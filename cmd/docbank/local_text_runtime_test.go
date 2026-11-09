@@ -357,7 +357,7 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
 }
 
-func TestLocalTextEnablesWithoutInputAndPreservesExplicitLifetime(t *testing.T) {
+func TestLocalTextEnablesNoninteractivelyAndRestartsExplicitDaemon(t *testing.T) {
 	bin := buildDocbank(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DO_NOT_TRACK", "1")

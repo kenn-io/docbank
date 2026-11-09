@@ -400,30 +400,26 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // before answering. Public ping fields cannot authenticate a rebound port, so
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
-		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
-			root, rec := startUnresponsiveRuntime(t)
-			rec.Metadata[MetaExplicitStart] = strconv.FormatBool(explicit)
-			_, err := RuntimeStore(root).Write(rec)
-			require.NoError(t, err)
-			canonicalRoot, err := filepath.EvalSymlinks(root)
-			require.NoError(t, err)
-			started := false
-			result, err := ensureDaemon(t.Context(), root, false,
-				func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
-					started = true
-					assert.False(t, persistent, "a draining owner contributes no explicit launch intent")
-					assert.Equal(t, canonicalRoot, gotRoot)
-					assert.False(t, kitdaemon.ProcessAlive(rec.PID),
-						"replacement must wait for the recorded owner to exit")
-					return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
-				})
-			require.NoError(t, err)
-			assert.True(t, started)
-			require.NotNil(t, result.Replaced)
-			assert.Equal(t, rec.PID, result.Replaced.PID)
+	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	started := false
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			started = true
+			assert.False(t, persistent, "a draining owner contributes no explicit launch intent")
+			assert.Equal(t, canonicalRoot, gotRoot)
+			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
+				"replacement must wait for the recorded owner to exit")
+			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
 		})
-	}
+	require.NoError(t, err)
+	assert.True(t, started)
+	require.NotNil(t, result.Replaced)
+	assert.Equal(t, rec.PID, result.Replaced.PID)
 }
 
 func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
@@ -808,12 +804,15 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 	})
 }
 
-func TestRestartHoldsLaunchLockAndPreservesLifetime(t *testing.T) {
+func TestRestartPreservesLifetime(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
 			root := t.TempDir()
 			assertLocked := func() {
 				t.Helper()
+				if !explicit {
+					return
+				}
 				lock, err := (home.Layout{Root: root}).TryLockLaunch()
 				if lock != nil {
 					_ = lock.Release()

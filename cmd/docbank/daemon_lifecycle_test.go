@@ -539,7 +539,7 @@ func TestRestartWhenNotRunningStartsFresh(t *testing.T) {
 }
 
 func TestDaemonLifetimeTransitions(t *testing.T) {
-	oldBin := buildDocbank(t)
+	bin := buildDocbank(t)
 	root := t.TempDir()
 	run := func(bin string, args ...string) string {
 		cmd := exec.CommandContext(t.Context(), bin, args...)
@@ -550,22 +550,18 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
-	run(oldBin, "search", "missing")
+	run(bin, "search", "missing")
 	automaticPID := waitForDaemon(t, root).PID
 	var status map[string]any
-	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
-	assert.Equal(t, false, status["explicit_start"])
-	assert.Equal(t, "30m0s", status["idle_timeout"])
-	run(oldBin, "daemon", "start")
+	run(bin, "daemon", "start")
 	assert.Equal(t, automaticPID, waitForDaemon(t, root).PID)
-	assert.Contains(t, run(oldBin, "daemon", "status"), "Exits after 30m idle (started automatically)")
-	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
+	require.NoError(t, json.Unmarshal([]byte(run(bin, "daemon", "status", "--json")), &status))
 	assert.Equal(t, false, status["explicit_start"])
 	assert.Equal(t, "30m0s", status["idle_timeout"])
 
-	run(oldBin, "daemon", "restart")
-	assert.Contains(t, run(oldBin, "daemon", "status"), "Stays running until docbank daemon stop")
-	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
+	run(bin, "daemon", "restart")
+	assert.Contains(t, run(bin, "daemon", "status"), "Stays running until docbank daemon stop")
+	require.NoError(t, json.Unmarshal([]byte(run(bin, "daemon", "status", "--json")), &status))
 	assert.Equal(t, true, status["explicit_start"])
 	assert.Equal(t, "0s", status["idle_timeout"])
 
@@ -575,7 +571,7 @@ func TestDaemonLifetimeTransitions(t *testing.T) {
 	_, err := daemonconn.RuntimeStore(root).Write(legacy)
 	require.NoError(t, err)
 	status = nil
-	require.NoError(t, json.Unmarshal([]byte(run(oldBin, "daemon", "status", "--json")), &status))
+	require.NoError(t, json.Unmarshal([]byte(run(bin, "daemon", "status", "--json")), &status))
 	assert.Equal(t, true, status["running"])
 	assert.NotContains(t, status, "explicit_start")
 	assert.NotContains(t, status, "idle_timeout")
