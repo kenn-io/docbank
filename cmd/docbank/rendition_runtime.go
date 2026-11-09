@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 )
@@ -38,6 +39,7 @@ type renditionProviderInputs struct {
 
 type registeredRenditionProvider struct {
 	provider *configuredRenditionProvider
+	exposed  document.RenditionProvider
 	inputs   renditionProviderInputs
 }
 
@@ -75,6 +77,25 @@ func (provider *configuredRenditionProvider) Render(
 	return provider.RenditionProvider.Render(ctx, upload, authorization)
 }
 
+// Only providers implementing the qualified resume contract expose it through
+// configuration. The base wrapper deliberately does not advertise resumability.
+type configuredResumableRenditionProvider struct {
+	*configuredRenditionProvider
+
+	resumable document.ResumableRenditionProvider
+}
+
+func (provider *configuredResumableRenditionProvider) RenderResumable(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization, resume *document.RenditionResumeHandle, checkpoint document.RenditionResumeCheckpoint) (document.RenditionResult, error) {
+	if _, ok := provider.allowedRenditionRequests[authorization.RenditionRequestFingerprint]; !ok {
+		failure, err := document.NewRenditionProviderError(document.RenditionErrorPolicyRejected, 0, document.ErrRenditionAuthorizationInvalid)
+		if err != nil {
+			return document.RenditionResult{}, err
+		}
+		return document.RenditionResult{}, failure
+	}
+	return provider.resumable.RenderResumable(ctx, upload, authorization, resume, checkpoint)
+}
+
 func (provider *configuredRenditionProvider) Probe(ctx context.Context) error {
 	probe, ok := provider.RenditionProvider.(interface {
 		Probe(ctx context.Context) error
@@ -109,7 +130,7 @@ func configureRenditionProviders(cfg config.Config) (
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case vision.AdapterContract:
 			provider, disclosures[name], err = configureVision(cfg, name, registered)
-		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
+		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract, workerprotocol.DocumentAdapter, workerprotocol.ASRAdapter:
 			provider, disclosures[name], err = configureExternalRendition(cfg, name, registered)
 		default:
 			continue
@@ -191,6 +212,9 @@ func configureExternalRendition(cfg config.Config, name string,
 		for fingerprint := range requestFingerprints {
 			existing.provider.allowedRenditionRequests[fingerprint] = struct{}{}
 		}
+		if existing.exposed != nil {
+			return existing.exposed, disclosure, nil
+		}
 		return existing.provider, disclosure, nil
 	}
 	secrets, client, err := renditionProviderClient(cfg, configured.Runtime.ProviderEgressConfig)
@@ -206,8 +230,12 @@ func configureExternalRendition(cfg config.Config, name string,
 	}
 	bound := &configuredRenditionProvider{RenditionProvider: provider,
 		allowedRenditionRequests: requestFingerprints, pdfPasswordsFile: cfg.Media.PDFPasswordsFile, pdfPasswords: adapter.pdfPasswords}
-	registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
-	return bound, disclosure, nil
+	var exposed document.RenditionProvider = bound
+	if resumable, ok := provider.(document.ResumableRenditionProvider); ok {
+		exposed = &configuredResumableRenditionProvider{configuredRenditionProvider: bound, resumable: resumable}
+	}
+	registered[descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, exposed: exposed, inputs: inputs}
+	return exposed, disclosure, nil
 }
 
 type resolvedRenditionAdapter struct {
@@ -222,6 +250,28 @@ type resolvedRenditionAdapter struct {
 func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolvedRenditionAdapter, error) {
 	runtime := configured.Runtime
 	switch configured.AdapterContract {
+	case workerprotocol.DocumentAdapter:
+		descriptor, err := docling.WorkerDocumentDescriptor()
+		if err != nil {
+			return resolvedRenditionAdapter{}, err
+		}
+		profile := configuredDoclingTransportProfile(configured, descriptor)
+		return resolvedRenditionAdapter{descriptor: descriptor, secretBinding: profile.SecretBinding,
+			disclosureFingerprint: docling.WorkerDisclosureFingerprint(configured.AdapterContract, descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
+				return docling.NewWorker(profile, secrets, client)
+			}}, nil
+	case workerprotocol.ASRAdapter:
+		descriptor, err := docling.WorkerASRDescriptor(configured.MaxTranscriptChars)
+		if err != nil {
+			return resolvedRenditionAdapter{}, err
+		}
+		profile := docling.ASRProfile{Profile: configuredDoclingTransportProfile(configured, descriptor), MaxTranscriptChars: configured.MaxTranscriptChars}
+		return resolvedRenditionAdapter{descriptor: descriptor, secretBinding: profile.SecretBinding,
+			disclosureFingerprint: docling.WorkerDisclosureFingerprint(configured.AdapterContract, descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
+				return docling.NewWorkerASR(profile, secrets, client)
+			}}, nil
 	case config.MistralOCRAdapterContract:
 		profile, err := configuredMistralProfile(configured)
 		if err != nil {

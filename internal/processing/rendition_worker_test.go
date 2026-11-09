@@ -1595,7 +1595,7 @@ func (provider *workerProvider) Render(
 }
 
 func workerProcessingProfile(
-	tb testing.TB, descriptor document.RenditionDescriptor,
+	tb testing.TB, descriptor document.RenditionDescriptor, mutations ...func(*document.ProcessingProfileV1),
 ) store.ProcessingProfileRecord {
 	tb.Helper()
 	profile := document.ProcessingProfileV1{
@@ -1632,6 +1632,9 @@ func workerProcessingProfile(
 			ConsentFingerprint:          processingHash("worker-consent"),
 			RetainSanitizedMarkdown:     true, TrustBoundary: "synthetic-vault",
 		},
+	}
+	for _, mutate := range mutations {
+		mutate(&profile)
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
 	require.NoError(tb, err)

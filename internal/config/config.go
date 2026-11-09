@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/document/workerprotocol"
 	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/storenamespace"
 	"go.kenn.io/kit/embedconfig"
@@ -1081,13 +1082,18 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
 		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))
 	}
-	if profile.AdapterContract == DoclingASRAdapterContract {
+	if profile.AdapterContract == DoclingASRAdapterContract || profile.AdapterContract == workerprotocol.ASRAdapter {
 		if _, err := document.NewEvidencePolicy(profile.MaxTranscriptChars); err != nil {
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
 	}
-	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
+	if (profile.AdapterContract == DoclingDocumentAdapterContract || profile.AdapterContract == workerprotocol.DocumentAdapter || profile.AdapterContract == MistralOCRAdapterContract) && profile.MaxTranscriptChars != 0 {
 		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
+	}
+	if profile.AdapterContract == workerprotocol.DocumentAdapter || profile.AdapterContract == workerprotocol.ASRAdapter {
+		if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) || profile.MaxDocumentBytes > 100<<20 || profile.MaxResponseBytes > 128<<20 || (profile.AdapterContract == workerprotocol.DocumentAdapter && profile.MaxUnits > 200) {
+			return fmt.Errorf("%s worker requires operator_network, source <=100 MiB, result <=128 MiB and document units <=200", prefix)
+		}
 	}
 	if profile.Model != "" && profile.AdapterContract != vision.AdapterContract {
 		return fmt.Errorf("%s model is only supported for %s", prefix, vision.AdapterContract)
@@ -1120,8 +1126,8 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract && profile.AdapterContract != workerprotocol.DocumentAdapter && profile.AdapterContract != workerprotocol.ASRAdapter {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract, workerprotocol.DocumentAdapter, workerprotocol.ASRAdapter)
 	}
 	if profile.AdapterContract == MistralOCRAdapterContract {
 		return validateMistralRuntime(profile, prefix)
@@ -1144,7 +1150,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {
 			return fmt.Errorf("%s vision requires a withheld filename, structured evidence, and at most 1 MiB response", prefix)
 		}
-	case DoclingASRAdapterContract:
+	case DoclingASRAdapterContract, workerprotocol.ASRAdapter:
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
 			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
 		}

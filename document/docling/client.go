@@ -77,14 +77,19 @@ type Client struct {
 
 // rendering carries the state of one Render call between its stages.
 type rendering struct {
-	operation       *providerutil.Operation
-	usage           providerutil.Usage
-	metadata        document.AuthorizedUploadMetadata
-	authorization   document.RenditionAuthorization
-	source          []byte
-	uploadSHA256    string
-	includeMarkdown bool
-	started         time.Time
+	operation              *providerutil.Operation
+	usage                  providerutil.Usage
+	metadata               document.AuthorizedUploadMetadata
+	authorization          document.RenditionAuthorization
+	source                 []byte
+	uploadSHA256           string
+	includeMarkdown        bool
+	started                time.Time
+	completed              time.Time
+	inputBytes             int64
+	expectedFilenameSHA256 string
+	workerProtocol         bool
+	headers                map[string]string
 }
 
 // New validates a fixed profile and isolates the supplied HTTP client from
@@ -97,6 +102,10 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 }
 
 func newTransportClient(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Client, error) {
+	return newTransportClientFor(profile, secrets, httpClient, providerID)
+}
+
+func newTransportClientFor(profile Profile, secrets SecretResolver, httpClient *http.Client, expectedID string) (*Client, error) {
 	origin, err := provider.ValidateOrigin(profile.Origin, profile.Descriptor.TrustBoundary)
 	if err != nil {
 		return nil, err
@@ -105,8 +114,8 @@ func newTransportClient(profile Profile, secrets SecretResolver, httpClient *htt
 	if err != nil {
 		return nil, err
 	}
-	if descriptor.ID != providerID {
-		return nil, errors.New("docling: descriptor ID must be docling.serve-v1")
+	if descriptor.ID != expectedID {
+		return nil, errors.New("docling: descriptor ID differs from adapter")
 	}
 	credential := providerutil.APIKeyCredential("X-Api-Key", profile.SecretBinding, secrets)
 	if err := credential.Validate(provider); err != nil {
@@ -276,25 +285,34 @@ func checkSelection(raw jsontext.Value, pages PageRange) error {
 	return nil
 }
 
-func (client *Client) startRender(
-	ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization,
-) (*rendering, error) {
+func (client *Client) startRender(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (*rendering, error) {
+	run, err := client.newRendering(ctx, upload.Metadata(), authorization)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.readSource(run, upload); err != nil {
+		run.operation.Cancel()
+		return nil, err
+	}
+	return run, nil
+}
+func (client *Client) newRendering(ctx context.Context, metadata document.AuthorizedUploadMetadata, authorization document.RenditionAuthorization) (*rendering, error) {
 	if client == nil {
 		return nil, errors.New("docling: client is required")
 	}
-	metadata := upload.Metadata()
 	if metadata.ByteLength > client.maxDocumentBytes {
-		return nil, provider.Classified(document.RenditionErrorPolicyRejected,
-			"input exceeds the Docling byte limit", nil)
+		return nil, provider.Classified(document.RenditionErrorPolicyRejected, "input exceeds the Docling byte limit", nil)
 	}
 	operation, err := providerutil.NewOperation(ctx, provider, authorization.ExpiresAt, client.totalTimeout)
 	if err != nil {
 		return nil, err
 	}
-	source, err := operation.ReadUpload(upload)
+	return &rendering{operation: operation, metadata: metadata, authorization: authorization, includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0, started: time.Now().UTC()}, nil
+}
+func (client *Client) readSource(run *rendering, upload document.AuthorizedUpload) error {
+	source, err := run.operation.ReadUpload(upload)
 	if err != nil {
-		operation.Cancel()
-		return nil, err
+		return err
 	}
 	original := source
 	source, uploadSHA256, err := providerutil.DecryptUpload(provider, upload, source, client.maxDocumentBytes)
@@ -302,15 +320,18 @@ func (client *Client) startRender(
 		clear(original)
 	}
 	if err != nil {
-		operation.Cancel()
-		return nil, err
+		return err
 	}
-	return &rendering{
-		uploadSHA256: uploadSHA256,
-		operation:    operation, metadata: metadata, authorization: authorization, source: source,
-		includeMarkdown: client.descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes > 0,
-		started:         time.Now().UTC(),
-	}, nil
+	run.source = source
+	run.inputBytes = int64(len(source))
+	run.uploadSHA256 = uploadSHA256
+	return nil
+}
+func (run *rendering) completedAt() time.Time {
+	if !run.completed.IsZero() {
+		return run.completed
+	}
+	return time.Now().UTC()
 }
 
 func (client *Client) convert(run *rendering, fields [][2]string) (taskResponse, doclingResult, error) {
@@ -359,7 +380,7 @@ func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, 
 			"Docling upload filename contains a newline", nil)
 	}
 	response, err := client.executor.Do(run.operation, &run.usage, providerutil.Request{
-		Stage: providerutil.StageSubmission, Method: http.MethodPost, Path: convertPath,
+		Stage: providerutil.StageSubmission, Method: http.MethodPost, Path: convertPath, Headers: run.headers, NoReplay: run.workerProtocol,
 		Upload: &providerutil.MultipartUpload{
 			FieldName: "files", Filename: filename, MediaType: run.metadata.MediaType,
 			Source: bytes.NewReader(run.source), Length: int64(len(run.source)), Fields: fields,
@@ -368,11 +389,14 @@ func (client *Client) submit(run *rendering, fields [][2]string) (taskResponse, 
 	if err != nil {
 		return taskResponse{}, err
 	}
+	if err := validateWorkerResponse(run, response); err != nil {
+		return taskResponse{}, err
+	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
 		return taskResponse{}, provider.StatusError(providerutil.StageSubmission, response.Status,
 			response.RetryAfter, nil)
 	}
-	task, err := parseTask(response.Body)
+	task, err := parseTaskForProtocol(response.Body, run.workerProtocol)
 	if err != nil {
 		return taskResponse{}, provider.AmbiguousSubmission(err)
 	}
@@ -497,9 +521,9 @@ func (client *Client) buildResult(
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{
 		Descriptor: client.descriptor, Authorization: run.authorization, SourceSHA256: run.metadata.SHA256,
 		UploadSHA256: run.uploadSHA256,
-		OperationID:  "docling-" + task.id, StartedAt: run.started, CompletedAt: time.Now().UTC(),
+		OperationID:  "docling-" + task.id, StartedAt: run.started, CompletedAt: run.completedAt(),
 		Warnings: partialSuccessWarnings(partialSuccess),
-		Usage:    run.usage.Rendition(int64(len(run.source)), int64(len(evidence.Units))),
+		Usage:    run.usage.Rendition(run.inputBytes, int64(len(evidence.Units))),
 	})
 	if err != nil {
 		return document.RenditionResult{}, err
@@ -517,10 +541,13 @@ func (client *Client) poll(run *rendering, taskID string) (taskResponse, error) 
 	if err != nil {
 		return taskResponse{}, err
 	}
+	if err := validateWorkerResponse(run, response); err != nil {
+		return taskResponse{}, err
+	}
 	if response.Status != http.StatusOK && response.Status != http.StatusAccepted {
 		return taskResponse{}, provider.StatusError(providerutil.StageJob, response.Status, response.RetryAfter, nil)
 	}
-	task, err := parseTask(response.Body)
+	task, err := parseTaskForProtocol(response.Body, run.workerProtocol)
 	if err != nil {
 		return taskResponse{}, err
 	}
@@ -536,6 +563,9 @@ func (client *Client) result(run *rendering, taskID string) (doclingResult, erro
 		MaxResponseBytes: int64(run.authorization.MaxTotalResultBytes),
 	})
 	if err != nil {
+		return doclingResult{}, err
+	}
+	if err := validateWorkerResponse(run, response); err != nil {
 		return doclingResult{}, err
 	}
 	if response.Status != http.StatusOK {
@@ -583,6 +613,12 @@ func parseResult(body []byte) (doclingResult, error) {
 }
 
 func parseTask(body []byte) (taskResponse, error) {
+	return parseTaskForProtocol(body, false)
+}
+
+// The durable gateway has no task_type field. Native Docling keeps its
+// required convert discriminator; worker IDs additionally have a fixed shape.
+func parseTaskForProtocol(body []byte, worker bool) (taskResponse, error) {
 	var wire struct {
 		ID     string `json:"task_id"`
 		Type   string `json:"task_type"`
@@ -594,8 +630,11 @@ func parseTask(body []byte) (taskResponse, error) {
 	if err := providerutil.ValidateJobID(wire.ID); err != nil {
 		return taskResponse{}, provider.Malformed("Docling task ID is invalid", err)
 	}
-	if wire.Type != "convert" {
+	if wire.Type != "convert" && (!worker || wire.Type != "") {
 		return taskResponse{}, provider.Malformed("Docling task type is invalid", nil)
+	}
+	if worker && !workerHex(wire.ID, 32) {
+		return taskResponse{}, provider.Malformed("worker task ID is invalid", nil)
 	}
 	if !officialTaskStatus(wire.Status) {
 		return taskResponse{}, provider.Malformed("Docling task status is invalid", nil)
