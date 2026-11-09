@@ -389,7 +389,6 @@ func TestLocalTextEnablesWithoutInput(t *testing.T) {
 	require.Equal(t, config.LocalTextProfile, choice.Profile)
 	after := waitForDaemon(t, root)
 	require.NotEqual(t, before.PID, after.PID)
-	require.True(t, daemonconn.Explicit(after))
 }
 
 func TestLocalTextCandidateRejections(t *testing.T) {

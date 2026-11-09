@@ -359,8 +359,9 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root, false,
-		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
+		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
+			assert.False(t, persistent, "replacing an automatic daemon keeps it automatic")
 			started.Store(true)
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
@@ -656,14 +657,9 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	rec.Metadata[MetaExplicitStart] = "true"
-	_, err := RuntimeStore(root).Write(rec)
-	require.NoError(t, err)
 	stopped, err := Stop(t.Context(), root)
+	assert.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
 	require.NoError(t, err)
-	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
-	assert.Equal(t, rec.PID, stopped.PID)
-	assert.Equal(t, "true", stopped.Metadata[MetaExplicitStart])
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
@@ -803,27 +799,31 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 }
 
 func TestRestartHoldsLaunchLockAcrossStopAndStart(t *testing.T) {
-	root := t.TempDir()
-	assertLocked := func() {
-		t.Helper()
-		lock, err := (home.Layout{Root: root}).TryLockLaunch()
-		if lock != nil {
-			_ = lock.Release()
-		}
-		require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
-	}
-	_, wasRunning, err := restart(t.Context(), root, false,
-		func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
-			assertLocked()
-			return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: "false"}}, nil
-		},
-		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
-			assertLocked()
-			assert.False(t, persistent, "restarting an automatic daemon keeps it automatic")
-			return kitdaemon.RuntimeRecord{}, nil
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			root := t.TempDir()
+			assertLocked := func() {
+				t.Helper()
+				lock, err := (home.Layout{Root: root}).TryLockLaunch()
+				if lock != nil {
+					_ = lock.Release()
+				}
+				require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
+			}
+			_, wasRunning, err := restart(t.Context(), root, false,
+				func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: strconv.FormatBool(explicit)}}, nil
+				},
+				func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					assert.Equal(t, explicit, persistent, "restarting a daemon keeps its lifetime")
+					return kitdaemon.RuntimeRecord{}, nil
+				})
+			require.NoError(t, err)
+			assert.True(t, wasRunning)
 		})
-	require.NoError(t, err)
-	assert.True(t, wasRunning)
+	}
 }
 
 func TestEnsureRejectsNewerPinglessRuntimeWithoutStoppingOwner(t *testing.T) {

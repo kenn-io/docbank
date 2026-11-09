@@ -37,10 +37,8 @@ func printEnsured(cmd *cobra.Command, res daemonconn.EnsureResult) {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already running: pid %d at %s (%s)\n",
 		res.Record.PID, res.Record.Address, res.Record.Version)
-	if !daemonconn.Explicit(res.Record) && (res.Record.Metadata[daemonconn.MetaIdleTimeout] != "" || res.Record.Metadata[daemonconn.MetaExplicitStart] == "") {
-		if lifetime := daemonLifetime(res.Record); lifetime != "" {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
-		}
+	if lifetime := daemonLifetime(res.Record); lifetime != "" && !daemonconn.Explicit(res.Record) {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), lifetime)
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run docbank daemon restart to keep it running.")
 	}
 }
@@ -91,10 +89,6 @@ var daemonStatusCmd = &cobra.Command{
 				out["address"] = rec.Address
 				out["version"] = info.Version
 				out["started_at"] = rec.StartedAt.Format(time.RFC3339)
-				if timeout := rec.Metadata[daemonconn.MetaIdleTimeout]; timeout != "" {
-					out["idle_timeout"] = timeout
-					out["explicit_start"] = daemonconn.Explicit(rec)
-				}
 			}
 			enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 			return json.MarshalEncode(enc, out)
@@ -112,26 +106,19 @@ var daemonStatusCmd = &cobra.Command{
 	},
 }
 
+// daemonLifetime is empty for a foreground daemon, which has no idle exit.
 func daemonLifetime(rec kitdaemon.RuntimeRecord) string {
 	timeout, err := time.ParseDuration(rec.Metadata[daemonconn.MetaIdleTimeout])
-	if err != nil {
-		return unavailableDaemonLifetime(rec)
-	}
-	if daemonconn.Explicit(rec) {
+	switch {
+	case daemonconn.Explicit(rec):
 		return "Stays running until docbank daemon stop"
-	}
-	if timeout == 0 {
+	case err == nil && timeout == 0:
 		return "Idle exit is off (started automatically)"
-	}
-	duration := timeout.String()
-	if timeout%time.Minute == 0 {
-		duration = fmt.Sprintf("%dm", timeout/time.Minute)
-	}
-	return fmt.Sprintf("Exits after %s idle (started automatically)", duration)
-}
-
-func unavailableDaemonLifetime(rec kitdaemon.RuntimeRecord) string {
-	if rec.Metadata[daemonconn.MetaExplicitStart] == "" {
+	case err == nil && timeout%time.Minute == 0:
+		return fmt.Sprintf("Exits after %dm idle (started automatically)", timeout/time.Minute)
+	case err == nil:
+		return fmt.Sprintf("Exits after %s idle (started automatically)", timeout)
+	case rec.Metadata[daemonconn.MetaExplicitStart] == "":
 		return "Lifetime unavailable (daemon predates lifetime reporting)"
 	}
 	return ""

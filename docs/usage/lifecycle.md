@@ -24,9 +24,6 @@ docbank daemon start       # reuse a compatible daemon or start until stopped
 docbank daemon stop        # graceful; does not start a stopped daemon
 ```
 
-If `daemon start` reuses an automatic daemon, its idle policy stays unchanged.
-Run `docbank daemon restart` to keep it running until stopped.
-
 Use `docbank daemon run` when diagnosing startup or configuration problems. It
 stays in the foreground and writes logs to the terminal. Background logs live
 under `$DOCBANK_HOME/logs/`.

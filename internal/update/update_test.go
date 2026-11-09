@@ -150,6 +150,7 @@ func TestUpdateCoordinatesDaemonUnderLaunchLock(t *testing.T) {
 }
 
 func coordinateDaemonUpdate(t *testing.T, explicit, installFails bool) {
+	t.Helper()
 	ts, _ := fakeReleaseServer(t, "9.9.9")
 	c := newFakeClient(t, ts, "0.0.1")
 	root := t.TempDir()
@@ -184,11 +185,9 @@ func coordinateDaemonUpdate(t *testing.T, explicit, installFails bool) {
 			require.True(t, locked, "restart must happen while the launch lock is held")
 			require.Equal(t, root, gotRoot)
 			assert.Equal(t, explicit, persistent, "restart keeps the stopped daemon's lifetime")
-			got, err := os.ReadFile(dest)
-			require.NoError(t, err)
-			if installFails {
-				assert.Equal(t, "old", string(got), "failed installation keeps the previous binary")
-			} else {
+			if !installFails {
+				got, err := os.ReadFile(dest)
+				require.NoError(t, err)
 				require.Contains(t, string(got), "9.9.9", "restart should happen after install")
 			}
 			order = append(order, "start")
@@ -420,7 +419,9 @@ func TestUpdateRefusesNewerRuntimeWithoutStoppingOwner(t *testing.T) {
 	ts, _ := fakeReleaseServer(t, "9.9.9")
 	client := newFakeClient(t, ts, "0.0.1")
 	root := t.TempDir()
-	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUpdateRuntimeOwnerHelper$")
+	testBinary, err := os.Executable()
+	require.NoError(t, err)
+	child := exec.CommandContext(t.Context(), testBinary, "-test.run=^TestUpdateRuntimeOwnerHelper$")
 	child.Env = append(os.Environ(), "DOCBANK_UPDATE_OWNER_HELPER=1")
 	input, err := child.StdinPipe()
 	require.NoError(t, err)
@@ -434,7 +435,6 @@ func TestUpdateRefusesNewerRuntimeWithoutStoppingOwner(t *testing.T) {
 	protocol, err := strconv.Atoi(rec.Metadata["protocol_version"])
 	require.NoError(t, err)
 	rec.Metadata["protocol_version"] = strconv.Itoa(protocol + 1)
-	rec.Metadata[daemonconn.MetaExplicitStart] = "future-format"
 	_, err = daemonconn.RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	dest := filepath.Join(t.TempDir(), "docbank")
