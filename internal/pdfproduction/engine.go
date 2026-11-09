@@ -186,8 +186,8 @@ func checkRSS(ctx context.Context, limit int64, read func(context.Context) (uint
 }
 
 // admitRSS refuses a job only when the process stays over the ceiling after
-// returning freeable memory to the OS. Garbage left by earlier work, such as
-// reading an upload, would otherwise count against a job that has not started.
+// returning freeable memory to the OS. Garbage left by other work, such as
+// reading an upload, would otherwise count against the job.
 func admitRSS(ctx context.Context, limit int64, read func(context.Context) (uint64, error)) error {
 	err := checkRSS(ctx, limit, read)
 	if _, over := errors.AsType[*RSSLimitError](err); !over {
@@ -210,12 +210,21 @@ func watchRSS(parent context.Context, limit int64, read func(context.Context) (u
 		defer close(done)
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
+		// Reclaim at most once while running: a forced collection on every
+		// tick near the ceiling would stall the job.
+		reclaimed := false
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := checkRSS(ctx, limit, read); err != nil {
+				err := checkRSS(ctx, limit, read)
+				if _, over := errors.AsType[*RSSLimitError](err); over && !reclaimed {
+					reclaimed = true
+					debug.FreeOSMemory()
+					err = checkRSS(ctx, limit, read)
+				}
+				if err != nil {
 					cancel(err)
 					return
 				}
