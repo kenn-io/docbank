@@ -250,6 +250,9 @@ func (client *RenditionClient) verifySource(ctx context.Context,
 		return candidate, 0, nil
 	}
 	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return CandidateFormat{}, 0, contextErr
+		}
 		return CandidateFormat{}, 0, renditionProvider.Classified(document.RenditionErrorUnsupportedInput,
 			countFailure, err)
 	}

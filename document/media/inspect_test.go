@@ -2281,11 +2281,12 @@ func TestInspectCapabilityProvesGeminiQuickTimeVideo(t *testing.T) {
 
 func TestInspectCapabilityRejectsMP4ClaimingQuickTimeIdentity(t *testing.T) {
 	t.Parallel()
-	data := mediatest.MP4(16, 16, 500)
+	// This clip is admitted when declared as MP4, so only the identity check rejects it.
+	data := mediatest.H265MP4()
 	policy := inspectionPolicy(data, "clip.mov", "video/quicktime")
 	policy.MaxPixels = 16 * 16
 	policy.MaxFrames = 1
-	policy.MaxDurationMS = 500
+	policy.MaxDurationMS = 1_000
 
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)

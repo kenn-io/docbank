@@ -100,6 +100,9 @@ func (c *Connection) DownloadEmailPDF(ctx context.Context, receipt document.Emai
 	}
 	sum := sha256.Sum256(b)
 	pages, parseErr := emailpdf.VerifyPDF(ctx, b)
+	if contextErr := ctx.Err(); parseErr != nil && contextErr != nil {
+		return nil, contextErr
+	}
 	if int64(len(b)) != receipt.Output.PDFSize || hex.EncodeToString(sum[:]) != receipt.Output.PDFSHA256 || parseErr != nil || pages != receipt.Output.Pages {
 		return nil, integrityErrorf("email PDF bytes disagree with verified receipt")
 	}

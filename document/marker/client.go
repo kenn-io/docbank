@@ -283,6 +283,9 @@ func (client *Client) localUnits(ctx context.Context, metadata document.Authoriz
 	switch metadata.MediaFamily {
 	case "pdf":
 		pages, err := formatdetect.CountPDFPages(ctx, source)
+		if contextErr := ctx.Err(); err != nil && contextErr != nil {
+			return 0, contextErr
+		}
 		if err != nil || pages <= 0 {
 			return 0, provider.Classified(document.RenditionErrorUnsupportedInput, "Marker PDF page authority is invalid", err)
 		}

@@ -149,8 +149,11 @@ func Convert(ctx context.Context, source ocr.Source, extension string, policy Po
 	if int64(len(pdf)) > policy.limits.MaxPDFBytes {
 		return nil, fmt.Errorf("%w: render PDF output exceeds byte limit", ErrOutputTooLarge)
 	}
-	pages, err := formatdetect.CountPDFPages(ctx, pdf)
+	pages, err := formatdetect.CountPDFPages(runCtx, pdf)
 	if err != nil {
+		if contextErr := runCtx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		return nil, errors.New("render PDF output is not a valid PDF")
 	}
 	if pages <= 0 || pages > int64(policy.limits.MaxPages) {

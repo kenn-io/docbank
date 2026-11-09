@@ -61,6 +61,9 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 	}
 	count, err := formatdetect.CountPDFPages(ctx, pdf)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, ocr.NewPreparationError("generated CSV PDF could not be validated", err)
 	}
 	if count != int64(pages) || count > int64(policy.limits.MaxPages) {
