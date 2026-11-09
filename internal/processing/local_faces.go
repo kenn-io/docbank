@@ -12,9 +12,10 @@ import (
 // FaceSetup reviews and grants the existing processing consent for local faces.
 // Its runtime callback only reuses installed assets.
 type FaceSetup struct {
-	Service *Service
-	Startup func(context.Context) error
-	mu      sync.Mutex
+	Service   *Service
+	Startup   func(context.Context) error
+	OnEnabled func() error
+	mu        sync.Mutex
 }
 
 func (setup *FaceSetup) Plan(ctx context.Context) (LocalTextPlan, error) {
@@ -47,5 +48,30 @@ func (setup *FaceSetup) Apply(ctx context.Context, fingerprint string) (LocalTex
 	if err := setup.Startup(ctx); err != nil {
 		return plan, err
 	}
-	return plan, setup.Service.grantProfileConsent(ctx, setup.Service.profiles[config.LocalFacesProfile], nil)
+	if err := setup.Service.grantProfileConsent(ctx, setup.Service.profiles[config.LocalFacesProfile], nil); err != nil {
+		return plan, err
+	}
+	if setup.OnEnabled != nil {
+		return plan, setup.OnEnabled()
+	}
+	return plan, nil
+}
+
+// IsEnabled reports whether the local face profile has current consent.
+func (setup *FaceSetup) IsEnabled(ctx context.Context) (bool, error) {
+	profile, ok := setup.Service.profiles[config.LocalFacesProfile]
+	if !ok {
+		return false, nil
+	}
+	for _, request := range setup.Service.profileConsentRequests(profile) {
+		_, err := setup.Service.catalog.AuthorizeProviderOperation(ctx, request)
+		state, err := processingConsentState(err)
+		if err != nil {
+			return false, err
+		}
+		if state != "active" {
+			return false, nil
+		}
+	}
+	return true, nil
 }

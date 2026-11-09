@@ -462,8 +462,22 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
-	if err := jobSupervisor.StartWorker("process:face-suggestions", func(ctx context.Context) error { return processingService.FaceSuggestionBackfill(ctx, logger) }); err != nil {
-		return fmt.Errorf("starting face suggestions: %w", err)
+	faces := &processing.FaceSetup{Service: processingService,
+		Startup: func(ctx context.Context) error { _, err := localEmbeddingOrigin(ctx, embedlocal.FaceModel); return err },
+		OnEnabled: func() error {
+			err := jobSupervisor.StartWorker("process:face-suggestions", func(ctx context.Context) error { return processingService.FaceSuggestionBackfill(ctx, logger) })
+			if err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+				return fmt.Errorf("starting face suggestions: %w", err)
+			}
+			return nil
+		},
+	}
+	if enabled, err := faces.IsEnabled(sigCtx); err != nil {
+		return fmt.Errorf("checking face suggestions consent: %w", err)
+	} else if enabled {
+		if err := faces.OnEnabled(); err != nil {
+			return err
+		}
 	}
 	if processingService.HasPhotoFaceDetectionProfiles() {
 		if err := jobSupervisor.StartWorker("process:photo-face-detection", func(ctx context.Context) error {
@@ -716,7 +730,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, Faces: &processing.FaceSetup{Service: processingService, Startup: func(ctx context.Context) error { _, err := localEmbeddingOrigin(ctx, embedlocal.FaceModel); return err }}, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText, Faces: faces, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
