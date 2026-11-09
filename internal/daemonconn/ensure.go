@@ -124,7 +124,7 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 	if err != nil {
 		return rec, info, ok, fmt.Errorf("discovering daemon: %w", err)
 	}
-	return rec, info, ok, runtimeProtocolError(rec)
+	return rec, info, ok, nil
 }
 
 // runtimeProtocolError refuses to interpret a newer owner's lifetime contract.
@@ -424,7 +424,7 @@ func ensureDaemonWithOptions(
 			return findErr
 		}
 		if found {
-			if err := stopRecord(ctx, old); err != nil {
+			if err := stopReplacementRecord(ctx, old, stopRecord); err != nil {
 				return fmt.Errorf("stopping incompatible daemon (pid %d, %s): %w",
 					old.PID, old.Version, err)
 			}
@@ -444,7 +444,7 @@ func ensureDaemonWithOptions(
 				// port and forge the public ping fields. Stop only the identity-checked
 				// recorded PID, then replace it after exit; never send its API key to a
 				// listener that appeared during this transition.
-				if err := signalStopRecord(ctx, stopping); err != nil {
+				if err := stopReplacementRecord(ctx, stopping, signalStopRecord); err != nil {
 					return fmt.Errorf("stopping pingless daemon (pid %d): %w",
 						stopping.PID, err)
 				}
@@ -470,7 +470,7 @@ func ensureDaemonWithOptions(
 // Restart serializes stop and start with automatic launches. A persistent request
 // or the stopped daemon's explicit intent keeps the replacement running.
 func Restart(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, bool, error) {
-	return restart(ctx, root, persistent, Stop, Start)
+	return restart(ctx, root, persistent, StopForReplacement, Start)
 }
 
 func restart(ctx context.Context, root string, persistent bool,
@@ -718,6 +718,16 @@ func proveOwnershipWithClient(
 // SIGTERM only when the process identity still matches the recorded PID. Returns
 // nil when no daemon was running.
 func Stop(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
+	return stop(ctx, root, false)
+}
+
+// StopForReplacement refuses newer runtime contracts before stopping an owner
+// whose explicit launch intent the caller will preserve in a replacement.
+func StopForReplacement(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
+	return stop(ctx, root, true)
+}
+
+func stop(ctx context.Context, root string, forReplacement bool) (*kitdaemon.RuntimeRecord, error) {
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return nil, err
@@ -726,18 +736,28 @@ func Stop(ctx context.Context, root string) (*kitdaemon.RuntimeRecord, error) {
 	if err != nil && !errors.Is(err, kitdaemon.ErrDaemonUnreachable) {
 		return nil, err
 	}
-	if ok {
-		return &rec, stopRecord(ctx, rec)
+	stopFn := stopRecord
+	if !ok {
+		// A draining owner has no proven endpoint; signal only its verified PID.
+		rec, ok, err = liveRuntimeRecord(root)
+		stopFn = signalStopRecord
 	}
-	// A daemon that already closed its listener can still be draining jobs.
-	// Recognize only an identity-verified runtime PID without ping evidence.
-	rec, ok, err = liveRuntimeRecord(root)
 	if err != nil || !ok {
 		return nil, err
 	}
-	// Do not probe or send secrets to a listener that may have been rebound
-	// after the recorded daemon stopped answering. Signal only the verified PID.
-	return &rec, signalStopRecord(ctx, rec)
+	if forReplacement {
+		return &rec, stopReplacementRecord(ctx, rec, stopFn)
+	}
+	return &rec, stopFn(ctx, rec)
+}
+
+func stopReplacementRecord(ctx context.Context, rec kitdaemon.RuntimeRecord,
+	stopFn func(context.Context, kitdaemon.RuntimeRecord) error,
+) error {
+	if err := runtimeProtocolError(rec); err != nil {
+		return err
+	}
+	return stopFn(ctx, rec)
 }
 
 func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
@@ -838,7 +858,7 @@ func liveRuntimeRecord(root string) (kitdaemon.RuntimeRecord, bool, error) {
 			kitdaemon.CompareRuntimeProcessIdentity(rec) != kitdaemon.ProcessIdentityMatch {
 			continue
 		}
-		return rec, true, runtimeProtocolError(rec)
+		return rec, true, nil
 	}
 	return kitdaemon.RuntimeRecord{}, false, nil
 }

@@ -642,6 +642,13 @@ func TestNewerRuntimeProtocolKeepsOwnerRunning(t *testing.T) {
 		assert.Contains(t, out, "newer runtime protocol")
 		assert.Equal(t, rec.PID, waitForDaemon(t, root).PID)
 	}
+	out, err = run("daemon", "status")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, strconv.Itoa(rec.PID))
+	out, err = run("daemon", "stop")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "stopped")
+	assert.False(t, kitdaemon.ProcessAlive(rec.PID), "explicit stop remains available for newer owners")
 }
 
 func TestStartAdviceDistinguishesForegroundAndLegacyRecords(t *testing.T) {
