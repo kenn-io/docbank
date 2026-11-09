@@ -330,6 +330,18 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, reader RenditionBlobR
 			return err
 		}
 		if !allowed[candidate.CandidateID] {
+			// Preserve the general candidate API's locked-photo response.
+			if !decision.FaceOnly {
+				occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
+				if err != nil {
+					return err
+				}
+				for _, occurrence := range occurrences {
+					if err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
+						return err
+					}
+				}
+			}
 			return ErrNotFound
 		}
 		if candidate.State != personCandidateStateOpen {
