@@ -1590,7 +1590,7 @@ func (service *Service) ResolveSourceFence(
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
-		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
+		return retrieval.Report{}, fmt.Errorf("%w: send exactly one of fence or scope", store.ErrInvalidProcessingSourceFence)
 	}
 	if request.AllLive != nil && request.MediaSources != nil {
 		return retrieval.Report{}, ErrMediaSearchInvalid
