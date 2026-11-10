@@ -244,6 +244,7 @@ type CoverageReport struct {
 	Embeddings         []CoverageClass `json:"embeddings"`
 	PagesWithoutText   []PageTextGap   `json:"pages_without_text,omitzero"`
 	NextCursor         string          `json:"next_cursor,omitempty"`
+	PageCoverage       string          `json:"page_coverage,omitempty" enum:"unavailable"`
 }
 
 type DocumentSearchScope struct {
@@ -938,12 +939,13 @@ type FuzzyReceipt struct {
 
 // SearchTextCoverage reports recoverable gaps in the current search scope.
 type SearchTextCoverage struct {
-	NoText           int      `json:"no_text" minimum:"0"`
-	Families         []string `json:"families" enum:"pdf,office,other"`
-	Pending          int      `json:"pending" minimum:"0"`
-	PDFsWithoutText  int      `json:"pdfs_without_text" minimum:"0"`
-	PagesWithoutText int      `json:"pages_without_text" minimum:"0"`
-	OtherWithoutText int      `json:"other_without_text" minimum:"0"`
+	NoText                     int      `json:"no_text" minimum:"0"`
+	Families                   []string `json:"families" enum:"pdf,office,other"`
+	Pending                    int      `json:"pending" minimum:"0"`
+	PDFsWithoutText            int      `json:"pdfs_without_text" minimum:"0"`
+	PagesWithoutText           int      `json:"pages_without_text" minimum:"0"`
+	OtherWithoutText           int      `json:"other_without_text" minimum:"0"`
+	PDFPageCoverageUnavailable int      `json:"pdf_page_coverage_unavailable" minimum:"0"`
 }
 
 // SearchReport is one bounded search result page.

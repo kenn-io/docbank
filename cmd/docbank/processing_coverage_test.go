@@ -36,6 +36,7 @@ func TestProcessingCoveragePreflight(t *testing.T) {
 
 func TestProcessingCoverageCLI(t *testing.T) {
 	coverage := api.CoverageReport{VaultUID: inspectionTestVaultID,
+		PageCoverage:       "unavailable",
 		ProfileFingerprint: strings.Repeat("b", 64), State: "partial",
 		Renditions: api.CoverageClass{Name: "rendition", Required: true, State: "rebuilding",
 			Total: 1, Complete: 1, Rebuilding: 1, PreviousGenerationServing: 1},
@@ -76,35 +77,9 @@ func TestProcessingCoverageCLI(t *testing.T) {
 	output.Reset()
 	require.NoError(t, runProcessingCoverage(cmd, c, processingTestVersionID, "archive", false))
 	for _, want := range []string{processingTestVersionID, inspectionTestVaultID,
-		coverage.ProfileFingerprint, `"semantic\nquoted"`, "previous-generation-serving", "partial"} {
+		coverage.ProfileFingerprint, `"semantic\nquoted"`, "previous-generation-serving", "partial", "page coverage: unavailable"} {
 		require.Contains(t, output.String(), want)
 	}
-}
-
-func TestProcessingCoverageContinuesPageList(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/vault" {
-			require.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
-			return
-		}
-		coverage := api.CoverageReport{VaultUID: inspectionTestVaultID, Embeddings: []api.CoverageClass{}}
-		if r.URL.Query().Get("cursor") == "" {
-			coverage.PagesWithoutText = []api.PageTextGap{{ContentVersionID: processingTestVersionID, Pages: []int{1, 2}}}
-			coverage.NextCursor = "next"
-		} else {
-			require.Equal(t, "next", r.URL.Query().Get("cursor"))
-			coverage.PagesWithoutText = []api.PageTextGap{{ContentVersionID: processingTestVersionID, Pages: []int{3, 4}}}
-		}
-		require.NoError(t, json.MarshalWrite(w, coverage))
-	}))
-	t.Cleanup(server.Close)
-	c := daemonconn.New(server.URL, "test-key")
-	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	cmd, output := processingTestCommand()
-	require.NoError(t, runProcessingCoverage(cmd, c, processingTestVersionID, "docbank-pdf-text", false))
-	require.Contains(t, output.String(), "[1 2]")
-	require.Contains(t, output.String(), "[3 4]")
 }
 
 func TestProcessingCoverageRefusesInvalidResponses(t *testing.T) {

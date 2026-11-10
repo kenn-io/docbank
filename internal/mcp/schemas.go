@@ -893,6 +893,7 @@ func getProcessingCoverageSchemas() (schema, schema) {
 		"profile_fingerprint": sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
 		"pages_without_text": arraySchema(objectSchema(schema{versionField: uuidSchema(), "pages": arraySchema(integerSchema(1, 0), 5000)}, versionField, "pages"), 4096),
 		"next_cursor":        stringSchema(2048),
+		"page_coverage":      enumSchema("unavailable"),
 	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", schemaStateField, "coverage")...)
 	return input, output
 }

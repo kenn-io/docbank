@@ -85,7 +85,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT cv.version_id, COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
-		COALESCE(b.unit_count < `+d.number("b.provider_receipt_json", "usage.units")+`, false),
+		COALESCE(`+pdfOmissionCandidateSQL(d, "b")+`, false),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=$1 AND w.state='waiting'
@@ -93,6 +93,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=$1
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		 AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		LEFT JOIN rendition_builds b ON b.build_id=a.build_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)`,
 		scope.ProcessingProfileFingerprint, string(versionsJSON))
@@ -137,7 +138,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 				validated[head.key] = true
 			}
 		}
-		if complete {
+		if head.key.buildID != "" {
 			result.BuildManifest[head.versionID] = head.key.buildID
 			if head.pdfCandidate {
 				result.RenditionBuilds[head.versionID] = head.key.buildID

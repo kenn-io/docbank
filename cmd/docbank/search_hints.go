@@ -23,6 +23,9 @@ type lexicalSearchJSON struct {
 func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, scoped, fuzzy bool) []searchHint {
 	const fileNoun = "file"
 	var hints []searchHint
+	if coverage.PDFPageCoverageUnavailable > 0 {
+		hints = append(hints, searchHint{Code: "pdf_page_coverage_unavailable", Message: "PDF page coverage is unavailable; some pages may lack searchable text."})
+	}
 	if coverage.PagesWithoutText > 0 {
 		pdf, verb, page := "PDFs", "have", "pages"
 		if coverage.PDFsWithoutText == 1 {

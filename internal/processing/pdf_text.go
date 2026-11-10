@@ -18,58 +18,82 @@ import (
 const PDFTextProfileName = "docbank-pdf-text"
 const PDFTextMaxDocumentBytes = 500 << 20
 
-func coveragePage(gaps []PageTextGap, scope, manifest, cursor string) ([]PageTextGap, string, error) {
-	type position struct {
-		Scope, Manifest string
-		Offset          int
-	}
-	pos := position{Scope: scope, Manifest: manifest}
+var ErrInvalidCoverageCursor = errors.New("invalid or stale coverage cursor")
+
+type coverageCursor struct {
+	Version     int    `json:"version"`
+	Scope       string `json:"scope"`
+	Manifest    string `json:"manifest"`
+	Index       int    `json:"index"`
+	Offset      int    `json:"offset"`
+	Unavailable bool   `json:"unavailable,omitempty"`
+}
+
+func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, scope, manifest, cursor string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, bool, error) {
+	pos := coverageCursor{Version: 1, Scope: scope, Manifest: manifest}
 	if cursor != "" {
 		data, err := base64.RawURLEncoding.DecodeString(cursor)
-		if err != nil || json.Unmarshal(data, &pos) != nil || pos.Scope != scope || pos.Manifest != manifest || pos.Offset < 1 {
-			return nil, "", errors.New("invalid or stale coverage cursor")
+		pos = coverageCursor{}
+		if err != nil || json.Unmarshal(data, &pos, json.RejectUnknownMembers(true)) != nil || pos.Version != 1 || pos.Scope != scope || pos.Manifest != manifest || pos.Index < 0 || pos.Index >= len(ids) || pos.Offset < 0 {
+			return nil, "", false, ErrInvalidCoverageCursor
 		}
 	}
-	start, remaining := pos.Offset, 8192
-	var page []PageTextGap
-	for _, gap := range gaps {
-		if start >= len(gap.Pages) {
-			start -= len(gap.Pages)
+	type result struct {
+		pages []int
+		err   error
+	}
+	cache := make(map[string]result)
+	var gaps []PageTextGap
+	remaining := 8192
+	for i := pos.Index; i < len(ids); i++ {
+		build := builds[ids[i]]
+		if build == "" {
+			if i == pos.Index && pos.Offset != 0 {
+				return nil, "", false, ErrInvalidCoverageCursor
+			}
 			continue
 		}
-		end := min(len(gap.Pages), start+remaining)
-		page = append(page, PageTextGap{ContentVersionID: gap.ContentVersionID, Pages: gap.Pages[start:end]})
-		remaining -= end - start
-		start = 0
+		r, ok := cache[build]
+		if !ok {
+			r.pages, r.err = read(ctx, build)
+			cache[build] = r
+		}
+		if ctx.Err() != nil {
+			return nil, "", false, ctx.Err()
+		}
+		if r.err != nil {
+			pos.Unavailable = true
+			continue
+		}
+		start := 0
+		if i == pos.Index {
+			start = pos.Offset
+		}
+		if start > len(r.pages) {
+			return nil, "", false, ErrInvalidCoverageCursor
+		}
+		end := min(len(r.pages), start+remaining)
+		if end > start {
+			gaps = append(gaps, PageTextGap{ContentVersionID: ids[i], Pages: r.pages[start:end]})
+			remaining -= end - start
+		}
 		if remaining == 0 {
+			if end < len(r.pages) {
+				pos.Index, pos.Offset = i, end
+			} else {
+				pos.Index, pos.Offset = i+1, 0
+			}
+			if pos.Index < len(ids) {
+				data, err := json.Marshal(pos)
+				if err != nil {
+					return nil, "", false, err
+				}
+				return gaps, base64.RawURLEncoding.EncodeToString(data), pos.Unavailable, nil
+			}
 			break
 		}
 	}
-	total := 0
-	for _, gap := range gaps {
-		total += len(gap.Pages)
-	}
-	if pos.Offset > total {
-		return nil, "", errors.New("invalid or stale coverage cursor")
-	}
-	pos.Offset += 8192 - remaining
-	if pos.Offset < total {
-		data, err := json.Marshal(pos)
-		if err != nil {
-			return nil, "", err
-		}
-		return page, base64.RawURLEncoding.EncodeToString(data), nil
-	}
-	return page, "", nil
-}
-
-// CoveragePage returns a bounded page list for one unchanged source snapshot.
-func CoveragePage(report Coverage, fence SourceFence, cursor string) ([]PageTextGap, string, error) {
-	scope, err := SourceFenceFingerprint(fence)
-	if err != nil {
-		return nil, "", err
-	}
-	return coveragePage(report.PagesWithoutText, scope, report.BuildManifest, cursor)
+	return gaps, "", pos.Unavailable, nil
 }
 
 // NewPDFTextProfile constructs the daemon's local PDF text profile.
@@ -129,7 +153,7 @@ func (service *Service) PDFPagesWithoutText(ctx context.Context, buildID string)
 		}
 	}
 	if !found {
-		return nil, nil
+		return nil, errors.New("normalized PDF evidence is unavailable")
 	}
 	evidence, _, err := service.renditionEvidence(ctx, build)
 	if err != nil {

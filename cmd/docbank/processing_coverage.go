@@ -64,20 +64,6 @@ func runProcessingCoverage(cmd *cobra.Command, c *daemonconn.Connection,
 	if coverage == nil || coverage.VaultUID != vaultID.String() {
 		return errors.New("coverage response does not match the connected vault")
 	}
-	for coverage.NextCursor != "" {
-		cursor := coverage.NextCursor
-		next, err := c.API().GetDocumentProcessingCoverage(cmd.Context(), &apiclient.GetDocumentProcessingCoverageRequestOptions{
-			Query: &apiclient.GetDocumentProcessingCoverageQuery{Profile: profile, VaultUID: vaultID, ContentVersionID: []string{version}, Cursor: &cursor},
-		})
-		if err != nil {
-			return err
-		}
-		if next == nil || next.VaultUID != vaultID.String() {
-			return errors.New("coverage response does not match the connected vault")
-		}
-		coverage.PagesWithoutText = append(coverage.PagesWithoutText, next.PagesWithoutText...)
-		coverage.NextCursor = next.NextCursor
-	}
 	if asJSON {
 		id, err := uuid.Parse(version)
 		if err != nil {
@@ -92,6 +78,9 @@ func writeProcessingCoverage(w io.Writer, version, profile string, coverage api.
 	var text strings.Builder
 	fmt.Fprintf(&text, "version: %s\nvault: %s\nprofile: %q\nfingerprint: %s\nstate: %q\n",
 		version, coverage.VaultUID, profile, coverage.ProfileFingerprint, coverage.State)
+	if coverage.PageCoverage == "unavailable" {
+		fmt.Fprintln(&text, "page coverage: unavailable")
+	}
 	for _, gap := range coverage.PagesWithoutText {
 		if gap.ContentVersionID == version {
 			fmt.Fprintf(&text, "pages without text: %v\n", gap.Pages)

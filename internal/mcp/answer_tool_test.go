@@ -114,8 +114,18 @@ func TestAnswerQuestionCompressesLongPageRuns(t *testing.T) {
 	require.Less(t, size, maxToolResponseBytes)
 }
 
+func TestAnswerQuestionMarksUnavailablePageCoverage(t *testing.T) {
+	f := &answerFakeClient{pageChunks: []api.CoverageReport{{PageCoverage: "unavailable"}}, report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+	require.NoError(t, err)
+	require.False(t, out.CoverageComplete)
+	require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
+}
+
 func TestAnswerQuestionContinuesFragmentedPageLists(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
+	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000001", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
 	for i := 0; i < 100; i++ {
 		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		f.fenceVersions = append(f.fenceVersions, version)
@@ -133,6 +143,9 @@ func TestAnswerQuestionContinuesFragmentedPageLists(t *testing.T) {
 	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
 	require.NotEmpty(t, out.PagesCursor)
+	require.Len(t, out.Passages, 1)
+	require.Equal(t, "answer text", out.Passages[0].Text)
+	require.Len(t, out.Receipt.CitedVersions, 1)
 	size, err := toolEnvelopeBytes(out, links)
 	require.NoError(t, err)
 	require.LessOrEqual(t, size, maxToolResponseBytes)

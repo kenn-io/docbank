@@ -208,3 +208,9 @@ func TestEmptySearchHintsKeepOfficeGuidance(t *testing.T) {
 	require.Equal(t, "no_searchable_text", hints[1].Code)
 	require.Contains(t, hints[1].Message, "1 file (Office)")
 }
+
+func TestEmptySearchHintsReportUnavailablePDFCoverage(t *testing.T) {
+	hints := emptySearchHints("missing", api.SearchTextCoverage{PDFPageCoverageUnavailable: 1}, true, false, false)
+	require.Len(t, hints, 1)
+	require.Equal(t, "pdf_page_coverage_unavailable", hints[0].Code)
+}

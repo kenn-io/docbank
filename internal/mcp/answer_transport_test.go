@@ -452,6 +452,25 @@ func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
 	gap := schemaMap(t, gaps[0])
 	require.Equal(t, node.CurrentVersionID, gap["content_version_id"])
 	require.Equal(t, []any{[]any{float64(2), float64(2)}}, gap["pages"])
+	var fingerprint string
+	for _, profile := range service.Profiles() {
+		if profile.Name == processing.PDFTextProfileName {
+			fingerprint = profile.Fingerprint
+		}
+	}
+	buildID, err := f.catalog.PDFTextCandidate(t.Context(), node.CurrentVersionID, fingerprint)
+	require.NoError(t, err)
+	build, err := f.catalog.RenditionBuild(t.Context(), buildID)
+	require.NoError(t, err)
+	for _, artifact := range build.Artifacts {
+		if artifact.Role == "normalized_evidence" {
+			require.NoError(t, f.blobs.Remove(artifact.BlobHash))
+		}
+	}
+	output = exportCall(t, server, "answer_question", map[string]any{"question": "readable", "profile": processing.PDFTextProfileName})
+	require.Equal(t, false, output["coverage_complete"])
+	require.Contains(t, output["coverage_reasons"], "page_coverage_unavailable")
+	require.NotEmpty(t, output["passages"])
 }
 
 func newSearchTestEmbeddingProfile(t *testing.T, f *nativeExportFixture, kind document.EmbeddingInputKind, failQuery bool) processing.ProfileConfig {

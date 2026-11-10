@@ -13,12 +13,13 @@ import (
 // SearchTextCoverage counts files whose missing text can be recovered by
 // processing, and current native-text files still waiting for extraction.
 type SearchTextCoverage struct {
-	NoText           int
-	Families         []string
-	Pending          int
-	PDFsWithoutText  int
-	PagesWithoutText int
-	OtherWithoutText int
+	NoText                     int
+	Families                   []string
+	Pending                    int
+	PDFsWithoutText            int
+	PagesWithoutText           int
+	OtherWithoutText           int
+	PDFPageCoverageUnavailable int
 }
 
 func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfProfile string, noTextLayer func(context.Context, string) ([]int, error)) (out SearchTextCoverage, err error) {
@@ -52,7 +53,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
  JOIN rendition_builds b ON b.build_id=a.build_id
  JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id
  WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=?
- AND b.unit_count < `+d.number("b.provider_receipt_json", "usage.units")+`
+ AND `+pdfOmissionCandidateSQL(d, "b")+`
  LIMIT 1),'') pdf_evidence,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
@@ -109,6 +110,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 			return err
 		}
 		read := make(map[string][]int)
+		unavailable := make(map[string]bool)
 		for _, check := range checks {
 			pages, ok := read[check.buildID]
 			if !ok {
@@ -118,8 +120,12 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 				}
 				if err != nil {
 					pages = nil
+					unavailable[check.buildID] = true
 				}
 				read[check.buildID] = pages
+			}
+			if unavailable[check.buildID] {
+				out.PDFPageCoverageUnavailable += check.count
 			}
 			if len(pages) > 0 {
 				out.PDFsWithoutText += check.count

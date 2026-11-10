@@ -393,17 +393,11 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			return nil, processingUnavailable()
 		}
 		fence := processing.SourceFence{VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs}
-		report, err := d.Processing.Coverage(ctx, input.Profile, fence)
+		report, err := d.Processing.CoverageWithCursor(ctx, input.Profile, fence, input.Cursor)
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
-		pages, cursor, err := processing.CoveragePage(report, fence, input.Cursor)
-		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_cursor", "The coverage cursor is invalid or stale.")
-		}
-		report.PagesWithoutText = pages
 		body := fromProcessingCoverage(report)
-		body.NextCursor = cursor
 		return &coverageOutput{Body: body}, nil
 	})
 
@@ -652,7 +646,7 @@ func parseByteRange(value string, size int64) (int64, int64, error) {
 }
 
 func fromProcessingCoverage(report processing.Coverage) CoverageReport {
-	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint,
+	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint, PageCoverage: report.PageCoverage, NextCursor: report.NextCursor,
 		State: report.State, Renditions: fromProcessingCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
 	for _, gap := range report.PagesWithoutText {
@@ -846,6 +840,7 @@ func fromProcessingError(err error) error {
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
 		{store.ErrVectorIndexUnavailable, http.StatusConflict, "index_unavailable", "The search index needs building."},
+		{processing.ErrInvalidCoverageCursor, http.StatusUnprocessableEntity, "invalid_cursor", "coverage cursor is invalid or stale"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},
