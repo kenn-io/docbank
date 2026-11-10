@@ -70,15 +70,25 @@ func loadExportPlan(ctx context.Context, q metadataQuerier, id string) (bundle.P
 }
 
 func (s *Store) ExportPlan(ctx context.Context, owner, id string) (bundle.Plan, error) {
+	var plan bundle.Plan
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		plan, err = loadExportPlanForOwner(ctx, tx, owner, id)
+		return err
+	})
+	return plan, err
+}
+
+func loadExportPlanForOwner(ctx context.Context, q metadataQuerier, owner, id string) (bundle.Plan, error) {
 	var actual, retainUntil string
-	err := s.db.QueryRowContext(ctx, `SELECT owner,expires_at FROM export_plans WHERE id=?`, id).Scan(&actual, &retainUntil)
+	err := q.QueryRowContext(ctx, `SELECT owner,expires_at FROM export_plans WHERE id=$1`, id).Scan(&actual, &retainUntil)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && actual != owner {
 		return bundle.Plan{}, ErrNotFound
 	}
 	if err != nil {
 		return bundle.Plan{}, err
 	}
-	p, err := loadExportPlan(ctx, s.db, id)
+	p, err := loadExportPlan(ctx, q, id)
 	if err != nil {
 		return p, err
 	}
@@ -97,7 +107,7 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 
 func replayExportPlan(ctx context.Context, q metadataQuerier, owner, id, digest string) (bundle.Plan, bool, error) {
 	var oldOwner, oldDigest string
-	err := q.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, id).Scan(&oldOwner, &oldDigest)
+	err := q.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=$1`, id).Scan(&oldOwner, &oldDigest)
 	if err == nil && oldOwner != owner {
 		return bundle.Plan{}, false, ErrNotFound
 	}
@@ -158,7 +168,7 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES(?,?,?,?,?,?)`, plan.ID, owner, source.ID, digest, raw, plan.ExpiresAt)
+		_, e = tx.ExecContext(ctx, `INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, plan.ID, owner, source.ID, digest, raw, plan.ExpiresAt)
 		if e != nil {
 			return e
 		}
@@ -216,12 +226,12 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 					return bundle.ErrLimit
 				}
 				plan.RoleBytes += role.Size
-				_, err = tx.ExecContext(ctx, `INSERT INTO export_role_roots(plan_id,blob_hash) VALUES(?,?) ON CONFLICT DO NOTHING`, plan.ID, role.SHA256)
+				_, err = tx.ExecContext(ctx, `INSERT INTO export_role_roots(plan_id,blob_hash) VALUES($1,$2) ON CONFLICT DO NOTHING`, plan.ID, role.SHA256)
 				if err != nil {
 					return err
 				}
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO export_documents(plan_id,ordinal,canonical_json) VALUES(?,?,?)`, plan.ID, index, raw)
+			_, err = tx.ExecContext(ctx, `INSERT INTO export_documents(plan_id,ordinal,canonical_json) VALUES($1,$2,$3)`, plan.ID, index, raw)
 			index++
 			return err
 		}
@@ -297,11 +307,11 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE export_plans SET canonical_json=? WHERE id=?`, raw, plan.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE export_plans SET canonical_json=$1 WHERE id=$2`, raw, plan.ID)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE export_sources SET expires_at=max(expires_at,?) WHERE id=?`, plan.ExpiresAt, r.SourceID)
+		_, err = tx.ExecContext(ctx, `UPDATE export_sources SET expires_at=`+(metadataJSONDialect{postgres: s.postgresSchema != ""}).maximum()+`(expires_at,$1) WHERE id=$2`, plan.ExpiresAt, r.SourceID)
 		return err
 	})
 	return plan, err
@@ -387,7 +397,12 @@ func walkExportDocumentBytes(ctx context.Context, q metadataQuerier, id string, 
 }
 
 func (s *Store) WalkExportDocuments(ctx context.Context, id string, visit func(bundle.Document) error) error {
-	return walkExportDocumentBytes(ctx, s.db, id, func(raw []byte) error {
+	// Release each page before callbacks: archive readers re-enter the Store.
+	return walkExportDocuments(ctx, s.db, id, visit)
+}
+
+func walkExportDocuments(ctx context.Context, q metadataQuerier, id string, visit func(bundle.Document) error) error {
+	return walkExportDocumentBytes(ctx, q, id, func(raw []byte) error {
 		var d bundle.Document
 		if err := json.Unmarshal(raw, &d, json.RejectUnknownMembers(true)); err != nil {
 			return err
@@ -414,7 +429,7 @@ func resolveExportDocument(ctx context.Context, q metadataQuerier, m bundle.Memb
 	var trash sql.NullString
 	var hash string
 	var size int64
-	err := q.QueryRowContext(ctx, `SELECT n.name,n.revision,n.trashed_at,v.mime_type,v.blob_hash,v.size FROM nodes n JOIN content_versions v ON v.node_id=n.id WHERE n.id=? AND v.version_id=?`, m.NodeID, m.VersionID).Scan(&d.Name, &revision, &trash, &d.MediaType, &hash, &size)
+	err := q.QueryRowContext(ctx, `SELECT n.name,n.revision,n.trashed_at,v.mime_type,v.blob_hash,v.size FROM nodes n JOIN content_versions v ON v.node_id=n.id WHERE n.id=$1 AND v.version_id=$2`, m.NodeID, m.VersionID).Scan(&d.Name, &revision, &trash, &d.MediaType, &hash, &size)
 	if err != nil {
 		return d, err
 	}
@@ -485,7 +500,7 @@ func resolveExportText(ctx context.Context, q metadataQuerier, m bundle.Member, 
 	r := bundle.Role{Role: "text", Status: "available", Path: base + "text.md", MediaType: "text/markdown; charset=utf-8"}
 	var attachment, build, profile, request, evidence, checksum, source string
 	var profileJSON []byte
-	err := q.QueryRowContext(ctx, `SELECT a.attachment_id,a.build_id,a.profile_fingerprint,b.rendition_request_fingerprint,b.evidence_lexical_fingerprint,b.source_sha256,x.blob_hash,x.size,x.checksum,p.canonical_profile FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id JOIN rendition_builds b ON b.build_id=a.build_id JOIN rendition_artifacts x ON x.build_id=b.build_id JOIN processing_profiles p ON p.profile_fingerprint=a.profile_fingerprint WHERE h.content_version_id=? AND (?='' OR h.profile_fingerprint=?) AND x.role='sanitized_markdown' AND x.blob_hash=b.markdown_checksum AND length(p.canonical_profile)<=32768 ORDER BY h.profile_fingerprint,x.artifact_id LIMIT 1`, m.VersionID, p.ProfileFingerprint, p.ProfileFingerprint).Scan(&attachment, &build, &profile, &request, &evidence, &source, &r.SHA256, &r.Size, &checksum, &profileJSON)
+	err := q.QueryRowContext(ctx, `SELECT a.attachment_id,a.build_id,a.profile_fingerprint,b.rendition_request_fingerprint,b.evidence_lexical_fingerprint,b.source_sha256,x.blob_hash,x.size,x.checksum,p.canonical_profile FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id JOIN rendition_builds b ON b.build_id=a.build_id JOIN rendition_artifacts x ON x.build_id=b.build_id JOIN processing_profiles p ON p.profile_fingerprint=a.profile_fingerprint WHERE h.content_version_id=$1 AND ($2='' OR h.profile_fingerprint=$3) AND x.role='sanitized_markdown' AND x.blob_hash=b.markdown_checksum AND length(p.canonical_profile)<=32768 ORDER BY h.profile_fingerprint,x.artifact_id LIMIT 1`, m.VersionID, p.ProfileFingerprint, p.ProfileFingerprint).Scan(&attachment, &build, &profile, &request, &evidence, &source, &r.SHA256, &r.Size, &checksum, &profileJSON)
 	if err != nil {
 		return r, err
 	}
@@ -506,7 +521,7 @@ func resolveExportText(ctx context.Context, q metadataQuerier, m bundle.Member, 
 func resolveExportPages(ctx context.Context, q metadataQuerier, m bundle.Member, p bundle.RolePolicy, base string) ([]bundle.Role, []document.PageFrameV1, error) {
 	// Bound the retained geometry before the page reader allocates it.
 	var length int
-	if err := q.QueryRowContext(ctx, `SELECT length(canonical_json) FROM page_documents WHERE version_id=?`, m.VersionID).Scan(&length); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT length(canonical_json) FROM page_documents WHERE version_id=$1`, m.VersionID).Scan(&length); err != nil {
 		return nil, nil, err
 	}
 	if length > bundle.MaxMemberBytes/2 {
@@ -523,7 +538,7 @@ func resolveExportPages(ctx context.Context, q metadataQuerier, m bundle.Member,
 		return nil, nil, bundle.ErrConflict
 	}
 	var recipe string
-	err = q.QueryRowContext(ctx, `SELECT recipe_sha256 FROM page_images WHERE version_id=? AND (?='' OR recipe_sha256=?) GROUP BY recipe_sha256 HAVING count(*)=? ORDER BY recipe_sha256 LIMIT 1`, m.VersionID, p.RecipeSHA256, p.RecipeSHA256, d.PageCount).Scan(&recipe)
+	err = q.QueryRowContext(ctx, `SELECT recipe_sha256 FROM page_images WHERE version_id=$1 AND ($2='' OR recipe_sha256=$3) GROUP BY recipe_sha256 HAVING count(*)=$4 ORDER BY recipe_sha256 LIMIT 1`, m.VersionID, p.RecipeSHA256, p.RecipeSHA256, d.PageCount).Scan(&recipe)
 	if err != nil {
 		return nil, nil, err
 	}

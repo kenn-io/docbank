@@ -17,7 +17,6 @@ var sqliteOnlyBackendTables = map[string]string{
 // Index expressions and predicates still need operation-specific plan checks.
 var deferredBackendIndexes = map[string]string{
 	"content_versions_photo_media_type": "content_versions",
-	"export_jobs_pending":               "export_jobs",
 	"mailbox_containers_owner":          "mailbox_containers",
 	"mailbox_transfer_receipts_source":  "mailbox_transfer_receipts",
 	"mailbox_transfer_versions":         "mailbox_transfer_receipts",
