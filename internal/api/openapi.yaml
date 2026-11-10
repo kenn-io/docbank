@@ -19647,6 +19647,8 @@ components:
           format: int64
           minimum: 0
           type: integer
+        pdf_page_coverage_partial:
+          type: boolean
         pdf_page_coverage_unavailable:
           format: int64
           minimum: 0
@@ -19666,6 +19668,7 @@ components:
         - pdfs_without_text
         - pages_without_text
         - pdf_page_coverage_unavailable
+        - pdf_page_coverage_partial
       type: object
       x-go-type: api.SearchTextCoverage
       x-go-type-import:

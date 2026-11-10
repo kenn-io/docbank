@@ -8395,6 +8395,7 @@ export interface SearchTextCoverage {
   no_text: number;
   /** @minimum 0 */
   pages_without_text: number;
+  pdf_page_coverage_partial: boolean;
   /** @minimum 0 */
   pdf_page_coverage_unavailable: number;
   /** @minimum 0 */

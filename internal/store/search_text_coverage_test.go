@@ -142,7 +142,7 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 	}{
 		{"no readable text", "candidate_empty", nil, false, 1, 0, 0},
 		{"missing evidence", "candidate_empty", nil, true, 1, 1, 0},
-		{"searchable with missing evidence", "candidate_serving", nil, true, 0, 0, 0},
+		{"searchable with missing evidence", "candidate_serving", nil, true, 0, 1, 0},
 		{"known scan", "candidate_empty", []int{2, 4}, false, 0, 0, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,4 +160,30 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 			require.Equal(t, tc.pageCount, got.PagesWithoutText)
 		})
 	}
+}
+
+func TestSearchTextCoverageLimitsEvidenceReads(t *testing.T) {
+	s, _, nodes, profile := collectionCoverageFixture(t, 17)
+	for _, node := range nodes {
+		collectionCoveragePublish(t, s, node, profile, "candidate_empty")
+	}
+	calls := 0
+	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
+	require.NoError(t, err)
+	require.Equal(t, 16, calls)
+	require.True(t, got.PDFPageCoveragePartial)
+	require.Equal(t, 16, got.PDFsWithoutText)
+	require.Equal(t, 32, got.PagesWithoutText)
+	require.Zero(t, got.NoText)
+}
+
+func TestSearchTextCoverageOtherProfileServes(t *testing.T) {
+	s, _, nodes, profile := collectionCoverageFixture(t, 1)
+	collectionCoveragePublish(t, s, nodes[0], profile, "candidate_empty")
+	other := catalogProcessingProfile(t, true)
+	collectionCoveragePublish(t, s, nodes[0], other, "complete")
+	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) { return nil, errors.New("missing") })
+	require.NoError(t, err)
+	require.Zero(t, got.PDFPageCoverageUnavailable)
+	require.Zero(t, got.NoText)
 }

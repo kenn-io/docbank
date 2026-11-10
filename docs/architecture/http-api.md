@@ -212,7 +212,7 @@ modification timestamps, such as nodes restored together.
 `GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
 current files after an empty text search. `no_text` counts files a processing
 profile could make searchable, by `families` (`pdf`, `office`, `other`), and
-`pending` counts native-text files still queued for extraction.
+`pending` counts native-text files still queued for extraction. PDF page coverage reads at most 16 distinct evidence builds; `pdf_page_coverage_partial` marks incomplete coverage, and the PDF and page counts are lower bounds when it is true.
 
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
