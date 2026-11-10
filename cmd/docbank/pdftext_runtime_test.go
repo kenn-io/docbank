@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -379,6 +380,20 @@ func TestDaemonWindowRetainedPDFProfiles(t *testing.T) {
 	output, err := runCLI(t, "rendition", "window", id, "--profile", "archive")
 	require.NoError(t, err)
 	require.Contains(t, output, "retained distinctive text")
+	first, err := runCLI(t, "rendition", "window", id, "--profile", "archive", "--max-chars", "16")
+	require.NoError(t, err)
+	parts := strings.Split(first, "Next window: ")
+	require.Len(t, parts, 2)
+	continuation := strings.Fields(parts[1])
+	require.Equal(t, "docbank", continuation[0])
+	require.NotContains(t, continuation, "--profile")
+	continuation = append(continuation[1:], "--json")
+	expectedJSON, err := runCLI(t, continuation...)
+	require.NoError(t, err)
+	var expected api.RenditionTextWindow
+	require.NoError(t, json.Unmarshal([]byte(expectedJSON), &expected))
+	require.Positive(t, expected.ActualStart)
+	require.NotEmpty(t, expected.Text)
 	scanID := fmt.Sprintf("id:%d", nodes["scan.pdf"].ID)
 	empty, err := runCLI(t, "rendition", "window", scanID, "--profile", "docbank-pdf-text")
 	require.NoError(t, err)
@@ -392,6 +407,13 @@ func TestDaemonWindowRetainedPDFProfiles(t *testing.T) {
 	stop = startServe(t)
 	defer stop()
 	waitForDaemon(t, home)
+	continuedJSON, err := runCLI(t, continuation...)
+	require.NoError(t, err)
+	var continued api.RenditionTextWindow
+	require.NoError(t, json.Unmarshal([]byte(continuedJSON), &continued))
+	require.Equal(t, expected.Text, continued.Text)
+	require.Equal(t, expected.ActualStart, continued.ActualStart)
+	require.Equal(t, expected.AttachmentID, continued.AttachmentID)
 	_, err = runCLI(t, "rendition", "window", id)
 	require.Equal(t, exitUsage, commandExitCode(err, true))
 	require.ErrorContains(t, err, fixture.profile)

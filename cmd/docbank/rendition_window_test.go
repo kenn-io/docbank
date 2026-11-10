@@ -49,7 +49,7 @@ func TestRenditionWindowCatalogBounds(t *testing.T) {
 	}{
 		{"unicode name boundary", "/" + strings.Repeat("界", 255), strings.Repeat("界", 255), false},
 		{"unicode name exceeded", "/" + strings.Repeat("界", 256), strings.Repeat("界", 256), true},
-		{"path depth boundary", "/" + strings.Repeat("d/", 254) + "d", "d", false},
+		{"path depth boundary", "/" + strings.Repeat("d/", 255) + "f", "f", false},
 		{"path bytes boundary", "/" + strings.Repeat("d", 16383), "d", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
