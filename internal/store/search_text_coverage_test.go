@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -164,13 +165,23 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 
 func TestSearchTextCoverageLimitsEvidenceReads(t *testing.T) {
 	s, _, nodes, profile := collectionCoverageFixture(t, 17)
-	for _, node := range nodes {
-		collectionCoveragePublish(t, s, node, profile, "candidate_empty")
+	var expected []string
+	for i, node := range nodes {
+		state := "candidate_empty"
+		if i%2 == 0 {
+			state = "candidate_serving"
+		}
+		collectionCoveragePublish(t, s, node, profile, state)
+		expected = append(expected, testSHA256([]byte(node.CurrentVersionID+state)))
 	}
-	calls := 0
-	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
+	slices.Sort(expected)
+	var read []string
+	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(_ context.Context, buildID string) ([]int, error) {
+		read = append(read, buildID)
+		return []int{2, 4}, nil
+	})
 	require.NoError(t, err)
-	require.Equal(t, 16, calls)
+	require.Equal(t, expected[:16], read)
 	require.True(t, got.PDFPageCoveragePartial)
 	require.Equal(t, 16, got.PDFsWithoutText)
 	require.Equal(t, 32, got.PagesWithoutText)
