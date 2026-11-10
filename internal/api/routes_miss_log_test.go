@@ -97,6 +97,8 @@ func TestMissLogSubmittedLexicalTextCoverage(t *testing.T) {
 		filters  map[string]any
 		coverage map[string]any
 		wantText any
+		count    *int
+		fence    string
 	}{
 		{name: "web and TUI", query: "lease renewal", mode: "lexical", wantText: map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}},
 		{name: "selected tag", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": tag.ID}, wantText: map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(0)}},
@@ -105,10 +107,18 @@ func TestMissLogSubmittedLexicalTextCoverage(t *testing.T) {
 		{name: "nonlexical", query: "lease renewal", mode: "semantic"},
 		{name: "filter only", query: " \t ", mode: "lexical", filters: map[string]any{"tag_id": tag.ID}},
 		{name: "unavailable scope", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": "not-a-tag"}},
+		{name: "advanced documents", query: "lease renewal", mode: "lexical", filters: map[string]any{"v": float64(1), "syntax": "simple", "mode": "lexical", "filters": map[string]any{"mime_types": []any{"text/plain"}}}, coverage: map[string]any{"configuration": "unconfigured"}},
+		{name: "photos", query: "lease renewal", mode: "lexical", filters: map[string]any{"corpus": "photos", "syntax": "simple", "hidden": false}, coverage: map[string]any{"coverage_incomplete": false}},
+		{name: "empty fence", query: "lease renewal", mode: "lexical", count: new(0), coverage: map[string]any{"state": "complete", "scoped_documents": float64(0)}},
+		{name: "exact fence", query: "lease renewal", mode: "lexical", count: new(1), fence: "sha256:synthetic", coverage: map[string]any{"state": "incomplete", "scoped_documents": float64(1)}},
+		{name: "flat MIME filter", query: "lease renewal", mode: "lexical", filters: map[string]any{"mime_type": "text/plain"}},
+		{name: "mixed flat filters", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": tag.ID, "mime_type": "text/plain"}},
+		{name: "unrecognized fence", query: "lease renewal", mode: "lexical", fence: "sha256:synthetic"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
 				Query: tc.query, RequestedMode: tc.mode, ActualMode: tc.mode, Filters: tc.filters, Coverage: tc.coverage,
+				DocumentCount: tc.count, FenceFingerprint: tc.fence,
 			})
 			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 			rows, err := listMisses(t, ts)
@@ -116,6 +126,9 @@ func TestMissLogSubmittedLexicalTextCoverage(t *testing.T) {
 			require.NotEmpty(t, rows)
 			require.Equal(t, tc.query, rows[0].Query)
 			require.Equal(t, tc.wantText, rows[0].Coverage["text"])
+			require.Equal(t, tc.filters, rows[0].Filters)
+			require.Equal(t, tc.count, rows[0].DocumentCount)
+			require.Equal(t, tc.fence, rows[0].FenceFingerprint)
 			for key, value := range tc.coverage {
 				require.Equal(t, value, rows[0].Coverage[key])
 			}

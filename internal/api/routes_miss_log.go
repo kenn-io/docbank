@@ -29,9 +29,12 @@ func missLogFailure() error {
 func registerMissLogRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent, MaxBodyBytes: 64 << 10}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
 		_, hasTextCoverage := in.Body.Coverage["text"]
-		if d.Cfg.MissLog.Enabled && in.Body.ActualMode == "lexical" && strings.TrimSpace(in.Body.Query) != "" && !hasTextCoverage {
-			tagID, _ := in.Body.Filters["tag_id"].(string)
+		tagID, _ := in.Body.Filters["tag_id"].(string)
+		plainScope := in.Body.DocumentCount == nil && in.Body.FenceFingerprint == "" &&
+			(len(in.Body.Filters) == 0 || len(in.Body.Filters) == 1 && tagID != "")
+		if d.Cfg.MissLog.Enabled && in.Body.ActualMode == "lexical" && strings.TrimSpace(in.Body.Query) != "" && !hasTextCoverage && plainScope {
 			// Web and TUI submissions lack the CLI's text coverage lookup.
+			// Other scopes retain only the coverage supplied by their caller.
 			// Keep enrichment best-effort, like receipt persistence itself.
 			if coverage, err := d.Store.SearchTextCoverage(ctx, store.SearchOptions{TagID: tagID}); err == nil {
 				if in.Body.Coverage == nil {
