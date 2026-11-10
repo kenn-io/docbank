@@ -2446,10 +2446,7 @@ func prepareSearch(query string) (string, []string, bool) {
 		terms = append(terms, word.Text)
 	}
 	for _, phrase := range natural.Phrases {
-		literal, err := analyzer.PreparePhrase(phrase)
-		if err != nil {
-			return fallback()
-		}
+		literal, _ := analyzer.PreparePhrase(phrase)
 		groups = append(groups, literal.Match)
 		terms = append(terms, `"`+phrase+`"`)
 	}

@@ -73,16 +73,20 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 	httpServer := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(httpServer.Close)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
-	output := exportCall(t, server, "answer_question", map[string]any{"question": "the observatories"})
-	require.Equal(t, "ANSWERED", output["status"])
-	passages, ok := output["passages"].([]any)
-	require.True(t, ok)
-	require.Len(t, passages, 1)
-	require.Equal(t, node.CurrentVersionID, schemaMap(t, passages[0])["content_version_id"])
-	require.Contains(t, schemaMap(t, passages[0])["text"], "observatory")
-	require.Contains(t, output["coverage_reasons"], "semantic_unavailable")
-	require.Equal(t, "processing_failed", output["semantic_failure"])
-	require.Equal(t, "lexical", schemaMap(t, output["receipt"])["actual_mode"])
+	for _, question := range []string{"observatory", "the observatories"} {
+		t.Run(question, func(t *testing.T) {
+			output := exportCall(t, server, "answer_question", map[string]any{"question": question})
+			require.Equal(t, "ANSWERED", output["status"])
+			passages, ok := output["passages"].([]any)
+			require.True(t, ok)
+			require.Len(t, passages, 1)
+			require.Equal(t, node.CurrentVersionID, schemaMap(t, passages[0])["content_version_id"])
+			require.Contains(t, schemaMap(t, passages[0])["text"], "observatory")
+			require.Contains(t, output["coverage_reasons"], "semantic_unavailable")
+			require.Equal(t, "processing_failed", output["semantic_failure"])
+			require.Equal(t, "lexical", schemaMap(t, output["receipt"])["actual_mode"])
+		})
+	}
 }
 
 type consentDeniedReranker struct{ t *testing.T }

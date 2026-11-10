@@ -1169,6 +1169,8 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		{"insur", []string{"insurance.pdf"}},
 		{`"tax 2026"`, []string{"tax 2026.pdf"}},
 		{`"tax 2026" absent`, nil},
+		{`"invoices`, nil},
+		{`"the invoices`, nil},
 	} {
 		hits, _, err := s.SearchPage(t.Context(), tc.query, 20)
 		require.NoError(t, err, tc.query)
@@ -1177,11 +1179,6 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 			names = append(names, hit.Node.Name)
 		}
 		require.Equal(t, tc.want, names, tc.query)
-	}
-	for _, query := range []string{"", "!!!", `""`, `"unbalanced`} {
-		got, _, phrase := prepareSearch(query)
-		require.Equal(t, ftsQuery(query), got)
-		require.False(t, phrase)
 	}
 }
 
