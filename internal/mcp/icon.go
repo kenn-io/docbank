@@ -8,11 +8,10 @@ import (
 	"time"
 )
 
-// serverIconPNG is the canonical website/favicon.svg rendered at 256x256.
+// serverIconPNG is the MCP document-and-vault mark rendered at 256x256.
 // Regenerate from the repository root with:
 //
-//	rsvg-convert -w 256 -h 256 website/favicon.svg -o /tmp/docbank-icon.png
-//	magick /tmp/docbank-icon.png -strip -define png:exclude-chunks=date,time internal/mcp/assets/icon.png
+//	rsvg-convert -w 256 -h 256 internal/mcp/assets/icon.svg | magick - -colors 32 -strip -define png:exclude-chunks=date,time PNG8:internal/mcp/assets/icon.png
 //
 //go:embed assets/icon.png
 var serverIconPNG []byte
