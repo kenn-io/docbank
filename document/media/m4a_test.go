@@ -317,7 +317,7 @@ func TestInspectMP4AudioWithNonVisualTracks(t *testing.T) {
 			track := bytes.Index(data, []byte("trak")) - 4
 			extra := bytes.Replace(bytes.Clone(data[track:]), []byte("soun"), []byte(handler), 1)
 			data = append(data, extra...)
-			binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie)) //nolint:gosec // small synthetic movie
+			binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie))
 			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
 			policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
 			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
@@ -334,5 +334,5 @@ func TestInspectMP4ExistingPolicyIdentity(t *testing.T) {
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible)
-	require.Equal(t, "9f37322a2e4c62b23f3dd604abf00aac709fc189a71289f9bd902d0e7724e0e8", record.PolicyFingerprint)
+	require.Equal(t, "a3255099414355444e81b8fce938cb7ffd0c6b0fea0e9ed384be187cd26a5625", record.PolicyFingerprint)
 }

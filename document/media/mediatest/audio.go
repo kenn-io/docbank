@@ -102,7 +102,7 @@ func SizedMP4Video(size int64) io.Reader {
 	binary.BigEndian.PutUint16(entry[6:8], 1)
 	binary.BigEndian.PutUint16(entry[24:26], 32)
 	binary.BigEndian.PutUint16(entry[26:28], 18)
-	entry = append(entry, Box("avcC", AVCConfig(32, 18))...)
+	entry = slices.Concat(entry, Box("avcC", AVCConfig(32, 18)))
 	stsd := append([]byte{0, 0, 0, 0, 0, 0, 0, 1}, Box("avc1", entry)...)
 	stts := []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0x27, 0x11, 0, 0, 0, 1}
 	stsz := []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0x27, 0x11}
@@ -125,7 +125,7 @@ func SizedMP4Video(size int64) io.Reader {
 		panic("invalid synthetic MP4 size")
 	}
 	header := slices.Clone(data[:mdat+8])
-	binary.BigEndian.PutUint32(header[mdat:mdat+4], uint32(mdatBytes)) //nolint:gosec // bounded above
+	binary.BigEndian.PutUint32(header[mdat:mdat+4], uint32(mdatBytes))
 	audioOffset := bytes.Index(movie, []byte("stco")) + 4
 	binary.BigEndian.PutUint32(movie[audioOffset+8:audioOffset+12], uint32(int64(mdat)+mdatBytes-4)) //nolint:gosec // source is at most uint32 bytes
 	return io.MultiReader(bytes.NewReader(header), io.LimitReader(zeroReader{}, mdatBytes-8), bytes.NewReader(movie))

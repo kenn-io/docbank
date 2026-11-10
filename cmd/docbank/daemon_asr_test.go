@@ -50,13 +50,11 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 	}{
 		{name: "WAV", filename: "recording.wav", mediaType: "audio/wav", extension: ".wav", content: mediatest.WAV()},
 		{name: "MP3", filename: "recording.mp3", mediaType: "audio/mpeg", extension: ".mp3", content: mediatest.MP3()},
-		{name: "MP4 video", filename: "recording.mp4", mediaType: "video/mp4", extension: ".mp4", content: mediatest.H264AACMP4()},
 		{name: "M4A AAC", filename: "recording.m4a", mediaType: "audio/mp4", extension: ".m4a", content: mediatest.AACM4A()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := newDaemonDoclingServer(t)
 			provider.allowM4A = test.mediaType == "audio/mp4"
-			provider.allowVideo = test.mediaType == "video/mp4"
 			provider.resultGate = make(chan struct{})
 			_, daemon, _ := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 
@@ -81,9 +79,6 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			wantAdapter := docling.ASRAdapterContract
 			if provider.allowM4A {
 				wantAdapter = docling.ASRM4AAdapterContract
-			}
-			if provider.allowVideo {
-				wantAdapter = docling.ASRVideoAdapterContract
 			}
 			assert.Equal(t, wantAdapter, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
 			assert.Equal(t, "docling.serve-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
@@ -148,9 +143,6 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, stream.Close())
 			require.Contains(t, rendition.String(), "Telescope delivery arrives Friday at 3")
-			if provider.allowVideo {
-				require.Contains(t, rendition.String(), `"family":"video"`)
-			}
 
 			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 				Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
@@ -163,6 +155,56 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
 		})
 	}
+}
+
+// An MP4 is not supplied media, which accepts audio only. It is imported as an
+// ordinary file and transcribed through the v3 profile's plan and consent.
+func TestDaemonDoclingASRMP4Import(t *testing.T) {
+	provider := newDaemonDoclingServer(t)
+	provider.allowVideo = true
+	_, daemon, _ := startDaemonASRTest(t, provider, daemonASRProviderKey, false)
+
+	content := mediatest.H264AACMP4()
+	source := filepath.Join(t.TempDir(), "recording.mp4")
+	require.NoError(t, os.WriteFile(source, content, 0o600))
+	_, err := runCLI(t, "add", source, "--dest", "/video")
+	require.NoError(t, err)
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/video/recording.mp4"}})
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "asr"}
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	require.Len(t, plan.Flow, 1)
+	assert.Equal(t, provider.URL(), plan.Flow[0].RuntimeDisclosure.Endpoint)
+	assert.Equal(t, docling.ASRVideoAdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+
+	job, err := daemon.StartProcessing(t.Context(), api.StartProcessingRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
+	}, plan.ProfileFingerprint)
+	require.NoError(t, err)
+	status := settledProcessingStatus(t, daemon, job.ID)
+	require.Equal(t, "completed", status.State, "%+v", status)
+	require.Equal(t, int64(1), provider.submissions.Load())
+	require.Equal(t, content, provider.submissionSource())
+	assert.Zero(t, provider.authFailures.Load())
+
+	stream, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
+	require.NoError(t, err)
+	var rendition bytes.Buffer
+	_, err = stream.CopyVerified(&rendition)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	require.Contains(t, rendition.String(), "Telescope delivery arrives Friday at 3")
+	require.Contains(t, rendition.String(), `"family":"video"`)
+
+	search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
+		Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
+		Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{node.CurrentVersionID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+	require.NotEmpty(t, search.Results[0].Evidence)
+	require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
 }
 
 func TestDaemonDoclingASRFailures(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -412,9 +413,10 @@ func (fixture asrFixture) upload() document.AuthorizedUpload {
 func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrFixture {
 	t.Helper()
 	policyFingerprint, err := ASRPolicyFingerprint(100_000)
-	if mediaType == "video/mp4" {
+	switch mediaType {
+	case "video/mp4":
 		policyFingerprint, err = ASRVideoPolicyFingerprint(100_000)
-	} else if mediaType == "audio/mp4" {
+	case "audio/mp4":
 		policyFingerprint, err = ASRM4APolicyFingerprint(100_000)
 	}
 	require.NoError(t, err)
@@ -576,6 +578,20 @@ func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
 	require.Error(t, err, "old adapter must refuse M4A authority")
 }
 
+// asrAssertType is a checked type assertion for synthetic provider responses.
+func asrAssertType[T any](t testing.TB, value any) T {
+	t.Helper()
+	typed, ok := value.(T)
+	require.True(t, ok)
+	return typed
+}
+
+// asrJSONContent returns the mutable Docling document body of a synthetic result.
+func asrJSONContent(t testing.TB, result map[string]any) map[string]any {
+	t.Helper()
+	return asrAssertType[map[string]any](t, asrAssertType[map[string]any](t, result["document"])["json_content"])
+}
+
 func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
 	v1, err := ASRPolicyFingerprint(100_000)
 	require.NoError(t, err)
@@ -590,14 +606,14 @@ func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
 		MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
 	require.Error(t, err, "v2 must not authorize video")
 	for _, frameBytes := range []int{128 << 10, 2 << 20} {
-		t.Run(fmt.Sprint(frameBytes), func(t *testing.T) {
+		t.Run(strconv.Itoa(frameBytes), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == convertPath {
 					writeJSON(t, w, doclingTask("video", "success"))
 					return
 				}
 				result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 2.42)
-				body := result["document"].(map[string]any)["json_content"].(map[string]any)
+				body := asrJSONContent(t, result)
 				body["pictures"] = []any{map[string]any{"image": strings.Repeat("A", frameBytes)}}
 				writeJSON(t, w, result)
 			}))
@@ -644,8 +660,8 @@ func TestDoclingASRVideoPreservesTrackSegments(t *testing.T) {
 			return
 		}
 		result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 1.0001)
-		body := result["document"].(map[string]any)["json_content"].(map[string]any)
-		body["texts"] = append(body["texts"].([]any), map[string]any{
+		body := asrJSONContent(t, result)
+		body["texts"] = append(asrAssertType[[]any](t, body["texts"]), map[string]any{
 			"text": "second cue", "source": []any{map[string]any{"kind": "track", "start_time": 0.75, "end_time": 2.0}}})
 		writeJSON(t, w, result)
 	}))
