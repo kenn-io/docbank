@@ -758,13 +758,13 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await download.saveAs(file);
       privateFiles.push(file);
     }
-    await drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+    await drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }).click();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog", { name: "Download reviewed PDF?" })).toBeHidden();
     await expect(drawer).toBeVisible();
     const bundles: Buffer[] = [];
     for (let i = 0; i < 2; i++) {
-      await drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+      await drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }).click();
       const event = page.waitForEvent("download");
       await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
       const download = await event,
@@ -782,9 +782,9 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     const saveReview = drawer.getByRole("button", { name: "Save review", exact: true });
     const footer = drawer.locator(".review-footer");
     await expect(
-      drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }),
+      drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }),
     ).toBeInViewport();
-    await drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+    await drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }).click();
     await page.keyboard.press("Escape");
     await footer.hover();
     await page.mouse.wheel(0, 500);
@@ -802,7 +802,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
     );
     await narrowReview;
     await expect(
-      drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }),
+      drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }),
     ).toBeInViewport();
     await page.screenshot({
       path: path.join(captures!, "redaction-narrow.png"),
@@ -941,7 +941,7 @@ test("reviews masks and downloads the exact verified PDF in the browser", async 
       await d.saveAs(file);
       cropInputs.push(file);
     }
-    await cropped.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+    await cropped.getByRole("button", { name: "Download unnumbered ZIP", exact: true }).click();
     const cropDownload = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
     const cropFile = path.join(scratch, "cropped.zip");

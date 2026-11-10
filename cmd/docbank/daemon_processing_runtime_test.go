@@ -635,8 +635,8 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 	require.NoError(t, err)
 	var coverage api.FormatCoverageResponse
 	require.NoError(t, json.Unmarshal([]byte(out), &coverage))
-	// The daemon also registers its two built-in supplied media providers.
-	assert.Len(t, coverage.GeneratedBy.BoundProviders, 3)
+	// The daemon also registers PDF text and two supplied media providers.
+	assert.Len(t, coverage.GeneratedBy.BoundProviders, 4)
 	assert.Contains(t, coverage.GeneratedBy.BoundProviders, provider.Descriptor().Fingerprint)
 
 	jobs, err := c.API().ListJobs(t.Context())
@@ -663,6 +663,12 @@ func TestExecutableProcessingProfilesRejectsVisionDisclosureThatDoesNotBindTheEn
 func TestExecutableProcessingProfilesRegistersDoclingM4A(t *testing.T) {
 	cfg, old := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
 	enableDaemonASRM4A(t, &cfg)
+	binding := cfg.RenditionProfiles["asr"]
+	resolved, err := configuredDoclingASRProfile(binding)
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(strings.Join([]string{config.DoclingASRM4AAdapterContract, resolved.Descriptor.ID, resolved.Descriptor.Fingerprint, binding.Runtime.Endpoint, binding.DeploymentFingerprint}, "\x00")))
+	binding.DisclosureFingerprint = hex.EncodeToString(digest[:])
+	cfg.RenditionProfiles["asr"] = binding
 	require.NoError(t, cfg.Validate())
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.NoError(t, err)
@@ -673,6 +679,11 @@ func TestExecutableProcessingProfilesRegistersDoclingM4A(t *testing.T) {
 	require.NotEqual(t, old.Fingerprint, descriptor.Fingerprint)
 	require.Equal(t, config.DoclingASRM4AAdapterContract, profile.RenditionDisclosure.ImmediateProcessor)
 	require.Contains(t, descriptor.SupportedFormats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
+	binding.DisclosureFingerprint = docling.ASRDisclosureFingerprint(resolved.Descriptor, binding.Runtime.Endpoint, binding.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = binding
+	_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.ErrorContains(t, err, "disclosure fingerprint")
+
 	invalid := cfg.RenditionProfiles["asr"]
 	invalid.MaxTranscriptChars = 0
 	cfg.RenditionProfiles["asr"] = invalid

@@ -4,9 +4,17 @@
   import InspectorDetails from "./InspectorDetails.svelte";
   import DrawerShell from "./DrawerShell.svelte";
   import { onDestroy } from "svelte";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-  import { Button, Chip, CopyButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import {
+    Disclosure,
+    Button,
+    Chip,
+    CopyButton,
+    SelectDropdown,
+    Spinner,
+    TextInput,
+  } from "@kenn-io/kit-ui";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
@@ -469,9 +477,8 @@
           <ul class="tool-list" aria-label="Productions">
             {#each productions as item (item.id)}
               <li class="production-item">
-                <details class="tool-disclosure">
-                  <summary>
-                    <ChevronRightIcon size="14" aria-hidden="true" />
+                <Disclosure variant="plain" class="tool-disclosure">
+                  {#snippet summary()}
                     <span class="production-name"
                       >{item.package?.package_name ?? "Bates export"}<span class="production-range"
                         >{item.range || "—"}</span
@@ -485,7 +492,7 @@
                         ? "Exported"
                         : "Imported"}</span
                     >
-                  </summary>
+                  {/snippet}
                   <div class="production-details">
                     {#if item.package}
                       <InspectorDetails
@@ -499,7 +506,7 @@
                     {/if}
                     {#if item.receipt}{@render exportCard(item.receipt, "")}{/if}
                   </div>
-                </details>
+                </Disclosure>
               </li>
             {/each}
           </ul>
@@ -643,14 +650,10 @@
             {@render namespaceForm()}
           </section>
         {:else}
-          <details class="tool-disclosure">
-            <summary
-              ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label"
-                >New namespace</span
-              ></summary
-            >
+          <Disclosure variant="plain" class="tool-disclosure">
+            {#snippet summary()}<span class="tool-label">New namespace</span>{/snippet}
             <div class="tool-section">{@render namespaceForm()}</div>
-          </details>
+          </Disclosure>
           {#if !plan}
             <div class="tool-actions">
               <Button
@@ -809,11 +812,8 @@
     padding: 0;
     display: block;
   }
-  .production-item .tool-disclosure {
+  .production-item :global(.tool-disclosure) {
     border: 0;
-  }
-  .production-item summary {
-    gap: var(--space-4);
   }
   .production-name {
     flex: 1;

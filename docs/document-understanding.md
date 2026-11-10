@@ -47,6 +47,7 @@ provider descriptor and profile, not to a filename extension.
 
 | Provider package | Where it runs | Contract and scope |
 |------------------|---------------|--------------------|
+| `document/pdftext` | In process | PDF text-layer pages and exact `no_text_layer` omissions |
 | `document/epub` | In process | EPUB XHTML spine text and virtual usage |
 | [`document/plaintext`](https://github.com/kenn-io/docbank/tree/main/document/plaintext) | In process | UTF-8 text, including declared source, structured-text, CSV, and mail formats; one generic unit with degraded provenance |
 | [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text for bounded WAV, MP3, and M4A, plus supplied SubRip captions for WAV, MP3, M4A, and MP4 originals; captions produce timed segment units with supplied provenance |
@@ -103,6 +104,43 @@ falls back with degraded provenance. Blank selections retain page units when
 Markdown is empty or whitespace-only. Whole-document `Render` also permits
 Markdown fallback for missing or unsupported schemas. Callers own range
 scheduling, retries, and aggregation.
+
+## Extract PDF text locally
+
+`document/pdftext` provides `pdftext.in-process-v1` through embedded PDFium.
+Construct it with
+`pdftext.New(pdftext.Profile{MaxDocumentBytes: 16 << 20, MaxPages: 1000})`.
+The daemon selects it with `docbank-pdftext-rendition/v1`; see
+[configuration](usage/configuration.md#local-pdf-text-rendition).
+
+Present units retain one-based page locations. A page with zero native
+text-layer characters becomes a `no_text_layer` unit omission. Any omission
+makes the evidence partial. An entirely image-only PDF publishes its page
+omissions with an empty Markdown body, zero lexical segments, and empty
+navigation. Pages with native characters whose extracted text is empty or
+only whitespace and control characters record a `no_readable_text` omission.
+Extraction removes PDFium's inferred line-wrap hyphen marker (U+FFFE), joining
+wrapped words for search. Ordinary hyphens remain. Other control characters
+are removed except line feed, carriage return, and tab.
+The retained Markdown keeps its frontmatter envelope even when its body is
+empty. Older binaries refuse omission-only evidence or its empty Markdown
+body; use a version that supports local PDF text to read these results.
+
+Text-only admission accepts DCT, JBIG2, and JPX image streams without decoding
+pixels and permits external references. Extraction opens no external resource.
+Other adapters keep their existing admission rules. Encrypted PDFs retain the
+`encrypted_container` refusal. Source bytes, encoded streams, ordinary decoded
+streams, page counts, text, and result bytes remain bounded.
+
+Page limits range from 1 through 100,000. Parser, limit, and cancellation
+errors fail the build; omissions describe absent or unreadable text.
+Daemon processing authorizations expire after ten minutes, so a PDF can
+exceed its processing time budget within the configured page limit.
+Each page opens a seekable view of the verified source in a fresh runtime
+with a 512 MiB WASM memory cap, a 60-second
+execution deadline, and the existing process RSS watchdog. Waiting for the
+shared engine uses the job context and authorization expiry. Each completed
+page releases the engine so a waiting redaction job can acquire it.
 
 ## Extract EPUB locally
 

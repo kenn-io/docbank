@@ -130,7 +130,7 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Start(ctx, root)
+		_, err := Start(ctx, root, false)
 		done <- err
 	}()
 	// The child reports its PID once it runs, before any runtime record exists.
@@ -228,6 +228,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "setup must replace daemons that create a separate local index")
 	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
+	rec.Metadata[metaProtocolVersion] = "125"
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without the transcript response contract must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
@@ -280,8 +282,8 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 				root = filepath.Join(root, "missing", "vault")
 			}
 			started := false
-			_, err := ensureDaemon(t.Context(), root,
-				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			_, err := ensureDaemon(t.Context(), root, false,
+				func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
 					started = true
 					if test.missing {
 						_, err := os.Stat(filepath.Dir(root))
@@ -355,11 +357,13 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
 	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	rec.Metadata[MetaExplicitStart] = "true"
 	rec.Metadata[metaProtocolVersion] = "119"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			assert.True(t, persistent, "replacement inherits the stopped owner's explicit lifetime")
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			started.Store(true)
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
@@ -382,8 +386,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	result, err := ensureDaemonWithOptions(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemonWithOptions(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", "127.0.0.1:3"), nil
 		}, webDiscoverOptions())
@@ -399,12 +403,16 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, gotRoot string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
 			started = true
+			assert.False(t, persistent, "a draining owner contributes no explicit launch intent")
 			assert.Equal(t, canonicalRoot, gotRoot)
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
 				"replacement must wait for the recorded owner to exit")
@@ -442,8 +450,8 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
 		})
@@ -536,6 +544,61 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 		require.NoError(t, err)
 		_, err = c.API().Health(t.Context())
 		require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
+	})
+}
+
+// MCP pages vault changes over one proven socket, so a finished change read
+// must leave it reusable even when the chunk terminator trails the result.
+func TestProvenClientReusedAfterChangePage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const token = "synthetic-change-page-token"
+		const head = "synthetic-change-head"
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer func() { _ = serverConn.Close() }()
+			reader := bufio.NewReader(serverConn)
+			req, err := http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading challenge request: %v", err)
+				return
+			}
+			body := challengeResponse(t, req, token)
+			if _, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+				"Content-Length: %d\r\n\r\n%s", len(body), body); err != nil {
+				t.Errorf("writing challenge response: %v", err)
+				return
+			}
+			for page := range 2 {
+				// The second page arrives only if the first left the socket open.
+				if req, err = http.ReadRequest(reader); err != nil {
+					return
+				}
+				assert.Equal(t, "/api/v1/changes", req.URL.Path)
+				record := `{"type":"result","cursor":"` + head + `"}` + "\n"
+				if _, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n"+
+					"Transfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n", len(record), record); err != nil {
+					t.Errorf("writing page %d result: %v", page, err)
+					return
+				}
+				// The daemon flushes each record and ends the stream in a later write.
+				time.Sleep(time.Second)
+				if _, err := io.WriteString(serverConn, "0\r\n\r\n"); err != nil {
+					return
+				}
+			}
+		}()
+		rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
+		c, err := newProvenClientForDial(t.Context(), rec, func(context.Context, string, string) (net.Conn, error) {
+			return clientConn, nil
+		})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, c.Close()) }()
+		limit := int64(500)
+		for range 2 {
+			cursor, err := c.WatchChanges(t.Context(), "synthetic-cursor", false, &limit, nil)
+			require.NoError(t, err)
+			require.Equal(t, head, cursor)
+		}
 	})
 }
 
@@ -652,9 +715,14 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	stopped, err := Stop(t.Context(), root)
-	assert.True(t, stopped, "the live runtime PID must be recognized as stopping")
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
+	stopped, err := Stop(t.Context(), root)
+	require.NoError(t, err)
+	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
+	assert.Equal(t, rec.PID, stopped.PID)
+	assert.False(t, Explicit(*stopped), "a draining owner contributes no explicit launch intent")
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
@@ -697,7 +765,7 @@ func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	stopped, err := Stop(t.Context(), root)
 	require.NoError(t, err)
-	assert.False(t, stopped)
+	assert.Nil(t, stopped)
 	_, err = os.Stat(root)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -791,4 +859,35 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 		assert.True(t, dead)
 		assert.Zero(t, time.Since(started), "an exited process ends the wait at once")
 	})
+}
+
+func TestRestartPreservesLifetime(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			root := t.TempDir()
+			assertLocked := func() {
+				t.Helper()
+				if !explicit {
+					return
+				}
+				lock, err := (home.Layout{Root: root}).TryLockLaunch()
+				if lock != nil {
+					_ = lock.Release()
+				}
+				require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
+			}
+			_, wasRunning, err := restart(t.Context(), root, false,
+				func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: strconv.FormatBool(explicit)}}, nil
+				},
+				func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					assert.Equal(t, explicit, persistent, "restarting a daemon keeps its lifetime")
+					return kitdaemon.RuntimeRecord{}, nil
+				})
+			require.NoError(t, err)
+			assert.True(t, wasRunning)
+		})
+	}
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +14,8 @@ import (
 )
 
 func main() {
+	// This process owns its root lifetime; the supervisor bounds its execution.
+	ctx := context.Background()
 	version := flag.Bool("version", false, "print runtime identity")
 	protocol := flag.String("protocol", "", "inspection protocol")
 	versionID := flag.String("version-id", "", "exact source version")
@@ -26,7 +29,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "unsupported inspection protocol")
 		os.Exit(2)
 	}
-	result, err := pagerender.InspectInput(os.Stdin, *versionID, *mediaType)
+	result, err := pagerender.InspectInput(ctx, os.Stdin, *versionID, *mediaType)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "source geometry unavailable")
 		os.Exit(1)

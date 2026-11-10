@@ -137,7 +137,7 @@ api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
 api_key = ""          # empty = ephemeral per-run key (loopback only)
 allowed_hosts = []   # additional Host names, optionally with a port
-idle_timeout = "30m"  # background daemons only; "0" = never
+idle_timeout = "30m"  # automatically started daemons only; "0" = never
 
 [web]
 enabled = true
@@ -173,7 +173,8 @@ minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
 capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
+default_excludes = true # skip known partial files and sync conflicts
+exclude_patterns = ["*.swp"]
 ```
 
 - **`bind_addr`** — the interface the API listens on. Defaults to loopback.
@@ -198,10 +199,12 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   a key at startup and publish it to same-user clients in the runtime record.
   Set a fixed key when a client cannot read that record, such as a client
   using an SSH tunnel from another machine.
-- **`idle_timeout`**: how long a background daemon waits without
+- **`idle_timeout`**: how long an automatically started daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out. A daemon
-  hosting MCP HTTP also never idles out.
+  A fresh `daemon start`, `daemon restart`, or foreground `daemon run` ignores
+  this and never idles out. `daemon start` reuses a compatible automatic daemon
+  with its existing idle policy; use `daemon restart` to keep it running.
+  A daemon hosting MCP HTTP also never idles out.
 - **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
@@ -330,6 +333,16 @@ Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
 recursive. A match in either list skips the entry. Matching directories are
 pruned during both startup checks and scanning.
 
+`default_excludes` defaults to `true`. Every watch skips Syncthing partial
+files (`.syncthing.*.tmp` and `~syncthing~*.tmp`), Syncthing conflict copies
+(`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`). These
+patterns add to configured rules and use the existing exclusion matcher and
+directory pruning, like `exclude_patterns`.
+Conflict copies (`*.sync-conflict-*`) are finished files that are not archived
+unless `default_excludes = false`. Set that option to use only configured
+exclusions when these names are intentional. Exclusions do not remove documents
+already archived.
+
 For a Syncthing inbox, for example:
 
 ```toml
@@ -338,7 +351,6 @@ name = "synced-notes"
 source = "~/synced-notes"
 destination = "/notes"
 exclude = [".stversions", ".git"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
 First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
@@ -462,7 +474,8 @@ destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
-and glob rules. Use `--json` when an agent needs the separate `exclude` and
+and glob rules, including the default patterns unless `default_excludes = false`.
+Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
 all-task view. A permanent source, destination, or read failure leaves the named
 job in the failed state and records the reason.
@@ -641,12 +654,30 @@ deployment, or descriptor mismatch prevents startup. Profiles sharing a
 descriptor must agree on all effective runtime and credential settings.
 A runtime without a selecting processing profile stays staged.
 
-PDF results can preserve exact page evidence, including blank pages. Other
-formats use bounded Markdown with explicitly degraded provenance. The existing
-upload authorization, sanitization, publication, and lexical indexing checks
-still apply. Original bytes remain unchanged. After changing the descriptor,
-queued work fails with `stale_authority`; plan and consent to the changed profile
-before retrying.
+PDF results can preserve exact page evidence, including blank pages. Each page
+unit holds the page's text items and tables. A table becomes a Markdown table
+on the one page its provenance names. Pages with mapped tables follow Docling's
+reading order through the body, then the furniture. Other pages keep text array
+order. Cell text is escaped so every character is kept, except that line breaks
+and repeated spaces in a cell read as one space. Text inside a picture, such as
+a letterhead or a scanned page, and captions are ordinary text items, so they
+stay on their pages too.
+Docbank never assigns content to a guessed page. The page evidence is partial,
+with a field omission for each unmapped kind, when:
+
+- a table spans several pages, has no provenance, names a page outside the
+  result, has a missing or ragged grid, or has a cell that holds other items;
+- a table or picture carries a Docling description or classification;
+- the result contains key-value, form, or field items.
+
+A described or classified table keeps its cells on the page when its grid and
+provenance can be mapped. Its description or classification stays an omission.
+
+Other formats use bounded Markdown with explicitly degraded provenance. The
+existing upload authorization, sanitization, publication, and lexical indexing
+checks still apply. Original bytes remain unchanged. After changing the
+descriptor, queued work fails with `stale_authority`; plan and consent to the
+changed profile before retrying.
 
 ### Document OCR with Mistral
 
@@ -796,7 +827,7 @@ codecs or video transcription.
 For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
 and include `audio/mp4` in the descriptor alongside `audio/wav` and
 `audio/mpeg`, each with `original_file` input. Use
-`docling.ASRDisclosureFingerprint` with that descriptor and the exact endpoint
+`docling.ASRM4ADisclosureFingerprint` with that descriptor and the exact endpoint
 and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
 A v1 descriptor cannot authorize that upload.
 
@@ -828,7 +859,8 @@ before retrying it.
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
 deployment fingerprint. Recompute it when the endpoint or deployment changes.
 The daemon rejects a mismatched binding before it starts provider work.
-For audio, Go applications can use `docling.ASRDisclosureFingerprint` from
+For audio, Go applications can use `docling.ASRDisclosureFingerprint` for v1 or
+`docling.ASRM4ADisclosureFingerprint` for v2 from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
 from their config with Python 3.11 or later. Replace the path and profile name
 in this command, then copy the output into that profile's

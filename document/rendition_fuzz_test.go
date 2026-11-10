@@ -8,11 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
 )
 
 // FuzzSanitizeRenditionMarkdown checks the invariants the example tests rely
@@ -72,19 +71,28 @@ func renderedMeaning(html string) string {
 
 func renderSanitizedMarkdown(t *testing.T, markdown string) string {
 	t.Helper()
-	parser := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRendererOptions(goldmarkhtml.WithUnsafe()),
-	)
+	return string(renderGFMUnsafe(t, []byte(markdown)))
+}
+
+// renderGFMUnsafe renders Markdown the way a GFM viewer that keeps raw HTML
+// would, independently of the sanitizer's own rendering setup.
+func renderGFMUnsafe(t *testing.T, markdown []byte) []byte {
+	t.Helper()
+	root := parseGFM(markdown)
+	renderer := goldmarkhtml.New(goldmarkhtml.WithUnsafe(), goldmarkhtml.WithExtensions(extension.GFMHTMLRenderer))
 	var rendered bytes.Buffer
-	require.NoError(t, parser.Convert([]byte(markdown), &rendered))
-	return rendered.String()
+	require.NoError(t, renderer.Render(&rendered, markdown, root))
+	return rendered.Bytes()
+}
+
+func parseGFM(markdown []byte) ast.Node {
+	return parser.New(parser.WithExtensions(extension.GFMParser)).Parse(markdown)
 }
 
 func assertNoRawHTML(t *testing.T, markdown string) {
 	t.Helper()
 	source := []byte(markdown)
-	root := goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser().Parse(text.NewReader(source))
+	root := parseGFM(source)
 	err := ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -93,7 +101,7 @@ func assertNoRawHTML(t *testing.T, markdown string) {
 		case *ast.RawHTML:
 			t.Errorf("sanitized Markdown contains raw inline HTML in %q", markdown)
 		case *ast.HTMLBlock:
-			block := strings.TrimSpace(string(typed.Lines().Value(source)))
+			block := strings.TrimSpace(string(typed.Value.Bytes(source)))
 			if block != "<!-- -->" {
 				t.Errorf("sanitized Markdown contains HTML block %q", block)
 			}

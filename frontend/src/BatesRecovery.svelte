@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-  import { Button, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Spinner, TextInput } from "@kenn-io/kit-ui";
   import InspectorDetails from "./InspectorDetails.svelte";
   import { formatBytes, formatDate } from "./format.js";
   import {
@@ -152,20 +151,20 @@
     <ul class="tool-list" aria-label="Matching productions">
       {#each items as item (item.artifact_id)}
         <li>
-          <details
+          <Disclosure
+            variant="plain"
             class="tool-disclosure"
             open={items.length === 1 && !nextCursor}
-            ontoggle={(event) => {
-              if (event.currentTarget.open) void expand(item);
+            ontoggle={(open) => {
+              if (open) void expand(item);
             }}
           >
-            <summary>
-              <ChevronRightIcon size={14} aria-hidden="true" />
+            {#snippet summary()}
               <span class="result-title">
                 Page {item.evidence.map((e) => e.output_page).join(", ")} of {item.page_count}
                 <small>{formatDate(item.created_at)} · {formatBytes(item.size)}</small>
               </span>
-            </summary>
+            {/snippet}
             <div class="recovery-details">
               {#if item.evidence_truncated}<p class="tool-muted">
                   Showing some matching pages.
@@ -201,7 +200,7 @@
                 </div>
               {/if}
             </div>
-          </details>
+          </Disclosure>
         </li>
       {/each}
     </ul>
@@ -228,11 +227,8 @@
     display: block;
     padding: 0;
   }
-  .tool-disclosure {
+  .tool-list :global(.tool-disclosure) {
     border: 0;
-  }
-  summary {
-    gap: var(--space-4);
   }
   .result-title {
     flex: 1;

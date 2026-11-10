@@ -77,6 +77,11 @@ func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint,
 	return providerutil.RenditionDisclosureFingerprint(ASRAdapterContract, descriptor, endpoint, deployment)
 }
 
+// ASRM4ADisclosureFingerprint binds a v2 profile to its endpoint and deployment.
+func ASRM4ADisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
+	return providerutil.RenditionDisclosureFingerprint(ASRM4AAdapterContract, descriptor, endpoint, deployment)
+}
+
 // NewASR constructs the WAV/MP3 provider or the opt-in M4A-capable v2 provider.
 func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client) (*ASRClient, error) {
 	client, err := newTransportClient(profile.Profile, secrets, httpClient)

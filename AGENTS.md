@@ -195,6 +195,11 @@ Instructions for autonomous coding agents working in this repository.
 9. Pull requests must have a user-facing benefit or improve the developer
    experience, and the body must say which one.
 10. Write issues and pull requests in English.
+11. End every commit message with a `Co-authored-by:` trailer naming the agent
+    that wrote the change.
+12. End the pull request description with a `Model used:` line naming the model,
+    such as `Model used: Opus 5.5` or `Model used: GPT-6.1 Sol`. Squash-merge
+    keeps only the description, so put the `Co-authored-by:` trailer there too.
 
 ## Commit Messages
 
@@ -273,9 +278,10 @@ release, from a breaking change to `feat` to `fix`.
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
   PostgreSQL schemas remain disposable until the first deployment whose data
-  must survive upgrades. Until then, edit canonical DDL directly, increment
-  `pgschema.SchemaVersion` whenever `schema.sql` changes, and recreate development
-  schemas on a version mismatch; setup and runtime validation must refuse them.
+  must survive upgrades. Until then, edit canonical DDL directly. Setup records
+  the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a
+  missing or different fingerprint. Recreate disposable development schemas on
+  mismatch, never retained data. No manual version bump is required.
   Before that first retained deployment, capture the current schema as migration
   1 and add CI comparison of the canonical schema with the numbered forward chain.
   After that cutoff every schema change, including indexes and defaults, needs a

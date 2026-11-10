@@ -1002,7 +1002,7 @@ func TestEmbeddedProcessingUsesEachBindingClassifier(t *testing.T) {
 				defer func() {
 					cancel()
 					if !joined {
-						<-done
+						t.Logf("StartProcessing returned %v after the wait failed", <-done)
 					}
 				}()
 				var jobID string
@@ -1281,7 +1281,7 @@ func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {
 	require.ErrorIs(t, err, docbank.ErrNotFound)
 }
 
-func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRestart(t *testing.T) {
+func TestEmbeddedSuppliedTranscriptRead(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
@@ -1401,6 +1401,15 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 			require.NoError(collect, statusErr)
 			require.Equal(collect, "succeeded", status.OperationState)
 		}, 10*time.Second, 20*time.Millisecond)
+		transcript, readErr := vault.MediaTranscript(t.Context(), docbank.MediaTranscriptRequest{SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID})
+		require.NoError(t, readErr)
+		require.Equal(t, "ready", transcript.EvidenceState)
+		require.Equal(t, "async media semantic needle\n", transcript.Transcript.Units[0].Text)
+		policy, err := document.NewEvidencePolicy(1 << 20)
+		require.NoError(t, err)
+		_, artifact, err := document.BuildTranscriptSourceEvidenceV1(document.SuppliedTranscript{Provider: "synthetic", Text: "async media semantic needle\n"}, policy)
+		require.NoError(t, err)
+		require.Equal(t, artifact.SHA256, transcript.Transcript.ArtifactSHA256)
 		// Replaying a retry reads its receipt, whose state comes from the bound job.
 		operationState := func(operationID string) string {
 			replayed, replayErr := vault.RetryMedia(t.Context(), operationID, receipt.SourceID,

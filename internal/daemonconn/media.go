@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 type MediaOccurrenceOptions struct {
@@ -295,7 +296,10 @@ func readMediaMultipartReceipt(
 	})
 	if err != nil {
 		_ = reader.CloseWithError(err)
-		<-writeResult
+		// Closing the pipe makes the writer fail with err; report any other writer failure too.
+		if writeErr := <-writeResult; writeErr != nil && !errors.Is(writeErr, err) {
+			return errors.Join(err, writeErr)
+		}
 		return err
 	}
 	_ = reader.Close()
@@ -332,6 +336,9 @@ func validateMediaReceipt(receipt api.MediaReceipt, operationID string, err erro
 func validateMediaTranscript(
 	transcript api.MediaTranscript, sourceID, sourceVersionID, contentVersionID string,
 ) error {
+	if transcript.ContractVersion != processing.MediaTranscriptReadContractV1 {
+		return errors.New("daemon returned an unsupported media transcript contract")
+	}
 	if transcript.VaultUID == "" || transcript.SourceID != sourceID ||
 		transcript.SourceVersionID != sourceVersionID || transcript.ContentVersionID != contentVersionID {
 		return errors.New("daemon returned an invalid media transcript identity")

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import {
+    Disclosure,
     Button,
     Modal,
     SelectDropdown,
@@ -266,15 +267,18 @@
               {expressionError}
             </p>{/if}
           {#if selection}<Button size="sm" onclick={focusError}>Focus query error</Button>{/if}
-          {#if draft.syntax === "advanced"}<details class="syntax-help">
-              <summary>Syntax help</summary>
+          {#if draft.syntax === "advanced"}<Disclosure
+              variant="plain"
+              class="syntax-help"
+              title="Syntax help"
+            >
               <p>Phrases, AND, OR, NOT, parentheses, suffix *, and NEAR/5.</p>
               <code>name:manual OR collection:archive</code>
               <p>
                 PDF evidence: <code>pdf_embedded_file_count_min:1 OR pdf_has_javascript:true</code>.
               </p>
               <p>References: <code>tag:</code>, <code>collection:</code>, <code>saved:</code>.</p>
-            </details>{/if}
+            </Disclosure>{/if}
         </div>
       {:else if expressionError}<p class="error" role="alert">{expressionError}</p>{/if}
       <div class="fields">
@@ -323,8 +327,7 @@
           />
         </div>
       </div>
-      <details open={filtersError !== "" || profileError !== ""}>
-        <summary>More</summary>
+      <Disclosure variant="plain" open={filtersError !== "" || profileError !== ""} title="More">
         <div class="advanced-fields">
           {#if profiles.length > 1}
             <div class="field">
@@ -355,7 +358,7 @@
           </div>
           {#if profileError}<p class="error" role="alert">{profileError}</p>{/if}
         </div>
-      </details>
+      </Disclosure>
       {#if runError}<p class="error" role="alert">{runError}</p>{/if}
     </div>
     {#snippet footer()}
@@ -422,11 +425,6 @@
   #query-facets {
     font-family: var(--font-mono);
   }
-  summary {
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-  }
   .advanced-fields {
     margin-top: var(--space-3);
   }
@@ -434,8 +432,8 @@
     margin: 0;
     font-size: var(--font-size-sm);
   }
-  .syntax-help p,
-  .syntax-help code {
+  :global(.syntax-help) p,
+  :global(.syntax-help) code {
     margin-top: var(--space-2);
   }
   .error {

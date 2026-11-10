@@ -43,12 +43,12 @@ func (s *Store) PutPackagePreflight(ctx context.Context, record PackagePreflight
 			preflight_id,owner,source_kind,source_ref,source_locator,profile_sha256,profile_json,mapping_sha256,mapping_json,
 			manifest_sha256,manifest_blob_sha256,diagnostics_blob_sha256,canonical_json,
 			diagnostics_json,blocking,created_at,expires_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 			record.PreflightID, record.Owner, record.SourceKind, record.SourceRef,
 			record.SourceLocator, record.ProfileSHA256, record.ProfileJSON, record.MappingSHA256,
 			record.MappingJSON, record.ManifestSHA256,
 			record.ManifestBlobSHA256, sql.NullString{String: record.DiagnosticsBlobSHA256, Valid: record.DiagnosticsBlobSHA256 != ""},
-			record.CanonicalJSON, record.DiagnosticsJSON, record.Blocking,
+			record.CanonicalJSON, record.DiagnosticsJSON, boolInt(record.Blocking),
 			record.CreatedAt, record.ExpiresAt)
 		if err != nil {
 			return fmt.Errorf("storing package preflight: %w", err)
@@ -57,7 +57,7 @@ func (s *Store) PutPackagePreflight(ctx context.Context, record PackagePreflight
 			if hash == "" {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_blob_staging WHERE blob_hash=?`, hash); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_blob_staging WHERE blob_hash=$1`, hash); err != nil {
 				return fmt.Errorf("transferring package preflight blob hold: %w", err)
 			}
 		}
@@ -139,7 +139,7 @@ func (s *Store) PackagePreflight(ctx context.Context, owner, preflightID string)
 	err := s.db.QueryRowContext(ctx, `SELECT preflight_id,owner,source_kind,source_ref,source_locator,
 		profile_sha256,profile_json,mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 		diagnostics_blob_sha256,canonical_json,diagnostics_json,blocking,created_at,expires_at
-		FROM package_preflights WHERE owner=? AND preflight_id=? AND expires_at>?`, owner, preflightID, nowRFC3339()).Scan(
+		FROM package_preflights WHERE owner=$1 AND preflight_id=$2 AND expires_at>$3`, owner, preflightID, nowRFC3339()).Scan(
 		&record.PreflightID, &record.Owner, &record.SourceKind, &record.SourceRef, &record.SourceLocator,
 		&record.ProfileSHA256, &record.ProfileJSON, &record.MappingSHA256, &record.MappingJSON, &record.ManifestSHA256,
 		&record.ManifestBlobSHA256, &diagnostics, &record.CanonicalJSON,
@@ -163,7 +163,7 @@ func (s *Store) ExpirePackagePreflights(ctx context.Context, now string) (int64,
 	}
 	var count int64
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `DELETE FROM package_preflights WHERE expires_at <= ?`, now)
+		result, err := tx.ExecContext(ctx, `DELETE FROM package_preflights WHERE expires_at <= $1`, now)
 		if err != nil {
 			return fmt.Errorf("expiring package preflights: %w", err)
 		}

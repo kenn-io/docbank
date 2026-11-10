@@ -50,7 +50,7 @@ func redactionBrowserRequestAllowed(r *http.Request) bool {
 	if r.URL.Path == redactionPreviewsPath {
 		return r.Method == http.MethodPost || r.Method == http.MethodDelete
 	}
-	if r.URL.Path == "/api/v1/redaction/prepare" || r.URL.Path == "/api/v1/redaction/resolve" {
+	if r.URL.Path == "/api/v1/redaction/prepare" || r.URL.Path == "/api/v1/redaction/resolve" || r.URL.Path == "/api/v1/redaction/reservations" || r.URL.Path == redactionPublicationsPath {
 		return r.Method == http.MethodPost
 	}
 	rest, ok := strings.CutPrefix(r.URL.Path, redactionPreviewsPath+"/")

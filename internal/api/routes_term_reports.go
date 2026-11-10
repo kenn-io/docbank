@@ -83,7 +83,7 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		return &reporting.Service{Source: d.Store,
 			Text: reporting.CapturedTextReader{Open: d.Blobs.OpenStreamContext},
 			Coverage: func(context.Context) (report.CoverageSelection, error) {
-				selection, err := selectCollectionProfile(d.Cfg, profile)
+				selection, err := selectCollectionProfile(d, profile, false)
 				if err != nil {
 					return report.CoverageSelection{}, err
 				}

@@ -2,7 +2,7 @@
   import { provenanceSourceLabel, urlFetchHeader } from "./provenanceLabel.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
-  import { Chip, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Chip, Spinner } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import CopyValue from "./CopyValue.svelte";
   import { APIError } from "./api-transport.js";
@@ -90,8 +90,7 @@
             </div>
             <CopyValue value={fact.original_path} label="source path" />
             <time datetime={recordedAt} title={recordedAt}>{formatDate(recordedAt)}</time>
-            <details>
-              <summary>Import details</summary>
+            <Disclosure variant="plain" title="Import details">
               <dl>
                 {#if fact.url_fetch}
                   <div>
@@ -140,7 +139,7 @@
                     <dd><CopyValue value={fact.supersedes} label="replaced record hash" /></dd>
                   </div>{/if}
               </dl>
-            </details>
+            </Disclosure>
           </li>
         {/each}
       </ol>
@@ -183,18 +182,10 @@
     font-size: var(--font-size-sm);
   }
   time,
-  summary,
   .empty,
   .limit-note {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
-  }
-  summary {
-    cursor: pointer;
-  }
-  details {
-    margin-top: var(--space-2);
-    min-width: 0;
   }
   dl {
     display: grid;

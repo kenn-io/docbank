@@ -58,22 +58,24 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 		if size != artifact.Size || int64(len(raw)) != artifact.Size || readErr != nil || verifyErr != nil || closeErr != nil {
 			return errors.Join(errors.New("retained transcript artifact could not be read exactly"), readErr, verifyErr, closeErr)
 		}
-		if transcript.Origin != "generated" {
-			var identity struct {
-				ContractVersion string `json:"contract_version"`
-			}
-			if err := json.Unmarshal(raw, &identity); err != nil {
+		var identity struct {
+			ContractVersion string `json:"contract_version"`
+		}
+		if err := json.Unmarshal(raw, &identity); err != nil {
+			return errors.New("saved transcript is invalid")
+		}
+		switch identity.ContractVersion {
+		case "supplied-transcript/v1":
+			return nil
+		case "media-transcript/v1":
+			timed, err := mediatranscript.Unmarshal(raw)
+			if err != nil {
 				return err
 			}
-			if identity.ContractVersion != "media-transcript/v1" {
-				return nil
-			}
+			transcript.Language = timed.Language
+		default:
+			return errors.New("saved transcript is invalid")
 		}
-		timed, err := mediatranscript.Unmarshal(raw)
-		if err != nil {
-			return err
-		}
-		transcript.Language = timed.Language
 		return nil
 	}
 	// Older profiles can retain normalized evidence without the typed artifact.

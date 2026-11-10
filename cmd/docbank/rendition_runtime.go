@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/document/vision"
@@ -102,6 +103,8 @@ func configureRenditionProviders(cfg config.Config) (
 		switch configured.AdapterContract {
 		case plaintextRenditionAdapter:
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
+		case pdftext.AdapterContract:
+			provider, err = pdftext.New(pdftext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxPages: int64(configured.MaxUnits)})
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case vision.AdapterContract:
@@ -117,7 +120,7 @@ func configureRenditionProviders(cfg config.Config) (
 		if provider == nil {
 			continue
 		}
-		if configured.AdapterContract == plaintextRenditionAdapter || configured.AdapterContract == epubRenditionAdapter {
+		if configured.AdapterContract == plaintextRenditionAdapter || configured.AdapterContract == epubRenditionAdapter || configured.AdapterContract == pdftext.AdapterContract {
 			descriptor := provider.Descriptor()
 			if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
 				string(descriptor.TrustBoundary) != configured.TrustBoundary {
@@ -236,8 +239,12 @@ func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolved
 		if err != nil {
 			return resolvedRenditionAdapter{}, err
 		}
+		disclosure := docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint)
+		if configured.AdapterContract == config.DoclingASRM4AAdapterContract {
+			disclosure = docling.ASRM4ADisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint)
+		}
 		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
-			disclosureFingerprint: docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			disclosureFingerprint: disclosure,
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return docling.NewASR(profile, secrets, client)
 			}}, nil

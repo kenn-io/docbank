@@ -125,13 +125,6 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, transcript, repeated)
 
-			if provider.allowM4A && os.Getenv("DOCBANK_CI_TRANSCRIPT_FIXTURE") == "1" {
-				raw, err := json.Marshal(transcript, json.Deterministic(true))
-				require.NoError(t, err)
-				directory := filepath.Join("..", "..", ".superpowers", "voice-contract")
-				require.NoError(t, os.MkdirAll(directory, 0700))
-				require.NoError(t, os.WriteFile(filepath.Join(directory, "media-transcript.json"), raw, 0600))
-			}
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())
 			assert.Zero(t, provider.authFailures.Load())
@@ -1161,6 +1154,6 @@ func enableDaemonASRM4A(t *testing.T, cfg *config.Config) {
 	resolved, err := configuredDoclingASRProfile(profile)
 	require.NoError(t, err)
 	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
-	profile.DisclosureFingerprint = docling.ASRDisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	profile.DisclosureFingerprint = docling.ASRM4ADisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
 	cfg.RenditionProfiles["asr"] = profile
 }

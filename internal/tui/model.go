@@ -17,6 +17,7 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -2262,6 +2263,11 @@ func (m Model) selectedNaturalProfile() *api.ProcessingProfileSummary {
 	}
 	if len(profiles) == 0 {
 		return nil
+	}
+	for index := range profiles {
+		if profiles[index].Name != processing.PDFTextProfileName {
+			return &profiles[index]
+		}
 	}
 	return &profiles[0]
 }

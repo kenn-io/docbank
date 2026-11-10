@@ -138,7 +138,7 @@ function readAllocation(value: unknown, request?: ExpectedAllocation): BatesAllo
   return { ...item, labels } as unknown as BatesAllocation;
 }
 
-function readExport(value: unknown): BatesExport {
+export function decodeBatesExport(value: unknown): BatesExport {
   const item = record(value);
   valid(typeof item.artifact_id === "string" && uuid.test(item.artifact_id));
   valid(typeof item.allocation_id === "string" && uuid.test(item.allocation_id));
@@ -319,7 +319,7 @@ export function batesRecipe(
     restamp: false,
     engine_identity: {
       name: "pdfcpu",
-      version: "v0.15.0",
+      version: "v0.16.4",
       api: "AddWatermarksMap",
       options: ["onTop=true", "update=restamp"],
     },
@@ -351,7 +351,7 @@ export async function startBatesExport(
       recipe.start_at === allocation.start_sequence,
   );
   valid((await batesRecipeSHA256(recipe)) === allocation.recipe_sha256);
-  const result = readExport(
+  const result = decodeBatesExport(
     await generated.publishBatesExport(
       { allocation_id: allocation.allocation_id, recipe },
       { session, signal },
@@ -370,7 +370,9 @@ export async function readBatesExport(
   signal?: AbortSignal,
 ): Promise<BatesExport> {
   valid(uuid.test(allocationID));
-  const result = readExport(await generated.readBatesExport(allocationID, { session, signal }));
+  const result = decodeBatesExport(
+    await generated.readBatesExport(allocationID, { session, signal }),
+  );
   valid(result.allocation_id === allocationID);
   return result;
 }
@@ -486,7 +488,7 @@ export async function listBatesExports(
       page.items.length <= 50 &&
       page.items.length <= page.total,
   );
-  return { ...page, items: page.items.map(readExport) } as unknown as BatesExportPage;
+  return { ...page, items: page.items.map(decodeBatesExport) } as unknown as BatesExportPage;
 }
 
 export async function downloadBatesExport(

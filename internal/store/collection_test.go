@@ -270,7 +270,7 @@ func addCollectionMembership(
 		fact.Identity = identity
 		_, err = tx.ExecContext(tb.Context(), `INSERT INTO provenance(
 			identity,node_id,ingest_id,original_path,original_mtime,supersedes
-		) VALUES(?,?,?,?,?,?)`, fact.Identity, fact.NodeID, fact.IngestID,
+		) VALUES($1,$2,$3,$4,$5,$6)`, fact.Identity, fact.NodeID, fact.IngestID,
 			fact.OriginalPath, fact.OriginalMTime, fact.Supersedes)
 		return err
 	}))

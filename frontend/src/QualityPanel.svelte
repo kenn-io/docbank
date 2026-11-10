@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Checkbox, Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Checkbox, Chip, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import {
     collectionQuality,
@@ -124,8 +124,7 @@
       Documents with duplicate content: {result.duplicate_documents}.
     </p>
     {#each result.dimensions as dimension (dimension.field)}
-      <details open>
-        <summary>{dimension.field}</summary>
+      <Disclosure variant="card" open title={dimension.field}>
         {#each dimension.values as bucket (bucket.value)}
           <div class="bucket">
             {#if onnewquery && qualitySuggestionFields.has(dimension.field)}
@@ -145,7 +144,7 @@
             onclick={() => suggest(dimension.field)}
             >New query for selected {dimension.field}</Button
           >{/if}
-      </details>
+      </Disclosure>
     {/each}
     {#each result.spikes as spike}<p>
         Concentration: {spike.field}
@@ -180,11 +179,5 @@
   p {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
-  }
-  details {
-    padding: var(--space-2);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    overflow-wrap: anywhere;
   }
 </style>

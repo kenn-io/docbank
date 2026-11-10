@@ -12,9 +12,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/v2/extension"
+	goldmarkparser "github.com/yuin/goldmark/v2/parser"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
 	"golang.org/x/net/html"
 )
 
@@ -301,12 +301,8 @@ func sanitizeMarkdown(
 		return "", nil, false, errors.New("provider Markdown is invalid UTF-8")
 	}
 	markdown, sourceTruncated := truncateUTF8Bytes(markdown, maxSourceBytes)
-	parser := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithRendererOptions(goldmarkhtml.WithUnsafe()),
-	)
 	var rendered bytes.Buffer
-	if err := parser.Convert([]byte(markdown), &rendered); err != nil {
+	if err := renderProviderMarkdown(&rendered, []byte(markdown)); err != nil {
 		return "", nil, false, fmt.Errorf("parse provider Markdown: %w", err)
 	}
 	writer := canonicalHTMLWriter{maxLinkChars: maxLinkChars}
@@ -315,6 +311,19 @@ func sanitizeMarkdown(
 	}
 	text, headings := canonicalWhitespace(writer.output.String())
 	return text, headings, sourceTruncated, nil
+}
+
+// renderProviderMarkdown renders source as GitHub Flavored Markdown with raw
+// HTML kept, so the sanitizers see exactly what a browser would receive.
+func renderProviderMarkdown(output *bytes.Buffer, source []byte, options ...goldmarkhtml.Option) error {
+	document := goldmarkparser.New(goldmarkparser.WithExtensions(extension.GFMParser)).Parse(source)
+	options = append([]goldmarkhtml.Option{
+		goldmarkhtml.WithUnsafe(), goldmarkhtml.WithExtensions(extension.GFMHTMLRenderer),
+	}, options...)
+	if err := goldmarkhtml.New(options...).Render(output, source, document); err != nil {
+		return fmt.Errorf("render Markdown as HTML: %w", err)
+	}
+	return nil
 }
 
 type canonicalHTMLWriter struct {

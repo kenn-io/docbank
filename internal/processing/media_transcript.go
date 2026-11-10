@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	// MediaTranscriptReadContractV1 identifies the transcript read response.
+	MediaTranscriptReadContractV1      = "media-transcript-read/v1"
 	mediaTranscriptEvidenceReady       = "ready"
 	mediaTranscriptEvidencePending     = "pending"
 	mediaTranscriptEvidenceUnavailable = "unavailable"
@@ -119,7 +121,7 @@ type renditionLookup func(
 func (service *Service) selectMediaTranscript(
 	ctx context.Context, request MediaTranscriptRequest,
 ) (mediaTranscriptSelection, error) {
-	result := MediaTranscript{ContractVersion: "media-transcript-read/v1", SourceID: request.SourceID, SourceVersionID: request.SourceVersionID,
+	result := MediaTranscript{ContractVersion: MediaTranscriptReadContractV1, SourceID: request.SourceID, SourceVersionID: request.SourceVersionID,
 		ContentVersionID: request.ContentVersionID, EvidenceState: mediaTranscriptEvidenceUnavailable}
 	if service == nil || service.catalog == nil || service.blobs == nil {
 		return mediaTranscriptSelection{result: result}, ErrMediaCapabilityUnavailable
@@ -153,7 +155,7 @@ func (service *Service) selectMediaTranscripts(
 	}
 	result := make(map[MediaTranscriptRequest]mediaTranscriptSelection, len(requests))
 	for i, request := range requests {
-		base := MediaTranscript{ContractVersion: "media-transcript-read/v1", VaultUID: service.catalog.VaultID(), SourceID: request.SourceID,
+		base := MediaTranscript{ContractVersion: MediaTranscriptReadContractV1, VaultUID: service.catalog.VaultID(), SourceID: request.SourceID,
 			SourceVersionID: request.SourceVersionID, ContentVersionID: request.ContentVersionID,
 			EvidenceState: mediaTranscriptEvidenceUnavailable}
 		selected := mediaTranscriptSelection{result: base}

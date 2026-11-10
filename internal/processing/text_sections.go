@@ -9,11 +9,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/util"
 	"go.kenn.io/docbank/document"
 )
 
@@ -24,11 +23,23 @@ type textSectionIndex struct {
 
 func newTextSectionParser() parser.Parser {
 	// Inline parsing adds potentially quadratic work; titles use the original block lines.
-	return parser.NewParser(
-		parser.WithBlockParsers(parser.DefaultBlockParsers()...),
-		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
-		parser.WithParagraphTransformers(
-			util.Prioritized(extension.NewTableParagraphTransformer(), 200)),
+	// The block parsers and priorities are those of parser.CommonMark.
+	return parser.New(
+		parser.WithDefaultParsers(false),
+		parser.WithBlockParsers(
+			util.Prioritized(parser.NewSetextHeadingParser(), 100),
+			util.Prioritized(parser.NewThematicBreakParser(), 200),
+			util.Prioritized(parser.NewListParser(), 300),
+			util.Prioritized(parser.NewListItemParser(), 400),
+			util.Prioritized(parser.NewCodeBlockParser(), 500),
+			util.Prioritized(parser.NewATXHeadingParser(), 600),
+			util.Prioritized(parser.NewFencedCodeBlockParser(), 700),
+			util.Prioritized(parser.NewBlockquoteParser(), 800),
+			util.Prioritized(parser.NewHTMLBlockParser(), 900),
+			util.Prioritized(parser.NewParagraphParser(), 1000),
+		),
+		parser.WithParagraphTransformers(util.Prioritized(parser.LinkReferenceParagraphTransformer, 100)),
+		parser.WithExtensions(extension.TableParser),
 	)
 }
 
@@ -41,7 +52,7 @@ func buildTextSectionIndex(
 	if bytes.Count(data, []byte{'\n'}) > document.MaxTextNavigationLineBreaks {
 		return textSectionIndex{}, document.ErrTextNavigationLimit
 	}
-	root := markdown.Parse(text.NewReader(data))
+	root := markdown.Parse(data)
 	if err := ctx.Err(); err != nil {
 		return textSectionIndex{}, err
 	}
@@ -110,13 +121,11 @@ func countSectionChars(ctx context.Context, data []byte) (int, error) {
 
 func sectionTitle(heading *ast.Heading, data []byte) (string, bool) {
 	var title strings.Builder
-	lines := heading.Lines()
-	for i := range lines.Len() {
+	for i, line := range heading.Source() {
 		if i > 0 {
 			title.WriteByte(' ')
 		}
-		line := lines.At(i)
-		title.Write(bytes.TrimSpace(line.Value(data)))
+		title.Write(bytes.TrimSpace(line.Bytes(data)))
 	}
 	value := strings.TrimSpace(title.String())
 	chars := 0

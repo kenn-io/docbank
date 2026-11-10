@@ -2,10 +2,11 @@
   import { drawerPage } from "./drawerNavigation.js";
   import DrawerShell from "./DrawerShell.svelte";
   import { getContext, untrack } from "svelte";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+
   import PlusIcon from "@lucide/svelte/icons/plus";
   import XIcon from "@lucide/svelte/icons/x";
   import {
+    Disclosure,
     Button,
     Card,
     Checkbox,
@@ -494,11 +495,10 @@
       </div>
     </section>
 
-    <details class="tool-disclosure" bind:open={optionsOpen}>
-      <summary
-        ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label">Options</span
-        ><span class="tool-disclosure-value">{optionSummary}</span></summary
-      >
+    <Disclosure variant="plain" class="tool-disclosure" bind:open={optionsOpen}>
+      {#snippet summary()}<span class="tool-label">Options</span><span class="tool-disclosure-value"
+          >{optionSummary}</span
+        >{/snippet}
       <div class="tool-grid">
         <div class="tool-field tool-span-all">
           <span class="tool-label">Sources</span>
@@ -588,7 +588,7 @@
           />
         </div>
       </div>
-    </details>
+    </Disclosure>
 
     <div class="tool-actions">
       {#if page}<Button disabled={busy} onclick={cancelDraft}>Cancel</Button>{/if}
