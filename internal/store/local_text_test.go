@@ -3,7 +3,6 @@ package store
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -127,23 +126,13 @@ func versionIDsForLocalText(items []DocumentSummary) []string {
 	return ids
 }
 
-func checkPDFTextDiscovery(t *testing.T, open func(*testing.T) *Store, checkCoverage bool) {
+func checkPDFTextDiscovery(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
 	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 		profile.Rendition.Descriptor.ID = document.PDFTextProviderID
 	})
-	coverage := func(pending int) {
-		t.Helper()
-		if !checkCoverage {
-			return
-		}
-		result, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
-		require.NoError(t, err)
-		require.Equal(t, pending, result.Pending)
-		require.Zero(t, result.NoText)
-	}
 	page, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 1, false)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
@@ -153,19 +142,12 @@ func checkPDFTextDiscovery(t *testing.T, open func(*testing.T) *Store, checkCove
 	oversized, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 50, false)
 	require.NoError(t, err)
 	require.Empty(t, oversized)
-	coverage(0)
 	request := renditionJobTestRequest(versions[0], profile)
 	request.ExecutionIdentity.Authorization.ProviderID = document.PDFTextProviderID
 	grantRenditionJobConsent(t, s, request)
-	job, _, err := s.EnqueueRenditionJob(t.Context(), request)
+	_, _, err = s.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
 	items, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 50, false)
 	require.NoError(t, err)
 	require.NotContains(t, versionIDsForLocalText(items), versions[0])
-	coverage(1)
-	now := time.Now().UTC().Add(time.Second)
-	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "pdf-worker", now, time.Minute)
-	require.NoError(t, err)
-	require.NoError(t, s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailureTerminal, now))
-	coverage(0)
 }

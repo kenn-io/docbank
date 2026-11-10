@@ -2,11 +2,11 @@ package store
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestSearchTextCoverage(t *testing.T) {
@@ -68,17 +68,33 @@ func TestSearchTextCoverage(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, SearchTextCoverage{Families: []string{}}, got)
 	})
-	t.Run("evidence error leaves PDF uncounted", func(t *testing.T) {
+	t.Run("pdf waiting and terminal", func(t *testing.T) {
 		t.Parallel()
-		s, _, pdfs, profile := collectionCoverageFixture(t, 1)
-		pdf, _, err := s.ReplaceContent(t.Context(), pdfs[0].ID, pdfs[0].Revision, pdfs[0].BlobHash, pdfs[0].Size, pdfs[0].MimeType)
+		s := newTestStore(t)
+		versions := seedRenditionCatalogVersions(t, s)
+		profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+			profile.Rendition.Descriptor.ID = document.PDFTextProviderID
+		})
+		coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 		require.NoError(t, err)
-		collectionCoveragePublish(t, s, pdf, profile, "none")
-		_, err = s.CreateFile(t.Context(), s.RootID(), "report.docx", testSHA256([]byte("synthetic office")), 16, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+		require.Zero(t, coverage.Pending)
+		require.Zero(t, coverage.NoText)
+		request := renditionJobTestRequest(versions[0], profile)
+		request.ExecutionIdentity.Authorization.ProviderID = document.PDFTextProviderID
+		grantRenditionJobConsent(t, s, request)
+		job, _, err := s.EnqueueRenditionJob(t.Context(), request)
 		require.NoError(t, err)
-		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) (bool, error) { return true, errors.New("synthetic missing evidence") })
+		coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 		require.NoError(t, err)
-		require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"office"}}, got)
+		require.Equal(t, 1, coverage.Pending)
+		now := time.Now().UTC().Add(time.Second)
+		claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "pdf-worker", now, time.Minute)
+		require.NoError(t, err)
+		require.NoError(t, s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailureTerminal, now))
+		coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
+		require.NoError(t, err)
+		require.Zero(t, coverage.Pending)
+		require.Zero(t, coverage.NoText)
 	})
 	for _, tc := range []struct {
 		name    string

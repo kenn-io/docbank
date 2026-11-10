@@ -19,7 +19,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/pdfproduction"
@@ -302,8 +301,6 @@ func assertRedactionLeavesNoJobs(t *testing.T, root string) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	var count int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
- (SELECT COUNT(*) FROM rendition_jobs WHERE json_extract(execution_identity_json, '$.authorization.provider_id') IS NOT ?) + (SELECT COUNT(*) FROM embedding_jobs) +
- (SELECT COUNT(*) FROM export_jobs)`, document.PDFTextProviderID).Scan(&count))
-	require.Zero(t, count, "redaction must not enqueue or retain jobs")
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM embedding_jobs) + (SELECT COUNT(*) FROM export_jobs)`).Scan(&count))
+	require.Zero(t, count+countNonPDFTextRenditionJobs(t, db), "redaction must not enqueue or retain jobs")
 }

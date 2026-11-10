@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
@@ -472,13 +473,37 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 
 func TestWorkspaceQuerySelectsAutomaticPDFProfile(t *testing.T) {
 	t.Parallel()
-	var runner *processing.PDFTextRunner
-	ts, _ := newTestServer(t, func(d *api.Deps) { runner = configureAutomaticPDFText(t, d) })
-
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil, map[string]any{"query": map[string]any{}})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var snapshot api.WorkspaceQueryResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
-	require.Equal(t, "configured", snapshot.Coverage.Configuration)
-	require.Equal(t, runner.Service.Profiles()[0].Fingerprint, snapshot.Coverage.ProfileFingerprint)
+	for _, tc := range []struct {
+		name, configured, explicit string
+	}{
+		{name: "automatic"},
+		{name: "configured", configured: "archive"},
+		{name: "explicit", configured: "archive", explicit: processing.PDFTextProfileName},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var runner *processing.PDFTextRunner
+			var configuredFingerprint string
+			ts, _ := newTestServer(t, func(d *api.Deps) {
+				runner = configureAutomaticPDFText(t, d)
+				if tc.configured != "" {
+					collectionCoverageConfig(d, tc.configured)
+					profile, err := d.Cfg.ProcessingProfile(tc.configured)
+					require.NoError(t, err)
+					_, fingerprints, err := document.CanonicalProfile(profile.Document)
+					require.NoError(t, err)
+					configuredFingerprint = fingerprints.Profile
+				}
+			})
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil, map[string]any{"query": map[string]any{}, "profile": tc.explicit})
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var snapshot api.WorkspaceQueryResponse
+			require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
+			require.Equal(t, "configured", snapshot.Coverage.Configuration)
+			fingerprint := runner.Service.Profiles()[0].Fingerprint
+			if tc.configured != "" && tc.explicit == "" {
+				fingerprint = configuredFingerprint
+			}
+			require.Equal(t, fingerprint, snapshot.Coverage.ProfileFingerprint)
+		})
+	}
 }

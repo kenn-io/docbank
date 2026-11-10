@@ -110,75 +110,64 @@ func TestPDFTextInitializePreservesRevokedConsent(t *testing.T) {
 	require.False(t, active)
 }
 
-func TestPDFTextDiscoversRestoredSourceInSameRun(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	_, profile, err := NewPDFTextProfile()
-	require.NoError(t, err)
-	service := newPDFTextService(t, fixture, profile)
-	runner := &PDFTextRunner{Service: service}
-	require.NoError(t, runner.Initialize(t.Context()))
-	node := replacePDFSource(t, fixture, mediatest.PDFTextPages([]string{"searchable"}, false))
-	trashed, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
-	require.NoError(t, err)
-	require.NoError(t, runner.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}))
-	_, _, err = fixture.catalog.Restore(t.Context(), trashed.ID, trashed.Revision)
-	require.NoError(t, err)
-	items, err := runner.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, node.CurrentVersionID, items[0].ContentVersionID)
-}
-
 //nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
-func TestPDFTextPurgeSettlesDiscovery(t *testing.T) {
-	fixture := newPublicationFixture(t)
-	_, profile, err := NewPDFTextProfile()
-	require.NoError(t, err)
-	service := newPDFTextService(t, fixture, profile)
-	runner := &PDFTextRunner{Service: service}
-	require.NoError(t, runner.Initialize(t.Context()))
-	node := replacePDFSource(t, fixture, mediatest.PDFTextPages([]string{"searchable"}, false))
-	item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
-	require.NoError(t, runner.process(t.Context(), item))
-	runPDFTextWorker(t, service)
-	_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
-	require.NoError(t, err)
-	require.NoError(t, runner.process(t.Context(), item))
-	_, err = fixture.catalog.EnsureDir(t.Context(), fixture.catalog.RootID(), "unrelated")
-	require.NoError(t, err)
-	pending, err := runner.Pending(t.Context())
-	require.NoError(t, err)
-	require.False(t, pending)
-}
-
-func TestPDFTextDiscoverySkipsRefusedVersionsAcrossPages(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	_, profile, err := NewPDFTextProfile()
-	require.NoError(t, err)
-	service := newPDFTextService(t, fixture, profile)
-	runner := &PDFTextRunner{Service: service}
-	require.NoError(t, runner.Initialize(t.Context()))
-	first := replacePDFSource(t, fixture, []byte("invalid PDF"))
-	data := mediatest.PDFTextPages([]string{"searchable"}, false)
-	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
-	require.NoError(t, err)
-	second, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "second.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	require.NoError(t, runner.process(t.Context(), store.DocumentSummary{NodeID: first.ID, ContentVersionID: first.CurrentVersionID}))
-	items, err := runner.targets(t.Context(), "", 1)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, second.CurrentVersionID, items[0].ContentVersionID)
-	fresh := &PDFTextRunner{Service: service}
-	items, err = fresh.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Len(t, items, 2)
-	runner.skips = make(map[string]bool, localTextSkipLimit)
-	for i := range localTextSkipLimit {
-		runner.skips[fmt.Sprint(i)] = true
+func TestPDFTextRunnerSkipPolicy(t *testing.T) {
+	for _, scenario := range []string{"trashed", "refused", "purged", "cap"} {
+		t.Run(scenario, func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			_, profile, err := NewPDFTextProfile()
+			require.NoError(t, err)
+			service := newPDFTextService(t, fixture, profile)
+			runner := &PDFTextRunner{Service: service}
+			require.NoError(t, runner.Initialize(t.Context()))
+			data := mediatest.PDFTextPages([]string{"searchable"}, false)
+			if scenario == "refused" || scenario == "cap" {
+				data = []byte("invalid PDF")
+			}
+			node := replacePDFSource(t, fixture, data)
+			item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+			switch scenario {
+			case "trashed":
+				trashed, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
+				require.NoError(t, err)
+				require.NoError(t, runner.process(t.Context(), item))
+				_, _, err = fixture.catalog.Restore(t.Context(), trashed.ID, trashed.Revision)
+				require.NoError(t, err)
+				items, err := runner.targets(t.Context(), "", 50)
+				require.NoError(t, err)
+				require.Len(t, items, 1)
+				require.Equal(t, node.CurrentVersionID, items[0].ContentVersionID)
+			case "refused":
+				written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.PDFTextPages([]string{"searchable"}, false)))
+				require.NoError(t, err)
+				second, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "second.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+				require.NoError(t, err)
+				require.NoError(t, runner.process(t.Context(), item))
+				items, err := runner.targets(t.Context(), "", 1)
+				require.NoError(t, err)
+				require.Len(t, items, 1)
+				require.Equal(t, second.CurrentVersionID, items[0].ContentVersionID)
+				fresh := &PDFTextRunner{Service: service}
+				items, err = fresh.targets(t.Context(), "", 50)
+				require.NoError(t, err)
+				require.Len(t, items, 2)
+			case "purged":
+				require.NoError(t, runner.process(t.Context(), item))
+				runPDFTextWorker(t, service)
+				_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
+				require.NoError(t, err)
+				require.NoError(t, runner.process(t.Context(), item))
+				pending, err := runner.Pending(t.Context())
+				require.NoError(t, err)
+				require.False(t, pending)
+			case "cap":
+				runner.skips = make(map[string]bool, localTextSkipLimit)
+				for i := range localTextSkipLimit {
+					runner.skips[fmt.Sprint(i)] = true
+				}
+				require.NoError(t, runner.process(t.Context(), item))
+				require.Equal(t, localTextSkipLimit, len(runner.skips))
+			}
+		})
 	}
-	require.NoError(t, runner.process(t.Context(), store.DocumentSummary{NodeID: first.ID, ContentVersionID: first.CurrentVersionID}))
-	require.Equal(t, localTextSkipLimit, len(runner.skips))
 }

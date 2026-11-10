@@ -906,7 +906,7 @@ var backendSuites = []backendSuite{
 		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
 	}},
 	{name: "text-extraction", postgres: "native operations", scope: "Plain-text queue discovery, retries, results and rendition authority publication; excludes ranked search and recovery.", scenarios: []backendScenario{
-		{"PDFTextDiscovery", func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newTestStore, true) }, func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newPostgresQueryStore, false) }},
+		{"PDFTextDiscovery", func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newPostgresQueryStore) }},
 		{"TextPublication", nil, checkTextPublicationPostgres},
 		{"TextChangedResult", nil, checkTextChangedResultPostgres},
 		{"TextPublicationRollback", nil, checkTextPublicationRollbackPostgres},
@@ -1402,7 +1402,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobWorkChoosesAnAuthorizedWaiter(t, newPostgresQueryStore)
 		}},
-		{"RenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle", func(t *testing.T) {
+		{"RenditionJobsRecoverAmbiguousProviderWork", func(t *testing.T) {
 			t.Helper()
 			checkRenditionJobsRecoverAmbiguousProviderWork(t, newTestStore)
 		}, func(t *testing.T) {

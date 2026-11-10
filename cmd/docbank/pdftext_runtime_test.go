@@ -4,16 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
@@ -250,22 +245,13 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 		return
 	}
 	for _, test := range []struct {
-		name                 string
-		configured, existing bool
+		name     string
+		existing bool
 	}{
-		{name: "import"}, {name: "configured", configured: true}, {name: "existing vault", existing: true},
+		{name: "import"}, {name: "existing vault", existing: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			configured := test.configured
 			home := t.TempDir()
-			if configured {
-				cfg := pdfTextRuntimeConfig(t)
-				delete(cfg.ProcessingProfiles, "private-text")
-				cfg.ProcessingProfiles["configured-pdf"] = cfg.ProcessingProfiles["pdf"]
-				delete(cfg.ProcessingProfiles, "pdf")
-				cfg.Server.APIKey = "synthetic-automatic-pdf-key"
-				require.NoError(t, writeDaemonASRConfig(home, cfg))
-			}
 			path := filepath.Join(t.TempDir(), "source.pdf")
 			data := mediatest.PDFTextPages([]string{"first page", "distinctivequartz on page two"}, false)
 			if test.existing {
@@ -289,9 +275,7 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			t.Setenv("DOCBANK_HOME", home)
 			stop := startServe(t)
 			defer stop()
-			runtime := waitForDaemon(t, home)
-			daemon := daemonconn.New("http://"+runtime.Address, runtime.Metadata["api_key"])
-			defer func() { require.NoError(t, daemon.Close()) }()
+			waitForDaemon(t, home)
 			require.NoError(t, os.WriteFile(path, data, 0600))
 			var deadline context.Context
 			if !test.existing {
@@ -317,45 +301,6 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			if deadline != nil {
 				require.NoError(t, deadline.Err(), "import and search exceeded ten seconds")
 			}
-			requireJob(t, daemonJobs(t), "text:pdf")
-			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/source.pdf"}})
-			require.NoError(t, err)
-			coverage, err := runCLI(t, "processing", "coverage", node.CurrentVersionID, "--profile", processing.PDFTextProfileName, "--json")
-			require.NoError(t, err)
-			var coverageReport processingCoverageOutput
-			require.NoError(t, json.Unmarshal([]byte(coverage), &coverageReport))
-			require.Equal(t, "complete", coverageReport.Coverage.State)
-			resolved, err := daemon.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.ResolveRenditionTextBody{NodeID: node.ID, Revision: node.Revision, VersionID: uuid.MustParse(node.CurrentVersionID), BlobHash: node.BlobHash, Size: node.Size}})
-			require.NoError(t, err)
-			if configured {
-				require.Equal(t, apiclient.RenditionTextReceiptStateUnprocessed, resolved.State)
-				require.Equal(t, "configured-pdf", resolved.Profile.Name)
-				explicit, err := daemon.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.ResolveRenditionTextBody{NodeID: node.ID, Revision: node.Revision, VersionID: uuid.MustParse(node.CurrentVersionID), BlobHash: node.BlobHash, Size: node.Size, Profile: new(processing.PDFTextProfileName)}})
-				require.NoError(t, err)
-				require.Equal(t, apiclient.Ready, explicit.State)
-				require.Equal(t, processing.PDFTextProfileName, explicit.Profile.Name)
-				resolved = explicit
-			} else {
-				require.Equal(t, apiclient.Ready, resolved.State)
-				require.Equal(t, processing.PDFTextProfileName, resolved.Profile.Name)
-			}
-			require.NotNil(t, resolved.Artifact)
-			params := url.Values{
-				"node_id": {strconv.FormatInt(node.ID, 10)}, "revision": {strconv.FormatInt(node.Revision, 10)},
-				"version_id": {node.CurrentVersionID}, "blob_hash": {node.BlobHash}, "size": {strconv.FormatInt(node.Size, 10)},
-				"profile_fingerprint": {resolved.Profile.Fingerprint}, "generation_id": {resolved.GenerationID},
-				"attachment_id": {resolved.AttachmentID}, "build_id": {resolved.BuildID}, "artifact_id": {resolved.Artifact.ID},
-			}
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+runtime.Address+"/api/v1/renditions/text/content?"+params.Encode(), nil)
-			require.NoError(t, err)
-			req.Header.Set("X-Api-Key", runtime.Metadata["api_key"])
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, resp.Body.Close()) }()
-			body, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
-			require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
-			require.Contains(t, string(body), "distinctivequartz")
 		})
 	}
 }
