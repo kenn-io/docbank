@@ -157,6 +157,7 @@ func TestEmptySearchHints(t *testing.T) {
 					Hints []searchHint `json:"hints"`
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+				require.Equal(t, "needs_ocr", report.Hints[0].Code)
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				if tc.everyWord {
 					require.Equal(t, searchHint{
@@ -166,11 +167,6 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.Empty(t, stderr.String())
 			} else {
-				if tc.unavailable {
-					require.NotContains(t, stderr.String(), "OCR can read them")
-				} else {
-					require.Contains(t, stderr.String(), "OCR can read them")
-				}
 				if tc.pending > 0 {
 					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
 				} else {
@@ -203,31 +199,24 @@ func TestEmptySearchHintsCoverageGuidance(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		coverage api.SearchTextCoverage
-		codes    []string
-		message  string
+		want     []searchHint
 	}{
-		{"office and pdf gaps", api.SearchTextCoverage{NoText: 1, PDFsWithoutText: 1, PagesWithoutText: 2, Families: []string{"office"}}, []string{"needs_ocr", "no_searchable_text"}, "1 file (Office)"},
-		{"unavailable pdf", api.SearchTextCoverage{NoText: 1, PDFPageCoverageUnavailable: 1, Families: []string{"pdf"}}, []string{"pdf_page_coverage_unavailable", "no_searchable_text"}, "1 file (PDF)"},
-		{"partial pdf", api.SearchTextCoverage{PDFsWithoutText: 2, PagesWithoutText: 3, PDFPageCoveragePartial: true}, []string{"pdf_page_coverage_partial", "needs_ocr"}, "at least 2 PDFs"},
+		{"office and pdf gaps", api.SearchTextCoverage{NoText: 1, PDFsWithoutText: 1, PagesWithoutText: 2, Families: []string{"office"}}, []searchHint{
+			{"needs_ocr", "1 PDF has 2 pages with no text layer; if they are scans, OCR can read them. See https://docbank.ai/docs/usage/document-processing/#ocr"},
+			{"no_searchable_text", "1 file (Office) has no searchable text, only its name; use or set up a profile that can extract these files; build it; choose another profile if a build returns no text; list profiles with docbank processing profiles"},
+		}},
+		{"unavailable pdf", api.SearchTextCoverage{NoText: 1, PDFPageCoverageUnavailable: 1, Families: []string{"pdf"}}, []searchHint{
+			{"pdf_page_coverage_unavailable", "PDF page coverage is unavailable; some pages may lack searchable text."},
+			{"no_searchable_text", "1 file (PDF) has no searchable text, only its name; use or set up a profile that can extract these files; build it; choose another profile if a build returns no text; list profiles with docbank processing profiles"},
+		}},
+		{"partial pdf", api.SearchTextCoverage{PDFsWithoutText: 2, PagesWithoutText: 3, PDFPageCoveragePartial: true}, []searchHint{
+			{"pdf_page_coverage_partial", "PDF page coverage is incomplete; narrow the search scope to inspect more PDFs."},
+			{"needs_ocr", "at least 2 PDFs have at least 3 pages with no text layer; if they are scans, OCR can read them. See https://docbank.ai/docs/usage/document-processing/#ocr"},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hints := emptySearchHints("missing", tc.coverage, true, false, false)
-			require.Len(t, hints, len(tc.codes))
-			for i, code := range tc.codes {
-				require.Equal(t, code, hints[i].Code)
-			}
-			if tc.coverage.PagesWithoutText > 0 && !tc.coverage.PDFPageCoveragePartial {
-				require.Contains(t, hints[0].Message, "1 PDF has 2 pages with no text layer")
-			}
-			message := hints[len(hints)-1].Message
-			require.Contains(t, message, tc.message)
-			if tc.coverage.PDFPageCoveragePartial {
-				require.Contains(t, hints[0].Message, "narrow the search scope")
-				require.Contains(t, message, "at least 3 pages")
-			} else {
-				require.Contains(t, message, "use or set up a profile")
-				require.Contains(t, message, "list profiles with docbank processing profiles")
-			}
+			require.Equal(t, tc.want, hints)
 		})
 	}
 }

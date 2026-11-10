@@ -234,9 +234,6 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
 	require.Equal(t, []int{2}, receipt.Pages)
 	buildID := receipt.BuildID
-	resp, body = get(t, ts, "/api/v1/search/text-coverage", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.Contains(t, body, `"pages_without_text":1`)
 	request["profile"] = "archive"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

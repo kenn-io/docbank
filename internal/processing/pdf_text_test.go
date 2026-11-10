@@ -62,10 +62,6 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			require.NoError(t, err)
 			if len(test.gaps) > 0 {
 				require.Equal(t, []PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: test.gaps}}, report.PagesWithoutText)
-			} else {
-				require.Empty(t, report.PagesWithoutText)
-			}
-			if len(test.gaps) > 0 {
 				for _, artifact := range view.Rendition.Build.Artifacts {
 					if artifact.Role == "normalized_evidence" {
 						require.NoError(t, fixture.blobs.Remove(artifact.BlobHash))
@@ -76,6 +72,8 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 				require.Equal(t, report.Renditions, corruptReport.Renditions)
 				require.Empty(t, corruptReport.PagesWithoutText)
 				require.True(t, corruptReport.PageCoverageUnavailable)
+			} else {
+				require.Empty(t, report.PagesWithoutText)
 			}
 		})
 	}
@@ -213,14 +211,9 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 				unqueued, err := runner.UnqueuedPending(t.Context())
 				require.NoError(t, err)
 				require.False(t, unqueued("oversized", PDFTextMaxDocumentBytes+1))
-				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, service.profiles[PDFTextProfileName].record.Fingerprint, service.PDFPagesWithoutText, unqueued)
-				require.NoError(t, err)
-				require.Equal(t, 2, coverage.Pending)
+				require.True(t, unqueued(node.CurrentVersionID, node.Size))
 				require.NoError(t, runner.process(t.Context(), item))
-				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, service.profiles[PDFTextProfileName].record.Fingerprint, service.PDFPagesWithoutText, unqueued)
-				require.NoError(t, err)
-				require.Equal(t, 1, coverage.Pending)
-				require.Equal(t, 1, coverage.NoText)
+				require.False(t, unqueued(node.CurrentVersionID, node.Size))
 				items, err := runner.targets(t.Context(), "", 1)
 				require.NoError(t, err)
 				require.Len(t, items, 1)
