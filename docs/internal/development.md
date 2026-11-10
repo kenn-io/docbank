@@ -751,7 +751,9 @@ artifact and page receipts, and allocation transition together. The first verifi
 publisher wins an exact retry, including when a later render has different PDF
 container bytes. Runtime roles can insert identities, advance `next_sequence`,
 and change only `state` and `committed_at` on allocations; they cannot rewrite
-snapshot, namespace, label, artifact or volume identities.
+snapshot, namespace, label, artifact or volume identities. Store methods enforce
+cursor monotonicity and one-way allocation publication under writer admission.
+The PostgreSQL column grants do not enforce those transitions against direct SQL.
 
 Package and artifact pages, member representations, publication plans and custodian
 evidence use repeatable-read transactions. A concurrent custodian change affects
@@ -803,9 +805,13 @@ The `received-packages` contracts exercise native intake, lease replacement,
 record replay, gap reporting, completion, label browsing and cleanup on both
 engines. PostgreSQL cases fail the final admission, receipt or job write to
 verify rollback, and commit new receipts during reads to verify snapshot
-isolation. Runtime access permits inserts into records, labels and receipts;
-only job lifecycle columns and package state, snapshot and completion columns
-may be updated. Package identity and source evidence cannot be rewritten.
+isolation. The PostgreSQL runtime grants are insert-only for records, labels
+and receipts. Updates are limited to job lifecycle columns and package state,
+snapshot and completion columns. Store methods enforce one-time snapshot and
+completion values under writer admission; the PostgreSQL grants do not prevent
+direct SQL from rewriting those columns. SQLite's released receipt trigger
+prevents updates but does not prevent deletion. These database-level differences
+do not change the qualified Store operations.
 
 #### PostgreSQL reference implementations
 
