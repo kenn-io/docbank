@@ -418,7 +418,7 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 		"document_event_state", "document_event_generations", "document_event_heads",
 		"document_event_builds", "document_event_dirty", "document_event_attempts",
 		"document_events", "document_event_actors", "document_event_primaries",
-		"document_people_builds",
+		"document_people_builds", "node_supersessions", "node_effective_windows",
 	}
 	for _, table := range tables {
 		for _, test := range v090UpgradeDrivers() {
@@ -426,6 +426,24 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 				dbPath := filepath.Join(t.TempDir(), "docbank.db")
 				s, err := Open(t.Context(), dbPath, test.driver)
 				require.NoError(t, err)
+				if table == "node_supersessions" || table == "node_effective_windows" {
+					old, err := s.CreateFile(t.Context(), s.RootID(), "old.txt", fakeHash("a1"), 1, "text/plain")
+					require.NoError(t, err)
+					wantState := "not_yet_effective"
+					if table == "node_supersessions" {
+						next, err := s.CreateFile(t.Context(), s.RootID(), "next.txt", fakeHash("b2"), 1, "text/plain")
+						require.NoError(t, err)
+						_, err = s.PutSupersession(t.Context(), next.ID, old.ID, old.Revision, nil)
+						require.NoError(t, err)
+						wantState = "superseded"
+					} else {
+						_, err = s.PutEffectiveWindow(t.Context(), old.ID, old.Revision, "2026-01-01", "")
+						require.NoError(t, err)
+					}
+					validity, err := s.NodeValidity(t.Context(), old.ID, "2025-06-01")
+					require.NoError(t, err)
+					require.Equal(t, wantState, string(validity.State))
+				}
 				require.NoError(t, s.Close())
 
 				db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
@@ -437,51 +455,6 @@ func TestOpenRejectsCurrentDatabaseWithoutAttributionTables(t *testing.T) {
 				require.NoError(t, db.Close())
 
 				reopened, err := Open(t.Context(), dbPath, test.driver)
-				if reopened != nil {
-					require.NoError(t, reopened.Close())
-				}
-				require.ErrorContains(t, err, "unexpected "+table+" layout")
-			})
-		}
-	}
-}
-
-func TestOpenRejectsCurrentDatabaseWithoutValidityAuthority(t *testing.T) {
-	t.Parallel()
-	for _, table := range []string{"node_supersessions", "node_effective_windows"} {
-		for _, test := range v090UpgradeDrivers() {
-			t.Run(table+"/"+test.name, func(t *testing.T) {
-				ctx := t.Context()
-				dbPath := filepath.Join(t.TempDir(), "docbank.db")
-				s, err := Open(ctx, dbPath, test.driver)
-				require.NoError(t, err)
-				old, err := s.CreateFile(ctx, s.RootID(), "old.txt", fakeHash("a1"), 1, "text/plain")
-				require.NoError(t, err)
-				wantState := "not_yet_effective"
-				if table == "node_supersessions" {
-					next, err := s.CreateFile(ctx, s.RootID(), "next.txt", fakeHash("b2"), 1, "text/plain")
-					require.NoError(t, err)
-					_, err = s.PutSupersession(ctx, next.ID, old.ID, old.Revision, nil)
-					require.NoError(t, err)
-					wantState = "superseded"
-				} else {
-					_, err = s.PutEffectiveWindow(ctx, old.ID, old.Revision, "2026-01-01", "")
-					require.NoError(t, err)
-				}
-				validity, err := s.NodeValidity(ctx, old.ID, "2025-06-01")
-				require.NoError(t, err)
-				require.Equal(t, wantState, string(validity.State))
-				require.NoError(t, s.Close())
-
-				db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
-					Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
-				})
-				require.NoError(t, err)
-				_, err = db.ExecContext(ctx, "DROP TABLE "+table)
-				require.NoError(t, err)
-				require.NoError(t, db.Close())
-
-				reopened, err := Open(ctx, dbPath, test.driver)
 				if reopened != nil {
 					require.NoError(t, reopened.Close())
 				}

@@ -36,7 +36,9 @@ func checkSupersessionMetadataGraphValidationPostgres(t *testing.T) {
 		return s.validateMetadataState(ctx, tx, high)
 	}))
 
-	// A reverse link creates a cycle that retained-state validation must reject.
+	// Inject corruption outside the supported Store boundary, as in the batch-tag
+	// receipt validator tests. Retained PostgreSQL authority must reject cycles
+	// independently of write/import guards.
 	_, err = setup.ExecContext(ctx, `INSERT INTO documents.node_supersessions(successor_node_id,predecessor_node_id,note,recorded_at) VALUES($1,$2,$3,$4)`,
 		predecessor.ID, successor.ID, "", nowRFC3339())
 	require.NoError(t, err)

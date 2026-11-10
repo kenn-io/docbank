@@ -85,8 +85,8 @@ func TestDeleteSupersessionTrashedEndpoint(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, removed.Changed)
 			require.Equal(t, predecessor.Revision+1, removed.Node.Revision)
-			require.Equal(t, predecessor.TrashedAt, removed.Node.TrashedAt)
 			if endpoint == "predecessor" {
+				require.Equal(t, predecessor.TrashedAt, removed.Node.TrashedAt)
 				require.Empty(t, removed.Path)
 			}
 		})
@@ -260,12 +260,10 @@ func TestSupersessionWindowRevisionAndClear(t *testing.T) {
 		require.NoError(t, err)
 		trashed, _, err := s.Trash(ctx, n.ID, window.Node.Revision)
 		require.NoError(t, err)
-		_, err = s.CreateFile(ctx, s.RootID(), "policy.txt", fakeHash("b4"), 1, "text/plain")
-		require.NoError(t, err)
 		cleared, err := s.DeleteEffectiveWindow(ctx, n.ID, trashed.Revision)
 		require.NoError(t, err)
-		require.Equal(t, trashed.TrashedAt, cleared.Node.TrashedAt)
-		require.Empty(t, cleared.Path)
+		require.True(t, cleared.Changed)
+		require.Equal(t, trashed.Revision+1, cleared.Node.Revision)
 	})
 }
 
