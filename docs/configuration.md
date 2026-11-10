@@ -812,17 +812,14 @@ identity. Switching to v2 requires a new descriptor and disclosure fingerprint,
 a reviewed processing plan, and fresh consent. Existing grants never gain
 permission to upload another format implicitly.
 
-The deployment needs Docling Serve 1.32.0, Docling 2.124.0 with its ASR
-requirements, Docling Core 2.105.0, and an audio decoder such as FFmpeg.
-The earlier WAV/MP3 qualification used Core 2.93.0, which rejects M4A MIME
-metadata; do not use that deployment for v2. Merely
-running a document conversion endpoint does not provide speech recognition.
+The earlier WAV/MP3 qualification used Docling Serve 1.32.0, Docling 2.124.0,
+and Docling Core 2.93.0. That Core version rejects M4A MIME metadata. A v2
+M4A deployment requires an audio decoder such as FFmpeg and must be qualified
+with synthetic speech before it receives real recordings. The repository records no real-deployment M4A qualification.
+
 The adapter requests `from_formats=audio`, JSON output, and in-body results;
 it accepts only timed tracks in document schema 1.10.0. It does not select or
-claim a particular model. Qualify the configured deployment with synthetic
-speech before authorizing real recordings. The M4A path inspects audio-only
-AAC/ALAC containers; the ASR qualification targets AAC, without promising other
-codecs or video transcription.
+claim a particular model. The M4A path inspects audio-only AAC/ALAC containers.
 
 For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
 and include `audio/mp4` in the descriptor alongside `audio/wav` and

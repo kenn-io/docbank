@@ -1937,6 +1937,21 @@ func (service *Service) rebuildVectorSpaces(ctx context.Context, vectorSpaces []
 	return nil
 }
 
+// readRenditionArtifact reads and verifies the declared bytes of a retained artifact.
+func (service *Service) readRenditionArtifact(ctx context.Context, artifact store.RenditionArtifactRecord, message string) ([]byte, error) {
+	reader, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(reader, artifact.Size+1))
+	verifyErr := reader.Verify()
+	closeErr := reader.Close()
+	if readErr != nil || verifyErr != nil || closeErr != nil || size != artifact.Size || int64(len(data)) != artifact.Size {
+		return nil, errors.Join(errors.New(message), readErr, verifyErr, closeErr)
+	}
+	return data, nil
+}
+
 // renditionEvidence reads a build's normalized evidence and proves it is the
 // exact canonical bytes its artifact record names. It returns those bytes too.
 func (service *Service) renditionEvidence(
@@ -1952,16 +1967,9 @@ func (service *Service) renditionEvidence(
 	if artifact.ID == "" || artifact.Size < 2 || artifact.Size > 64<<20 {
 		return document.NormalizedEvidenceV1{}, nil, errors.New("normalized evidence artifact is unavailable or exceeds bounds")
 	}
-	reader, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+	data, err := service.readRenditionArtifact(ctx, artifact, "normalized evidence could not be read exactly")
 	if err != nil {
 		return document.NormalizedEvidenceV1{}, nil, err
-	}
-	data, readErr := io.ReadAll(io.LimitReader(reader, artifact.Size+1))
-	verifyErr := reader.Verify()
-	closeErr := reader.Close()
-	if readErr != nil || verifyErr != nil || closeErr != nil || size != artifact.Size || int64(len(data)) != artifact.Size {
-		return document.NormalizedEvidenceV1{}, nil, errors.Join(
-			errors.New("normalized evidence could not be read exactly"), readErr, verifyErr, closeErr)
 	}
 	var evidence document.NormalizedEvidenceV1
 	if err := json.Unmarshal(data, &evidence, json.RejectUnknownMembers(true)); err != nil {

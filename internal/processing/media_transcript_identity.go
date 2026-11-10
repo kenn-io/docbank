@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -48,15 +47,9 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 			return errors.New("retained transcript artifact authority is invalid")
 		}
 		transcript.ArtifactSHA256 = artifact.Checksum
-		stream, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+		raw, err := service.readRenditionArtifact(ctx, artifact, "retained transcript artifact could not be read exactly")
 		if err != nil {
 			return err
-		}
-		raw, readErr := io.ReadAll(io.LimitReader(stream, artifact.Size+1))
-		verifyErr := stream.Verify()
-		closeErr := stream.Close()
-		if size != artifact.Size || int64(len(raw)) != artifact.Size || readErr != nil || verifyErr != nil || closeErr != nil {
-			return errors.Join(errors.New("retained transcript artifact could not be read exactly"), readErr, verifyErr, closeErr)
 		}
 		var identity struct {
 			ContractVersion string `json:"contract_version"`

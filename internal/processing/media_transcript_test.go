@@ -355,7 +355,26 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, blob.Hash, result.ArtifactSHA256)
 				require.Equal(t, tc.language, result.Language)
+				build.Artifacts[0].Size++
+				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
+				require.ErrorContains(t, err, "read exactly")
 			})
 		}
 	}
+}
+
+func TestRenditionEvidenceRejectsWrongArtifactSize(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	staged := f.stage(t, publicationIDs{"size-build", "size-attachment", "size-generation"}, "synthetic evidence", "synthetic markdown")
+	publisher, err := NewArtifactPublisher(f.catalog, f.blobs)
+	require.NoError(t, err)
+	_, err = publisher.PublishRendition(t.Context(), staged)
+	require.NoError(t, err)
+	service := &Service{blobs: f.blobs}
+	_, _, err = service.renditionEvidence(t.Context(), staged.Build)
+	require.NoError(t, err)
+	staged.Build.Artifacts[0].Size++
+	_, _, err = service.renditionEvidence(t.Context(), staged.Build)
+	require.ErrorContains(t, err, "read exactly")
 }
