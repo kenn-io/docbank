@@ -57,7 +57,7 @@ func TestDuplicatesFindsOnlyLiveCurrentContent(t *testing.T) {
 	assert.Zero(t, page.Total)
 	assert.Zero(t, page.TotalReferences)
 
-	refs, total, err := s.ContentReferencesByHash(ctx, duplicateHash, 10, 0)
+	refs, total, err := s.ContentReferencesByHash(ctx, duplicateHash, 10, 0, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 2, total, "the historical content lookup remains unchanged")
 	assert.Contains(t, duplicateReferenceVersionIDs(refs), historicalVersion)
@@ -75,7 +75,7 @@ func TestDuplicatesFindsOnlyLiveCurrentContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, page.Items)
 	assert.Zero(t, page.TotalReferences)
-	refs, total, err = s.ContentReferencesByHash(ctx, duplicateHash, 10, 0)
+	refs, total, err = s.ContentReferencesByHash(ctx, duplicateHash, 10, 0, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	assert.Contains(t, duplicateReferenceNodeIDs(refs), first.ID)

@@ -36,7 +36,7 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	require.NoError(t, s.RecordVerifiedBlobChecksum(ctx,
 		BlobChecksumRecord{BlobSHA256: replacement, MD5: replacementMD5}))
 
-	refs, total, err := s.ContentReferencesByHash(ctx, wanted, 10, 0)
+	refs, total, err := s.ContentReferencesByHash(ctx, wanted, 10, 0, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	require.Len(t, refs, 3)
@@ -63,13 +63,13 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	assert.NotNil(t, refs[2].Node.TrashedAt)
 	assert.Empty(t, refs[2].Path, "trashed nodes have no resolvable current path")
 
-	page, pageTotal, err := s.ContentReferencesByHash(ctx, wanted, 1, 1)
+	page, pageTotal, err := s.ContentReferencesByHash(ctx, wanted, 1, 1, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, pageTotal)
 	require.Len(t, page, 1)
 	assert.Equal(t, historicalVersion, page[0].Version.ID)
 
-	exhausted, exhaustedTotal, err := s.ContentReferencesByHash(ctx, wanted, 1, 10)
+	exhausted, exhaustedTotal, err := s.ContentReferencesByHash(ctx, wanted, 1, 10, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, exhaustedTotal)
 	assert.Empty(t, exhausted)
@@ -86,18 +86,18 @@ func TestContentReferencesByHashRequiresLogicalAuthorityAndBoundedInput(t *testi
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		return s.EnsureBlobTx(t.Context(), tx, orphan, 7)
 	}))
-	refs, total, err := s.ContentReferencesByHash(ctx, orphan, 10, 0)
+	refs, total, err := s.ContentReferencesByHash(ctx, orphan, 10, 0, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Zero(t, total)
 	assert.Empty(t, refs)
 
-	_, _, err = s.ContentReferencesByHash(ctx, "ABC", 10, 0)
+	_, _, err = s.ContentReferencesByHash(ctx, "ABC", 10, 0, ContentReferenceOptions{})
 	require.ErrorContains(t, err, "canonical lowercase SHA-256")
-	_, _, err = s.ContentReferencesByHash(ctx, orphan, 0, 0)
+	_, _, err = s.ContentReferencesByHash(ctx, orphan, 0, 0, ContentReferenceOptions{})
 	require.ErrorContains(t, err, "between 1 and 1000")
-	_, _, err = s.ContentReferencesByHash(ctx, orphan, 1001, 0)
+	_, _, err = s.ContentReferencesByHash(ctx, orphan, 1001, 0, ContentReferenceOptions{})
 	require.ErrorContains(t, err, "between 1 and 1000")
-	_, _, err = s.ContentReferencesByHash(ctx, orphan, 1, -1)
+	_, _, err = s.ContentReferencesByHash(ctx, orphan, 1, -1, ContentReferenceOptions{})
 	require.ErrorContains(t, err, "must not be negative")
 }
 
@@ -121,7 +121,7 @@ func TestContentReferencesByHashPagesRepeatedVersions(t *testing.T) {
 	other, err := s.CreateFile(ctx, s.RootID(), "other.txt", wanted, 10, "text/plain")
 	require.NoError(t, err)
 
-	first, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 0)
+	first, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 0, ContentReferenceOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 4, total)
 	require.Len(t, first, 2)
@@ -132,7 +132,7 @@ func TestContentReferencesByHashPagesRepeatedVersions(t *testing.T) {
 	assert.Equal(t, "/other.txt", first[1].Path)
 	assert.True(t, first[1].IsCurrent)
 
-	history, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 2)
+	history, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 2, ContentReferenceOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 4, total)
 	require.Len(t, history, 2)
@@ -145,7 +145,7 @@ func TestContentReferencesByHashPagesRepeatedVersions(t *testing.T) {
 		assert.False(t, ref.IsCurrent)
 	}
 
-	empty, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 4)
+	empty, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 4, ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 4, total)
 	assert.Empty(t, empty)

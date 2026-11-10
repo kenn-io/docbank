@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -56,4 +58,30 @@ func TestMCPFindDocumentsByHash(t *testing.T) {
 	item, ok = items[0].(map[string]any)
 	require.True(t, ok)
 	require.EqualValues(t, other.NodeID, item["node_id"])
+}
+
+func TestMCPFindDocumentsByHashAcceptsUploadedMediaType(t *testing.T) {
+	f := newNativeExportFixture(t)
+	const content = "synthetic document with a long MIME parameter"
+	sum := sha256.Sum256([]byte(content))
+	hash := hex.EncodeToString(sum[:])
+	mediaType := "text/plain; title=" + strings.Repeat("a", 300)
+	uploaded, err := f.connection.Upload(t.Context(), f.catalog.RootID(), "long-media-type.txt",
+		mediaType, hash, int64(len(content)), strings.NewReader(content))
+	require.NoError(t, err)
+	require.Equal(t, mediaType, uploaded.Node.MimeType)
+
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
+	out := exportCall(t, server, "find_documents_by_hash", map[string]any{"sha256": hash})
+	require.EqualValues(t, 1, out["total"])
+	items, ok := out["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, uploaded.Node.ID, item["node_id"])
+	require.Equal(t, uploaded.Node.CurrentVersionID, item["content_version_id"])
+	require.Equal(t, "/long-media-type.txt", item["path"])
+	require.Equal(t, hash, item["blob_hash"])
+	require.Equal(t, mediaType, item["media_type"])
 }

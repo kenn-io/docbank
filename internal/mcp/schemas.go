@@ -1069,7 +1069,7 @@ func findDocumentsByHashSchemas() (schema, schema) {
 	item := objectSchema(schema{
 		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
 		"path": stringSchema(0), "size": integerSchema(0, 0),
-		"media_type": stringSchema(255), "blob_hash": sha256Schema(),
+		"media_type": stringSchema(0), "blob_hash": sha256Schema(),
 	}, "node_id", "content_version_id", "path", "size", "media_type", "blob_hash")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(item, 100), "total": integerSchema(0, 0),

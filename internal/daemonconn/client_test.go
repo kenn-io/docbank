@@ -863,7 +863,7 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, page.Items[0], *version)
-	looseRefs, err := c.ContentReferences(t.Context(), wantHash, 10, 0)
+	looseRefs, err := c.ContentReferences(t.Context(), wantHash, 10, 0, store.ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, looseRefs.Total)
 	require.Len(t, looseRefs.Items, 1)
@@ -871,7 +871,7 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	assert.Equal(t, node.CurrentVersionID, looseRefs.Items[0].Version.ID)
 	assert.True(t, looseRefs.Items[0].IsCurrent)
 	assert.Equal(t, "/inbox/evidence.txt", looseRefs.Items[0].Path)
-	exhaustedRefs, err := c.ContentReferences(t.Context(), wantHash, 1, 10)
+	exhaustedRefs, err := c.ContentReferences(t.Context(), wantHash, 1, 10, store.ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, exhaustedRefs.Total)
 	assert.Empty(t, exhaustedRefs.Items)
@@ -898,7 +898,7 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 1, packed.BlobsPacked)
-	packedRefs, err := c.ContentReferences(t.Context(), wantHash, 10, 0)
+	packedRefs, err := c.ContentReferences(t.Context(), wantHash, 10, 0, store.ContentReferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, looseRefs, packedRefs)
 	versionStream, err := c.VersionContent(t.Context(), node.CurrentVersionID)
@@ -916,11 +916,11 @@ func TestContentIdentityAndVerificationRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, verified.Verified, "the same evidence contract reads packed authority")
 	assert.Equal(t, wantHash, verified.ComputedHash)
-	_, err = c.ContentReferences(t.Context(), "ABC", 10, 0)
+	_, err = c.ContentReferences(t.Context(), "ABC", 10, 0, store.ContentReferenceOptions{})
 	require.ErrorContains(t, err, "canonical lowercase SHA-256")
-	_, err = c.ContentReferences(t.Context(), wantHash, 0, 0)
+	_, err = c.ContentReferences(t.Context(), wantHash, 0, 0, store.ContentReferenceOptions{})
 	require.ErrorContains(t, err, "between 1 and 1000")
-	_, err = c.ContentReferences(t.Context(), wantHash, 1, -1)
+	_, err = c.ContentReferences(t.Context(), wantHash, 1, -1, store.ContentReferenceOptions{})
 	require.ErrorContains(t, err, "must not be negative")
 }
 
@@ -983,7 +983,7 @@ func TestContentReferencesRejectsInconsistentResponses(t *testing.T) {
 				}
 			}))
 			t.Cleanup(ts.Close)
-			_, err := daemonconn.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0, daemonconn.ContentReferenceOptions{LiveCurrent: true, Size: new(int64(3))})
+			_, err := daemonconn.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0, store.ContentReferenceOptions{LiveCurrent: true, Size: new(int64(3))})
 			require.ErrorContains(t, err, "content-reference response")
 		})
 	}

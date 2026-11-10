@@ -29,7 +29,7 @@ type ContentReferenceOptions struct {
 // content version is not a match. Live current references sort first, followed
 // by live history and then trashed references.
 func (s *Store) ContentReferencesByHash(
-	ctx context.Context, hash string, limit, offset int, options ...ContentReferenceOptions,
+	ctx context.Context, hash string, limit, offset int, filter ContentReferenceOptions,
 ) ([]ContentReference, int, error) {
 	if _, err := packstore.ParseHash(hash); err != nil {
 		return nil, 0, errors.New("content hash must be canonical lowercase SHA-256")
@@ -41,22 +41,13 @@ func (s *Store) ContentReferencesByHash(
 		return nil, 0, errors.New("content-reference offset must not be negative")
 	}
 
-	var filter ContentReferenceOptions
-	if len(options) > 1 {
-		return nil, 0, errors.New("expected at most one content-reference filter")
-	}
-	if len(options) == 1 {
-		filter = options[0]
-	}
 	if filter.Size != nil && *filter.Size < 0 {
 		return nil, 0, errors.New("content-reference size must not be negative")
 	}
 	where := "v.blob_hash = ?"
 	args := []any{hash}
-	ctes := ""
 	if filter.LiveCurrent {
-		ctes = CurrentContentMembershipCTE + ", "
-		where += " AND v.version_id IN (SELECT version_id FROM current_content_members)"
+		where += " AND n.kind = 'file' AND n.trashed_at IS NULL AND v.version_id = n.current_version_id"
 	}
 	if filter.Size != nil {
 		where += " AND v.size = ?"
@@ -68,7 +59,7 @@ func (s *Store) ContentReferencesByHash(
 	// trash-empty is observed entirely before or after the mutation. Select the
 	// page before loading full metadata, checksums, and live paths.
 	rows, err := s.db.QueryContext(ctx, `
-		WITH RECURSIVE `+ctes+`matching AS (
+		WITH RECURSIVE matching AS (
 			SELECT v.version_id, v.node_id, v.node_revision,
 			       n.trashed_at IS NOT NULL AS trashed_sort,
 			       v.version_id != n.current_version_id AS historical_sort

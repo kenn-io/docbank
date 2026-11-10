@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const maxReferencesLimit = 1000
@@ -43,7 +44,7 @@ var referencesCmd = &cobra.Command{
 			return err
 		}
 		page, err := c.ContentReferences(
-			cmd.Context(), args[0], referencesLimit, referencesOffset,
+			cmd.Context(), args[0], referencesLimit, referencesOffset, store.ContentReferenceOptions{},
 		)
 		if err != nil {
 			return err

@@ -1112,7 +1112,7 @@ func findDocumentsByHash(ctx context.Context, lease *daemonLease, raw []byte) (f
 	}
 	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.ContentReferencePage, error) {
 		return c.ContentReferences(ctx, input.SHA256, input.Limit, input.Offset,
-			daemonconn.ContentReferenceOptions{LiveCurrent: true, Size: input.Size})
+			store.ContentReferenceOptions{LiveCurrent: true, Size: input.Size})
 	})
 	if err != nil {
 		return findDocumentsByHashOutput{}, err
