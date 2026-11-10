@@ -731,7 +731,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText,
+		Processing: processingService, LocalText: localText, PDFText: pdfText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
 			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,

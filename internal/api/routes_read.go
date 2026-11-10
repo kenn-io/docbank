@@ -436,7 +436,14 @@ func registerReadRoutes(api huma.API, d Deps) {
 			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, ModifiedSince: since, ModifiedBefore: before})
 		opts.PDFFilter = in.PDFFilter
 		profile, noTextLayer := pdfSearchTextCoverage(d)
-		coverage, err := d.Store.SearchTextCoverage(ctx, opts, profile, noTextLayer)
+		var unqueuedPDF func(string, int64) bool
+		if d.PDFText != nil {
+			unqueuedPDF, err = d.PDFText.UnqueuedPending(ctx)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+		}
+		coverage, err := d.Store.SearchTextCoverage(ctx, opts, profile, noTextLayer, unqueuedPDF)
 		if err != nil {
 			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())

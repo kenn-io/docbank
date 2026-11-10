@@ -890,8 +890,9 @@ func getProcessingCoverageSchemas() (schema, schema) {
 	output := rootObjectSchema(withPrivateCache(schema{
 		"vault_id": uuidSchema(), "content_version_ids": arraySchema(uuidSchema(), 4096),
 		"profile_fingerprint": sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
-		"pages_without_text": arraySchema(objectSchema(schema{versionField: uuidSchema(), "pages": arraySchema(integerSchema(1, 0), 5000)}, versionField, "pages"), 4096),
-		"page_coverage":      enumSchema("partial", "unavailable"),
+		"pages_without_text":        arraySchema(objectSchema(schema{versionField: uuidSchema(), "pages": arraySchema(integerSchema(1, 0), 5000)}, versionField, "pages"), 4096),
+		"page_coverage":             enumSchema("partial", "unavailable"),
+		"page_coverage_unavailable": booleanSchema(),
 	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", schemaStateField, "coverage")...)
 	return input, output
 }

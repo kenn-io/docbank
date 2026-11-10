@@ -902,13 +902,14 @@ type coverageClassOutput struct {
 type processingCoverageOutput struct {
 	privateCache
 
-	VaultID            string                `json:"vault_id"`
-	ContentVersionIDs  []string              `json:"content_version_ids"`
-	ProfileFingerprint string                `json:"profile_fingerprint"`
-	State              string                `json:"state"`
-	Coverage           []coverageClassOutput `json:"coverage"`
-	PagesWithoutText   []api.PageTextGap     `json:"pages_without_text,omitempty"`
-	PageCoverage       string                `json:"page_coverage,omitempty"`
+	VaultID                 string                `json:"vault_id"`
+	ContentVersionIDs       []string              `json:"content_version_ids"`
+	ProfileFingerprint      string                `json:"profile_fingerprint"`
+	State                   string                `json:"state"`
+	Coverage                []coverageClassOutput `json:"coverage"`
+	PagesWithoutText        []api.PageTextGap     `json:"pages_without_text,omitempty"`
+	PageCoverage            string                `json:"page_coverage,omitempty"`
+	PageCoverageUnavailable bool                  `json:"page_coverage_unavailable,omitempty"`
 }
 
 func getProcessingCoverage(
@@ -940,9 +941,10 @@ func getProcessingCoverage(
 	output := processingCoverageOutput{VaultID: report.VaultUID,
 		ContentVersionIDs:  slices.Clone(input.ContentVersionIDs),
 		ProfileFingerprint: report.ProfileFingerprint, State: report.State,
-		PagesWithoutText: report.PagesWithoutText,
-		PageCoverage:     report.PageCoverage,
-		Coverage:         make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
+		PagesWithoutText:        report.PagesWithoutText,
+		PageCoverage:            report.PageCoverage,
+		PageCoverageUnavailable: report.PageCoverageUnavailable,
+		Coverage:                make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
 	for index, item := range classes {
 		output.Coverage[index] = coverageClassOutput{Name: item.Name, Required: item.Required,
 			State: item.State, Complete: item.Complete, Unavailable: item.Unavailable,

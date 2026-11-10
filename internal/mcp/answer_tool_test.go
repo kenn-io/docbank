@@ -442,3 +442,12 @@ func TestAnswerQuestionLargePartialCoverageKeepsPassage(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, size, maxToolResponseBytes)
 }
+
+func TestAnswerQuestionReportsPartialAndUnavailable(t *testing.T) {
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}, pageChunks: []api.CoverageReport{{PageCoverage: "partial", PageCoverageUnavailable: true}}}
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+	require.NoError(t, err)
+	require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
+	require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
+}

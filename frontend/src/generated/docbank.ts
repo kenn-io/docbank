@@ -1770,6 +1770,7 @@ export interface CoverageReport {
   readonly $schema?: string;
   embeddings: CoverageClass[];
   page_coverage?: CoverageReportPageCoverage;
+  page_coverage_unavailable?: boolean;
   pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;

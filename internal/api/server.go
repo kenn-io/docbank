@@ -80,6 +80,7 @@ type Deps struct {
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
+	PDFText               *processing.PDFTextRunner
 	RequestEmailPDF       func(context.Context, document.EmailPDFRequest) (document.EmailPDFJob, error)
 	PublishEmailDocuments PublishEmailDocumentsFunc
 
