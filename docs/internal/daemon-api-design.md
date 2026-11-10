@@ -653,7 +653,9 @@ the artifact hash identifies the exact verified retained transcript bytes.
 Providers may transform returned text while retaining the original artifact.
 Generated speech and timed captions use `media-transcript/v1`; untimed supplied
 text uses `supplied-transcript/v1` and also has an artifact hash when retained.
-Optional language comes only from a canonical `media-transcript/v1` artifact. Readers reject other saved transcript contracts and response versions.
+Optional language comes only from a canonical `media-transcript/v1` artifact.
+Unknown saved transcript contracts return unavailable evidence without text;
+readers reject unsupported response versions.
 Neither field is inferred from the sender or the filename.
 
 `speech_state: "complete"` means generated, nonempty, untruncated segment evidence with

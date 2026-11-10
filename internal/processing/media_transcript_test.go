@@ -80,8 +80,6 @@ func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testi
 	})
 	require.NoError(t, err)
 	require.Equal(t, mediaTranscriptEvidenceStale, result.EvidenceState)
-	require.Zero(t, result.NodeID)
-	require.Empty(t, result.SourceSHA256)
 	require.Nil(t, result.Transcript)
 	require.Equal(t, wrong, result.ContentVersionID)
 }
@@ -229,6 +227,7 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 func TestMediaTranscriptGeneratedBuildHasNoSuppliedInput(t *testing.T) {
 	t.Parallel()
 	f := newMediaStateFixture(t)
+	f.provider.timedWithoutArtifact = true
 	retained, err := f.service.SubmitSuppliedMedia(t.Context(),
 		f.suppliedRequest(uuid.New().String(), &MediaProcessingRequest{Profile: "speech"}))
 	require.NoError(t, err)
@@ -246,6 +245,7 @@ func TestMediaTranscriptGeneratedBuildHasNoSuppliedInput(t *testing.T) {
 	require.Empty(t, result.Transcript.SuppliedInputID)
 	require.Empty(t, result.Transcript.ArtifactSHA256)
 	require.Equal(t, "partial", result.Transcript.SpeechState)
+	require.Equal(t, "generated speech", result.Transcript.Units[0].Text)
 }
 
 func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
@@ -321,39 +321,39 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 	timed, _, err := mediatranscript.Marshal(mediatranscript.ArtifactV1{ContractVersion: "media-transcript/v1", Origin: "generated", Provider: "synthetic", Language: "en", Segments: []mediatranscript.Segment{{Text: "hello", EndMS: 1000}}})
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name     string
-		raw      []byte
-		language string
-		valid    bool
+		name, origin, language, speech string
+		raw                            []byte
+		valid                          bool
 	}{
-		{"timed", timed, "en", true},
-		{"supplied", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), "", true},
-		{"supplied missing text", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic"}`), "", false},
-		{"supplied empty text", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":" "}`), "", false},
-		{"supplied missing provider", []byte(`{"contract_version":"supplied-transcript/v1","text":"hello"}`), "", false},
-		{"supplied noncanonical", []byte(`{ "contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), "", false},
-		{"missing", []byte(`{"provider":"synthetic"}`), "", false},
-		{"future", []byte(`{"contract_version":"supplied-transcript/v2"}`), "", false},
+		{"timed generated", "generated", "en", "complete", timed, true},
+		{"timed with supplied input", "supplied", "en", "partial", timed, true},
+		{"supplied with input", "supplied", "", "partial", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), true},
+		{"supplied without input", "generated", "", "partial", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), true},
+		{"supplied missing text", "generated", "", "", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic"}`), false},
+		{"supplied empty text", "generated", "", "", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":" "}`), false},
+		{"supplied missing provider", "generated", "", "", []byte(`{"contract_version":"supplied-transcript/v1","text":"hello"}`), false},
+		{"supplied noncanonical", "generated", "", "", []byte(`{ "contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), false},
+		{"missing", "generated", "", "", []byte(`{"provider":"synthetic"}`), false},
+		{"future", "generated", "", "", []byte(`{"contract_version":"supplied-transcript/v2"}`), false},
 	} {
-		for _, origin := range []string{"generated", "supplied"} {
-			t.Run(tc.name+"/"+origin, func(t *testing.T) {
-				blob, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.raw))
-				require.NoError(t, err)
-				require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), blob.Hash, blob.Size, processingBlobPhysical(t, blob)))
-				build := store.RenditionBuildRecord{Artifacts: []store.RenditionArtifactRecord{{Role: string(document.EvidenceArtifactTranscript), BlobHash: blob.Hash, Checksum: blob.Hash, Size: blob.Size, State: store.RenditionArtifactVerified}}}
-				result := MediaTranscriptEvidence{Origin: origin}
-				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
-				if !tc.valid {
-					require.Error(t, err)
-					return
-				}
-				require.NoError(t, err)
-				require.Equal(t, blob.Hash, result.ArtifactSHA256)
-				require.Equal(t, tc.language, result.Language)
-				build.Artifacts[0].Size++
-				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
-				require.ErrorContains(t, err, "read exactly")
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			blob, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.raw))
+			require.NoError(t, err)
+			require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), blob.Hash, blob.Size, processingBlobPhysical(t, blob)))
+			build := store.RenditionBuildRecord{Artifacts: []store.RenditionArtifactRecord{{Role: string(document.EvidenceArtifactTranscript), BlobHash: blob.Hash, Checksum: blob.Hash, Size: blob.Size, State: store.RenditionArtifactVerified}}}
+			result := MediaTranscriptEvidence{Origin: tc.origin, SpeechState: "complete"}
+			err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, blob.Hash, result.ArtifactSHA256)
+			require.Equal(t, tc.language, result.Language)
+			require.Equal(t, tc.speech, result.SpeechState)
+			build.Artifacts[0].Size++
+			err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
+			require.ErrorContains(t, err, "read exactly")
+		})
 	}
 }

@@ -98,7 +98,7 @@ func (service *Service) MediaTranscript(
 		transcript.HasOmissions = transcript.HasOmissions || len(unit.Omissions) > 0
 	}
 	if err := service.mediaTranscriptArtifactIdentity(ctx, view.Build, &transcript); err != nil {
-		return result, err
+		return mediaTranscriptArtifactFailure(result, err)
 	}
 	result.EvidenceState, result.Transcript = mediaTranscriptEvidenceReady, &transcript
 	return result, nil

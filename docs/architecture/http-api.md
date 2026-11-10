@@ -468,7 +468,9 @@ The evidence checksum identifies the returned normalized text; a provider may
 transform that text while retaining the original transcript artifact.
 `artifact_sha256` identifies the exact bytes of any verified retained transcript
 artifact, including untimed `supplied-transcript/v1` artifacts. Optional
-`language` comes only from a canonical `media-transcript/v1` artifact. Readers reject other saved transcript contracts and response versions.
+`language` comes only from a canonical `media-transcript/v1` artifact. An unknown
+saved transcript contract returns `evidence_state: "unavailable"` without text.
+Readers reject unsupported response versions.
 Generated timed speech can report `speech_state: "complete"` while
 overall evidence remains partial because it omits non-speech sounds.
 Supplied-origin transcripts always report `speech_state: "partial"`, including

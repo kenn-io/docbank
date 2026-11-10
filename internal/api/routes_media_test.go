@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -191,11 +192,23 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ready", transcriptResult.EvidenceState)
 	require.NotNil(t, transcriptResult.Transcript)
+	active, err := catalog.ActiveRenditionByAttachment(t.Context(), waiter.AttachmentID)
+	require.NoError(t, err)
 	require.Equal(t, "media-transcript-read/v1", transcriptResult.ContractVersion)
-	require.NotEmpty(t, transcriptResult.NodeID)
-	require.Len(t, transcriptResult.SourceSHA256, 64)
-	require.Len(t, transcriptResult.Transcript.EvidenceChecksum, 64)
-	require.NotEmpty(t, transcriptResult.Transcript.ProfileFingerprint)
+	require.Equal(t, version.NodeID, transcriptResult.NodeID)
+	require.Equal(t, digest, transcriptResult.SourceSHA256)
+	require.Equal(t, active.Attachment.Profile.Fingerprint, transcriptResult.Transcript.ProfileFingerprint)
+	require.Equal(t, active.Build.EvidenceChecksum, transcriptResult.Transcript.EvidenceChecksum)
+	var transcriptHash string
+	for _, saved := range active.Build.Artifacts {
+		if saved.Role == string(document.EvidenceArtifactTranscript) {
+			transcriptHash = saved.Checksum
+		}
+	}
+	require.NotEmpty(t, transcriptHash)
+	require.Equal(t, transcriptHash, transcriptResult.Transcript.ArtifactSHA256)
+	require.Equal(t, "partial", transcriptResult.Transcript.SpeechState)
+	require.Empty(t, transcriptResult.Transcript.Language)
 	require.Equal(t, "supplied", transcriptResult.Transcript.Origin)
 	require.Equal(t, search.Results[0].Evidence[0].BuildID, transcriptResult.Transcript.BuildID)
 	require.Equal(t, artifact.SuppliedInputID, transcriptResult.Transcript.SuppliedInputID)

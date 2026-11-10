@@ -666,9 +666,6 @@ func TestExecutableProcessingProfilesRegistersDoclingM4A(t *testing.T) {
 	binding := cfg.RenditionProfiles["asr"]
 	resolved, err := configuredDoclingASRProfile(binding)
 	require.NoError(t, err)
-	digest := sha256.Sum256([]byte(strings.Join([]string{config.DoclingASRM4AAdapterContract, resolved.Descriptor.ID, resolved.Descriptor.Fingerprint, binding.Runtime.Endpoint, binding.DeploymentFingerprint}, "\x00")))
-	binding.DisclosureFingerprint = hex.EncodeToString(digest[:])
-	cfg.RenditionProfiles["asr"] = binding
 	require.NoError(t, cfg.Validate())
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.NoError(t, err)

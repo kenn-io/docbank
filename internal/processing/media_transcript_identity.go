@@ -11,6 +11,16 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+var errUnknownTranscriptContract = errors.New("saved transcript contract is unsupported")
+
+func mediaTranscriptArtifactFailure(result MediaTranscript, err error) (MediaTranscript, error) {
+	if errors.Is(err, errUnknownTranscriptContract) {
+		result.EvidenceState = mediaTranscriptEvidenceUnavailable
+		return result, nil
+	}
+	return result, err
+}
+
 // Speech completeness excludes only the explicitly documented non-speech field.
 // It does not upgrade the evidence's completeness or erase its omissions.
 func transcriptSpeechState(evidence document.NormalizedEvidenceV1, truncated bool) string {
@@ -73,7 +83,7 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 				transcript.SpeechState = statusPartial
 			}
 		default:
-			return errors.New("saved transcript is invalid")
+			return errUnknownTranscriptContract
 		}
 		return nil
 	}

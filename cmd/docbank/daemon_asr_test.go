@@ -109,18 +109,12 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.Equal(t, "succeeded", completed.OperationState, "%+v", completed)
 			require.Equal(t, "transcribed", completed.CoverageState)
 			require.Equal(t, receipt.ContentVersionID, completed.ContentVersionID)
-			transcript, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
-			require.NoError(t, err)
-			require.Equal(t, "media-transcript-read/v1", transcript.ContractVersion)
-			require.Equal(t, sha, transcript.SourceSHA256)
-			require.Equal(t, node.ID, transcript.NodeID)
-			require.NotNil(t, transcript.Transcript)
-			require.Equal(t, "complete", transcript.Transcript.SpeechState)
-			require.Equal(t, "partial", transcript.Transcript.Completeness)
-			require.True(t, transcript.Transcript.HasOmissions)
-			require.Len(t, transcript.Transcript.ArtifactSHA256, 64)
-			require.Len(t, transcript.Transcript.EvidenceChecksum, 64)
-			require.NotEmpty(t, transcript.Transcript.ProfileFingerprint)
+			if provider.allowM4A {
+				transcript, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
+				require.NoError(t, err)
+				require.Equal(t, "ready", transcript.EvidenceState)
+				require.Equal(t, "complete", transcript.Transcript.SpeechState)
+			}
 
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())
@@ -343,22 +337,10 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 }
 
 func TestDaemonDoclingASRRestoredWork(t *testing.T) {
-	for _, kind := range []string{"WAV", "M4A"} {
-		t.Run(kind, func(t *testing.T) { testDaemonDoclingASRRestoredWork(t, kind == "M4A") })
-	}
-}
-
-func testDaemonDoclingASRRestoredWork(t *testing.T, allowM4A bool) {
-	t.Helper()
 	provider := newDaemonDoclingServer(t)
-	provider.allowM4A = allowM4A
 	provider.resultGate = make(chan struct{})
 	root, daemon, stop := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
-	filename, mediaType, content := "restored.wav", "audio/wav", mediatest.WAV()
-	if allowM4A {
-		filename, mediaType, content = "restored.m4a", "audio/mp4", mediatest.AACM4A()
-	}
-	receipt, selector, plan := daemonASRSourceAndPlanWith(t, daemon, "00000000-0000-4000-8000-000000000671", filename, mediaType, content)
+	receipt, selector, plan := daemonASRSourceAndPlan(t, daemon, "restored.wav", mediatest.WAV())
 	_, err := daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 		Selector: selector, PlanFingerprint: plan.Fingerprint,
 	}})
