@@ -457,7 +457,9 @@ covers PDF, word-processing files (DOCX, DOC, ODT, RTF), and EPUB ebooks. Keys u
 `audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, `unknown`.
 Each value names a profile with an original-file rendition. Only the matching
 family's rendition is queued; unmapped families get baseline extraction only.
-Docling ASR reads only MP3 and WAV; M4A, MP4, and MOV files in `audio_video`
+The Docbank Docling document adapter accepts PDF, PPTX, XLSX, plain text,
+Markdown, PNG, and JPEG; other files in those families are ineligible.
+Docbank's Docling ASR adapter accepts only MP3 and WAV; M4A, MP4, and MOV files in `audio_video`
 are skipped as ineligible.
 No current automatic transcription adapter extracts MP4 audio. Photo descriptions
 and image embeddings continue to use vault-wide consent, independently of watches.

@@ -8227,7 +8227,9 @@ components:
           type: integer
         processing:
           $ref: "#/components/schemas/WatchProcessingStatus"
+          description: Status for the watch's single profile, when configured.
         processing_routes:
+          description: Status for each configured media-family route. A watch uses either processing or processing_routes.
           items:
             $ref: "#/components/schemas/WatchProcessingStatus"
           type: array
@@ -21922,6 +21924,7 @@ components:
         error:
           type: string
         media_family:
+          description: Media family for a route; omitted for a single profile.
           type: string
         profile:
           type: string
@@ -21955,7 +21958,9 @@ components:
           type: string
         processing:
           $ref: "#/components/schemas/WatchProcessingStatus"
+          description: Status for the watch's single profile, when configured.
         processing_routes:
+          description: Status for each configured media-family route. A watch uses either processing or processing_routes.
           items:
             $ref: "#/components/schemas/WatchProcessingStatus"
           type: array

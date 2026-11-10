@@ -823,9 +823,6 @@ func (c Config) Validate() error {
 			if !query.ValidMediaFamily(family) {
 				return fmt.Errorf("watch %q unknown media family %q", watch.Name, family)
 			}
-			if name == "" {
-				return fmt.Errorf("watch %q profile for %q must not be empty", watch.Name, family)
-			}
 			if err := c.validateWatchProfile(watch.Name, name); err != nil {
 				return err
 			}
