@@ -245,6 +245,9 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	var report api.CoverageReport
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	require.Equal(t, []api.PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: []int{2}}}, report.PagesWithoutText)
+	invalidCursor := base64.RawURLEncoding.EncodeToString([]byte(`{"offset":1}`))
+	resp, body = get(t, ts, coverageURL+"&cursor="+invalidCursor, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	request["profile"] = "archive"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -263,6 +266,13 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.Contains(t, body, `"state":"ready"`)
 	require.NotContains(t, body, `"pages_without_text"`)
+	require.Contains(t, body, `"page_coverage":"unavailable"`)
+	resp, body = get(t, ts, coverageURL, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"page_coverage":"unavailable"`)
+	resp, body = get(t, ts, "/api/v1/search/text-coverage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"pdf_page_coverage_unavailable":1`)
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {

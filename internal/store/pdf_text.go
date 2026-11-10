@@ -37,6 +37,10 @@ func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, 
 	return out, rows.Err()
 }
 
+func pdfOmissionCandidateSQL(d metadataJSONDialect, alias string) string {
+	return alias + ".unit_count < " + d.number(alias+".provider_receipt_json", "usage.units")
+}
+
 // PDFTextCandidate returns the active build only when its metadata records omitted pages.
 func (s *Store) PDFTextCandidate(ctx context.Context, version, profile string) (string, error) {
 	d := metadataJSONDialect{s.postgresSchema != ""}
@@ -46,7 +50,7 @@ func (s *Store) PDFTextCandidate(ctx context.Context, version, profile string) (
 		 AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		JOIN rendition_builds b ON b.build_id=a.build_id
 		WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2
-		 AND b.unit_count < `+d.number("b.provider_receipt_json", "usage.units"), version, profile).Scan(&buildID)
+		 AND `+pdfOmissionCandidateSQL(d, "b"), version, profile).Scan(&buildID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

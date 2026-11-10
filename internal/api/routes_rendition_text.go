@@ -67,6 +67,7 @@ type renditionTextReceipt struct {
 	BuildID          string                 `json:"build_id"`
 	Artifact         *renditionTextArtifact `json:"artifact,omitempty"`
 	PagesWithoutText []int                  `json:"pages_without_text,omitzero"`
+	PageCoverage     string                 `json:"page_coverage,omitempty" enum:"unavailable"`
 }
 
 func exactRenditionTextSource(ctx context.Context, d Deps, request renditionTextRequest) (store.ContentVersionView, error) {
@@ -147,6 +148,8 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		pages, coverageErr := d.Processing.PDFSourcePagesWithoutText(ctx, request.VersionID)
 		if coverageErr == nil {
 			receipt.PagesWithoutText = pages
+		} else {
+			receipt.PageCoverage = "unavailable"
 		}
 		if ctx.Err() != nil {
 			return renditionTextReceipt{}, ctx.Err()

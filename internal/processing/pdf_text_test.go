@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"strconv"
 	"testing"
 	"time"
@@ -106,19 +107,56 @@ func TestCoveragePageContinuesAndRejectsChangedManifest(t *testing.T) {
 	for i := range pages {
 		pages[i] = i + 1
 	}
-	report := Coverage{PagesWithoutText: []PageTextGap{{ContentVersionID: "version", Pages: pages}}}
-	first, cursor, err := coveragePage(report.PagesWithoutText, "scope", "manifest", "")
+	ids := []string{"version", "later"}
+	builds := map[string]string{"version": "build", "later": "later-build"}
+	reads := []string{}
+	read := func(_ context.Context, build string) ([]int, error) {
+		reads = append(reads, build)
+		if build == "build" {
+			return pages, nil
+		}
+		return []int{1}, nil
+	}
+	first, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
 	require.NoError(t, err)
 	require.Len(t, first[0].Pages, 8192)
+	require.Equal(t, []string{"build"}, reads)
 	require.NotEmpty(t, cursor)
-	last, next, err := coveragePage(report.PagesWithoutText, "scope", "manifest", cursor)
+	reads = nil
+	last, next, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
 	require.NoError(t, err)
 	require.Equal(t, pages[8192:], last[0].Pages)
+	require.Equal(t, []string{"build", "later-build"}, reads)
 	require.Empty(t, next)
-	_, _, err = coveragePage(report.PagesWithoutText, "scope", "changed", cursor)
+	_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "changed", cursor, read)
 	require.Error(t, err)
-	_, _, err = coveragePage(report.PagesWithoutText, "changed", "manifest", cursor)
+	_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "changed", "manifest", cursor, read)
 	require.Error(t, err)
+	for _, payload := range []string{`{"Offset":8192}`, `{"version":1,"scope":"scope","manifest":"manifest","index":0,"offset":1,"extra":true}`} {
+		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", base64.RawURLEncoding.EncodeToString([]byte(payload)), read)
+		require.Error(t, err)
+	}
+}
+
+func TestCoverageContinuationDoesNotReadEarlierBuilds(t *testing.T) {
+	ids := []string{"one", "two", "three"}
+	builds := map[string]string{"one": "first", "two": "second", "three": "third"}
+	pages := make([]int, 5000)
+	for i := range pages {
+		pages[i] = i + 1
+	}
+	var reads []string
+	read := func(_ context.Context, build string) ([]int, error) {
+		reads = append(reads, build)
+		return pages, nil
+	}
+	_, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
+	require.NoError(t, err)
+	require.Equal(t, []string{"first", "second"}, reads)
+	reads = nil
+	_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
+	require.NoError(t, err)
+	require.Equal(t, []string{"second", "third"}, reads)
 }
 
 func newPDFTextService(t *testing.T, fixture publicationFixture, profile ProfileConfig) *Service {

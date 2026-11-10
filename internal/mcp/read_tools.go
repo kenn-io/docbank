@@ -909,6 +909,7 @@ type processingCoverageOutput struct {
 	Coverage           []coverageClassOutput `json:"coverage"`
 	PagesWithoutText   []api.PageTextGap     `json:"pages_without_text,omitempty"`
 	NextCursor         string                `json:"next_cursor,omitempty"`
+	PageCoverage       string                `json:"page_coverage,omitempty"`
 }
 
 func getProcessingCoverage(
@@ -946,6 +947,7 @@ func getProcessingCoverage(
 		ProfileFingerprint: report.ProfileFingerprint, State: report.State,
 		PagesWithoutText: report.PagesWithoutText,
 		NextCursor:       report.NextCursor,
+		PageCoverage:     report.PageCoverage,
 		Coverage:         make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
 	for index, item := range classes {
 		output.Coverage[index] = coverageClassOutput{Name: item.Name, Required: item.Required,

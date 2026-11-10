@@ -333,6 +333,13 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "pages_without_text")
 	}
+	for _, chunk := range result.pageChunks {
+		if chunk.PageCoverage == "unavailable" {
+			out.CoverageComplete = false
+			out.CoverageReasons = append(out.CoverageReasons, "page_coverage_unavailable")
+			break
+		}
+	}
 	if result.report.Truncated {
 		out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
 	}
@@ -366,6 +373,16 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		return documentResourceLinks(result.fence.Fence.VaultUID, docs)
 	}
 	linkLimit := -1
+	pageListOversized := false
+	trimPages := func() {
+		retainedChunks--
+		for _, gap := range result.pageChunks[retainedChunks].PagesWithoutText {
+			out.PagesOmitted += len(gap.Pages)
+		}
+		out.PagesCursor = result.pageCursors[retainedChunks]
+		out.PagesFence = result.fence.Fence.ContentVersionIDs
+		out.PagesWithoutText = rangesFor(result.pageChunks[:retainedChunks])
+	}
 	for {
 		if (out.OmittedPassages > 0 || out.OmittedLeads > 0) && !slices.Contains(out.CoverageReasons, "retrieval_truncated") {
 			out.CoverageReasons = append(out.CoverageReasons, "retrieval_truncated")
@@ -422,6 +439,21 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if envelope <= maxToolResponseBytes-(4<<10) {
 			return out, links, nil
 		}
+		if retainedChunks > 1 {
+			pageOnly := out
+			pageOnly.Passages = nil
+			pageOnly.Leads = nil
+			pageOnly.Receipt.CitedVersions = nil
+			pageBytes, err := toolEnvelopeBytes(pageOnly, nil)
+			if err != nil {
+				return answerOutput{}, nil, err
+			}
+			pageListOversized = pageListOversized || pageBytes > maxToolResponseBytes-(4<<10)
+			if pageListOversized {
+				trimPages()
+				continue
+			}
+		}
 		if len(links) > 0 {
 			linkLimit = len(links) / 2
 			continue
@@ -441,13 +473,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			continue
 		}
 		if retainedChunks > 1 {
-			retainedChunks--
-			for _, gap := range result.pageChunks[retainedChunks].PagesWithoutText {
-				out.PagesOmitted += len(gap.Pages)
-			}
-			out.PagesCursor = result.pageCursors[retainedChunks]
-			out.PagesFence = result.fence.Fence.ContentVersionIDs
-			out.PagesWithoutText = rangesFor(result.pageChunks[:retainedChunks])
+			trimPages()
 			continue
 		}
 		return answerOutput{}, nil, fmt.Errorf("%w: answer receipt", errToolResultTooLarge)

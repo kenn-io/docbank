@@ -3389,6 +3389,10 @@ components:
           type: array
         next_cursor:
           type: string
+        page_coverage:
+          enum:
+            - unavailable
+          type: string
         pages_without_text:
           items:
             $ref: "#/components/schemas/PageTextGap"
@@ -18284,6 +18288,10 @@ components:
           type: string
         generation_id:
           type: string
+        page_coverage:
+          enum:
+            - unavailable
+          type: string
         pages_without_text:
           items:
             format: int64
@@ -19580,6 +19588,10 @@ components:
           format: int64
           minimum: 0
           type: integer
+        pdf_page_coverage_unavailable:
+          format: int64
+          minimum: 0
+          type: integer
         pdfs_without_text:
           format: int64
           minimum: 0
@@ -19595,6 +19607,7 @@ components:
         - pdfs_without_text
         - pages_without_text
         - other_without_text
+        - pdf_page_coverage_unavailable
       type: object
       x-go-type: api.SearchTextCoverage
       x-go-type-import:
