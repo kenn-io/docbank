@@ -1298,9 +1298,84 @@ func TestEmbeddedTimedTranscriptWithoutRetainedArtifact(t *testing.T) {
 	require.Equal(t, "needle first phrase", result.Transcript.Units[0].Text)
 }
 
+type alteredTranscriptProvider struct {
+	document.RenditionProvider
+
+	change string
+}
+
+func (provider alteredTranscriptProvider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+	result, err := provider.RenditionProvider.Render(ctx, upload, authorization)
+	if err == nil {
+		switch provider.change {
+		case "text":
+			result.Evidence.Units[0].Text = "different transcript"
+		case "time":
+			result.Evidence.Units[0].Locator.End++
+		case "partial":
+			result.Evidence.Units = result.Evidence.Units[:1]
+			result.Evidence.Units[0].Text = "needle first"
+			result.Receipt.Warnings = append(result.Receipt.Warnings, "partial_success")
+		case "split":
+			result.Evidence.Units[1] = result.Evidence.Units[0]
+			result.Evidence.Units[0].Text = "needle "
+			result.Evidence.Units[1].Order = 1
+			result.Evidence.Units[1].Text = "first phrase"
+			result.Receipt.Warnings = append(result.Receipt.Warnings, "partial_success")
+		}
+	}
+	return result, err
+}
+
+func TestEmbeddedTranscriptRejectsMismatchedArtifact(t *testing.T) {
+	t.Parallel()
+	supplied, err := suppliedtranscript.New(suppliedtranscript.Profile{
+		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("mismatched-media-source"), MaxDocumentChars: 1 << 20,
+	})
+	require.NoError(t, err)
+	for name, renderer := range map[string]alteredTranscriptProvider{
+		"timed text": {newTimedTranscriptRenditionProvider(t), "text"},
+		"timed span": {newTimedTranscriptRenditionProvider(t), "time"},
+		"supplied":   {supplied, "text"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := readEmbeddedTranscriptResult(t, renderer, true)
+			require.ErrorContains(t, err, "transcript artifact disagrees with evidence")
+		})
+	}
+}
+
+func TestEmbeddedPartialTranscriptMatchesRetainedArtifact(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"partial", "split"} {
+		t.Run(change, func(t *testing.T) {
+			renderer := alteredTranscriptProvider{newTimedTranscriptRenditionProvider(t), change}
+			result := testEmbeddedTranscriptRead(t, renderer, true)
+			require.Equal(t, "partial", result.Transcript.SpeechState)
+			if change == "partial" {
+				require.Len(t, result.Transcript.Units, 1)
+				require.Equal(t, "needle first", result.Transcript.Units[0].Text)
+			} else {
+				require.Len(t, result.Transcript.Units, 2)
+				require.Equal(t, "needle ", result.Transcript.Units[0].Text)
+				require.Equal(t, "first phrase", result.Transcript.Units[1].Text)
+			}
+		})
+	}
+}
+
 func testEmbeddedTranscriptRead(t *testing.T, renderer document.RenditionProvider, retainArtifact bool) docbank.MediaTranscript {
 	t.Helper()
+	result, err := readEmbeddedTranscriptResult(t, renderer, retainArtifact)
+	require.NoError(t, err)
+	require.Equal(t, "ready", result.EvidenceState)
+	return result
+}
+
+func readEmbeddedTranscriptResult(t *testing.T, renderer document.RenditionProvider, retainArtifact bool) (docbank.MediaTranscript, error) {
+	t.Helper()
 	var result docbank.MediaTranscript
+	var readErr error
 	synctest.Test(t, func(t *testing.T) {
 		profile := embeddedProcessingProfile(t, renderer.Descriptor())
 		profile.Rendition.Name = "large-transcript"
@@ -1337,11 +1412,9 @@ func testEmbeddedTranscriptRead(t *testing.T, renderer document.RenditionProvide
 			require.NoError(collect, statusErr)
 			require.Equal(collect, "completed", status.State, "%+v", status)
 		}, 2*time.Minute, 100*time.Millisecond)
-		result, err = vault.MediaTranscript(t.Context(), docbank.MediaTranscriptRequest{SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID})
-		require.NoError(t, err)
-		require.Equal(t, "ready", result.EvidenceState)
+		result, readErr = vault.MediaTranscript(t.Context(), docbank.MediaTranscriptRequest{SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID})
 	})
-	return result
+	return result, readErr
 }
 
 func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {

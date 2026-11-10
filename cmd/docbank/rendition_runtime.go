@@ -283,10 +283,11 @@ func configuredDoclingTransportProfile(configured config.RenditionProfileConfig,
 
 func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docling.ASRProfile, error) {
 	allowM4A := configured.AdapterContract == config.DoclingASRM4AAdapterContract
-	policyFingerprint, err := docling.ASRPolicyFingerprint(configured.MaxTranscriptChars)
+	fingerprint := docling.ASRPolicyFingerprint
 	if allowM4A {
-		policyFingerprint, err = docling.ASRM4APolicyFingerprint(configured.MaxTranscriptChars)
+		fingerprint = docling.ASRM4APolicyFingerprint
 	}
+	policyFingerprint, err := fingerprint(configured.MaxTranscriptChars)
 	if err != nil {
 		return docling.ASRProfile{}, err
 	}

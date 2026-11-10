@@ -816,8 +816,9 @@ The earlier WAV/MP3 qualification used Docling Serve 1.32.0, Docling 2.124.0,
 and Docling Core 2.93.0. That Core version rejects M4A MIME metadata. A v2
 M4A deployment requires an audio decoder such as FFmpeg and must be qualified
 with synthetic speech before it receives real recordings. A local Docling Serve
-1.32.0 deployment using Docling Core 2.105.0 returned one timed segment for
-synthetic AAC/M4A speech; the [qualification record](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-qualification.json) lists its dependencies and result.
+1.32.0 deployment using Docling Core 2.105.0 returned one timed segment each for
+synthetic [AAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-qualification.json)
+and [ALAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-alac-qualification.json) speech.
 
 The adapter requests `from_formats=audio`, JSON output, and in-body results;
 it accepts only timed tracks in document schema 1.10.0. It does not select or
