@@ -42,6 +42,7 @@ type ProcessingCoverageSnapshot struct {
 	Renditions      ProcessingClassCoverage
 	Embeddings      []ProcessingClassCoverage
 	RenditionBuilds map[string]string
+	BuildManifest   map[string]string
 }
 
 // ProcessingCoverage evaluates source visibility, retained heads and replacement
@@ -84,6 +85,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT cv.version_id, COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
+		COALESCE(b.unit_count < `+d.number("b.provider_receipt_json", "usage.units")+`, false),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=$1 AND w.state='waiting'
@@ -91,6 +93,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=$1
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		LEFT JOIN rendition_builds b ON b.build_id=a.build_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)`,
 		scope.ProcessingProfileFingerprint, string(versionsJSON))
 	if err != nil {
@@ -103,12 +106,13 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	type renditionHead struct {
 		versionID, attachmentID string
 		rebuilding              bool
+		pdfCandidate            bool
 		key                     renditionValidationKey
 	}
 	heads := make([]renditionHead, 0, len(opts.ContentVersionIDs))
 	for rows.Next() {
 		var head renditionHead
-		if err := rows.Scan(&head.versionID, &head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
+		if err := rows.Scan(&head.versionID, &head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.pdfCandidate, &head.rebuilding); err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
 		heads = append(heads, head)
@@ -121,6 +125,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	// this read snapshot. Keep counting each version's state independently.
 	validated := make(map[renditionValidationKey]bool)
 	result.RenditionBuilds = make(map[string]string)
+	result.BuildManifest = make(map[string]string)
 	for _, head := range heads {
 		complete := validated[head.key]
 		if !complete {
@@ -133,7 +138,10 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			}
 		}
 		if complete {
-			result.RenditionBuilds[head.versionID] = head.key.buildID
+			result.BuildManifest[head.versionID] = head.key.buildID
+			if head.pdfCandidate {
+				result.RenditionBuilds[head.versionID] = head.key.buildID
+			}
 		}
 		countProcessingCoverage(&result.Renditions, complete, head.rebuilding)
 	}

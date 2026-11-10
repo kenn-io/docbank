@@ -459,7 +459,7 @@ winner.
 
 ### Answer questions
 
-`answer_question` reports `pages_without_text` for PDFs in the resolved scope, including documents absent from search results. Such gaps make coverage incomplete. See [OCR](document-processing.md#ocr) for options.
+`answer_question` reports `pages_without_text` as inclusive page ranges for PDFs in the resolved scope, including documents absent from search results. Such gaps make coverage incomplete. See [OCR](document-processing.md#ocr) for options. If the response includes `pages_without_text_cursor`, call `get_processing_coverage` with that cursor, profile `docbank-pdf-text`, the receipt's vault ID, and `pages_without_text_content_version_ids`. Continue with each `next_cursor` until it is absent. The cursor expires if the source fence or builds change.
 
 `answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the

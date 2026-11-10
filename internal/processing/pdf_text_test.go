@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -55,6 +56,15 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			pending, err = restarted.Pending(t.Context())
 			require.NoError(t, err)
 			require.False(t, pending)
+			if test.name == "born" {
+				reads := 0
+				_, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, func(context.Context, string) ([]int, error) {
+					reads++
+					return nil, nil
+				})
+				require.NoError(t, err)
+				require.Zero(t, reads)
+			}
 			if test.name != "born" {
 				pages, err := service.PDFPagesWithoutText(t.Context(), view.Rendition.Build.ID)
 				require.NoError(t, err)
@@ -75,9 +85,40 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 					wantPages = 1
 				}
 				require.Equal(t, wantPages, coverage.PagesWithoutText)
+				if test.name == "mixed" {
+					for _, artifact := range view.Rendition.Build.Artifacts {
+						if artifact.Role == "normalized_evidence" {
+							require.NoError(t, fixture.blobs.Remove(artifact.BlobHash))
+						}
+					}
+					corruptReport, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
+					require.NoError(t, err)
+					require.Equal(t, report.Renditions, corruptReport.Renditions)
+					require.Empty(t, corruptReport.PagesWithoutText)
+				}
 			}
 		})
 	}
+}
+
+func TestCoveragePageContinuesAndRejectsChangedManifest(t *testing.T) {
+	pages := make([]int, 9000)
+	for i := range pages {
+		pages[i] = i + 1
+	}
+	report := Coverage{PagesWithoutText: []PageTextGap{{ContentVersionID: "version", Pages: pages}}}
+	first, cursor, err := coveragePage(report.PagesWithoutText, "scope", "manifest", "")
+	require.NoError(t, err)
+	require.Len(t, first[0].Pages, 8192)
+	require.NotEmpty(t, cursor)
+	last, next, err := coveragePage(report.PagesWithoutText, "scope", "manifest", cursor)
+	require.NoError(t, err)
+	require.Equal(t, pages[8192:], last[0].Pages)
+	require.Empty(t, next)
+	_, _, err = coveragePage(report.PagesWithoutText, "scope", "changed", cursor)
+	require.Error(t, err)
+	_, _, err = coveragePage(report.PagesWithoutText, "changed", "manifest", cursor)
+	require.Error(t, err)
 }
 
 func newPDFTextService(t *testing.T, fixture publicationFixture, profile ProfileConfig) *Service {

@@ -59,7 +59,7 @@ func TestSearchTextCoverage(t *testing.T) {
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: failed.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionFailed, Error: "invalid UTF-8"}))
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, "", nil)
 	require.NoError(t, err)
-	require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"office"}}, got)
+	require.Equal(t, SearchTextCoverage{NoText: 1, OtherWithoutText: 1, Families: []string{"office"}}, got)
 	t.Run("blank_segments", func(t *testing.T) {
 		t.Parallel()
 		s, _, pdfs, profile := collectionCoverageFixture(t, 1)

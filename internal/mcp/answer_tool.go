@@ -70,8 +70,16 @@ type answerReceipt struct {
 	Reranking           *api.DocumentSearchRerankingReceipt `json:"reranking,omitempty"`
 	CitedVersions       []answerCitation                    `json:"cited_versions"`
 }
+type answerPageGap struct {
+	ContentVersionID string   `json:"content_version_id"`
+	Pages            [][2]int `json:"pages"`
+}
+
 type answerOutput struct {
-	PagesWithoutText []api.PageTextGap `json:"pages_without_text,omitempty"`
+	PagesWithoutText []answerPageGap `json:"pages_without_text,omitempty"`
+	PagesOmitted     int             `json:"pages_without_text_omitted,omitempty"`
+	PagesCursor      string          `json:"pages_without_text_cursor,omitempty"`
+	PagesFence       []string        `json:"pages_without_text_content_version_ids,omitempty"`
 	privateCache
 
 	Status           answer.Status    `json:"status"`
@@ -89,7 +97,7 @@ type answerOutput struct {
 
 type answerClient interface {
 	documentClient
-	GetPDFPageCoverage(context.Context, api.DocumentSourceFence) (api.CoverageReport, error)
+	GetPDFPageCoverage(context.Context, api.DocumentSourceFence, string) (api.CoverageReport, error)
 }
 
 type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
@@ -98,12 +106,16 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
 }
 
-func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
+func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence, cursor string) (api.CoverageReport, error) {
 	vaultID, err := uuid.Parse(fence.VaultUID)
 	if err != nil {
 		return api.CoverageReport{}, err
 	}
-	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}})
+	query := &apiclient.GetDocumentProcessingCoverageQuery{Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}
+	if cursor != "" {
+		query.Cursor = &cursor
+	}
+	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: query})
 	if err != nil {
 		return api.CoverageReport{}, err
 	}
@@ -180,14 +192,15 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 	hash := sha256.Sum256([]byte(input.Question))
 	out := answerOutput{privateCache: newPrivateCache(), CoverageReasons: []string{}, Passages: []answer.Passage{}, Leads: []answer.Lead{}, Receipt: answerReceipt{QuestionSHA256: hex.EncodeToString(hash[:]), VectorSpaceIDs: []string{}, Degradations: []string{}, CitedVersions: []answerCitation{}}}
 	type response struct {
-		fence     api.DocumentSourceFenceResolution
-		profile   api.ProcessingProfileSummary
-		binding   string
-		report    api.DocumentSearchReport
-		failure   string
-		executed  bool
-		documents []api.DocumentSummary
-		pageGaps  []api.PageTextGap
+		fence       api.DocumentSourceFenceResolution
+		profile     api.ProcessingProfileSummary
+		binding     string
+		report      api.DocumentSearchReport
+		failure     string
+		executed    bool
+		documents   []api.DocumentSummary
+		pageChunks  []api.CoverageReport
+		pageCursors []string
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
 		filters := input.Filters
@@ -198,13 +211,22 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		var pageGaps []api.PageTextGap
+		var pageChunks []api.CoverageReport
+		var pageCursors []string
 		if len(fence.Fence.ContentVersionIDs) > 0 {
-			coverage, err := c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs})
-			if err != nil {
-				return response{}, err
+			cursor := ""
+			for {
+				coverage, err := c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}, cursor)
+				if err != nil {
+					return response{}, err
+				}
+				pageChunks = append(pageChunks, coverage)
+				pageCursors = append(pageCursors, cursor)
+				if coverage.NextCursor == "" {
+					break
+				}
+				cursor = coverage.NextCursor
 			}
-			pageGaps = coverage.PagesWithoutText
 		}
 		profiles, err := c.ListDocumentProcessingProfiles(ctx)
 		if err != nil {
@@ -239,7 +261,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs, pageGaps: pageGaps}, nil
+		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs, pageChunks: pageChunks, pageCursors: pageCursors}, nil
 	})
 	if err != nil {
 		if code, count := stableDomainError(err); code == "scope_too_large" {
@@ -250,7 +272,29 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		return answerOutput{}, nil, err
 	}
-	out.PagesWithoutText = result.pageGaps
+	rangesFor := func(chunks []api.CoverageReport) []answerPageGap {
+		var ranges []answerPageGap
+		for _, chunk := range chunks {
+			for _, gap := range chunk.PagesWithoutText {
+				item := answerPageGap{ContentVersionID: gap.ContentVersionID}
+				if len(ranges) > 0 && ranges[len(ranges)-1].ContentVersionID == gap.ContentVersionID {
+					item = ranges[len(ranges)-1]
+					ranges = ranges[:len(ranges)-1]
+				}
+				for _, page := range gap.Pages {
+					if len(item.Pages) > 0 && item.Pages[len(item.Pages)-1][1]+1 == page {
+						item.Pages[len(item.Pages)-1][1] = page
+					} else {
+						item.Pages = append(item.Pages, [2]int{page, page})
+					}
+				}
+				ranges = append(ranges, item)
+			}
+		}
+		return ranges
+	}
+	retainedChunks := len(result.pageChunks)
+	out.PagesWithoutText = rangesFor(result.pageChunks)
 	out.Receipt.ObservedScopeCount = result.fence.ObservedScopeCount
 	out.Receipt.VaultID = result.fence.Fence.VaultUID
 	out.Receipt.FenceFingerprint = result.fence.FenceFingerprint
@@ -394,6 +438,16 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			out.Passages = out.Passages[:len(out.Passages)-1]
 			out.OmittedPassages++
 			linkLimit = -1
+			continue
+		}
+		if retainedChunks > 1 {
+			retainedChunks--
+			for _, gap := range result.pageChunks[retainedChunks].PagesWithoutText {
+				out.PagesOmitted += len(gap.Pages)
+			}
+			out.PagesCursor = result.pageCursors[retainedChunks]
+			out.PagesFence = result.fence.Fence.ContentVersionIDs
+			out.PagesWithoutText = rangesFor(result.pageChunks[:retainedChunks])
 			continue
 		}
 		return answerOutput{}, nil, fmt.Errorf("%w: answer receipt", errToolResultTooLarge)

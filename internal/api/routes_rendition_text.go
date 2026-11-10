@@ -143,6 +143,15 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		BlobHash: sourceView.Version.BlobHash, Size: sourceView.Version.Size,
 		MediaType: sourceView.Version.MimeType}, Profile: profile,
 		GenerationID: binding.GenerationID, AttachmentID: binding.AttachmentID, BuildID: binding.BuildID}
+	if d.Processing != nil {
+		pages, coverageErr := d.Processing.PDFSourcePagesWithoutText(ctx, request.VersionID)
+		if coverageErr == nil {
+			receipt.PagesWithoutText = pages
+		}
+		if ctx.Err() != nil {
+			return renditionTextReceipt{}, ctx.Err()
+		}
+	}
 	if profile.Configuration != "configured" {
 		receipt.State = profile.Configuration
 		return receipt, nil
@@ -172,12 +181,6 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	receipt.GenerationID = binding.GenerationID
 	receipt.AttachmentID = view.Rendition.Attachment.ID
 	receipt.BuildID = view.Rendition.Build.ID
-	if d.Processing != nil {
-		receipt.PagesWithoutText, err = d.Processing.PDFPagesWithoutText(ctx, receipt.BuildID)
-		if err != nil {
-			return renditionTextReceipt{}, FromStoreError(err)
-		}
-	}
 	if view.Empty {
 		receipt.State = "verified_empty"
 		return receipt, nil

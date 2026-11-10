@@ -64,6 +64,20 @@ func runProcessingCoverage(cmd *cobra.Command, c *daemonconn.Connection,
 	if coverage == nil || coverage.VaultUID != vaultID.String() {
 		return errors.New("coverage response does not match the connected vault")
 	}
+	for coverage.NextCursor != "" {
+		cursor := coverage.NextCursor
+		next, err := c.API().GetDocumentProcessingCoverage(cmd.Context(), &apiclient.GetDocumentProcessingCoverageRequestOptions{
+			Query: &apiclient.GetDocumentProcessingCoverageQuery{Profile: profile, VaultUID: vaultID, ContentVersionID: []string{version}, Cursor: &cursor},
+		})
+		if err != nil {
+			return err
+		}
+		if next == nil || next.VaultUID != vaultID.String() {
+			return errors.New("coverage response does not match the connected vault")
+		}
+		coverage.PagesWithoutText = append(coverage.PagesWithoutText, next.PagesWithoutText...)
+		coverage.NextCursor = next.NextCursor
+	}
 	if asJSON {
 		id, err := uuid.Parse(version)
 		if err != nil {

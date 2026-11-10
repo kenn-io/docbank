@@ -367,16 +367,24 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Profile           string   `query:"profile" required:"true" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 		VaultUID          string   `query:"vault_uid" required:"true" format:"uuid"`
 		ContentVersionIDs []string `query:"content_version_id,explode" required:"true" minItems:"1" maxItems:"4096"`
+		Cursor            string   `query:"cursor" maxLength:"2048"`
 	}) (*coverageOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		report, err := d.Processing.Coverage(ctx, input.Profile, processing.SourceFence{
-			VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs})
+		fence := processing.SourceFence{VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs}
+		report, err := d.Processing.Coverage(ctx, input.Profile, fence)
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
-		return &coverageOutput{Body: fromProcessingCoverage(report)}, nil
+		pages, cursor, err := processing.CoveragePage(report, fence, input.Cursor)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_cursor", "The coverage cursor is invalid or stale.")
+		}
+		report.PagesWithoutText = pages
+		body := fromProcessingCoverage(report)
+		body.NextCursor = cursor
+		return &coverageOutput{Body: body}, nil
 	})
 
 	type searchInput struct{ Body DocumentSearchRequest }

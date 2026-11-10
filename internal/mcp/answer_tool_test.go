@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -53,6 +54,7 @@ type answerFakeClient struct {
 	documents     []api.DocumentSummary
 	fenceVersions []string
 	pageGaps      []api.PageTextGap
+	pageChunks    []api.CoverageReport
 	coverageFence api.DocumentSourceFence
 	empty         bool
 	validations   int
@@ -64,8 +66,15 @@ func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]ap
 	}
 	return []api.ProcessingProfileSummary{{Name: "default", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}}, nil
 }
-func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
+func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence, cursor string) (api.CoverageReport, error) {
 	f.coverageFence = fence
+	if len(f.pageChunks) > 0 {
+		index := 0
+		if cursor != "" {
+			index, _ = strconv.Atoi(cursor)
+		}
+		return f.pageChunks[index], nil
+	}
 	return api.CoverageReport{PagesWithoutText: f.pageGaps}, nil
 }
 
@@ -77,9 +86,65 @@ func TestAnswerQuestionReportsPagesOutsideSearchResults(t *testing.T) {
 	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
 	require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
-	require.Equal(t, f.pageGaps, out.PagesWithoutText)
+	require.Equal(t, []answerPageGap{{ContentVersionID: version, Pages: [][2]int{{2, 3}}}}, out.PagesWithoutText)
 	require.Contains(t, out.CoverageReasons, "pages_without_text")
 	require.Equal(t, answer.IncompleteCoverage, out.Status)
+}
+
+func TestAnswerQuestionCompressesLongPageRuns(t *testing.T) {
+	pages := make([]int, 5000)
+	for i := range pages {
+		pages[i] = i + 1
+	}
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 50, CompleteDocuments: 50}}}
+	for i := 0; i < 50; i++ {
+		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+		f.fenceVersions = append(f.fenceVersions, version)
+		f.pageGaps = append(f.pageGaps, api.PageTextGap{ContentVersionID: version, Pages: pages})
+	}
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+	require.NoError(t, err)
+	require.Len(t, out.PagesWithoutText, 50)
+	for _, gap := range out.PagesWithoutText {
+		require.Equal(t, [][2]int{{1, 5000}}, gap.Pages)
+	}
+	size, err := toolEnvelopeBytes(out, links)
+	require.NoError(t, err)
+	require.Less(t, size, maxToolResponseBytes)
+}
+
+func TestAnswerQuestionContinuesFragmentedPageLists(t *testing.T) {
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
+	for i := 0; i < 100; i++ {
+		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+		f.fenceVersions = append(f.fenceVersions, version)
+		pages := make([]int, 2500)
+		for n := range pages {
+			pages[n] = n*2 + 1
+		}
+		chunk := api.CoverageReport{PagesWithoutText: []api.PageTextGap{{ContentVersionID: version, Pages: pages}}}
+		if i < 99 {
+			chunk.NextCursor = strconv.Itoa(i + 1)
+		}
+		f.pageChunks = append(f.pageChunks, chunk)
+	}
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+	require.NoError(t, err)
+	require.NotEmpty(t, out.PagesCursor)
+	size, err := toolEnvelopeBytes(out, links)
+	require.NoError(t, err)
+	require.LessOrEqual(t, size, maxToolResponseBytes)
+	retained := 0
+	for _, gap := range out.PagesWithoutText {
+		retained += len(gap.Pages)
+	}
+	index, err := strconv.Atoi(out.PagesCursor)
+	require.NoError(t, err)
+	require.Equal(t, 250000-retained, out.PagesOmitted)
+	require.Equal(t, 100-index, out.PagesOmitted/2500)
+	require.Equal(t, f.fenceVersions, out.PagesFence)
 }
 
 func (f *answerFakeClient) ResolveDocumentSourceFence(context.Context, api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error) {
