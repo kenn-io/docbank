@@ -159,7 +159,7 @@ func newCaptionFixture(
 		MaxCells: 10_000_000, MaxSpineItems: 100_000, MaxResources: 1_000_000,
 		MaxPixels: 1920 * 1088, MaxFrames: 18_000, MaxDurationMS: 300_000,
 	}
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
 	proof := record.UploadCapability()

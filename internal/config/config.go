@@ -60,11 +60,12 @@ type ServerConfig struct {
 	BindAddr     string   `toml:"bind_addr"`     // default "127.0.0.1"
 	APIPort      int      `toml:"api_port"`      // default 0 (ephemeral)
 	APIKey       string   `toml:"api_key"`       // default "" (ephemeral per-run key on loopback)
-	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; background daemons only
+	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; automatically started daemons only
 }
 
 // WebConfig controls the built-in web UI.
 type WebConfig struct {
+	BasePath            string         `toml:"base_path"`
 	Enabled             bool           `toml:"enabled"` // default true
 	PublicOrigin        string         `toml:"public_origin"`
 	AllowedHosts        []string       `toml:"allowed_hosts"`
@@ -205,6 +206,7 @@ type StoreBindingConfig struct {
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
 	Profile         string   `toml:"profile"`
+	Tags            []string `toml:"tags"`
 	CaptureOnChange bool     `toml:"capture_on_change"`
 	Name            string   `toml:"name"`
 	Source          string   `toml:"source"`
@@ -278,6 +280,9 @@ type ProviderEgressConfig struct {
 
 type EmbeddingRuntimeConfig struct {
 	ProviderEgressConfig
+
+	Managed    bool   `toml:"-"`
+	ServerMode string `toml:"-"`
 
 	AdapterContract        string   `toml:"adapter_contract"`
 	ModelRevision          string   `toml:"model_revision"`
@@ -440,6 +445,8 @@ type Config struct {
 	RetrievalProfiles  map[string]RetrievalProfileConfig  `toml:"retrieval_profiles"`
 	ProcessingProfiles map[string]ProcessingProfileConfig `toml:"processing_profiles"`
 	Watches            []WatchConfig                      `toml:"watch"`
+
+	EffectiveProfiles map[string]ResolvedProcessingProfile `toml:"-"`
 }
 
 // Default returns the configuration used when config.toml is absent.
@@ -1376,9 +1383,17 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 			runtime.AdapterContract != "docbank-standard-embedding-bridge/v2" {
 			return fmt.Errorf("%s runtime adapter_contract is unsupported", prefix)
 		}
-		parsed, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
-		if err != nil {
-			return err
+		parsed := new(url.URL)
+		if ManagedEmbedding(profile) {
+			if _, err := ManagedEmbeddingProfile(profile, nil); err != nil {
+				return fmt.Errorf("%s: %w", prefix, err)
+			}
+		} else {
+			var err error
+			parsed, err = validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
+			if err != nil {
+				return err
+			}
 		}
 		if runtime.ModelRevision == "" || runtime.ModelRevision != strings.TrimSpace(runtime.ModelRevision) {
 			return fmt.Errorf("%s runtime model_revision is required", prefix)
@@ -1440,6 +1455,9 @@ func (c Config) EmbeddingModelInput(name string) (document.ModelInputContract, e
 // ProcessingProfile assembles one named portable profile and its deployment
 // retrieval policy without resolving credential references or contacting providers.
 func (c Config) ProcessingProfile(name string) (ResolvedProcessingProfile, error) {
+	if profile, ok := c.EffectiveProfiles[name]; ok {
+		return profile, nil
+	}
 	profile, err := c.assembleProcessingProfile(name)
 	if err != nil {
 		return ResolvedProcessingProfile{}, err

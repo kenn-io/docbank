@@ -63,10 +63,43 @@ func photoXMPRequired(expression *query.Expression) bool {
 	}
 }
 
-func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+func (c queryCompiler) compilePhotoMetadataPredicate(headsFirst bool, predicate string, args ...any) compiledQueryFragment {
+	if c.photoDisplayMetadata && c.photoMetadataSet {
+		metadata := `photo_technical_metadata p
+ CROSS JOIN source_metadata_heads h ON h.generation_id=p.generation_id`
+		if headsFirst {
+			metadata = `source_metadata_heads h
+ CROSS JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+		}
+		// Like xmp, match assets once, then expand them to their members.
+		return compiledQueryFragment{sql: `n.id IN (WITH m AS MATERIALIZED (
+ SELECT asset.asset_id FROM ` + metadata + `
+ CROSS JOIN content_versions v ON v.blob_hash=h.source_sha256
+ CROSS JOIN nodes dn ON dn.id=v.node_id AND dn.current_version_id=v.version_id
+ CROSS JOIN photo_files display ON display.node_id=dn.id
+ CROSS JOIN photo_assets asset ON asset.asset_id=display.asset_id AND asset.display_file_id=display.file_id
+ WHERE ` + predicate + `)
+ SELECT member.node_id FROM m CROSS JOIN photo_files member ON member.asset_id=m.asset_id)`, args: args}
+	}
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
 	}, args...)
+}
+
+type photoMetadataDensityError struct{ error }
+
+func (err photoMetadataDensityError) Unwrap() error { return err.error }
+
+func (c queryCompiler) compilePhotoTextMetadataPredicate(value, predicate string, args ...any) (compiledQueryFragment, error) {
+	headsFirst := false
+	if c.photoMetadataDensity != nil {
+		var err error
+		headsFirst, err = c.photoMetadataDensity(value)
+		if err != nil {
+			return compiledQueryFragment{}, photoMetadataDensityError{err}
+		}
+	}
+	return c.compilePhotoMetadataPredicate(headsFirst, predicate, args...), nil
 }
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
@@ -135,13 +168,13 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return c.compilePhotoMetadataPredicate(`p.location_label=?`, value), nil
+		return c.compilePhotoTextMetadataPredicate(value, `p.location_label=?`, value)
 	case compiledCameraField, compiledLensField:
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
 		folded := cases.Fold().String(value)
-		return c.compilePhotoMetadataPredicate(`(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, folded, folded), nil
+		return c.compilePhotoTextMetadataPredicate(value, `(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, folded, folded)
 	case "iso", "iso_min", "iso_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil {
@@ -154,7 +187,7 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if field == "iso_max" {
 			operator = "<="
 		}
-		return c.compilePhotoMetadataPredicate(`p.iso `+operator+` ?`, n), nil
+		return c.compilePhotoMetadataPredicate(false, `p.iso `+operator+` ?`, n), nil
 	case "capture_after", "capture_before":
 		_, err := query.CaptureDateKey(value)
 		if err != nil {
@@ -170,9 +203,7 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		// photo_technical_metadata join on the version's blob_hash, and photo_technical_metadata only ever sets
 		// capture_date alongside a non-empty capture_sort_key, so a placed file's EXIF day already equals pl.day.
 		return c.compilePhotoVersionPredicate(func(alias string) string {
-			timeline := `SELECT 1 FROM photo_files tf JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id`
-			return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ?) OR EXISTS (` +
-				`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ?))`
+			return photoCaptureDatePredicate(alias, operator, "?")
 		}, value, value), nil
 	case "gps":
 		bounds, err := query.ParseGPSOperand(value)
@@ -194,7 +225,7 @@ func (c queryCompiler) compilePhotoGPSPredicate(bounds query.GPSBounds) compiled
 	if west > east {
 		operator = ` OR `
 	}
-	return c.compilePhotoMetadataPredicate(`p.latitude>=? AND p.latitude<=? AND (p.longitude>=?`+operator+`p.longitude<=?)`, south, north, west, east)
+	return c.compilePhotoMetadataPredicate(false, `p.latitude>=? AND p.latitude<=? AND (p.longitude>=?`+operator+`p.longitude<=?)`, south, north, west, east)
 }
 
 func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
@@ -301,4 +332,12 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return quality(alias) + ` AND q.` + column + operator + ` ?)`
 	}, args...), nil
+}
+
+// photoCaptureDatePredicate keeps checkout year selection and photo queries on
+// the same timeline/source-metadata date rule. The parameter may occur twice.
+func photoCaptureDatePredicate(alias, operator, parameter string) string {
+	timeline := `SELECT 1 FROM photo_files tf JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id`
+	return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ` + parameter + `) OR EXISTS (` +
+		`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ` + parameter + `))`
 }

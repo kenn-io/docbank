@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -32,7 +30,8 @@ import (
 
 func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	var worker renditionTestWorker
+	ts, catalog := newTestServer(t, configureMediaTestServiceWith(t, mediaTestOptions{Worker: &worker}))
 	unauthorized, body := get(t, ts, "/api/v1/media/sources?limit=10",
 		map[string]string{"X-Api-Key": ""})
 	require.Equal(t, 401, unauthorized.StatusCode, body)
@@ -136,11 +135,11 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, queued.JobID)
 	require.Equal(t, "queued", queued.OperationState)
-	require.Eventually(t, func() bool {
-		status, statusErr := c.MediaStatus(t.Context(), receipt.SourceID)
-		return statusErr == nil && status.OperationID == queued.OperationID &&
-			status.OperationState == "succeeded" && status.CoverageState == "transcribed"
-	}, 30*time.Second, 20*time.Millisecond)
+	worker.runQueued(t)
+	processed, err := c.MediaStatus(t.Context(), receipt.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, queued.OperationID, processed.OperationID)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{processed.OperationState, processed.CoverageState})
 	// msgvault replays the same request to read its receipt; the state comes from the job.
 	replayed, err := c.RetryMedia(t.Context(), receipt.SourceID, retry)
 	require.NoError(t, err)
@@ -241,7 +240,8 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 
 func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 1))
+	var worker renditionTestWorker
+	ts, catalog := newTestServer(t, configureMediaTestServiceWith(t, mediaTestOptions{LexicalLimit: 1, Worker: &worker}))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -273,10 +273,11 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 		Processing:  &api.MediaProcessingBody{Profile: processing.SuppliedMediaProfileName, SuppliedInputID: artifact.SuppliedInputID},
 	})
 	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		status, statusErr := c.MediaStatus(t.Context(), receipt.SourceID)
-		return statusErr == nil && status.OperationID == queued.OperationID && status.OperationState == "succeeded"
-	}, 30*time.Second, 20*time.Millisecond)
+	worker.runQueued(t)
+	processed, err := c.MediaStatus(t.Context(), receipt.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, queued.OperationID, processed.OperationID)
+	require.Equal(t, "succeeded", processed.OperationState)
 	fence := []string{version.ID}
 	for _, name := range []string{"mercury-a.txt", "mercury-b.txt"} {
 		node := createFileWithContent(t, ts, catalog, "/"+name, "unrelated synthetic text "+name)
@@ -321,7 +322,7 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 
 func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID()}}
 	for i := range 4096 {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
@@ -368,8 +369,16 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 		{"input_count", rawInput(slices.Repeat([]string{strings.Repeat("a", 64)}, 65)), http.StatusUnprocessableEntity, "expected array length <= 64"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, tc.body)
-			require.Equal(t, tc.status, response.StatusCode, body)
+			encoded, err := json.Marshal(tc.body)
+			require.NoError(t, err)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/search", bytes.NewReader(encoded))
+			request.Header.Set("X-Api-Key", testAPIKey)
+			request.Header.Set("Content-Type", "application/json")
+			// Test body admission and validation independently of socket read deadlines.
+			response := httptest.NewRecorder()
+			catalog.Server.Handler().ServeHTTP(response, request)
+			body := response.Body.String()
+			require.Equal(t, tc.status, response.Code, body)
 			if tc.status == http.StatusOK {
 				var report api.DocumentSearchReport
 				require.NoError(t, json.Unmarshal([]byte(body), &report))
@@ -398,7 +407,7 @@ func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
 	t.Parallel()
 	for _, artifact := range []bool{false, true} {
 		t.Run(fmt.Sprintf("artifact=%t", artifact), func(t *testing.T) {
-			ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+			ts, catalog := newTestServer(t, configureMediaTestService(t))
 			wav := mediatest.WAV()
 			supplied := api.MediaSuppliedMetadata{
 				OperationID: "00000000-0000-4000-8000-000000000601", Filename: "slow.wav",
@@ -463,7 +472,7 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 		{name: "oversized metadata", oversized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+			ts, catalog := newTestServer(t, configureMediaTestService(t))
 			wav := mediatest.WAV()
 			metadata := api.MediaSuppliedMetadata{OperationID: "00000000-0000-4000-8000-000000000391",
 				Filename: "bounded.wav", MediaType: "audio/wav", SHA256: processingTestHash(string(wav)),
@@ -513,8 +522,16 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 	}
 }
 
-func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+func TestMediaRetryClassifiesProcessingErrors(t *testing.T) {
+	t.Parallel()
+	// The processing service runs an hour behind the store. The grant route
+	// checks a new expiry against the service clock, and the retry route
+	// checks consent against the store clock, so an expiry between the two is
+	// accepted when granted and already past when the retry is authorized.
+	const serviceLag = time.Hour
+	ts, catalog := newTestServer(t, configureMediaTestServiceWith(t, mediaTestOptions{
+		Clock: func() time.Time { return time.Now().Add(-serviceLag) },
+	}))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -550,16 +567,13 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:parallelt
 		t.Run(test.name, func(t *testing.T) {
 			if test.name == "expired" || test.name == "revoked" {
 				grant := api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}
-				expires := time.Now().Add(2 * time.Second)
 				if test.name == "expired" {
-					grant.ExpiresAt = expires.Format(time.RFC3339Nano)
+					grant.ExpiresAt = time.Now().Add(-serviceLag / 2).Format(time.RFC3339Nano)
 				}
 				_, err := c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: new(grant)})
 
 				require.NoError(t, err)
-				if test.name == "expired" {
-					time.Sleep(time.Until(expires) + time.Millisecond) //nolint:kennlint // sleeptest: consent expiry is checked against the store's real clock, which has no seam
-				} else {
+				if test.name != "expired" {
 					_, err := c.API().RevokeDocumentProcessingConsent(t.Context())
 
 					require.NoError(t, err)
@@ -580,7 +594,7 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:parallelt
 
 func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureMediaTestService(t, 0))
+	ts, _ := newTestServer(t, configureMediaTestService(t))
 	response, body := do(t, ts, http.MethodPost, "/api/v1/media/sources", nil, api.MediaReferenceBody{
 		OperationID: "00000000-0000-4000-8000-000000000404", ReferenceURL: "https://recordings.invalid/call",
 		Occurrence: api.MediaOccurrenceBody{Ref: "call", Revision: "1"},
@@ -594,7 +608,7 @@ func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
 
 func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	mp3 := mediatest.MP3()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -643,7 +657,7 @@ func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 
 func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	for index, operationID := range []string{
 		"00000000-0000-4000-8000-000000000361",
@@ -672,7 +686,7 @@ func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 
 func TestMediaOperationReceiptRecoversLostRemoteSubmission(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	operationID := "00000000-0000-4000-8000-000000000371"
 	path := "/api/v1/media/operations/" + operationID
@@ -747,15 +761,30 @@ func newOtherPrincipalMediaServer(t *testing.T, catalog *testStore) *httptest.Se
 	return otherHTTP
 }
 
-func configureMediaTestService(t *testing.T, lexicalLimit int) func(*api.Deps) {
+func configureMediaTestService(t *testing.T) func(*api.Deps) {
+	t.Helper()
+	return configureMediaTestServiceWith(t, mediaTestOptions{})
+}
+
+// mediaTestOptions adjusts the media test service. The zero value has no
+// rendition worker, so a test that queues processing must ask for one.
+type mediaTestOptions struct {
+	LexicalLimit int
+	// Worker receives the rendition worker that the test drives.
+	Worker *renditionTestWorker
+	// Clock replaces the processing service clock.
+	Clock func() time.Time
+}
+
+func configureMediaTestServiceWith(t *testing.T, options mediaTestOptions) func(*api.Deps) {
 	t.Helper()
 	return func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
 		name, profile, err := processing.NewSuppliedMediaProfile(deps.Store, deps.Blobs, "daemon:operator")
 		require.NoError(t, err)
-		if lexicalLimit != 0 {
-			profile.Profile.Retrieval.LexicalLimit = lexicalLimit
+		if options.LexicalLimit != 0 {
+			profile.Profile.Retrieval.LexicalLimit = options.LexicalLimit
 		}
 		var key [32]byte
 		key[0] = 7
@@ -769,17 +798,12 @@ func configureMediaTestService(t *testing.T, lexicalLimit int) func(*api.Deps) {
 				InputClasses: []string{"recording_reference"}, RetainedClasses: []string{"recording_bytes"},
 				ReferencePrefixes: []string{"https://recordings.invalid/"}, AcquisitionAvailable: true,
 			}},
+			Clock: options.Clock,
 		})
 		require.NoError(t, err)
 		deps.Processing = service
-		worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: service.RenditionRuntimes(), Gate: gate,
-			Owner: "media-route-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
-		})
-		require.NoError(t, err)
-		workerContext, cancelWorker := context.WithCancel(context.Background())
-		var workers sync.WaitGroup
-		workers.Go(func() { _ = worker.Run(workerContext) })
-		t.Cleanup(func() { cancelWorker(); workers.Wait() })
+		if options.Worker != nil {
+			options.Worker.bind(t, deps, service, gate, "media-route-worker")
+		}
 	}
 }

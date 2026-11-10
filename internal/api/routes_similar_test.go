@@ -91,9 +91,14 @@ func TestSimilarDocumentsRouteGroupsCopiesAndNeverEmbeds(t *testing.T) {
 		code   string
 	}{
 		{"/api/v1/search/similar", request, http.StatusConflict, "stale_index"},
-		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusInternalServerError, "processing_failed"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "semantic", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusConflict, "stale_index"},
+		{"/api/v1/search", api.DocumentSearchRequest{Query: "synthetic", Mode: "hybrid", Profile: "private", BindingID: "semantic", Limit: 20, Fence: request.Fence}, http.StatusConflict, "stale_index"},
 	} {
-		t.Run(test.path+"/stale_index", func(t *testing.T) {
+		name := test.path + "/stale_index"
+		if request, ok := test.body.(api.DocumentSearchRequest); ok {
+			name += "/" + request.Mode
+		}
+		t.Run(name, func(t *testing.T) {
 			response, body := do(t, ts, http.MethodPost, test.path, nil, test.body)
 			assert.Equal(t, test.status, response.StatusCode, body)
 			assert.Contains(t, body, `"code":"`+test.code+`"`)
@@ -143,4 +148,33 @@ func TestSimilarMissingCoverageRequiresSourceFenceAndCurrentIdentity(t *testing.
 	require.NoError(t, err)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, request)
 	assert.Equal(t, http.StatusNotFound, response.StatusCode, body, "trashed source stays an error")
+}
+
+func TestSimilarDocumentsUnbuiltIndexReturnsSetupError(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestServiceWithEmbedding(t))
+	node := createFileWithContent(t, ts, catalog, "/source.txt", "Synthetic source text.")
+	c := daemonconn.New(ts.URL, testAPIKey)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "private"}
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	_, err = c.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	require.NoError(t, err)
+
+	// Keep the source embedding while removing the active search index.
+	db, err := catalog.SQLiteDriver().Open(catalog.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), `DELETE FROM vector_index_heads`)
+	require.NoError(t, err)
+
+	request := api.DocumentSimilarRequest{Selector: selector, BindingID: "semantic", Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, request)
+	assert.Equal(t, http.StatusConflict, response.StatusCode, body)
+	assert.Contains(t, body, `"code":"index_unavailable"`)
+	assert.Contains(t, body, `"detail":"The search index needs building."`)
+	request.BindingID = "missing"
+	response, body = do(t, ts, http.MethodPost, "/api/v1/search/similar", nil, request)
+	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	assert.Contains(t, body, `"code":"not_found"`)
 }

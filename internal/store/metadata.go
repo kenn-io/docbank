@@ -992,6 +992,12 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE tags SET assignment_count=(SELECT COUNT(*) FROM node_tags WHERE tag_id=tags.id)`); err != nil {
+			return fmt.Errorf("restoring tag assignment counts: %w", err)
+		}
+		if err := stampImportedAuditEventSequencesTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.backfillPhotoSourcesTx(ctx, tx); err != nil {
 			return err
 		}
@@ -1077,7 +1083,7 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	}{
 		{"rendition_lexical_generations", `SELECT COUNT(*) FROM rendition_lexical_generations`},
 		{"rendition_lexical_generation_manifests", `SELECT COUNT(*) FROM rendition_lexical_generation_manifests`},
-		{"rendition_lexical_generation_builds", `SELECT COUNT(*) FROM rendition_lexical_generation_builds`},
+		{"rendition_lexical_stream_builds", `SELECT COUNT(*) FROM rendition_lexical_stream_builds`},
 		{"rendition_lexical_index", `SELECT COUNT(*) FROM rendition_lexical_index`},
 		{"rendition_lexical_heads", `SELECT COUNT(*) FROM rendition_lexical_heads`},
 	} {

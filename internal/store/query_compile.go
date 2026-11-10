@@ -70,6 +70,8 @@ func compileQuery(
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
 	photoDisplayMetadata bool
+	photoMetadataSet     bool
+	photoMetadataDensity func(string) (bool, error)
 	pdfOnly              bool
 	photoHidden          bool
 }
@@ -80,6 +82,11 @@ func (c queryCompiler) compile(
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
+	}
+	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
+		c.photoMetadataDensity = func(value string) (bool, error) {
+			return r.photoMetadataHeadsFirst(ctx, value)
+		}
 	}
 	predicate, err := c.compileResolvedQuery(resolved)
 	if err != nil {
@@ -352,6 +359,9 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
+			if probeErr, ok := errors.AsType[photoMetadataDensityError](err); ok {
+				return compiledQueryFragment{}, probeErr.error
+			}
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
 		}
 		return part, nil
@@ -569,20 +579,17 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	marker := compiledGenerationArgument{}
 	content := compiledQueryFragment{
 		sql: `(
-			(?='' AND EXISTS (
-				SELECT 1 FROM content_fts
-				JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id
-				WHERE content_fts.blob_hash=cv.blob_hash AND content_fts MATCH ?
-			))
-			OR (?<>'' AND EXISTS (
-				SELECT 1 FROM rendition_lexical_fts
+			(?='' AND cv.blob_hash IN (
+				SELECT content_fts.blob_hash FROM content_fts WHERE content_fts MATCH ?
+			) AND EXISTS (SELECT 1 FROM text_searchable_versions tsv WHERE tsv.version_id=cv.version_id))
+			OR (?<>'' AND cv.version_id IN (
+				SELECT a.content_version_id FROM rendition_lexical_fts
 				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
 				JOIN rendition_heads rh
 				  ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint
 				 AND rh.attachment_id=a.attachment_id
-				WHERE a.content_version_id=cv.version_id
-				  AND (? IS NULL OR a.profile_fingerprint=?)
+				WHERE (? IS NULL OR a.profile_fingerprint=?)
 				  AND rendition_lexical_fts MATCH ?
 				  AND EXISTS (
 					SELECT 1 FROM rendition_lexical_generation_builds gb

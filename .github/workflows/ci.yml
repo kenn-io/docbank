@@ -22,7 +22,7 @@ env:
 jobs:
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -55,7 +55,7 @@ jobs:
     needs: changes
     if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 11
     strategy:
       fail-fast: false
@@ -94,14 +94,27 @@ jobs:
       - name: Exercise schema lifecycle and node queries
         env:
           DOCBANK_TEST_POSTGRES_DSN: postgres://docbank_test:docbank_test@127.0.0.1:5432/docbank_test?sslmode=disable
-        run: make test-pg
+        run: make test-pg PG_SUITE=postgres-${{ matrix.version }}
+
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-${{ matrix.version }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   docs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'docs')) }}
     name: Public documentation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 16
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     steps:
       - name: Check out full repository history
         uses: actions/checkout@v7.0.1
@@ -123,17 +136,33 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Restore pinned uv archive
+        id: uv_archive
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .vercel-tools/downloads
+          key: release-uv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/vercel-install-docs.sh') }}
+
       - name: Install pinned documentation tools
         run: |
-          ./scripts/vercel-install-docs.sh
+          kit-retry 3 5 ./scripts/vercel-install-docs.sh
           echo "$PWD/.vercel-tools/bin" >> "$GITHUB_PATH"
 
+      - name: Save pinned uv archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.uv_archive.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .vercel-tools/downloads
+          key: ${{ steps.uv_archive.outputs.cache-primary-key }}
+
       - name: Install browser test dependencies
-        run: npm ci --prefix frontend
+        run: kit-retry 3 5 npm ci --prefix frontend
 
       - name: Start Playwright browser server
         id: browser_server
@@ -142,7 +171,7 @@ jobs:
         run: |
           version=$(node -p 'require("./node_modules/@playwright/test/package.json").version')
           image="mcr.microsoft.com/playwright:v$version-noble"
-          if ! docker pull "$image"; then
+          if ! kit-retry 3 5 docker pull "$image"; then
             echo "::error::Could not pull $image. Microsoft may not have published the image for this @playwright/test version yet."
             exit 1
           fi
@@ -151,6 +180,7 @@ jobs:
             "$image" \
             node node_modules/@playwright/test/cli.js run-server \
             --port 3000 --host 127.0.0.1)
+          # workflowretry: allow Poll the local service for readiness.
           until curl -s http://127.0.0.1:3000/; do
             [ "$(docker inspect -f '{{.State.Running}}' "$cid")" = true ] || { docker logs "$cid"; exit 1; }
             sleep 1
@@ -164,6 +194,17 @@ jobs:
           node --test scripts/docs/*.test.mjs
           make docs-build
 
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-docs-bridge-contract-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Verify documentation upload inputs locally
         run: node scripts/docs/check-upload-inputs.mjs
 
@@ -174,6 +215,15 @@ jobs:
           npm --prefix frontend run docs-site:check
           npm --prefix frontend run docs-site:test
 
+      - name: Upload Playwright docs-site results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-docs-site-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/docs-site.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Print Playwright browser server logs on failure
         if: failure() && steps.browser_server.outcome == 'success'
         run: docker logs playwright-browser-server
@@ -181,8 +231,10 @@ jobs:
   frontend:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     name: Web application
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 12
     steps:
       - name: Check out repository
@@ -193,16 +245,27 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Check and build web application
         run: make frontend-test
 
+      - name: Upload Vitest frontend results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-frontend-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/vitest/frontend.json
+          retention-days: 14
+          if-no-files-found: ignore
+
   released-schemas:
     name: Released storage schemas
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check out full repository history
@@ -217,8 +280,10 @@ jobs:
   report-export-browser:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
+    env:
+      DOWNLOAD_RETRY: kit-retry 3 5
     name: Browser reports and original exports
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -240,33 +305,62 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24.22.1"
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
       - name: Install pinned Chromium
         run: |
-          npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install chromium
+          kit-retry 3 5 npm ci --prefix frontend
+          kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
+
+      - name: Upload Playwright report-export results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-report-export-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/report-export-*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Qualify photo map in Chromium
         env:
           CGO_ENABLED: "0"
         run: make photo-map-browser-test
 
+      - name: Upload Playwright photo-map results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-photo-map-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/photo-map.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Qualify live photo tabs in Chromium
         env:
           CGO_ENABLED: "0"
         run: make photo-tabs-browser-test
 
+      - name: Upload Playwright photo-tabs results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-photo-tabs-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/playwright/photo-tabs.json
+          retention-days: 14
+          if-no-files-found: ignore
+
   test:
     needs: changes
     if: *go-changed
     name: Linux tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 38
     steps:
       - name: Check out repository
@@ -284,12 +378,18 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-cgo
+          save-owner: "true"
 
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
       - name: Check Huma API contract
-        run: go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./...
+        run: |
+          huma=go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d
+          kit-retry 3 5 go run -n "$huma"
+          go run "$huma" -fix=false -tags fts5 ./...
 
       - name: Vet
         run: go vet -tags fts5 ./...
@@ -304,26 +404,20 @@ jobs:
           # MinIO no longer publishes images, so tests run against RustFS 1.0.0.
           image="docker.io/rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff"
           if ! docker image inspect "$image" >/dev/null 2>&1; then
-            for attempt in 1 2 3; do
-              if docker pull "$image"; then
-                break
-              fi
-              if [ "$attempt" = 3 ]; then
-                exit 1
-              fi
-              sleep $((attempt * 5))
-            done
+            kit-retry 3 5 docker pull "$image"
           fi
           echo "DOCBANK_S3_CONTAINER=$name" >> "$GITHUB_ENV"
           docker run --rm -d --name "$name"             -p 127.0.0.1::9000             -e RUSTFS_ACCESS_KEY -e RUSTFS_SECRET_KEY             "$image" >/dev/null
           port="$(docker port "$name" 9000/tcp | head -1 | awk -F: '{print $NF}')"
           endpoint="http://127.0.0.1:${port}"
           for _ in $(seq 1 30); do
+            # workflowretry: allow Poll the local service for readiness.
             if curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
               break
             fi
             sleep 1
           done
+          # workflowretry: allow Poll the local service for readiness.
           if ! curl --fail --silent "${endpoint}/health/ready" >/dev/null; then
             docker logs "$name"
             exit 1
@@ -340,7 +434,35 @@ jobs:
       - name: Embedded modernc restore without FTS5 build tags
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' ./docbank
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text
+          --jsonfile gotestsum/linux-amd64-cgo-modernc-restore.json
+          --rerun-fails=2 --rerun-fails-report gotestsum/linux-amd64-cgo-modernc-restore-reruns.txt
+          --packages ./docbank -- -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$'
+
+      - name: Upload Go test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-linux-amd64-cgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - &slowest-tests
+        name: Print slowest tests
+        if: always()
+        run: |
+          {
+            echo '### Slowest tests'
+            echo '```text'
+            for f in gotestsum/*.json; do
+              [ -f "$f" ] || continue
+              echo "# $f"
+              go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stop S3-compatible test service
         if: always()
@@ -356,7 +478,7 @@ jobs:
     needs: changes
     if: *go-changed
     name: Pure-Go SQLite
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 36
     env:
       CGO_ENABLED: "0"
@@ -376,12 +498,24 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-purego
+          save-owner: "true"
 
       - name: Vet
         run: go vet -tags fts5 ./...
 
       - name: Test
         run: bash scripts/test-go-ci.sh
+
+      - name: Upload Go test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-linux-amd64-purego-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - *slowest-tests
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -391,7 +525,7 @@ jobs:
     if: *go-changed
     # Exercises the kqueue watch backend and other darwin-only code paths.
     name: macOS tests
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -409,12 +543,24 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: macos-arm64
+          save-owner: "true"
 
       - name: Vet
         run: go vet -tags fts5 ./...
 
       - name: Test
         run: bash scripts/test-go-ci.sh
+
+      - name: Upload Go test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-darwin-arm64-cgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - *slowest-tests
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -423,7 +569,7 @@ jobs:
     needs: changes
     if: *go-changed
     name: golangci-lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 23
     steps:
       - name: Check out repository
@@ -441,7 +587,11 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-lint
+          save-owner: "true"
           extra-path: ~/.cache/golangci-lint
+
+      - name: Reject timing suppressions
+        run: make check-timing-suppressions
 
       - name: Run golangci-lint
         uses: step-security/golangci-lint-action@v9.3.0
@@ -467,6 +617,10 @@ jobs:
   windows:
     needs: changes
     if: *go-changed
+    env:
+      LLVM_MINGW_VERSION: "20260602"
+      LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
+      LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
     strategy:
       fail-fast: false
@@ -499,6 +653,27 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: windows-${{ matrix.goarch }}
+          save-owner: ${{ matrix.shard == 4 }}
+
+      # t.TempDir holds every test vault. TEMP defaults to C:, the runner's
+      # network-attached OS disk, whose flushes stall for seconds while other
+      # test packages write. D: is a local disk. Private-file checks accept
+      # only the user, SYSTEM and Administrators, so the directory gets the
+      # same access as the default per-user TEMP instead of D:'s broader ACL.
+      - name: Put temporary files on D
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path 'D:\') {
+            $path = 'D:\a\_temp\tmp'
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            icacls $path /inheritance:r /grant:r "*${user}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            "TEMP=$path", "TMP=$path" >> $env:GITHUB_ENV
+          } else {
+            Write-Warning 'D: is missing; keeping TEMP on the OS disk'
+          }
 
       - name: Check PowerShell installer
         if: matrix.goarch == 'amd64'
@@ -507,18 +682,30 @@ jobs:
           $ErrorActionPreference = 'Stop'
           [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+        if: matrix.goarch == 'arm64'
+
+      - name: Restore pinned ARM64 compiler archive
+        if: matrix.goarch == 'arm64'
+        id: llvm_mingw_archive
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/llvm-mingw.zip
+          key: release-llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_SHA256 }}
+
+      - name: Download ARM64 C compiler
+        if: matrix.goarch == 'arm64' && steps.llvm_mingw_archive.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        shell: bash
+        run: kit-retry 3 30 kit-download "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.zip" "$RUNNER_TEMP/llvm-mingw.zip"
+
       - name: Set up ARM64 C compiler
         if: matrix.goarch == 'arm64'
         shell: pwsh
-        env:
-          LLVM_MINGW_VERSION: "20260602"
-          LLVM_MINGW_NAME: llvm-mingw-20260602-ucrt-aarch64
-          LLVM_MINGW_SHA256: cb5c20fbe1808e31ada5cbe4efd9daa2fee19c91dac6ec5ca1ac46a9c7247e37
         run: |
           $ErrorActionPreference = 'Stop'
           $zip = Join-Path $env:RUNNER_TEMP 'llvm-mingw.zip'
           $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$env:LLVM_MINGW_NAME.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
           $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
           if ($actual -ne $env:LLVM_MINGW_SHA256) {
             throw "Checksum mismatch for $url`n  expected $env:LLVM_MINGW_SHA256`n  actual   $actual"
@@ -527,6 +714,13 @@ jobs:
           $cc = Join-Path $env:RUNNER_TEMP "$env:LLVM_MINGW_NAME\bin\aarch64-w64-mingw32-clang.exe"
           if (-not (Test-Path $cc)) { throw "CC not found at $cc" }
           Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
+
+      - name: Save pinned ARM64 compiler archive
+        if: matrix.goarch == 'arm64' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.llvm_mingw_archive.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/llvm-mingw.zip
+          key: ${{ steps.llvm_mingw_archive.outputs.cache-primary-key }}
 
       - name: Build
         if: matrix.shard == 4
@@ -548,6 +742,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
         run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4
+
+      # gotestsum writes a reruns file only after it reran a failed test. A job
+      # rerun always uploads, so its passes can be matched with earlier failures.
+      - name: Upload Go test results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-${{ matrix.goarch }}-shard-${{ matrix.shard || 'all' }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         if: matrix.shard == 4

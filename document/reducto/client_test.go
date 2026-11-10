@@ -43,89 +43,92 @@ func TestClientUploadsExactBytesAndMapsNaturalEvidence(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.family, func(t *testing.T) {
-			source := []byte("synthetic exact " + testCase.family + " bytes")
-			fixture := newFixture(t, testCase.family, testCase.mediaType, testCase.filename, source)
-			fixture.profile.RetainStructured = true
-			fixture.profile.MaxArtifacts = 1
-			var paths []string
-			polls := 0
-			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				paths = append(paths, request.URL.Path)
-				assert.Equal(t, "https", request.URL.Scheme)
-				assert.Equal(t, apiHost, request.URL.Host)
-				assert.Empty(t, request.URL.RawQuery)
-				assert.Equal(t, "Bearer synthetic-secret", request.Header.Get("Authorization"))
-				switch request.URL.Path {
-				case uploadPath:
-					assertUpload(t, request, fixture.metadata, source)
-					return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":"https://attacker.invalid/upload"}`), nil
-				case parsePath:
-					assert.Equal(t, http.MethodPost, request.Method)
-					var body map[string]any
-					require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
-					assert.Equal(t, map[string]any{
-						"document_url":     testFileID,
-						"advanced_options": map[string]any{"add_page_markers": true, "return_ocr_data": false},
-						"options": map[string]any{
-							"chunking":         map[string]any{"chunk_mode": "page"},
-							"force_url_result": false,
-						},
-						"priority": false,
-					}, body)
-					return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
-				case jobPath(testJobID):
-					assert.Equal(t, http.MethodGet, request.Method)
-					polls++
-					if polls == 1 {
-						return response(request, http.StatusOK, `{"status":"Pending","progress":0.25,"reason":null,"result":null}`), nil
+			// The first job poll is pending, so run the poll interval on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				source := []byte("synthetic exact " + testCase.family + " bytes")
+				fixture := newFixture(t, testCase.family, testCase.mediaType, testCase.filename, source)
+				fixture.profile.RetainStructured = true
+				fixture.profile.MaxArtifacts = 1
+				var paths []string
+				polls := 0
+				transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					paths = append(paths, request.URL.Path)
+					assert.Equal(t, "https", request.URL.Scheme)
+					assert.Equal(t, apiHost, request.URL.Host)
+					assert.Empty(t, request.URL.RawQuery)
+					assert.Equal(t, "Bearer synthetic-secret", request.Header.Get("Authorization"))
+					switch request.URL.Path {
+					case uploadPath:
+						assertUpload(t, request, fixture.metadata, source)
+						return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":"https://attacker.invalid/upload"}`), nil
+					case parsePath:
+						assert.Equal(t, http.MethodPost, request.Method)
+						var body map[string]any
+						require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+						assert.Equal(t, map[string]any{
+							"document_url":     testFileID,
+							"advanced_options": map[string]any{"add_page_markers": true, "return_ocr_data": false},
+							"options": map[string]any{
+								"chunking":         map[string]any{"chunk_mode": "page"},
+								"force_url_result": false,
+							},
+							"priority": false,
+						}, body)
+						return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
+					case jobPath(testJobID):
+						assert.Equal(t, http.MethodGet, request.Method)
+						polls++
+						if polls == 1 {
+							return response(request, http.StatusOK, `{"status":"Pending","progress":0.25,"reason":null,"result":null}`), nil
+						}
+						return response(request, http.StatusOK, completedBody()), nil
+					default:
+						t.Fatalf("unexpected route %s", request.URL.String())
+						return nil, errors.New("unexpected route")
 					}
-					return response(request, http.StatusOK, completedBody()), nil
-				default:
-					t.Fatalf("unexpected route %s", request.URL.String())
-					return nil, errors.New("unexpected route")
-				}
+				})
+				client := fixture.client(t, transport)
+				var checkpoint document.RenditionResumeHandle
+				checkpointCount := 0
+				result, err := document.RenderRenditionWithResume(
+					t.Context(), client, fixture.upload(), fixture.authorization, nil,
+					func(handle document.RenditionResumeHandle) error {
+						checkpoint = handle
+						checkpointCount++
+						return nil
+					},
+				)
+				require.NoError(t, err)
+				assert.NotEqual(t, testJobID, checkpoint.Value)
+				assert.LessOrEqual(t, len(checkpoint.Value), 512)
+				issued := decodeTestResumeHandle(t, checkpoint.Value)
+				assert.Equal(t, testJobID, issued.JobID)
+				authorizationFingerprint, err := fixture.authorization.Fingerprint()
+				require.NoError(t, err)
+				assert.Equal(t, authorizationFingerprint, issued.AuthorizationFingerprint)
+				assert.Equal(t, int64(4), issued.Requests)
+				assert.Equal(t, fixture.metadata.ByteLength, issued.InputBytes)
+				assert.Positive(t, issued.OutputBytes)
+				assert.GreaterOrEqual(t, checkpointCount, 4)
+				started, err := time.Parse(timeForm, issued.StartedAt)
+				require.NoError(t, err)
+				assert.False(t, time.Now().UTC().Before(started))
+				assert.Equal(t, []string{uploadPath, parsePath, jobPath(testJobID), jobPath(testJobID)}, paths)
+				assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
+				assert.Equal(t, testCase.unitKind, result.Evidence.UnitKind)
+				require.Len(t, result.Evidence.Units, 2)
+				assert.Equal(t, testCase.locatorKind, result.Evidence.Units[0].Locator.Kind)
+				assert.Equal(t, document.EvidenceIndexOriginOne, result.Evidence.Units[0].Locator.IndexOrigin)
+				assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
+				assert.Empty(t, result.Evidence.Units[0].ProviderID)
+				assert.Equal(t, "# First unit\n\nFirst body", result.Evidence.Units[0].Text)
+				assert.Equal(t, "# First unit\n\nFirst body\n\n---\n\nSecond unit", string(result.ProviderMarkdown))
+				require.Len(t, result.Artifacts, 1)
+				assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
+				assert.Contains(t, string(result.Artifacts[0].Payload), `"pdf_url":"https://attacker.invalid/converted.pdf"`)
+				assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
+				assert.Equal(t, int64(2), result.Receipt.Usage.Units)
 			})
-			client := fixture.client(t, transport)
-			var checkpoint document.RenditionResumeHandle
-			checkpointCount := 0
-			result, err := document.RenderRenditionWithResume(
-				t.Context(), client, fixture.upload(), fixture.authorization, nil,
-				func(handle document.RenditionResumeHandle) error {
-					checkpoint = handle
-					checkpointCount++
-					return nil
-				},
-			)
-			require.NoError(t, err)
-			assert.NotEqual(t, testJobID, checkpoint.Value)
-			assert.LessOrEqual(t, len(checkpoint.Value), 512)
-			issued := decodeTestResumeHandle(t, checkpoint.Value)
-			assert.Equal(t, testJobID, issued.JobID)
-			authorizationFingerprint, err := fixture.authorization.Fingerprint()
-			require.NoError(t, err)
-			assert.Equal(t, authorizationFingerprint, issued.AuthorizationFingerprint)
-			assert.Equal(t, int64(4), issued.Requests)
-			assert.Equal(t, fixture.metadata.ByteLength, issued.InputBytes)
-			assert.Positive(t, issued.OutputBytes)
-			assert.GreaterOrEqual(t, checkpointCount, 4)
-			started, err := time.Parse(timeForm, issued.StartedAt)
-			require.NoError(t, err)
-			assert.False(t, time.Now().UTC().Before(started))
-			assert.Equal(t, []string{uploadPath, parsePath, jobPath(testJobID), jobPath(testJobID)}, paths)
-			assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
-			assert.Equal(t, testCase.unitKind, result.Evidence.UnitKind)
-			require.Len(t, result.Evidence.Units, 2)
-			assert.Equal(t, testCase.locatorKind, result.Evidence.Units[0].Locator.Kind)
-			assert.Equal(t, document.EvidenceIndexOriginOne, result.Evidence.Units[0].Locator.IndexOrigin)
-			assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
-			assert.Empty(t, result.Evidence.Units[0].ProviderID)
-			assert.Equal(t, "# First unit\n\nFirst body", result.Evidence.Units[0].Text)
-			assert.Equal(t, "# First unit\n\nFirst body\n\n---\n\nSecond unit", string(result.ProviderMarkdown))
-			require.Len(t, result.Artifacts, 1)
-			assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
-			assert.Contains(t, string(result.Artifacts[0].Payload), `"pdf_url":"https://attacker.invalid/converted.pdf"`)
-			assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
-			assert.Equal(t, int64(2), result.Receipt.Usage.Units)
 		})
 	}
 }
@@ -274,44 +277,47 @@ func TestClientResumesHistoricalAuthorizationWithRecordedReceiptInterval(t *test
 }
 
 func TestClientAcceptsOnlyPinnedSDKAsyncLifecycleStates(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("lifecycle source"))
-	polls := 0
-	var transport http.RoundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		switch request.URL.Path {
-		case uploadPath:
-			return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":null}`), nil
-		case parsePath:
-			return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
-		case jobPath(testJobID):
-			polls++
-			if polls == 1 {
-				return response(request, http.StatusOK, `{"status":"Pending","progress":0.5,"reason":null,"result":null}`), nil
+	// Pending and Idle jobs wait poll intervals, which run on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("lifecycle source"))
+		polls := 0
+		var transport http.RoundTripper = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			switch request.URL.Path {
+			case uploadPath:
+				return response(request, http.StatusOK, `{"file_id":"`+testFileID+`","presigned_url":null}`), nil
+			case parsePath:
+				return response(request, http.StatusOK, `{"job_id":"`+testJobID+`"}`), nil
+			case jobPath(testJobID):
+				polls++
+				if polls == 1 {
+					return response(request, http.StatusOK, `{"status":"Pending","progress":0.5,"reason":null,"result":null}`), nil
+				}
+				if polls == 2 {
+					return response(request, http.StatusOK, `{"status":"Idle","progress":0.9,"reason":null,"result":null}`), nil
+				}
+				return response(request, http.StatusOK, completedBody()), nil
+			default:
+				t.Fatalf("unexpected route %s", request.URL.String())
+				return nil, errors.New("unexpected route")
 			}
-			if polls == 2 {
-				return response(request, http.StatusOK, `{"status":"Idle","progress":0.9,"reason":null,"result":null}`), nil
-			}
-			return response(request, http.StatusOK, completedBody()), nil
-		default:
-			t.Fatalf("unexpected route %s", request.URL.String())
-			return nil, errors.New("unexpected route")
+		})
+		result, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), result.Receipt.Usage.Units)
+
+		for _, status := range []string{"InProgress", "Completing"} {
+			fixture = newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("status drift"))
+			transport = routeTransport(t, map[string]string{
+				uploadPath:         `{"file_id":"` + testFileID + `","presigned_url":null}`,
+				parsePath:          `{"job_id":"` + testJobID + `"}`,
+				jobPath(testJobID): `{"status":"` + status + `","progress":0.5,"reason":null,"result":null}`,
+			})
+			_, err = document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
+			assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 		}
 	})
-	result, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-		fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), result.Receipt.Usage.Units)
-
-	for _, status := range []string{"InProgress", "Completing"} {
-		fixture = newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("status drift"))
-		transport = routeTransport(t, map[string]string{
-			uploadPath:         `{"file_id":"` + testFileID + `","presigned_url":null}`,
-			parsePath:          `{"job_id":"` + testJobID + `"}`,
-			jobPath(testJobID): `{"status":"` + status + `","progress":0.5,"reason":null,"result":null}`,
-		})
-		_, err = document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error { return nil })
-		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
-	}
 }
 
 func TestClientNeverFollowsProviderAuthoredURLs(t *testing.T) {
@@ -567,17 +573,20 @@ func TestClientEnforcesInputControlPollResultAndArtifactBounds(t *testing.T) {
 	})
 
 	t.Run("poll limit", func(t *testing.T) {
-		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("poll"))
-		fixture.profile.MaxPolls = 2
-		transport := routeTransport(t, map[string]string{
-			uploadPath:         `{"file_id":"` + testFileID + `","presigned_url":null}`,
-			parsePath:          `{"job_id":"` + testJobID + `"}`,
-			jobPath(testJobID): `{"status":"Idle","progress":0,"reason":null,"result":null}`,
+		// The idle job waits one poll interval, which runs on fake time.
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("poll"))
+			fixture.profile.MaxPolls = 2
+			transport := routeTransport(t, map[string]string{
+				uploadPath:         `{"file_id":"` + testFileID + `","presigned_url":null}`,
+				parsePath:          `{"job_id":"` + testJobID + `"}`,
+				jobPath(testJobID): `{"status":"Idle","progress":0,"reason":null,"result":null}`,
+			})
+			_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+				fixture.upload(), fixture.authorization, nil,
+				func(document.RenditionResumeHandle) error { return nil })
+			assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 		})
-		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-			fixture.upload(), fixture.authorization, nil,
-			func(document.RenditionResumeHandle) error { return nil })
-		assertCode(t, err, document.RenditionErrorAmbiguousSubmission)
 	})
 
 	t.Run("result response", func(t *testing.T) {
@@ -792,22 +801,26 @@ func TestClientDistinguishesPreEgressContextFailures(t *testing.T) {
 }
 
 func TestClientTreatsExpiryAfterDurableCheckpointAsResumableTimeout(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("durable expiry source"))
-	fixture.profile.PollInterval = 50 * time.Millisecond
-	fixture.authorization.ExpiresAt = time.Now().UTC().Add(20 * time.Millisecond).Format(timeForm)
-	transport := routeTransport(t, map[string]string{
-		uploadPath:         `{"file_id":"` + testFileID + `","presigned_url":null}`,
-		parsePath:          `{"job_id":"` + testJobID + `"}`,
-		jobPath(testJobID): `{"status":"Pending","progress":0.5,"reason":null,"result":null}`,
-	})
-	checkpointed := false
-	_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
-		fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error {
-			checkpointed = true
-			return nil
+	// The authorization expires on fake time during the poll interval after the
+	// pending job is checkpointed.
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "synthetic.pdf", []byte("durable expiry source"))
+		fixture.profile.PollInterval = 50 * time.Millisecond
+		fixture.authorization.ExpiresAt = time.Now().UTC().Add(20 * time.Millisecond).Format(timeForm)
+		transport := routeTransport(t, map[string]string{
+			uploadPath:         `{"file_id":"` + testFileID + `","presigned_url":null}`,
+			parsePath:          `{"job_id":"` + testJobID + `"}`,
+			jobPath(testJobID): `{"status":"Pending","progress":0.5,"reason":null,"result":null}`,
 		})
-	assert.True(t, checkpointed)
-	require.ErrorContains(t, err, "authorization is not current")
+		checkpointed := false
+		_, err := document.RenderRenditionWithResume(t.Context(), fixture.client(t, transport),
+			fixture.upload(), fixture.authorization, nil, func(document.RenditionResumeHandle) error {
+				checkpointed = true
+				return nil
+			})
+		assert.True(t, checkpointed)
+		require.ErrorContains(t, err, "authorization is not current")
+	})
 }
 
 func TestClientTreatsExpiryAfterCompletedResultAsResumableTimeout(t *testing.T) {

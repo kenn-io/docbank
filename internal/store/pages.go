@@ -38,7 +38,7 @@ func putPageDocument(ctx context.Context, tx *sql.Tx, d document.PageDocumentV1)
 		return err
 	}
 	var existing []byte
-	err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM page_documents WHERE version_id=?`, d.Source.VersionID).Scan(&existing)
+	err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM page_documents WHERE version_id=$1`, d.Source.VersionID).Scan(&existing)
 	if err == nil {
 		if !bytes.Equal(existing, encoded) {
 			return ErrPageConflict
@@ -48,7 +48,7 @@ func putPageDocument(ctx context.Context, tx *sql.Tx, d document.PageDocumentV1)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO page_documents(version_id,canonical_json,checksum) VALUES(?,?,?)`, d.Source.VersionID, encoded, hash)
+	_, err = tx.ExecContext(ctx, `INSERT INTO page_documents(version_id,canonical_json,checksum) VALUES($1,$2,$3)`, d.Source.VersionID, encoded, hash)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func putPageDocument(ctx context.Context, tx *sql.Tx, d document.PageDocumentV1)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO page_frames(version_id,page,canonical_json,checksum) VALUES(?,?,?,?)`, d.Source.VersionID, frame.Page, b, h); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO page_frames(version_id,page,canonical_json,checksum) VALUES($1,$2,$3,$4)`, d.Source.VersionID, frame.Page, b, h); err != nil {
 			return err
 		}
 	}
@@ -139,12 +139,12 @@ func putPageRecipe(ctx context.Context, tx *sql.Tx, r document.PageRecipeV1) (st
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO page_recipes(checksum,canonical_json) VALUES(?,?) ON CONFLICT(checksum) DO NOTHING`, hash, encoded)
+	_, err = tx.ExecContext(ctx, `INSERT INTO page_recipes(checksum,canonical_json) VALUES($1,$2) ON CONFLICT(checksum) DO NOTHING`, hash, encoded)
 	if err != nil {
 		return "", err
 	}
 	var retained []byte
-	if err := tx.QueryRowContext(ctx, `SELECT canonical_json FROM page_recipes WHERE checksum=?`, hash).Scan(&retained); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT canonical_json FROM page_recipes WHERE checksum=$1`, hash).Scan(&retained); err != nil {
 		return "", err
 	}
 	if !bytes.Equal(retained, encoded) {
@@ -252,7 +252,7 @@ func (s *Store) PublishPageImage(ctx context.Context, claim PageJobClaim, image 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO page_images(version_id,page,recipe_sha256,canonical_json,checksum,blob_hash) VALUES(?,?,?,?,?,?)`, image.Source.VersionID, image.Page, image.RecipeSHA256, encoded, hash, image.SHA256); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO page_images(version_id,page,recipe_sha256,canonical_json,checksum,blob_hash) VALUES($1,$2,$3,$4,$5,$6)`, image.Source.VersionID, image.Page, image.RecipeSHA256, encoded, hash, image.SHA256); err != nil {
 			return err
 		}
 		return appendPageJobResult(ctx, tx, job, image)
@@ -261,7 +261,7 @@ func (s *Store) PublishPageImage(ctx context.Context, claim PageJobClaim, image 
 
 func (s *Store) PageInventory(ctx context.Context, binding PageBinding) (PageInventory, error) {
 	inventory := PageInventory{Source: binding.Source, Frames: []PageFrameView{}, Recipes: []PageRecipeView{}, Images: []document.PageImageV1{}}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return inventory, err
 	}
@@ -287,7 +287,7 @@ func (s *Store) PageInventory(ctx context.Context, binding PageBinding) (PageInv
 		}
 		inventory.Frames = append(inventory.Frames, PageFrameView{Frame: frame, SHA256: hash})
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT recipe_sha256,page FROM page_images WHERE version_id=? ORDER BY recipe_sha256,page`, binding.Source.VersionID)
+	rows, err := tx.QueryContext(ctx, `SELECT recipe_sha256,page FROM page_images WHERE version_id=$1 ORDER BY recipe_sha256,page`, binding.Source.VersionID)
 	if err != nil {
 		return inventory, err
 	}
@@ -328,7 +328,7 @@ func (s *Store) PageInventory(ctx context.Context, binding PageBinding) (PageInv
 }
 
 func (s *Store) PageImage(ctx context.Context, binding PageBinding, recipeHash string, page int) (PageImageView, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return PageImageView{}, err
 	}

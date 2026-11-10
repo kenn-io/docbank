@@ -26,6 +26,15 @@ import (
 
 const pushProofTimeout = 30 * time.Second
 
+// pushResponseHeaderTimeout bounds the wait for an upload receipt. The daemon
+// answers only after the durable commit, and a push keeps a window of uploads
+// in flight, so the last upload of a window also waits for the commits queued
+// ahead of it: on slow or busy storage that queue alone can exceed 30 seconds.
+// The bound matches the dialer's keepalive detection of a dead peer (30s idle
+// plus nine 30s probes), so it still ends a request whose tunnel stopped
+// answering without failing a healthy daemon that is working through a window.
+const pushResponseHeaderTimeout = 5 * time.Minute
+
 // ErrPushResponseInterrupted means the upload may have committed but its
 // receipt could not be read. A push can recover by rereading the source cursor.
 var ErrPushResponseInterrupted = errors.New("push upload response was interrupted")
@@ -38,6 +47,25 @@ var errKeyProof = errors.New("daemon endpoint did not prove it holds the API key
 // document bytes cross it, so a listener that captures a forwarded port after
 // the tunnel exits receives neither. Redirects and proxies are not followed.
 func NewPushConnection(origin, key string) (*Connection, error) {
+	return newPushConnection(origin, key, nil)
+}
+
+// NewPushConnectionWithDialer is NewPushConnection for an http origin whose
+// raw connections come from dial instead of TCP. Tests use it to reach a
+// daemon on an in-memory network, where fake time can run. Every connection
+// still proves the key before it carries the key or any document bytes.
+func NewPushConnectionWithDialer(
+	origin, key string, dial func(ctx context.Context, network, address string) (net.Conn, error),
+) (*Connection, error) {
+	if dial == nil {
+		return nil, errors.New("push dialer is required")
+	}
+	return newPushConnection(origin, key, dial)
+}
+
+func newPushConnection(
+	origin, key string, dial func(ctx context.Context, network, address string) (net.Conn, error),
+) (*Connection, error) {
 	parsed, err := url.Parse(origin)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
@@ -51,20 +79,25 @@ func NewPushConnection(origin, key string) (*Connection, error) {
 	prover := keyProver{base: base, key: key}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: pushResponseHeaderTimeout,
 		IdleConnTimeout:       90 * time.Second,
 		// Keep a complete folder-push window connected between batches.
 		MaxIdleConnsPerHost: 32,
 	}
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	if parsed.Scheme == "http" {
+		if dial == nil {
+			dial = dialer.DialContext
+		}
 		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			conn, err := dialer.DialContext(ctx, network, address)
+			conn, err := dial(ctx, network, address)
 			if err != nil {
 				return nil, fmt.Errorf("dialing daemon: %w", err)
 			}
 			return prover.prove(ctx, conn)
 		}
+	} else if dial != nil {
+		return nil, errors.New("a push dialer requires an http origin")
 	} else {
 		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{
 			ServerName: parsed.Hostname(), NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS12,

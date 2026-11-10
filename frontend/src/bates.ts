@@ -1,5 +1,6 @@
 import { offerPreparedDownload } from "./download.js";
 import { sha256Digest } from "./crypto.js";
+import { webBasePath } from "./web-path.js";
 import * as generated from "./generated/docbank.js";
 import type {
   BatesAllocation,
@@ -66,7 +67,7 @@ interface ExpectedAllocation {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const hash = /^[0-9a-f]{64}$/;
 export const maxBatesPages = 250;
-const pendingKey = "docbank.bates.pendingReservation";
+const pendingKey = (): string => "docbank.bates.pendingReservation" + webBasePath();
 
 function valid(
   condition: unknown,
@@ -137,7 +138,7 @@ function readAllocation(value: unknown, request?: ExpectedAllocation): BatesAllo
   return { ...item, labels } as unknown as BatesAllocation;
 }
 
-function readExport(value: unknown): BatesExport {
+export function decodeBatesExport(value: unknown): BatesExport {
   const item = record(value);
   valid(typeof item.artifact_id === "string" && uuid.test(item.artifact_id));
   valid(typeof item.allocation_id === "string" && uuid.test(item.allocation_id));
@@ -318,7 +319,7 @@ export function batesRecipe(
     restamp: false,
     engine_identity: {
       name: "pdfcpu",
-      version: "v0.15.0",
+      version: "v0.16.4",
       api: "AddWatermarksMap",
       options: ["onTop=true", "update=restamp"],
     },
@@ -350,7 +351,7 @@ export async function startBatesExport(
       recipe.start_at === allocation.start_sequence,
   );
   valid((await batesRecipeSHA256(recipe)) === allocation.recipe_sha256);
-  const result = readExport(
+  const result = decodeBatesExport(
     await generated.publishBatesExport(
       { allocation_id: allocation.allocation_id, recipe },
       { session, signal },
@@ -369,7 +370,9 @@ export async function readBatesExport(
   signal?: AbortSignal,
 ): Promise<BatesExport> {
   valid(uuid.test(allocationID));
-  const result = readExport(await generated.readBatesExport(allocationID, { session, signal }));
+  const result = decodeBatesExport(
+    await generated.readBatesExport(allocationID, { session, signal }),
+  );
   valid(result.allocation_id === allocationID);
   return result;
 }
@@ -485,7 +488,7 @@ export async function listBatesExports(
       page.items.length <= 50 &&
       page.items.length <= page.total,
   );
-  return { ...page, items: page.items.map(readExport) } as unknown as BatesExportPage;
+  return { ...page, items: page.items.map(decodeBatesExport) } as unknown as BatesExportPage;
 }
 
 export async function downloadBatesExport(
@@ -517,7 +520,7 @@ export async function downloadBatesExport(
 export function loadPendingBatesReservation(): PendingBatesReservation | null {
   let raw: string | null;
   try {
-    raw = sessionStorage.getItem(pendingKey);
+    raw = sessionStorage.getItem(pendingKey());
   } catch {
     return null;
   }
@@ -549,7 +552,7 @@ export function loadPendingBatesReservation(): PendingBatesReservation | null {
 /** Remembers a pending reservation for this tab; returns false when the browser refuses storage. */
 export function savePendingBatesReservation(pending: PendingBatesReservation): boolean {
   try {
-    sessionStorage.setItem(pendingKey, JSON.stringify(pending));
+    sessionStorage.setItem(pendingKey(), JSON.stringify(pending));
     return true;
   } catch {
     return false;
@@ -558,7 +561,7 @@ export function savePendingBatesReservation(pending: PendingBatesReservation): b
 
 export function clearPendingBatesReservation(): void {
   try {
-    sessionStorage.removeItem(pendingKey);
+    sessionStorage.removeItem(pendingKey());
   } catch {
     // Storage that cannot be read cannot resurrect the reservation either.
   }

@@ -263,6 +263,46 @@ func (s *Store) EnqueueRenditionJob(
 			request.ExecutionIdentity.Authorization.SourceSHA256 != sourceSHA256 {
 			return fmt.Errorf("%w: rendition execution identity does not match exact source authority", ErrRenditionJobStaleAuthority)
 		}
+		if request.ExecutionIdentity.Upload.InputKind == document.RenditionInputOriginalFile {
+			err := func() (retErr error) {
+				rows, err := tx.QueryContext(ctx, `SELECT j.job_id,j.execution_identity_json,j.execution_identity_fingerprint
+ FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+ JOIN rendition_jobs j ON j.job_id=a.build_id
+ WHERE h.content_version_id=$1 AND j.source_sha256=$2 AND j.rendition_request_fingerprint=$3
+ AND j.evidence_lexical_fingerprint=$4 AND j.captured_artifact_policy_fingerprint=$5
+ AND NOT EXISTS(SELECT 1 FROM rendition_jobs WHERE job_id=$6) ORDER BY j.job_id`,
+					request.ContentVersionID, sourceSHA256, profile.RenditionRequestFingerprint,
+					profile.EvidenceLexicalFingerprint, policyFingerprint, jobID)
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+				for rows.Next() {
+					var retainedID, retainedJSON, retainedFingerprint string
+					if err := rows.Scan(&retainedID, &retainedJSON, &retainedFingerprint); err != nil {
+						return err
+					}
+					stored, err := document.ParseRenditionExecutionIdentityV1([]byte(retainedJSON))
+					if err != nil {
+						return err
+					}
+					stored.Upload.CapabilityRecordChecksum, stored.Upload.ProviderMetadataChecksum = request.ExecutionIdentity.Upload.CapabilityRecordChecksum, request.ExecutionIdentity.Upload.ProviderMetadataChecksum
+					stored.Authorization.CapabilityRecordChecksum, stored.Authorization.ProviderMetadataChecksum = request.ExecutionIdentity.Authorization.CapabilityRecordChecksum, request.ExecutionIdentity.Authorization.ProviderMetadataChecksum
+					_, matchingFingerprint, err := document.CanonicalRenditionExecutionIdentityV1(stored)
+					if err != nil {
+						return err
+					}
+					if matchingFingerprint == executionFingerprint {
+						jobID, executionJSON, executionFingerprint = retainedID, jsontext.Value(retainedJSON), retainedFingerprint
+						break
+					}
+				}
+				return rows.Err()
+			}()
+			if err != nil {
+				return fmt.Errorf("checking retained rendition execution: %w", err)
+			}
+		}
 		buildSuppressed, err := derivativeBuildSuppressedTx(ctx, tx, sourceSHA256, jobID)
 		if err != nil {
 			return fmt.Errorf("checking rendition job build suppression: %w", err)
@@ -1029,7 +1069,9 @@ func (s *Store) BeginRenditionProviderEgress(
 	ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
 ) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
-	s.providerEgressMu.RLock()
+	if err := s.providerEgressMu.RLock(ctx); err != nil {
+		return ProviderOperationAuthorization{}, nil, err
+	}
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	authorization, err := s.BeginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
 	if err != nil {
@@ -1359,37 +1401,43 @@ func (s *Store) StageRenditionJobGeneration(
 		if err != nil {
 			return err
 		}
-		root := CurrentRenditionRoot{
-			ID: renditionJobRootID("generation", claim.JobID), Kind: RenditionRootJob,
-			TargetKind: RenditionRootLexicalGeneration, TargetID: generation.ID,
-			FencingToken: claim.Epoch, RecordedAt: at.UTC().Format(timestampLayout),
-		}
-		if job.Phase == RenditionPhaseGenerationStaged {
-			result, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET
-				target_id=$1,recorded_at=$2
-				WHERE root_id=$3 AND root_kind='job' AND target_kind='lexical_generation'
-				  AND fencing_token=$4 AND active=1`, generation.ID, root.RecordedAt,
-				root.ID, claim.Epoch)
-			if err != nil {
-				return fmt.Errorf("refreshing rendition job generation root: %w", err)
-			}
-			changed, err := result.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("reading rendition job transition result: %w", err)
-			}
-			if changed != 1 {
-				return ErrRenditionJobFenced
-			}
-		} else if err := putRenditionJobRootTx(ctx, tx, root); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			phase='generation_staged',lexical_generation_id=$1,updated_at=$2
-			WHERE job_id=$3 AND claim_epoch=$4`, generation.ID,
-			at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
-		return err
+		return rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at)
 	})
 	return generation, err
+}
+
+func rootRenditionJobGenerationTx(
+	ctx context.Context, tx *sql.Tx, job RenditionJob, claim RenditionJobClaim, generation LexicalGeneration, at time.Time,
+) error {
+	root := CurrentRenditionRoot{
+		ID: renditionJobRootID("generation", claim.JobID), Kind: RenditionRootJob,
+		TargetKind: RenditionRootLexicalGeneration, TargetID: generation.ID,
+		FencingToken: claim.Epoch, RecordedAt: at.UTC().Format(timestampLayout),
+	}
+	if job.Phase == RenditionPhaseGenerationStaged {
+		result, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots SET
+			target_id=$1,recorded_at=$2
+			WHERE root_id=$3 AND root_kind='job' AND target_kind='lexical_generation'
+			  AND fencing_token=$4 AND active=1`, generation.ID, root.RecordedAt,
+			root.ID, claim.Epoch)
+		if err != nil {
+			return fmt.Errorf("refreshing rendition job generation root: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reading rendition job transition result: %w", err)
+		}
+		if changed != 1 {
+			return ErrRenditionJobFenced
+		}
+	} else if err := putRenditionJobRootTx(ctx, tx, root); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
+		phase='generation_staged',lexical_generation_id=$1,updated_at=$2
+		WHERE job_id=$3 AND claim_epoch=$4`, generation.ID,
+		at.UTC().Format(timestampLayout), claim.JobID, claim.Epoch)
+	return err
 }
 
 type renditionJobWaiterAuthority struct {
@@ -1399,7 +1447,8 @@ type renditionJobWaiterAuthority struct {
 
 // PublishRenditionJob rechecks the egress grant and every waiter inside the
 // same transaction that attaches authorized waiters and flips all rendition
-// and lexical heads. Revoked secondary waiters are rejected without exposing
+// and lexical heads. It stages the final lexical generation under that writer
+// lock. Revoked secondary waiters are rejected without exposing
 // the successfully authorized waiters to a partial head flip.
 func (s *Store) PublishRenditionJob(
 	ctx context.Context, claim RenditionJobClaim, at time.Time,
@@ -1432,7 +1481,20 @@ func (s *Store) publishRenditionJob(
 		if err != nil {
 			return err
 		}
-		if result == nil && job.Phase != RenditionPhaseGenerationStaged || result != nil && job.Phase != RenditionPhaseProvider {
+		if result == nil {
+			if job.Phase != RenditionPhaseBuildStaged && job.Phase != RenditionPhaseGenerationStaged {
+				return errors.New("rendition job is not ready for publication")
+			}
+			// Capture the final manifest under the publication writer lock so
+			// another publisher cannot make it stale before the head flip.
+			generation, err := stageLexicalGenerationExcludingTx(ctx, tx, nil)
+			if err != nil {
+				return err
+			}
+			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at); err != nil {
+				return err
+			}
+		} else if job.Phase != RenditionPhaseProvider {
 			return errors.New("rendition job is not ready for publication")
 		}
 		var generationID string
@@ -1558,7 +1620,7 @@ func (s *Store) publishRenditionJob(
 				if err := json.Unmarshal(result.Artifacts[0].Payload, &detection, json.RejectUnknownMembers(true)); err != nil || detection.Faces == nil {
 					return ErrInvalidPhotoDescriptionResult
 				}
-				if err := publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
+				if err := s.publishFaceDetectionTx(ctx, tx, version, job.RenditionRequestFingerprint, detection, at); err != nil {
 					return err
 				}
 			} else {

@@ -1,9 +1,11 @@
 import { defineConfig } from "vite-plus";
+import { verifyEmbedPDFPatch } from "./scripts/patch-embedpdf.mjs";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 const apiTarget = process.env.VITE_API_TARGET ?? "http://127.0.0.1:8080";
 
 export default defineConfig({
+  base: "./",
   fmt: {
     svelte: true,
     ignorePatterns: ["src/generated/docbank.ts"],
@@ -14,7 +16,10 @@ export default defineConfig({
       "vite-plus/prefer-vite-plus-imports": "error",
     },
   },
-  plugins: [svelte()],
+  plugins: [
+    svelte(),
+    { name: "verify-embedpdf", apply: "build", buildStart: () => verifyEmbedPDFPatch() },
+  ],
   resolve: {
     conditions: ["browser"],
   },
@@ -37,6 +42,13 @@ export default defineConfig({
     execArgv: ["--no-experimental-webstorage"],
     exclude: ["docs-site/**", "node_modules/**"],
     maxWorkers: 2,
+    // CI retries a failed test and records every result as JSON, which CI
+    // uploads so a test that passed only on a retry stays visible.
+    ...(process.env.CI && {
+      retry: 2,
+      reporters: ["default", "github-actions", "json"],
+      outputFile: { json: "test-results/vitest/frontend.json" },
+    }),
     testTimeout: 30_000,
     server: {
       deps: {

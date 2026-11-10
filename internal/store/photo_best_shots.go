@@ -27,7 +27,7 @@ func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep 
 			versionIDs = append(versionIDs, t.CurrentContentVersionID)
 		}
 	}
-	quality, err := photoQualityForVersions(ctx, tx, versionIDs)
+	quality, err := s.photoQualityForVersions(ctx, tx, versionIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (s *Store) bestShotsTx(ctx context.Context, tx *sql.Tx, ids []string, prep 
 // PhotoStackBestShots enriches a complete read, publishing nothing on failure.
 func (s *Store) PhotoStackBestShots(ctx context.Context, stacks []PhotoStack, hidden bool) error {
 	offers := make([][]document.PhotoBestShotProposal, len(stacks))
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		settings, err := photoSettingsTx(ctx, tx)
 		if err != nil {
 			return err

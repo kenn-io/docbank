@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -309,7 +309,7 @@ func TestTrashAndRestoreRoundTripHTTP(t *testing.T) {
 func TestMutationReceiptsRemainBoundDuringCompetingMutation(t *testing.T) {
 	t.Parallel()
 	t.Run("move", func(t *testing.T) {
-		ts, s := newTestServer(t, nil)
+		ts, s, compete := newCompetingMutationServer(t)
 		left, err := s.Mkdir(t.Context(), s.RootID(), "left")
 		require.NoError(t, err)
 		right, err := s.Mkdir(t.Context(), s.RootID(), "right")
@@ -319,42 +319,38 @@ func TestMutationReceiptsRemainBoundDuringCompetingMutation(t *testing.T) {
 			t.Context(), file.ID, left.ID, file.Name, store.UnconditionalRev,
 		)
 		require.NoError(t, err)
-		revision := file.Revision
 
-		for range 20 {
-			attempted := make(chan struct{})
-			competing := make(chan mutationRequestResult, 1)
-			go func(revision int64) {
-				competing <- retryMoveRequest(
-					t, ts, file.ID, revision, left.ID, attempted,
-					map[int]bool{http.StatusPreconditionFailed: true},
-				)
-			}(revision + 1)
-			<-attempted
+		// The competing move needs the revision the main move commits, so it
+		// can only succeed in the window after that commit.
+		competing := compete(func() mutationRequestResult {
+			return moveRequest(t, ts, file.ID, file.Revision+1, left.ID)
+		})
+		resp, body := do(t, ts, http.MethodPatch,
+			fmt.Sprintf("/api/v1/nodes/%d", file.ID),
+			map[string]string{"If-Match": strconv.FormatInt(file.Revision, 10)},
+			map[string]any{"new_parent_id": right.ID})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var moved api.Node
+		require.NoError(t, json.Unmarshal([]byte(body), &moved))
+		assert.Equal(t, right.ID, *moved.ParentID)
+		assert.Equal(t, "/right/item.txt", moved.Path)
 
-			resp, body := do(t, ts, http.MethodPatch,
-				fmt.Sprintf("/api/v1/nodes/%d", file.ID),
-				map[string]string{"If-Match": strconv.FormatInt(revision, 10)},
-				map[string]any{"new_parent_id": right.ID})
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var moved api.Node
-			require.NoError(t, json.Unmarshal([]byte(body), &moved))
-			assert.Equal(t, right.ID, *moved.ParentID)
-			assert.Equal(t, "/right/item.txt", moved.Path)
-
-			result := <-competing
-			require.NoError(t, result.err)
-			require.Equal(t, http.StatusOK, result.status, result.body)
-			var returned api.Node
-			require.NoError(t, json.Unmarshal([]byte(result.body), &returned))
-			assert.Equal(t, left.ID, *returned.ParentID)
-			assert.Equal(t, "/left/item.txt", returned.Path)
-			revision = returned.Revision
+		var result mutationRequestResult
+		select {
+		case result = <-competing:
+		default:
+			t.Fatal("the competing move did not run between the commit and the response")
 		}
+		require.NoError(t, result.err)
+		require.Equal(t, http.StatusOK, result.status, result.body)
+		var returned api.Node
+		require.NoError(t, json.Unmarshal([]byte(result.body), &returned))
+		assert.Equal(t, left.ID, *returned.ParentID)
+		assert.Equal(t, "/left/item.txt", returned.Path)
 	})
 
 	t.Run("restore", func(t *testing.T) {
-		ts, s := newTestServer(t, nil)
+		ts, s, compete := newCompetingMutationServer(t)
 		left, err := s.Mkdir(t.Context(), s.RootID(), "left")
 		require.NoError(t, err)
 		right, err := s.Mkdir(t.Context(), s.RootID(), "right")
@@ -367,16 +363,9 @@ func TestMutationReceiptsRemainBoundDuringCompetingMutation(t *testing.T) {
 		trashed, _, err := s.Trash(t.Context(), file.ID, file.Revision)
 		require.NoError(t, err)
 
-		attempted := make(chan struct{})
-		competing := make(chan mutationRequestResult, 1)
-		go func() {
-			competing <- retryMoveRequest(
-				t, ts, file.ID, trashed.Revision+1, right.ID, attempted,
-				map[int]bool{http.StatusNotFound: true, http.StatusPreconditionFailed: true},
-			)
-		}()
-		<-attempted
-
+		competing := compete(func() mutationRequestResult {
+			return moveRequest(t, ts, file.ID, trashed.Revision+1, right.ID)
+		})
 		resp, body := do(t, ts, http.MethodPost,
 			fmt.Sprintf("/api/v1/nodes/%d/restore", file.ID),
 			map[string]string{"If-Match": strconv.FormatInt(trashed.Revision, 10)}, nil)
@@ -386,7 +375,12 @@ func TestMutationReceiptsRemainBoundDuringCompetingMutation(t *testing.T) {
 		assert.Equal(t, left.ID, *restored.ParentID)
 		assert.Equal(t, "/left/item.txt", restored.Path)
 
-		result := <-competing
+		var result mutationRequestResult
+		select {
+		case result = <-competing:
+		default:
+			t.Fatal("the competing move did not run between the commit and the response")
+		}
 		require.NoError(t, result.err)
 		require.Equal(t, http.StatusOK, result.status, result.body)
 		var moved api.Node
@@ -402,32 +396,35 @@ type mutationRequestResult struct {
 	err    error
 }
 
-func retryMoveRequest(
-	t *testing.T,
-	ts *httptest.Server,
-	nodeID, revision, parentID int64,
-	attempted chan<- struct{},
-	retryable map[int]bool,
-) mutationRequestResult {
+// newCompetingMutationServer returns a server and a function that arms one
+// competing request. The armed request runs once, after the next route
+// mutation commits and before that mutation's handler builds its response.
+func newCompetingMutationServer(t *testing.T) (*httptest.Server, *testStore, func(func() mutationRequestResult) <-chan mutationRequestResult) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	first := true
-	for time.Now().Before(deadline) {
-		resp, body, err := try(t, ts, http.MethodPatch,
-			fmt.Sprintf("/api/v1/nodes/%d", nodeID),
-			map[string]string{"If-Match": strconv.FormatInt(revision, 10)},
-			map[string]any{"new_parent_id": parentID})
-		if first {
-			close(attempted)
-			first = false
+	gate := api.NewOperationGate()
+	var armed atomic.Pointer[func()]
+	api.SetAfterRouteMutation(gate, func() {
+		if run := armed.Swap(nil); run != nil {
+			(*run)()
 		}
-		if err != nil {
-			return mutationRequestResult{err: err}
-		}
-		if resp.StatusCode == http.StatusOK || !retryable[resp.StatusCode] {
-			return mutationRequestResult{status: resp.StatusCode, body: body}
-		}
-		time.Sleep(time.Millisecond) //nolint:kennlint // sleeptest: retries must race the main request while it runs; pacing keeps them from starving it on SQLite's write lock
+	})
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+	return ts, s, func(request func() mutationRequestResult) <-chan mutationRequestResult {
+		result := make(chan mutationRequestResult, 1)
+		run := func() { result <- request() }
+		armed.Store(&run)
+		return result
 	}
-	return mutationRequestResult{err: fmt.Errorf("timed out waiting to move node %d", nodeID)}
+}
+
+func moveRequest(t *testing.T, ts *httptest.Server, nodeID, revision, parentID int64) mutationRequestResult {
+	t.Helper()
+	resp, body, err := try(t, ts, http.MethodPatch,
+		fmt.Sprintf("/api/v1/nodes/%d", nodeID),
+		map[string]string{"If-Match": strconv.FormatInt(revision, 10)},
+		map[string]any{"new_parent_id": parentID})
+	if err != nil {
+		return mutationRequestResult{err: err}
+	}
+	return mutationRequestResult{status: resp.StatusCode, body: body}
 }

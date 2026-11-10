@@ -20,7 +20,7 @@ func startMailboxJobs(ctx context.Context, supervisor *jobs.Supervisor, s *store
 	}
 	service := &mailbox.Service{Store: s, Blobs: b, Spool: spool, Mutate: gate.MutateContext, Logger: logger}
 	for i := range 2 {
-		if err := supervisor.Start(fmt.Sprintf("import:mailbox:%d", i+1), service.RunWorker); err != nil {
+		if err := supervisor.StartWorker(fmt.Sprintf("import:mailbox:%d", i+1), service.RunWorker); err != nil {
 			return err
 		}
 	}

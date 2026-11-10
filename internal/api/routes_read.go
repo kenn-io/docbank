@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -91,6 +92,18 @@ func contentResponses() map[string]*huma.Response {
 	}
 }
 
+func setContentVersionHeaders(hctx huma.Context, version store.ContentVersion) {
+	contentType := version.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	hctx.SetHeader("Content-Type", contentType)
+	hctx.SetHeader(ContentVersionHeader, version.ID)
+	hctx.SetHeader(BlobHashHeader, version.BlobHash)
+	hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
+	hctx.SetHeader("Trailer", "Content-Digest")
+}
+
 func streamContentVersion(
 	ctx context.Context, d Deps, version store.ContentVersion,
 ) (*huma.StreamResponse, error) {
@@ -99,21 +112,43 @@ func streamContentVersion(
 		return nil, NewError(http.StatusInternalServerError, "internal",
 			fmt.Sprintf("opening blob %s: %v (run docbank verify)", version.BlobHash, err))
 	}
-	contentType := version.MimeType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
 	return &huma.StreamResponse{Body: func(hctx huma.Context) {
 		defer func() { _ = f.Close() }()
-		hctx.SetHeader("Content-Type", contentType)
-		hctx.SetHeader(ContentVersionHeader, version.ID)
-		hctx.SetHeader(BlobHashHeader, version.BlobHash)
-		hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
-		hctx.SetHeader("Trailer", "Content-Digest")
+		setContentVersionHeaders(hctx, version)
 		// The blob reader hashes the streamed bytes and verifies this identity
 		// at EOF. Reuse that result only after a complete, verified transfer.
 		if _, err := io.Copy(hctx.BodyWriter(), f); err == nil && f.Verified() {
 			hctx.SetHeader("Content-Digest", contentDigest(mustDecodeHash(version.BlobHash)))
+		}
+	}}, nil
+}
+
+func streamContentVersionRange(ctx context.Context, d Deps, version store.ContentVersion, requested string) (*huma.StreamResponse, error) {
+	start, end, err := parseByteRange(requested, version.Size)
+	if err != nil {
+		return nil, NewError(http.StatusRequestedRangeNotSatisfiable, "invalid_content_range", "content byte range is invalid or unsatisfiable")
+	}
+	// Streaming to the offset reads each blob once without materializing it.
+	// Seekable opens copy and verify the whole decoded blob first.
+	reader, size, err := d.Blobs.OpenStreamContext(ctx, version.BlobHash)
+	if err == nil && size == version.Size {
+		_, err = io.CopyN(io.Discard, reader, start)
+	}
+	if err != nil || size != version.Size {
+		if reader != nil {
+			_ = reader.Close()
+		}
+		return nil, NewError(http.StatusInternalServerError, "internal", "opening content byte range failed (run docbank verify)")
+	}
+	return &huma.StreamResponse{Body: func(hctx huma.Context) {
+		defer func() { _ = reader.Close() }()
+		setContentVersionHeaders(hctx, version)
+		hctx.SetHeader("Accept-Ranges", "bytes")
+		hctx.SetHeader("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, version.Size))
+		hctx.SetStatus(http.StatusPartialContent)
+		digest := sha256.New()
+		if n, err := io.Copy(io.MultiWriter(hctx.BodyWriter(), digest), io.LimitReader(reader, end-start)); err == nil && n == end-start {
+			hctx.SetHeader("Content-Digest", contentDigest(digest.Sum(nil)))
 		}
 	}}, nil
 }
@@ -175,19 +210,34 @@ func registerReadRoutes(api huma.API, d Deps) {
 		return &contentVersionOutput{Body: body}, nil
 	})
 
+	versionContentResponses := contentResponses()
+	partial := contentResponses()["200"]
+	partial.Description = "Selected document byte range with expected version and blob identity plus a computed digest trailer"
+	partial.Headers["Content-Range"] = &huma.Param{Schema: &huma.Schema{Type: openAPIStringType}}
+	versionContentResponses["206"] = partial
+	versionContentResponses["default"] = &huma.Response{Description: "Error", Content: map[string]*huma.MediaType{
+		new(Error).ContentType("application/json"): {
+			Schema: api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Error](), true, ""),
+		},
+	}}
 	huma.Register(api, huma.Operation{
 		OperationID: "getContentVersionBytes", Method: http.MethodGet,
 		Path:    "/api/v1/versions/{version_id}/content",
 		Summary: "Stream one immutable content version by stable ID",
 		Description: "Version, blob hash, and size headers identify expected authority before the body. " +
-			"Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed.",
-		Responses: contentResponses(),
+			"Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed. " +
+			"Range selects a single byte window and returns 206 with Content-Range.",
+		Responses: versionContentResponses,
 	}, func(ctx context.Context, in *struct {
 		VersionID string `path:"version_id"`
+		Range     string `header:"Range"`
 	}) (*huma.StreamResponse, error) {
 		version, err := d.Store.ContentVersionByID(ctx, in.VersionID)
 		if err != nil {
 			return nil, FromStoreError(err)
+		}
+		if in.Range != "" {
+			return streamContentVersionRange(ctx, d, version, in.Range)
 		}
 		return streamContentVersion(ctx, d, version)
 	})
@@ -358,6 +408,41 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, staleRevisionError(n.ID, revision, current.Revision)
 		}
 		return &verifyNodeOutput{Body: report}, nil
+	})
+
+	type textCoverageOutput struct{ Body SearchTextCoverage }
+	huma.Register(api, huma.Operation{
+		OperationID: "search-text-coverage", Method: http.MethodGet, Path: "/api/v1/search/text-coverage",
+		Summary:     "Count files waiting for searchable text",
+		Description: "Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.",
+	}, func(ctx context.Context, in *struct {
+		PDFFilter      string `query:"pdf_filter" maxLength:"16384"`
+		SourcePresent  bool   `query:"source_present"`
+		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		MIMEType       string `query:"mime_type" maxLength:"255"`
+		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
+		ModifiedSince  string `query:"modified_since" maxLength:"64"`
+		ModifiedBefore string `query:"modified_before" maxLength:"64"`
+	}) (*textCoverageOutput, error) {
+		mimeType, err := store.NormalizeSearchMIMEType(in.MIMEType)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
+		since, before, err := store.NormalizeSearchTimeBounds(in.ModifiedSince, in.ModifiedBefore)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
+		opts := searchFilterOptions(&DocumentSourceFenceFilters{SourcePresent: in.SourcePresent, TagID: in.TagID,
+			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, ModifiedSince: since, ModifiedBefore: before})
+		opts.PDFFilter = in.PDFFilter
+		coverage, err := d.Store.SearchTextCoverage(ctx, opts)
+		if err != nil {
+			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+			}
+			return nil, FromStoreError(err)
+		}
+		return &textCoverageOutput{Body: SearchTextCoverage(coverage)}, nil
 	})
 
 	type searchOutput struct{ Body SearchReport }

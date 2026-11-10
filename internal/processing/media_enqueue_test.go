@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -147,8 +148,8 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	}()
 	select {
 	case <-provider.renderStarted:
-	case <-time.After(10 * time.Second):
-		t.Fatal("supervised worker did not reach provider")
+	case runErr := <-done:
+		t.Fatalf("supervised worker did not reach provider: %v", runErr)
 	}
 	close(provider.renderRelease)
 	require.NoError(t, <-done)
@@ -192,173 +193,184 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 // of resuming.
 func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if blobs != nil {
-			require.NoError(t, blobs.Close())
-		}
-		if catalog != nil {
-			require.NoError(t, catalog.Close())
-		}
-	})
-
-	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
-		ID: "synthetic.media-cancel-v1", ContractVersion: document.RenditionProviderContractVersion,
-		PolicyFingerprint: processingHash("media-cancel-policy"),
-		TrustBoundary:     document.RenditionTrustLocalProcess,
-		SupportedFormats: []document.RenditionFormatCapability{{
-			MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile,
-		}},
-		ReturnsStructured: true,
-		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
-	})
-	require.NoError(t, err)
-	renderer := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
-	embeddingFixture := newEmbeddingWorkerFixture(t)
-	var embeddingProfile document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(embeddingFixture.profile.CanonicalProfile, &embeddingProfile))
-	var direct document.EmbeddingBindingV1
-	for _, binding := range embeddingProfile.Embeddings {
-		if binding.InputKind == document.EmbeddingInputOriginalFile {
-			direct = binding
-		}
-	}
-	require.NotEmpty(t, direct.Name)
-	record := workerProcessingProfile(t, renderer.Descriptor())
-	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
-	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
-	portable.Embeddings = []document.EmbeddingBindingV1{direct}
-	// Required, so an abandoned job is not reported as an optional partial result.
-	portable.Embeddings[0].Activation = document.EmbeddingRequired
-	embedder := &embeddingWorkerProvider{runtime: embeddingFixture.runtime,
-		binding: direct.Name, descriptor: embeddingFixture.descriptor}
-	spool := filepath.Join(root, "spool")
-	require.NoError(t, os.MkdirAll(spool, 0o700))
-	newService := func() *Service {
-		service, serviceErr := NewService(t.Context(), ServiceConfig{
-			Catalog: catalog, Blobs: blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool,
-			Principal: "operator:cancel-restart", Scope: "document-processing",
-			Profiles: map[string]ProfileConfig{"speech": {
-				Profile: portable, RenditionProvider: renderer,
-				EmbeddingProviders: map[string]document.EmbeddingProvider{direct.Name: embedder},
-				EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){
-					direct.Name: embeddingFixture.runtime.Classify,
-				},
-			}},
+	// Embedding retry delays and the continuation's poll run on the bubble's clock.
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
+		require.NoError(t, err)
+		blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			if blobs != nil {
+				require.NoError(t, blobs.Close())
+			}
+			if catalog != nil {
+				require.NoError(t, catalog.Close())
+			}
 		})
-		require.NoError(t, serviceErr)
-		return service
-	}
-	service := newService()
-	raw := mediatest.WAV()
-	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
-	require.NoError(t, err)
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "cancel.wav",
-		written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	version, err := catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-	require.NoError(t, err)
-	selector := Selector{NodeID: node.ID, ContentVersionID: version.ID, Profile: "speech"}
-	plan, err := service.Plan(t.Context(), selector)
-	require.NoError(t, err)
-	_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	receipt, err := service.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
-		OperationID: "00000000-0000-4000-8000-000000000171",
-		Filename:    "cancel.wav", MediaType: "audio/wav", SHA256: written.Hash,
-		ByteLength: written.Size, ExistingContentVersionID: version.ID,
-		Occurrence: MediaOccurrenceInput{Ref: "cancelled-continuation", Revision: "1"},
-		Processing: &MediaProcessingRequest{Profile: "speech"},
-	})
-	require.NoError(t, err)
-	waiter, err := catalog.RenditionJobWaiterByID(t.Context(), receipt.JobID)
-	require.NoError(t, err)
-	renditionWorker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: catalog, Blobs: blobs, Runtime: service.renditions, Gate: newWorkerTestGate(),
-		Owner: "cancel-rendition-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
-	})
-	require.NoError(t, err)
-	_, err = renditionWorker.RunJob(t.Context(), waiter.JobID)
-	require.NoError(t, err)
-	targets, err := service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	target := targets[0]
-	derived, err := service.mediaOperationState(t.Context(), target)
-	require.NoError(t, err)
-	require.Equal(t, "queued", derived.OperationState, "a published rendition still awaits its embeddings")
-	cancelled, cancel := context.WithCancel(t.Context())
-	cancel()
-	require.ErrorIs(t, service.ContinueMediaProcessing(cancelled, target), context.Canceled)
-	require.Zero(t, embeddingFixture.runtime.calls(), "cancellation must stop before embedding egress")
-	pending, err := service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Len(t, pending, 1, "cancellation must preserve resumable media intent")
 
-	require.NoError(t, blobs.Close())
-	blobs = nil
-	require.NoError(t, catalog.Close())
-	catalog = nil
-	catalog, err = store.Open(t.Context(), filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	blobs, err = blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	service = newService()
-	embeddingFixture.runtime.failures[direct.Name] = []error{
-		embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{},
-	}
-	var clockOffset atomic.Int64
-	service.clock = func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
-	runContext, stopRun := context.WithTimeout(t.Context(), 10*time.Second)
-	finished := make(chan struct{})
-	go func() {
-		err = service.ContinueMediaProcessing(runContext, target)
-		close(finished)
-	}()
-	t.Cleanup(func() { stopRun(); <-finished })
-	require.Eventually(t, func() bool {
-		status, statusErr := service.Status(t.Context(), receipt.JobID)
-		return statusErr == nil && status.State == "retry_wait"
-	}, 10*time.Second, time.Millisecond)
-	pending, readErr := service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, readErr)
-	require.Len(t, pending, 1, "retrying embeddings must not finish the media intent")
-	stopRun()
-	<-finished
-	require.ErrorIs(t, err, context.Canceled)
-	clockOffset.Store(int64(2 * time.Minute))
-	// A fenced attempt abandons the embedding job. Re-running embeddings reopens it.
-	waiting, err := service.Status(t.Context(), receipt.JobID)
-	require.NoError(t, err)
-	require.Len(t, waiting.EmbeddingJobIDs, 1)
-	at := service.clock()
-	claim, _, claimed, err := catalog.ClaimEmbeddingWork(t.Context(), waiting.EmbeddingJobIDs[0], "fenced-worker",
-		at, time.Minute, []string{embeddingFixture.descriptor.Fingerprint})
-	require.NoError(t, err)
-	require.True(t, claimed)
-	require.NoError(t, catalog.AbandonEmbeddingWork(t.Context(), claim, at))
-	abandoned, err := service.MediaStatus(t.Context(), receipt.SourceID)
-	require.NoError(t, err)
-	require.Equal(t, "queued", abandoned.OperationState, "an abandoned embedding job can still finish")
-	resumeContext, stopResume := context.WithTimeout(t.Context(), 10*time.Second)
-	defer stopResume()
-	require.NoError(t, service.ContinueMediaProcessing(resumeContext, target))
-	require.Positive(t, embeddingFixture.runtime.calls())
-	status, err := service.Status(t.Context(), receipt.JobID)
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.State)
-	require.Equal(t, 1, status.CompletedBindings)
-	pending, err = service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Empty(t, pending)
-	recorded, err := service.MediaStatus(t.Context(), receipt.SourceID)
-	require.NoError(t, err)
-	require.Equal(t, []string{"succeeded", "transcribed"}, []string{recorded.OperationState, recorded.CoverageState})
+		descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+			ID: "synthetic.media-cancel-v1", ContractVersion: document.RenditionProviderContractVersion,
+			PolicyFingerprint: processingHash("media-cancel-policy"),
+			TrustBoundary:     document.RenditionTrustLocalProcess,
+			SupportedFormats: []document.RenditionFormatCapability{{
+				MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile,
+			}},
+			ReturnsStructured: true,
+			ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
+		})
+		require.NoError(t, err)
+		renderer := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
+		embeddingFixture := newEmbeddingWorkerFixture(t)
+		var embeddingProfile document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(embeddingFixture.profile.CanonicalProfile, &embeddingProfile))
+		var direct document.EmbeddingBindingV1
+		for _, binding := range embeddingProfile.Embeddings {
+			if binding.InputKind == document.EmbeddingInputOriginalFile {
+				direct = binding
+			}
+		}
+		require.NotEmpty(t, direct.Name)
+		record := workerProcessingProfile(t, renderer.Descriptor())
+		var portable document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
+		portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
+		portable.Embeddings = []document.EmbeddingBindingV1{direct}
+		// Required, so an abandoned job is not reported as an optional partial result.
+		portable.Embeddings[0].Activation = document.EmbeddingRequired
+		embedder := &embeddingWorkerProvider{runtime: embeddingFixture.runtime,
+			binding: direct.Name, descriptor: embeddingFixture.descriptor}
+		spool := filepath.Join(root, "spool")
+		require.NoError(t, os.MkdirAll(spool, 0o700))
+		newService := func() *Service {
+			service, serviceErr := NewService(t.Context(), ServiceConfig{
+				Catalog: catalog, Blobs: blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool,
+				Principal: "operator:cancel-restart", Scope: "document-processing",
+				Profiles: map[string]ProfileConfig{"speech": {
+					Profile: portable, RenditionProvider: renderer,
+					EmbeddingProviders: map[string]document.EmbeddingProvider{direct.Name: embedder},
+					EmbeddingClassifiers: map[string]func(error) (EmbeddingProviderFailure, time.Duration){
+						direct.Name: embeddingFixture.runtime.Classify,
+					},
+				}},
+			})
+			require.NoError(t, serviceErr)
+			return service
+		}
+		service := newService()
+		raw := mediatest.WAV()
+		written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "cancel.wav",
+			written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
+		require.NoError(t, err)
+		version, err := catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, err)
+		selector := Selector{NodeID: node.ID, ContentVersionID: version.ID, Profile: "speech"}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+		require.NoError(t, err)
+		receipt, err := service.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
+			OperationID: "00000000-0000-4000-8000-000000000171",
+			Filename:    "cancel.wav", MediaType: "audio/wav", SHA256: written.Hash,
+			ByteLength: written.Size, ExistingContentVersionID: version.ID,
+			Occurrence: MediaOccurrenceInput{Ref: "cancelled-continuation", Revision: "1"},
+			Processing: &MediaProcessingRequest{Profile: "speech"},
+		})
+		require.NoError(t, err)
+		waiter, err := catalog.RenditionJobWaiterByID(t.Context(), receipt.JobID)
+		require.NoError(t, err)
+		renditionWorker, err := NewRenditionWorker(RenditionWorkerConfig{
+			Catalog: catalog, Blobs: blobs, Runtime: service.renditions, Gate: newWorkerTestGate(),
+			Owner: "cancel-rendition-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+		})
+		require.NoError(t, err)
+		_, err = renditionWorker.RunJob(t.Context(), waiter.JobID)
+		require.NoError(t, err)
+		targets, err := service.MediaProcessingTargets(t.Context(), "", 10)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		target := targets[0]
+		derived, err := service.mediaOperationState(t.Context(), target)
+		require.NoError(t, err)
+		require.Equal(t, "queued", derived.OperationState, "a published rendition still awaits its embeddings")
+		cancelled, cancel := context.WithCancel(t.Context())
+		cancel()
+		require.ErrorIs(t, service.ContinueMediaProcessing(cancelled, target), context.Canceled)
+		require.Zero(t, embeddingFixture.runtime.calls(), "cancellation must stop before embedding egress")
+		pending, err := service.MediaProcessingTargets(t.Context(), "", 10)
+		require.NoError(t, err)
+		require.Len(t, pending, 1, "cancellation must preserve resumable media intent")
+
+		require.NoError(t, blobs.Close())
+		blobs = nil
+		require.NoError(t, catalog.Close())
+		catalog = nil
+		catalog, err = store.Open(t.Context(), filepath.Join(root, "docbank.db"))
+		require.NoError(t, err)
+		blobs, err = blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+		require.NoError(t, err)
+		service = newService()
+		embeddingFixture.runtime.failures[direct.Name] = []error{
+			embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{},
+		}
+		exhausted := make(chan struct{})
+		embeddingFixture.runtime.inspectInputs = func([]document.EmbeddingInput) {
+			if embeddingFixture.runtime.callCount(direct.Name) == 3 {
+				close(exhausted)
+			}
+		}
+		var clockOffset atomic.Int64
+		service.clock = func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
+		runContext, stopRun := context.WithTimeout(t.Context(), 10*time.Second)
+		finished := make(chan struct{})
+		go func() {
+			err = service.ContinueMediaProcessing(runContext, target)
+			close(finished)
+		}()
+		t.Cleanup(func() { stopRun(); <-finished })
+		<-exhausted
+		// The continuation now polls the embedding job through its retry backoff.
+		synctest.Wait()
+		retrying, statusErr := service.Status(t.Context(), receipt.JobID)
+		require.NoError(t, statusErr)
+		require.Equal(t, "retry_wait", retrying.State)
+		pending, readErr := service.MediaProcessingTargets(t.Context(), "", 10)
+		require.NoError(t, readErr)
+		require.Len(t, pending, 1, "retrying embeddings must not finish the media intent")
+		stopRun()
+		<-finished
+		require.ErrorIs(t, err, context.Canceled)
+		clockOffset.Store(int64(2 * time.Minute))
+		// A fenced attempt abandons the embedding job. Re-running embeddings reopens it.
+		waiting, err := service.Status(t.Context(), receipt.JobID)
+		require.NoError(t, err)
+		require.Len(t, waiting.EmbeddingJobIDs, 1)
+		at := service.clock()
+		claim, _, claimed, err := catalog.ClaimEmbeddingWork(t.Context(), waiting.EmbeddingJobIDs[0], "fenced-worker",
+			at, time.Minute, []string{embeddingFixture.descriptor.Fingerprint})
+		require.NoError(t, err)
+		require.True(t, claimed)
+		require.NoError(t, catalog.AbandonEmbeddingWork(t.Context(), claim, at))
+		abandoned, err := service.MediaStatus(t.Context(), receipt.SourceID)
+		require.NoError(t, err)
+		require.Equal(t, "queued", abandoned.OperationState, "an abandoned embedding job can still finish")
+		resumeContext, stopResume := context.WithTimeout(t.Context(), 10*time.Second)
+		defer stopResume()
+		require.NoError(t, service.ContinueMediaProcessing(resumeContext, target))
+		require.Positive(t, embeddingFixture.runtime.calls())
+		status, err := service.Status(t.Context(), receipt.JobID)
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
+		require.Equal(t, 1, status.CompletedBindings)
+		pending, err = service.MediaProcessingTargets(t.Context(), "", 10)
+		require.NoError(t, err)
+		require.Empty(t, pending)
+		recorded, err := service.MediaStatus(t.Context(), receipt.SourceID)
+		require.NoError(t, err)
+		require.Equal(t, []string{"succeeded", "transcribed"}, []string{recorded.OperationState, recorded.CoverageState})
+	})
 }
 
 type mediaWorkerProvider struct{ *workerProvider }

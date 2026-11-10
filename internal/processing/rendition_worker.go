@@ -221,9 +221,6 @@ type renditionWorkerCatalog interface {
 		physical store.BlobPhysical) error
 	StageRenditionJobBuild(ctx context.Context, claim store.RenditionJobClaim,
 		build store.RenditionBuildRecord, at time.Time) error
-	StageRenditionJobGeneration(ctx context.Context, claim store.RenditionJobClaim,
-		generationID string, at time.Time) (
-		store.LexicalGeneration, error)
 	PublishRenditionJob(ctx context.Context, claim store.RenditionJobClaim, at time.Time) (
 		store.RenditionJobPublication, error)
 	PublishPhotoDescription(ctx context.Context, claim store.RenditionJobClaim,
@@ -334,6 +331,8 @@ func (worker *RenditionWorker) Run(ctx context.Context) error {
 			return err
 		}
 	}
+	// found records whether any build since the last idle wait ran.
+	found := false
 	for {
 		processed, err := worker.RunOne(ctx)
 		if err != nil {
@@ -355,11 +354,13 @@ func (worker *RenditionWorker) Run(ctx context.Context) error {
 			return renditionWorkerFatal(err)
 		}
 		if processed {
+			found = true
 			continue
 		}
-		if err := jobs.Wait(ctx, worker.idleDelay); err != nil {
+		if err := jobs.Idle(ctx, worker.idleDelay, found); err != nil {
 			return err
 		}
+		found = false
 	}
 }
 
@@ -802,15 +803,7 @@ func (worker *RenditionWorker) stageArtifactsAndBuild(
 func (worker *RenditionWorker) stageGenerationAndPublish(
 	ctx context.Context, claim store.RenditionJobClaim,
 ) error {
-	generationID := renditionJobGenerationID(claim.JobID, claim.Epoch)
 	err := worker.mutate(ctx, func() error {
-		if err := worker.retryCatalog(ctx, func() error {
-			_, stageErr := worker.catalog.StageRenditionJobGeneration(
-				ctx, claim, generationID, worker.clock().UTC())
-			return stageErr
-		}); err != nil {
-			return err
-		}
 		return worker.retryCatalog(ctx, func() error {
 			_, publishErr := worker.catalog.PublishRenditionJob(ctx, claim, worker.clock().UTC())
 			return publishErr

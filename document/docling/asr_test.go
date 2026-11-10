@@ -427,7 +427,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		ProviderMetadataChecksum: "3333333333333333333333333333333333333333333333333333333333333333",
 		InputKind:                document.RenditionInputOriginalFile,
 	}
-	record, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType,
 		ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: descriptor.Fingerprint,
@@ -463,7 +463,7 @@ func newASRClient(t *testing.T, origin string, descriptor document.RenditionDesc
 	client, err := NewASR(ASRProfile{
 		Origin: origin, Descriptor: descriptor,
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
-		PollInterval: time.Millisecond, MaxPollAttempts: 4,
+		MaxPollAttempts:  4,
 		MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
 		MaxTranscriptChars: 100_000,
 	}, nil, http.DefaultClient)

@@ -20,19 +20,23 @@ func BenchmarkPeopleRecentAtVaultScale(b *testing.B) {
 		people   int
 		contacts int
 		photos   int
+		// hidden sets a Hidden passcode and leaves it locked, with nothing hidden.
+		hidden bool
 	}{
+		{name: "1000-people-100000-photos", people: 1000, photos: 100000},
+		{name: "1000-people-100000-photos-hidden-locked", people: 1000, photos: 100000, hidden: true},
 		{name: "3000-people-40000-photos", people: 3000, photos: 40000},
 		{name: "5000-people", people: 5000},
 		{name: "50000-people-mail-heavy", people: 50000, contacts: 10000},
 		{name: "100000-people", people: 100000},
 	} {
 		b.Run(scale.name, func(b *testing.B) {
-			benchmarkPeopleRecent(b, scale.people, scale.contacts, scale.photos)
+			benchmarkPeopleRecent(b, scale.people, scale.contacts, scale.photos, scale.hidden)
 		})
 	}
 }
 
-func benchmarkPeopleRecent(b *testing.B, people, contacts, photos int) {
+func benchmarkPeopleRecent(b *testing.B, people, contacts, photos int, hidden bool) {
 	b.Helper()
 	const evidencePeople, photosPerPerson = 100, 250
 	const heavyPeople, heavyPhotos = 8, 300
@@ -132,6 +136,9 @@ func benchmarkPeopleRecent(b *testing.B, people, contacts, photos int) {
 		}
 		return nil
 	}))
+	if hidden {
+		require.NoError(b, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	}
 	// The tail case continues from a real page of every ranked group.
 	ranked, _, err := s.PeopleByDisplayName(ctx, "", "", "", evidencePeople, true, PeopleSearchOptions{RecentFirst: true})
 	require.NoError(b, err)

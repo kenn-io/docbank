@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"runtime"
-	"time"
 )
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "wait" {
-		time.Sleep(time.Hour)
+		wait()
 		return
 	}
 	allocation := make([]byte, 3<<30)
@@ -18,4 +19,19 @@ func main() {
 	}
 	fmt.Println("unexpected allocation success")
 	runtime.KeepAlive(allocation)
+}
+
+// wait connects to the address the test sends on stdin, which tells the test
+// that the probe is running, then blocks until it is killed.
+func wait() {
+	address, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(2)
+	}
+	connection, err := net.Dial("tcp", string(address))
+	if err != nil {
+		os.Exit(3)
+	}
+	_, _ = io.Copy(io.Discard, connection)
+	os.Exit(4)
 }

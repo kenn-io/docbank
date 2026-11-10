@@ -441,6 +441,17 @@ func (c *Connection) ProcessingStatus(ctx context.Context, jobID string) (api.Pr
 	return result, nil
 }
 
+func (c *Connection) ValidateDocumentSearch(ctx context.Context, request api.DocumentSearchValidationRequest) error {
+	result, err := c.API().ValidateDocumentSearch(ctx, &apiclient.ValidateDocumentSearchRequestOptions{Body: &request})
+	if err != nil {
+		return err
+	}
+	if !result.Valid {
+		return errors.New("search validation response is invalid")
+	}
+	return nil
+}
+
 func (c *Connection) SearchDocuments(ctx context.Context, request api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
 	var result api.DocumentSearchReport
 	apiResponse, err := c.API().SearchDocuments(ctx, &apiclient.SearchDocumentsRequestOptions{Body: &request})
@@ -586,8 +597,13 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	seenDocuments := make(map[resultIdentity]struct{}, len(report.Results))
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
+	// A scoped request names no vault, so every result must share the first result's vault.
+	vaultUID := request.Fence.VaultUID
 	for index, result := range report.Results {
-		if (request.Scope == nil && result.VaultUID != request.Fence.VaultUID) || !validUUIDv4(result.VaultUID) {
+		if request.Scope != nil && index == 0 {
+			vaultUID = result.VaultUID
+		}
+		if result.VaultUID != vaultUID || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}
 		if _, allowed := versions[result.ContentVersionID]; (!allowed && request.Scope == nil) || !validUUIDv4(result.ContentVersionID) {

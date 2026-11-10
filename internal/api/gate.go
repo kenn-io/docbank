@@ -23,6 +23,10 @@ type OperationGate struct {
 	preservation *semaphore.Weighted
 	admission    sync.RWMutex
 	maintenance  int
+
+	// afterRouteMutation is a test hook for move and restore responses. It
+	// runs after the store commits and before the handler builds its response.
+	afterRouteMutation func()
 }
 
 // NewOperationGate creates one daemon-wide operation coordinator. Every

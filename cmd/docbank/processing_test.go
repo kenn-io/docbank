@@ -169,7 +169,7 @@ func TestProcessingCLINDJSONFlushesDurableJobBeforeTerminalStatus(t *testing.T) 
 	c := daemonconn.New(server.URL, "test-key")
 	command := &cobra.Command{}
 	command.SetContext(t.Context())
-	output := &synchronizedBuffer{}
+	output := &synchronizedBuffer{written: make(chan struct{}, 1)}
 	command.SetOut(output)
 	command.SetErr(output)
 	done := make(chan error, 1)
@@ -178,8 +178,18 @@ func TestProcessingCLINDJSONFlushesDurableJobBeforeTerminalStatus(t *testing.T) 
 	}()
 
 	<-jobFlushed
-	require.Eventually(t, func() bool { return strings.Contains(output.String(), `"type":"job"`) },
-		time.Second, 10*time.Millisecond, "the durable job event must be observable while terminal delivery is blocked")
+	// The command is still waiting for the blocked terminal event, so the job
+	// event must reach the output before the command returns.
+	for !strings.Contains(output.String(), `"type":"job"`) {
+		select {
+		case <-output.written:
+		case err := <-done:
+			require.Failf(t, "the durable job event must be observable while terminal delivery is blocked", "command returned first: %v", err)
+		case <-time.After(10 * time.Second):
+			// A safety net: the event is written as soon as the command reads it.
+			require.FailNow(t, "the durable job event must be observable while terminal delivery is blocked")
+		}
+	}
 	releaseOnce.Do(func() { close(terminalRelease) })
 	require.NoError(t, <-done)
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
@@ -259,12 +269,20 @@ func processingTestCommand() (*cobra.Command, *bytes.Buffer) {
 type synchronizedBuffer struct {
 	mu   sync.Mutex
 	data bytes.Buffer
+	// written receives a signal after each write, if it is set.
+	written chan struct{}
 }
 
 func (buffer *synchronizedBuffer) Write(value []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	written, err := buffer.data.Write(value)
+	if buffer.written != nil {
+		select {
+		case buffer.written <- struct{}{}:
+		default:
+		}
+	}
 	if err != nil {
 		return written, fmt.Errorf("writing synchronized test output: %w", err)
 	}

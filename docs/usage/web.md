@@ -52,7 +52,7 @@ album index at `/photos/albums`, People at `/photos/people`, or an album at `/ph
 Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
 **Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
-**Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
+**Protected folders**, **Usage reporting**, and **Search by meaning**. On a narrow screen, **Open navigation** reveals the
 same menu.
 
 Folder breadcrumbs let you jump to any parent. Each file has an icon and a
@@ -312,8 +312,8 @@ browser session does not preserve the drawer's job handle.
 ## Review and redact a PDF
 
 Open a live PDF and choose **Redact PDF** in the reader, or use the same action
-in the Documents inspector. Mark rectangles or whole pages, inspect verified
-output and sanitized text, and download one ZIP. Closing the review returns to
+in the Documents inspector. Mark rectangles or whole pages on the same reader,
+inspect verified output and sanitized text, and download one ZIP. Closing the review returns to
 the reader's page and zoom; unsaved masks require confirmation before discard.
 The original is unchanged. Reviews are temporary and require the configured
 Linux amd64 page runtime. See the [browser PDF review workflow](document-processing.md#review-a-pdf-in-the-browser)
@@ -714,7 +714,8 @@ the version selected by a frozen snapshot.
 
 PDFs open in EmbedPDF, with search, zoom, page navigation, thumbnails, text
 selection and printing. **Download** saves the selected original. **Redact PDF**
-opens the review workflow for live PDFs; frozen search results stay read-only.
+switches live PDFs to review in the same workspace; frozen search results stay
+read-only.
 Its rendering engine and fonts ship with Docbank; viewing a PDF
 needs no optional server runtime or external asset download. PDF previews are
 limited to 64 MiB. Markdown displays headings, lists, tables and code blocks;
@@ -851,6 +852,8 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
 count, each row shows the name with its folder beneath, and the **Match** column
@@ -916,23 +919,23 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose **System → Protected folders** to run the vault-wide permanent
-audit verifier. The verifier does more than read stored status. Docbank
-replays canonical audit history against the current node, version, membership,
-topology, tag, and provenance projections, then reads and recomputes SHA-256 for
-every unique blob retained by protected history.
+Choose **System → Protected folders** to read protection status. When nothing is
+protected, the section shows the command to protect a folder and skips verification.
+Otherwise, including when status cannot be read, Docbank runs the vault-wide
+permanent audit verifier. It replays canonical audit history against the current
+node, version, membership, topology, tag, and provenance projections, then reads
+and recomputes SHA-256 for every unique blob retained by protected history.
 
 A successful result reports the protected and verified file totals and the
 protected size. **Details** holds the vault and allocation-lineage identities,
 the operation high-water mark, the allocation entry count and head, and each
 scope's terminal entry count and chain head. Copy buttons preserve the complete
-identities even when they wrap. A vault with nothing protected shows the
-`docbank audit enable` command instead of a failure. Metadata, missing-content,
+identities even when they wrap. Metadata, missing-content,
 corruption, and unreadable-content problems stay visible with the affected hash.
 
-This drawer runs only a fresh proof of current authority. It does not accept a
-previous evidence bundle, enroll a scope, or change protected state. Record
-`docbank audit verify --json` outside the vault and later use
+Verification results provide a fresh proof of current authority. The drawer does
+not accept a previous evidence bundle, enroll a scope, or change protected state.
+Record `docbank audit verify --json` outside the vault and later use
 `docbank audit verify --expected` when that external copy must act as a rollback
 trust anchor. Closing the drawer cancels its active request. Maintenance
 contention or interruption remains visible, and you can retry.
@@ -947,7 +950,8 @@ The list below shows every worker and its status, and offers pause controls for
 idle workers. Queued operations stay in that list until they start.
 
 A worker waiting for work shows Idle, and the header counts only work in
-progress.
+progress. Watched inboxes show their [configured tags](../configuration.md#watched-inboxes).
+A missing tag appears beside the configured tags, separately from any worker error.
 
 Pause or resume photo imports, visual previews, and the storage lanes `place`,
 `evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item
@@ -1107,6 +1111,44 @@ Without `public_origin`, configured-key login is available at the daemon's
 fresh loopback web origin, and key login adds no Host restriction beyond the
 server's [`allowed_hosts`](../configuration.md). The usual `docbank web` fragment handoff also works
 with ephemeral API keys and keeps its existing upload proof and permissions.
+
+### Serve Docbank under a path
+
+Set `base_path` when other applications share the public origin:
+
+```toml
+[web]
+public_origin = "https://library.example.test"
+base_path = "/archive"
+```
+
+Restart the daemon, then open `https://library.example.test/archive/`.
+Keep `public_origin` free of paths. The proxy must preserve `/archive` in
+upstream requests, preserve the public `Host`, and forward WebSocket upgrades.
+For example, inside an existing Caddy HTTPS site:
+
+```caddyfile
+@docbank path /archive /archive/*
+handle @docbank {
+    reverse_proxy 127.0.0.1:7777
+}
+```
+
+Use `handle`, which preserves the path. `handle_path` would strip the prefix.
+The daemon redirects `/archive` to `/archive/`; nested pages, browser API
+requests, uploads, downloads, and assets stay beneath that prefix. Existing
+CLI API endpoints remain available at the backend root, and `docbank web`
+includes the path in its loopback launch URL. The proxy only needs to expose
+the configured prefix.
+
+Login cookies are scoped to the configured path and have distinct names for
+each origin and path. This lets separate Docbank instances share an origin.
+Photo-import resume cookies use the mounted checkpoint endpoint, and pending
+Bates exports in the same browser tab are kept separately for each mount.
+As with any applications on the same origin, their scripts share browser
+origin authority; a path is not a browser security boundary.
+
+### Browser sessions
 
 Key login sets a host-only, HttpOnly, SameSite=Strict instance cookie; HTTPS
 also sets Secure. Each tab receives its own token and upload proof.

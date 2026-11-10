@@ -21,10 +21,13 @@ var ErrStorageOperationCancelled = errors.New("storage operation cancellation wa
 
 const storageOperationFinalizingCursor = "@finalizing"
 
-const boundPhotoCheckoutRebind = `kind='` + StorageOperationKindPhotoCheckoutRebind + `' AND EXISTS (
+func (s *Store) boundPhotoCheckoutRebindSQL() string {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	return `kind='` + StorageOperationKindPhotoCheckoutRebind + `' AND EXISTS (
  SELECT 1 FROM photo_checkouts c WHERE c.last_operation_id=storage_operations.operation_id
- AND c.destination=json_extract(storage_operations.request_json,'$.destination')
- AND c.destination_identity=json_extract(storage_operations.request_json,'$.identity') AND c.destination_reserved=1)`
+ AND c.destination=` + d.text("storage_operations.request_json", "destination") + `
+ AND c.destination_identity=` + d.text("storage_operations.request_json", "identity") + ` AND c.destination_reserved=1)`
+}
 
 const (
 	storageOperationKindPlace       = "place"
@@ -124,8 +127,8 @@ func createStorageOperationTx(ctx context.Context, tx *sql.Tx, input StorageOper
 			var active int
 			if err := tx.QueryRowContext(ctx, `
 				SELECT COUNT(*) FROM storage_operations
-				WHERE source_store_id=? AND kind='evacuate'
-				  AND state IN (?,?)`,
+				WHERE source_store_id=$1 AND kind='evacuate'
+				  AND state IN ($2,$3)`,
 				input.SourceStoreID, StorageOperationQueued, StorageOperationRunning,
 			).Scan(&active); err != nil {
 				return fmt.Errorf("checking active evacuation: %w", err)
@@ -160,7 +163,7 @@ func createStorageOperationTx(ctx context.Context, tx *sql.Tx, input StorageOper
 			INSERT INTO storage_operations(
 				operation_id,kind,source_store_id,request_version,request_digest,
 				request_json,plan_json,state,total_objects,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 			id, input.Kind, sourceStoreID, 1, input.RequestDigest,
 			input.RequestJSON, input.PlanJSON, StorageOperationQueued,
 			input.TotalObjects, now, now,
@@ -171,7 +174,7 @@ func createStorageOperationTx(ctx context.Context, tx *sql.Tx, input StorageOper
 		for _, reference := range storeReferences {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO storage_operation_stores(operation_id,store_id,role)
-				VALUES(?,?,?)`,
+				VALUES($1,$2,$3)`,
 				id, reference.StoreID, reference.Role,
 			); err != nil {
 				return fmt.Errorf(
@@ -181,7 +184,7 @@ func createStorageOperationTx(ctx context.Context, tx *sql.Tx, input StorageOper
 			}
 		}
 		created, err = scanStorageOperation(tx.QueryRowContext(
-			ctx, storageOperationSelect+` WHERE operation_id=?`, id,
+			ctx, storageOperationSelect+` WHERE operation_id=$1`, id,
 		))
 		return err
 	}()
@@ -210,7 +213,7 @@ func (s *Store) FinalizeLocalOperation(ctx context.Context, id string) (bool, er
 	var cancelled bool
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT cancel_requested FROM storage_operations
-			WHERE operation_id=? AND state=?`, id, StorageOperationRunning).Scan(&cancelled)
+			WHERE operation_id=$1 AND state=$2`, id, StorageOperationRunning).Scan(&cancelled)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("finalizing storage operation %s: %w", id, ErrNotFound)
 		}
@@ -231,12 +234,14 @@ func (s *Store) SetStorageOperationTotal(ctx context.Context, id string, total i
 	if total < 0 {
 		return errors.New("storage operation total must not be negative")
 	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET total_objects=?,updated_at=?
-		WHERE operation_id=? AND state=?`,
-		total, nowRFC3339(), id, StorageOperationRunning,
-	)
-	return requireOneStorageOperationRow(result, err, id, "sizing")
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+		UPDATE storage_operations SET total_objects=$1,updated_at=$2
+		WHERE operation_id=$3 AND state=$4`,
+			total, nowRFC3339(), id, StorageOperationRunning,
+		)
+		return requireOneStorageOperationRow(result, err, id, "sizing")
+	})
 }
 
 // PruneExpiredStorageOperations removes terminal operation receipts after
@@ -262,9 +267,9 @@ func pruneExpiredStorageOperationsTx(
 ) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM storage_operations
-		WHERE state IN (?,?,?)
+		WHERE state IN ($1,$2,$3)
 		  AND retention_until IS NOT NULL
-		  AND retention_until<=?
+		  AND retention_until<=$4
 		  AND NOT EXISTS (
 			SELECT 1 FROM photo_checkouts c JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id
 			WHERE c.operation_id=storage_operations.operation_id AND c.retired_at IS NULL
@@ -296,8 +301,8 @@ func activeStorageOperationsForStoreTx(
 		FROM storage_operation_stores reference
 		JOIN storage_operations operation
 		  ON operation.operation_id=reference.operation_id
-		WHERE reference.store_id=? AND operation.state IN (?,?)
-		  AND operation.operation_id<>?`,
+		WHERE reference.store_id=$1 AND operation.state IN ($2,$3)
+		  AND operation.operation_id<>$4`,
 		storeID, StorageOperationQueued, StorageOperationRunning,
 		excludedOperationID,
 	).Scan(&active)
@@ -370,24 +375,29 @@ func (s *Store) ClaimStorageOperation(
 	if err := validateUUIDv4(id); err != nil {
 		return StorageOperation{}, fmt.Errorf("invalid storage operation ID: %w", err)
 	}
-	now := nowRFC3339()
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET state=?,cursor=CASE WHEN cursor=? AND kind IN (?,?,?) AND NOT (`+boundPhotoCheckoutRebind+`) THEN '' ELSE cursor END,error='',updated_at=?
-		WHERE operation_id=? AND state IN (?,?)`,
-		StorageOperationRunning, storageOperationFinalizingCursor, StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutRebind, now, id,
-		StorageOperationQueued, StorageOperationRunning,
-	)
-	if err != nil {
-		return StorageOperation{}, fmt.Errorf("claiming storage operation %s: %w", id, err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return StorageOperation{}, fmt.Errorf("reading storage operation claim: %w", err)
-	}
-	if affected != 1 {
-		return StorageOperation{}, fmt.Errorf("storage operation %s is not resumable: %w", id, ErrStaleRevision)
-	}
-	return s.StorageOperation(ctx, id)
+	var claimed StorageOperation
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		now := nowRFC3339()
+		result, err := tx.ExecContext(ctx, `
+		UPDATE storage_operations SET state=$1,cursor=CASE WHEN cursor=$2 AND kind IN ($3,$4,$5) AND NOT (`+s.boundPhotoCheckoutRebindSQL()+`) THEN '' ELSE cursor END,error='',updated_at=$6
+		WHERE operation_id=$7 AND state IN ($8,$9)`,
+			StorageOperationRunning, storageOperationFinalizingCursor, StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutRebind, now, id,
+			StorageOperationQueued, StorageOperationRunning,
+		)
+		if err != nil {
+			return fmt.Errorf("claiming storage operation %s: %w", id, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reading storage operation claim: %w", err)
+		}
+		if affected != 1 {
+			return fmt.Errorf("storage operation %s is not resumable: %w", id, ErrStaleRevision)
+		}
+		claimed, err = scanStorageOperation(tx.QueryRowContext(ctx, storageOperationSelect+` WHERE operation_id=$1`, id))
+		return err
+	})
+	return claimed, err
 }
 
 // DeferStorageOperation records a retryable failure or a clean operator pause and returns the
@@ -398,25 +408,29 @@ func (s *Store) DeferStorageOperation(ctx context.Context, id string, failure er
 		message = failure.Error()
 	}
 	message = boundedStorageOperationError(message)
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET state=?,error=?,updated_at=?
-		WHERE operation_id=? AND state=?`,
-		StorageOperationQueued, message, nowRFC3339(), id, StorageOperationRunning,
-	)
-	return requireOneStorageOperationRow(result, err, id, "deferring")
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+		UPDATE storage_operations SET state=$1,error=$2,updated_at=$3
+		WHERE operation_id=$4 AND state=$5`,
+			StorageOperationQueued, message, nowRFC3339(), id, StorageOperationRunning,
+		)
+		return requireOneStorageOperationRow(result, err, id, "deferring")
+	})
 }
 
 // NoteQueuedStorageOperation records why a queued operation is waiting. A
 // later claim clears it. An operation that left the queue is unchanged.
 func (s *Store) NoteQueuedStorageOperation(ctx context.Context, id, message string) error {
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET error=?,updated_at=?
-		WHERE operation_id=? AND state=?`,
-		boundedStorageOperationError(message), nowRFC3339(), id, StorageOperationQueued,
-	); err != nil {
-		return fmt.Errorf("noting queued storage operation %s: %w", id, err)
-	}
-	return nil
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+		UPDATE storage_operations SET error=$1,updated_at=$2
+		WHERE operation_id=$3 AND state=$4`,
+			boundedStorageOperationError(message), nowRFC3339(), id, StorageOperationQueued,
+		); err != nil {
+			return fmt.Errorf("noting queued storage operation %s: %w", id, err)
+		}
+		return nil
+	})
 }
 
 func (s *Store) AdvanceStorageOperation(
@@ -435,53 +449,57 @@ func (s *Store) AdvanceStorageOperation(
 	if len(progressJSON) == 1 {
 		receipt = progressJSON[0]
 	}
-	result, err := s.db.ExecContext(ctx, `
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
 		UPDATE storage_operations
-		SET cursor=?,completed_objects=?,copied_objects=?,copied_bytes=?,
-		    receipt_json=CASE WHEN ?='' THEN receipt_json ELSE ? END,updated_at=?
-		WHERE operation_id=? AND state=?`,
-		cursor, completedObjects, copiedObjects, copiedBytes, receipt, receipt, nowRFC3339(),
-		id, StorageOperationRunning,
-	)
-	return requireOneStorageOperationRow(result, err, id, "advancing")
+		SET cursor=$1,completed_objects=$2,copied_objects=$3,copied_bytes=$4,
+		    receipt_json=CASE WHEN $5='' THEN receipt_json ELSE $6 END,updated_at=$7
+		WHERE operation_id=$8 AND state=$9`,
+			cursor, completedObjects, copiedObjects, copiedBytes, receipt, receipt, nowRFC3339(),
+			id, StorageOperationRunning,
+		)
+		return requireOneStorageOperationRow(result, err, id, "advancing")
+	})
 }
 
 func (s *Store) RequestStorageOperationCancel(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET cancel_requested=1,updated_at=?
-		WHERE operation_id=? AND ((state=? AND (cursor<>? OR (kind IN (?,?,?) AND NOT (`+boundPhotoCheckoutRebind+`)))) OR (state=? AND cursor<>?))`,
-		nowRFC3339(), id, StorageOperationQueued, storageOperationFinalizingCursor,
-		StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutRebind, StorageOperationRunning, storageOperationFinalizingCursor,
-	)
-	if err != nil {
-		return fmt.Errorf("requesting cancellation for storage operation %s: %w", id, err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("reading cancellation result for storage operation %s: %w", id, err)
-	}
-	if affected == 1 {
-		return nil
-	}
-	var state, cursor string
-	err = s.db.QueryRowContext(ctx,
-		`SELECT state,cursor FROM storage_operations WHERE operation_id=?`, id,
-	).Scan(&state, &cursor)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("storage operation %s: %w", id, ErrNotFound)
-	}
-	if err != nil {
-		return fmt.Errorf("reading storage operation %s after cancellation: %w", id, err)
-	}
-	if StorageOperationState(state) == StorageOperationRunning &&
-		cursor == storageOperationFinalizingCursor {
-		return fmt.Errorf(
-			"storage operation %s is finalizing and no longer cancellable: %w",
-			id, ErrStorageOperationTerminal,
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+		UPDATE storage_operations SET cancel_requested=1,updated_at=$1
+		WHERE operation_id=$2 AND ((state=$3 AND (cursor<>$4 OR (kind IN ($5,$6,$7) AND NOT (`+s.boundPhotoCheckoutRebindSQL()+`)))) OR (state=$8 AND cursor<>$9))`,
+			nowRFC3339(), id, StorageOperationQueued, storageOperationFinalizingCursor,
+			StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutRebind, StorageOperationRunning, storageOperationFinalizingCursor,
 		)
-	}
-	return fmt.Errorf("storage operation %s is %s: %w",
-		id, state, ErrStorageOperationTerminal)
+		if err != nil {
+			return fmt.Errorf("requesting cancellation for storage operation %s: %w", id, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reading cancellation result for storage operation %s: %w", id, err)
+		}
+		if affected == 1 {
+			return nil
+		}
+		var state, cursor string
+		err = tx.QueryRowContext(ctx,
+			`SELECT state,cursor FROM storage_operations WHERE operation_id=$1`, id,
+		).Scan(&state, &cursor)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("storage operation %s: %w", id, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("reading storage operation %s after cancellation: %w", id, err)
+		}
+		if StorageOperationState(state) == StorageOperationRunning &&
+			cursor == storageOperationFinalizingCursor {
+			return fmt.Errorf(
+				"storage operation %s is finalizing and no longer cancellable: %w",
+				id, ErrStorageOperationTerminal,
+			)
+		}
+		return fmt.Errorf("storage operation %s is %s: %w",
+			id, state, ErrStorageOperationTerminal)
+	})
 }
 
 func (s *Store) FinishStorageOperation(
@@ -507,8 +525,8 @@ func finishStorageOperationTx(ctx context.Context, tx *sql.Tx, id string, state 
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE storage_operations
-		SET state=?,receipt_json=?,error=?,updated_at=?,finished_at=?,retention_until=?
-		WHERE operation_id=? AND state IN (?,?)`,
+		SET state=$1,receipt_json=$2,error=$3,updated_at=$4,finished_at=$5,retention_until=$6
+		WHERE operation_id=$7 AND state IN ($8,$9)`,
 		state, receiptJSON, failure, now, now, retention, id,
 		StorageOperationQueued, StorageOperationRunning,
 	)
@@ -543,7 +561,7 @@ func requireOneStorageOperationRow(
 
 func (s *Store) StorageOperation(ctx context.Context, id string) (StorageOperation, error) {
 	return scanStorageOperation(s.db.QueryRowContext(ctx, storageOperationSelect+
-		` WHERE operation_id=?`, id))
+		` WHERE operation_id=$1`, id))
 }
 
 func (s *Store) StorageOperations(
@@ -553,7 +571,7 @@ func (s *Store) StorageOperations(
 		return nil, errors.New("storage operation limit must be between 1 and 1000")
 	}
 	rows, err := s.db.QueryContext(ctx, storageOperationSelect+
-		` ORDER BY created_at DESC,operation_id DESC LIMIT ?`, limit)
+		` ORDER BY created_at DESC,operation_id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing storage operations: %w", err)
 	}
@@ -562,7 +580,7 @@ func (s *Store) StorageOperations(
 
 func (s *Store) ResumableStorageOperations(ctx context.Context) ([]StorageOperation, error) {
 	rows, err := s.db.QueryContext(ctx, storageOperationSelect+
-		` WHERE state IN (?,?) ORDER BY created_at,operation_id`,
+		` WHERE state IN ($1,$2) ORDER BY created_at,operation_id`,
 		StorageOperationQueued, StorageOperationRunning)
 	if err != nil {
 		return nil, fmt.Errorf("listing resumable storage operations: %w", err)

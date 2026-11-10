@@ -16,6 +16,7 @@ import (
 	redaction "go.kenn.io/docbank/document/redaction"
 	api "go.kenn.io/docbank/internal/api"
 	backupapp "go.kenn.io/docbank/internal/backupapp"
+	ingest "go.kenn.io/docbank/internal/ingest"
 	kataclient "go.kenn.io/docbank/internal/kataclient"
 	kataevidence "go.kenn.io/docbank/internal/kataevidence"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
@@ -2235,6 +2236,52 @@ func (c *Client) CreateBatesNamespace(ctx context.Context, options *CreateBatesN
 	return responseParser(ctx, resp)
 }
 
+// ReadBatesNamespace Read a Bates namespace and its next sequence
+func (c *Client) ReadBatesNamespace(ctx context.Context, options *ReadBatesNamespaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadBatesNamespaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/bates/namespaces/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadBatesNamespaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadBatesNamespaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadBatesNamespaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadBatesNamespaceErrorResponse](resp, "ReadBatesNamespaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/namespaces/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanBatesStamp Preview tentative Bates labels without stamping or reserving
 func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanBatesStampResponse, error) {
 	var err error
@@ -2273,6 +2320,46 @@ func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequ
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// VaultChanges Read resumable vault changes
+func (c *Client) VaultChanges(ctx context.Context, options *VaultChangesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VaultChangesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/changes",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VaultChangesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VaultChangesResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[VaultChangesErrorResponse](resp, "VaultChangesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/changes")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -11974,6 +12061,145 @@ func (c *Client) GetDocumentProcessingJob(ctx context.Context, options *GetDocum
 	return responseParser(ctx, resp)
 }
 
+// PlanLocalText Preview vault-wide text indexing
+func (c *Client) PlanLocalText(ctx context.Context, options *PlanLocalTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanLocalTextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/local/plans",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanLocalTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PlanLocalTextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PlanLocalTextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PlanLocalTextErrorResponse](resp, "PlanLocalTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/plans")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ApplyLocalText Approve vault-wide and ongoing text indexing
+func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyLocalTextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/local/setup",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ApplyLocalTextResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ApplyLocalTextResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ApplyLocalTextResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ApplyLocalTextErrorResponse](resp, "ApplyLocalTextErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/setup")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetLocalTextStatus Read search by meaning setup status
+func (c *Client) GetLocalTextStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalTextStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetLocalTextStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetLocalTextStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetLocalTextStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetLocalTextStatusErrorResponse](resp, "GetLocalTextStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -12702,6 +12928,53 @@ func (c *Client) ReadRedactionPreviewText(ctx context.Context, options *ReadReda
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}/text")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PublishNumberedPDF Publish one reviewed numbered PDF into retained storage
+func (c *Client) PublishNumberedPDF(ctx context.Context, options *PublishNumberedPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishNumberedPDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/publications",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishNumberedPDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PublishNumberedPDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishNumberedPDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PublishNumberedPDFErrorResponse](resp, "PublishNumberedPDFErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/publications")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -13924,6 +14197,63 @@ func (c *Client) FindSimilarDocuments(ctx context.Context, options *FindSimilarD
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/similar")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SearchTextCoverage Count files waiting for searchable text
+func (c *Client) SearchTextCoverage(ctx context.Context, options *SearchTextCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SearchTextCoverageResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
+		"modified_since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"pdf_filter":      {Style: "form", Explode: &[]bool{false}[0]},
+		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
+		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
+		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search/text-coverage",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SearchTextCoverageResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SearchTextCoverageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SearchTextCoverageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SearchTextCoverageErrorResponse](resp, "SearchTextCoverageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search/text-coverage")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -15517,6 +15847,51 @@ func (c *Client) UploadFile(ctx context.Context, options *UploadFileRequestOptio
 	return responseParser(ctx, resp)
 }
 
+// VaultIdentity Identify the selected vault
+func (c *Client) VaultIdentity(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VaultIdentityResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/vault",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VaultIdentityResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VaultIdentityResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VaultIdentityResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[VaultIdentityErrorResponse](resp, "VaultIdentityErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/vault")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // Verify Validate metadata and re-hash every stored blob
 func (c *Client) Verify(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*VerifyResponse, error) {
 	var err error
@@ -15609,7 +15984,7 @@ func (c *Client) GetContentVersion(ctx context.Context, options *GetContentVersi
 }
 
 // GetContentVersionBytes Stream one immutable content version by stable ID
-func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResponse, error) {
+func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContentVersionBytesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContentVersionBytesResult, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/content",
@@ -15622,7 +15997,7 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentVersionBytesResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContentVersionBytesResult, error) {
 		switch resp.StatusCode {
 
 		case 200:
@@ -15635,7 +16010,19 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 				}
 			}
 
-			return target, nil
+			return &GetContentVersionBytesResult{Status200: target}, nil
+
+		case 206:
+
+			target := new(GetContentVersionBytesResponse206)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContentVersionBytesResponse206", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &GetContentVersionBytesResult{Status206: target}, nil
 
 		default:
 
@@ -15649,7 +16036,7 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
 	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
+		return nil, c.acceptStream(resp, 200, 206)
 	}
 	return responseParser(ctx, resp)
 }
@@ -16063,6 +16450,12 @@ type GetDocumentRenditionResult struct {
 type UploadFileResult struct {
 	Status200 *UploadFileResponse
 	Status201 *UploadFileResponseJSON
+}
+
+// GetContentVersionBytesResult contains the decoded body for the returned success status.
+type GetContentVersionBytesResult struct {
+	Status200 *GetContentVersionBytesResponse
+	Status206 *GetContentVersionBytesResponse206
 }
 
 // GetEmailMetadataResult contains the decoded body for the returned success status.
@@ -17288,6 +17681,37 @@ func (o *CreateBatesNamespaceRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// ReadBatesNamespaceRequestOptions is the options needed to make a request to ReadBatesNamespace.
+type ReadBatesNamespaceRequestOptions struct {
+	PathParams *ReadBatesNamespacePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadBatesNamespaceRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PlanBatesStampRequestOptions is the options needed to make a request to PlanBatesStamp.
 type PlanBatesStampRequestOptions struct {
 	Body *PlanBatesStampBody
@@ -17313,6 +17737,37 @@ func (o *PlanBatesStampRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *PlanBatesStampRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// VaultChangesRequestOptions is the options needed to make a request to VaultChanges.
+type VaultChangesRequestOptions struct {
+	Query *VaultChangesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *VaultChangesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *VaultChangesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *VaultChangesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *VaultChangesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -23774,6 +24229,62 @@ func (o *GetDocumentProcessingJobRequestOptions) GetHeader() (map[string]string,
 	return nil, nil
 }
 
+// PlanLocalTextRequestOptions is the options needed to make a request to PlanLocalText.
+type PlanLocalTextRequestOptions struct {
+	Body *PlanLocalTextBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PlanLocalTextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PlanLocalTextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PlanLocalTextRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PlanLocalTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ApplyLocalTextRequestOptions is the options needed to make a request to ApplyLocalText.
+type ApplyLocalTextRequestOptions struct {
+	Body *ApplyLocalTextBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApplyLocalTextRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApplyLocalTextRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApplyLocalTextRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApplyLocalTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PlanDocumentProcessingRequestOptions is the options needed to make a request to PlanDocumentProcessing.
 type PlanDocumentProcessingRequestOptions struct {
 	Body *PlanDocumentProcessingBody
@@ -24202,6 +24713,34 @@ func (o *ReadRedactionPreviewTextRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ReadRedactionPreviewTextRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PublishNumberedPDFRequestOptions is the options needed to make a request to PublishNumberedPDF.
+type PublishNumberedPDFRequestOptions struct {
+	Body *PublishNumberedPDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PublishNumberedPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PublishNumberedPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PublishNumberedPDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PublishNumberedPDFRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -25033,6 +25572,37 @@ func (o *FindSimilarDocumentsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *FindSimilarDocumentsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SearchTextCoverageRequestOptions is the options needed to make a request to SearchTextCoverage.
+type SearchTextCoverageRequestOptions struct {
+	Query *SearchTextCoverageQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SearchTextCoverageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SearchTextCoverageRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SearchTextCoverageRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SearchTextCoverageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -26041,6 +26611,7 @@ func (o *GetContentVersionRequestOptions) GetHeader() (map[string]string, error)
 // GetContentVersionBytesRequestOptions is the options needed to make a request to GetContentVersionBytes.
 type GetContentVersionBytesRequestOptions struct {
 	PathParams *GetContentVersionBytesPath
+	Header     *GetContentVersionBytesHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -26066,7 +26637,13 @@ func (o *GetContentVersionBytesRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // GetEmailMetadataRequestOptions is the options needed to make a request to GetEmailMetadata.
@@ -26686,11 +27263,18 @@ type RenameTagHeaders struct {
 }
 
 type UploadFileHeaders struct {
+	// XDocbankURLFetch JSON URL fetch evidence
+	XDocbankURLFetch *string `json:"X-Docbank-URL-Fetch,omitempty"`
+
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 
 	// XDocbankBlobSize Expected raw file byte length
 	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
+}
+
+type GetContentVersionBytesHeaders struct {
+	Range *string `json:"Range,omitempty"`
 }
 
 type RevokeWebSignInPath struct {
@@ -26714,6 +27298,10 @@ type DownloadBatesExportContentPath struct {
 }
 
 type DownloadBatesExportPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type ReadBatesNamespacePath struct {
 	ID uuid.UUID `json:"id"`
 }
 
@@ -27619,6 +28207,10 @@ type RevokeProcessingConsentBody = ProcessingConsentRevocationRequest
 
 type StartDocumentProcessingBody = StartProcessingRequest
 
+type PlanLocalTextBody = LocalTextPlanRequest
+
+type ApplyLocalTextBody = LocalTextApplyRequest
+
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
@@ -27636,6 +28228,8 @@ type PrepareNativePDFBody = RedactionPreparationRequest
 type CreateRedactionPreviewBody = PreviewInput
 
 type DownloadRedactionPreviewBody = RedactionPreviewConfirmation
+
+type PublishNumberedPDFBody = RedactionRenderRequest
 
 type RenderNativePDFBody = RedactionRenderRequest
 
@@ -27772,6 +28366,14 @@ type FindBatesExportsQuery struct {
 type ListBatesNamespacesQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Limit  *int64  `json:"limit,omitempty"`
+}
+
+type VaultChangesQuery struct {
+	After  *string `json:"after,omitempty"`
+	Follow *bool   `json:"follow,omitempty"`
+
+	// Limit Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.
+	Limit *int64 `json:"limit,omitempty"`
 }
 
 type ListCollectionsQuery struct {
@@ -28061,6 +28663,16 @@ type ListTermReportHistoryQuery struct {
 	Limit  *int64 `json:"limit,omitempty"`
 }
 
+type SearchTextCoverageQuery struct {
+	PdfFilter      *string `json:"pdf_filter,omitempty"`
+	SourcePresent  *bool   `json:"source_present,omitempty"`
+	TagID          *string `json:"tag_id,omitempty"`
+	MimeType       *string `json:"mime_type,omitempty"`
+	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
+	ModifiedSince  *string `json:"modified_since,omitempty"`
+	ModifiedBefore *string `json:"modified_before,omitempty"`
+}
+
 type StorageStatusQuery struct {
 	Refresh *bool `json:"refresh,omitempty"`
 }
@@ -28090,8 +28702,11 @@ type ListTrashQuery struct {
 }
 
 type UploadFileQuery struct {
+	// ParentPath Absolute destination directory path; creates missing parents; exclusive with parent_id
+	ParentPath *string `json:"parent_path,omitempty"`
+
 	// ParentID Stable destination directory node ID
-	ParentID int64 `json:"parent_id"`
+	ParentID *int64 `json:"parent_id,omitempty"`
 
 	// Name Virtual filename; must equal the multipart filename
 	Name string `json:"name"`
@@ -28265,9 +28880,19 @@ type CreateBatesNamespaceResponse = api.BatesNamespace
 
 type CreateBatesNamespaceErrorResponse = Error
 
+type ReadBatesNamespaceResponse = api.BatesNamespaceDetail
+
+type ReadBatesNamespaceErrorResponse = Error
+
 type PlanBatesStampResponse = api.BatesPlan
 
 type PlanBatesStampErrorResponse = Error
+
+type VaultChangesResponse = []byte
+
+type VaultChangesErrorResponse api.Error
+
+type VaultChangesErrorResponseApplicationProblemPlusJSON api.Error
 
 type ListCollectionsResponse = api.CollectionPage
 
@@ -28391,6 +29016,7 @@ type GetExportJobEventsErrorResponse struct {
 	BackupForget *BackupForgetReport `json:"backup_forget,omitempty"`
 	BackupPrune  *BackupPruneReport  `json:"backup_prune,omitempty"`
 	Code         *string             `json:"code,omitempty"`
+	Cursor       *string             `json:"cursor,omitempty"`
 	Detail       *string             `json:"detail,omitempty"`
 	Errors       []string            `json:"errors,omitempty"`
 	FaceIds      []string            `json:"face_ids,omitempty"`
@@ -29217,6 +29843,18 @@ type GetDocumentProcessingJobResponse = api.ProcessingStatus
 
 type GetDocumentProcessingJobErrorResponse = Error
 
+type PlanLocalTextResponse = api.LocalTextPlan
+
+type PlanLocalTextErrorResponse = Error
+
+type ApplyLocalTextResponse = api.LocalTextPlan
+
+type ApplyLocalTextErrorResponse = Error
+
+type GetLocalTextStatusResponse = api.LocalTextStatus
+
+type GetLocalTextStatusErrorResponse = Error
+
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
 type PlanDocumentProcessingErrorResponse = Error
@@ -29298,6 +29936,30 @@ type ReadRedactionPreviewPageErrorResponse = Error
 type ReadRedactionPreviewTextResponse = []byte
 
 type ReadRedactionPreviewTextErrorResponse = Error
+
+type PublishNumberedPDFResponse = api.BatesExport
+
+type PublishNumberedPDFErrorResponse api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON504 api.Error
 
 type RenderNativePDFResponse = []byte
 
@@ -29438,6 +30100,10 @@ type ReviseTermReportErrorResponse = Error
 type FindSimilarDocumentsResponse = api.DocumentSimilarReport
 
 type FindSimilarDocumentsErrorResponse = Error
+
+type SearchTextCoverageResponse = api.SearchTextCoverage
+
+type SearchTextCoverageErrorResponse = Error
 
 type ValidateDocumentSearchResponse = api.DocumentSearchValidation
 
@@ -29625,6 +30291,10 @@ type UploadFileResponseJSON = api.UploadReceipt
 
 type UploadFileErrorResponse = Error
 
+type VaultIdentityResponse = api.VaultIdentity
+
+type VaultIdentityErrorResponse = Error
+
 type VerifyResponse = api.VerifyReport
 
 type VerifyErrorResponse = Error
@@ -29634,6 +30304,8 @@ type GetContentVersionResponse = api.ContentVersion
 type GetContentVersionErrorResponse = Error
 
 type GetContentVersionBytesResponse = runtime.File
+
+type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
 
@@ -29826,6 +30498,8 @@ type BatesExportPage = api.BatesExportPage
 type BatesExportRequest = api.BatesExportRequest
 
 type BatesNamespace = api.BatesNamespace
+
+type BatesNamespaceDetail = api.BatesNamespaceDetail
 
 type BatesNamespacePage = api.BatesNamespacePage
 
@@ -30267,6 +30941,14 @@ type JobList = api.JobList
 type JobRequest = bundle.JobRequest
 
 type LaneControl = api.LaneControl
+
+type LocalTextApplyRequest = api.LocalTextApplyRequest
+
+type LocalTextPlan = api.LocalTextPlan
+
+type LocalTextPlanRequest = api.LocalTextPlanRequest
+
+type LocalTextStatus = api.LocalTextStatus
 
 type Locator = report.Locator
 
@@ -31159,6 +31841,8 @@ type SearchHit = api.SearchHit
 
 type SearchReport = api.SearchReport
 
+type SearchTextCoverage = api.SearchTextCoverage
+
 type SelectedDocuments = report.SelectedDocuments
 
 type Selector = kataevidence.Selector
@@ -31310,6 +31994,8 @@ type TrashPathRequest struct {
 	Path   string  `json:"path"`
 }
 
+type URLFetch = ingest.URLFetch
+
 type UnassignTagPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -31321,6 +32007,8 @@ type UpdatePhotoAlbumRequest = api.UpdatePhotoAlbumRequest
 type UpdateSavedQueryRequest = api.SavedQueryPatch
 
 type UploadReceipt = api.UploadReceipt
+
+type VaultIdentity = api.VaultIdentity
 
 type VaultInfo = api.VaultInfo
 

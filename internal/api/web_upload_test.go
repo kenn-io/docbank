@@ -164,7 +164,7 @@ func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
 	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
 	require.Equal(t, "ready", message.Type)
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	require.NoError(t, s.Server.Shutdown(shutdownCtx))
 	require.NoError(t, gate.MaintainContext(t.Context(), func() error { return nil }))

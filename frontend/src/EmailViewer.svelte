@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Button, SelectDropdown } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, SelectDropdown } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { randomUUID } from "./crypto.js";
+  import { formatRawBytes } from "./format.js";
   import { getNode, type Node } from "./generated/docbank.js";
   import type { SelectedSource } from "./selectedSource.js";
   import EmailPDFButton from "./EmailPDFButton.svelte";
@@ -85,15 +86,10 @@
         throw new Error("Email access identity changed.");
       node = { ...live, revision: authorizationRevision };
       if (headers) {
-        try {
-          raw = new TextDecoder("utf-8", { fatal: true }).decode(headers);
-        } catch {
-          raw =
-            "Invalid UTF-8 bytes shown as \\xNN; original bytes remain in the EML.\n" +
-            Array.from(headers, (byte) =>
-              byte < 128 ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, "0")}`,
-            ).join("");
-        }
+        raw = formatRawBytes(
+          headers,
+          "Invalid UTF-8 bytes shown as \\xNN; original bytes remain in the EML.\n",
+        );
       } else raw = "Raw headers unavailable; download the original EML.";
       metadata = result;
       const message = result.evidence.inventory!.messages.find(
@@ -217,14 +213,13 @@
       MIME inventory: {inventory?.state}. Body and inline bytes are SHA-256 verified before display.
     </p>
     {#if diagnostics.length}
-      <details>
-        <summary>MIME warnings ({diagnostics.length})</summary>
+      <Disclosure variant="plain" title={`MIME warnings (${diagnostics.length})`}>
         <ul>
           {#each diagnostics as diagnostic}<li>
               {diagnostic.path ? `Part ${diagnostic.path} · ` : ""}{diagnostic.code}: {diagnostic.detail}
             </li>{/each}
         </ul>
-      </details>
+      </Disclosure>
     {/if}
     {#if alternatives.length}
       <SelectDropdown
@@ -240,12 +235,14 @@
       />
     {:else}<p role="status">No displayable body. Original MIME remains available.</p>{/if}
     {#if bodyError}<p role="status">{bodyError}</p>{/if}
-    {#if warnings.length}<details>
-        <summary>Reading-copy changes ({warnings.length})</summary>
+    {#if warnings.length}<Disclosure
+        variant="plain"
+        title={`Reading-copy changes (${warnings.length})`}
+      >
         <ul>
           {#each warnings as warning}<li>{warning}</li>{/each}
         </ul>
-      </details>{/if}
+      </Disclosure>{/if}
     {#if frame}
       <button class="escape" bind:this={escapeButton} type="button" onclick={() => iframe?.focus()}
         >Enter email body · Escape returns here</button
@@ -267,8 +264,10 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard access to the scrollable complete body) -->
       <pre class="plain-body" aria-label="Plain text email body" tabindex="0">{text}</pre>
     {/if}
-    {#if inlineParts.length}<details>
-        <summary>Inline MIME resources ({inlineParts.length})</summary>
+    {#if inlineParts.length}<Disclosure
+        variant="plain"
+        title={`Inline MIME resources (${inlineParts.length})`}
+      >
         <ul>
           {#each inlineParts as part}<li>
               Part {part.path}: {part.filename.safe_name ||
@@ -281,7 +280,7 @@
           occurrences, 16 MiB and 32 million pixels total. Other resources retain placeholders and
           their original MIME bytes.
         </p>
-      </details>{/if}
+      </Disclosure>{/if}
     <Button size="sm" surface="soft" onclick={onattachments}>Inspect attachment documents</Button>
     {#if node}<p class="hint">
         New PDF rendering requires a configured, pinned Chromium bundle and fonts on a Linux daemon
@@ -347,9 +346,6 @@
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     background: white;
-  }
-  summary {
-    cursor: pointer;
   }
   ul {
     padding-left: 1.2rem;

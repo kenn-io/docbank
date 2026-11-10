@@ -2,16 +2,13 @@ package api_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -22,7 +19,9 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 )
 
-func configureRemoteManualTestService(t *testing.T) func(*api.Deps) {
+// configureRemoteManualTestService binds worker, when it is not nil, to the
+// rendition worker the test drives.
+func configureRemoteManualTestService(t *testing.T, worker *renditionTestWorker) func(*api.Deps) {
 	t.Helper()
 	return func(deps *api.Deps) {
 		gate := api.NewOperationGate()
@@ -36,21 +35,16 @@ func configureRemoteManualTestService(t *testing.T) func(*api.Deps) {
 		})
 		require.NoError(t, err)
 		deps.Processing = service
-		worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
-			Catalog: deps.Store, Blobs: deps.Blobs, Runtime: service.RenditionRuntimes(), Gate: gate,
-			Owner: "remote-manual-test-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
-		})
-		require.NoError(t, err)
-		workerContext, cancelWorker := context.WithCancel(context.Background())
-		var workers sync.WaitGroup
-		workers.Go(func() { _ = worker.Run(workerContext) })
-		t.Cleanup(func() { cancelWorker(); workers.Wait() })
+		if worker != nil {
+			worker.bind(t, deps, service, gate, "remote-manual-test-worker")
+		}
 	}
 }
 
 func TestRemoteRecordingManualHTTP(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureRemoteManualTestService(t))
+	var worker renditionTestWorker
+	ts, catalog := newTestServer(t, configureRemoteManualTestService(t, &worker))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	protectedPrefix := "https://private.invalid/share/http?token="
 	protectedReference := protectedPrefix + strings.Repeat("p", 8192-len(protectedPrefix))
@@ -132,12 +126,11 @@ func TestRemoteRecordingManualHTTP(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "queued", queued.OperationState)
-	var processed api.MediaReceipt
-	require.Eventually(t, func() bool {
-		processed, err = c.MediaStatus(t.Context(), remote.SourceID)
-		return err == nil && processed.OperationID == queued.OperationID &&
-			processed.OperationState == "succeeded" && processed.CoverageState == "transcribed"
-	}, 30*time.Second, 20*time.Millisecond)
+	worker.runQueued(t)
+	processed, err := c.MediaStatus(t.Context(), remote.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, queued.OperationID, processed.OperationID)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{processed.OperationState, processed.CoverageState})
 	require.Equal(t, original.SourceVersionID, processed.SourceVersionID)
 	require.Equal(t, original.ContentVersionID, processed.ContentVersionID)
 	search, err := c.SearchDocuments(t.Context(), api.DocumentSearchRequest{
@@ -157,7 +150,7 @@ func TestRemoteRecordingManualHTTP(t *testing.T) {
 
 func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureRemoteManualTestService(t))
+	ts, _ := newTestServer(t, configureRemoteManualTestService(t, nil))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	remote, err := c.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
 		OperationID: "00000000-0000-4000-8000-000000000458", ReferenceURL: "https://private.invalid/share/extra?token=synthetic",
@@ -200,7 +193,7 @@ func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
 
 func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureMediaTestService(t, 0))
+	ts, _ := newTestServer(t, configureMediaTestService(t))
 	secret := strings.Repeat("c", 8193)
 	body := `{"operation_id":"00000000-0000-0000-0000-000000000460","reference_url":"https://recordings.invalid/call","canonical_url":"` + secret + `"}`
 	response, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/media/acquisition-plan",
@@ -212,7 +205,7 @@ func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.
 
 func TestMediaAcquisitionPlanRejectsOversizedReferenceURLWithoutEcho(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureMediaTestService(t, 0))
+	ts, _ := newTestServer(t, configureMediaTestService(t))
 	secret := strings.Repeat("r", 8193)
 	body := `{"operation_id":"00000000-0000-0000-0000-000000000461","reference_url":"` + secret + `","canonical_url":"https://recordings.invalid/call"}`
 	response, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/media/acquisition-plan",

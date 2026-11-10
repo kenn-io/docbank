@@ -1,10 +1,8 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -35,9 +33,8 @@ type automaticSearchJSON struct {
 	api.DocumentSearchReport `json:",inline"`
 
 	Folders []api.SearchHit `json:"folders"`
+	Hints   []searchHint    `json:"hints,omitzero"`
 }
-
-type automaticSearchCandidate struct{ profile, binding string }
 
 // tryAutomaticSearch runs hybrid search when a profile has a query embedding
 // binding. Scope and semantic readiness decisions stay with the daemon.
@@ -54,14 +51,14 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		}
 		return automaticSearchFallback(ctx, err)
 	}
-	candidates := automaticSearchCandidates(*profiles)
+	candidates := daemonconn.AutomaticSearchCandidates(*profiles)
 	if len(candidates) == 0 {
 		return automaticSearchOutcome{}, nil
 	}
 	var first automaticSearchOutcome
 	for _, candidate := range candidates {
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
-			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
+			Profile: candidate.Profile, BindingID: candidate.Binding, Limit: limit, Scope: &api.DocumentSearchScope{Kind: "all_live"}})
 		if searchErr == nil {
 			return automaticSearchOutcome{report: &report}, nil
 		}
@@ -72,7 +69,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 		if first.reason == "" {
 			first = outcome
 		}
-		if !bindingSearchFailure(outcome.reason) {
+		if !daemonconn.BindingSearchFailure(outcome.reason) {
 			break
 		}
 	}
@@ -87,20 +84,6 @@ func automaticSearchEligible(query string, limit int, opts daemonconn.SearchOpti
 		opts.ModifiedSince != "" || opts.ModifiedBefore != ""
 	return !filtered && limit <= maxAutomaticSearchLimit && strings.TrimSpace(query) != "" &&
 		utf8.RuneCountInString(query) <= maxAutomaticSearchQueryRunes
-}
-
-func automaticSearchCandidates(profiles []api.ProcessingProfileSummary) []automaticSearchCandidate {
-	ordered := slices.Clone(profiles)
-	slices.SortFunc(ordered, func(a, b api.ProcessingProfileSummary) int { return cmp.Compare(a.Name, b.Name) })
-	var candidates []automaticSearchCandidate
-	for _, profile := range ordered {
-		bindings := slices.Clone(profile.QueryEmbeddingBindings)
-		slices.Sort(bindings)
-		for _, binding := range bindings {
-			candidates = append(candidates, automaticSearchCandidate{profile.Name, binding})
-		}
-	}
-	return candidates
 }
 
 // automaticSearchFallback keeps lexical search available when the optional
@@ -120,24 +103,12 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 	}
 }
 
-// bindingSearchFailure reports whether another profile or binding could still
-// succeed. A binding without a built vector index reports not_found.
-func bindingSearchFailure(reason string) bool {
-	switch reason {
-	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found",
-		"processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
-		return true
-	default:
-		return false
-	}
-}
-
 // writeAutomaticSearch adds folder name hits to a hybrid report within one
 // --limit page. Folders rank ahead of the lowest hybrid results, as ordinary
 // search ranks name matches ahead of content. The page is truncated when
 // either search omitted matches.
 func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentSearchReport,
-	lexical api.SearchReport,
+	lexical api.SearchReport, hints []searchHint,
 ) error {
 	folders := []api.SearchHit{}
 	for _, hit := range lexical.Hits {
@@ -151,7 +122,7 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 	}
 	report.Truncated = report.Truncated || lexical.Truncated
 	if searchJSON {
-		return writeCLIJSON(cmd.OutOrStdout(), automaticSearchJSON{DocumentSearchReport: report, Folders: folders})
+		return writeCLIJSON(cmd.OutOrStdout(), automaticSearchJSON{DocumentSearchReport: report, Folders: folders, Hints: hints})
 	}
 	if searchAgent {
 		return writeDocumentSearchAgent(cmd, query, report, folders)

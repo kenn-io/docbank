@@ -39,9 +39,10 @@ func remoteStoreArtifact(
 	}
 }
 
-func TestRetainRemoteRecordingMedia(t *testing.T) {
+func checkRetainRemoteRecordingMedia(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	sourceID := testSHA256([]byte("remote-source"))
 	retained, _ := remoteStoreReference(t, s, sourceID,
 		"00000000-0000-4000-8000-000000000801", "remote-occurrence-a")
@@ -83,12 +84,12 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, firstReceipt.SourceVersionID, thirdReceipt.SourceVersionID)
 	var headRevision, thirdRevision int64
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT MAX(revision) FROM media_source_versions WHERE source_id=?`, sourceID).Scan(&headRevision))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT MAX(revision) FROM media_source_versions WHERE source_id=$1`, sourceID).Scan(&headRevision))
 	require.Equal(t, int64(2), headRevision)
 	current, err := s.MediaSource(t.Context(), "operator:remote", sourceID)
 	require.NoError(t, err)
 	require.Equal(t, thirdReceipt.SourceVersionID, current.SourceVersionID)
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM media_source_versions WHERE source_version_id=?`, current.SourceVersionID).Scan(&thirdRevision))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT revision FROM media_source_versions WHERE source_version_id=$1`, current.SourceVersionID).Scan(&thirdRevision))
 	require.Equal(t, int64(2), thirdRevision)
 	// A publisher that read revision 1 before the winner committed loses.
 	require.ErrorIs(t, s.PublishMediaSourceVersion(t.Context(), MediaSourceVersionInput{
@@ -130,7 +131,7 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 
 	var versions int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_source_versions WHERE source_id=?`, sourceID).Scan(&versions))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_source_versions WHERE source_id=$1`, sourceID).Scan(&versions))
 	require.Equal(t, 2, versions)
 }
 
@@ -181,6 +182,6 @@ func TestRemoteRecordingManualMetadata(t *testing.T) {
 	require.Equal(t, receipt.SourceVersionID, restoredStatus.SourceVersionID)
 	require.Equal(t, receipt.ContentVersionID, restoredStatus.ContentVersionID)
 	var inputCount int
-	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_input_artifacts WHERE input_id=?`, request.InputID).Scan(&inputCount))
+	require.NoError(t, restored.db.QueryRowContext(t.Context(), `SELECT count(*) FROM media_input_artifacts WHERE input_id=$1`, request.InputID).Scan(&inputCount))
 	require.Equal(t, 1, inputCount)
 }

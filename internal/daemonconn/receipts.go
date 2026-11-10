@@ -36,7 +36,9 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
@@ -47,6 +49,10 @@ type Connection struct {
 	key  string
 	hc   *http.Client
 }
+
+// ErrBackupRepositoryNotConfigured identifies only the absent configuration
+// problem, not other backup_repository failures such as permissions or I/O.
+var ErrBackupRepositoryNotConfigured = errors.New("no backup repository configured; pass repo or set [backup] repo in config.toml")
 
 // WebSessionURL asks the ownership-proven daemon for a daemon-lifetime,
 // scoped browser credential and a daemon-lifetime upload proof secret, then
@@ -85,14 +91,15 @@ func (c *Connection) WebSessionURL(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parsing daemon browser origin: %w", err)
 	}
 	if u.Scheme != "http" || u.Host == "" || u.User != nil ||
-		u.Path != "/" || u.RawQuery != "" || u.Fragment != "" ||
+		!strings.HasSuffix(u.Path, "/") || u.RawPath != "" ||
+		config.ValidateWebBasePath(strings.TrimSuffix(u.Path, "/")) != nil ||
+		u.RawQuery != "" || u.Fragment != "" ||
 		!validBrowserOriginAddress(u.Host) {
 		return "", errors.New("daemon returned an invalid browser origin")
 	}
 	if u.Host == apiURL.Host {
 		return "", errors.New("daemon returned its reusable API origin for the browser")
 	}
-	u.Path = "/"
 	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = url.Values{
@@ -493,7 +500,13 @@ func apiProblemError(e api.Error) error {
 	var cause error
 	detail := ""
 	observedScopeCount := 0
-	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
+	if e.Code == "changes_cursor_expired" && e.Status == http.StatusGone {
+		cause = &ChangeCursorExpiredError{Cursor: e.Cursor}
+	} else if e.Code == "backup_repository" && e.Detail == ErrBackupRepositoryNotConfigured.Error() {
+		// Preserve the existing message and wire detail while providing a
+		// cause that survives wrapping at the CLI process boundary.
+		cause = fmt.Errorf("daemon error (%d %s): %w", e.Status, e.Code, ErrBackupRepositoryNotConfigured)
+	} else if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
 		observedScopeCount = e.ObservedScopeCount
 	} else if e.Code == "hidden_lockout" {
@@ -695,6 +708,35 @@ func (c *Connection) VersionContent(ctx context.Context, id string) (*ContentStr
 	if stream.VersionID != id {
 		_ = stream.Close()
 		return nil, integrityErrorf("content version %s returned version identity %s", id, stream.VersionID)
+	}
+	return stream, nil
+}
+
+// VersionContentRange streams a non-empty half-open window of an immutable version.
+func (c *Connection) VersionContentRange(ctx context.Context, id string, start, end int64) (*ContentStream, error) {
+	if start < 0 || end <= start {
+		return nil, errors.New("content range must be a non-empty half-open interval")
+	}
+	var responseHTTP *http.Response
+	_, err := c.apiWithResponse(&responseHTTP).GetContentVersionBytes(runtime.WithStreamingResponse(ctx), &apiclient.GetContentVersionBytesRequestOptions{
+		PathParams: &apiclient.GetContentVersionBytesPath{VersionID: id},
+		Header:     &apiclient.GetContentVersionBytesHeaders{Range: new(fmt.Sprintf("bytes=%d-%d", start, end-1))},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if responseHTTP.StatusCode != http.StatusPartialContent {
+		defer func() { _ = responseHTTP.Body.Close() }()
+		return nil, decodeError(responseHTTP)
+	}
+	stream, err := decodeContent(responseHTTP, "content version "+id)
+	if err != nil {
+		return nil, err
+	}
+	gotStart, gotEnd, total, rangeErr := parseContentRange(responseHTTP.Header.Get("Content-Range"))
+	if stream.VersionID != id || rangeErr != nil || gotStart != start || gotEnd != end || total != stream.Size {
+		_ = stream.Close()
+		return nil, integrityErrorf("content version %s returned mismatched version identity or Content-Range", id)
 	}
 	return stream, nil
 }
@@ -992,6 +1034,20 @@ type SearchOptions struct {
 
 func (c *Connection) Search(ctx context.Context, query string, limit int) (api.SearchReport, error) {
 	return c.SearchWithOptions(ctx, query, limit, SearchOptions{})
+}
+
+// SearchTextCoverage reads recoverable text gaps after an empty search.
+func (c *Connection) SearchTextCoverage(ctx context.Context, opts SearchOptions) (api.SearchTextCoverage, error) {
+	params := apiclient.SearchTextCoverageQuery{PdfFilter: &opts.PDFFilter, SourcePresent: &opts.SourcePresent,
+		TagID: &opts.TagID, MimeType: &opts.MIMEType, ModifiedSince: &opts.ModifiedSince, ModifiedBefore: &opts.ModifiedBefore}
+	if opts.UnderNodeID != 0 {
+		params.UnderNodeID = &opts.UnderNodeID
+	}
+	out, err := c.API().SearchTextCoverage(ctx, &apiclient.SearchTextCoverageRequestOptions{Query: &params})
+	if err != nil {
+		return api.SearchTextCoverage{}, err
+	}
+	return *out, nil
 }
 
 // SearchWithOptions returns one bounded ranked or filter-only result set.
@@ -2617,9 +2673,21 @@ func (c *Connection) Upload(
 	ctx context.Context, parentID int64, name, mimeType, expectedHash string,
 	expectedSize int64, content io.Reader,
 ) (api.UploadReceipt, error) {
+	return c.upload(ctx, parentID, "", name, mimeType, expectedHash, expectedSize, content, "")
+}
+
+func (c *Connection) UploadURL(ctx context.Context, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetch ingest.URLFetch) (api.UploadReceipt, error) {
+	encoded, err := json.Marshal(fetch)
+	if err != nil {
+		return api.UploadReceipt{}, err
+	}
+	return c.upload(ctx, 0, parentPath, name, mimeType, expectedHash, expectedSize, content, string(encoded))
+}
+
+func (c *Connection) upload(ctx context.Context, parentID int64, parentPath, name, mimeType, expectedHash string, expectedSize int64, content io.Reader, fetchJSON string) (api.UploadReceipt, error) {
 	var receipt api.UploadReceipt
-	if parentID <= 0 {
-		return receipt, errors.New("upload parent ID must be positive")
+	if parentID <= 0 && parentPath == "" {
+		return receipt, errors.New("upload requires a positive parent ID or a destination path")
 	}
 	mimeType, err := validateUploadRequest(name, mimeType, expectedHash, expectedSize, content)
 	if err != nil {
@@ -2628,7 +2696,17 @@ func (c *Connection) Upload(
 	resp, err := streamUpload(ctx, name, mimeType, content, func(
 		ctx context.Context, response **http.Response, editor runtime.RequestEditorFn,
 	) error {
-		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, editor)
+		query := &apiclient.UploadFileQuery{Name: name}
+		if parentPath != "" {
+			query.ParentPath = new(parentPath)
+		} else {
+			query.ParentID = new(parentID)
+		}
+		headers := &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}
+		if fetchJSON != "" {
+			headers.XDocbankURLFetch = new(fetchJSON)
+		}
+		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: query, Header: headers}, editor)
 		return callErr
 	})
 	if err != nil {
@@ -2636,7 +2714,25 @@ func (c *Connection) Upload(
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
-		return receipt, fmt.Errorf("decoding upload response: %w", err)
+		return api.UploadReceipt{}, &responseDecodeError{err: fmt.Errorf("decoding upload response: %w", err)}
+	}
+	return validateUploadReceipt(receipt, expectedHash, expectedSize)
+}
+
+// validateUploadReceipt returns receipt only when it binds an added or skipped
+// file node to the declared bytes; anything else is an unknown outcome.
+func validateUploadReceipt(receipt api.UploadReceipt, expectedHash string, expectedSize int64) (api.UploadReceipt, error) {
+	node := receipt.Node
+	switch {
+	case receipt.Status != "added" && receipt.Status != "skipped":
+		return api.UploadReceipt{}, &responseDecodeError{err: fmt.Errorf("upload receipt has unknown status %q", receipt.Status)}
+	case node.ID <= 0 || node.Kind != "file" || node.Revision <= 0:
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("upload receipt does not name an addressable file node")}
+	case receipt.ComputedHash != expectedHash || receipt.ComputedSize != expectedSize ||
+		node.BlobHash != expectedHash || node.Size != expectedSize:
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("upload receipt disagrees with declared bytes")}
+	case receipt.Status == "added" && receipt.IngestID == "":
+		return api.UploadReceipt{}, &responseDecodeError{err: errors.New("added upload receipt is missing its ingest ID")}
 	}
 	return receipt, nil
 }

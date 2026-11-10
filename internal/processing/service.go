@@ -24,11 +24,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/v2/parser"
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/formatcoverage"
@@ -52,6 +53,7 @@ const (
 var (
 	ErrForeignVault              = errors.New("processing source fence belongs to another vault")
 	ErrProfileNotConfigured      = errors.New("processing profile is not configured")
+	ErrSemanticUnavailable       = errors.New("semantic retrieval is not configured")
 	ErrPlanChanged               = errors.New("processing plan changed after preview")
 	ErrConsentRequired           = errors.New("processing consent is required")
 	ErrConsentSaved              = errors.New("processing consent was saved")
@@ -249,7 +251,10 @@ type Plan struct {
 	RenditionIneligibleReason string `json:",omitzero"`
 }
 
+type processingRunOptions struct{ retryUnavailable, deferIndex bool }
+
 type StartRequest struct {
+	runOptions      processingRunOptions
 	Selector        Selector
 	PlanFingerprint string
 	Consent         bool
@@ -946,7 +951,7 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 				ProfileFingerprint: profile.record.Fingerprint, ContentVersionID: version.ID})
 		}
 	}
-	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID, embeddingProgress)
+	embeddingJobIDs, err := service.runEmbeddings(ctx, version, profile, principal, scope, consentSetGrantID, embeddingProgress, request.runOptions)
 	if processingJobID == "" && len(embeddingJobIDs) != 0 {
 		processingJobID = embeddingJobIDs[0]
 	}
@@ -1585,7 +1590,7 @@ func (service *Service) ResolveSourceFence(
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
-		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
+		return retrieval.Report{}, fmt.Errorf("%w: send exactly one of fence or scope", store.ErrInvalidProcessingSourceFence)
 	}
 	if request.AllLive != nil && request.MediaSources != nil {
 		return retrieval.Report{}, ErrMediaSearchInvalid
@@ -1614,11 +1619,11 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	semantic := prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid
 	if request.AllLive != nil && semantic && len(profile.portable.Embeddings) != 0 {
-		count, err := service.catalog.LiveSearchScopeCount(ctx, searchScope)
+		exists, err := service.catalog.LiveSearchScopeExists(ctx, searchScope)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
-		if count == 0 {
+		if !exists {
 			binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
 			if err != nil {
 				return retrieval.Report{}, err
@@ -1630,7 +1635,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
 	if prepared.authorization.ProviderID != "" && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
-		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID)
+		binding, err := selectDocumentSearchBinding(profile.portable, prepared.bindingID, prepared.mode)
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -1718,13 +1723,16 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID)
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
 		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
+			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				return preparedSearch{}, ErrSemanticUnavailable
+			}
 			request.BindingID = binding.Name
 			searcherConfig.Encoders = service.embeddings
 			authorization = document.EmbeddingAuthorization{ProviderID: binding.Descriptor.ID,
@@ -1733,7 +1741,7 @@ func (service *Service) prepareSearch(
 				MaxBatchItems:         1, MaxInputBytes: binding.MaxInputBytes, MaxResponseBytes: binding.MaxResponseBytes}
 		}
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
-		return preparedSearch{}, errors.New("semantic retrieval is not configured")
+		return preparedSearch{}, ErrSemanticUnavailable
 	}
 	var rerankingAuth *rerankingAuthorizer
 	if request.Rerank {
@@ -1755,7 +1763,7 @@ func (service *Service) prepareSearch(
 }
 
 func (service *Service) runEmbeddings(ctx context.Context, version store.ContentVersion,
-	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string),
+	profile configuredProfile, principal, scope, consentSetGrantID string, onEnqueued func([]string), options processingRunOptions,
 ) ([]string, error) {
 	if len(profile.portable.Embeddings) == 0 {
 		return []string{}, nil
@@ -1788,6 +1796,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			if err != nil {
 				return jobIDs, err
 			}
+			if len(generation.Inputs) == 0 {
+				continue
+			}
 		default:
 			return jobIDs, fmt.Errorf("embedding binding %q has an unsupported input kind", binding.Name)
 		}
@@ -1814,7 +1825,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			job, err = service.catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
 				ContentVersionID: version.ID, Profile: profile.record, BindingID: binding.Name,
 				VectorSpaceID: profile.vectorSpaces[binding.Name], Descriptor: profile.embedders[binding.Name].Descriptor(), InputGeneration: generation,
-				Authorization: authorization,
+				Authorization: authorization, RetryUnavailable: options.retryUnavailable,
 			})
 			return err
 		})
@@ -1890,9 +1901,13 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			}
 		}
 	}
-	if len(vectorSpaces) == 0 {
+	if len(vectorSpaces) == 0 || options.deferIndex {
 		return jobIDs, nil
 	}
+	return jobIDs, service.rebuildVectorSpaces(ctx, vectorSpaces)
+}
+
+func (service *Service) rebuildVectorSpaces(ctx context.Context, vectorSpaces []string) error {
 	indexer, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: service.catalog,
 		ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
 			return service.catalog.ReadVectorIndexVectorSet(ctx, service.blobs, member)
@@ -1900,7 +1915,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 		Mutate: service.gate.MutateContext, Owner: "embedded-index-worker", BuildLease: 5 * time.Minute,
 		ReaderLease: 5 * time.Minute, IdleDelay: time.Millisecond, Clock: service.clock})
 	if err != nil {
-		return jobIDs, err
+		return err
 	}
 	for _, vectorSpace := range sortedUnique(vectorSpaces) {
 		for {
@@ -1909,17 +1924,17 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 				errors.Is(err, store.ErrVectorIndexSourceStale) {
 				// Another request can publish embeddings while this index builds.
 				if err := jobs.Wait(ctx, 100*time.Millisecond); err != nil {
-					return jobIDs, err
+					return err
 				}
 				continue
 			}
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return jobIDs, err
+				return err
 			}
 			break
 		}
 	}
-	return jobIDs, nil
+	return nil
 }
 
 // renditionEvidence reads a build's normalized evidence and proves it is the
@@ -1985,6 +2000,10 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
+	if len(generated.Inputs) == 0 {
+		return store.EmbeddingInputGenerationRecord{}, nil
+	}
+
 	encoded, err := document.MarshalEmbeddingInputGeneration(generated)
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
@@ -2063,13 +2082,25 @@ func selectEmbeddingBinding(profile document.ProcessingProfileV1,
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
 
+// selectDocumentSearchBinding returns the text-query binding for a search.
+// Semantic mode reports ErrSemanticUnavailable when the profile has no
+// text-query binding to default to or the named binding only accepts images;
+// an unknown binding name is store.ErrNotFound in every mode.
 func selectDocumentSearchBinding(profile document.ProcessingProfileV1,
-	name string,
+	name string, mode retrieval.Mode,
 ) (document.EmbeddingBindingV1, error) {
+	imageOnly := false
 	for _, binding := range profile.Embeddings {
-		if binding.InputKind != document.EmbeddingInputImage && (name == "" || binding.Name == name) {
+		if name != "" && binding.Name != name {
+			continue
+		}
+		if binding.InputKind != document.EmbeddingInputImage {
 			return binding, nil
 		}
+		imageOnly = true
+	}
+	if mode == retrieval.ModeSemantic && (name == "" || imageOnly) {
+		return document.EmbeddingBindingV1{}, ErrSemanticUnavailable
 	}
 	return document.EmbeddingBindingV1{}, fmt.Errorf("embedding binding %q: %w", name, store.ErrNotFound)
 }
@@ -2427,7 +2458,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	if size != version.Size {
 		return media.CapabilityRecord{}, errors.Join(errors.New("inspection source size changed"), reader.Close())
 	}
-	capability, inspectErr := media.InspectCapability(reader, policy)
+	capability, inspectErr := media.InspectCapability(ctx, reader, policy)
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
@@ -2451,7 +2482,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, err
 		}
 		policy.UnlockPDF, policy.PDFPasswords = true, passwords
-		capability, inspectErr = media.InspectCapability(reader, policy)
+		capability, inspectErr = media.InspectCapability(ctx, reader, policy)
 		closeErr = reader.Close()
 		if inspectErr != nil || closeErr != nil {
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
@@ -2499,6 +2530,7 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 		declaredMediaType = baseType
 	}
 	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
+		PDFTextOnly:   profile.portable.Rendition.AdapterContract == pdftext.AdapterContract,
 		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,
@@ -2739,6 +2771,9 @@ func canonicalRuntimeDisclosure(value RuntimeDisclosure, trustBoundary string) (
 }
 
 func canonicalDisclosureEndpoint(raw, trustBoundary string) (string, error) {
+	if raw == "managed://kit-embed/auto" || raw == "managed://kit-embed/local" {
+		return raw, nil
+	}
 	local := trustBoundary == string(document.RenditionTrustLocalProcess) ||
 		trustBoundary == string(document.EmbeddingTrustLocalProcess)
 	if local {

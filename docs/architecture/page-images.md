@@ -17,6 +17,23 @@ right and y down. Finite PDF coordinates are rounded half away from zero.
 Invalid crops, non-default UserUnit, and unsupported precision fail. Page
 dimensions are never guessed from a filename or a default paper size.
 
+Native redaction admission compares page boxes at PDFium's binary32 precision.
+For each stored point/10,000 coordinate `q`, it computes
+`p = round(float32(q / 10000) * 10000)`, with ties away from zero. It requires
+`abs(p - q) <= 1` and the observed coordinate to round to exactly `p`. This is
+an exact projection check, not a tolerance for any neighboring coordinate.
+The original frame, its digest and its mask transform remain unchanged.
+Coordinates whose projection moves farther are refused, even on a small crop.
+
+Source widths and heights are rounded forward from points into the frame's
+inch/10,000 units. This preserves dimensions such as a 168pt crop that becomes
+23333 units, rather than rejecting it after converting that rounded value back
+to points. Saved and freshly written PDFs retain their separate output checks.
+Previously admitted boxes stay admitted: the nearest binary32 value to
+`q / 10000` is at least as close as the previously accepted engine value, so
+both quantize to `q`. The former .001pt dimension tolerance lies inside the
+.0036pt half-unit boundary of forward rounding.
+
 Still PNGs need one CRC-valid, metre-based pHYs chunk before image data, with
 equal nonzero horizontal and vertical density. Animation, EXIF orientation,
 missing density, and unequal density are unsupported. PNG rendering retains the
@@ -173,7 +190,7 @@ qualifies normalized evidence, including fractional-position Courier text.
 
 ### Native-PDF mask execution
 
-The API-key-only resolve and render routes admit a live file's exact retained
+The resolve and plain render routes admit a live file's exact retained
 version, hash and size. They do not require the observed node revision.
 Preparation still checks its own requested revision. The preparation and review
 digests use typed projections that exclude revisions; observed/admitted revisions
@@ -318,9 +335,9 @@ Authenticated preview routes are under `/api/v1/redaction/previews`:
 The random 48-hex ID is never authority by itself. Unknown, expired, retired and
 other-owner previews return 410 `redaction_preview_unavailable`. Confirmation
 mismatch is 409 `redaction_review_changed`; an occupied cache is 503
-`redaction_preview_busy`. Only prepare, resolve and these preview operations are
-added to browser admission. Query parameters are refused. Direct render and
-reservations remain API-key-only.
+`redaction_preview_busy`. Browser admission covers prepare, resolve, these preview
+operations, and the separate reservation/publication routes. Query parameters are
+refused. The generic ZIP render remains API-key-only.
 
 One mutex protects a global building, ready or retired entry awaiting readers or
 cleanup. Ready publication is fenced against session revocation. It releases the native-PDF
@@ -354,8 +371,54 @@ ceiling. PNGs are capped at 128 MiB each and 1 GiB total; the ZIP at 544 MiB.
 One ready preview plus another native operation may use about 3.7 GiB. These
 are file-payload bounds, not a global disk quota; tmpfs space is outside process
 RSS accounting. Preview handles, masks and reviews are not persisted to SQLite.
-The browser keeps one displayed image URL, verifies its length/hash and PNG
-header before decode, and binds its frame to preparation before enabling drawing.
+The browser keeps the original's verified bytes in one EmbedPDF reader during
+reading and review. Original downloads use the latest observed node revision.
+Metadata changes retry unfinished downloads without replacing verified bytes.
+Original pixels are an unchecked browser rendering. Page
+count, boxes, intrinsic rotation and dimensions must match preparation before
+marking is enabled. Box matching uses the same bounded binary32 projection as
+native admission. The browser and server use different pinned PDFium builds;
+a disagreement disables marking rather than substituting browser geometry. Crop-relative rectangles are transformed through the
+preparation's rational affine transform; all four corners are rounded outward
+into physical mask coordinates. Coverage and expansion overlays never enter the
+library's pending-redaction list. Docbank owns committed masks and never invokes
+the library's Apply/Commit operation.
+
+The pinned viewer extension reports actual base/tile image decoding and provides
+an inert layer inside the existing page transform. Drawing requires the current
+page's displayed images to have decoded. Image events cancel unfinished marks
+only when their document and page become unavailable; neighboring pages do not
+interrupt drawing. Generation-scoped callbacks cannot revive a retired render.
+Print/export commands stay disabled during review, as do the library's redaction
+commands. The same worker and original bytes survive mode changes.
+Returning to reading restores its zoom mode, including Fit width and Automatic,
+so the page continues to fit when the window resizes. Keyboard arrow movement
+accounts for viewing rotation before updating physical mask coordinates.
+
+Completed one-page text selections use exact run contexts, prefixes and suffixes
+from the reader's permission-checked text API. Each full context must occur once
+in both complete page extracts. Matching uses literal Unicode, never browser
+glyph coordinates or indexes as native offsets. Native UTF-8 spans must contain
+whole server atoms. The resolver derives their physical masks; the browser draws
+the same native atom boxes. Exact selected whitespace can join adjacent spans;
+reversed native order leaves separate selectors grouped only in the editor.
+Ambiguity and disagreement refuse the entire addition, with rectangle/page
+marking still available.
+
+Selection work is bounded to one page, 32 contexts/spans, 4,096 browser glyph
+positions, 64 KiB of context/separator text and 1 MiB per page extract. There is
+one extraction task; generation, document, map, range and decoded-page checks
+prevent stale results from becoming masks. Page/zoom/rotation changes, selected
+page readiness loss, mode changes and disposal cancel transient selections.
+Text selectors consume mask slots but no input boxes. On explicit approval of a
+multi-span expansion, the browser constructs a rectangle selector from the
+server's checked `expanded_boxes`. It retains whitespace between glyphs and
+uses the shared 1,024-box budget. No normalization or geometry fallback is used
+when matching selections.
+
+Redacted keeps one server PNG URL, verifies its length/hash and header before
+decode, and binds its frame to preparation. These are the images checked against
+the delivered PDF. Text is compared with the resolved runs.
 The editor closes on pagehide and requests owner-scoped preview cancellation,
 including when creation has not returned a handle. It does not revoke the
 browser session or cancel unrelated exports and imports. A cached page returns
@@ -364,11 +427,34 @@ Canceled or ambiguous creation uses a fresh request to the owner-scoped discard
 route. The editor preserves masks and requires acknowledged cleanup before
 another creation attempt; a failed cleanup can be retried separately.
 The browser retains a preview handle until the server reports it unavailable or
-acknowledges discard; its wall clock does not establish expiry. Returning to
-original pages revalidates the source and reloads a verified image with the
-current node revision, preserving masks through metadata-only changes.
+acknowledges discard; its wall clock does not establish expiry. Preparing and
+creating output revalidate the live source. Metadata-only changes
+keep the original reader and masks; a changed version blocks new output.
 
 ### Retained numbered native PDFs
+
+Browser publication uses `POST /api/v1/redaction/publications`, with the reviewed
+preparation, masks, review digest and required numbered allocation ID. It owns
+the shared native slot for at most ten minutes and calls the same admission,
+snapshot capture, render and first-winner publication pipeline as CLI rendering.
+It returns the existing export detail without packaging a ZIP or retaining page
+images. Body reads have a finite 60-second deadline, cleared before publication.
+Completed retries use the first verified retained PDF without a page runtime.
+Cleanup failure after commit is logged without reporting a failed publication.
+
+`GET /api/v1/bates/namespaces/{id}` reads the namespace and its advisory
+`next_sequence` together. The cursor is separate from immutable namespace objects
+embedded in recipes and receipts. It includes reserved and skipped numbers; it
+is not a global free-range guarantee. A missing or invalid cursor fails rather
+than defaulting to one. An exhausted cursor is `10^padding`. This read makes no
+snapshot, reservation or native operation and returns `private, no-store`.
+
+Browser gates allow only the exact namespace-detail GET and named reservation
+and publication POSTs without query parameters. Frozen numbering inputs and their
+controller live independently of temporary previews. Expiry removes preview
+assets but does not abort publication or change the confirmed start. The existing
+preview storage allowance remains in force alongside publication staging. There
+is no retained browser draft or implicit storage of private review files.
 
 A numbered delivery uses the existing reservation ledger and a real sealed
 collection snapshot. The snapshot's sole member and occurrence name the original
@@ -379,7 +465,7 @@ preparation, decisions and review digests, qualified renderer, namespace, explic
 start, pages, footer policy and indefinite original retention. Revisions are
 informational and excluded from this identity.
 
-The API-key-only `POST /api/v1/redaction/reservations` requires literal
+`POST /api/v1/redaction/reservations` requires literal
 `retain_original: true`. New requests validate the review, namespace range and
 footer fit before taking permanent authority. After fresh inspection, one store
 transaction checks for an existing operation, seals the snapshot, reserves the
@@ -476,7 +562,7 @@ The proof has two parts:
    ink. Any nonzero alpha is ink. A single inked alias makes that object's
    whitespace unproven, even if the alias is unused on the page.
 
-The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.15.0`
+The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.16.4`
 and one required `simple_fonts_only` boolean per page. Native inspection accepts
 these facts only for the exact staged source identity and ordered frames.
 Rebuild an older inspector and update its configured executable SHA-256 pin;

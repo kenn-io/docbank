@@ -3,15 +3,16 @@ package emailpdf
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,25 +66,11 @@ func TestRuntimeReal(t *testing.T) {
 		defer cancel()
 		ready := make(chan error, 1)
 		go func() {
-			ticker := time.NewTicker(time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					ready <- ctx.Err()
-					return
-				case <-ticker.C:
-					paths, _ := filepath.Glob(filepath.Join(spool, "email-pdf-*", "renderer-ready"))
-					for _, path := range paths {
-						if readyRendererUnit(filepath.Dir(path)) == "" {
-							continue
-						}
-						cancel()
-						ready <- nil
-						return
-					}
-				}
+			_, err := waitForReadyRenderer(ctx, spool)
+			if err == nil {
+				cancel()
 			}
+			ready <- err
 		}()
 		_, _, err := r.Render(ctx, h)
 		cancel()
@@ -94,6 +81,55 @@ func TestRuntimeReal(t *testing.T) {
 	entries, err := os.ReadDir(spool)
 	require.NoError(t, err)
 	require.Empty(t, entries, "all staging must be removed after real rendering and cancellation")
+}
+
+// waitForReadyRenderer blocks until a worker staged under spool reports
+// readiness, and returns its unit. It follows file events instead of polling.
+func waitForReadyRenderer(ctx context.Context, spool string) (string, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return "", fmt.Errorf("watch spool: %w", err)
+	}
+	defer func() { _ = watcher.Close() }()
+	if err := watcher.Add(spool); err != nil {
+		return "", fmt.Errorf("watch spool: %w", err)
+	}
+	// Watch a staging directory before reading it, so a readiness write
+	// between the two still produces an event.
+	check := func(dir string) string {
+		if filepath.Dir(dir) != spool || !strings.HasPrefix(filepath.Base(dir), "email-pdf-") {
+			return ""
+		}
+		if err := watcher.Add(dir); err != nil {
+			return ""
+		}
+		return readyRendererUnit(dir)
+	}
+	entries, err := os.ReadDir(spool)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if unit := check(filepath.Join(spool, entry.Name())); unit != "" {
+			return unit, nil
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case err := <-watcher.Errors:
+			return "", err
+		case event := <-watcher.Events:
+			dir := event.Name
+			if filepath.Base(event.Name) == "renderer-ready" {
+				dir = filepath.Dir(event.Name)
+			}
+			if unit := check(dir); unit != "" {
+				return unit, nil
+			}
+		}
+	}
 }
 
 func readyRendererUnit(dir string) string {

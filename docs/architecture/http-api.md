@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-01
 title: HTTP API
-description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+description: The agent-first HTTP API, with filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
 
 # HTTP API
@@ -22,6 +22,14 @@ starting point.
 | When may I trust downloaded bytes? | [Content verification](#content-identity-and-verification-evidence) |
 | Which credentials does a request need? | [Authentication](#auth) |
 | How do I handle a failed request? | [Error mapping](#error-mapping) |
+
+## Vault change feed
+
+`GET /api/v1/changes?after=CURSOR&follow=true` requires an API key. It returns `application/x-ndjson`. Each change record is `{"type":"change","change":{"cursor":"…","kind":"created","node_id":2,"revision":1}}`. A finite drain ends with `{"type":"result","cursor":"…"}`; EOF before that record means the drain was interrupted. The result cursor marks the final snapshot head, including an empty drain. The `after`, `follow`, and `limit` parameters are optional. Without `after`, reading starts at the oldest retained event. Without `follow=true`, the response drains and closes. Supply `limit=0` for only the current checkpoint or `limit=1` through `limit=500` for one bounded snapshot page. `limit` cannot combine with `follow=true`. A bounded result carries the snapshot head even when more events remain; resume after the last returned change cursor, or the head when the page is empty. Save a checkpoint before scanning documents, then replay from it to include changes made during the scan. A follow response checks for new changes every second and closes on client disconnect or daemon shutdown. Cancellation interrupts blocked writes; ordinary slow readers have no write timeout.
+
+The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
+
+A `processed` event announces completed publication for a current live document. Timeline and attribution first publications and changed checksums or states emit; identical results and freshness-only refreshes stay silent. Invalidation and explicit derivative purge stay silent; a later successful republication emits when its prior head is absent. Email inventory head changes and new terminal body results each emit an event. A body changing from pending to unavailable counts. Source-metadata publication compares evidence checksums; an extractor fingerprint change with identical facts stays silent. Dismissed or fully filtered photo descriptions and unchanged or fully protected face results stay silent.
 
 ## Mailbox imports and explicit EML transfers
 
@@ -78,6 +86,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 
 | Endpoint | Purpose | Status |
 |----------|---------|--------|
+| `GET /vault` | read the selected vault's ID without counting its contents | Implemented |
 | `GET /nodes/{id}` | stat by id (live or trashed) | Implemented |
 | `GET /path?path=/a/b` | stat by virtual path | Implemented |
 | `GET /formats/capabilities?family=&format=&extension=` | read the running binary's per-format capability snapshot | Implemented |
@@ -198,6 +207,11 @@ require substantial work before reaching `limit`. The normal `limit` and
 `truncated` contract remains in force, without a cursor. If `truncated` is true,
 the page is incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+`GET /api/v1/search/text-coverage` takes the ordinary search filters and counts
+current files after an empty text search. `no_text` counts files a processing
+profile could make searchable, by `families` (`pdf`, `office`, `other`), and
+`pending` counts native-text files still queued for extraction.
 
 Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
 and path discovery after existing hits. Blank text returns `422 validation`;
@@ -809,11 +823,20 @@ The Go library and MCP version lists send fences.
 
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
-and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
+and accepts 1–100. `binding_id` selects the embedding binding. When the profile has
+embeddings, an unknown binding returns `404 not_found`. Profiles without embeddings
+ignore it for lexical and auto search. Omitting it uses
 the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The explicit CLI processing form requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
+
+Semantic search requires a binding whose provider supports text queries; otherwise
+it returns `422 semantic_unavailable` after validating the source and binding.
+Hybrid search on a profile without embeddings returns that same error. An index
+without an active generation returns `409 index_unavailable`, so clients can try
+another binding while preserving `404 not_found` for invalid selections. Daemon
+protocol revision 123 requires these distinct errors for MCP profile selection.
 
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
@@ -888,12 +911,15 @@ envelope. Common processing codes are:
 | 428 | `processing_consent_required` | No matching grant; review and grant consent |
 | 412 | `processing_consent_expired`, `processing_consent_revoked` | Existing consent cannot authorize this operation |
 | 409 | `processing_plan_changed` | Preview the changed source or profile again |
+| 409 | `index_unavailable` | The selected vector index has no active generation |
+| 409 | `stale_index` | The vector index source changed and the index is stale |
 | 409 | `rendition_operator_required` | Processing needs operator intervention; an unreadable PDF passwords file returns the fixed detail `PDF passwords file can't be read; check media.pdf_passwords_file` without its path |
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
+| 422 | `semantic_unavailable` | The profile has no query-capable binding for semantic search, or no embeddings for hybrid search |
 | 422 | `rendition_failed` | Required rendition work failed |
 | 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why. A locked PDF that no configured password opens instead creates a job that ends `failed` with `failure_code=pdf_password_required` |
-| 404 | `not_found` | Requested node, version, job, or active rendition is absent |
+| 404 | `not_found` | Requested node, version, binding, job, or active rendition is absent |
 | 503 | `processing_unavailable` | The processing service is not configured |
 | 500 | `processing_failed` | An otherwise unclassified processing failure |
 
@@ -1191,6 +1217,13 @@ These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
 and `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
+`[web] base_path` mounts the browser app and its API requests under a configured
+prefix. The daemon removes that prefix before authorization, loopback checks,
+and timeout classification; the endpoint contracts below remain unchanged.
+Root API endpoints stay available to CLI clients. Browser launch URLs include
+the prefix, while `public_origin` continues to contain only the scheme and
+authority. See [proxy subpaths](../usage/web.md#serve-docbank-under-a-path).
+
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
 its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
@@ -1294,7 +1327,7 @@ the caller, and supplies `destination_path`. Every selector resolves against
 one pre-transaction topology. Each destination is an exact final coordinate,
 and its parent resolves against the planned final topology. Batch requests do
 not apply the single-move “move into an existing directory” shorthand. Docbank
-constructs and checks the complete final topology in Go before applying it, so
+resolves and checks requested paths before applying moves, so
 file and directory swaps and nested reorganizations do not depend on unsafe
 intermediate names. A failure rejects the whole plan. The response preserves
 request order and returns each node's prior path plus its complete final node
@@ -1768,6 +1801,14 @@ metadata globally, and its `/content` child streams that version with the same
 identity headers and digest contract. A path rename cannot strand a retained
 version reference.
 
+The version's `/content` route accepts a single byte `Range`. It returns
+`206` with `Content-Range`, or `416 invalid_content_range` for an invalid or
+unsatisfiable range. The version, hash, and size headers still identify the
+whole version. The `Content-Digest` trailer covers only the returned window.
+MCP clients verify the assembled bytes against the selected version's size
+and SHA-256. Every window streams from the beginning of the blob up to the
+requested bytes, so a window costs time in proportion to its offset.
+
 `GET /nodes/{id}/provenance` returns the requested file node, its live path when
 one exists, and a bounded newest-ingest-first page from one read snapshot. Each
 fact carries its canonical SHA-256 identity, active/superseded state, ingest
@@ -2083,8 +2124,7 @@ authority instead of silently dropping it.
 ## Addendum: `POST /uploads`
 
 `POST /uploads?parent_id=<id>&name=<filename>` accepts exactly one
-`multipart/form-data` file field named `file`. The query uses a stable
-destination directory ID rather than a mutable path. The multipart filename
+`multipart/form-data` file field named `file`. Supply exactly one destination selector: stable `parent_id` or absolute `parent_path`. Missing path directories publish in the document's content transaction after the complete upload is verified. A rejected upload leaves no destination directories or ingest record. The multipart filename
 must equal the normalized `name` query value, preventing the envelope and
 requested tree entry from describing different files.
 
@@ -2104,6 +2144,8 @@ version. Repeating the same name, hash, and parent converges to that stable
 node with `200` and `status: "skipped"`. The receipt always includes the
 server's `computed_hash`, `computed_size`, and the node's ID and revision.
 Clients compare the values themselves.
+
+URL imports may supply `X-Docbank-URL-Fetch`, a version-1 JSON descriptor containing `version`, `requested_url`, `final_url`, and UTC `fetched_at`; optional `etag` and `last_modified` carry base64-encoded header bytes. Unsupported versions, unknown fields, and invalid descriptors are rejected before content preparation. The daemon consumes the supplied bytes and evidence; it does not fetch the URL. Content, missing directories, the ingest run, and its URL origin publish together after envelope verification. URL retries match the exact requested URL and equal current bytes within the destination, including after a rename. Distinct requested URLs retain separate documents even when their bytes match. A skip adds no ingest record or provenance. Readers expose supported evidence as `url_fetch` on provenance and collections, while retaining the raw source description for metadata export and unsupported stored formats.
 
 Uploads are file-granular. A caller sending many files issues independent
 requests (concurrently when useful), so one failure never makes the success of
@@ -2287,13 +2329,13 @@ Tag definitions use stable server-generated UUIDv4 identities, mutable,
 unique NFC-normalized names, and a revision covering both the definition and
 its assignment set. `POST /tags`, `GET /tags`, `GET /tags/by-name`,
 and `GET|PATCH|DELETE /tags/{tag_id}` expose definition lifecycle.
-Single-tag lookups count assignments through the tag index, including live
-and trashed nodes, in the same query as the definition. This avoids joining
-and grouping the assignment rows.
+Tag definitions store exact assignment counts, including live and trashed
+nodes. Membership changes, purges, and metadata restores update counts in the
+same transaction. Single-tag lookups read the stored count without scanning
+assignments.
 `GET /nodes/{id}/tags` and `GET /tags/{tag_id}/nodes` provide bounded forward
-and reverse listings. A node's tag listing selects the name-sorted page before
-counting its tags' assignments, so tags outside the page do not add counting
-work. The page, total, and assignment counts share one query snapshot.
+and reverse listings. The page, total, and assignment counts share one query
+snapshot.
 Reverse results include a path only for live nodes.
 `live_only=true` returns a bounded live projection and `omitted_trashed` count
 from one metadata snapshot, which is suitable for an interactive live browser

@@ -320,7 +320,7 @@ func TestDOCXClientUpload(t *testing.T) {
 		_, _ = io.WriteString(w, ocrResponse(11, len(pdf)))
 	}))
 	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1})
 	result, err := client.Process(t.Context(), prepared, authorization)
 	require.NoError(t, err)
 	require.Len(t, bodies, 2)
@@ -389,7 +389,7 @@ func TestRenderLaneClientUpload(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
+			client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1})
 			result, err := client.Process(t.Context(), prepared, authorization)
 			require.NoError(t, err)
 			require.Len(t, bodies, 2)
@@ -463,26 +463,34 @@ func TestRenderLaneConversionFailures(t *testing.T) {
 	}
 }
 
-func TestRenderLaneRetryIdentity(t *testing.T) {
+func TestRenderLaneReleaseStopsRetry(t *testing.T) {
 	pdf := testMultipagePDF(1)
 	policy := testPolicyWithRenderPDF(t, testRenderPDFPolicyForFormat(t, "xlsx", pdf, nil), 1<<20, 10)
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "xlsx")
 	require.NoError(t, err)
 	prepared := prepareTestRenderLane(t, policy, "xlsx", renderLaneFixture(t, "xlsx"))
 	requests := 0
+	released := make(chan error, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
-		prepared.mu.Lock()
-		prepared.sha256 = strings.Repeat("0", sha256.Size*2)
-		prepared.mu.Unlock()
+		select {
+		case released <- prepared.Release():
+		default:
+		}
 		w.Header().Set("Retry-After", "0")
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
+	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1})
 	_, err = client.Process(t.Context(), prepared, authorization)
+	select {
+	case releaseErr := <-released:
+		require.NoError(t, releaseErr)
+	case <-t.Context().Done():
+		t.Fatal("provider request did not release the prepared document")
+	}
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "source changed before retry")
+	assert.Contains(t, err.Error(), "released")
 	assert.Equal(t, 1, requests)
 }
 

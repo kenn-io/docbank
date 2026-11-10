@@ -24,8 +24,8 @@ export default defineConfig({
           }
           if (operation.operationName === "uploadFile" && operation.body.formData) {
             operation.body.formData = operation.body.formData.replace(
-              "uploadFileBody.file);",
-              "uploadFileBody.file, params.name);",
+              /(formData\.append\(`file`, .*)\);/,
+              "$1, params.name);",
             );
           }
           return operation;
@@ -47,6 +47,10 @@ export default defineConfig({
             requestOptions: { headers: { Accept: "application/x-ndjson" } },
           },
           mailboxEvents: {
+            mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+            requestOptions: { headers: { Accept: "application/x-ndjson" } },
+          },
+          vaultChanges: {
             mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
             requestOptions: { headers: { Accept: "application/x-ndjson" } },
           },

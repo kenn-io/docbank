@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
@@ -207,44 +206,51 @@ func TestBrowserPackageSocketAbandonsIncompleteUpload(t *testing.T) {
 	t.Parallel()
 	for _, outcome := range []string{"cancel", "disconnect"} {
 		t.Run(outcome, func(t *testing.T) {
-			srv, _ := newPackageTestServer(t)
-			token := packageBrowserToken(t, srv)
-			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}
-			raw := []byte("synthetic ZIP payload")
-			hash := sha256.Sum256(raw)
-			digest := hex.EncodeToString(hash[:])
-			created := srv.call(t, http.MethodPost, "/api/v1/packages/containers", mustPackageJSON(t, map[string]any{
-				"container_id": "incomplete-zip", "sha256": digest, "size": len(raw),
-			}), headers)
-			require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-			conn, response, err := websocket.Dial(t.Context(), "ws"+strings.TrimPrefix(srv.ts.URL, "http")+"/api/daemon/web-upload", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {strings.TrimSuffix(testWebURL, "/")}}})
-			require.NoError(t, err)
-			if response != nil && response.Body != nil {
-				require.NoError(t, response.Body.Close())
-			}
-			defer func() { _ = conn.CloseNow() }()
-			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "authenticate", "token": token, "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"}))
-			var reply struct {
-				Type string `json:"type"`
-				Code string `json:"code"`
-			}
-			require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
-			require.Equal(t, "authenticated", reply.Type)
-			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin", "request_id": "incomplete", "container_id": "incomplete-zip", "expected_hash": digest, "expected_size": len(raw)}))
-			require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
-			require.Equal(t, "ready", reply.Type)
-			require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, raw))
-			if outcome == "cancel" {
-				require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "cancel", "request_id": "incomplete"}))
+			synctest.Test(t, func(t *testing.T) {
+				// The bubble's in-memory network lets synctest.Wait observe the
+				// handler finishing its cleanup.
+				ts, _ := newBubbleTestServer(t, nil)
+				srv := &testServer{ts: ts}
+				token := packageBrowserToken(t, srv)
+				headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}
+				raw := []byte("synthetic ZIP payload")
+				hash := sha256.Sum256(raw)
+				digest := hex.EncodeToString(hash[:])
+				created := srv.call(t, http.MethodPost, "/api/v1/packages/containers", mustPackageJSON(t, map[string]any{
+					"container_id": "incomplete-zip", "sha256": digest, "size": len(raw),
+				}), headers)
+				require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+				conn, response, err := websocket.Dial(t.Context(), "ws"+strings.TrimPrefix(srv.ts.URL, "http")+"/api/daemon/web-upload", &websocket.DialOptions{
+					HTTPClient: srv.ts.Client(),
+					HTTPHeader: http.Header{"Origin": {strings.TrimSuffix(testWebURL, "/")}},
+				})
+				require.NoError(t, err)
+				if response != nil && response.Body != nil {
+					require.NoError(t, response.Body.Close())
+				}
+				defer func() { _ = conn.CloseNow() }()
+				require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "authenticate", "token": token, "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"}))
+				var reply struct {
+					Type string `json:"type"`
+					Code string `json:"code"`
+				}
 				require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
-				require.Equal(t, "canceled", reply.Code)
-			} else {
-				require.NoError(t, conn.CloseNow())
-			}
-			require.EventuallyWithT(t, func(collect *assert.CollectT) {
+				require.Equal(t, "authenticated", reply.Type)
+				require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin", "request_id": "incomplete", "container_id": "incomplete-zip", "expected_hash": digest, "expected_size": len(raw)}))
+				require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
+				require.Equal(t, "ready", reply.Type)
+				require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, raw))
+				if outcome == "cancel" {
+					require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "cancel", "request_id": "incomplete"}))
+					require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
+					require.Equal(t, "canceled", reply.Code)
+				} else {
+					require.NoError(t, conn.CloseNow())
+				}
+				synctest.Wait()
 				got := srv.call(t, http.MethodGet, "/api/v1/packages/containers/incomplete-zip", "", headers)
-				assert.Equal(collect, http.StatusNotFound, got.Code, got.Body.String())
-			}, 5*time.Second, 10*time.Millisecond)
+				require.Equal(t, http.StatusNotFound, got.Code, got.Body.String())
+			})
 		})
 	}
 }

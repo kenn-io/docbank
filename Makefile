@@ -29,6 +29,14 @@ LDFLAGS = -X go.kenn.io/docbank/internal/version.Version=$(VERSION) \
 # fts5: enable the SQLite FTS5 full-text search extension
 BUILD_TAGS := fts5
 
+# gotestsum writes gotestsum/<suite>.json. Linux, pure-Go, and macOS jobs upload
+# every run; other Go jobs upload failures and reruns. CI sets PG_SUITE so each
+# PostgreSQL version has its own files.
+PG_SUITE ?= postgres
+gotestsum = mkdir -p gotestsum && go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+	--jsonfile gotestsum/$(1).json --rerun-fails=2 --rerun-fails-report gotestsum/$(1)-reruns.txt \
+	--packages "$(2)" --
+
 # Output directory for make homebrew.
 BINDIR ?= bin
 
@@ -52,7 +60,7 @@ override GOFLAGS += -trimpath
 endif
 export GOFLAGS
 
-.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build homebrew install clean test test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci check-timing-suppressions tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
@@ -82,8 +90,9 @@ backend-coverage:
 
 test-pg:
 	@test -n "$${DOCBANK_TEST_POSTGRES_DSN:-}" || (echo 'Set DOCBANK_TEST_POSTGRES_DSN to a disposable PostgreSQL test server' >&2; exit 1)
-	go test -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store/pgschema
-	go test -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)" ./internal/store -run 'Postgres$$'
+	$(call gotestsum,$(PG_SUITE)-pgschema,./internal/store/pgschema) -race -parallel 4 -count=1 -timeout 3m -tags "$(BUILD_TAGS)"
+	# The full Store contract suite includes photo edits and XMP synchronization.
+	$(call gotestsum,$(PG_SUITE)-store,./internal/store) -race -parallel 4 -count=1 -timeout 5m -tags "$(BUILD_TAGS)" -run 'Postgres$$'
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
@@ -99,12 +108,12 @@ generate-photo-policy:
 	go run -tags "$(BUILD_TAGS)" ./scripts/generate-photo-policy
 
 frontend:
-	cd frontend && npm ci && npm run build
+	cd frontend && $(DOWNLOAD_RETRY) npm ci && npm run build
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	cp -R frontend/dist/. internal/web/dist/
 
 frontend-test:
-	cd frontend && npm ci
+	cd frontend && $(DOWNLOAD_RETRY) npm ci
 	cd frontend && npm run check:fmt-lint
 	cd frontend && npm run check
 	cd frontend && npm run check:kit-ui
@@ -128,11 +137,11 @@ redaction-review-browser-test: frontend
 
 photo-map-browser-test: frontend
 	go build -tags "$(BUILD_TAGS) screenshot_tiles" -o bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
-	DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_MAP_PROOF_DIR="$(CURDIR)/bin/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
+	DOCBANK_PLAYWRIGHT_SUITE=photo-map DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_MAP_PROOF_DIR="$(CURDIR)/bin/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
 
 photo-tabs-browser-test: frontend
 	go build -tags "$(BUILD_TAGS)" -o bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
-	DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_PHOTOS_SCREENSHOT_DIR="$${DOCBANK_PHOTOS_SCREENSHOT_DIR:-$(CURDIR)/bin/photo-tabs-proof}" node frontend/node_modules/@playwright/test/cli.js test photo-tabs.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
+	DOCBANK_PLAYWRIGHT_SUITE=photo-tabs DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-tabs$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_PHOTOS_SCREENSHOT_DIR="$${DOCBANK_PHOTOS_SCREENSHOT_DIR:-$(CURDIR)/bin/photo-tabs-proof}" node frontend/node_modules/@playwright/test/cli.js test photo-tabs.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
 
 docs-screenshots:
 	cd frontend && npm run screenshots
@@ -147,11 +156,18 @@ $(CUSTOM_GCL): .custom-gcl.yml
 	fi
 	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl
 
-lint: $(CUSTOM_GCL)
+lint: $(CUSTOM_GCL) check-timing-suppressions
 	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...
 
-lint-ci: $(CUSTOM_GCL)
+lint-ci: $(CUSTOM_GCL) lint-workflow-retries check-timing-suppressions
 	"$(CUSTOM_GCL)" run --allow-serial-runners ./...
+
+# Tests never wait on the real clock, so the timing analyzers allow no suppressions.
+check-timing-suppressions:
+	@if git grep -nE 'nolint:.*kennlint.*(sleeptest|deadlinetest)' -- '*.go'; then \
+		echo "Do not suppress sleeptest or deadlinetest. See docs/internal/development.md#timing-checks." >&2; \
+		exit 1; \
+	fi
 
 tidy:
 	go mod tidy
@@ -170,7 +186,7 @@ docs-subpath-test:
 	cd docs && uv run --project . --frozen --no-dev python scripts/check_zensical_subpath.py
 
 bridge-contract:
-	go test -tags fts5 ./document/bridge -run '^TestBridgeContractNormativeDocuments'
+	$(call gotestsum,docs-bridge-contract,./document/bridge) -tags fts5 -run '^TestBridgeContractNormativeDocuments'
 
 docs-assets-test:
 	bash scripts/docs-assets-sync.test.sh
@@ -202,6 +218,10 @@ docs-deploy:
 
 help:
 	@echo "Targets: build homebrew install clean test test-pg backend-coverage test-v openapi generate-api generate-photo-policy frontend frontend-test frontend-dev report-export-browser-test redaction-review-browser-test photo-map-browser-test photo-tabs-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries
 
 # Workflow actions run at the commits in .github/workflows/actions.lock,
 # including actions that other actions call. The organization requires

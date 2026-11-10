@@ -137,10 +137,11 @@ api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
 api_key = ""          # empty = ephemeral per-run key (loopback only)
 allowed_hosts = []   # additional Host names, optionally with a port
-idle_timeout = "30m"  # background daemons only; "0" = never
+idle_timeout = "30m"  # automatically started daemons only; "0" = never
 
 [web]
 enabled = true
+base_path = ""                 # empty = root; e.g. "/archive" (no trailing slash)
 public_origin = ""             # empty = loopback web origin; set = 32+ char api_key
 allowed_hosts = []             # extra exact host[:port] authorities; needs public_origin
 trust_private_network = false  # explicit trust for non-loopback HTTP
@@ -166,6 +167,7 @@ pack_max_bytes = 268435456  # 256 MiB soft raw-byte budget per run
 name = "agent-sessions"
 source = "~/agent-sessions"
 destination = "/archives/agents"
+tags = ["receipts"] # optional; first run: docbank tag create receipts
 settle_time = "30s"
 minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
@@ -196,15 +198,22 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   a key at startup and publish it to same-user clients in the runtime record.
   Set a fixed key when a client cannot read that record, such as a client
   using an SSH tunnel from another machine.
-- **`idle_timeout`**: how long a background daemon waits without
+- **`idle_timeout`**: how long an automatically started daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out. A daemon
-  hosting MCP HTTP also never idles out.
-- **`[web] enabled`**: serves the embedded web application at `/`.
+  A fresh `daemon start`, `daemon restart`, or foreground `daemon run` ignores
+  this and never idles out. `daemon start` reuses a compatible automatic daemon
+  with its existing idle policy; use `daemon restart` to keep it running.
+  A daemon hosting MCP HTTP also never idles out.
+- **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
   independent of a configured `api_port`. Disabling it 404s `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
+- **`[web] base_path`**: mounts browser pages, assets, and API requests beneath a
+  path such as `/archive`. Empty means `/`. Use ASCII letters, digits, `-`, `.`,
+  `_`, and `~` in nonempty segments; omit the trailing slash. Dot segments and
+  reserved API prefixes such as `/api`, `/health`, and `/docs` are rejected.
+  The CLI retains its root API endpoints. See [proxy subpaths](usage/web.md#serve-docbank-under-a-path).
 - **`[mcp.http] enabled`**: hosts read-only MCP HTTP in the daemon. When unset,
   the daemon hosts it if the API binds loopback, `port` is unset, and the MCP
   bearer resolves in the daemon's environment; otherwise it logs why and starts
@@ -334,6 +343,8 @@ exclude = [".stversions", ".git"]
 exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
+First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
+
 Empty, absolute, parent-traversal, malformed, and backslash-containing glob
 rules fail watcher or folder-scanner construction with the watch name.
 Restart the daemon after changing watch rules.
@@ -449,7 +460,7 @@ rendition; embedding stages require explicit profile execution.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
-destination, capture mode (`settled` or `prompt`), settle window,
+destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
@@ -632,12 +643,30 @@ deployment, or descriptor mismatch prevents startup. Profiles sharing a
 descriptor must agree on all effective runtime and credential settings.
 A runtime without a selecting processing profile stays staged.
 
-PDF results can preserve exact page evidence, including blank pages. Other
-formats use bounded Markdown with explicitly degraded provenance. The existing
-upload authorization, sanitization, publication, and lexical indexing checks
-still apply. Original bytes remain unchanged. After changing the descriptor,
-queued work fails with `stale_authority`; plan and consent to the changed profile
-before retrying.
+PDF results can preserve exact page evidence, including blank pages. Each page
+unit holds the page's text items and tables. A table becomes a Markdown table
+on the one page its provenance names. Pages with mapped tables follow Docling's
+reading order through the body, then the furniture. Other pages keep text array
+order. Cell text is escaped so every character is kept, except that line breaks
+and repeated spaces in a cell read as one space. Text inside a picture, such as
+a letterhead or a scanned page, and captions are ordinary text items, so they
+stay on their pages too.
+Docbank never assigns content to a guessed page. The page evidence is partial,
+with a field omission for each unmapped kind, when:
+
+- a table spans several pages, has no provenance, names a page outside the
+  result, has a missing or ragged grid, or has a cell that holds other items;
+- a table or picture carries a Docling description or classification;
+- the result contains key-value, form, or field items.
+
+A described or classified table keeps its cells on the page when its grid and
+provenance can be mapped. Its description or classification stays an omission.
+
+Other formats use bounded Markdown with explicitly degraded provenance. The
+existing upload authorization, sanitization, publication, and lexical indexing
+checks still apply. Original bytes remain unchanged. After changing the
+descriptor, queued work fails with `stale_authority`; plan and consent to the
+changed profile before retrying.
 
 ### Document OCR with Mistral
 
@@ -1090,6 +1119,14 @@ Affected embedding jobs record an authorization failure and can recover later.
 Startup still fails for an undefined legacy credential binding, invalid runtime
 configuration, or mismatched descriptor.
 
+#### Local text indexing
+
+Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile and all provider disclosures, downloads any missing server and model files, and needs no confirmation. It starts the shared server, grants consent, saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, and restarts the daemon. Your TOML stays intact.
+
+Setup moves an indexed compatible Nomic profile to Kit's shared per-user server with its extractor, chunks, and vectors; otherwise it builds a separate `local-text` index with Nomic v1.5 and the plaintext extractor. Both `auto` and `local` select Kit's shared per-user server. Other processing profiles keep their configured providers.
+
+The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
+
 #### Runtime settings
 
 An optional `[embedding_profiles.<name>.runtime]` section makes a binding
@@ -1204,10 +1241,13 @@ encoders, each with `mode` and `template`. Templates use `{{content}}`. Contract
 validation checks the supported roles and formatting rules. `query_instruction`
 is available only to contracts that support it.
 
-Discovery reads in pages and waits one minute between complete passes.
+Discovery reads in pages and checks once a minute whether another complete
+pass is needed. Quiet vaults skip the pass; see [idle embedding discovery](embedding.md#idle-embedding-discovery)
+for the wake triggers.
 Existing queued work is still checked on the normal one-second idle cadence.
 Discovery skips missing or invalid generation bytes so later candidates can
-proceed, and a later pass retries them. Database failures keep their
+proceed. Later passes retry temporary input failures; permanent rejections
+allow discovery to settle. Database failures keep their
 separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.

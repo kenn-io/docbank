@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -271,62 +272,63 @@ func TestStorageRegistrationRejectsCatalogChangeBeforeMarkerHandoff(t *testing.T
 
 func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 	t.Parallel()
-	namespace := filepath.Join(t.TempDir(), "archive")
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Jobs = jobs.New(t.Context(), nil)
-		t.Cleanup(d.Jobs.Stop)
-		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
-			"archive_nas": {Kind: "filesystem", Path: namespace},
-		}
-		d.BlobRegistry = blob.NewRegistry(
-			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
-		)
-		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	})
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
-		map[string]any{"name": "archive", "binding": "archive_nas"})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var registration api.BlobStorePreview
-	require.NoError(t, json.Unmarshal([]byte(body), &registration))
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil,
-		map[string]any{"preview_token": registration.PreviewToken})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var registered api.BlobStore
-	require.NoError(t, json.Unmarshal([]byte(body), &registered))
+	synctest.Test(t, func(t *testing.T) {
+		namespace := filepath.Join(t.TempDir(), "archive")
+		ts, _ := newBubbleTestServer(t, func(d *api.Deps) {
+			d.Jobs = jobs.New(t.Context(), nil)
+			t.Cleanup(d.Jobs.Stop)
+			d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+				"archive_nas": {Kind: "filesystem", Path: namespace},
+			}
+			d.BlobRegistry = blob.NewRegistry(
+				t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+			)
+			t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+		})
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+			map[string]any{"name": "archive", "binding": "archive_nas"})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var registration api.BlobStorePreview
+		require.NoError(t, json.Unmarshal([]byte(body), &registration))
+		resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil,
+			map[string]any{"preview_token": registration.PreviewToken})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var registered api.BlobStore
+		require.NoError(t, json.Unmarshal([]byte(body), &registered))
 
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/evacuate/preview", nil,
-		map[string]any{"store": registered.ID})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var preview api.StoragePlacementPreview
-	require.NoError(t, json.Unmarshal([]byte(body), &preview))
-	assert.Zero(t, preview.Objects)
+		resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/evacuate/preview", nil,
+			map[string]any{"store": registered.ID})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var preview api.StoragePlacementPreview
+		require.NoError(t, json.Unmarshal([]byte(body), &preview))
+		assert.Zero(t, preview.Objects)
 
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/evacuate", nil,
-		map[string]any{"preview_token": preview.PreviewToken})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var operation api.StorageOperation
-	require.NoError(t, json.Unmarshal([]byte(body), &operation))
+		resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/evacuate", nil,
+			map[string]any{"preview_token": preview.PreviewToken})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var operation api.StorageOperation
+		require.NoError(t, json.Unmarshal([]byte(body), &operation))
 
-	require.Eventually(t, func() bool {
+		// The evacuation runs as a supervisor job; Wait returns once it has
+		// finished or is durably blocked.
+		synctest.Wait()
 		resp, body = get(t, ts, "/api/v1/jobs/"+operation.ID, nil)
-		if resp.StatusCode != http.StatusOK {
-			return false
-		}
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var current api.StorageOperation
-		return json.Unmarshal([]byte(body), &current) == nil &&
-			current.State == "completed"
-	}, 3*time.Second, 10*time.Millisecond)
+		require.NoError(t, json.Unmarshal([]byte(body), &current))
+		require.Equal(t, "completed", current.State)
 
-	resp, body = get(t, ts, "/api/v1/storage/stores", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var stores []api.BlobStore
-	require.NoError(t, json.Unmarshal([]byte(body), &stores))
-	require.Len(t, stores, 2)
-	assert.Equal(t, "detached", stores[1].Lifecycle)
+		resp, body = get(t, ts, "/api/v1/storage/stores", nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var stores []api.BlobStore
+		require.NoError(t, json.Unmarshal([]byte(body), &stores))
+		require.Len(t, stores, 2)
+		assert.Equal(t, "detached", stores[1].Lifecycle)
 
-	resp, body = do(t, ts, http.MethodDelete,
-		"/api/v1/storage/stores/"+registered.ID, nil, nil)
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+		resp, body = do(t, ts, http.MethodDelete,
+			"/api/v1/storage/stores/"+registered.ID, nil, nil)
+		require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+	})
 }
 
 func TestStorageRegistrationRejectsProtectedPathOverlaps(t *testing.T) {

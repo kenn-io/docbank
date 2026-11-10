@@ -22,6 +22,37 @@ func checkAuditHistoryPostgres(t *testing.T) {
 	publish()
 	ctx := t.Context()
 
+	tx, err := reader.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `SET LOCAL enable_seqscan=off; SET LOCAL enable_bitmapscan=off`)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		query, index string
+		args         []any
+	}{
+		{auditScopeHistoryPageSQL, "audit_record_event_scope", []any{scopeID, 3}},
+		{auditScopeHistoryCursorPageSQL, "audit_record_event_scope", []any{scopeID, 2, 0, fakeHash("a720"), 3}},
+		{auditNodeHistoryPageSQL, "audit_record_event_node", []any{child.ID, 3}},
+		{auditNodeHistoryCursorPageSQL, "audit_record_event_node", []any{child.ID, 2, 0, fakeHash("a720"), 3}},
+	} {
+		rows, err := tx.QueryContext(ctx, "EXPLAIN "+tc.query, tc.args...)
+		require.NoError(t, err)
+		defer func() { _ = rows.Close() }()
+		var lines []string
+		for rows.Next() {
+			var line string
+			require.NoError(t, rows.Scan(&line))
+			lines = append(lines, line)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		plan := strings.Join(lines, "\n")
+		require.Contains(t, plan, "Index Scan Backward using "+tc.index)
+		require.NotContains(t, plan, "Sort")
+	}
+	require.NoError(t, tx.Rollback())
+
 	first, err := reader.AuditHistory(ctx, child.ID, 2, "")
 	require.NoError(t, err)
 	require.Equal(t, "/Documents/renamed", first.Path)
@@ -192,7 +223,11 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 			destinations[i] = &values[i]
 			parameters[i] = fmt.Sprintf("$%d", i+1)
 		}
-		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ") VALUES(" + strings.Join(parameters, ",") + ")"
+		override := ""
+		if table == "extracted_text" || table == "photo_hidden_failures" {
+			override = " OVERRIDING SYSTEM VALUE"
+		}
+		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
 			_, err := to.ExecContext(ctx, insert, values...)
@@ -200,6 +235,14 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		}
 		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
+		if table == "photo_hidden_failures" {
+			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence($1,'failure_id'), COALESCE(MAX(failure_id),1), COUNT(*)>0) FROM photo_hidden_failures`, table)
+			require.NoError(t, err)
+		}
+		if table == "extracted_text" || table == "photo_suggestions" {
+			_, err = to.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence($1,'id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM `+table, table)
+			require.NoError(t, err)
+		}
 	}
 	var highWater int64
 	require.NoError(t, from.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name='nodes'`).Scan(&highWater))

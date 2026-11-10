@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -75,7 +76,7 @@ type embeddingJobRunner interface {
 }
 
 type embeddingJobStarter interface {
-	Start(name string, run func(context.Context) error) error
+	StartWorker(name string, run func(context.Context) error) error
 }
 
 // startEmbeddingWorkerIfReady preserves the daemon's normal supervisor-owned
@@ -95,7 +96,7 @@ func startEmbeddingWorkerIfReady(starter embeddingJobStarter, readiness embeddin
 	if worker == nil {
 		return errors.New("embedding worker builder returned nil")
 	}
-	return starter.Start("process:embeddings", worker.Run)
+	return starter.StartWorker("process:embeddings", worker.Run)
 }
 
 func startVectorIndexWorker(starter embeddingJobStarter,
@@ -108,7 +109,7 @@ func startVectorIndexWorker(starter embeddingJobStarter,
 	if worker == nil {
 		return errors.New("vector index worker builder returned nil")
 	}
-	return starter.Start("process:vector-indexes", worker.Run)
+	return starter.StartWorker("process:vector-indexes", worker.Run)
 }
 
 func vectorIndexRetryPolicy(isBusy func(error) bool) func(error) bool {
@@ -126,7 +127,21 @@ func removeWebBootstrap(root string) {
 	}
 }
 
-func runServe(ctx context.Context) (retErr error) {
+func runServe(ctx context.Context) error {
+	return serveDaemon(ctx, nil)
+}
+
+// serveReady describes a daemon that is ready to serve. In-process tests use
+// it to wait for background work and to check idle shutdown without polling.
+type serveReady struct {
+	tracker *api.ActivityTracker
+	jobs    *jobs.Supervisor
+}
+
+// serveDaemon runs the daemon until ctx ends or a shutdown request arrives.
+// A non-nil ready runs once the runtime record, listeners, and supervised jobs
+// are in place, just before the HTTP servers start.
+func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
@@ -308,6 +323,39 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring executable processing profiles: %w", err)
 	}
+
+	choice, err := readLocalText(layout.Root)
+	if err != nil {
+		logger.Warn("read local text selection; indexing remains inactive", "error", err)
+		choice = config.LocalTextConfig{}
+	}
+	baseConfig := cfg
+	candidateProfiles := func(mode, name string) (map[string]processing.ProfileConfig, config.Config, error) {
+		candidate, err := localTextCandidate(baseConfig, mode, name)
+		if err != nil {
+			return nil, candidate, err
+		}
+		bundle, err := configureEmbeddingRuntimeBundle(candidate)
+		if err != nil {
+			return nil, candidate, err
+		}
+		profiles, err := executableProcessingProfiles(candidate, bundle)
+		return profiles, candidate, err
+	}
+	if choice.Profile != "" {
+		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
+		if err == nil && selected[choice.Profile].RenditionProvider == nil {
+			err = processing.ErrProfileNotConfigured
+		}
+		if err == nil {
+			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
+		}
+		if err != nil {
+			logger.Warn("restore local text selection; indexing remains inactive", "profile", choice.Profile, "error", err)
+			choice = config.LocalTextConfig{}
+		}
+	}
+
 	for _, watch := range cfg.Watches {
 		if watch.Profile != "" {
 			if _, ok := processingProfiles[watch.Profile]; !ok {
@@ -350,6 +398,29 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)
 	}
+
+	tracker := api.NewActivityTracker()
+	var restartPending atomic.Bool
+	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
+		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+		Startup: localTextStartup,
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText),
+	}
+	localText.Candidate = func(mode, name string) (*processing.Service, error) {
+		profiles, _, err := candidateProfiles(mode, name)
+		if err != nil {
+			return nil, err
+		}
+		service, err := processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: profiles,
+			MediaMaxBytes: cfg.Media.MaxSourceBytes,
+			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
+		return service, err
+	}
+	if choice.Profile != "" {
+		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
+			return err
+		}
+	}
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
 	renditionWorkers := 1
@@ -363,12 +434,13 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
 		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
-		List:    processingService.MediaProcessingTargets,
-		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
-		Process: processingService.ContinueMediaProcessing,
-		Logger:  logger,
+		WriteRevision: s.WriteRevision,
+		List:          processingService.MediaProcessingTargets,
+		Key:           func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process:       processingService.ContinueMediaProcessing,
+		Logger:        logger,
 	}
-	if err := jobSupervisor.Start("process:media-continuations", mediaContinuations.Run); err != nil {
+	if err := jobSupervisor.StartWorker("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
 	}
 	if len(mediaOriginProbes) > 0 {
@@ -377,7 +449,7 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 	if processingService.HasPhotoDescriptionProfiles() {
-		if err := jobSupervisor.Start("process:photo-descriptions", func(ctx context.Context) error {
+		if err := jobSupervisor.StartWorker("process:photo-descriptions", func(ctx context.Context) error {
 			return processingService.PhotoDescriptionBackfill(ctx, logger, renditionWorkers)
 		}); err != nil {
 			return fmt.Errorf("starting photo descriptions: %w", err)
@@ -385,7 +457,7 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 
 	if processingService.HasPhotoFaceDetectionProfiles() {
-		if err := jobSupervisor.Start("process:photo-face-detection", func(ctx context.Context) error {
+		if err := jobSupervisor.StartWorker("process:photo-face-detection", func(ctx context.Context) error {
 			return processingService.PhotoFaceDetectionBackfill(ctx, logger, renditionWorkers)
 		}); err != nil {
 			return fmt.Errorf("starting photo face detection: %w", err)
@@ -523,12 +595,21 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
+	persistent := os.Getenv(daemonconn.EnvPersistentDaemon) == "true"
+	var idleTimeout time.Duration
+	if background && !persistent && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 && cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+		idleTimeout = cfg.Server.IdleTimeout.Std()
+	}
 	rtStore := daemonconn.RuntimeStore(layout.Root)
 	webAddress := ""
 	if webListener != nil {
 		webAddress = webListener.Addr().String()
 	}
 	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
+	if background {
+		record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
+	}
+	record.Metadata[daemonconn.MetaExplicitStart] = strconv.FormatBool(persistent)
 	if localListener != nil {
 		record.Metadata["network_address"] = listener.Addr().String()
 	}
@@ -549,7 +630,7 @@ func runServe(ctx context.Context) (retErr error) {
 				return processingService.AdmitImportedRendition(ctx, node, watchConfig.Profile)
 			}
 		}
-		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
+		if err := jobSupervisor.StartWorker("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
 	}
@@ -557,7 +638,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring text extraction: %w", err)
 	}
-	if err := jobSupervisor.Start("extract:plain-text", textWorker.Run); err != nil {
+	if err := jobSupervisor.StartWorker("extract:plain-text", textWorker.Run); err != nil {
 		return fmt.Errorf("starting text extraction: %w", err)
 	}
 	packageMailbox := mailbox.Service{Store: s, Blobs: blobs}
@@ -579,7 +660,7 @@ func runServe(ctx context.Context) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring package import worker: %w", err)
 	}
-	if err := jobSupervisor.Start("import:packages", packageWorker.Run); err != nil {
+	if err := jobSupervisor.StartWorker("import:packages", packageWorker.Run); err != nil {
 		return fmt.Errorf("starting package import worker: %w", err)
 	}
 	if cfg.Storage.PackInterval.Std() > 0 {
@@ -593,7 +674,7 @@ func runServe(ctx context.Context) (retErr error) {
 			})
 			return report, err
 		}
-		if err := jobSupervisor.Start("storage:pack", func(ctx context.Context) error {
+		if err := jobSupervisor.StartWorker("storage:pack", func(ctx context.Context) error {
 			return internalmaintenance.RunPackSchedule(
 				ctx, cfg.Storage.PackInterval.Std(), packRun, logger)
 		}); err != nil {
@@ -601,7 +682,6 @@ func runServe(ctx context.Context) (retErr error) {
 		}
 	}
 
-	tracker := api.NewActivityTracker()
 	backupScheduleWake := make(chan struct{}, 1)
 	if err := api.StartBackupSchedule(ctx, api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Logger: logger, Jobs: jobSupervisor, Tracker: tracker, BackupScheduleWake: backupScheduleWake}); err != nil {
 		return fmt.Errorf("starting scheduled backups: %w", err)
@@ -636,11 +716,15 @@ func runServe(ctx context.Context) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText,
+		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
+		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
 		TelemetryCapture:      telemetry.CaptureHandler(telemetryReporter, layout.Root),
+		RepackPage:            daemonRepackPage,
 	})
 	defer srv.Close()
 	newHTTPServer := func(handler http.Handler) *http.Server {
@@ -668,10 +752,9 @@ func runServe(ctx context.Context) (retErr error) {
 		servers = append(servers, servingHTTP{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true})
 	}
 
-	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+	if idleTimeout > 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
-			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, stop)
+			idleWatch(ctx, tracker, idleTimeout, logger, localText.Pending, stop)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("starting idle-timeout job: %w", err)
@@ -685,6 +768,9 @@ func runServe(ctx context.Context) (retErr error) {
 
 	if mcpURL != "" {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
+	}
+	if ready != nil {
+		ready(serveReady{tracker: tracker, jobs: jobSupervisor})
 	}
 
 	return serveDaemonHTTP(sigCtx, stopCh, servers, drainMCP, func() {
@@ -828,6 +914,25 @@ func listenLocalDiscovery(ctx context.Context, listener net.Listener) (net.Liste
 	return local, local.Addr().String(), nil
 }
 
+// repackNow is the time a daemon repack measures pack ages at; nil means the
+// current time. In-process tests move it ahead so a pack they wrote moments
+// earlier is already older than a tiny --min-age.
+var repackNow func() time.Time
+
+func daemonRepackPage(
+	ctx context.Context, s *store.Store, blobs *blob.Store, opts internalmaintenance.RepackOptions,
+) (internalmaintenance.RepackReport, error) {
+	if repackNow != nil {
+		opts.Now = repackNow()
+	}
+	return internalmaintenance.Repack(ctx, s, blobs, opts)
+}
+
+// renditionWorkerClock is the rendition workers' clock; nil means the current
+// time. In-process tests hold it still so a provider retry the worker schedules
+// never becomes due while the test reads the recorded failure.
+var renditionWorkerClock func() time.Time
+
 // startProcessingJobs registers the daemon jobs that derive data from stored
 // originals. The rendition worker starts only when a provider adapter is
 // bound, so `docbank jobs` never reports rendition work that cannot happen.
@@ -845,12 +950,12 @@ func startProcessingJobs(
 			worker, err := processing.NewRenditionWorker(processing.RenditionWorkerConfig{
 				Catalog: s, Blobs: blobs, Runtime: runtimes, Gate: gate,
 				Owner: fmt.Sprintf("daemon-rendition-worker-%d", index), LeaseDuration: 5 * time.Minute,
-				IdleDelay: time.Second, Logger: logger,
+				IdleDelay: time.Second, Logger: logger, Clock: renditionWorkerClock,
 			})
 			if err != nil {
 				return fmt.Errorf("configuring rendition worker: %w", err)
 			}
-			if err := supervisor.Start(name, worker.Run); err != nil {
+			if err := supervisor.StartWorker(name, worker.Run); err != nil {
 				return fmt.Errorf("starting rendition worker: %w", err)
 			}
 		}
@@ -867,11 +972,12 @@ func startProcessingJobs(
 			return err
 		},
 	}
-	if err := supervisor.Start("maintenance:auxiliary-checksums", checksums.Run); err != nil {
+	if err := supervisor.StartWorker("maintenance:auxiliary-checksums", checksums.Run); err != nil {
 		return fmt.Errorf("starting auxiliary checksum backfill: %w", err)
 	}
 	metadata := &processing.Backfill[store.SourceMetadataTarget]{
 		Name: "source-metadata", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		List: func(ctx context.Context, after string, limit int) ([]store.SourceMetadataTarget, error) {
 			return s.MissingSourceMetadataTargetsAfter(
 				ctx, processing.SourceMetadataExtractorFingerprint, after, limit)
@@ -885,30 +991,31 @@ func startProcessingJobs(
 			return err
 		},
 	}
-	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
+	if err := supervisor.StartWorker("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
 	}
-	if err := supervisor.Start("extract:photo-sidecars", newPhotoSidecarBackfill(s, blobs, gate, logger)); err != nil {
+	if err := supervisor.StartWorker("extract:photo-sidecars", newPhotoSidecarBackfill(s, blobs, gate, logger)); err != nil {
 		return fmt.Errorf("starting photo sidecar backfill: %w", err)
 	}
 	previews, err := newVisualPreviewBackfill(s, blobs, gate, logger)
 	if err != nil {
 		return err
 	}
-	if err := supervisor.Start(store.VisualPreviewLane, previews.Run); err != nil {
+	if err := supervisor.StartWorker(store.VisualPreviewLane, previews.Run); err != nil {
 		return fmt.Errorf("starting visual preview backfill: %w", err)
 	}
 
 	quality := &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "photo-quality", Page: 10, IdleDelay: time.Second,
-		List:   s.MissingPhotoQualityTargetsAfter,
-		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
-		Mutate: gate.MutateContext, Logger: logger,
+		WriteRevision: s.WriteRevision,
+		List:          s.MissingPhotoQualityTargetsAfter,
+		Key:           func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
+		Mutate:        gate.MutateContext, Logger: logger,
 		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
 			return processing.EvaluatePhotoQuality(ctx, s, blobs, target)
 		},
 	}
-	if err := supervisor.Start("derive:photo-quality", quality.Run); err != nil {
+	if err := supervisor.StartWorker("derive:photo-quality", quality.Run); err != nil {
 		return fmt.Errorf("starting photo quality backfill: %w", err)
 	}
 	emailFingerprint, err := processing.EmailDecoderFingerprint()
@@ -921,6 +1028,7 @@ func startProcessingJobs(
 	}
 	email := &processing.Backfill[store.EmailTarget]{
 		Name: "email", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		List: func(ctx context.Context, after string, limit int) ([]store.EmailTarget, error) {
 			return s.MissingEmailTargetsAfter(
 				ctx, emailFingerprint, emailBodyProfileFingerprint, after, limit,
@@ -936,15 +1044,17 @@ func startProcessingJobs(
 			return processErr
 		},
 	}
-	if err := supervisor.Start("extract:email", email.Run); err != nil {
+	if err := supervisor.StartWorker("extract:email", email.Run); err != nil {
 		return fmt.Errorf("starting email backfill: %w", err)
 	}
 	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
-	if err := supervisor.Start("derive:document-events", documentEvents.Run); err != nil {
+	documentEvents.WriteRevision = s.WriteRevision
+	if err := supervisor.StartWorker("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)
 	}
 	documentPeople := processing.NewDocumentPeopleBackfill(s, gate.MutateContext, logger)
-	if err := supervisor.Start("derive:document-people", documentPeople.Run); err != nil {
+	documentPeople.WriteRevision = s.WriteRevision
+	if err := supervisor.StartWorker("derive:document-people", documentPeople.Run); err != nil {
 		return fmt.Errorf("starting document people derivation: %w", err)
 	}
 	return startRetentionMaintenance(supervisor, s, gate, logger)
@@ -979,6 +1089,7 @@ func newVisualPreviewBackfill(
 	}
 	return &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "visual-previews", Page: 10, IdleDelay: time.Second,
+		WriteRevision: s.WriteRevision,
 		Control: func(ctx context.Context) (store.LaneControl, error) {
 			return s.LaneControl(ctx, store.VisualPreviewLane)
 		},
@@ -1014,14 +1125,19 @@ func startRetentionMaintenance(
 				logger.Warn("retention maintenance failed", "error", err)
 			}
 			jobs.ReportBusy(ctx, false)
+			// The pass reported busy, so it parks without a found flag.
+			settle, resume := jobs.Park(ctx, false)
 			select {
 			case <-ctx.Done():
+				resume()
 				return nil
 			case <-ticker.C:
+			case <-settle:
 			}
+			resume()
 		}
 	}
-	if err := supervisor.Start("maintenance:retention", pruneRetention); err != nil {
+	if err := supervisor.StartWorker("maintenance:retention", pruneRetention); err != nil {
 		return fmt.Errorf("starting retention maintenance: %w", err)
 	}
 	return nil
@@ -1259,7 +1375,7 @@ func listenWebOriginWithIdentity(
 // idleWatch exits an auto-started daemon after a fully quiet window so
 // spawned daemons don't accumulate. Foreground `daemon run` never idles out.
 func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duration,
-	logger *slog.Logger, stop func()) {
+	logger *slog.Logger, pending func(context.Context) (bool, error), stop func()) {
 	jobs.ReportBusy(ctx, false)
 	// Clamp the poll interval: NewTicker panics on a non-positive duration,
 	// and a pathologically small configured timeout must not spin.
@@ -1271,7 +1387,7 @@ func idleWatch(ctx context.Context, t *api.ActivityTracker, timeout time.Duratio
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if t.IdleFor() >= timeout {
+			if t.IdleFor() >= timeout && localTextIdle(ctx, t, timeout, pending, logger) {
 				logger.Info("idle timeout reached, shutting down", "idle", timeout.String())
 				stop()
 				return
@@ -1306,4 +1422,19 @@ func randomHex32() (string, error) {
 		return "", fmt.Errorf("reading random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// localTextIdle closes the gap between the last lane sweep and idle shutdown.
+func localTextIdle(ctx context.Context, tracker *api.ActivityTracker, timeout time.Duration, pending func(context.Context) (bool, error), logger *slog.Logger) bool {
+	busy, err := pending(ctx)
+	if err != nil {
+		logger.Warn("check local text work before idle shutdown", "error", err)
+		return false
+	}
+	if busy {
+		tracker.Begin()
+		tracker.End()
+		return false
+	}
+	return tracker.IdleFor() >= timeout
 }

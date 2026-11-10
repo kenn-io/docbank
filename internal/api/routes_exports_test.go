@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -63,87 +64,82 @@ func (g *pausedExportGate) MutateContext(ctx context.Context, fn func() error) e
 
 func TestExportRevocationInterruptsActiveWorkBehindMaintenance(t *testing.T) {
 	t.Parallel()
-	gate := api.NewOperationGate()
-	paused := &pausedExportGate{gate: gate, opening: make(chan struct{}), resume: make(chan struct{}), interrupted: make(chan struct{})}
-	var worker *exporter.Worker
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		d.Gate = gate
-		var err error
-		worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, paused)
-		require.NoError(t, err)
-		d.Exports = worker
-	})
-	token := issueWebSession(t, ts)
-	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token}
-	owner := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
-	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("synthetic cancellation payload")))
-	require.NoError(t, err)
-	n, err := s.CreateFile(t.Context(), s.RootID(), "cancel.txt", hash, size, "text/plain")
-	require.NoError(t, err)
-	source, err := s.CreateExportSource(t.Context(), owner, bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
-	require.NoError(t, err)
-	plan, err := s.CreateExportPlan(t.Context(), owner, bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}}})
-	require.NoError(t, err)
-	job, err := s.QueueExportJob(t.Context(), owner, bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	finished := make(chan error, 1)
-	go func() { _, err := worker.RunOne(t.Context()); finished <- err }()
-	select {
-	case <-paused.opening:
-	case <-time.After(5 * time.Second):
-		t.Fatal("worker never reached source gate")
-	}
-	held, release := make(chan struct{}), make(chan struct{})
-	maintenanceDone := make(chan error, 1)
-	go func() {
-		maintenanceDone <- gate.MaintainContext(t.Context(), func() error { close(held); <-release; return nil })
-	}()
-	<-held
-	close(paused.resume)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, ts.URL+"/api/daemon/web-session", nil)
-	require.NoError(t, err)
-	for key, value := range headers {
-		request.Header.Set(key, value)
-	}
-	type revokeResult struct {
-		status int
-		err    error
-	}
-	revoked := make(chan revokeResult, 1)
-	go func() {
-		response, err := ts.Client().Do(request)
-		if err != nil {
-			revoked <- revokeResult{err: err}
-			return
+	now := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		// Export deadlines are wall-clock timestamps; start the fake clock at now.
+		time.Sleep(time.Until(now))
+		gate := api.NewOperationGate()
+		paused := &pausedExportGate{gate: gate, opening: make(chan struct{}), resume: make(chan struct{}), interrupted: make(chan struct{})}
+		var worker *exporter.Worker
+		s, key := newTestAPIServer(t, func(d *api.Deps) {
+			d.Gate = gate
+			var err error
+			worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, paused)
+			require.NoError(t, err)
+			d.Exports = worker
+		})
+		handler := s.Server.Handler()
+		issued := serveLoopback(t.Context(), handler, http.MethodPost, "/api/daemon/web-session", map[string]string{"X-Api-Key": key}, nil)
+		require.Equal(t, http.StatusCreated, issued.Code, issued.Body.String())
+		var session struct {
+			Token string `json:"token"`
 		}
-		revoked <- revokeResult{status: response.StatusCode, err: response.Body.Close()}
-	}()
-	select {
-	case <-paused.interrupted:
-	case <-time.After(10 * time.Second):
+		require.NoError(t, json.Unmarshal(issued.Body.Bytes(), &session))
+		token := session.Token
+		owner := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
+		hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader([]byte("synthetic cancellation payload")))
+		require.NoError(t, err)
+		n, err := s.CreateFile(t.Context(), s.RootID(), "cancel.txt", hash, size, "text/plain")
+		require.NoError(t, err)
+		source, err := s.CreateExportSource(t.Context(), owner, bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
+		require.NoError(t, err)
+		plan, err := s.CreateExportPlan(t.Context(), owner, bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}}})
+		require.NoError(t, err)
+		job, err := s.QueueExportJob(t.Context(), owner, bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})
+		require.NoError(t, err)
+		finished := make(chan error, 1)
+		go func() { _, err := worker.RunOne(t.Context()); finished <- err }()
+		select {
+		case <-paused.opening:
+		case err := <-finished:
+			t.Fatalf("worker finished before reaching the source gate: %v", err)
+		}
+		held, release := make(chan struct{}), make(chan struct{})
+		maintenanceDone := make(chan error, 1)
+		go func() {
+			maintenanceDone <- gate.MaintainContext(t.Context(), func() error { close(held); <-release; return nil })
+		}()
+		<-held
+		close(paused.resume)
+		revoked := make(chan int, 1)
+		go func() {
+			response := serveLoopback(t.Context(), handler, http.MethodDelete, "/api/daemon/web-session", map[string]string{api.WebSessionHeader: token}, nil)
+			revoked <- response.Code
+		}()
+		// Revocation cancels the active export at once, then waits behind
+		// maintenance to record the cancellation durably.
+		synctest.Wait()
+		select {
+		case <-paused.interrupted:
+		default:
+			t.Fatal("revocation did not interrupt active export while maintenance blocked durable cancellation")
+		}
+		// No timeout may abandon the durable mutation, however long maintenance runs.
+		time.Sleep(time.Hour)
+		select {
+		case <-revoked:
+			t.Fatal("revocation abandoned blocked durable cancellation")
+		default:
+		}
 		close(release)
-		maintenanceErr := <-maintenanceDone
-		<-revoked
-		t.Fatalf("revocation did not interrupt active export while maintenance blocked durable cancellation; maintenance returned %v, export returned %v",
-			maintenanceErr, <-finished)
-	}
-	// The old five-second timeout must not abandon the durable mutation.
-	select {
-	case <-revoked:
-		close(release)
-		t.Fatal("revocation abandoned blocked durable cancellation")
-	case <-time.After(5100 * time.Millisecond):
-	}
-	close(release)
-	require.NoError(t, <-maintenanceDone)
-	result := <-revoked
-	require.NoError(t, result.err)
-	require.Equal(t, http.StatusNoContent, result.status)
-	require.NoError(t, <-finished)
-	stored, err := s.ExportJob(t.Context(), owner, job.ID)
-	require.NoError(t, err)
-	require.Equal(t, "canceled", stored.State)
-	require.Nil(t, stored.Receipt)
+		require.NoError(t, <-maintenanceDone)
+		require.Equal(t, http.StatusNoContent, <-revoked)
+		require.NoError(t, <-finished)
+		stored, err := s.ExportJob(t.Context(), owner, job.ID)
+		require.NoError(t, err)
+		require.Equal(t, "canceled", stored.State)
+		require.Nil(t, stored.Receipt)
+	})
 }
 
 func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {

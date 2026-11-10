@@ -2,6 +2,7 @@ package pgschema
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"os"
@@ -19,6 +20,32 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 )
 
+func TestSchemaRequiresUTF8(t *testing.T) {
+	t.Parallel()
+	admin, owner := pgtest.NewDatabase(t)
+	name := fmt.Sprintf("ascii_%x", uuid.New())
+	quotedName := pgx.Identifier{name}.Sanitize()
+	_, err := admin.ExecContext(t.Context(), "CREATE DATABASE "+quotedName+" TEMPLATE template0 ENCODING 'SQL_ASCII' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C'")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP DATABASE "+quotedName+" WITH (FORCE)")
+		require.NoError(t, err)
+	})
+	c, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
+	require.NoError(t, err)
+	c.Database = name
+	db := stdlib.OpenDB(*c)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
+	_, err = Setup(t.Context(), db, cfg)
+	require.ErrorContains(t, err, "requires UTF8 database encoding; got SQL_ASCII")
+	var exists bool
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='documents')`).Scan(&exists))
+	require.False(t, exists, "setup must reject the encoding before installing a schema")
+	_, err = Validate(t.Context(), db, cfg)
+	require.ErrorContains(t, err, "requires UTF8 database encoding; got SQL_ASCII")
+}
+
 func TestSetupPreservesIdentity(t *testing.T) {
 	t.Parallel()
 	db, owner := pgtest.NewDatabase(t)
@@ -26,6 +53,9 @@ func TestSetupPreservesIdentity(t *testing.T) {
 	id, err := Setup(t.Context(), db, cfg)
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil(), id)
+	var installed string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT schema_fingerprint FROM documents.vault_metadata`).Scan(&installed))
+	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(schemaSQL))), installed, "setup must identify the SQL this build embeds")
 	var rootID, childID int64
 	var rootCreated string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id,created_at FROM documents.nodes WHERE parent_id IS NULL`).Scan(&rootID, &rootCreated))
@@ -172,6 +202,44 @@ func TestRuntimeCannotChangeSchema(t *testing.T) {
 		_, err = Validate(t.Context(), selected, cfg)
 		require.ErrorContains(t, err, "requires a separate runtime role", "selecting a lesser role must not hide the login's privileges")
 	})
+	t.Run("schema fingerprint mismatch", func(t *testing.T) {
+		var installedFingerprint string
+		require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT schema_fingerprint FROM documents.vault_metadata`).Scan(&installedFingerprint))
+		// Both the setup and runtime entry points must refuse incompatible
+		// schemas without rewriting the fingerprint, identity or existing data.
+		checkRefused := func(t *testing.T) {
+			t.Helper()
+			var before, after sql.NullString
+			query := `SELECT to_jsonb(m)->>'schema_fingerprint' FROM documents.vault_metadata m`
+			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&before))
+			_, err := Setup(t.Context(), setup, cfg)
+			require.ErrorContains(t, err, "recreate this schema")
+			_, err = Validate(t.Context(), runtime, cfg)
+			require.ErrorContains(t, err, "recreate this schema")
+			require.NoError(t, admin.QueryRowContext(t.Context(), query).Scan(&after))
+			require.Equal(t, before, after)
+			var kept uuid.UUID
+			require.NoError(t, admin.QueryRowContext(t.Context(), `SELECT vault_uid FROM documents.vault_metadata`).Scan(&kept))
+			require.Equal(t, id, kept)
+		}
+		for _, fingerprint := range []string{"", strings.Repeat("0", sha256.Size*2)} {
+			t.Run(fmt.Sprintf("fingerprint %q", fingerprint), func(t *testing.T) {
+				_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_fingerprint=$1`, fingerprint)
+				require.NoError(t, err)
+				checkRefused(t)
+			})
+		}
+		_, err := admin.ExecContext(t.Context(), `UPDATE documents.vault_metadata SET schema_fingerprint=$1`, installedFingerprint)
+		require.NoError(t, err)
+		actual, err := Validate(t.Context(), runtime, cfg)
+		require.NoError(t, err)
+		require.Equal(t, id, actual)
+		t.Run("older integer version", func(t *testing.T) {
+			_, err := admin.ExecContext(t.Context(), `ALTER TABLE documents.vault_metadata DROP COLUMN schema_fingerprint, ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 4`)
+			require.NoError(t, err)
+			checkRefused(t)
+		})
+	})
 }
 
 func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
@@ -180,7 +248,7 @@ func TestSetupRefusesUnownedOrInvalidState(t *testing.T) {
 		{"empty schema", `CREATE SCHEMA documents`},
 		{"unrelated schema", `CREATE SCHEMA documents; CREATE TABLE documents.kept(value text); INSERT INTO documents.kept VALUES('keep me')`},
 		{"wrong singleton", `UPDATE documents.vault_metadata SET singleton=2`},
-		{"multiple identities", `INSERT INTO documents.vault_metadata VALUES (2,'11111111-1111-4111-8111-111111111111')`},
+		{"multiple identities", `INSERT INTO documents.vault_metadata(singleton,vault_uid,schema_fingerprint) SELECT 2,'11111111-1111-4111-8111-111111111111',schema_fingerprint FROM documents.vault_metadata`},
 		{"missing identity", `DELETE FROM documents.vault_metadata`},
 		{"nil identity", `UPDATE documents.vault_metadata SET vault_uid='00000000-0000-0000-0000-000000000000'`},
 		{"wrong table shape", `ALTER TABLE documents.vault_metadata DROP CONSTRAINT vault_metadata_pkey`},
@@ -270,13 +338,20 @@ func TestSetupCancellationDoesNotPublish(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := Setup(ctx, db, cfg); done <- err }()
 	// Cancel only after PostgreSQL reports that setup is waiting for our lock.
-	// The timeout bounds a broken test; it does not decide when to cancel.
-	require.Eventually(t, func() bool {
-		var waiting bool
-		err := db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
-			WHERE datname=current_database() AND wait_event='advisory')`).Scan(&waiting)
-		return err == nil && waiting
-	}, 10*time.Second, 10*time.Millisecond)
+	// PostgreSQL has no notification for a lock waiter, so ask until it
+	// reports one. The timeout bounds a broken test; it does not decide when
+	// to cancel.
+	waitCtx, cancelWait := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancelWait()
+	for waiting := false; !waiting; {
+		select {
+		case err := <-done:
+			t.Fatalf("setup returned while our lock was held: %v", err)
+		default:
+		}
+		require.NoError(t, db.QueryRowContext(waitCtx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+			WHERE datname=current_database() AND wait_event='advisory')`).Scan(&waiting))
+	}
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
 	var exists bool

@@ -1,3 +1,4 @@
+import { webURL } from "./web-path.js";
 export interface Problem {
   status?: number;
   code?: string;
@@ -83,7 +84,7 @@ async function send(
   }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
-  const response = await fetch(url, {
+  const response = await fetch(webURL(url), {
     ...init,
     headers,
     credentials: "same-origin",

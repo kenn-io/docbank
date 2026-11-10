@@ -268,12 +268,6 @@ func defaultRun(ctx context.Context, runnerIdentity string, request IsolatedRunR
 	case "wait":
 		<-ctx.Done()
 		return isolatedResult(runnerIdentity, request, nil), ctx.Err()
-	case "slow-complete":
-		select {
-		case <-ctx.Done():
-			return isolatedResult(runnerIdentity, request, nil), ctx.Err()
-		case <-time.After(40 * time.Millisecond): //nolint:kennlint // deadlinetest: runs only inside the expired-after-child synctest bubble in provider_test.go, so this is fake time the authorization expiry falls within
-		}
 	case "unbounded-output":
 		return isolatedResult(runnerIdentity, request, nil), ErrChildOutputTooLarge
 	case "malformed":

@@ -210,24 +210,7 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 	return inserted == 1, nil
 }
 
-// resolveIngestNameTx applies the import idempotency rule: a live suffix
-// candidate of name under parentID that carries blobHash AND was originally
-// imported under this same basename means the file is already imported
-// (skip). Content alone is not enough: a real source file named like an
-// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
-// is a distinct file, not a re-import. Otherwise returns the smallest free
-// candidate name.
-func resolveIngestNameTx(
-	ctx context.Context,
-	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
-) (string, int64, bool, error) {
-	base, ext := splitSuffix(name)
-	// Select candidate IDs through the blob index before joining their active
-	// origins. SQLite can visit those IDs in order without sorting provenance,
-	// so an early match need not load every sibling's origins. The left join
-	// preserves the name fallback for unknown origins.
-	rows, err := tx.QueryContext(ctx,
-		`SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
+const resolveIngestCandidatesPrefix = `SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
 		 LEFT JOIN provenance AS p ON p.node_id = n.id
 		   AND NOT EXISTS (
 			 SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
@@ -237,38 +220,94 @@ func resolveIngestNameTx(
 			 SELECT candidate.id FROM content_versions AS cv
 			 JOIN nodes AS candidate ON candidate.id = cv.node_id
 			 WHERE cv.blob_hash = $1 AND candidate.current_version_id = cv.version_id
-			   AND candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
+			   AND `
+const resolveIngestCandidatesSuffix = `candidate.parent_id = $2 AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
 		 )
-		 ORDER BY n.id`, blobHash, parentID)
-	if err != nil {
-		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
-	}
-	defer func() { _ = rows.Close() }()
+		 ORDER BY n.id`
 
-	for rows.Next() {
-		var sibID int64
-		var sibName string
-		var storedSourceKind, originalPath sql.NullString
-		if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
-			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
+const resolveIngestCandidatesSQL = resolveIngestCandidatesPrefix + "+" + resolveIngestCandidatesSuffix
+const resolveIngestFolderCandidatesSQL = resolveIngestCandidatesPrefix + resolveIngestCandidatesSuffix
+
+// resolveIngestCandidatesQueryTx returns an empty query when the blob has no versions.
+func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash string, parentID int64) (string, error) {
+	// Both counts double together, so the probe costs at most the smaller side.
+	for limit := int64(16); ; limit *= 2 {
+		var copies, files int64
+		if err := tx.QueryRowContext(ctx, `SELECT
+			(SELECT COUNT(*) FROM (
+				SELECT 1 FROM content_versions WHERE blob_hash = $1 LIMIT $2
+			) AS versions),
+			(SELECT COUNT(*) FROM (
+				SELECT 1 FROM nodes WHERE parent_id = $3 AND kind = 'file'
+				AND trashed_at IS NULL LIMIT $2
+			) AS children)`, blobHash, limit, parentID).Scan(&copies, &files); err != nil {
+			return "", fmt.Errorf("checking for duplicates: %w", err)
 		}
-		match := false
-		if !originalPath.Valid {
-			// Without provenance, only a name in the incoming suffix family
-			// identifies a prior import of this content.
-			_, match = parseSuffix(sibName, base, ext)
-		} else if storedSourceKind.String == sourceKind && !query.IsEmbeddedSourceKind(storedSourceKind.String) {
-			// Operational origins use normalized local basenames. Embedded
-			// references are opaque and must never be treated as paths.
-			originName, err := NormalizeName(filepath.Base(originalPath.String))
-			match = err == nil && originName == name
+		if copies == 0 {
+			return "", nil
 		}
-		if match {
-			return "", sibID, true, nil // already imported (possibly renamed)
+		if copies < limit || files < limit {
+			if copies <= files {
+				// Unary + makes SQLite seek by blob without ANALYZE statistics.
+				return resolveIngestCandidatesSQL, nil
+			}
+			return resolveIngestFolderCandidatesSQL, nil
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+}
+
+// resolveIngestNameTx applies the import idempotency rule: a live suffix
+// candidate of name under parentID that carries blobHash AND was originally
+// imported under this same basename means the file is already imported
+// (skip). Content alone is not enough: a real source file named like an
+// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
+// is a distinct file, not a re-import. Otherwise returns the smallest free
+// candidate name.
+func resolveIngestNameTx(
+	ctx context.Context,
+	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
+) (string, int64, bool, error) {
+	base, ext := splitSuffix(name)
+	candidateQuery, err := resolveIngestCandidatesQueryTx(ctx, tx, blobHash, parentID)
+	if err != nil {
+		return "", 0, false, err
+	}
+	if candidateQuery != "" {
+		// Join active origins only after selecting matching content in this folder.
+		// The left join preserves the name fallback for unknown origins.
+		rows, err := tx.QueryContext(ctx, candidateQuery, blobHash, parentID)
+		if err != nil {
+			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			var sibID int64
+			var sibName string
+			var storedSourceKind, originalPath sql.NullString
+			if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
+				return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
+			}
+			match := false
+			if sourceKind == "url" {
+				match = storedSourceKind.String == "url" && originalPath.String == sourceRef
+			} else if !originalPath.Valid {
+				// Without provenance, only a name in the incoming suffix family
+				// identifies a prior import of this content.
+				_, match = parseSuffix(sibName, base, ext)
+			} else if storedSourceKind.String == sourceKind && !query.IsEmbeddedSourceKind(storedSourceKind.String) {
+				// Operational origins use normalized local basenames. Embedded
+				// references are opaque and must never be treated as paths.
+				originName, err := NormalizeName(filepath.Base(originalPath.String))
+				match = err == nil && originName == name
+			}
+			if match {
+				return "", sibID, true, nil // already imported (possibly renamed)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+		}
 	}
 	// Two disjoint index ranges cover the original name and every possible
 	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary
@@ -316,12 +355,25 @@ func (s *Store) IngestFile(ctx context.Context, run IngestRun, parentID int64, n
 	return receipt.Node, added, err
 }
 
+// IngestFilePlanned publishes missing directories and an ordinary import together.
+func (s *Store) IngestFilePlanned(ctx context.Context, run IngestRun, plan IngestDirectoryPlan, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, bool, error) {
+	receipt, added, _, err := s.ingestFile(ctx, run, 0, name, blobHash, size, mimeType, originalPath, originalMtime, ingestFileOptions{directoryPlan: &plan}, physical...)
+	return receipt.Node, added, err
+}
+
 // IngestFileExact imports one already-durable blob under exactly name. Unlike
 // bulk migration it never suffixes or adopts an existing same-content node;
 // a watched source needs its configured source identity to remain one-to-one.
 func (s *Store) IngestFileExact(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, physical ...BlobPhysical) (Node, error) {
 	receipt, _, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
 		originalPath, originalMtime, ingestFileOptions{exact: true}, physical...)
+	return receipt.Node, err
+}
+
+// IngestFileExactTagged imports a new document and assigns existing tags atomically.
+func (s *Store) IngestFileExactTagged(ctx context.Context, run IngestRun, parentID int64, name, blobHash string, size int64, mimeType, originalPath, originalMtime string, tags []string, physical ...BlobPhysical) (Node, error) {
+	receipt, _, _, err := s.ingestFile(ctx, run, parentID, name, blobHash, size, mimeType,
+		originalPath, originalMtime, ingestFileOptions{exact: true, tags: tags}, physical...)
 	return receipt.Node, err
 }
 
@@ -338,6 +390,7 @@ func (s *Store) IngestFileExactWithReceipt(
 }
 
 type ingestFileOptions struct {
+	tags              []string
 	exact             bool
 	completeReceipt   bool
 	observeMembership bool
@@ -401,7 +454,7 @@ func (s *Store) ingestFileTx(
 		resolution IngestDirectoryResolution
 	)
 	ingestAdded := false
-	if options.directoryPlan != nil || options.observeMembership {
+	if run.initialLabel != nil || options.observeMembership {
 		ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -433,7 +486,7 @@ func (s *Store) ingestFileTx(
 		var existingID int64
 		var skip bool
 		finalName, existingID, skip, err = resolveIngestNameTx(
-			ctx, tx, parentID, name, blobHash, run.record.SourceKind,
+			ctx, tx, parentID, name, blobHash, run.record.SourceKind, originalPath,
 		)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -496,7 +549,7 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
-	if options.directoryPlan == nil && !options.observeMembership {
+	if run.initialLabel == nil && !options.observeMembership {
 		ingestAdded, err = s.ensureIngestRunForMutationTx(ctx, tx, run)
 		if err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
@@ -574,6 +627,26 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
+	seenTags := make(map[string]bool, len(options.tags))
+	for _, name := range options.tags {
+		tag, err := resolveWatchTagQuery(ctx, tx, name)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		if seenTags[tag.Name] {
+			continue
+		}
+		seenTags[tag.Name] = true
+		recordedAt := nowRFC3339()
+		results, err := s.applyBatchTagsTx(ctx, tx, BatchTagRequest{TagID: tag.ID, Assign: true}, tag,
+			[]batchTagTargetState{{node: receipt.Node}}, recordedAt)
+		if err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+		receipt.Node.Revision = results[0].Revision
+		receipt.Node.ModifiedAt = recordedAt
+	}
+
 	if !options.deferPhotoEnrollment {
 		if err := s.enrollNewPhotoFileTx(ctx, tx, receipt.Node); err != nil {
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err

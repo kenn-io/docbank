@@ -57,6 +57,23 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		}
 		return &struct{ Body BatesNamespacePage }{Body: out}, nil
 	})
+	huma.Register(api, huma.Operation{OperationID: "readBatesNamespace", Method: http.MethodGet,
+		Path: "/api/v1/bates/namespaces/{id}", Summary: "Read a Bates namespace and its next sequence"}, func(ctx context.Context, in *struct {
+		ID string `path:"id" format:"uuid"`
+	}) (*struct {
+		CacheControl string `header:"Cache-Control"`
+		Body         BatesNamespaceDetail
+	}, error) {
+		detail, err := d.Store.BatesNamespaceDetail(ctx, in.ID)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &struct {
+			CacheControl string `header:"Cache-Control"`
+			Body         BatesNamespaceDetail
+		}{
+			CacheControl: "private, no-store", Body: BatesNamespaceDetail{Namespace: batesNamespaceDTO(detail.Namespace), NextSequence: detail.NextSequence}}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "planBatesStamp", Method: http.MethodPost,
 		Path: "/api/v1/bates/preview", Summary: "Preview tentative Bates labels without stamping or reserving",
 		MaxBodyBytes: 128 << 10}, func(ctx context.Context, in *struct{ Body BatesPlanRequest }) (*struct{ Body BatesPlan }, error) {
@@ -128,21 +145,10 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		allocation, err := d.Store.BatesAllocation(ctx, in.ID)
+		result, err := batesExportDetail(ctx, d.Store, artifact)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		namespace, err := d.Store.BatesNamespace(ctx, allocation.NamespaceID, "", "", 0)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		if _, err := processing.CheckBatesArtifact(artifact, allocation, namespace); err != nil {
-			return nil, FromStoreError(err)
-		}
-		result := batesExportDTO(artifact)
-		result.Recipe = artifact.RecipeJSON
-		a, n := batesAllocationDTO(allocation), batesNamespaceDTO(namespace)
-		result.Allocation, result.Namespace = &a, &n
 		return &struct{ Body BatesExport }{Body: result}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "findBatesExports", Method: http.MethodGet,
@@ -431,4 +437,23 @@ func batesCandidateDTO(value store.BatesArtifactCandidate) BatesCandidate {
 		SnapshotID: value.SnapshotID, BlobSHA256: value.BlobSHA256, Size: value.Size,
 		MediaType: value.MediaType, PageCount: value.PageCount, ManifestSHA256: value.ManifestSHA256,
 		State: value.State, CreatedAt: value.CreatedAt, Evidence: evidence, EvidenceTruncated: value.EvidenceTruncated}
+}
+
+func batesExportDetail(ctx context.Context, catalog *store.Store, artifact store.BatesArtifact) (BatesExport, error) {
+	allocation, err := catalog.BatesAllocation(ctx, artifact.AllocationID)
+	if err != nil {
+		return BatesExport{}, err
+	}
+	namespace, err := catalog.BatesNamespace(ctx, allocation.NamespaceID, "", "", 0)
+	if err != nil {
+		return BatesExport{}, err
+	}
+	if _, err := processing.CheckBatesArtifact(artifact, allocation, namespace); err != nil {
+		return BatesExport{}, err
+	}
+	result := batesExportDTO(artifact)
+	result.Recipe = artifact.RecipeJSON
+	a, n := batesAllocationDTO(allocation), batesNamespaceDTO(namespace)
+	result.Allocation, result.Namespace = &a, &n
+	return result, nil
 }

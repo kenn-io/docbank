@@ -172,7 +172,7 @@ func checkNativePageFrame(instance pdfium.Pdfium, ref requests.Page, frame docum
 		if err != nil {
 			return err
 		}
-		if actual != frame.CropBox {
+		if !nativeBoxMatches(actual, frame.CropBox) {
 			return errors.New("native PDF bounding box differs from frame")
 		}
 		media = &responses.FPDFPage_GetMediaBox{Left: bounds.Rect.Left, Bottom: bounds.Rect.Bottom, Right: bounds.Rect.Right, Top: bounds.Rect.Top}
@@ -190,11 +190,11 @@ func checkNativePageFrame(instance pdfium.Pdfium, ref requests.Page, frame docum
 	if err != nil {
 		return err
 	}
-	if actualMedia != frame.MediaBox || actualCrop != frame.CropBox || int(rotation.PageRotation)*90 != frame.Rotation {
+	if !nativeBoxMatches(actualMedia, frame.MediaBox) || !nativeBoxMatches(actualCrop, frame.CropBox) || int(rotation.PageRotation)*90 != frame.Rotation {
 		return errors.New("native PDF MediaBox, CropBox, or rotation differs from frame")
 	}
 	size, err := instance.GetPageSize(&requests.GetPageSize{Page: ref})
-	if err != nil || math.Abs(size.Width-physicalPoints(frame.Width)) > .001 || math.Abs(size.Height-physicalPoints(frame.Height)) > .001 {
+	if err != nil || !sourceDimensionMatches(size.Width, frame.Width) || !sourceDimensionMatches(size.Height, frame.Height) {
 		return errors.New("native PDF physical page differs from frame")
 	}
 	return nil

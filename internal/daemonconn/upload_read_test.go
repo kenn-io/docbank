@@ -50,3 +50,34 @@ func TestUploadPreservesSourceReadFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadTreatsUnusableSuccessReceiptAsUnknownOutcome(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"empty object", `{}`},
+		{"truncated body", `{"status":"added"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := New("http://daemon.invalid", "synthetic-key")
+			c.hc.Transport = failingRoundTripper(func(request *http.Request) (*http.Response, error) {
+				defer func() { _ = request.Body.Close() }()
+				_, err := io.Copy(io.Discard, request.Body)
+				require.NoError(t, err)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(tc.body)),
+				}, nil
+			})
+			receipt, err := c.Upload(t.Context(), 1, "notes.txt", "text/plain",
+				"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 3, strings.NewReader("abc"))
+			require.Error(t, err, "malformed HTTP 200 receipt must have an unknown outcome")
+			assert.True(t, IsResponseDecodeError(err), "malformed success receipts must be classified as unknown outcomes")
+			assert.True(t, IsRetryableMutationError(err), "unknown outcomes must retain the caller's retry ID")
+			assert.Empty(t, receipt, "malformed success receipts must return no partial receipt")
+		})
+	}
+}

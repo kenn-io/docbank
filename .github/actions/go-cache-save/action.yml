@@ -5,6 +5,38 @@ description: >-
 runs:
   using: composite
   steps:
+    - name: Trim unused cache entries
+      if: env.GO_CACHE_TRIM_PATHS != ''
+      shell: bash
+      run: |
+        while IFS= read -r path; do
+          if [ -d "$path" ]; then
+            # New action records can reuse old output bytes without refreshing their mtime.
+            # Retain each referenced output, including whole executable directories.
+            find "$path" -mindepth 2 -maxdepth 2 -name '*-a' -newer "$RUNNER_TEMP/go-cache-use" -exec perl -e '
+              $root = shift @ARGV;
+              for $record (@ARGV) {
+                open my $file, "<", $record or die "$record: $!";
+                local $/;
+                $entry = <$file>;
+                $entry =~ /\Av1 [0-9a-f]{64} ([0-9a-f]{64}) [ 0-9]{20} [ 0-9]{20}\n\z/
+                  or die "Unsupported cache action record: $record";
+                $output = "$root/" . substr($1, 0, 2) . "/$1-d";
+                if (-e $output) { utime undef, undef, $output or die "$output: $!"; }
+              }
+            ' "$path" {} +
+            find "$path" -mindepth 2 -maxdepth 2 \( -name '*-a' -o -name '*-d' \) ! -newer "$RUNNER_TEMP/go-cache-use" -exec rm -rf -- {} +
+          fi
+        done <<< "$GO_CACHE_TRIM_PATHS"
+        modcache=$(go env GOMODCACHE | tr '\\' '/')
+        if [ -d "$modcache/cache" ]; then
+          # Archive downloads only; restore expands them with go mod download.
+          mv "$modcache/cache" "${modcache}.download"
+          go clean -modcache
+          mkdir -p "$modcache"
+          mv "${modcache}.download" "$modcache/cache"
+        fi
+
     - name: Save caches
       if: >-
         github.event_name == 'push' && github.ref == 'refs/heads/main'

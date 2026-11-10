@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -160,7 +161,7 @@ See docs/usage/search.md.`,
 		if searchTag == "" && store.SearchNeedsQuery(strings.Join(args, " "), store.SearchOptions{
 			PDFFilter: searchPDFFilter, MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}) {
-			return usageError(store.ErrSearchQueryRequired)
+			return withHint(usageError(store.ErrSearchQueryRequired), searchQueryHint)
 		}
 		var underSelector nodeSelector
 		if searchUnder != "" {
@@ -232,14 +233,29 @@ See docs/usage/search.md.`,
 				reportSearch(cmd, c, searchType, empty, searchAgent)
 			}
 		}()
+		var hints []searchHint
+		if empty && strings.TrimSpace(query) != "" {
+			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			if coverageErr != nil {
+				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
+			}
+			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
+				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
+			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, opts.Fuzzy)
+		}
+		defer func() {
+			if retErr == nil && !searchJSON {
+				retErr = writeSearchHints(cmd, hints)
+			}
+		}()
 		if automatic.report != nil {
-			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep, hints)
 		}
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
 		if searchJSON {
-			return writeCLIJSON(cmd.OutOrStdout(), rep)
+			return writeCLIJSON(cmd.OutOrStdout(), lexicalSearchJSON{SearchReport: rep, Hints: hints})
 		}
 		if searchAgent {
 			return writeLexicalSearchAgent(cmd, query, rep, automatic)
@@ -341,7 +357,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if err != nil {
 		return usageError(err)
 	}
-	info, err := c.API().VaultInfo(cmd.Context())
+	info, err := c.API().VaultIdentity(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -413,7 +429,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return usageError(err)
 	}
-	info, err := c.API().VaultInfo(cmd.Context())
+	info, err := c.API().VaultIdentity(cmd.Context())
 
 	if err != nil {
 		return err
@@ -445,7 +461,8 @@ func validateDocumentSearchOptions(query string, options documentSearchCLIOption
 		if options.Mode == "" {
 			return usageError(errors.New("--mode is required with processing search options"))
 		}
-		return usageError(errors.New("--mode must be lexical, semantic, hybrid, or auto"))
+		return withHint(usageError(errors.New("--mode must be lexical, semantic, hybrid, or auto")),
+			`modes: lexical, semantic, hybrid, auto; plain "docbank search <words>" needs no mode flag`)
 	}
 	if options.Profile == "" {
 		return usageError(errors.New("--profile is required for processing search; list profiles with \"docbank processing profiles\""))

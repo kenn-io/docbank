@@ -4,7 +4,7 @@
   import HardDriveIcon from "@lucide/svelte/icons/hard-drive";
   import SendIcon from "@lucide/svelte/icons/send";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
-  import { Button, Checkbox, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Checkbox, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { startProcessing, type ProcessingRun } from "./receipts.js";
   import { formatBytes } from "./format.js";
@@ -351,6 +351,7 @@
   ariaLabel={title}
   width="520px"
   onclose={close}
+  closable
   closeOnOverlayClick={!running}
   footer={plan ? actions : undefined}
 >
@@ -425,8 +426,7 @@
           <p class="muted">{coverageSentence(coverage)}</p>
         {/if}
       </div>
-      <details class="details">
-        <summary>Details</summary>
+      <Disclosure variant="plain" title="Details">
         <div class="facts"><InspectorDetails {facts} label="Processing details" /></div>
         <Button
           size="sm"
@@ -434,7 +434,7 @@
           disabled={running || loading}
           onclick={() => void revokeConsent()}>Revoke all processing permissions</Button
         >
-      </details>
+      </Disclosure>
     {/if}
   </div>
 </Modal>
@@ -527,19 +527,6 @@
   }
   .outcome:empty {
     display: none;
-  }
-  .details {
-    display: grid;
-    gap: var(--space-3);
-  }
-  .details summary {
-    width: fit-content;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-    cursor: pointer;
-  }
-  .details[open] > :global(*:not(summary)) {
-    margin-top: var(--space-3);
   }
   .facts :global(.inspector-details > div) {
     grid-template-columns: 112px minmax(0, 1fr);

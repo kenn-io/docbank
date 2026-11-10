@@ -1,6 +1,8 @@
 package store
 
 import (
+	"cmp"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -19,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
 	querypkg "go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
@@ -144,12 +147,8 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		nameArgs := names.Args
 		nameArgs = append(nameArgs, filterArgs...)
 		nameArgs = append(nameArgs, limit+1)
-		rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
-		SELECT `+nodeCols+` FROM `+nodeFrom+`
-		JOIN name_matches ON name_matches.doc_key=n.id
-		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+nameFilterSQL+`
-		ORDER BY name_matches.score DESC,n.name,n.id
-		LIMIT ?`, nameArgs...)
+		rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL,
+			"AND n.kind='file' AND cv.version_id IS NOT NULL "+nameFilterSQL), nameArgs...)
 		if err != nil {
 			return nil, false, err
 		}
@@ -184,10 +183,10 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
 			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
-			FROM content_fts JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
-			JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
-			JOIN content_versions cv ON cv.version_id=matched_cv.version_id
-			JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
+			FROM content_fts CROSS JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
+			CROSS JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
+			CROSS JOIN content_versions cv ON cv.version_id=matched_cv.version_id
+			CROSS JOIN text_searchable_versions tsv ON tsv.version_id=matched_cv.version_id
 			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
@@ -195,11 +194,11 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
 				 ru.locator_json
 				FROM rendition_lexical_fts ` + selectedJoin + `
-				JOIN rendition_lexical_generation_builds gb
+				CROSS JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
-				JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
+				CROSS JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
-				JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
+				CROSS JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
 				JOIN rendition_attachments a
 				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
@@ -542,14 +541,14 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 			}
 		}
 		if semanticSource != "" {
-			current, captureErr := captureVectorIndexSourceTx(ctx, tx, semanticSpace)
+			current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, semanticSpace)
 			if captureErr != nil {
 				if errors.Is(captureErr, ErrNotFound) {
 					return ErrVectorIndexSourceStale
 				}
 				return captureErr
 			}
-			if current.ManifestChecksum != semanticSource {
+			if current != semanticSource {
 				return ErrVectorIndexSourceStale
 			}
 		}
@@ -680,31 +679,26 @@ type SemanticSearchCandidate struct {
 	MediaEvidence     SearchMediaEvidence
 }
 
-// SemanticSearchResolution binds ranked candidates and coverage to the same
+// SemanticSearchResolution binds ranked candidates to the
 // current-head snapshot after query embedding and vector search complete.
 type SemanticSearchResolution struct {
 	SourceManifestChecksum string
 	Candidates             []SemanticSearchCandidate
 	Truncated              bool
-	ScopedDocuments        int
-	CompleteDocuments      int
 	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
 	NextNeighbor int
 }
 
 // SemanticSearchAuthority pins the exact persisted vector-space descriptor and
-// one active local index generation for a query. ANNRows is the source-fenced
-// subset that must be supplied to vector search before it scores any row.
-// Required and Complete count current documents after applying the operator
-// scope.
+// one active local index generation for a query. WholeSpace permits scoring the
+// entire generation; otherwise ANNRows limits scoring to the source-fenced scope.
 type SemanticSearchAuthority struct {
-	VectorSpace       EmbeddingVectorSpaceRecord
-	Lease             VectorIndexReaderLease
-	InputKind         document.EmbeddingInputKind
-	BindingRequired   bool
-	ScopedDocuments   int
-	CompleteDocuments int
-	ANNRows           []vectorindex.RowIdentity
+	VectorSpace     EmbeddingVectorSpaceRecord
+	Lease           VectorIndexReaderLease
+	InputKind       document.EmbeddingInputKind
+	BindingRequired bool
+	ANNRows         []vectorindex.RowIdentity
+	WholeSpace      bool
 }
 
 // AcquireSemanticSearchAuthority resolves the query contract from durable E1
@@ -723,6 +717,10 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, s.db, profileFingerprint, bindingID)
+	if errors.Is(err, ErrNotFound) && fingerprints.Profile == "" {
+		// A configured profile can be searched before processing persists it.
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -731,19 +729,17 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		vectorSpaceID = normalized.VectorSpaceID
 	}
 	if similar != nil {
-		err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 			return similar.load(ctx, tx, profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized)
 		})
 		if err != nil {
 			return SemanticSearchAuthority{}, err
 		}
 	}
-	var space EmbeddingVectorSpaceRecord
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var loadErr error
-		space, loadErr = loadVectorSpaceTx(ctx, tx, vectorSpaceID)
-		return loadErr
-	})
+	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -755,15 +751,18 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
 	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
 	release := func() {
 		_ = s.ReleaseVectorIndexGeneration(context.WithoutCancel(ctx), lease.ID, lease.FencingToken, at)
 	}
-	current, required, complete, annRows, err := s.semanticSearchAuthorityFence(ctx,
+	current, annRows, wholeSpace, err := s.semanticSearchAuthorityFence(ctx,
 		profileFingerprint, bindingID, binding.InputKind, vectorSpaceID, normalized, similar)
-	if err != nil || current.ManifestChecksum != lease.Generation.SourceManifestChecksum {
+	if err != nil || current != lease.Generation.SourceManifestChecksum {
 		release()
 		if err != nil {
 			return SemanticSearchAuthority{}, err
@@ -780,12 +779,12 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 	}
 	return SemanticSearchAuthority{VectorSpace: space, Lease: lease, InputKind: binding.InputKind,
 		BindingRequired: binding.Activation == document.EmbeddingRequired,
-		ScopedDocuments: required, CompleteDocuments: complete, ANNRows: annRows}, nil
+		ANNRows:         annRows, WholeSpace: wholeSpace}, nil
 }
 
 func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, similar *similarSourceCapture,
-) (source VectorIndexSource, required, complete int, annRows []vectorindex.RowIdentity, retErr error) {
+) (source string, annRows []vectorindex.RowIdentity, wholeSpace bool, retErr error) {
 	err := s.withSearchOptionsTx(ctx, opts, func(tx *sql.Tx, opts SearchOptions) error {
 		var err error
 		if similar != nil {
@@ -793,53 +792,76 @@ func (s *Store) semanticSearchAuthorityFence(ctx context.Context, profileFingerp
 				return err
 			}
 		}
-		source, err = captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		source, err = s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if err != nil {
 			return err
 		}
-		required, complete, err = semanticSearchCoverageTx(ctx, tx, profileFingerprint,
-			bindingID, inputKind, vectorSpaceID, opts)
-		if err != nil {
-			return err
-		}
-		filterSQL, filterArgs := searchFilterSQL(opts)
-		eligible, err := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			opts.CollapsesPhotoDuplicates())
-		if err != nil {
-			return err
-		}
-		annRows = make([]vectorindex.RowIdentity, 0, len(eligible))
-		for key := range eligible {
-			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID,
-				InputKey: key.InputID, InputChecksum: key.InputChecksum})
-		}
-		sort.Slice(annRows, func(left, right int) bool {
-			if annRows[left].SetID != annRows[right].SetID {
-				return annRows[left].SetID < annRows[right].SetID
-			}
-			if annRows[left].InputKey != annRows[right].InputKey {
-				return annRows[left].InputKey < annRows[right].InputKey
-			}
-			return annRows[left].InputChecksum < annRows[right].InputChecksum
-		})
-		return nil
+		annRows, wholeSpace, err = semanticANNRowsForSourceTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		return err
 	})
-	return source, required, complete, annRows, err
+	return source, annRows, wholeSpace, err
 }
 
-// LiveSearchScopeCount counts current live files in normalized search filters.
-func (s *Store) LiveSearchScopeCount(ctx context.Context, opts SearchOptions) (int, error) {
-	return liveSearchScopeCount(ctx, s.db, opts)
+func semanticANNRowsForSourceTx(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space string, opts SearchOptions,
+) ([]vectorindex.RowIdentity, bool, error) {
+	filterSQL, filterArgs := searchFilterSQL(opts)
+	if filterSQL == "" && !opts.CollapsesPhotoDuplicates() {
+		return nil, true, nil
+	}
+	rows, err := semanticANNRowsTx(ctx, tx, profile, binding, kind, space, opts, filterSQL, filterArgs)
+	return rows, false, err
+}
+
+// semanticANNRowsTx reads eligible rows in the requested scope for SearchRows.
+// This allowlist excludes other bindings, trashed, non-current,
+// out-of-scope, and non-representative rows before scoring.
+func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions, filterSQL string, filterArgs []any,
+) ([]vectorindex.RowIdentity, error) {
+	annRows := make([]vectorindex.RowIdentity, 0)
+	var lastHash string
+	var representative int64
+	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+			if opts.CollapsesPhotoDuplicates() {
+				if hash != lastHash {
+					lastHash, representative = hash, nodeID
+				}
+				if nodeID != representative {
+					return
+				}
+			}
+			annRows = append(annRows, vectorindex.RowIdentity{SetID: key.VectorSetID, InputKey: key.InputID, InputChecksum: key.InputChecksum})
+		})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(annRows, vectorindex.CompareIdentity)
+	uniqueRows := slices.Compact(annRows)
+	annRows = make([]vectorindex.RowIdentity, len(uniqueRows))
+	copy(annRows, uniqueRows)
+	return annRows, nil
+}
+
+// LiveSearchScopeExists reports whether normalized search filters match a live file.
+func (s *Store) LiveSearchScopeExists(ctx context.Context, opts SearchOptions) (bool, error) {
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 `+scopeSQL+` LIMIT 1)`, args...).Scan(&exists)
+	return exists, err
 }
 
 func liveSearchScopeCount(ctx context.Context, q metadataQuerier, opts SearchOptions) (int, error) {
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	scopeSQL, args := liveSearchScopeSQL(searchFilterSQL(opts))
 	var count int
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+nodeFrom+`
-		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		filterArgs...).Scan(&count)
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) `+scopeSQL, args...).Scan(&count)
 	return count, err
+}
+
+func liveSearchScopeSQL(filterSQL string, filterArgs []any) (string, []any) {
+	return `FROM ` + nodeFrom + `
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL ` + filterSQL, filterArgs
 }
 
 // currentEmbeddingHeadsSQL keeps coverage and semantic retrieval on the same
@@ -893,50 +915,88 @@ func (s *Store) ResolveSemanticCandidates(ctx context.Context, profileFingerprin
 	}
 	var result SemanticSearchResolution
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, normalized SearchOptions) error {
-		filterSQL, filterArgs := searchFilterSQL(normalized)
-		current, captureErr := captureVectorIndexSourceTx(ctx, tx, vectorSpaceID)
+		current, captureErr := s.vectorIndexSourceChecksumTx(ctx, tx, vectorSpaceID)
 		if captureErr != nil {
 			if errors.Is(captureErr, ErrNotFound) {
 				return ErrVectorIndexSourceStale
 			}
 			return captureErr
 		}
-		if current.ManifestChecksum != expectedSourceManifest {
+		if current != expectedSourceManifest {
 			return ErrVectorIndexSourceStale
 		}
-		result.SourceManifestChecksum = current.ManifestChecksum
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx,
-			profileFingerprint, bindingID, inputKind, vectorSpaceID, normalized)
-		if err != nil {
-			return err
-		}
-		eligible, loadErr := loadSemanticEligibility(ctx, tx, profileFingerprint, bindingID,
-			inputKind, vectorSpaceID, filterSQL, filterArgs,
-			normalized.CollapsesPhotoDuplicates())
-		if loadErr != nil {
-			return loadErr
-		}
-		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
-			neighbors, limit, eligible, excludedNodes)
-		for index := range result.Candidates {
-			candidate := &result.Candidates[index]
-			candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
-			if err != nil {
-				return err
-			}
-			if candidate.InputKind == document.EmbeddingInputOriginalFile {
-				candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		result.SourceManifestChecksum = current
+		return s.semanticCandidatesTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, neighbors, limit, normalized, excludedNodes, &result)
 	})
 	if err != nil {
 		return SemanticSearchResolution{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
+	inputKind document.EmbeddingInputKind, vectorSpaceID string, neighbors []vectorindex.Neighbor, limit int,
+	normalized SearchOptions, excludedNodes map[int64]struct{}, result *SemanticSearchResolution,
+) error {
+	var err error
+	filterSQL, filterArgs := searchFilterSQL(normalized)
+	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	representatives := make(map[string]int64)
+	prefix, walked := min(limit+1, len(neighbors)), 0
+	for {
+		members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+			filterSQL, filterArgs, semanticNeighborKeys(neighbors[walked:prefix]))
+		if err != nil {
+			return err
+		}
+		if normalized.CollapsesPhotoDuplicates() {
+			hashes := []string{}
+			for _, entries := range members {
+				for _, entry := range entries {
+					if _, seen := representatives[entry.BlobHash]; !seen {
+						representatives[entry.BlobHash] = 0
+						hashes = append(hashes, entry.BlobHash)
+					}
+				}
+			}
+			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
+				filterSQL, filterArgs, hashes, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+					if representatives[hash] == 0 {
+						representatives[hash] = nodeID
+					}
+				})
+			if err != nil {
+				return err
+			}
+		}
+		for key, entries := range members {
+			for _, entry := range entries {
+				if !normalized.CollapsesPhotoDuplicates() || entry.NodeID == representatives[entry.BlobHash] {
+					eligible[key] = entry
+				}
+			}
+		}
+		result.Candidates, result.Truncated, result.NextNeighbor = reduceSemanticCandidates(s.vaultID, vectorSpaceID,
+			neighbors[:prefix], limit, eligible, excludedNodes)
+		if result.Truncated || prefix == len(neighbors) {
+			break
+		}
+		walked, prefix = prefix, min(prefix*2, len(neighbors))
+	}
+	for index := range result.Candidates {
+		candidate := &result.Candidates[index]
+		candidate.Path, err = pathOf(ctx, tx, candidate.NodeID)
+		if err != nil {
+			return err
+		}
+		if candidate.InputKind == document.EmbeddingInputOriginalFile {
+			candidate.Excerpt, err = searchExcerptByVersionTx(ctx, tx, candidate.ContentVersionID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func searchExcerptByVersionTx(ctx context.Context, queryer interface {
@@ -956,79 +1016,113 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 }
 
 type semanticEligibilityKey struct {
-	VectorSetID   string
-	InputID       string
-	InputChecksum string
+	VectorSetID   string `json:"VectorSetID"`
+	InputID       string `json:"InputID"`
+	InputChecksum string `json:"InputChecksum"`
 }
 
-// loadSemanticEligibility performs the only catalog query needed while the
-// exact index's ordered neighbors are reduced. Its result is bounded by the
-// active vector-space catalog (at most one million rows), not by neighbor rank.
-func loadSemanticEligibility(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
-	collapseDuplicates bool,
-) (_ map[semanticEligibilityKey]SemanticSearchCandidate, retErr error) {
-	members, err := loadSemanticMemberships(ctx, tx, profileFingerprint, bindingID,
-		inputKind, vectorSpaceID, filterSQL, filterArgs)
+// semanticNeighborKeys preserves the unique row identities returned by vector search.
+func semanticNeighborKeys(neighbors []vectorindex.Neighbor) []semanticEligibilityKey {
+	keys := make([]semanticEligibilityKey, len(neighbors))
+	for i, neighbor := range neighbors {
+		keys[i] = semanticEligibilityKey{neighbor.SetID, neighbor.InputKey, neighbor.InputChecksum}
+	}
+	return keys
+}
+
+// semanticMembershipSQL shares current-source and input authority across keyed
+// candidate loads and streaming row scans. The caller chooses the driving index.
+func semanticMembershipSQL(driver string) string {
+	return driver + `
+ JOIN content_versions cv ON cv.version_id=es.content_version_id
+ JOIN nodes n ON n.id=cv.node_id
+ JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
+  AND eh.binding_id=es.binding_id AND eh.input_kind=es.input_kind
+  AND eh.embedding_set_id=es.embedding_set_id AND eh.vector_space_id=es.vector_space_id
+  AND eh.profile_fingerprint=es.profile_fingerprint
+ JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
+ JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
+  AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
+ JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
+ LEFT JOIN rendition_attachments ra ON ra.attachment_id=eig.attachment_id
+  AND ra.content_version_id=es.content_version_id AND ra.profile_fingerprint=es.profile_fingerprint
+ LEFT JOIN blobs evidence_blob ON evidence_blob.hash=eig.evidence_fingerprint
+ WHERE es.vector_space_id=?
+  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
+  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
+  AND (es.input_kind='original_file' OR (es.input_kind='image' AND ` + currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint") + `) OR (es.input_kind='rendition_chunk' AND ` + currentRenditionChunkAuthoritySQL + `))
+ `
+}
+
+// scanSemanticRows reads the whole space when blobHashes is nil, else only
+// rows whose current content has one of those hashes.
+func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
+	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
+	blobHashes []string, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
+) (retErr error) {
+	driver := `FROM embedding_sets es`
+	prefix := ""
+	var args []any
+	if blobHashes != nil {
+		encoded, err := json.Marshal(blobHashes)
+		if err != nil {
+			return err
+		}
+		args = append(args, string(encoded))
+		driver = `FROM json_each(?) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
+   CROSS JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
+	} else if versionFence {
+		// Explicit version fences are bounded to 4096 IDs. Other filters keep
+		// the embedding scan so unembedded files do not drive their cost.
+		prefix = `WITH scoped_versions AS MATERIALIZED (
+   SELECT cv.version_id FROM content_versions cv
+   CROSS JOIN nodes n ON n.id=cv.node_id WHERE 1=1 ` + filterSQL + `) `
+		driver = `FROM scoped_versions scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
+   ON es.content_version_id=scope.version_id`
+		args = append(args, filterArgs...)
+		filterSQL, filterArgs = "", nil
+	}
+	args = append(args, space, profile, binding, kind)
+	args = append(args, filterArgs...)
+	order := ""
+	if representativeOrder {
+		order = " ORDER BY cv.blob_hash," + DuplicateRepresentativeOrder
+	}
+	rows, err := tx.QueryContext(ctx, prefix+`SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
+		semanticMembershipSQL(driver)+filterSQL+order, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate, len(members))
-	if collapseDuplicates {
-		// Choose among current embedding candidates so an unindexed copy cannot hide an indexed one.
-		representatives := make(map[string]SemanticSearchCandidate)
-		for _, entries := range members {
-			for _, entry := range entries {
-				current, exists := representatives[entry.BlobHash]
-				if !exists || entry.modifiedAt < current.modifiedAt ||
-					(entry.modifiedAt == current.modifiedAt && entry.NodeID < current.NodeID) {
-					representatives[entry.BlobHash] = entry
-				}
-			}
+	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+	for rows.Next() {
+		var key semanticEligibilityKey
+		var nodeID int64
+		var hash string
+		if err := rows.Scan(&key.VectorSetID, &key.InputID, &key.InputChecksum, &nodeID, &hash); err != nil {
+			return err
 		}
-		for key, entries := range members {
-			for _, entry := range entries {
-				if entry.NodeID == representatives[entry.BlobHash].NodeID {
-					eligible[key] = entry
-				}
-			}
-		}
-		return eligible, nil
+		visit(key, nodeID, hash)
 	}
-	for key, entries := range members {
-		eligible[key] = entries[len(entries)-1]
-	}
-	return eligible, nil
+	return rows.Err()
 }
 
 func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
-	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any,
+	inputKind document.EmbeddingInputKind, vectorSpaceID, filterSQL string, filterArgs []any, keys []semanticEligibilityKey,
 ) (_ map[semanticEligibilityKey][]SemanticSearchCandidate, retErr error) {
-	args := append([]any{vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
+	encoded, err := json.Marshal(keys)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]any{string(encoded), vectorSpaceID, profileFingerprint, bindingID, inputKind}, filterArgs...)
 	rows, err := tx.QueryContext(ctx, `SELECT n.id,n.revision,n.current_version_id,
 			es.embedding_set_id,es.input_generation_id,es.input_kind,
 			evr.vector_set_id,evr.input_id,evr.checksum,
 			COALESCE(ra.build_id,''),COALESCE(eig.generation_blob_hash,''),
 			eig.generation_encoded_size,eig.generation_checksum,eig.evidence_fingerprint,
 			COALESCE(evidence_blob.size,0),eig.input_count,cv.blob_hash,n.modified_at
-		FROM `+nodeFrom+`
-		JOIN embedding_sets es ON es.content_version_id=cv.version_id
-		JOIN embedding_heads eh ON eh.content_version_id=es.content_version_id
-		 AND eh.binding_id=es.binding_id AND eh.input_kind=es.input_kind
-		 AND eh.embedding_set_id=es.embedding_set_id AND eh.vector_space_id=es.vector_space_id
-		 AND eh.profile_fingerprint=es.profile_fingerprint
-		JOIN embedding_vector_rows evr ON evr.vector_set_id=es.vector_set_id
-		JOIN embedding_generation_inputs egi ON egi.generation_id=es.input_generation_id
-		 AND egi.input_id=evr.input_id AND egi.rendered_checksum=evr.checksum
-		JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id
-		LEFT JOIN rendition_attachments ra ON ra.attachment_id=eig.attachment_id
-		 AND ra.content_version_id=es.content_version_id AND ra.profile_fingerprint=es.profile_fingerprint
-		LEFT JOIN blobs evidence_blob ON evidence_blob.hash=eig.evidence_fingerprint
-		WHERE es.vector_space_id=?
-		  AND es.profile_fingerprint=? AND es.binding_id=? AND es.input_kind=?
-		  AND n.current_version_id=es.content_version_id AND n.trashed_at IS NULL
-		  AND (es.input_kind='original_file' OR (es.input_kind='image' AND `+currentImageEmbeddingSQL("es.content_version_id", "eig.evidence_fingerprint")+`) OR (es.input_kind='rendition_chunk' AND `+currentRenditionChunkAuthoritySQL+`))
-		  `+filterSQL, args...)
+  `+semanticMembershipSQL(`FROM json_each(?) k CROSS JOIN embedding_sets es INDEXED BY embedding_sets_vector_set ON es.vector_set_id=json_extract(k.value,'$.VectorSetID')`)+
+		` AND evr.input_id=json_extract(k.value,'$.InputID') AND evr.checksum=json_extract(k.value,'$.InputChecksum')`+
+		filterSQL+` ORDER BY es.vector_set_id,es.embedding_set_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1103,7 +1197,6 @@ type LexicalGeneration struct {
 	SegmentCount   int
 	ManifestDigest string
 	BuildCount     int
-	BuildDigest    string
 }
 
 // ErrLexicalGenerationStale reports a complete immutable generation that no
@@ -1219,7 +1312,7 @@ func stageLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, segments, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
 }
 
 func stageLexicalGenerationExcludingTx(
@@ -1245,12 +1338,13 @@ func stageLexicalGenerationExcludingTx(
 		return LexicalGeneration{}, nil
 	}
 	generationID := lexicalReplacementGenerationID(segments, buildIDs)
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, segments, buildIDs)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
 }
 
 func stageLexicalGenerationRowsTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
-	segments []lexicalManifestRow, buildIDs []string,
+	buildIDs []string,
+	segments []lexicalManifestRow,
 ) (LexicalGeneration, error) {
 	stored, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
 	if err == nil {
@@ -1259,35 +1353,158 @@ func stageLexicalGenerationRowsTx(
 	if !errors.Is(err, ErrNotFound) {
 		return LexicalGeneration{}, err
 	}
-	generation := LexicalGeneration{
-		ID: generationID, SegmentCount: len(segments), ManifestDigest: lexicalManifestDigest(segments),
-		BuildCount: len(buildIDs), BuildDigest: lexicalBuildDigest(buildIDs),
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generations(generation_id,segment_count,build_count,built_at)
-		VALUES($1,$2,$3,$4)`, generation.ID, generation.SegmentCount, generation.BuildCount, nowRFC3339(),
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("completing lexical generation %s: %w", generationID, err)
-	}
-	for _, buildID := range buildIDs {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_generation_builds(generation_id,build_id)
-			VALUES($1,$2)`, generationID, buildID); err != nil {
-			return LexicalGeneration{}, fmt.Errorf(
-				"recording lexical generation %s build %s: %w", generationID, buildID, err)
-		}
-	}
-	if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("building lexical generation %s: %w", generationID, err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_lexical_generation_manifests(
-			generation_id,manifest_digest,build_digest
-		) VALUES($1,$2,$3)`, generation.ID, generation.ManifestDigest, generation.BuildDigest,
-	); err != nil {
-		return LexicalGeneration{}, fmt.Errorf("recording lexical generation %s manifest: %w", generationID, err)
+	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, segments, generationID, nowRFC3339()); err != nil {
+		return LexicalGeneration{}, err
 	}
 	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
+}
+
+// lexicalChain extends an ordered digest with one build, including empty builds.
+func lexicalChain(previous, buildID string, segments []lexicalManifestRow) string {
+	hash := sha256.New()
+	ordered := slices.Clone(segments)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].segmentID != ordered[j].segmentID {
+			return ordered[i].segmentID < ordered[j].segmentID
+		}
+		return ordered[i].text < ordered[j].text
+	})
+	for _, field := range []string{previous, buildID} {
+		_, _ = io.WriteString(hash, strconv.Itoa(len(field))+":"+field)
+	}
+	for _, row := range ordered {
+		for _, field := range []string{row.segmentID, row.text} {
+			_, _ = io.WriteString(hash, strconv.Itoa(len(field))+":"+field)
+		}
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation LexicalGeneration, streamID, builtAt string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generations
+		(generation_id,stream_id,segment_count,build_count,built_at) VALUES($1,$2,$3,$4,$5)`, generation.ID, streamID, generation.SegmentCount, generation.BuildCount, builtAt); err != nil {
+		return fmt.Errorf("recording lexical generation %s: %w", generation.ID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_generation_manifests
+		(generation_id,manifest_digest) VALUES($1,$2)`, generation.ID, generation.ManifestDigest); err != nil {
+		return fmt.Errorf("recording lexical generation %s manifest: %w", generation.ID, err)
+	}
+	return nil
+}
+
+// extendLexicalStreamTx shares indexing and ordered membership for staging and append.
+// A supplied generation ID preserves full-stage and metadata restore identities.
+func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, rows []lexicalManifestRow, generationID, builtAt string) (LexicalGeneration, error) {
+	byBuild := make(map[string][]lexicalManifestRow)
+	for _, row := range rows {
+		byBuild[row.buildID] = append(byBuild[row.buildID], row)
+	}
+	generation := from
+	for _, buildID := range buildIDs {
+		segments := byBuild[buildID]
+		if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
+			return LexicalGeneration{}, err
+		}
+		generation.BuildCount++
+		generation.SegmentCount += len(segments)
+		generation.ManifestDigest = lexicalChain(generation.ManifestDigest, buildID, segments)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_stream_builds
+			(stream_id,ordinal,build_id) VALUES($1,$2,$3)`, streamID, generation.BuildCount, buildID); err != nil {
+			return LexicalGeneration{}, fmt.Errorf("recording lexical stream %s build %s: %w", streamID, buildID, err)
+		}
+	}
+	if generationID == "" {
+		digest := sha256.Sum256([]byte("docbank-lexical-append/v1\x00" + streamID + "\x00" +
+			strconv.Itoa(generation.BuildCount) + "\x00" + generation.ManifestDigest))
+		generationID = hex.EncodeToString(digest[:])
+	}
+	generation.ID = generationID
+	if err := insertLexicalGenerationTx(ctx, tx, generation, streamID, builtAt); err != nil {
+		return LexicalGeneration{}, err
+	}
+	return generation, nil
+}
+
+func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []string) (LexicalGeneration, error) {
+	head, err := readActiveLexicalGeneration(ctx, tx)
+	if err != nil {
+		return LexicalGeneration{}, err
+	}
+	var streamID string
+	if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
+		WHERE generation_id=$1`, head.ID).Scan(&streamID); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("reading lexical head stream: %w", err)
+	}
+	var added []string
+	for _, buildID := range buildIDs {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rendition_lexical_stream_builds
+			WHERE stream_id=$1 AND build_id=$2 AND ordinal<=$3)`, streamID, buildID, head.BuildCount).Scan(&exists); err != nil {
+			return LexicalGeneration{}, fmt.Errorf("checking lexical stream membership: %w", err)
+		}
+		if !exists {
+			added = append(added, buildID)
+		}
+	}
+	if len(added) == 0 {
+		return head, nil
+	}
+	var tip int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0)
+		FROM rendition_lexical_stream_builds WHERE stream_id=$1`, streamID).Scan(&tip); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("reading lexical stream tip: %w", err)
+	}
+	if tip > head.BuildCount {
+		return LexicalGeneration{}, ErrNotFound
+	}
+	var segments []lexicalManifestRow
+	for _, buildID := range added {
+		rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, buildID)
+		if err != nil {
+			return LexicalGeneration{}, err
+		}
+		segments = append(segments, rows...)
+	}
+	return extendLexicalStreamTx(ctx, tx, streamID, head, added, segments, "", nowRFC3339())
+}
+
+// dropLexicalGenerationTx trims only the tail no retained generation can read.
+func dropLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generationID string) (int, error) {
+	var streamID string
+	if err := tx.QueryRowContext(ctx, `SELECT stream_id FROM rendition_lexical_generations
+		WHERE generation_id=$1`, generationID).Scan(&streamID); err != nil {
+		return 0, fmt.Errorf("reading collected lexical stream: %w", err)
+	}
+	for _, statement := range []string{
+		`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`,
+		`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
+			return 0, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
+		}
+	}
+	var cutoff int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(build_count),0)
+		FROM rendition_lexical_generations WHERE stream_id=$1`, streamID).Scan(&cutoff); err != nil {
+		return 0, fmt.Errorf("reading retained lexical stream cutoff: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
+		WHERE build_id IN (SELECT build_id FROM rendition_lexical_stream_builds
+		                   WHERE stream_id=$1 AND ordinal>$2)
+		AND NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
+		                WHERE gb.build_id=rendition_lexical_index.build_id)`, streamID, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("collecting trimmed lexical index rows: %w", err)
+	}
+	removed, err := rowsAffectedInt(result)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_stream_builds
+		WHERE stream_id=$1 AND ordinal>$2`, streamID, cutoff); err != nil {
+		return 0, fmt.Errorf("trimming lexical stream membership: %w", err)
+	}
+	return removed, nil
 }
 
 func lexicalReplacementGenerationID(rows []lexicalManifestRow, buildIDs []string) string {
@@ -1442,23 +1659,10 @@ func (s *Store) collectSupersededLexicalGenerationsTx(
 		if _, live := pinned[generationID]; live {
 			continue
 		}
-		for _, statement := range []string{
-			`DELETE FROM rendition_lexical_generation_manifests WHERE generation_id=$1`,
-			`DELETE FROM rendition_lexical_generations WHERE generation_id=$1`,
-		} {
-			if _, err := tx.ExecContext(ctx, statement, generationID); err != nil {
-				return removed, fmt.Errorf("collecting lexical generation %s: %w", generationID, err)
-			}
+		if _, err := dropLexicalGenerationTx(ctx, tx, generationID); err != nil {
+			return removed, err
 		}
 		removed++
-	}
-	if removed == 0 {
-		return 0, nil
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_lexical_index
-		WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
-		                  WHERE gb.build_id=rendition_lexical_index.build_id)`); err != nil {
-		return removed, fmt.Errorf("collecting unreferenced lexical index rows: %w", err)
 	}
 	return removed, nil
 }
@@ -1601,14 +1805,14 @@ func loadAndValidateLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 ) (LexicalGeneration, error) {
 	generation := LexicalGeneration{ID: generationID}
-	var manifestDigest, buildDigest sql.NullString
+	var manifestDigest sql.NullString
 	err := tx.QueryRowContext(ctx, `
-		SELECT g.segment_count,g.build_count,m.manifest_digest,m.build_digest
+		SELECT g.segment_count,g.build_count,m.manifest_digest
 		FROM rendition_lexical_generations g
 		LEFT JOIN rendition_lexical_generation_manifests m
 		  ON m.generation_id=g.generation_id
 		WHERE g.generation_id=$1`, generationID,
-	).Scan(&generation.SegmentCount, &generation.BuildCount, &manifestDigest, &buildDigest)
+	).Scan(&generation.SegmentCount, &generation.BuildCount, &manifestDigest)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LexicalGeneration{}, ErrNotFound
 	}
@@ -1619,20 +1823,42 @@ func loadAndValidateLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	buildIDs, err := lexicalGenerationBuildIDsTx(ctx, tx, generationID)
-	if err != nil {
-		return LexicalGeneration{}, err
+	byBuild := make(map[string][]lexicalManifestRow)
+	for _, row := range segments {
+		byBuild[row.buildID] = append(byBuild[row.buildID], row)
 	}
-	if !manifestDigest.Valid || !buildDigest.Valid ||
-		len(segments) != generation.SegmentCount ||
-		len(buildIDs) != generation.BuildCount ||
-		lexicalManifestDigest(segments) != manifestDigest.String ||
-		lexicalBuildDigest(buildIDs) != buildDigest.String {
+	rows, err := tx.QueryContext(ctx, `SELECT b.ordinal,b.build_id
+		FROM rendition_lexical_generations g JOIN rendition_lexical_stream_builds b
+		ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count
+		WHERE g.generation_id=$1 ORDER BY b.ordinal`, generationID)
+	if err != nil {
+		return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	count := 0
+	manifestChain := ""
+	for rows.Next() {
+		var ordinal int
+		var buildID string
+		if err := rows.Scan(&ordinal, &buildID); err != nil {
+			return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest row: %w", err)
+		}
+		count++
+		manifestChain = lexicalChain(manifestChain, buildID, byBuild[buildID])
+		if ordinal != count {
+			return LexicalGeneration{}, fmt.Errorf("lexical generation %s has a different immutable manifest", generationID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return LexicalGeneration{}, fmt.Errorf("reading lexical stream manifest rows: %w", err)
+	}
+	if !manifestDigest.Valid ||
+		len(segments) != generation.SegmentCount || count != generation.BuildCount ||
+		manifestChain != manifestDigest.String {
 		return LexicalGeneration{}, fmt.Errorf(
 			"lexical generation %s has a different immutable manifest", generationID)
 	}
 	generation.ManifestDigest = manifestDigest.String
-	generation.BuildDigest = buildDigest.String
 	return generation, nil
 }
 
@@ -1648,13 +1874,13 @@ func readActiveLexicalGeneration(
 ) (LexicalGeneration, error) {
 	var generation LexicalGeneration
 	err := queryer.QueryRowContext(ctx, `
-		SELECT g.generation_id,g.segment_count,m.manifest_digest,g.build_count,m.build_digest
+		SELECT g.generation_id,g.segment_count,m.manifest_digest,g.build_count
 		FROM rendition_lexical_heads h
 		JOIN rendition_lexical_generations g ON g.generation_id=h.generation_id
 		JOIN rendition_lexical_generation_manifests m ON m.generation_id=g.generation_id
 		WHERE h.singleton=1`).Scan(
 		&generation.ID, &generation.SegmentCount, &generation.ManifestDigest,
-		&generation.BuildCount, &generation.BuildDigest,
+		&generation.BuildCount,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LexicalGeneration{}, ErrNotFound
@@ -2084,16 +2310,13 @@ func insertRenditionAttachmentAndHeadTx(
 	if binding, err := emailPDFBinding(normalized.Profile); err != nil {
 		return err
 	} else if binding != nil {
+		if inserted != 0 {
+			return recordProcessedTx(ctx, tx, normalized.ContentVersionID, "")
+		}
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-		VALUES($1,$2,$3,$4)
-		ON CONFLICT(content_version_id,profile_fingerprint) DO UPDATE SET
-			attachment_id=excluded.attachment_id,published_at=excluded.published_at`,
-		head.ContentVersionID, head.ProcessingProfileFingerprint,
-		head.AttachmentID, head.PublishedAt); err != nil {
-		return fmt.Errorf("publishing rendition head: %w", err)
+	if err := publishRenditionHeadTx(ctx, tx, head); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_heads
 		WHERE content_version_id=$1 AND profile_fingerprint=$2 AND EXISTS (
@@ -2124,8 +2347,9 @@ func validateLexicalGenerationCoversCurrentHeadsTx(
 	if err != nil {
 		return err
 	}
+	generationBuildSet := stringSet(generationBuildIDs)
 	for _, buildID := range buildIDs {
-		if !slices.Contains(generationBuildIDs, buildID) {
+		if _, ok := generationBuildSet[buildID]; !ok {
 			return fmt.Errorf("lexical generation %s does not cover published rendition build %s (current rendition head build): %w",
 				generationID, buildID, ErrLexicalGenerationStale)
 		}
@@ -2200,6 +2424,17 @@ func nameSearchCandidates(match string) (sqlquery.Query, error) {
 	return query, nil
 }
 
+func nameSearchPageSQL(names, filter string) string {
+	// CROSS JOIN leads from name hits; paging first loads full metadata only for the selected hits.
+	return `WITH name_matches AS (` + names + `), name_page AS (
+		SELECT n.id,name_matches.score,n.name FROM name_matches CROSS JOIN ` + nodeFrom + `
+		WHERE name_matches.doc_key=n.id AND n.trashed_at IS NULL ` + filter + `
+		ORDER BY name_matches.score DESC,n.name,n.id LIMIT ?
+	) SELECT ` + nodeCols + ` FROM name_page CROSS JOIN ` + nodeFrom + `
+		WHERE n.id=name_page.id
+		ORDER BY name_page.score DESC,name_page.name,name_page.id`
+}
+
 // SearchPage returns live name matches in their established order, followed
 // by content-only matches. Keeping the two ranks separate preserves the
 // deterministic name-search contract: enabling extraction never reorders or
@@ -2237,13 +2472,7 @@ func (s *Store) SearchPageWithOptions(
 	nameArgs := names.Args
 	nameArgs = append(nameArgs, filterArgs...)
 	nameArgs = append(nameArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
-		SELECT `+nodeCols+`
-		FROM `+nodeFrom+`
-		JOIN name_matches ON name_matches.doc_key=n.id
-		WHERE n.trashed_at IS NULL `+nameFilterSQL+`
-		ORDER BY name_matches.score DESC,n.name,n.id
-		LIMIT ?`, nameArgs...)
+	rows, err := s.db.QueryContext(ctx, nameSearchPageSQL(names.SQL, nameFilterSQL), nameArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)
 	}
@@ -2259,13 +2488,20 @@ func (s *Store) SearchPageWithOptions(
 		return nameHits, true, nil
 	}
 
-	// Content may also match a node already returned by name. Over-fetch by
-	// the complete name set so duplicate filtering cannot conceal truncation.
+	seen := make(map[int64]struct{}, len(nameHits))
+	for _, hit := range nameHits {
+		seen[hit.Node.ID] = struct{}{}
+	}
 	remaining := limit - len(nameHits)
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
-		cte, join, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
-		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + nodeFrom + ` ` + join + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
+		if filterSQL == "" {
+			contentHits, err = leadingContentHits(ctx, queryer, query, fq, generationID, seen, remaining+1)
+			return err
+		}
+		// Over-fetch by the name set so overlap cannot conceal truncation.
+		cte, from, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
+		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + from + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
 		contentArgs = append(contentArgs, filterArgs...)
 		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
@@ -2283,16 +2519,15 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	seen := make(map[int64]struct{}, len(nameHits))
-	for _, hit := range nameHits {
-		seen[hit.Node.ID] = struct{}{}
-	}
-	filtered := contentHits[:0]
-	for _, hit := range contentHits {
-		if _, exists := seen[hit.Node.ID]; exists {
-			continue
+	filtered := contentHits
+	if filterSQL != "" {
+		filtered = contentHits[:0]
+		for _, hit := range contentHits {
+			if _, exists := seen[hit.Node.ID]; exists {
+				continue
+			}
+			filtered = append(filtered, hit)
 		}
-		filtered = append(filtered, hit)
 	}
 	truncated := len(filtered) > remaining
 	if truncated {
@@ -2307,10 +2542,10 @@ func (s *Store) SearchPageWithOptions(
 	return hits, truncated, nil
 }
 
-// withSearchOptionsTx binds photo predicates to the transaction consuming them.
+// withSearchOptionsTx binds photo predicates to the read snapshot consuming them.
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
-	return s.withStorageTx(ctx, func(tx *sql.Tx) (retErr error) {
+	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
 		if opts.PhotoScope != nil {
 			lease, err := s.acquireLexicalGeneration(ctx, tx)
 			if err != nil && !errors.Is(err, ErrNotFound) {
@@ -2564,13 +2799,15 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 	if opts.UnderNodeID != 0 {
 		// Only directories can parent a result. Keep files out of the recursive
 		// scope and match the immediate parent, so the scope itself stays excluded.
+		// Trash marks whole subtrees; restore reattaches them under a live parent.
+		// Live directories therefore suffice and use nodes_live_children.
 		clauses = append(clauses, `AND n.parent_id IN (
 			WITH RECURSIVE directories(id) AS (
 				SELECT ?
 				UNION ALL
 				SELECT child.id FROM nodes child
 				JOIN directories parent ON child.parent_id=parent.id
-				WHERE child.kind='dir'
+				WHERE child.kind='dir' AND child.trashed_at IS NULL
 			)
 			SELECT id FROM directories
 		)`)
@@ -2678,24 +2915,133 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 	return nil
 }
 
-// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
-func contentSearchMatches(match, generation string, profile *string) (cte, join, rank string, args []any) {
-	args = []any{match}
+// contentSearchSource shares FTS eligibility between grouped and streaming reads.
+func contentSearchSource(match, generation string, profile *string, join string) (from, where string, args []any) {
 	if generation == "" {
-		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM content_fts WHERE content_fts MATCH ? GROUP BY blob_hash)`,
-			`JOIN matched_blobs mb ON mb.blob_hash=cv.blob_hash JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+		return `content_fts`, `content_fts MATCH ?`, []any{match}
 	}
-	profileFilter := ""
-	args = append(args, generation)
+	from = `rendition_lexical_fts
+  ` + join + ` rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+  ` + join + ` rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id`
+	where = `rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)`
+	args = []any{match, generation}
 	if profile != nil {
-		profileFilter = ` AND a.profile_fingerprint=?`
+		where += ` AND a.profile_fingerprint=?`
 		args = append(args, *profile)
 	}
-	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM rendition_lexical_fts
-  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
-  JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
-  WHERE rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)` + profileFilter + ` GROUP BY a.content_version_id)`,
-		`JOIN matched_versions mv ON mv.version_id=cv.version_id`, `mv.best_rank`, args
+	return from, where, args
+}
+
+// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
+func contentSearchMatches(match, generation string, profile *string) (cte, from, rank string, args []any) {
+	source, where, args := contentSearchSource(match, generation, profile, "JOIN")
+	if generation == "" {
+		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM ` + source + ` WHERE ` + where + ` GROUP BY blob_hash)`,
+			`matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+	}
+	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM ` + source + `
+  WHERE ` + where + ` GROUP BY a.content_version_id)`,
+		`matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`, `mv.best_rank`, args
+}
+
+type contentHitKey struct {
+	id   int64
+	name string
+	rank float64
+}
+
+func compareContentHit(a, b contentHitKey) int {
+	if order := cmp.Compare(a.rank, b.rank); order != 0 {
+		return order
+	}
+	if order := cmp.Compare(a.name, b.name); order != 0 {
+		return order
+	}
+	return cmp.Compare(a.id, b.id)
+}
+
+// The worst retained key stays at the root, including name and ID rank ties.
+type contentHitHeap []contentHitKey
+
+func (h *contentHitHeap) Len() int           { return len(*h) }
+func (h *contentHitHeap) Less(i, j int) bool { return compareContentHit((*h)[i], (*h)[j]) > 0 }
+func (h *contentHitHeap) Swap(i, j int)      { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+func (h *contentHitHeap) Push(x any) {
+	key, ok := x.(contentHitKey)
+	if !ok {
+		panic("store: invalid content hit heap key")
+	}
+	*h = append(*h, key)
+}
+func (h *contentHitHeap) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
+}
+
+func leadingContentHits(ctx context.Context, queryer metadataQuerier, query, match, generation string, seen map[int64]struct{}, n int) ([]SearchHit, error) {
+	from, where, args := contentSearchSource(match, generation, nil, "CROSS JOIN")
+	rank, version := `rendition_lexical_fts.rank`, `a.content_version_id`
+	if generation == "" {
+		rank, version = `content_fts.rank`, `cv.version_id`
+		from += ` CROSS JOIN content_versions cv ON cv.blob_hash=content_fts.blob_hash`
+	} else {
+		from += ` CROSS JOIN content_versions cv ON cv.version_id=a.content_version_id`
+	}
+	from += ` CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=` + version
+	if generation == "" {
+		from += ` CROSS JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
+	}
+	streamRows, err := queryer.QueryContext(ctx, `SELECT n.id,n.name,`+rank+` FROM `+from+` WHERE `+where+` AND n.trashed_at IS NULL ORDER BY `+rank, args...)
+	if err != nil {
+		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	defer func() { _ = streamRows.Close() }()
+	kept := make(contentHitHeap, 0, n)
+	members := make(map[int64]struct{}, n)
+	for streamRows.Next() {
+		var key contentHitKey
+		if err := streamRows.Scan(&key.id, &key.name, &key.rank); err != nil {
+			return nil, fmt.Errorf("scanning content hit: %w", err)
+		}
+		if len(kept) == n && key.rank > kept[0].rank {
+			break
+		}
+		if _, exists := seen[key.id]; exists {
+			continue
+		}
+		if _, exists := members[key.id]; exists {
+			continue
+		}
+		if len(kept) < n {
+			heap.Push(&kept, key)
+		} else if compareContentHit(key, kept[0]) < 0 {
+			delete(members, kept[0].id)
+			kept[0] = key
+			heap.Fix(&kept, 0)
+		} else {
+			continue
+		}
+		members[key.id] = struct{}{}
+	}
+	if err := errors.Join(streamRows.Err(), streamRows.Close()); err != nil {
+		return nil, fmt.Errorf("streaming content hits: %w", err)
+	}
+	slices.SortFunc(kept, compareContentHit)
+	ids := make([]int64, len(kept))
+	for i, key := range kept {
+		ids[i] = key.id
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("encoding content hit IDs: %w", err)
+	}
+	rows, err := queryer.QueryContext(ctx, `SELECT `+nodeCols+` FROM json_each(?) page CROSS JOIN `+nodeFrom+` WHERE n.id=page.value ORDER BY CAST(page.key AS INTEGER)`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("loading content hits: %w", err)
+	}
+	return scanSearchRows(rows, SearchMatchContent, query)
 }
 
 // photoAssetTextCandidates ranks every member of the asset that owns matching
@@ -2745,11 +3091,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
   JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
-	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)
-	from := `matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
-	if generation != "" {
-		from = `matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
-	}
+	cte, from, rank, args := contentSearchMatches(textMatch, generation, profile)
 	result.SQL += ` UNION ALL SELECT node_id,1 tier,score FROM (WITH ` + cte + ` SELECT n.id node_id,-` + rank + ` score FROM ` + from + `)`
 	result.Args = append(result.Args, args...)
 	return result, nil

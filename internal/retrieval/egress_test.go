@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -13,97 +14,90 @@ import (
 )
 
 func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []ProviderStage{ProviderStageExpansion, ProviderStageReranking} {
 		for _, outcome := range []string{"success", "failure", "canceled"} {
 			t.Run(string(stage)+"/"+outcome, func(t *testing.T) {
-				catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-				_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "needle.txt", strings.Repeat("a", 64), 1, "text/plain")
-				require.NoError(t, err)
-				request := store.ProviderOperationAuthorizationRequest{
-					Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
-					DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
-				}
-				if stage == ProviderStageReranking {
-					request.InputClasses = []string{"query_text_and_excerpt"}
-				}
-				_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
-					Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
-					DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
-				})
-				require.NoError(t, err)
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				authorized, proceed := make(chan struct{}), make(chan struct{})
-				started, finish := make(chan struct{}), make(chan struct{})
-				authorizer := &consentStageAuthorizer{catalog: catalog, request: request,
-					afterAuthorize: func() {
-						close(authorized)
-						select {
-						case <-proceed:
-						case <-ctx.Done():
-						}
-					}}
-				provider := &blockingStageProvider{started: started, finish: finish}
-				if outcome == "failure" {
-					provider.err = errors.New("provider failed")
-				}
-				config := SearcherConfig{Backend: catalog, Owner: "search-test", LeaseDuration: time.Minute}
-				if stage == ProviderStageExpansion {
-					config.Expansion = ExpansionConfig{Enabled: true, Profile: ExpansionProfile{ID: "expansion", MaxVariants: 1},
-						Provider: provider, Authorizer: authorizer, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
-				} else {
-					config.Reranking = RerankingConfig{Enabled: true, Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1},
-						Provider: provider, Authorizer: authorizer, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
-				}
-				searcher, err := NewSearcher(config)
-				require.NoError(t, err)
-				done := make(chan error, 1)
-				go func() { _, err := searcher.Search(ctx, Query{Text: "needle", Mode: ModeLexical}); done <- err }()
-				<-authorized
-				revoked := make(chan error, 1)
-				go func() {
-					_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Principal, Scope: request.Scope})
-					revoked <- err
-				}()
-				early := false
-				select {
-				case err := <-revoked:
-					t.Errorf("revocation completed between authorization and provider execution: %v", err)
-					early = true
-				case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
-				}
-				close(proceed)
-				<-started
-				if !early {
-					select {
-					case err := <-revoked:
-						t.Errorf("revocation completed during provider execution: %v", err)
-						early = true
-					case <-time.After(20 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the running provider keeps revocation blocked
+				t.Parallel()
+				// The fence's waiters block on channels, so synctest.Wait returns
+				// while a revocation waits for the provider call.
+				synctest.Test(t, func(t *testing.T) {
+					catalog, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "consent.db"))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+					_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "needle.txt", strings.Repeat("a", 64), 1, "text/plain")
+					require.NoError(t, err)
+					request := store.ProviderOperationAuthorizationRequest{
+						Principal: "search-user", Scope: "search", ProfileFingerprint: strings.Repeat("b", 64),
+						DisclosureFingerprint: strings.Repeat("c", 64), InputClasses: []string{"query_text"},
 					}
-				}
-				if outcome == "canceled" {
-					cancel()
-				} else {
-					close(finish)
-				}
-				searchErr := <-done
-				switch outcome {
-				case "success":
-					require.NoError(t, searchErr)
-				case "canceled":
-					require.ErrorIs(t, searchErr, context.Canceled)
-				case "failure":
-					require.Error(t, searchErr)
-				}
-				if !early {
+					if stage == ProviderStageReranking {
+						request.InputClasses = []string{"query_text_and_excerpt"}
+					}
+					_, err = catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{
+						Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
+						DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
+					})
+					require.NoError(t, err)
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					authorized, proceed := make(chan struct{}), make(chan struct{})
+					started, finish := make(chan struct{}), make(chan struct{})
+					authorizer := &consentStageAuthorizer{catalog: catalog, request: request,
+						afterAuthorize: func() {
+							close(authorized)
+							select {
+							case <-proceed:
+							case <-ctx.Done():
+							}
+						}}
+					provider := &blockingStageProvider{started: started, finish: finish}
+					if outcome == "failure" {
+						provider.err = errors.New("provider failed")
+					}
+					config := SearcherConfig{Backend: catalog, Owner: "search-test", LeaseDuration: time.Minute}
+					if stage == ProviderStageExpansion {
+						config.Expansion = ExpansionConfig{Enabled: true, Profile: ExpansionProfile{ID: "expansion", MaxVariants: 1},
+							Provider: provider, Authorizer: authorizer, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+					} else {
+						config.Reranking = RerankingConfig{Enabled: true, Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1},
+							Provider: provider, Authorizer: authorizer, Deadline: time.Second, FailurePolicy: ProviderFailureFailClosed}
+					}
+					searcher, err := NewSearcher(config)
+					require.NoError(t, err)
+					done := make(chan error, 1)
+					go func() { _, err := searcher.Search(ctx, Query{Text: "needle", Mode: ModeLexical}); done <- err }()
+					<-authorized
+					revoked := make(chan error, 1)
+					go func() {
+						_, err := catalog.RevokeConsent(t.Context(), store.ProcessingConsentRevocationRequest{Principal: request.Principal, Scope: request.Scope})
+						revoked <- err
+					}()
+					synctest.Wait()
+					requireStillWaiting(t, revoked, "revocation completed between authorization and provider execution")
+					close(proceed)
+					<-started
+					synctest.Wait()
+					requireStillWaiting(t, revoked, "revocation completed during provider execution")
+					if outcome == "canceled" {
+						cancel()
+					} else {
+						close(finish)
+					}
+					searchErr := <-done
+					switch outcome {
+					case "success":
+						require.NoError(t, searchErr)
+					case "canceled":
+						require.ErrorIs(t, searchErr, context.Canceled)
+					case "failure":
+						require.Error(t, searchErr)
+					}
 					require.NoError(t, <-revoked)
-				}
-				authorizer.afterAuthorize = nil
-				_, err = searcher.Search(t.Context(), Query{Text: "needle", Mode: ModeLexical})
-				require.Error(t, err, "revoked consent must reject the next provider call")
+					authorizer.afterAuthorize = nil
+					_, err = searcher.Search(t.Context(), Query{Text: "needle", Mode: ModeLexical})
+					require.Error(t, err, "revoked consent must reject the next provider call")
+				})
 			})
 		}
 	}
@@ -156,4 +150,15 @@ func (provider *blockingStageProvider) Rerank(ctx context.Context, request Reran
 		return nil, provider.err
 	}
 	return []RerankScore{{Document: request.Candidates[0].Document, Score: 1}}, nil
+}
+
+// requireStillWaiting fails if done has delivered. Call it after
+// synctest.Wait, when every goroutine in the bubble is blocked.
+func requireStillWaiting(t *testing.T, done <-chan error, crossed string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.FailNow(t, crossed, "returned: %v", err)
+	default:
+	}
 }

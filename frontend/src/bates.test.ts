@@ -7,11 +7,64 @@ import {
   listBatesExports,
   readBatesExport,
   startBatesExport,
+  loadPendingBatesReservation,
+  savePendingBatesReservation,
+  clearPendingBatesReservation,
+  type PendingBatesReservation,
 } from "./bates.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  sessionStorage.clear();
+  document.querySelector('meta[name="docbank-base-path"]')?.remove();
+});
+
+it("keeps pending exports separate when a tab switches mounts", () => {
+  const mount = document.createElement("meta");
+  mount.name = "docbank-base-path";
+  document.head.append(mount);
+  const namespace = {
+    namespace_id: "11111111-1111-4111-8111-111111111111",
+    prefix: "CASE",
+    suffix: "",
+    padding: 6,
+    created_at: "2026-09-21T00:00:00Z",
+  };
+  const pending: PendingBatesReservation = {
+    operation_id: "22222222-2222-4222-8222-222222222222",
+    snapshot_id: "33333333-3333-4333-8333-333333333333",
+    recipe: batesRecipe(namespace, 1),
+    plan: {
+      namespace,
+      start_sequence: 1,
+      end_sequence: 1,
+      stamped_nothing: true,
+      labels: [
+        {
+          ordinal: 1,
+          occurrence_id: "a".repeat(32),
+          source_page: 1,
+          output_page: 1,
+          label: "CASE000001",
+        },
+      ],
+    },
+  };
+  expect(savePendingBatesReservation(pending)).toBe(true);
+  mount.content = "/archive";
+  expect(loadPendingBatesReservation()).toBeNull();
+  const archive = { ...pending, operation_id: "44444444-4444-4444-8444-444444444444" };
+  expect(savePendingBatesReservation(archive)).toBe(true);
+  mount.content = "/other";
+  expect(loadPendingBatesReservation()).toBeNull();
+  clearPendingBatesReservation();
+  mount.content = "/archive";
+  expect(loadPendingBatesReservation()?.operation_id).toBe(archive.operation_id);
+  clearPendingBatesReservation();
+  expect(loadPendingBatesReservation()).toBeNull();
+  mount.content = "";
+  expect(loadPendingBatesReservation()?.operation_id).toBe(pending.operation_id);
 });
 
 it("hashes a recipe to the same digest as the Go stamp engine", async () => {
@@ -30,7 +83,7 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
 
   // Golden digest from internal/pdfstamp/stamp_test.go validRecipe.
   expect(await batesRecipeSHA256(recipe)).toBe(
-    "f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787",
+    "a57da5610692c042a986615cc7511cb84ce3792406eb9a30e9e08b3f3eba22f2",
   );
 });
 
@@ -50,7 +103,7 @@ it("hashes a recipe when SubtleCrypto is unavailable", async () => {
   );
 
   await expect(batesRecipeSHA256(recipe)).resolves.toBe(
-    "f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787",
+    "a57da5610692c042a986615cc7511cb84ce3792406eb9a30e9e08b3f3eba22f2",
   );
 });
 

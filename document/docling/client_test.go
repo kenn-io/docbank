@@ -37,6 +37,9 @@ import (
 //go:embed testdata/docling-pages.json
 var recordedPagesResponse []byte
 
+//go:embed testdata/docling-tables-pictures.json
+var recordedTablesPicturesResponse []byte
+
 //go:embed testdata/docling-task.json
 var recordedTaskResponse []byte
 
@@ -69,44 +72,45 @@ func (secrets testSecrets) ResolveSecret(_ context.Context, name string) (string
 }
 
 func TestClientRendersDoclingPagesAndRequestsBothFormats(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
-	var polls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
-			assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
-			assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"}, nil)
-			writeJSON(t, response, doclingTask("task-1", "pending"))
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
-			if polls.Add(1) == 1 {
-				writeJSON(t, response, doclingTask("task-1", "started"))
-				return
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+		var polls atomic.Int64
+		origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch {
+			case request.Method == http.MethodPost && request.URL.Path == "/v1/convert/file/async":
+				assert.Equal(t, "synthetic-secret", request.Header.Get("X-Api-Key"))
+				assertDoclingSubmission(t, request, fixture.metadata, fixture.source, []string{"md", "json"}, nil)
+				writeJSON(t, response, doclingTask("task-1", "pending"))
+			case request.Method == http.MethodGet && request.URL.Path == "/v1/status/poll/task-1":
+				if polls.Add(1) == 1 {
+					writeJSON(t, response, doclingTask("task-1", "started"))
+					return
+				}
+				writeJSON(t, response, doclingTask("task-1", "success"))
+			case request.Method == http.MethodGet && request.URL.Path == "/v1/result/task-1":
+				writeRecordedJSON(t, response, recordedPagesResponse)
+			default:
+				http.NotFound(response, request)
 			}
-			writeJSON(t, response, doclingTask("task-1", "success"))
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/result/task-1":
-			writeRecordedJSON(t, response, recordedPagesResponse)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(server.Close)
+		}))
 
-	client := newClient(t, server.URL, fixture.descriptor, testSecrets{"docling-api": "synthetic-secret"}, http.DefaultClient)
-	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	require.Len(t, result.Evidence.Units, 2)
-	assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
-	assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
-	assert.Equal(t, "first page", result.Evidence.Units[0].Text)
-	assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
-	assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.End)
-	assert.Equal(t, "second page", result.Evidence.Units[1].Text)
-	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
-	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.End)
-	assert.Equal(t, "# Synthetic report\n", string(result.ProviderMarkdown))
-	require.Len(t, result.Artifacts, 1)
-	assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
-	assert.Equal(t, int64(2), polls.Load())
+		client := newClient(t, origin, fixture.descriptor, testSecrets{"docling-api": "synthetic-secret"}, httpClient)
+		result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		require.NoError(t, err)
+		require.Len(t, result.Evidence.Units, 2)
+		assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
+		assert.Equal(t, document.EvidenceUnitPage, result.Evidence.UnitKind)
+		assert.Equal(t, "first page", result.Evidence.Units[0].Text)
+		assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.Start)
+		assert.Equal(t, int64(1), result.Evidence.Units[0].Locator.End)
+		assert.Equal(t, "second page", result.Evidence.Units[1].Text)
+		assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
+		assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.End)
+		assert.Equal(t, "# Synthetic report\n", string(result.ProviderMarkdown))
+		require.Len(t, result.Artifacts, 1)
+		assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
+		assert.Equal(t, int64(2), polls.Load())
+	})
 }
 
 func TestClientAcceptsProviderFilenameWhenDisclosureIsWithheld(t *testing.T) {
@@ -258,11 +262,281 @@ func TestMapEvidenceUsesContiguousPageRegistryAndNeverDropsText(t *testing.T) {
 	}
 }
 
+func TestClientKeepsTableCellLiteralsThroughRendition(t *testing.T) {
+	content := rangeContent([]int64{1})
+	content["tables"] = []any{map[string]any{
+		"prov": []any{map[string]any{"page_no": 1}},
+		"data": map[string]any{"grid": []any{[]any{
+			map[string]any{"text": "Order <invoice-1729>"},
+			map[string]any{"text": `C:\path\file`},
+		}}},
+	}}
+	raw, err := json.Marshal(content)
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+	require.True(t, usable)
+	policy, err := document.NewEvidencePolicy(10000)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(evidence, policy)
+	require.NoError(t, err)
+	renditionPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 10000, MaxUnitRunes: 10000, MaxSegmentRunes: 1000})
+	require.NoError(t, err)
+	rendition, err := document.BuildRenditionV1(normalized, renditionPolicy)
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidenceComplete, rendition.Completeness)
+	require.Len(t, rendition.Units, 1)
+	assert.Contains(t, rendition.Units[0].Text, `Order \<invoice\-1729\>`)
+	assert.Contains(t, rendition.Units[0].Text, `C\:\\path\\file`)
+}
+
+func TestClientMapsDoclingTablesAndPicturesToPages(t *testing.T) {
+	fixture := newFixture(t, "pdf", "application/pdf", "agreement.pdf", []byte("synthetic PDF bytes"))
+	fixture.authorization.MaxArtifactBytes = 1 << 20
+	fixture.authorization.MaxTotalResultBytes = 1 << 20
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/convert/file/async":
+			writeJSON(t, response, doclingTask("tables", "success"))
+		case "/v1/result/tables":
+			writeRecordedJSON(t, response, recordedTablesPicturesResponse)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	assert.Equal(t, document.EvidenceComplete, result.Evidence.Completeness)
+	assert.Empty(t, result.Evidence.Omissions)
+	require.Len(t, result.Evidence.Units, 4)
+	assert.Contains(t, result.Evidence.Units[0].Text, "Example Trading Co.")
+	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.Start)
+	assert.Equal(t, int64(2), result.Evidence.Units[1].Locator.End)
+}
+
+func TestMapEvidenceMapsDoclingTablesOnlyToOneRegisteredPage(t *testing.T) {
+	located := func(pages ...int) []any {
+		provenance := make([]any, 0, len(pages))
+		for _, page := range pages {
+			provenance = append(provenance, map[string]any{"page_no": page})
+		}
+		return provenance
+	}
+	grid := func(rows ...[]string) map[string]any {
+		cells := make([]any, 0, len(rows))
+		for _, row := range rows {
+			values := make([]any, 0, len(row))
+			for _, value := range row {
+				values = append(values, map[string]any{"text": value})
+			}
+			cells = append(cells, values)
+		}
+		return map[string]any{"grid": cells}
+	}
+	table := func(provenance []any, data map[string]any) map[string]any {
+		return map[string]any{"prov": provenance, "data": data, "annotations": []any{}, "meta": nil}
+	}
+	priceTable := grid([]string{"Item", "Price"}, []string{"Paper", "4.10"})
+	const priceMarkdown = "| Item | Price |\n| --- | --- |\n| Paper | 4\\.10 |"
+	for _, testCase := range []struct {
+		name   string
+		tables []any
+		want   []string
+		omits  bool
+	}{
+		{name: "one page", tables: []any{table(located(2), priceTable)}, want: []string{"one", "two\n\n" + priceMarkdown}},
+		{name: "repeated provenance on one page", tables: []any{table(located(2, 2), priceTable)}, want: []string{"one", "two\n\n" + priceMarkdown}},
+		{name: "spans pages", tables: []any{table(located(1, 2), priceTable)}, want: []string{"one", "two"}, omits: true},
+		{name: "unlocated", tables: []any{table(nil, priceTable)}, want: []string{"one", "two"}, omits: true},
+		{name: "unregistered page", tables: []any{table(located(3), priceTable)}, want: []string{"one", "two"}, omits: true},
+		{name: "cells without grid", tables: []any{table(located(1), map[string]any{"table_cells": []any{map[string]any{"text": "cell"}}})}, want: []string{"one", "two"}, omits: true},
+		{name: "rich grid cell", tables: []any{table(located(1), map[string]any{"grid": []any{[]any{map[string]any{"text": "cell", "ref": map[string]any{"$ref": "#/texts/0"}}}}})}, want: []string{"one", "two"}, omits: true},
+		// A rich reference must stay unmapped even when its cell has no text.
+		{name: "blank rich grid cell", tables: []any{table(located(1), map[string]any{"grid": []any{[]any{map[string]any{"ref": map[string]any{"$ref": "#/texts/0"}}}}})}, want: []string{"one", "two"}, omits: true},
+		{name: "rich cell without grid", tables: []any{table(located(1), map[string]any{"table_cells": []any{map[string]any{"ref": map[string]any{"$ref": "#/texts/0"}}}})}, want: []string{"one", "two"}, omits: true},
+		{name: "ragged grid", tables: []any{table(located(1), grid([]string{"a", "b"}, []string{"c"}))}, want: []string{"one", "two"}, omits: true},
+		{name: "described", tables: []any{map[string]any{"prov": located(1), "data": priceTable, "meta": map[string]any{"summary": map[string]any{"text": "prices"}}}}, want: []string{"one\n\n" + priceMarkdown, "two"}, omits: true},
+		{name: "blank and unlocated", tables: []any{table(nil, grid([]string{" ", ""})), table(nil, map[string]any{"table_cells": []any{}})}, want: []string{"one", "two"}},
+		{name: "cell text normalized", tables: []any{table(located(1), grid([]string{"a|b", " c\n d "}))}, want: []string{"one\n\n| a\\|b | c d |\n| --- | --- |", "two"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.10.0",
+				"pages": map[string]any{"1": map[string]any{}, "2": map[string]any{}},
+				"texts": []any{
+					pageText("one", 1),
+					pageText("two", 2),
+				},
+				"tables": testCase.tables,
+			})
+			require.NoError(t, err)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+			require.True(t, usable)
+			require.NoError(t, document.ValidateSourceEvidenceV1(evidence))
+			require.Len(t, evidence.Units, len(testCase.want))
+			for index, want := range testCase.want {
+				assert.Equal(t, want, evidence.Units[index].Text)
+			}
+			if !testCase.omits {
+				assert.Equal(t, document.EvidenceComplete, evidence.Completeness)
+				assert.Empty(t, evidence.Omissions)
+				return
+			}
+			assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+			assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionField, Field: "tables", Reason: "Docling structured content is not mapped",
+			}}, evidence.Omissions)
+		})
+	}
+}
+
+func TestMapEvidenceOrdersDoclingTablesByReadingOrder(t *testing.T) {
+	ref := func(path string) map[string]any { return map[string]any{"$ref": path} }
+	table := func(value string) map[string]any {
+		return map[string]any{
+			"prov": []any{map[string]any{"page_no": 1}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": value}}}},
+		}
+	}
+	for _, testCase := range []struct {
+		name    string
+		content map[string]any
+		want    []string
+	}{
+		{
+			name: "tables and groups",
+			content: map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.10.0",
+				"pages": map[string]any{"1": map[string]any{}},
+				"body": map[string]any{"children": []any{
+					ref("#/tables/1"), ref("#/tables/0"), ref("#/texts/0"), ref("#/groups/0"), ref("#/texts/1"),
+				}},
+				"groups": []any{map[string]any{"children": []any{ref("#/tables/2")}}},
+				"texts":  []any{pageText("first", 1), pageText("second", 1)},
+				"tables": []any{table("leading"), table("before leading"), table("grouped"), table("unreached")},
+			},
+			want: []string{"| before leading |\n| --- |\n\n| leading |\n| --- |\n\nfirst\n\n| grouped |\n| --- |\n\nsecond\n\n| unreached |\n| --- |"},
+		},
+		{
+			name: "inserted texts and table-free page",
+			content: map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.7.0",
+				"origin": map[string]any{"filename": "range.pdf"},
+				"pages":  map[string]any{"1": map[string]any{}, "2": map[string]any{}},
+				"body": map[string]any{"children": []any{
+					ref("#/texts/1"), ref("#/texts/2"), ref("#/tables/0"), ref("#/texts/0"), ref("#/texts/4"), ref("#/texts/3"),
+				}},
+				"texts": []any{
+					pageText("after table", 1), pageText("first", 1), pageText("inserted before table", 1),
+					pageText("array first", 2), pageText("tree first", 2),
+				},
+				"tables": []any{table("cell")},
+			},
+			want: []string{
+				"first\n\ninserted before table\n\n| cell |\n| --- |\n\nafter table",
+				"array first\n\ntree first",
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			raw, err := json.Marshal(testCase.content)
+			require.NoError(t, err)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+			require.True(t, usable)
+			require.Len(t, evidence.Units, len(testCase.want))
+			for index, want := range testCase.want {
+				assert.Equal(t, want, evidence.Units[index].Text)
+			}
+			assert.Equal(t, document.EvidenceComplete, evidence.Completeness)
+		})
+	}
+}
+
+func TestMapEvidenceKeepsTableOnlyPages(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"schema_name": "DoclingDocument", "version": "1.10.0",
+		"pages": map[string]any{"1": map[string]any{}},
+		"texts": []any{},
+		"tables": []any{map[string]any{
+			"prov": []any{map[string]any{"page_no": 1}},
+			"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "only cell"}}}},
+		}},
+	})
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+	require.True(t, usable)
+	require.Len(t, evidence.Units, 1)
+	assert.Equal(t, "| only cell |\n| --- |", evidence.Units[0].Text)
+}
+
+func TestMapEvidenceKeepsDescribedTableGrid(t *testing.T) {
+	content := rangeContent([]int64{1})
+	content["tables"] = []any{map[string]any{
+		"prov": []any{map[string]any{"page_no": 1}},
+		"data": map[string]any{"grid": []any{[]any{map[string]any{"text": "only cell"}}}},
+		"meta": map[string]any{"description": map[string]any{"text": "a described table"}},
+	}}
+	raw, err := json.Marshal(content)
+	require.NoError(t, err)
+	evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+	require.True(t, usable)
+	require.Len(t, evidence.Units, 1)
+	assert.Equal(t, "| only cell |\n| --- |", evidence.Units[0].Text)
+	assert.Equal(t, int64(1), evidence.Units[0].Locator.Start)
+	assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+	assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+		Kind: document.EvidenceOmissionField, Field: "tables", Reason: "Docling structured content is not mapped",
+	}}, evidence.Omissions)
+}
+
+func TestMapEvidenceNamesOnlyDescribedDoclingPictures(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		picture map[string]any
+		omits   bool
+	}{
+		{name: "plain", picture: map[string]any{"annotations": []any{}, "meta": nil}},
+		{name: "empty metadata", picture: map[string]any{"meta": map[string]any{"description": nil, "classification": nil}}},
+		{name: "annotated", omits: true, picture: map[string]any{"annotations": []any{map[string]any{"kind": "description", "text": "a chart"}}}},
+		{name: "described", omits: true, picture: map[string]any{"meta": map[string]any{"description": map[string]any{"text": "a chart"}}}},
+		{name: "classified", omits: true, picture: map[string]any{"meta": map[string]any{"classification": map[string]any{"predictions": []any{}}}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.picture["prov"] = []any{map[string]any{"page_no": 1}}
+			testCase.picture["children"] = []any{map[string]any{"$ref": "#/texts/0"}}
+			raw, err := json.Marshal(map[string]any{
+				"schema_name": "DoclingDocument", "version": "1.10.0",
+				"pages":    map[string]any{"1": map[string]any{}},
+				"body":     map[string]any{"children": []any{map[string]any{"$ref": "#/pictures/0"}}},
+				"texts":    []any{map[string]any{"text": "text inside the picture", "prov": []any{map[string]any{"page_no": 1}}}},
+				"pictures": []any{testCase.picture},
+			})
+			require.NoError(t, err)
+			evidence, _, usable := mapEvidence(raw, "pdf", 1, false)
+			require.True(t, usable)
+			require.Len(t, evidence.Units, 1)
+			assert.Equal(t, "text inside the picture", evidence.Units[0].Text)
+			if !testCase.omits {
+				assert.Equal(t, document.EvidenceComplete, evidence.Completeness)
+				assert.Empty(t, evidence.Omissions)
+				return
+			}
+			assert.Equal(t, document.EvidencePartial, evidence.Completeness)
+			assert.Equal(t, []document.SourceEvidenceOmissionV1{{
+				Kind: document.EvidenceOmissionField, Field: "pictures", Reason: "Docling structured content is not mapped",
+			}}, evidence.Omissions)
+		})
+	}
+}
+
 func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
+	// Missing provenance and a missing grid must still report a table omission.
 	raw, err := json.Marshal(map[string]any{
 		"schema_name": "DoclingDocument", "version": "1.7.0",
 		"pages":  map[string]any{"1": map[string]any{}},
-		"texts":  []any{map[string]any{"text": "page text", "prov": []any{map[string]any{"page_no": 1}}}},
+		"texts":  []any{pageText("page text", 1)},
 		"tables": []any{map[string]any{"data": map[string]any{"table_cells": []any{map[string]any{"text": "cell text"}}}}},
 	})
 	require.NoError(t, err)
@@ -276,24 +550,25 @@ func TestMapEvidenceNamesUnmappedDoclingContent(t *testing.T) {
 }
 
 func TestClientRejectsChangedTaskIDWhilePolling(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case convertPath:
-			writeJSON(t, response, doclingTask("original", "pending"))
-		case pollPath + "original":
-			writeJSON(t, response, doclingTask("substituted", "success"))
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-	require.Error(t, err)
-	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-	require.True(t, ok)
-	assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", []byte("synthetic PDF bytes"))
+		origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case convertPath:
+				writeJSON(t, response, doclingTask("original", "pending"))
+			case pollPath + "original":
+				writeJSON(t, response, doclingTask("substituted", "success"))
+			default:
+				http.NotFound(response, request)
+			}
+		}))
+		client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+		require.Error(t, err)
+		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorMalformedEvidence, providerErr.Code())
+	})
 }
 
 func TestClientStopsAtAuthorizationExpiryBeforeEgress(t *testing.T) {
@@ -422,7 +697,6 @@ func TestClientStopsAtAuthorizationExpiryBeforeFollowupEgress(t *testing.T) {
 }
 
 func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "status.pdf", []byte("synthetic PDF bytes"))
 	for _, testCase := range []struct {
 		name      string
 		operation string
@@ -448,38 +722,40 @@ func TestClientClassifiesHTTPStatusByOperationBeforeContentType(t *testing.T) {
 		{name: "oversized submit 503", operation: "submit", status: http.StatusServiceUnavailable, want: document.RenditionErrorAmbiguousSubmission, maxBytes: 8},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if testCase.operation == "submit" && request.URL.Path == convertPath ||
-					testCase.operation == "poll" && request.URL.Path == pollPath+"status" ||
-					testCase.operation == "result" && request.URL.Path == resultPath+"status" {
-					response.Header().Set("Content-Type", "text/html")
-					response.WriteHeader(testCase.status)
-					_, err := io.WriteString(response, "provider-private-body")
-					assert.NoError(t, err)
-					return
-				}
-				switch request.URL.Path {
-				case convertPath:
-					if testCase.operation == "poll" {
-						writeJSON(t, response, doclingTask("status", "pending"))
-					} else {
-						writeJSON(t, response, doclingTask("status", "success"))
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, "pdf", "application/pdf", "status.pdf", []byte("synthetic PDF bytes"))
+				origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					if testCase.operation == "submit" && request.URL.Path == convertPath ||
+						testCase.operation == "poll" && request.URL.Path == pollPath+"status" ||
+						testCase.operation == "result" && request.URL.Path == resultPath+"status" {
+						response.Header().Set("Content-Type", "text/html")
+						response.WriteHeader(testCase.status)
+						_, err := io.WriteString(response, "provider-private-body")
+						assert.NoError(t, err)
+						return
 					}
-				default:
-					http.NotFound(response, request)
+					switch request.URL.Path {
+					case convertPath:
+						if testCase.operation == "poll" {
+							writeJSON(t, response, doclingTask("status", "pending"))
+						} else {
+							writeJSON(t, response, doclingTask("status", "success"))
+						}
+					default:
+						http.NotFound(response, request)
+					}
+				}))
+				client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+				if testCase.maxBytes != 0 {
+					client = newClientWithBounds(t, origin, fixture.descriptor, nil, httpClient, testCase.maxBytes)
 				}
-			}))
-			t.Cleanup(server.Close)
-			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-			if testCase.maxBytes != 0 {
-				client = newClientWithBounds(t, server.URL, fixture.descriptor, nil, http.DefaultClient, testCase.maxBytes)
-			}
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			require.Error(t, err)
-			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-			require.True(t, ok)
-			assert.Equal(t, testCase.want, providerErr.Code())
-			assert.NotContains(t, err.Error(), "provider-private-body")
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				require.Error(t, err)
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, testCase.want, providerErr.Code())
+				assert.NotContains(t, err.Error(), "provider-private-body")
+			})
 		})
 	}
 }
@@ -559,31 +835,32 @@ func TestClientClassifiesTotalTimeoutBySubmissionState(t *testing.T) {
 	})
 
 	t.Run("after submission", func(t *testing.T) {
-		fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
-		var submits, polls atomic.Int64
-		server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			switch request.URL.Path {
-			case convertPath:
-				submits.Add(1)
-				writeJSON(t, response, doclingTask("timeout", "pending"))
-			case pollPath + "timeout":
-				polls.Add(1)
-			default:
-				http.NotFound(response, request)
-			}
-		}))
-		t.Cleanup(server.Close)
-		client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-		client.totalTimeout = 25 * time.Millisecond //nolint:kennlint // deadlinetest: the total deadline must expire before the first poll of the accepted job
-		client.pollInterval = 50 * time.Millisecond
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "timeout.pdf", []byte("synthetic PDF bytes"))
+			var submits, polls atomic.Int64
+			origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case convertPath:
+					submits.Add(1)
+					writeJSON(t, response, doclingTask("timeout", "pending"))
+				case pollPath + "timeout":
+					polls.Add(1)
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+			client.totalTimeout = 25 * time.Millisecond
+			client.pollInterval = 50 * time.Millisecond
 
-		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-		require.Error(t, err)
-		providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-		require.True(t, ok)
-		assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
-		assert.Equal(t, int64(1), submits.Load())
-		assert.Zero(t, polls.Load())
+			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+			assert.Equal(t, int64(1), submits.Load())
+			assert.Zero(t, polls.Load())
+		})
 	})
 }
 
@@ -620,7 +897,6 @@ func TestClientTreatsUnreadableSuccessfulSubmissionAsAmbiguous(t *testing.T) {
 }
 
 func TestClientRecoversKnownTaskWithoutResubmitting(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
 	for _, testCase := range []struct {
 		name string
 		path string
@@ -629,42 +905,44 @@ func TestClientRecoversKnownTaskWithoutResubmitting(t *testing.T) {
 		{name: "result", path: resultPath + "recovery"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			var submits, failures atomic.Int64
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				switch request.URL.Path {
-				case convertPath:
-					submits.Add(1)
-					if testCase.name == "poll" {
-						writeJSON(t, response, doclingTask("recovery", "pending"))
-					} else {
-						writeJSON(t, response, doclingTask("recovery", "success"))
-					}
-				case testCase.path:
-					if failures.Add(1) == 1 {
-						response.WriteHeader(http.StatusServiceUnavailable)
-						return
-					}
-					if testCase.name == "poll" {
-						writeJSON(t, response, doclingTask("recovery", "success"))
-					} else {
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
+				var submits, failures atomic.Int64
+				origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					switch request.URL.Path {
+					case convertPath:
+						submits.Add(1)
+						if testCase.name == "poll" {
+							writeJSON(t, response, doclingTask("recovery", "pending"))
+						} else {
+							writeJSON(t, response, doclingTask("recovery", "success"))
+						}
+					case testCase.path:
+						if failures.Add(1) == 1 {
+							response.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						if testCase.name == "poll" {
+							writeJSON(t, response, doclingTask("recovery", "success"))
+						} else {
+							writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# recovery\n", []any{
+								map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+							}))
+						}
+					case resultPath + "recovery":
 						writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# recovery\n", []any{
 							map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
 						}))
+					default:
+						http.NotFound(response, request)
 					}
-				case resultPath + "recovery":
-					writeJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# recovery\n", []any{
-						map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
-					}))
-				default:
-					http.NotFound(response, request)
-				}
-			}))
-			t.Cleanup(server.Close)
-			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			require.NoError(t, err)
-			assert.Equal(t, int64(1), submits.Load())
-			assert.Equal(t, int64(2), failures.Load())
+				}))
+				client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1), submits.Load())
+				assert.Equal(t, int64(2), failures.Load())
+			})
 		})
 	}
 }
@@ -678,75 +956,77 @@ func TestClientReturnsAmbiguousSubmissionWhenKnownTaskRecoveryExhausts(t *testin
 		{name: "still pending", pollStatus: http.StatusOK},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				switch request.URL.Path {
-				case convertPath:
-					writeJSON(t, response, doclingTask("recovery", "pending"))
-				case pollPath + "recovery":
-					if testCase.pollStatus == http.StatusOK {
+			synctest.Test(t, func(t *testing.T) {
+				fixture := newFixture(t, "pdf", "application/pdf", "recovery.pdf", []byte("synthetic PDF bytes"))
+				origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					switch request.URL.Path {
+					case convertPath:
 						writeJSON(t, response, doclingTask("recovery", "pending"))
-					} else {
-						response.WriteHeader(testCase.pollStatus)
+					case pollPath + "recovery":
+						if testCase.pollStatus == http.StatusOK {
+							writeJSON(t, response, doclingTask("recovery", "pending"))
+						} else {
+							response.WriteHeader(testCase.pollStatus)
+						}
+					default:
+						http.NotFound(response, request)
 					}
-				default:
-					http.NotFound(response, request)
-				}
-			}))
-			t.Cleanup(server.Close)
-			client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-			require.Error(t, err)
-			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
-			require.True(t, ok)
-			assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+				}))
+				client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+				_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+				require.Error(t, err)
+				providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, document.RenditionErrorAmbiguousSubmission, providerErr.Code())
+			})
 		})
 	}
 }
 
 func TestClientReceiptCountsEveryResponseBodyAndRequest(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "usage.pdf", []byte("synthetic PDF bytes"))
-	var outputBytes atomic.Int64
-	var polls atomic.Int64
-	writeCountedJSON := func(t *testing.T, response http.ResponseWriter, value any) {
-		t.Helper()
-		body, err := json.Marshal(value)
-		require.NoError(t, err)
-		body = append(body, '\n')
-		outputBytes.Add(int64(len(body)))
-		response.Header().Set("Content-Type", "application/json")
-		_, err = response.Write(body)
-		require.NoError(t, err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case convertPath:
-			writeCountedJSON(t, response, doclingTask("usage", "pending"))
-		case pollPath + "usage":
-			if polls.Add(1) == 1 {
-				body := []byte("temporary provider body")
-				outputBytes.Add(int64(len(body)))
-				response.WriteHeader(http.StatusServiceUnavailable)
-				_, err := response.Write(body)
-				assert.NoError(t, err)
-				return
-			}
-			writeCountedJSON(t, response, doclingTask("usage", "success"))
-		case resultPath + "usage":
-			writeCountedJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# usage\n", []any{
-				map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
-			}))
-		default:
-			http.NotFound(response, request)
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newFixture(t, "pdf", "application/pdf", "usage.pdf", []byte("synthetic PDF bytes"))
+		var outputBytes atomic.Int64
+		var polls atomic.Int64
+		writeCountedJSON := func(t *testing.T, response http.ResponseWriter, value any) {
+			t.Helper()
+			body, err := json.Marshal(value)
+			require.NoError(t, err)
+			body = append(body, '\n')
+			outputBytes.Add(int64(len(body)))
+			response.Header().Set("Content-Type", "application/json")
+			_, err = response.Write(body)
+			require.NoError(t, err)
 		}
-	}))
-	t.Cleanup(server.Close)
-	client := newClient(t, server.URL, fixture.descriptor, nil, http.DefaultClient)
-	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
-	assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
-	assert.Equal(t, outputBytes.Load(), result.Receipt.Usage.OutputBytes)
+		origin, httpClient := inMemoryServer(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case convertPath:
+				writeCountedJSON(t, response, doclingTask("usage", "pending"))
+			case pollPath + "usage":
+				if polls.Add(1) == 1 {
+					body := []byte("temporary provider body")
+					outputBytes.Add(int64(len(body)))
+					response.WriteHeader(http.StatusServiceUnavailable)
+					_, err := response.Write(body)
+					assert.NoError(t, err)
+					return
+				}
+				writeCountedJSON(t, response, doclingTask("usage", "success"))
+			case resultPath + "usage":
+				writeCountedJSON(t, response, doclingResultResponse(fixture.metadata.Filename, "# usage\n", []any{
+					map[string]any{"text": "page", "prov": []any{map[string]any{"page_no": 1}}},
+				}))
+			default:
+				http.NotFound(response, request)
+			}
+		}))
+		client := newClient(t, origin, fixture.descriptor, nil, httpClient)
+		result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		require.NoError(t, err)
+		assert.Equal(t, int64(4), result.Receipt.Usage.Requests)
+		assert.Equal(t, int64(1), result.Receipt.Usage.Retries)
+		assert.Equal(t, outputBytes.Load(), result.Receipt.Usage.OutputBytes)
+	})
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -783,6 +1063,16 @@ func slowUpload(fixture fixture, delay time.Duration) *testUpload {
 			return nil
 		},
 	}
+}
+
+// inMemoryServer serves handler on Go's in-memory test network. Inside a
+// synctest bubble, poll intervals, retry delays, and deadlines then elapse on
+// the bubble's fake clock instead of the real one.
+func inMemoryServer(t *testing.T, handler http.Handler) (string, *http.Client) {
+	t.Helper()
+	server := httptest.NewTestServer(t, handler)
+	client := server.Client()
+	return server.URL, client
 }
 
 // handlerClient serves requests in memory, so a test can run in a synctest
@@ -1320,10 +1610,11 @@ func newClientWithBounds(t *testing.T, origin string, descriptor document.Rendit
 	if secrets != nil {
 		binding = "docling-api"
 	}
-	// Timeout tests override these normal deadlines explicitly.
+	// Timeout tests override these normal deadlines explicitly. Tests that
+	// poll or retry run in a synctest bubble, so the default poll interval
+	// elapses on fake time.
 	client, err := New(Profile{
 		Origin: origin, Descriptor: descriptor, SecretBinding: binding,
-		PollInterval:    time.Millisecond,
 		MaxPollAttempts: 4, MaxResponseBytes: maxResponseBytes,
 	}, secrets, httpClient)
 	require.NoError(t, err)
@@ -1424,7 +1715,7 @@ func writeRecordedJSON(t *testing.T, response http.ResponseWriter, value []byte)
 }
 
 func TestDoclingUnlocksPDF(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
 	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", source)
 
@@ -1453,7 +1744,7 @@ func TestDoclingUnlocksPDF(t *testing.T) {
 					}
 				}
 			}
-			pdf, err := api.ReadAndValidate(bytes.NewReader(sent), &model.Configuration{
+			pdf, err := api.ReadAndValidate(r.Context(), bytes.NewReader(sent), &model.Configuration{
 				Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
 				Limits: model.DefaultResourceLimits(),
 			})

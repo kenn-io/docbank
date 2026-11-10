@@ -7,12 +7,15 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/docbank/internal/store/schemaformat"
+	"go.kenn.io/docbank/internal/waitlock"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -23,19 +26,22 @@ var schemaSQL string
 type Store struct {
 	db                     *sql.DB
 	writeDB                *sql.DB
+	writeRevision          atomic.Uint64
 	postgresSchema         string // Empty for SQLite; PostgreSQL pools use this schema as their search path.
 	path                   string
 	rootID                 int64
 	vaultID                string
 	primaryStoreID         string
 	driver                 docsqlite.Driver
-	providerEgressMu       sync.RWMutex
+	providerEgressMu       waitlock.RWMutex // Revocation waits here durably blocked, so synctest can observe it.
 	laneControlsMu         sync.Mutex
 	photoExportSlot        chan struct{}
 	photoPublicationTreeMu sync.RWMutex
 	photoPublicationMu     sync.Mutex
 	photoPublicationLocks  map[string]*photoPublicationLock
 	photoEvents            photoEventFeed
+	vectorSourceMu         sync.Mutex
+	vectorSourceMemos      map[string]vectorSourceMemo
 	photoStackVectorsMu    sync.Mutex
 	photoStackVectors      map[string]photoStackOpenedGeneration
 	photoHiddenNow         func() time.Time
@@ -48,7 +54,8 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 43
+const currentStorageSchemaVersion = 48
+const auditEventSequenceStorageSchemaVersion = 46
 const photoSuggestionsStorageSchemaVersion = 43
 const photoFaceDetectionStorageSchemaVersion = 43
 
@@ -131,7 +138,7 @@ func openCurrentStore(
 	// Queue writers in database/sql instead of racing SQLite's busy timeout.
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
-	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
+	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, providerEgressMu: waitlock.New(), photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
 	if err := s.bootstrap(ctx, incarnation); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -172,10 +179,27 @@ func (s *Store) bootstrap(ctx context.Context, incarnation *metadataProcessingIn
 	return nil
 }
 
+// applySchema bounds driver SQL-tail copying while keeping the caller's transaction.
+func applySchema(ctx context.Context, tx *sql.Tx) error {
+	for group := range strings.SplitSeq(schemaSQL, "\n\n") {
+		if _, err := tx.ExecContext(ctx, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) bootstrapTx(ctx context.Context, incarnation *metadataProcessingIncarnation) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+		if err := applySchema(ctx, tx); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
+		}
+		epoch, err := newUUIDv4()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vault_change_head(singleton,epoch) VALUES(1,$1) ON CONFLICT(singleton) DO NOTHING`, epoch); err != nil {
+			return err
 		}
 		if err := initializeDocumentPeopleState(ctx, tx); err != nil {
 			return fmt.Errorf("initializing document people state: %w", err)
@@ -289,11 +313,40 @@ var (
 	errCommitTx = errors.New("committing transaction")
 )
 
+// WriteRevision changes after committed storage writes. All users of this Store
+// and its writer observe the same revision. A reopened Store starts unsettled.
+func (s *Store) WriteRevision() uint64 { return s.writeRevision.Load() }
+
+// withReadTx runs a consistent snapshot without reserving the writer.
+func (s *Store) withReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return fmt.Errorf("beginning read transaction: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing read transaction: %w", err)
+	}
+	return nil
+}
+
 // withStorageTx is the transaction primitive for bootstrap, import, audit
 // recording, and physical storage maintenance. User-visible metadata mutations
 // use withLogicalTx so audited vaults fail closed unless that mutation has an
 // explicit audit implementation in Go.
-func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
+func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.storageTx(ctx, true, fn)
+}
+
+// withBookkeepingTx keeps search reader leases from waking embedding discovery.
+func (s *Store) withBookkeepingTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.storageTx(ctx, false, fn)
+}
+
+func (s *Store) storageTx(ctx context.Context, counts bool, fn func(tx *sql.Tx) error) (retErr error) {
 	defer func() {
 		// Cancellation may roll back before the callback or Commit observes it.
 		// Preserve cancellation alongside ErrTxDone.
@@ -369,6 +422,12 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	} else if s.photoEvents.installed.Load() {
 		dropped = s.photoEvents.dropPhotoCapture(ctx, tx)
 	}
+	var before int64
+	if counts && s.postgresSchema == "" {
+		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
+			return err
+		}
+	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
@@ -378,9 +437,24 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, tx.Rollback())
 	}
+	wrote := false
+	if counts {
+		if s.postgresSchema == "" {
+			var after int64
+			if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
+				return err
+			}
+			wrote = after != before
+		} else if err := tx.QueryRowContext(ctx, `SELECT pg_catalog.pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&wrote); err != nil {
+			return err
+		}
+	}
 	changed := capture && photoChanged(ctx, tx)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("%w: %w", errCommitTx, err)
+	}
+	if wrote {
+		s.writeRevision.Add(1)
 	}
 	if dropped {
 		s.photoEvents.installed.Store(false)

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -100,16 +102,17 @@ func emailTableCounts(t *testing.T, s *Store) []int {
 	return result
 }
 
-func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
+func checkEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "first.eml")
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", first.BodySearch.State)
 	for hash := range f.bytes {
 		var n int
-		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM rendition_blob_staging WHERE blob_hash=?", hash).Scan(&n))
+		require.NoError(t, s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM rendition_blob_staging WHERE blob_hash=$1", hash).Scan(&n))
 		require.Zero(t, n)
 	}
 	node, err := s.CreateFile(t.Context(), s.RootID(), "second.eml", first.Version.BlobHash, first.Version.Size, "message/rfc822")
@@ -137,13 +140,16 @@ func TestEmailPublicationSharesGenerationAndRetiresStaging(t *testing.T) {
 			require.Equal(t, "sample.bin", r.Filename)
 		}
 	}
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
+func checkEmailSupersededBeforeBodyPublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "message.eml")
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
 	first, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", first.BodySearch.State)
@@ -161,6 +167,15 @@ func TestEmailSupersededBeforeBodyPublication(t *testing.T) {
 	reselected, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
 	require.Equal(t, "pending", reselected.BodySearch.State)
+	_, err = s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 3, "initial selection, changed head, and reselection; retry is silent")
+	for _, change := range changes {
+		require.Equal(t, "processed", change.Kind)
+		require.Equal(t, first.Version.NodeID, change.NodeID)
+	}
 }
 
 func TestEmailPublicationRejectsInvalidAuthorityAtomically(t *testing.T) {
@@ -238,9 +253,10 @@ func TestEmailPublicationRollbackPreservesNewStagingAndOldHead(t *testing.T) {
 	require.Zero(t, emailTableCounts(t, s)[5])
 }
 
-func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
+func checkEmailMissingStatesAndDeterministicRefusal(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "pending.eml")
 	v, err := s.EmailMetadata(t.Context(), f.publication.ContentVersionID)
 	require.ErrorIs(t, err, ErrEmailPending)
@@ -266,5 +282,59 @@ func TestEmailMissingStatesAndDeterministicRefusal(t *testing.T) {
 	require.Equal(t, document.EmailVerification("catalog_only"), v.Evidence.Source.Verification)
 	_, err = s.EmailPart(t.Context(), n.CurrentVersionID, v.Generation.ID, "1", "raw_headers")
 	require.ErrorIs(t, err, ErrEmailPartUnavailable)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
+}
+
+func checkEmailPDFAttachmentNotifiesOnce(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	seedRenditionCatalogVersions(t, s)
+	attachment := stageEmailPDFFixture(t, s)
+	_, cursor, err := s.VaultChanges(t.Context(), "", 500)
+	require.NoError(t, err)
+	for range 2 {
+		require.NoError(t, publishAttachmentForTest(t, s, attachment))
+	}
+	receipt, err := s.EmailPDFReceipt(t.Context(), attachment.ContentVersionID, attachment.Profile.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, attachment.ID, receipt.AttachmentID)
+	require.Equal(t, attachment.ContentVersionID, receipt.Source.VersionID)
+	require.Equal(t, catalogEvidenceBlobHash, receipt.Output.PDFSHA256)
+	require.Equal(t, int64(1), receipt.Output.Pages)
+	receipts, err := s.EmailPDFReceipts(t.Context(), attachment.ContentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, []EmailPDFReceipt{receipt}, receipts)
+	changes, _, err := s.VaultChanges(t.Context(), cursor, 500)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Equal(t, "processed", changes[0].Kind)
+	require.Equal(t, receipt.Source.NodeID, changes[0].NodeID)
+}
+
+func stageEmailPDFFixture(t *testing.T, s *Store) RenditionAttachmentRecord {
+	t.Helper()
+	f := newEmailFixture(t, s, "message.eml")
+	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+	require.NoError(t, err)
+	profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) {
+		*p, err = document.EmailPDFProfile(document.EmailPDFBindingV1{GenerationID: view.Generation.ID, GenerationChecksum: view.Generation.Checksum,
+			Recipe: document.EmailPDFRecipeV1{Contract: document.EmailPDFContract, RendererVersion: "synthetic-v1", RendererSHA256: fakeHash("a1"), WorkerSHA256: fakeHash("a2"), BubblewrapSHA256: fakeHash("a3"), FontsSHA256: fakeHash("a4"), Paper: "A4"}})
+		require.NoError(t, err)
+	})
+	pdf := catalogRenditionBuild(s, profile)
+	pdf.ID, pdf.SourceSHA256, pdf.Completeness = fakeHash("b5"), view.Version.BlobHash, document.EvidenceDegradedProvenance
+	pdf.Units, pdf.LexicalSegments = nil, nil
+	pdf.CapturedArtifactPolicy = jsontext.Value(`{"roles":[{"max_count":1,"min_count":1,"role":"email_pdf"},{"max_count":1,"min_count":1,"role":"normalized_evidence"},{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
+	pdf.CapturedArtifactPolicyFingerprint = testSHA256(pdf.CapturedArtifactPolicy)
+	pdf.Artifacts = append(pdf.Artifacts, RenditionArtifactRecord{ID: "artifact_" + fakeHash("23"), Role: string(document.EvidenceArtifactPDF), BlobHash: catalogEvidenceBlobHash, Size: int64(len(catalogBlobContents[catalogEvidenceBlobHash])), Checksum: catalogEvidenceBlobHash, State: RenditionArtifactVerified})
+	pdf.DeclaredArtifactCount = len(pdf.Artifacts)
+	path, body := emailSelectedBody(view.Evidence)
+	require.NotNil(t, body)
+	pdf.ProviderReceipt, err = json.Marshal(document.RenditionReceipt{ProviderID: document.EmailPDFContract, SourceSHA256: pdf.SourceSHA256, RenditionRequestFingerprint: profile.RenditionRequestFingerprint,
+		EmailPDF: &document.EmailPDFOutputV1{BodyPath: *path, BodySHA256: body.SHA256, BodySize: body.Size, PDFSHA256: catalogEvidenceBlobHash, PDFSize: int64(len(catalogBlobContents[catalogEvidenceBlobHash])), Pages: 1}})
+	require.NoError(t, err)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), pdf))
+	attachment := RenditionAttachmentRecord{ID: fakeHash("b6"), VaultID: s.VaultID(), ContentVersionID: view.Version.ID, BuildID: pdf.ID, Profile: profile, AttachedAt: nowRFC3339()}
+	return attachment
 }

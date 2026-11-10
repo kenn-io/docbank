@@ -636,6 +636,7 @@ export interface Error {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -1145,6 +1146,17 @@ export interface BatesExportRequest {
   recipe: Recipe;
 }
 
+export interface BatesNamespaceDetail {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  namespace: BatesNamespace;
+  /**
+     * @minimum 1
+     * @maximum 10000000000
+     */
+  next_sequence: number;
+}
+
 export interface BatesNamespacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1352,6 +1364,15 @@ export interface ClaimBackupRepositoryRequest {
   repo?: string;
 }
 
+export interface URLFetch {
+  etag?: string;
+  fetched_at: string;
+  final_url: string;
+  last_modified?: string;
+  requested_url: string;
+  version: number;
+}
+
 export interface Collection {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1370,6 +1391,7 @@ export interface Collection {
   started_at: string;
   /** @minimum 0 */
   total_bytes: number;
+  url_fetch?: URLFetch;
 }
 
 export interface CollectionLabel {
@@ -1463,6 +1485,7 @@ export interface CollectionQualitySummary {
   started_at: string;
   /** @minimum 0 */
   total_bytes: number;
+  url_fetch?: URLFetch;
 }
 
 export interface QualityBucket {
@@ -3720,6 +3743,10 @@ export interface Job {
   processing?: WatchProcessingStatus;
   started_at: string;
   status: JobStatus;
+  /** Why configured watch tags are unavailable. */
+  tag_error?: string;
+  /** Existing tag names applied to files imported by this watch. */
+  tags?: string[];
   total_bytes?: number;
   total_objects?: number;
 }
@@ -3748,6 +3775,115 @@ export interface JobRequest {
   fingerprint: string;
   operation_id: string;
   plan_id: string;
+}
+
+export type LocalTextApplyRequestServer = typeof LocalTextApplyRequestServer[keyof typeof LocalTextApplyRequestServer];
+
+
+export const LocalTextApplyRequestServer = {
+  auto: 'auto',
+  local: 'local',
+} as const;
+
+export interface LocalTextApplyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consent: boolean;
+  /** @pattern ^[0-9a-f]{64}$ */
+  plan_fingerprint: string;
+  server: LocalTextApplyRequestServer;
+}
+
+export interface ProcessingRuntimeDisclosure {
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  deployment: string;
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  endpoint: string;
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  immediate_processor: string;
+  /** @maxItems 64 */
+  metadata_classes: string[];
+  /** @maxLength 1024 */
+  model?: string;
+  /** @maxLength 1024 */
+  model_revision?: string;
+  /** @maxItems 64 */
+  retained_artifact_roles: string[];
+  /**
+     * @minLength 1
+     * @maxLength 1024
+     */
+  ultimate_processor: string;
+  /** @maxLength 1024 */
+  vector_space?: string;
+}
+
+export interface ProcessingFlowHop {
+  capability: string;
+  disclose_filename: boolean;
+  filename?: string;
+  input_classes: string[];
+  provider_id: string;
+  runtime_disclosure: ProcessingRuntimeDisclosure;
+  trust_boundary: string;
+}
+
+export interface LocalTextPlan {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fingerprint: string;
+  flow: ProcessingFlowHop[];
+  managed: boolean;
+  models: string[];
+  profile: string;
+  profile_fingerprint: string;
+  retained_classes: string[];
+  scope: string;
+  server: string;
+  vault_uid: string;
+  vector_effect: string;
+}
+
+export type LocalTextPlanRequestServer = typeof LocalTextPlanRequestServer[keyof typeof LocalTextPlanRequestServer];
+
+
+export const LocalTextPlanRequestServer = {
+  auto: 'auto',
+  local: 'local',
+} as const;
+
+export interface LocalTextPlanRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  server: LocalTextPlanRequestServer;
+}
+
+export type LocalTextStatusProvider = typeof LocalTextStatusProvider[keyof typeof LocalTextStatusProvider];
+
+
+export const LocalTextStatusProvider = {
+  '': '',
+  local: 'local',
+  ollama: 'ollama',
+  configured: 'configured',
+} as const;
+
+export interface LocalTextStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  download_bytes: number;
+  provider: LocalTextStatusProvider;
+  restart_required: boolean;
 }
 
 export interface LookupPhotoFlagsRequest {
@@ -7252,49 +7388,6 @@ export interface ProcessingEstimate {
   vector_spaces: number;
 }
 
-export interface ProcessingRuntimeDisclosure {
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  deployment: string;
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  endpoint: string;
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  immediate_processor: string;
-  /** @maxItems 64 */
-  metadata_classes: string[];
-  /** @maxLength 1024 */
-  model?: string;
-  /** @maxLength 1024 */
-  model_revision?: string;
-  /** @maxItems 64 */
-  retained_artifact_roles: string[];
-  /**
-     * @minLength 1
-     * @maxLength 1024
-     */
-  ultimate_processor: string;
-  /** @maxLength 1024 */
-  vector_space?: string;
-}
-
-export interface ProcessingFlowHop {
-  capability: string;
-  disclose_filename: boolean;
-  filename?: string;
-  input_classes: string[];
-  provider_id: string;
-  runtime_disclosure: ProcessingRuntimeDisclosure;
-  trust_boundary: string;
-}
-
 export interface ProcessingJob {
   /** @pattern ^[0-9a-f]{64}$ */
   attachment_id?: string;
@@ -7432,6 +7525,7 @@ export interface ProvenanceFact {
   source_kind: string;
   /** @pattern ^[0-9a-f]{64}$ */
   supersedes?: string;
+  url_fetch?: URLFetch;
 }
 
 export interface ProvenanceAppendReceipt {
@@ -8238,6 +8332,25 @@ export interface SearchReport {
   under_node_id?: number;
 }
 
+export type SearchTextCoverageFamiliesItem = typeof SearchTextCoverageFamiliesItem[keyof typeof SearchTextCoverageFamiliesItem];
+
+
+export const SearchTextCoverageFamiliesItem = {
+  pdf: 'pdf',
+  office: 'office',
+  other: 'other',
+} as const;
+
+export interface SearchTextCoverage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  families: SearchTextCoverageFamiliesItem[];
+  /** @minimum 0 */
+  no_text: number;
+  /** @minimum 0 */
+  pending: number;
+}
+
 export interface SetBackupScheduleRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -8907,8 +9020,15 @@ export interface UploadReceipt {
   /** @pattern ^[0-9a-f]{64}$ */
   computed_hash: string;
   computed_size: number;
+  ingest_id?: string;
   node: Node;
   status: UploadReceiptStatus;
+}
+
+export interface VaultIdentity {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  vault_id: string;
 }
 
 export interface VaultInfo {
@@ -8996,6 +9116,10 @@ export interface WatchedInbox {
   scan_interval: string;
   settle_time: string;
   source: string;
+  /** Why configured watch tags are unavailable. */
+  tag_error?: string;
+  /** Existing tag names applied to files imported by this watch. */
+  tags: string[];
 }
 
 export interface WatchedInboxList {
@@ -9274,6 +9398,17 @@ cursor?: string;
 limit?: number;
 };
 
+export type VaultChangesParams = {
+after?: string;
+follow?: boolean;
+/**
+ * Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.
+ * @minimum 0
+ * @maximum 500
+ */
+limit?: number;
+};
+
 export type ListCollectionsParams = {
 /**
  * @minimum 1
@@ -9425,6 +9560,7 @@ export type GetExportJobEventsDefault = {
   backup_forget?: BackupForgetReport;
   backup_prune?: BackupPruneReport;
   code?: string;
+  cursor?: string;
   detail?: string;
   errors?: string[];
   /** @maxItems 20 */
@@ -9539,12 +9675,12 @@ limit?: number;
 };
 
 export type SubmitMediaSourceBodyTwo = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaSuppliedMetadata;
 };
 
 export type ImportMediaArtifactBody = {
-  file: Blob | File;
+  file: Blob | File | string;
   metadata: MediaArtifactMetadata;
 };
 
@@ -10007,7 +10143,7 @@ export type UploadPushFileHeaders = {
 };
 
 export type UploadPushFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
 };
 
 export type ReadRenditionTextParams = {
@@ -10147,6 +10283,34 @@ offset?: number;
 limit?: number;
 };
 
+export type SearchTextCoverageParams = {
+/**
+ * @maxLength 16384
+ */
+pdf_filter?: string;
+source_present?: boolean;
+/**
+ * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+ */
+tag_id?: string;
+/**
+ * @maxLength 255
+ */
+mime_type?: string;
+/**
+ * @minimum 1
+ */
+under_node_id?: number;
+/**
+ * @maxLength 64
+ */
+modified_since?: string;
+/**
+ * @maxLength 64
+ */
+modified_before?: string;
+};
+
 export type StorageStatusParams = {
 refresh?: boolean;
 };
@@ -10206,9 +10370,13 @@ offset?: number;
 
 export type UploadFileParams = {
 /**
+ * Absolute destination directory path; creates missing parents; exclusive with parent_id
+ */
+parent_path?: string;
+/**
  * Stable destination directory node ID
  */
-parent_id: number;
+parent_id?: number;
 /**
  * Virtual filename; must equal the multipart filename
  * @minLength 1
@@ -10217,6 +10385,10 @@ name: string;
 };
 
 export type UploadFileHeaders = {
+/**
+ * JSON URL fetch evidence
+ */
+'X-Docbank-URL-Fetch'?: string;
 /**
  * Expected lowercase hexadecimal SHA-256 of the file payload
  * @pattern ^[0-9a-f]{64}$
@@ -10230,7 +10402,11 @@ export type UploadFileHeaders = {
 };
 
 export type UploadFileBody = {
-  file: Blob | File;
+  file: Blob | File | string;
+};
+
+export type GetContentVersionBytesHeaders = {
+Range?: string;
 };
 
 export type EnsureEmailMetadataBody = { [key: string]: unknown };
@@ -11813,6 +11989,30 @@ return sessionJSON<BatesNamespace>(getCreateBatesNamespaceUrl(),
 
 
 
+export const getReadBatesNamespaceUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/bates/namespaces/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Read a Bates namespace and its next sequence
+ */
+export const readBatesNamespace = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesNamespaceDetail> => {
+
+  return sessionJSON<BatesNamespaceDetail>(getReadBatesNamespaceUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getPlanBatesStampUrl = () => {
 
 
@@ -11846,6 +12046,51 @@ return sessionJSON<BatesPlan>(getPlanBatesStampUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(batesPlanRequest)
+  }
+);}
+
+
+
+export const getVaultChangesUrl = (params?: VaultChangesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/changes?${stringifiedParams}` : `/api/v1/changes`
+}
+
+/**
+ * @summary Read resumable vault changes
+ */
+export const vaultChanges = (params?: VaultChangesParams, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Response>(getVaultChangesUrl(params),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `application/x-ndjson`, ...getHeaders(options?.headers) }
+
   }
 );}
 
@@ -18931,6 +19176,106 @@ export const getDocumentProcessingJob = async (id: string, options?: Parameters<
 
 
 
+export const getPlanLocalTextUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/plans`
+}
+
+/**
+ * @summary Preview vault-wide text indexing
+ */
+export const planLocalText = async (localTextPlanRequest: NonReadonly<LocalTextPlanRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LocalTextPlan>(getPlanLocalTextUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localTextPlanRequest)
+  }
+);}
+
+
+
+export const getApplyLocalTextUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/setup`
+}
+
+/**
+ * @summary Approve vault-wide and ongoing text indexing
+ */
+export const applyLocalText = async (localTextApplyRequest: NonReadonly<LocalTextApplyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextPlan> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LocalTextPlan>(getApplyLocalTextUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(localTextApplyRequest)
+  }
+);}
+
+
+
+export const getGetLocalTextStatusUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/status`
+}
+
+/**
+ * @summary Read search by meaning setup status
+ */
+export const getLocalTextStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextStatus> => {
+
+  return sessionJSON<LocalTextStatus>(getGetLocalTextStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getPlanDocumentProcessingUrl = () => {
 
 
@@ -19086,7 +19431,7 @@ export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
     params: UploadPushFileParams,
     headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadPushFileBody.file);
+formData.append(`file`, uploadPushFileBody.file instanceof Blob ? uploadPushFileBody.file : new Blob([uploadPushFileBody.file], { type: '*/*' }));
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -19447,6 +19792,44 @@ export const readRedactionPreviewText = (id: string, options?: Parameters<typeof
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getPublishNumberedPDFUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/publications`
+}
+
+/**
+ * @summary Publish one reviewed numbered PDF into retained storage
+ */
+export const publishNumberedPDF = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<BatesExport> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
   }
 );}
 
@@ -20357,6 +20740,38 @@ return sessionJSON<DocumentSimilarReport>(getFindSimilarDocumentsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSimilarRequest)
+  }
+);}
+
+
+
+export const getSearchTextCoverageUrl = (params?: SearchTextCoverageParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/search/text-coverage?${stringifiedParams}` : `/api/v1/search/text-coverage`
+}
+
+/**
+ * Counts current live files in the search scope that need processing or await native text extraction. Call after an empty text search.
+ * @summary Count files waiting for searchable text
+ */
+export const searchTextCoverage = async (params?: SearchTextCoverageParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchTextCoverage> => {
+
+  return sessionJSON<SearchTextCoverage>(getSearchTextCoverageUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -21494,7 +21909,7 @@ export const uploadFile = async (uploadFileBody: UploadFileBody,
     params: UploadFileParams,
     headers: UploadFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<UploadReceipt> => {
     const formData = new FormData();
-formData.append(`file`, uploadFileBody.file, params.name);
+formData.append(`file`, uploadFileBody.file instanceof Blob ? uploadFileBody.file : new Blob([uploadFileBody.file], { type: '*/*' }), params.name);
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -21516,6 +21931,30 @@ return sessionJSON<UploadReceipt>(getUploadFileUrl(params),
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) },
     body: formData
+  }
+);}
+
+
+
+export const getVaultIdentityUrl = () => {
+
+
+
+
+  return `/api/v1/vault`
+}
+
+/**
+ * @summary Identify the selected vault
+ */
+export const vaultIdentity = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<VaultIdentity> => {
+
+  return sessionJSON<VaultIdentity>(getVaultIdentityUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -21578,16 +22017,31 @@ export const getGetContentVersionBytesUrl = (versionId: string,) => {
 }
 
 /**
- * Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed.
+ * Version, blob hash, and size headers identify expected authority before the body. Content-Digest is an RFC 9530 trailer computed from the bytes actually streamed. Range selects a single byte window and returns 206 with Content-Range.
  * @summary Stream one immutable content version by stable ID
  */
-export const getContentVersionBytes = (versionId: string, options?: Parameters<typeof sessionResponse>[1]) => {
+export const getContentVersionBytes = (versionId: string,
+    headers?: GetContentVersionBytesHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
-  return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
   {
     ...options,
-    method: 'GET'
-
+    method: 'GET',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}

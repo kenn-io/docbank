@@ -89,6 +89,13 @@ type Request struct {
 	Policy            Policy `json:"policy"`
 	Stdin             []byte `json:"-"`
 	StdinSHA256       string `json:"stdin_sha256"`
+	// ChildStarted is called once the LibreOffice-mode launcher reports that
+	// the caller's supervised child started. Warm-up launches do not call
+	// it. Tests use it to act while the child runs; production leaves it nil.
+	ChildStarted func() `json:"-"`
+	// HoldChildAfterExec is used only by cancellation tests. It holds the
+	// real supervised child at exec until its launcher is canceled.
+	HoldChildAfterExec bool `json:"-"`
 }
 
 // Attestation records the controls applied to a completed run.
@@ -115,10 +122,11 @@ type Result struct {
 }
 
 type launchControl struct {
-	RootDirectory     string `json:"root_directory,omitempty"`
-	Policy            Policy `json:"policy"`
-	PolicyFingerprint string `json:"policy_fingerprint,omitempty"`
-	StdinSHA256       string `json:"stdin_sha256"`
+	RootDirectory      string `json:"root_directory,omitempty"`
+	Policy             Policy `json:"policy"`
+	PolicyFingerprint  string `json:"policy_fingerprint,omitempty"`
+	StdinSHA256        string `json:"stdin_sha256"`
+	HoldChildAfterExec bool   `json:"hold_child_after_exec,omitempty"`
 }
 
 // Validate checks the portable parts of a launch policy in the parent.

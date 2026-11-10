@@ -126,7 +126,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT cv.node_id,n.revision,h.generation_id FROM content_versions cv
 			JOIN nodes n ON n.id=cv.node_id
-			JOIN document_event_heads h ON h.content_version_id=cv.version_id WHERE cv.version_id=?`, versionID).
+			JOIN document_event_heads h ON h.content_version_id=cv.version_id WHERE cv.version_id=$1`, versionID).
 			Scan(&input.NodeID, &input.NodeRevision, &input.EventGenerationID); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
@@ -218,14 +218,14 @@ func checkDocumentPeopleInputRowBoundsTx(ctx context.Context, tx *sql.Tx, versio
 	var custodians int64
 	err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT count(*) FROM custodian_assignments ca WHERE ca.retired_at IS NULL AND (
-		(ca.scope_kind='document' AND ca.content_version_id=?) OR
-		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=?)))`,
+		(ca.scope_kind='document' AND ca.content_version_id=$1) OR
+		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))`,
 		versionID, versionID).Scan(&custodians)
 	if err != nil {
 		return err
 	}
 	var assertions int64
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM person_document_assertions WHERE content_version_id=?`, versionID).Scan(&assertions); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM person_document_assertions WHERE content_version_id=$1`, versionID).Scan(&assertions); err != nil {
 		return err
 	}
 	if custodians > maxRows || assertions > maxRows {
@@ -240,7 +240,7 @@ func documentEventActorClaimsTx(ctx context.Context, tx *sql.Tx, generationID st
 		CASE WHEN a.evidence_id='' THEN e.evidence_id ELSE a.evidence_id END,
 		CASE WHEN a.evidence_kind='' OR (a.evidence_kind=e.evidence_kind AND a.evidence_id=e.evidence_id) THEN e.axis_key ELSE '' END,a.sensitive
 		FROM document_event_actors a JOIN document_events e ON e.generation_id=a.generation_id AND e.event_id=a.event_id
-		WHERE a.generation_id=? ORDER BY e.source_key,e.date_kind,a.role,a.ordinal`, generationID)
+		WHERE a.generation_id=$1 ORDER BY e.source_key,e.date_kind,a.role,a.ordinal`, generationID)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +300,7 @@ func peopleBoundToActorKeyTx(ctx context.Context, tx *sql.Tx, actorKey string) (
 				return nil, err
 			}
 			var person Person
-			err = tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, resolved.PersonID).
+			err = tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=$1`, resolved.PersonID).
 				Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
 					&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
 			if err != nil {
@@ -319,7 +319,7 @@ func peopleBoundToActorKeyTx(ctx context.Context, tx *sql.Tx, actorKey string) (
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT p.person_id,p.display_name,p.display_name_folded,p.origin,p.state,p.revision,p.created_at,p.updated_at
 		FROM person_identities i JOIN persons p ON p.person_id=i.person_id
-		WHERE i.kind=? AND i.value_normalized=? ORDER BY p.person_id LIMIT 2`, kind, value)
+		WHERE i.kind=$1 AND i.value_normalized=$2 ORDER BY p.person_id LIMIT 2`, kind, value)
 	if err != nil {
 		return nil, err
 	}
@@ -361,11 +361,11 @@ func provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopl
 	}
 	now := nowRFC3339()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at)
-		VALUES(?,?,?,'derived','provisional',1,?,?)`, personID, display, document.FoldPersonName(display), now, now); err != nil {
+		VALUES($1,$2,$3,'derived','provisional',1,$4,$5)`, personID, display, document.FoldPersonName(display), now, now); err != nil {
 		return Person{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at)
-		VALUES(?,?,?,?,?,'','',?,'derived',?,?,'exact_identifier',?)`, identityID, personID, kind,
+		VALUES($1,$2,$3,$4,$5,'','',$6,'derived',$7,$8,'exact_identifier',$9)`, identityID, personID, kind,
 		normalized.ValueNormalized, normalized.ValueDisplay, normalized.Normalization, claim.EvidenceKind, claim.EvidenceID, now); err != nil {
 		return Person{}, err
 	}
@@ -413,9 +413,9 @@ func (s *Store) openActorCandidatesTx(ctx context.Context, tx *sql.Tx, versionID
 func loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
 	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+custodianColumns+` FROM custodian_assignments ca WHERE ca.retired_at IS NULL AND (
-		(ca.scope_kind='document' AND ca.content_version_id=?) OR
-		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=?)))
-		ORDER BY CASE WHEN ca.scope_kind='document' AND ca.basis='operator_assigned' THEN 0 WHEN ca.scope_kind='document' AND ca.basis='transfer_record' THEN 1 ELSE 4 END,ca.recorded_at,ca.assignment_id LIMIT ?`, versionID, versionID, document.MaxPersonEdgesPerVersion+1)
+		(ca.scope_kind='document' AND ca.content_version_id=$1) OR
+		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))
+		ORDER BY CASE WHEN ca.scope_kind='document' AND ca.basis='operator_assigned' THEN 0 WHEN ca.scope_kind='document' AND ca.basis='transfer_record' THEN 1 ELSE 4 END,ca.recorded_at,ca.assignment_id LIMIT $3`, versionID, versionID, document.MaxPersonEdgesPerVersion+1)
 	if err != nil {
 		return err
 	}
@@ -429,7 +429,7 @@ func loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID s
 
 func loadDocumentPeopleAssertionsTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
 	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision
-		FROM person_document_assertions WHERE content_version_id=? ORDER BY role,person_id,assertion_id LIMIT ?`, versionID, document.MaxPersonEdgesPerVersion+1)
+		FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id LIMIT $2`, versionID, document.MaxPersonEdgesPerVersion+1)
 	if err != nil {
 		return err
 	}
@@ -466,7 +466,7 @@ func loadReferencedPeopleTx(ctx context.Context, tx *sql.Tx, input *DocumentPeop
 	slices.Sort(ordered)
 	for _, id := range ordered {
 		var p Person
-		err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).
+		err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=$1`, id).
 			Scan(&p.PersonID, &p.DisplayName, &p.DisplayNameFolded, &p.Origin, &p.State, &p.Revision, &p.CreatedAt, &p.UpdatedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -505,29 +505,29 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 		}
 		var storedChecksum string
 		var storedJSON []byte
-		err := tx.QueryRowContext(ctx, `SELECT checksum,canonical_json FROM document_people_generations WHERE generation_id=?`, generationID).Scan(&storedChecksum, &storedJSON)
+		err := tx.QueryRowContext(ctx, `SELECT checksum,canonical_json FROM document_people_generations WHERE generation_id=$1`, generationID).Scan(&storedChecksum, &storedJSON)
 		switch {
 		case err == nil && (storedChecksum != checksum || !bytes.Equal(storedJSON, canonicalJSON)):
 			return ErrDocumentPeopleCorrupt
 		case err != nil && !errors.Is(err, sql.ErrNoRows):
 			return err
 		case errors.Is(err, sql.ErrNoRows):
-			if _, err := tx.ExecContext(ctx, `INSERT INTO document_people_generations(generation_id,content_version_id,inputs_sha256,resolver_fingerprint,canonical_json,checksum,created_at) VALUES(?,?,?,?,?,?,?)`,
+			if _, err := tx.ExecContext(ctx, `INSERT INTO document_people_generations(generation_id,content_version_id,inputs_sha256,resolver_fingerprint,canonical_json,checksum,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
 				generationID, p.People.ContentVersionID, p.InputsSHA256, p.ResolverFingerprint, canonicalJSON, checksum, nowRFC3339()); err != nil {
 				return err
 			}
 		}
-		changed, err := documentPeopleHeadChangedTx(ctx, tx, p, generationID, state)
+		changed, outputChanged, err := documentPeopleHeadChangedTx(ctx, tx, p, generationID, checksum, state)
 		if err != nil {
 			return err
 		}
 		if changed {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM document_people WHERE content_version_id=?`, p.People.ContentVersionID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM document_people WHERE content_version_id=$1`, p.People.ContentVersionID); err != nil {
 				return err
 			}
 			if state == documentPeopleStatePublished {
 				for _, edge := range p.People.Edges {
-					if _, err := tx.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,first_axis_key,last_axis_key,sensitive) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+					if _, err := tx.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,first_axis_key,last_axis_key,sensitive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 						p.People.ContentVersionID, p.NodeID, edge.PersonID, generationID, edge.Role, edge.ActorKey,
 						edge.EvidenceKind, edge.EvidenceID, edge.Confidence, edge.Basis, edge.RawLabel, edge.ClaimCount,
 						nullablePeopleText(edge.FirstAxisKey), nullablePeopleText(edge.LastAxisKey), boolInt(edge.Sensitive)); err != nil {
@@ -536,14 +536,19 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 				}
 			}
 			publishedAt := nowRFC3339()
-			if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET publication_epoch=publication_epoch+1,resolver_fingerprint=?,updated_at=? WHERE singleton=1`, p.ResolverFingerprint, publishedAt); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET publication_epoch=publication_epoch+1,resolver_fingerprint=$1,updated_at=$2 WHERE singleton=1`, p.ResolverFingerprint, publishedAt); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO document_people_heads(content_version_id,event_generation_id,inputs_sha256,generation_id,unresolved_actors,suppressed_actors,candidate_overflow,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at)
-				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'',?) ON CONFLICT(content_version_id) DO UPDATE SET event_generation_id=excluded.event_generation_id,inputs_sha256=excluded.inputs_sha256,generation_id=excluded.generation_id,unresolved_actors=excluded.unresolved_actors,suppressed_actors=excluded.suppressed_actors,candidate_overflow=excluded.candidate_overflow,resolver_fingerprint=excluded.resolver_fingerprint,binding_epoch=excluded.binding_epoch,node_revision=excluded.node_revision,edge_count=excluded.edge_count,state=excluded.state,failure_reason='',published_at=excluded.published_at`,
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'',$13) ON CONFLICT(content_version_id) DO UPDATE SET event_generation_id=excluded.event_generation_id,inputs_sha256=excluded.inputs_sha256,generation_id=excluded.generation_id,unresolved_actors=excluded.unresolved_actors,suppressed_actors=excluded.suppressed_actors,candidate_overflow=excluded.candidate_overflow,resolver_fingerprint=excluded.resolver_fingerprint,binding_epoch=excluded.binding_epoch,node_revision=excluded.node_revision,edge_count=excluded.edge_count,state=excluded.state,failure_reason='',published_at=excluded.published_at`,
 				p.People.ContentVersionID, p.People.EventGenerationID, p.InputsSHA256, generationID,
 				p.Resolution.UnresolvedActors, p.Resolution.SuppressedActors, p.Resolution.CandidateOverflow,
 				p.ResolverFingerprint, p.BindingEpoch, p.NodeRevision, len(p.People.Edges), state, publishedAt); err != nil {
+				return err
+			}
+		}
+		if outputChanged {
+			if err := recordProcessedTx(ctx, tx, p.People.ContentVersionID, ""); err != nil {
 				return err
 			}
 		}
@@ -560,7 +565,7 @@ func checkPeoplePublicationFence(ctx context.Context, tx *sql.Tx, p DocumentPeop
 	if err := tx.QueryRowContext(ctx, `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&epoch); err != nil {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(h.generation_id,''),n.revision FROM content_versions cv JOIN nodes n ON n.id=cv.node_id LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id WHERE cv.version_id=? AND cv.node_id=?`, p.People.ContentVersionID, p.NodeID).Scan(&eventGeneration, &nodeRevision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(h.generation_id,''),n.revision FROM content_versions cv JOIN nodes n ON n.id=cv.node_id LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id WHERE cv.version_id=$1 AND cv.node_id=$2`, p.People.ContentVersionID, p.NodeID).Scan(&eventGeneration, &nodeRevision); err != nil {
 		return err
 	}
 	// Membership, trash, and current-version changes advance the node revision.
@@ -571,17 +576,19 @@ func checkPeoplePublicationFence(ctx context.Context, tx *sql.Tx, p DocumentPeop
 	return nil
 }
 
-func documentPeopleHeadChangedTx(ctx context.Context, tx *sql.Tx, p DocumentPeoplePublication, generationID, state string) (bool, error) {
+func documentPeopleHeadChangedTx(ctx context.Context, tx *sql.Tx, p DocumentPeoplePublication, generationID, checksum, state string) (changed, outputChanged bool, err error) {
 	var h DocumentPeopleHead
-	err := tx.QueryRowContext(ctx, `SELECT content_version_id,event_generation_id,generation_id,inputs_sha256,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at FROM document_people_heads WHERE content_version_id=?`, p.People.ContentVersionID).
-		Scan(&h.ContentVersionID, &h.EventGenerationID, &h.GenerationID, &h.InputsSHA256, &h.ResolverFingerprint, &h.BindingEpoch, &h.NodeRevision, &h.EdgeCount, &h.State, &h.FailureReason, &h.PublishedAt)
+	var storedChecksum string
+	err = tx.QueryRowContext(ctx, `SELECT h.content_version_id,h.event_generation_id,h.generation_id,h.inputs_sha256,h.resolver_fingerprint,h.binding_epoch,h.node_revision,h.edge_count,h.state,h.failure_reason,h.published_at,COALESCE(g.checksum,'')
+		FROM document_people_heads h LEFT JOIN document_people_generations g ON g.generation_id=h.generation_id WHERE h.content_version_id=$1`, p.People.ContentVersionID).
+		Scan(&h.ContentVersionID, &h.EventGenerationID, &h.GenerationID, &h.InputsSHA256, &h.ResolverFingerprint, &h.BindingEpoch, &h.NodeRevision, &h.EdgeCount, &h.State, &h.FailureReason, &h.PublishedAt, &storedChecksum)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
+		return true, true, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return h.GenerationID != generationID || h.InputsSHA256 != p.InputsSHA256 || h.ResolverFingerprint != p.ResolverFingerprint || h.BindingEpoch != p.BindingEpoch || h.NodeRevision != p.NodeRevision || h.State != state || h.FailureReason != "" || h.EdgeCount != int64(len(p.People.Edges)), nil
+	return h.GenerationID != generationID || h.InputsSHA256 != p.InputsSHA256 || h.ResolverFingerprint != p.ResolverFingerprint || h.BindingEpoch != p.BindingEpoch || h.NodeRevision != p.NodeRevision || h.State != state || h.FailureReason != "" || h.EdgeCount != int64(len(p.People.Edges)), storedChecksum != checksum || h.State != state, nil
 }
 
 func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, versionIDs []string) error {
@@ -612,7 +619,7 @@ func invalidateDocumentPeopleForVersionsTx(ctx context.Context, tx *sql.Tx, vers
 
 func documentPeopleHeadTx(ctx context.Context, tx *sql.Tx, versionID string) (DocumentPeopleHead, error) {
 	var h DocumentPeopleHead
-	err := tx.QueryRowContext(ctx, `SELECT content_version_id,event_generation_id,generation_id,inputs_sha256,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at FROM document_people_heads WHERE content_version_id=?`, versionID).
+	err := tx.QueryRowContext(ctx, `SELECT content_version_id,event_generation_id,generation_id,inputs_sha256,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at FROM document_people_heads WHERE content_version_id=$1`, versionID).
 		Scan(&h.ContentVersionID, &h.EventGenerationID, &h.GenerationID, &h.InputsSHA256, &h.ResolverFingerprint, &h.BindingEpoch, &h.NodeRevision, &h.EdgeCount, &h.State, &h.FailureReason, &h.PublishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return h, ErrNotFound
@@ -638,7 +645,7 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 		var state, eventGeneration, inputsSHA256, resolverFingerprint, failureReason string
 		var bindingEpoch int64
 		err = tx.QueryRowContext(ctx, `SELECT state,event_generation_id,inputs_sha256,resolver_fingerprint,binding_epoch,failure_reason
-			FROM document_people_heads WHERE content_version_id=?`, input.ContentVersionID).
+			FROM document_people_heads WHERE content_version_id=$1`, input.ContentVersionID).
 			Scan(&state, &eventGeneration, &inputsSHA256, &resolverFingerprint, &bindingEpoch, &failureReason)
 		if err == nil && (state == documentPeopleStatePublished || state == documentPeopleStateUnavailable) &&
 			eventGeneration == input.EventGenerationID && inputsSHA256 == digest &&
@@ -657,15 +664,15 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 			bindingEpoch == input.BindingEpoch && failureReason == reason {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM document_people WHERE content_version_id=?`, input.ContentVersionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM document_people WHERE content_version_id=$1`, input.ContentVersionID); err != nil {
 			return err
 		}
 		publishedAt := nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET publication_epoch=publication_epoch+1,updated_at=? WHERE singleton=1`, publishedAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE document_people_state SET publication_epoch=publication_epoch+1,updated_at=$1 WHERE singleton=1`, publishedAt); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO document_people_heads(content_version_id,event_generation_id,inputs_sha256,generation_id,unresolved_actors,suppressed_actors,candidate_overflow,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at)
-			VALUES(?,?,?,'',0,0,0,?,?,?,0,?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET event_generation_id=excluded.event_generation_id,inputs_sha256=excluded.inputs_sha256,generation_id='',unresolved_actors=0,suppressed_actors=0,candidate_overflow=0,resolver_fingerprint=excluded.resolver_fingerprint,binding_epoch=excluded.binding_epoch,node_revision=excluded.node_revision,edge_count=0,state=excluded.state,failure_reason=excluded.failure_reason,published_at=excluded.published_at`,
+			VALUES($1,$2,$3,'',0,0,0,$4,$5,$6,0,$7,$8,$9) ON CONFLICT(content_version_id) DO UPDATE SET event_generation_id=excluded.event_generation_id,inputs_sha256=excluded.inputs_sha256,generation_id='',unresolved_actors=0,suppressed_actors=0,candidate_overflow=0,resolver_fingerprint=excluded.resolver_fingerprint,binding_epoch=excluded.binding_epoch,node_revision=excluded.node_revision,edge_count=0,state=excluded.state,failure_reason=excluded.failure_reason,published_at=excluded.published_at`,
 			input.ContentVersionID, input.EventGenerationID, digest, document.PersonResolverFingerprint(), input.BindingEpoch, input.NodeRevision, headState, reason, publishedAt)
 		if err != nil {
 			return err
@@ -677,7 +684,7 @@ func (s *Store) MarkDocumentPeopleFailed(ctx context.Context, input DocumentPeop
 // DocumentPeopleForVersion returns current attribution and coverage diagnostics.
 // Stale publications remain stored, but cannot be read as current attribution.
 func (s *Store) DocumentPeopleForVersion(ctx context.Context, versionID string) ([]document.DocumentPersonEdgeV1, DocumentPeopleHead, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, DocumentPeopleHead{}, err
 	}
@@ -691,7 +698,7 @@ func (s *Store) DocumentPeopleForVersion(ctx context.Context, versionID string) 
 		SELECT 1 FROM content_versions cv JOIN nodes n ON n.id=cv.node_id
 		JOIN document_event_heads eh ON eh.content_version_id=cv.version_id
 		CROSS JOIN document_people_state ps
-		WHERE cv.version_id=? AND eh.generation_id=? AND ps.binding_epoch=? AND n.revision=?)`,
+		WHERE cv.version_id=$1 AND eh.generation_id=$2 AND ps.binding_epoch=$3 AND n.revision=$4)`,
 		versionID, head.EventGenerationID, head.BindingEpoch, head.NodeRevision).Scan(&current)
 	if err != nil {
 		return nil, head, err
@@ -704,7 +711,7 @@ func (s *Store) DocumentPeopleForVersion(ctx context.Context, versionID string) 
 	}
 	var raw []byte
 	var checksum string
-	if err := tx.QueryRowContext(ctx, `SELECT canonical_json,checksum FROM document_people_generations WHERE generation_id=?`, head.GenerationID).Scan(&raw, &checksum); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT canonical_json,checksum FROM document_people_generations WHERE generation_id=$1`, head.GenerationID).Scan(&raw, &checksum); err != nil {
 		return nil, head, ErrDocumentPeopleCorrupt
 	}
 	record, actual, err := document.DecodeDocumentPeopleV1(raw)
@@ -724,8 +731,8 @@ func (s *Store) MissingDocumentPeopleTargetsAfter(ctx context.Context, fingerpri
 	rows, err := s.db.QueryContext(ctx, `SELECT cv.version_id,cv.node_id,CASE WHEN ph.content_version_id IS NULL THEN 'missing' ELSE 'stale' END
 		FROM content_versions cv JOIN nodes n ON n.id=cv.node_id JOIN document_event_heads eh ON eh.content_version_id=cv.version_id
 		LEFT JOIN document_people_heads ph ON ph.content_version_id=cv.version_id
-		CROSS JOIN document_people_state ps WHERE cv.version_id>? AND (ph.content_version_id IS NULL OR ph.state='failed' OR ph.event_generation_id<>eh.generation_id OR ph.binding_epoch<>ps.binding_epoch OR ph.node_revision<>n.revision OR ph.resolver_fingerprint<>?)
-		ORDER BY cv.version_id LIMIT ?`, after, fingerprint, limit)
+		CROSS JOIN document_people_state ps WHERE cv.version_id>$1 AND (ph.content_version_id IS NULL OR ph.state='failed' OR ph.event_generation_id<>eh.generation_id OR ph.binding_epoch<>ps.binding_epoch OR ph.node_revision<>n.revision OR ph.resolver_fingerprint<>$2)
+		ORDER BY cv.version_id LIMIT $3`, after, fingerprint, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -109,14 +109,16 @@ func (s *Store) TagByID(ctx context.Context, id string) (Tag, error) {
 	return tagByIDQuery(ctx, s.db, id)
 }
 
+const tagByIDSQL = `
+		SELECT t.id, t.name, t.revision,
+		       t.assignment_count
+		FROM tags t WHERE t.id = $1`
+
 func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, error) {
 	if err := validateUUIDv4(id); err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
-	tag, err := scanTag(queryer.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision,
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
-		FROM tags t WHERE t.id = $1`, id))
+	tag, err := scanTag(queryer.QueryRowContext(ctx, tagByIDSQL, id))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
@@ -125,13 +127,16 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 
 // TagByName returns the tag whose normalized name exactly matches name.
 func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
+	return tagByNameQuery(ctx, s.db, name)
+}
+
+func tagByNameQuery(ctx context.Context, queryer rowQuerier, name string) (Tag, error) {
 	name, err := NormalizeTagName(name)
 	if err != nil {
 		return Tag{}, err
 	}
-	tag, err := scanTag(s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision,
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
+	tag, err := scanTag(queryer.QueryRowContext(ctx, `
+		SELECT t.id, t.name, t.revision, t.assignment_count
 		FROM tags t WHERE t.name = $1`, name))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
@@ -139,19 +144,45 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 	return tag, nil
 }
 
+// TagResolutionError identifies a missing or invalid configured watch tag.
+type TagResolutionError struct {
+	Name string
+	Err  error
+}
+
+func (e *TagResolutionError) Error() string {
+	if errors.Is(e.Err, ErrInvalidTag) {
+		return fmt.Sprintf("tag %q is unavailable: %v", e.Name, e.Err)
+	}
+	return fmt.Sprintf("tag %q is unavailable", e.Name)
+}
+func (e *TagResolutionError) Unwrap() error { return e.Err }
+
+// ResolveWatchTag resolves a configured watch tag name.
+func (s *Store) ResolveWatchTag(ctx context.Context, name string) (Tag, error) {
+	return resolveWatchTagQuery(ctx, s.db, name)
+}
+
+func resolveWatchTagQuery(ctx context.Context, queryer rowQuerier, name string) (Tag, error) {
+	tag, err := tagByNameQuery(ctx, queryer, name)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidTag) {
+		return Tag{}, &TagResolutionError{Name: name, Err: err}
+	}
+	return tag, err
+}
+
 // Tags lists one name-sorted page and the total number of definitions.
 func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error) {
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	// Count assignments only for the selected page, using the tag index.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH page AS (
-		  SELECT id, name, revision FROM tags ORDER BY name, id LIMIT $1 OFFSET $2
+		  SELECT id, name, revision, assignment_count FROM tags ORDER BY name, id LIMIT $1 OFFSET $2
 		), totals AS (SELECT COUNT(*) AS total FROM tags)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = page.id)
+		       COALESCE(page.assignment_count, 0)
 		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags: %w", err)
@@ -188,7 +219,7 @@ func (s *Store) RenameTag(ctx context.Context, id string, ifRev int64, name stri
 	}
 	var renamed Tag
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(ctx, tx, id)
+		current, err := tagByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -250,7 +281,7 @@ func (s *Store) renameTagDefinitionTx(ctx context.Context, tx *sql.Tx, current T
 func (s *Store) DeleteTag(ctx context.Context, id string, ifRev int64) (Tag, error) {
 	var deleted Tag
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		current, err := tagByIDTx(ctx, tx, id)
+		current, err := tagByIDQuery(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -405,7 +436,7 @@ func (s *Store) changeTagAssignmentTx(
 	assign bool,
 	recordedAt string,
 ) (TagAssignmentChange, error) {
-	tag, err := tagByIDTx(ctx, tx, tagID)
+	tag, err := tagByIDQuery(ctx, tx, tagID)
 	if err != nil {
 		return TagAssignmentChange{}, err
 	}
@@ -443,7 +474,8 @@ func (s *Store) changeTagAssignmentTx(
 			result.Tag.AssignmentCount--
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE tags SET revision = revision + 1 WHERE id = $1`, tagID,
+			`UPDATE tags SET revision = revision + 1, assignment_count = assignment_count + $1 WHERE id = $2`,
+			result.Tag.AssignmentCount-tag.AssignmentCount, tagID,
 		); err != nil {
 			return TagAssignmentChange{}, fmt.Errorf(
 				"advancing tag %s after assignment change: %w", tagID, err,
@@ -457,6 +489,9 @@ func (s *Store) changeTagAssignmentTx(
 			return TagAssignmentChange{}, fmt.Errorf(
 				"advancing node %d after tag assignment change: %w", node.ID, err,
 			)
+		}
+		if err := recordVaultChangesTx(ctx, tx, "tagged", node.ID); err != nil {
+			return TagAssignmentChange{}, err
 		}
 		if err := s.refreshTagPhotoWorkTx(ctx, tx, `node_id=$1`, node.ID); err != nil {
 			return TagAssignmentChange{}, err
@@ -480,17 +515,16 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	// Count assignments after pagination, not for tags discarded by the sort.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH target AS (SELECT id FROM nodes WHERE id = $1),
 		page AS (
-		  SELECT t.id, t.name, t.revision
+		  SELECT t.id, t.name, t.revision, t.assignment_count
 		  FROM tags t JOIN node_tags nt ON nt.tag_id = t.id
 		  WHERE nt.node_id = $2 ORDER BY t.name, t.id LIMIT $3 OFFSET $4
 		), totals AS (SELECT COUNT(*) AS total FROM node_tags WHERE node_id = $5)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = page.id)
+		       COALESCE(page.assignment_count, 0)
 		FROM target CROSS JOIN totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
 		nodeID, nodeID, limit, offset, nodeID)
 	if err != nil {
@@ -626,20 +660,6 @@ func (s *Store) taggedNodes(
 	return nodes, assignmentTotal, 0, nil
 }
 
-func tagByIDTx(ctx context.Context, tx *sql.Tx, id string) (Tag, error) {
-	if err := validateUUIDv4(id); err != nil {
-		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
-	}
-	tag, err := scanTag(tx.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision,
-		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
-		FROM tags t WHERE t.id = $1`, id))
-	if err != nil {
-		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
-	}
-	return tag, nil
-}
-
 func checkTagRevision(tag Tag, expected int64) error {
 	if expected != UnconditionalRev && tag.Revision != expected {
 		return fmt.Errorf("tag %s revision is %d, expected %d: %w",
@@ -649,10 +669,17 @@ func checkTagRevision(tag Tag, expected int64) error {
 }
 
 func (s *Store) touchTaggedNodesTx(ctx context.Context, tx *sql.Tx, tagID, timestamp string) error {
+	ids, err := tagAssignmentNodeIDsTx(ctx, tx, tagID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE nodes SET revision = revision + 1, modified_at = $1
 		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id = $2)`, timestamp, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
+	}
+	if err := recordVaultChangesTx(ctx, tx, "tagged", ids...); err != nil {
+		return err
 	}
 	return s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (SELECT node_id FROM node_tags WHERE tag_id=$1)`, tagID)
 }

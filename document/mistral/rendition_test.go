@@ -93,7 +93,6 @@ func TestRenditionClientMapsExactMistralOCRResponse(t *testing.T) {
 	client, err := NewRenditionProvider(Profile{
 		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-		MaxRetryDelay: time.Millisecond,
 	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, httpClient)
 	require.NoError(t, err)
 
@@ -145,7 +144,6 @@ func TestRenditionClientDOCXRoute(t *testing.T) {
 	client, err := NewRenditionProvider(Profile{
 		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-		MaxRetryDelay: time.Millisecond,
 	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(request.Body)
 		require.NoError(t, err)
@@ -189,7 +187,6 @@ func TestRenditionClientRenderLaneEvidence(t *testing.T) {
 			client, err := NewRenditionProvider(Profile{
 				Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 				SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-				MaxRetryDelay: time.Millisecond,
 			}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				body, readErr := io.ReadAll(request.Body)
 				require.NoError(t, readErr)
@@ -318,7 +315,6 @@ func TestRenditionClientCountsPPTXSlidesForAuthorizedLocalExact(t *testing.T) {
 	client, err := NewRenditionProvider(Profile{
 		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-		MaxRetryDelay: time.Millisecond,
 	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		body, err := io.ReadAll(request.Body)
@@ -430,24 +426,30 @@ func TestRenditionClientClassifiesHTTPAndModelFailures(t *testing.T) {
 		{name: "malformed", status: http.StatusOK, body: `{`, want: document.RenditionErrorMalformedEvidence},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			policy := testPolicy(t, 1<<20, 10)
-			manifest := syntheticManifest(t, policy, true)
-			descriptor := renditionDescriptor(t, policy, manifest, "pdf")
-			fixture := renditionFixture(t, descriptor, testPDF("classified"))
-			body := testCase.body
-			if body == "" {
-				body = `{"private":"provider detail"}`
-			}
-			client := newRenditionTestClient(t, policy, manifest, descriptor,
-				renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-					return &http.Response{
-						StatusCode: testCase.status, Header: http.Header{"Content-Type": []string{"application/json"}},
-						Body: io.NopCloser(strings.NewReader(body)), Request: request,
-					}, nil
-				}))
-			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
-			assertRenditionCode(t, err, testCase.want)
-			assert.NotContains(t, err.Error(), "provider detail")
+			// Capacity and rate-limit responses wait out the fallback retry
+			// backoff on fake time, set to the real time the manifest checks.
+			now := time.Now()
+			synctest.Test(t, func(t *testing.T) {
+				time.Sleep(time.Until(now))
+				policy := testPolicy(t, 1<<20, 10)
+				manifest := syntheticManifest(t, policy, true)
+				descriptor := renditionDescriptor(t, policy, manifest, "pdf")
+				fixture := renditionFixture(t, descriptor, testPDF("classified"))
+				body := testCase.body
+				if body == "" {
+					body = `{"private":"provider detail"}`
+				}
+				client := newRenditionTestClient(t, policy, manifest, descriptor,
+					renditionSecrets{"mistral-ocr": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+						return &http.Response{
+							StatusCode: testCase.status, Header: http.Header{"Content-Type": []string{"application/json"}},
+							Body: io.NopCloser(strings.NewReader(body)), Request: request,
+						}, nil
+					}))
+				_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+				assertRenditionCode(t, err, testCase.want)
+				assert.NotContains(t, err.Error(), "provider detail")
+			})
 		})
 	}
 }
@@ -541,7 +543,6 @@ func TestRenditionClientExpiryCancelsInFlightUpload(t *testing.T) {
 		client, err := NewRenditionProvider(Profile{
 			Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 			SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-			MaxRetryDelay: time.Millisecond,
 		}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			close(requestStarted)
 			buffer := make([]byte, 1)
@@ -826,7 +827,6 @@ func newRenditionTestClient(
 	client, err := NewRenditionProvider(Profile{
 		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-		MaxRetryDelay: 50 * time.Millisecond,
 	}, secrets, &http.Client{Transport: drainingTransport})
 	require.NoError(t, err)
 	return client
@@ -851,7 +851,6 @@ func renditionServerClient(
 	client, err := NewRenditionProvider(Profile{
 		Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
 		SecretBinding: "mistral-ocr", Timeout: time.Second, MaxRetries: 1,
-		MaxRetryDelay: 50 * time.Millisecond,
 	}, renditionSecrets{"mistral-ocr": "synthetic-key"}, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		clone := request.Clone(request.Context())
 		clone.URL.Scheme, clone.URL.Host = target.Scheme, target.Host
@@ -1062,7 +1061,7 @@ func testMultipagePDF(pages int) []byte {
 }
 
 func TestMistralUnlocksPDF(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
 	policy := testPolicy(t, 1<<20, 10)
 	manifest := syntheticManifest(t, policy, true)

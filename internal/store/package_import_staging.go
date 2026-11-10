@@ -76,15 +76,21 @@ func (s *Store) discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx
 	if err := s.deleteRenditionAuthorityForVersionsTx(ctx, tx, versionIDs); err != nil {
 		return err
 	}
-	if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, slices.Compact(slices.Clone(nodeIDs))); err != nil {
+	nodeIDs = slices.Compact(nodeIDs)
+	if err := recordVaultChangesTx(ctx, tx, "removed", nodeIDs...); err != nil {
+		return err
+	}
+	if err := s.adjustPhotosForPurgedNodesTx(ctx, tx, nodeIDs); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(nodeIDs)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE tags SET revision=revision+1 WHERE id IN (
-		SELECT tag_id FROM node_tags WHERE node_id IN (SELECT value FROM json_each(?)))`, string(encoded)); err != nil {
+	if _, err := tx.ExecContext(ctx, `WITH doomed(id) AS (SELECT value FROM json_each(?))
+		UPDATE tags SET revision=revision+1, assignment_count=assignment_count-gone.n
+		FROM (SELECT nt.tag_id, COUNT(*) AS n FROM doomed d JOIN node_tags nt ON nt.node_id=d.id
+		GROUP BY nt.tag_id) gone WHERE tags.id=gone.tag_id`, string(encoded)); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM nodes WHERE id IN (SELECT value FROM json_each(?))`, string(encoded))

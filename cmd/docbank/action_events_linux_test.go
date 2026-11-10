@@ -80,12 +80,14 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 			assert.NoError(t, json.MarshalWrite(w, api.IngestReport{Added: added, Failed: failedItems}))
 		case r.URL.Path == "/api/v1/processing/profiles":
 			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"semantic"}}}))
-		case r.URL.Path == "/api/v1/info":
-			assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: "22222222-2222-4222-8222-222222222222"}))
+		case r.URL.Path == "/api/v1/vault":
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: "22222222-2222-4222-8222-222222222222"}))
 		case r.URL.Path == "/api/v1/search/similar":
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSimilarReport{State: "ready", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: version}, BindingID: "semantic", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}))
 		case r.URL.Path == "/api/v1/search":
 			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: 20, Hits: hits}))
+		case r.URL.Path == "/api/v1/search/text-coverage":
+			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{Families: []string{}}))
 		case r.URL.Path == "/api/v1/nodes/42":
 			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: kind, CurrentVersionID: version, BlobHash: hash, Size: int64(len(content))}))
 		case strings.HasSuffix(r.URL.Path, "/content"):
@@ -122,6 +124,13 @@ func TestCLICompletedSearchAndContentActions(t *testing.T) {
 		rootCmd.SetArgs(args)
 		return rootCmd.ExecuteContext(context.Background())
 	}
+	t.Run("URL fetch failure", func(t *testing.T) {
+		server := httptest.NewServer(http.NotFoundHandler())
+		defer server.Close()
+		require.Error(t, execute(false, false, []string{"add", server.URL, "--allow-http"}))
+		require.Len(t, events, 1)
+		assert.JSONEq(t, fmt.Sprintf(shown, "add"), <-events)
+	})
 	for _, tc := range []struct {
 		name  string
 		args  []string

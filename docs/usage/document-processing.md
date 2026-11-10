@@ -19,9 +19,27 @@ The daemon exposes only profiles it can execute:
 docbank processing profiles
 ```
 
-The default configuration has no processing profiles. Configure a processing
-profile, the retrieval profile it references, and any rendition or embedding
-profiles it references, then use a profile name listed by this command.
+## Set up local text search
+
+```bash
+docbank processing local --server local
+```
+
+The command previews the profile, model, server, and provider disclosures, then enables indexing without a prompt. Running the command is the approval. Setup keeps an approved configured recipe or picks the first indexed compatible recipe in name order, then moves it to the shared server with its extractor, chunks, comparison metric, normalization setting, and existing vectors. Only new or changed content needs embedding.
+
+If another model, text format, or formatted input limit above 2,046 rune tokens requires a separate built-in index, the preview says so before downloading or starting work. The original index stays intact. Vaults without compatible indexed recipes use the built-in `local-text` profile with Nomic and the plaintext extractor. When no configured recipe moves, an existing saved built-in index continues adding missing content. A moved recipe replaces that built-in selection for new imports. Mixed recipes keep image and other bindings on their configured providers. Setup moves one profile; other configured profiles still need their providers. Restart restores the saved profile, including existing watches.
+
+To return to your configured providers, delete `local-text.json` beside the vault's `config.toml` and run `docbank daemon restart`. Documents added or changed while local indexing was selected need processing under the configured profile.
+
+Moving a recipe processes the previewed document count before setup returns. Restart resumes background indexing for the saved profile. Revoking processing consent stops provider calls.
+
+Both `--server auto` and `--server local` use the shared per-user `kennembed` server. Discovery uses its per-user runtime record. When the server or model is missing, the command downloads them from Kit's shared installation and prints the download size first. An already installed server downloads nothing. The daemon's changing loopback port keeps the same consent grant.
+
+Cancellation before apply and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server before apply. API apply installs a missing server after consent and plan verification, then starts it. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. The CLI restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
+
+In the web app, open **System → Search by meaning**, review the download size, and choose **Turn on** to approve setup. Setup starts the server and saves the indexing choice for this vault and new imports. Run `docbank daemon restart`, then reopen the web app to start indexing and search by meaning. The tab keeps the restart instruction until the daemon restarts.
+
+For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:
 
@@ -214,30 +232,59 @@ A killed daemon may leave private files in its spool; see the
 [staging bounds](../architecture/page-images.md#native-pdf-mask-execution).
 Agents can use these commands or the authenticated `POST /api/v1/redaction/resolve`
 and `/api/v1/redaction/render` routes. Browser sessions use resolve and the
-temporary-preview routes described below; direct render and reservations remain
-API-key-only. No MCP tool is exposed.
+temporary-preview and numbered-publication routes described below. The direct ZIP
+render remains API-key-only. No MCP redaction tool is exposed.
 
 ### Review a PDF in the browser
 
-Select a live PDF in **Documents**, then choose **Redact PDF**. The configured
+Open a live PDF in **Documents**, then choose **Redact PDF**. Reading and
+marking share the same page navigation, search and zoom; the inspector offers
+the same entry point. The configured
 Linux amd64 page runtime is required. The editor supports one original PDF up
 to 64 MiB and 16 pages. Empty files, saved-result sources and related previews
 cannot start a review. **Fit page** initially shows the whole page; choose
 **Fit width** or a percentage to inspect it more closely.
 
-1. Render any missing original page, then choose **Draw rectangle** or **Mask
-   whole page**. To draw with the keyboard, focus the mask canvas, move with
+1. Wait for the original page to render. With **Draw rectangle** off, select a
+   passage on one page and choose **Mask selected text**. One Remove action
+   removes the whole selection. You can also draw rectangles or choose **Mask
+   whole page**. To draw with the keyboard, focus the PDF, move with
    arrow keys and press Enter at each corner. Shift moves 0.1 inch; Escape
-   cancels the unfinished rectangle. Page and zoom changes cancel it too.
+   cancels the unfinished rectangle. The reader announces the page and cursor
+   position in inches as you move it with the keyboard. Arrows follow the screen
+   directions after viewing rotation, and the crosshair stays the same size on
+   screen at every zoom. Page and zoom changes cancel the unfinished rectangle too.
    Drawing stays on after each rectangle.
-2. Cover every coverage gap. An unordered gap needs a whole-page mask. If a
-   rectangle cuts through text, review the proposed expansion and explicitly
+2. Cover every coverage gap. An unordered gap needs a whole-page mask. A safety
+   margin can reach nearby text even when you selected complete words. Review
+   any proposed expansion and explicitly
    choose **Use expanded mask**, or keep editing.
 3. Choose **Preview redaction**. Inspect **Redacted** and **Text** on each page.
    The displayed page images are the exact images verified against this PDF.
-4. Choose **Confirm and download ZIP**, then **Download ZIP**. Extract
+4. Choose **Download unnumbered ZIP**, then **Download ZIP**. Extract
    `redacted.pdf` to open it. The ZIP also contains the sanitized text and receipt.
    Keep the tab open until the transfer finishes.
+
+**Original** is an unchecked browser rendering of verified source bytes. It may
+differ from the server renderer. Server coverage gaps and the verified
+**Redacted** view remain authoritative. Drawing is disabled while the displayed
+page is loading or has failed; **Retry page** retries a failed image. Cropped
+pages may use fractional point coordinates, but unsupported precision or a
+browser/server geometry disagreement still disables drawing.
+
+Text selection must match the server's prepared text uniquely. Repeated full
+contexts, differing extraction or an oversized passage require rectangle or
+whole-page marking instead. Ligatures and some non-Latin text may already have
+server coverage gaps. A selection can include several lines; matching selected
+line breaks are removed with the passage. Different extraction order can produce
+several text masks, shown as one removable group. Text masks use the existing
+256-mask limit, without a rectangle box for each glyph.
+An expansion covering separate text ranges becomes a rectangle mask on approval.
+It uses rectangle capacity and keeps whitespace between the selected glyphs.
+
+**Back to reading** discards masks and preview after confirmation, then restores
+the reading position. The original stays loaded. Original print and export are
+disabled during review. Download the reviewed ZIP, or keep a numbered PDF in Productions.
 
 The original is unchanged. A changed source version before preview requires
 reopening the intended PDF; tags, names and moves preserve masks. Once ready,
@@ -265,6 +312,38 @@ contains unredacted evidence. Keep all three separate from the delivery ZIP.
 Use them with [`redaction verify`](#check-and-retain-a-saved-archive).
 
 ### Deliver one reviewed PDF with Bates numbers
+
+In the browser, start from a ready redaction preview and choose **Number and keep
+PDF**. Select a namespace, or create one with a prefix, suffix and digit count.
+The first-number field starts at that namespace's next sequence. You can change
+it or use the **Refresh next number** icon beside the field before confirming.
+Starts below the known next number are refused. The suggested number is advisory:
+other reservations can advance the cursor, and label formats can collide.
+A conflict requires another explicit choice and confirmation. A namespace that cannot
+fit all pages stays unavailable even if you enter an earlier first number.
+
+Check the displayed range, opt in to keeping the unredacted original indefinitely,
+and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
+a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
+points. The server verifies the content and footer before publication.
+**Download numbered PDF** downloads the retained PDF, and **Open Productions**
+opens its recovery view. The published result stays available while you edit
+other masks, until you close the review. Downloads check the retained file
+identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
+until their usual expiry or discard. **Download unnumbered ZIP** saves that
+reviewed preview. Download it before expiry if you need its sanitized-text
+sidecar; this action produces no numbered ZIP.
+
+A failed or canceled request cannot release reserved numbers. **Retry reservation**
+replays the same frozen range when its reply was uncertain. **Retry publication**
+uses the existing allocation, even if the live source was trashed and purged.
+A lost successful reply returns the first retained PDF without another render.
+Preview expiry does not erase an in-progress numbering request or its private
+review files. Closing the tab loses that draft. Save all three private files before
+reserving: finishing an unpublished range after a reload requires them through the
+CLI. Completed PDFs can be recovered by number without those files.
+
+The same workflow is available through the CLI:
 
 Reserve a range only when you intend to keep the original indefinitely. This
 creates a real collection snapshot that retains the unredacted original through
@@ -342,11 +421,14 @@ must match, and pixels outside the box must be white. Render-time verification
 still compares the complete raster exactly. Full verification still does not prove unmasked pixels match the source
 or authenticate the producer.
 
-Agents can reserve and render through the CLI or API-key-only
-`POST /api/v1/redaction/reservations` and `/api/v1/redaction/render` routes.
+Agents can reserve and render through the CLI or API-key authentication.
+Browser sessions and API-key callers can reserve through
+`POST /api/v1/redaction/reservations` and publish a retained PDF through
+`POST /api/v1/redaction/publications`. The ZIP-streaming `/api/v1/redaction/render`
+route remains API-key-only.
 The existing MCP `export_bates_file` tool supports the reduced recovery check
 and reports its scope. It does not accept review files or reserve numbered
-redactions. No browser control is included. Load-file exports accept ordinary
+redactions. Load-file exports accept ordinary
 stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
 
 ### Package completed numbered PDFs for a recipient
@@ -559,7 +641,7 @@ Add a working password to the file, then build again. The daemon reads the file 
 
 ### Design choices
 
-The pinned pdfcpu v0.15.0 password preparation rejects spaces, non-ASCII punctuation such as curly quotes or `£`, and emoji in AES-256 passwords. It also Unicode-normalizes decomposed accents and fullwidth letters. These files report `pdf_password_required` even with the correct password. Older RC4 and AES-128 ciphers support spaces and PDFDocEncoding characters such as `£`, because Docbank also tries each password converted from UTF-8 to PDFDocEncoding. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
+Docbank uses pdfcpu v0.16.4 to open AES-256 PDFs, including passwords containing spaces and punctuation such as curly quotes or `£`. AES-256 password handling applies Unicode normalization to decomposed accents and fullwidth letters. Older RC4 and AES-128 ciphers use PDFDocEncoding, so Docbank also tries each password converted from UTF-8 to that encoding. A rejected password candidate does not prevent trying the remaining entries. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
 
 ## Find similar documents
 
@@ -595,7 +677,10 @@ useful shapes:
   plan reports `local_process` and the `in-process` destination before consent.
   See
   [local EPUB extraction](../document-understanding.md#extract-epub-locally)
-  for limits and counting rules.
+  for limits and counting rules. The `docbank-pdftext-rendition/v1` adapter reads
+  existing PDF text locally and records exact page omissions for pages with no
+  text layer. An image-only PDF completes with those omissions and an empty
+  text body. See [local PDF text extraction](../document-understanding.md#extract-pdf-text-locally).
 - **Hosted provider.** A configured Mistral OCR or embedding runtime, or an embedded caller's
   rendition or embedding provider, may cross a hosted-provider trust boundary.
   The reviewed plan identifies the provider and the input class it receives:

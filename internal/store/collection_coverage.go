@@ -73,21 +73,25 @@ coverage_versions AS MATERIALIZED (
  FROM coverage_members m JOIN nodes n ON n.id=m.node_id
  JOIN content_versions v ON v.version_id=n.current_version_id AND v.node_id=n.id
  WHERE n.kind='file' AND n.trashed_at IS NULL
-), ` + processingVersionCoverageCTE()
+), ` + processingVersionCoverageCTE(metadataJSONDialect{})
+}
+
+func renditionHasSearchableTextSQL(buildID string) string {
+	return `EXISTS(SELECT 1 FROM rendition_lexical_index ix WHERE ix.build_id=` + buildID + ` AND length(trim(ix.text))>0)`
 }
 
 // processingVersionCoverageCTE classifies exact versions supplied by the caller
 // in coverage_versions, under the profile/generation in coverage_selection.
-func processingVersionCoverageCTE() string {
+func processingVersionCoverageCTE(d metadataJSONDialect) string {
 	return `coverage_attempts AS (
  SELECT w.content_version_id, w.waiter_id, w.job_id, w.state waiter_state,
   j.state job_state, w.updated_at waiter_updated_at, j.updated_at job_updated_at,
   ROW_NUMBER() OVER (PARTITION BY w.content_version_id ORDER BY
-   MAX(w.updated_at,j.updated_at) DESC, w.updated_at DESC, j.updated_at DESC,
+   ` + d.maximum() + `(w.updated_at,j.updated_at) DESC, w.updated_at DESC, j.updated_at DESC,
    w.waiter_id DESC, j.job_id DESC) attempt_rank
  FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
  JOIN coverage_versions v ON v.version_id=w.content_version_id
- CROSS JOIN coverage_selection p WHERE w.profile_fingerprint=p.profile AND ` + originalFileWaiterSQL + `
+ CROSS JOIN coverage_selection p WHERE w.profile_fingerprint=p.profile AND ` + d.originalFileWaiter() + `
 ),
 coverage_head_builds AS (
  SELECT DISTINCT b.build_id,b.completeness,b.partial_success,b.truncated,
@@ -99,9 +103,7 @@ coverage_head_builds AS (
  JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid AND b.source_sha256=v.blob_hash
 ),
 coverage_serving AS MATERIALIZED (
- SELECT b.build_id, EXISTS(
-  SELECT 1 FROM rendition_lexical_index ix WHERE ix.build_id=b.build_id AND length(trim(ix.text))>0
- ) nonempty
+ SELECT b.build_id, CASE WHEN ` + renditionHasSearchableTextSQL("b.build_id") + ` THEN 1 ELSE 0 END nonempty
  FROM coverage_head_builds b CROSS JOIN coverage_selection p
  WHERE EXISTS(SELECT 1 FROM rendition_lexical_generation_builds gb
   WHERE gb.generation_id=p.generation AND gb.build_id=b.build_id)
@@ -124,7 +126,7 @@ processing_coverage AS (
   COALESCE(attempt.waiter_updated_at,'') waiter_updated_at, COALESCE(attempt.job_updated_at,'') job_updated_at,
   CASE
    WHEN serving.nonempty>0 THEN
-    CASE WHEN b.truncated OR b.partial_success OR b.completeness='partial' THEN 'partial' ELSE 'complete' END
+    CASE WHEN b.truncated<>0 OR b.partial_success<>0 OR b.completeness='partial' THEN 'partial' ELSE 'complete' END
    WHEN serving.nonempty=0 THEN 'none'
    WHEN native.version_id IS NOT NULL THEN 'complete'
    WHEN attempt.waiter_state='rejected' OR attempt.job_state IN ('failed','operator_required') THEN 'failed'

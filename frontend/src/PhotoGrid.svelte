@@ -1,14 +1,13 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import {
-    computeMonthLayout,
-    HEADER_HEIGHT,
+    createPhotoChunks,
+    chunkAt,
     layoutRow,
     monthAt,
     type PhotoGridRow,
     rowTop,
-    seekOffset,
-    type PhotoChunk,
+    createPhotoSeek,
     type PhotoGroup,
   } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -18,6 +17,8 @@
 
   let {
     groups,
+    changedFrom = 0,
+    appendedFrom,
     loadedItems,
     narrow = false,
     timeline,
@@ -46,6 +47,8 @@
     scrollTop = $bindable(0),
   }: {
     groups: PhotoGroup[];
+    changedFrom?: number;
+    appendedFrom?: PhotoGridRow[];
     loadedItems: PhotoGridRow[];
     narrow?: boolean;
     timeline?: CaptureDayFacet;
@@ -80,27 +83,24 @@
   let width = $state(800);
   let initialized = $state(false);
   let viewport = $state(960);
-  const chunks: PhotoChunk[] = $derived.by(() => {
-    let offset = 0;
-    return groups.map((group) => {
-      const layout = computeMonthLayout(
-        group.items,
-        width,
-        targetRowHeight,
-        group.key === "relevance" ? 12 : HEADER_HEIGHT,
-      );
-      const chunk = { group, layout, offset };
-      offset += layout.intrinsicHeight;
-      return chunk;
-    });
-  });
+  const buildChunks = createPhotoChunks();
+  let seekOffset = createPhotoSeek();
+  let seekStart = 0;
+  const layout = $derived(buildChunks(groups, width, targetRowHeight, changedFrom));
+  const chunks = $derived(layout.chunks);
   const totalHeight = $derived(
-    chunks.reduce((sum, chunk) => sum + chunk.layout.intrinsicHeight, 0),
+    chunks.length ? chunks.at(-1)!.offset + chunks.at(-1)!.layout.intrinsicHeight : 0,
   );
+  const firstChunk = $derived(chunkAt(chunks, Math.max(0, scrollTop - viewport)));
+  const windowChunks = $derived.by(() => {
+    const end = chunkAt(chunks, scrollTop + 2 * viewport);
+    return chunks.slice(firstChunk, Math.min(chunks.length, end + 1));
+  });
+  const timelineBlocking = $derived(timelineLoading && !timeline);
   const showTimeline = $derived(
     !!onjump &&
       (!!timelineError ||
-        timelineLoading ||
+        timelineBlocking ||
         !!timeline?.values.length ||
         (timeline?.missing ?? 0) > 0),
   );
@@ -158,17 +158,25 @@
     if (initialized && container && container.scrollTop !== scrollTop)
       container.scrollTop = scrollTop;
   });
+  $effect.pre(() => {
+    // Retain relayouts while paging suspends the seek.
+    seekStart = Math.min(seekStart, layout.changedFrom);
+  });
   $effect(() => {
     if (!initialized || loading) return;
     if (seek) {
-      const offset = seekOffset(chunks, seek, !more, loadedItems);
+      const offset = seekOffset(chunks, seek, !more, loadedItems, appendedFrom, seekStart);
+      seekStart = Infinity;
       // Done once the month can sit at the top of the view, or the list ends.
       const done = !more || (offset !== undefined && offset + viewport <= totalHeight);
       // A loaded month scrolls now, so it still works when paging has failed.
       if (offset !== undefined || done) place(Math.ceil(offset ?? totalHeight));
       if (done) seek = "";
       else untrack(onloadmore);
-    } else if (totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    } else {
+      seekOffset = createPhotoSeek();
+      if (totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    }
   });
 
   export function preservePosition() {
@@ -178,16 +186,30 @@
     const viewportTop = element.getBoundingClientRect().top;
     const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find((item) => {
       const group = item.closest<HTMLElement>("[data-month]");
-      const chunk = chunks.find((chunk) => chunk.group.key === group?.dataset.month);
+      const chunk = windowChunks.find((chunk) => chunk.group.key === group?.dataset.month);
       return item.getBoundingClientRect().bottom > viewportTop + (chunk?.layout.contentOffset ?? 0);
     });
     const id = cell?.dataset.asset;
+    const key = cell?.closest<HTMLElement>("[data-month]")?.dataset.month;
+    const chunkIndex = firstChunk + windowChunks.findIndex((chunk) => chunk.group.key === key);
+    const itemIndex = Number(cell?.closest<HTMLElement>("[data-index]")?.dataset.index ?? -1);
     const pixelOffset = cell ? cell.getBoundingClientRect().top - viewportTop : 0;
     return async () => {
       let newTop = oldTop;
       if (id) {
-        for (const chunk of chunks) {
-          const index = chunk.group.items.findIndex((item) => item.asset_id === id);
+        const own =
+          chunks[chunkIndex]?.group.key === key
+            ? chunks[chunkIndex]
+            : chunks.find((chunk) => chunk.group.key === key);
+        function* candidates() {
+          if (own) yield own;
+          for (const chunk of chunks) if (chunk !== own) yield chunk;
+        }
+        for (const chunk of candidates()) {
+          const index =
+            chunk.group.items[itemIndex]?.asset_id === id
+              ? itemIndex
+              : chunk.group.items.findIndex((item) => item.asset_id === id);
           if (index < 0) continue;
           const row = layoutRow(chunk, index);
           if (row) newTop = rowTop(chunk, row) - pixelOffset;
@@ -205,7 +227,7 @@
 {#snippet dates(compact: boolean)}
   <PhotoTimeline
     facet={timeline}
-    loading={timelineLoading}
+    loading={timelineBlocking}
     error={timelineError}
     chosen={chosenYear}
     {current}
@@ -238,26 +260,28 @@
   {/if}
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
-      {#each chunks as chunk (chunk.group.key)}
-        <PhotoMonthChunk
-          group={chunk.group}
-          layout={chunk.layout}
-          offset={chunk.offset}
-          top={Math.max(0, scrollTop - viewport)}
-          bottom={scrollTop + 2 * viewport}
-          {cache}
-          {selectedIDs}
-          {onselect}
-          {oncheck}
-          {onopen}
-          {expandedStacks}
-          {onexpand}
-          {onhidden}
-          {hidden}
-          {ondragstart}
-          {ondragend}
-        />
-      {/each}
+      <div style:position="relative" style:top={`${windowChunks[0]?.offset ?? 0}px`}>
+        {#each windowChunks as chunk (chunk.group.key)}
+          <PhotoMonthChunk
+            group={chunk.group}
+            layout={chunk.layout}
+            offset={chunk.offset}
+            top={Math.max(0, scrollTop - viewport)}
+            bottom={scrollTop + 2 * viewport}
+            {cache}
+            {selectedIDs}
+            {onselect}
+            {oncheck}
+            {onopen}
+            {expandedStacks}
+            {onexpand}
+            {onhidden}
+            {hidden}
+            {ondragstart}
+            {ondragend}
+          />
+        {/each}
+      </div>
     {/if}
   </div>
 </div>

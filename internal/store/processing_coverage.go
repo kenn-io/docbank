@@ -77,10 +77,6 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	}
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
 	d := metadataJSONDialect{s.postgresSchema != ""}
-	originalWaiter := originalFileWaiterSQL
-	if d.postgres {
-		originalWaiter = `NOT EXISTS(SELECT 1 FROM ` + d.arrayValues("w.input_classes_json") + ` WHERE value='derived_upload')`
-	}
 	versionsJSON, err := json.Marshal(opts.ContentVersionIDs)
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
@@ -90,7 +86,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=$1 AND w.state='waiting'
-			AND `+originalWaiter+` AND j.state IN ('queued','running','retry_wait'))
+			AND `+d.originalFileWaiter()+` AND j.state IN ('queued','running','retry_wait'))
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=$1
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
@@ -260,8 +256,14 @@ func (s *Store) processingEmbeddingCompleteTx(ctx context.Context, tx *sql.Tx, p
 	}
 	var count int
 	d := metadataJSONDialect{s.postgresSchema != ""}
-	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
+	query := `SELECT DISTINCT n.id ` + currentEmbeddingHeadsSQL() + `
  AND eh.profile_fingerprint=$1 AND eh.binding_id=$2 AND eh.input_kind=$3 AND eh.vector_space_id=$4
- AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$5")+`)`, profile, binding, kind, space, string(encoded)).Scan(&count)
+ AND cv.version_id IN (SELECT value FROM ` + d.arrayValues("$5") + `)`
+	if kind == document.EmbeddingInputRenditionChunk {
+		query += ` UNION SELECT n.id FROM ` + nodeFrom + ` WHERE n.kind='file' AND n.trashed_at IS NULL
+ AND cv.version_id IN (SELECT value FROM ` + d.arrayValues("$5") + `)
+ AND ` + emptyRenditionChunkSQL("cv.version_id", "$1")
+	}
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+query+`) settled`, profile, binding, kind, space, string(encoded)).Scan(&count)
 	return count, err
 }

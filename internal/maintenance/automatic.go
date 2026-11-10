@@ -36,6 +36,8 @@ func RunPackSchedule(
 	}
 
 	for {
+		// found records whether this run packed anything or left more to pack.
+		var found bool
 		runCtx, cancelRun := context.WithTimeout(ctx, interval)
 		jobs.ReportBusy(ctx, true)
 		report, err := run(runCtx)
@@ -43,6 +45,7 @@ func RunPackSchedule(
 		deadlineExceeded := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		cancelRun()
 		if err != nil && ctx.Err() == nil && deadlineExceeded && isCancellationOnly(err) {
+			found = true
 			logger.Warn("automatic packing canceled at interval; retrying",
 				"interval", interval,
 				"blobs", report.Stats.BlobsPacked,
@@ -54,7 +57,8 @@ func RunPackSchedule(
 			return fmt.Errorf("automatic packing: %w", err)
 		} else {
 			stats := report.Stats
-			if stats.BlobsPacked > 0 || stats.PacksSealed > 0 || report.More {
+			found = stats.BlobsPacked > 0 || stats.PacksSealed > 0 || report.More
+			if found {
 				logger.Info("automatic packing completed",
 					"blobs", stats.BlobsPacked,
 					"raw_bytes", stats.BytesPacked,
@@ -63,17 +67,8 @@ func RunPackSchedule(
 				)
 			}
 		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return ctx.Err()
-		case <-timer.C:
+		if err := jobs.Idle(ctx, interval, found); err != nil {
+			return err
 		}
 	}
 }

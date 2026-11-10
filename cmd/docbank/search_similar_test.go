@@ -51,8 +51,8 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", CurrentVersionID: processingTestVersionID}))
 		case "/api/v1/processing/profiles":
 			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "private", EmbeddingBindings: []string{"semantic"}}}))
-		case "/api/v1/info":
-			assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: vault}))
+		case "/api/v1/vault":
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: vault}))
 		case "/api/v1/search/similar":
 			calls++
 			var request api.DocumentSimilarRequest

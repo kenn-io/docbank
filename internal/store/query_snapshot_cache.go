@@ -511,7 +511,7 @@ func (s *QuerySnapshotService) validatePhotoSnapshotPage(ctx context.Context, pa
 	for i := range page.Rows {
 		members[i] = page.Rows[i].SnapshotMember
 	}
-	return s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+	return s.store.withReadTx(ctx, func(tx *sql.Tx) error {
 		return validatePhotoSnapshotMembersTx(ctx, tx, members)
 	})
 }
@@ -1052,7 +1052,7 @@ func (s *Store) currentPhotoRowsTx(ctx context.Context, tx metadataQuerier, memb
 // CurrentPhotoPage reads current display values while retaining the accepted order.
 func (s *QuerySnapshotService) CurrentPhotoPage(ctx context.Context, snapshot SnapshotPage, request PhotoBrowseRequest) (PhotoBrowsePage, error) {
 	page := PhotoBrowsePage{Total: snapshot.Total, RelevanceAvailable: true}
-	err := s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.store.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		page.Items, err = s.store.currentPhotoRowsTx(ctx, tx, snapshotMembers(snapshot.Rows), request.Recipes)
 		if err != nil {

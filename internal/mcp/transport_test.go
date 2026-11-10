@@ -32,72 +32,80 @@ const testMCPBearer = "synthetic-mcp-http-token"
 func TestNativeExportHTTPDeadline(t *testing.T) {
 	job, archive := nativeExportArchive(t)
 	serve := exportArchiveHandler(t, job, archive)
-	started, canceled := make(chan struct{}), make(chan struct{})
-	var pause atomic.Bool
-	pause.Store(true)
-	var tickets atomic.Int32
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/download") {
-			tickets.Add(1)
+	synctest.Test(t, func(t *testing.T) {
+		started, canceled := make(chan struct{}), make(chan struct{})
+		var pause atomic.Bool
+		pause.Store(true)
+		var tickets atomic.Int32
+		daemon := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/download") {
+				tickets.Add(1)
+			}
+			if r.URL.Path == "/api/daemon/web-download/file" && pause.CompareAndSwap(true, false) {
+				_, _ = w.Write(archive[:32])
+				_ = http.NewResponseController(w).Flush()
+				close(started)
+				<-r.Context().Done()
+				close(canceled)
+				return
+			}
+			serve(w, r)
+		}))
+		// Daemon connections use the default transport. Route it through the
+		// in-memory network so the request deadline runs on the bubble's clock.
+		defaultTransport := http.DefaultTransport
+		http.DefaultTransport = daemon.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = defaultTransport })
+		cleaned := make(chan struct{}, 2)
+		cleanup := cleanupExportStage
+		t.Cleanup(func() { cleanupExportStage = cleanup })
+		cleanupExportStage = func(stage *filepublish.Stage) error {
+			err := cleanup(stage)
+			cleaned <- struct{}{}
+			return err
 		}
-		if r.URL.Path == "/api/daemon/web-download/file" && pause.CompareAndSwap(true, false) {
-			_, _ = w.Write(archive[:32])
-			_ = http.NewResponseController(w).Flush()
-			close(started)
-			<-r.Context().Done()
-			close(canceled)
-			return
+		server := newServerWithOptionsAndDaemon(testImplementation(),
+			ServerOptions{AllowExportWrites: true}, exportTestLease(t, daemon.URL))
+		handler, err := server.HTTPTransportHandler(HTTPOptions{
+			BearerToken: testMCPBearer, limits: httpLimits{RequestTimeout: time.Minute},
+		})
+		require.NoError(t, err)
+		dir := t.TempDir()
+		destination := filepath.Join(dir, "originals.zip")
+		require.NoError(t, os.WriteFile(destination, []byte("existing destination"), 0o600))
+		args := map[string]any{"job_id": job.ID, "destination_path": destination, "overwrite": true}
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
+			bytes.NewReader(requestFor("tools/call", map[string]any{
+				"name": "download_export", "arguments": args,
+			})))
+		request.Header = protocolHeaders("tools/call", "download_export")
+		request.Header.Set("Authorization", "Bearer "+testMCPBearer)
+		recorder := httptest.NewRecorder()
+		done := make(chan struct{})
+		begun := time.Now()
+		go func() { defer close(done); handler.ServeHTTP(recorder, request) }()
+		select {
+		case <-started:
+		case <-done:
+			t.Fatalf("download never started: %s", recorder.Body.String())
 		}
-		serve(w, r)
-	}))
-	t.Cleanup(daemon.Close)
-	cleaned := make(chan struct{}, 2)
-	cleanup := cleanupExportStage
-	t.Cleanup(func() { cleanupExportStage = cleanup })
-	cleanupExportStage = func(stage *filepublish.Stage) error {
-		err := cleanup(stage)
-		cleaned <- struct{}{}
-		return err
-	}
-	server := newServerWithOptionsAndDaemon(testImplementation(),
-		ServerOptions{AllowExportWrites: true}, exportTestLease(t, daemon.URL))
-	handler, err := server.HTTPTransportHandler(HTTPOptions{
-		BearerToken: testMCPBearer, limits: httpLimits{RequestTimeout: time.Second},
+		<-done
+		require.Equal(t, time.Minute, time.Since(begun), "only the request deadline ends the stalled download")
+		<-canceled
+		<-cleaned
+		content, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		require.Equal(t, "existing destination", string(content))
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		require.Len(t, entries, 1, "the canceled transfer removed its private stage")
+		result := exportCall(t, server, "download_export", args)
+		require.Equal(t, "published", result["state"])
+		require.EqualValues(t, 2, tickets.Load(), "the caller's later attempt obtains a fresh ticket")
+		content, err = os.ReadFile(destination)
+		require.NoError(t, err)
+		require.Equal(t, archive, content)
 	})
-	require.NoError(t, err)
-	dir := t.TempDir()
-	destination := filepath.Join(dir, "originals.zip")
-	require.NoError(t, os.WriteFile(destination, []byte("existing destination"), 0o600))
-	args := map[string]any{"job_id": job.ID, "destination_path": destination, "overwrite": true}
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1/mcp",
-		bytes.NewReader(requestFor("tools/call", map[string]any{
-			"name": "download_export", "arguments": args,
-		})))
-	request.Header = protocolHeaders("tools/call", "download_export")
-	request.Header.Set("Authorization", "Bearer "+testMCPBearer)
-	recorder := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() { defer close(done); handler.ServeHTTP(recorder, request) }()
-	select {
-	case <-started:
-	case <-done:
-		t.Fatalf("download never started: %s", recorder.Body.String())
-	}
-	<-done
-	<-canceled
-	<-cleaned
-	content, err := os.ReadFile(destination)
-	require.NoError(t, err)
-	require.Equal(t, "existing destination", string(content))
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 1, "the canceled transfer removed its private stage")
-	result := exportCall(t, server, "download_export", args)
-	require.Equal(t, "published", result["state"])
-	require.EqualValues(t, 2, tickets.Load(), "the caller's later attempt obtains a fresh ticket")
-	content, err = os.ReadFile(destination)
-	require.NoError(t, err)
-	require.Equal(t, archive, content)
 }
 
 type testWriteCloser struct{ io.Writer }

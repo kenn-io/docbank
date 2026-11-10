@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-31
+last_edited: 2026-11-02
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -9,8 +9,8 @@ description: Every docbank command, with its flags, output formats, and error be
 Use this page to look up command syntax, flags, output, and failure behavior.
 For a first import, follow [Quickstart](quickstart.md).
 
-Run `docbank --help` for commands grouped by outcome, start-here examples,
-selectors, search scope, and exit codes. Follow with `docbank <command> --help`
+Run `docbank --help` for commands grouped by outcome, a numbered agent workflow,
+selectors, output modes, environment settings, and exit codes. Follow with `docbank <command> --help`
 for its workflow and flags. Runnable commands include examples; prerequisite
 examples show where version, job, and snapshot IDs come from.
 
@@ -48,15 +48,32 @@ Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
 See [Configuration](configuration.md). Virtual paths are absolute,
 `/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
 exit code. Parsing errors (unknown commands or flags, wrong argument counts,
-missing required flags) include usage or a help command. Missing paths, trashed
-nodes, missing tags, a locked backup repository, and busy vault maintenance
-include a next-step hint. Hints stay on stderr.
+missing required flags) include usage or a help command. An unknown child of a
+command group, such as `docbank tag bogus`, fails with exit `2`; the bare
+`docbank tag` still shows help and succeeds. Errors include a next-step hint,
+or a command suggestion when Cobra can identify a likely typo. Hints name canonical CLI
+commands and flags, including when an older spelling was invoked. They stay
+on stderr.
+
+Within `document`, `rename` aliases `move`, `delete` aliases `remove`, and
+`show` aliases `cat`. These aliases have the same output and behavior.
+`document show` prints original file bytes; `document delete` moves to trash.
 
 Data commands send HTTP requests to the daemon and start it in the background
 if needed. `docbank push` selects an explicit keyed daemon with `--to` and
 does not start a local daemon. Commands never open the vault directly. `docbank daemon status` and
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
+
+## docbank changes
+
+```text
+docbank changes [--after CURSOR] [--follow] [--json]
+```
+
+Read committed vault changes in cursor order. The default output has four tab-separated columns: cursor, kind, node ID, and revision. `--json` prints one JSON event per line. `--after` resumes after a saved cursor; omitting it starts at the oldest retained event. `--follow` waits for new events after draining the backlog. Ctrl-C stops following cleanly. A successful finite drain prints `cursor: CURSOR` on stderr, including when it has no events.
+
+An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`, including when expiry happens during streaming. An interrupted drain or a later read failure also produces a nonzero exit. The command prints only change events; HTTP completion and error records stay out of stdout. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
 
 ## docbank kata
 
@@ -356,7 +373,37 @@ object used by the HTTP API.
 ## Process exit codes
 
 CLI process codes are stable so shell automation can branch without parsing
-stderr. Human error text remains explanatory and may change.
+stderr. Human error text remains explanatory and may change. Invocation and
+request-validation errors both use `2`; operational and internal failures use
+`1`. Missing backup repository configuration uses `2` and explains `--repo`
+and `backup init`; repository I/O failures still use `1`.
+
+Human errors print `error: MESSAGE` followed by `hint: NEXT STEP`. Search with
+`--agent` uses `Hint:` for its recovery line; its successful hit rows keep their
+existing format. Other commands support `--json` only where their help lists it.
+If that command has already parsed `--json` as true, its final error record on
+stderr is compact JSON with a trailing newline:
+
+```json
+{"error":{"message":"...","code":"not_found","exit":3,"hint":"list paths with \"docbank document tree\" or find by name with \"docbank search <name>\""}}
+```
+
+The CLI `error.code` values are `error`, `usage`, `not_found`, `stale`, `busy`,
+`integrity`, and `claim_required`, corresponding to exits `1` through `7`.
+`error.hint` is omitted when a command suggestion already provides recovery.
+These are process categories; HTTP problem codes retain their richer meanings.
+
+Previews and progress can precede this final stderr record. For example,
+`backup claim --json` still prints its repository preview before requesting
+confirmation. Parse the final record separately from those diagnostics.
+`--json=false` keeps human errors. Flag parsing can fail before `--json` is
+read; those failures also stay human. A malformed repeated output flag keeps
+the last successfully parsed value. When search parses both `--agent` and
+`--json` as true, their mutual-exclusion error uses JSON.
+
+Success output stays on stdout. Commands may return a report or partial bytes
+before failing; always check the exit code. Recovery hints recommend inspection
+before retrying a write whose outcome is uncertain.
 
 | Code | Meaning | Typical action |
 |------|---------|----------------|
@@ -380,6 +427,7 @@ than translating process exits back into HTTP status.
 ```
 docbank document add <path>... [--dest <virtual-dir>] [--include <pattern>]... [--exclude <pattern>]... [--replace] [--progress auto|bar|plain] [--json]
 docbank document add <path>... --preflight [--include <pattern>]... [--exclude <pattern>]... [--json]
+docbank document add <https-url> [--dest <virtual-dir>] [--allow-http] [--max-bytes <bytes>] [--progress auto|bar|plain] [--json]
 ```
 
 Imports files or directory trees into the vault. Sources are copied,
@@ -394,6 +442,10 @@ never modified or deleted.
 | `--preflight` | false | Inventory source metadata without opening file content or changing the vault |
 | `--json` | false | Emit only the terminal preflight or ingest report as JSON; suppress progress |
 | `--progress` | `auto` | Human ingest progress: `auto`, `bar`, or durable `plain` lines |
+| `--allow-http` | false | Permit HTTP for a URL download and its redirects |
+| `--max-bytes` | `100000000` | URL download byte cap; positive and at most the ingest limit |
+
+URL imports accept one HTTP(S) URL, with HTTPS required unless `--allow-http` is set. The same rule applies to every redirect, with a ten-redirect ceiling. Downloads have no total timeout and honor cancellation. Responses must be HTTP 200 and fit within the cap before import. Filters, `--preflight`, and `--replace` are local-only. See [URL imports](usage/importing.md#import-from-a-url) for naming, skips, and fetch provenance.
 
 - A directory argument imports recursively: its basename becomes a
   directory under `--dest` and relative structure is preserved.
@@ -1219,6 +1271,7 @@ version 1 request format, date choices, counts, and retention limits.
 
 ```
 docbank processing vision-fingerprints [--task <descriptor-id>] --model <model> --trust-boundary <boundary> --endpoint <origin> --deployment-fingerprint <sha256>
+docbank processing local [--server auto|local]
 docbank processing profiles [--json]
 docbank processing probe --profile <name> --seeds <dir> [--overwrite]
 docbank processing coverage <version-uuid> --profile <name> [--json]
@@ -1230,6 +1283,8 @@ docbank processing status <job-id> [--json]
 `vision-fingerprints` prints the descriptor and disclosure fingerprints for a vision profile. `--task` defaults to `compatible-vision.describe-v1`; use `compatible-vision.detect-faces-v1` for automatic face detection. It runs locally without a daemon or provider credential. See [Photo descriptions](configuration.md#photo-descriptions) and [Automatic face detection](configuration.md#automatic-face-detection).
 
 `probe` runs Mistral capability checks locally with the processing profile's policy, credential, and egress settings. It writes the manifest to the rendition runtime's configured `capability_manifest` path. Supply five synthetic native seeds and use `--overwrite` to replace an existing manifest. After saving, it prints the profile's `descriptor_fingerprint` and `disclosure_fingerprint`. See [Mistral OCR configuration](configuration.md#document-ocr-with-mistral).
+
+`local` previews text indexing for this vault and future imports, including provider disclosures, then enables it without a prompt and downloads any missing server and model files. An indexed compatible Nomic profile keeps its extractor, chunks, and vectors when it moves to the shared server; setup previews a rebuild when another model requires a new built-in index. It saves the selected profile and server outside `config.toml`, then restarts and reconnects the daemon. Both `auto` and `local` select Kit's shared per-user server. See [Local text search](usage/document-processing.md#set-up-local-text-search).
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.
@@ -1397,7 +1452,7 @@ invalid for stdio. The bearer is resolved once at startup and must differ from
 the daemon's effective API key. There is no token flag or remote-daemon option.
 See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
 
-The catalog contains 20 read tools by default, including `get_photo_asset`.
+The default catalog contains read-only tools, including `get_photo_asset`.
 `--allow-processing` adds only the guarded `start_processing` tool. The agent
 must first retrieve the plan from the same process, and the operator must
 already have consented to that unchanged disclosure. The flag does not let MCP
@@ -1721,13 +1776,17 @@ docbank daemon stop
 | Command | Behavior |
 |---------|----------|
 | `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
-| `daemon start` | Start detached in the background; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon start` | Reuse a compatible daemon unchanged, or start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
 | `daemon status` | Report pid, address, version, and uptime without starting a daemon |
 | `daemon restart` | Stop a running daemon, then start it; also works when none is running |
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Restart prints `restarted: ...` or
+"started_at"}`. Running daemons also report `explicit_start` as a boolean
+when launch intent is recorded, and `idle_timeout` as the effective duration
+string when recorded. Older records omit unavailable fields. Foreground
+daemons report `explicit_start: false` without `idle_timeout`.
+Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
@@ -1911,7 +1970,7 @@ docbank watch list [--json]
 Lists the daemon's effective watched-inbox configuration in stable name order:
 the machine-local source, virtual-tree destination, complete settle window,
 minimum source age (`0s` when disabled), scan interval, exclusion count, and
-current runner state. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile.
+current runner state. `TAGS` shows quoted tag names and any unavailable-tag error. The final `PROCESSING` column shows the profile and any consent wait or status error, or `-` without a profile.
 A waiting watcher shows `idle`; it shows `running` while
 ingesting a file. Human output quotes source and destination paths so
 terminal control characters cannot disguise them. `--json` includes the

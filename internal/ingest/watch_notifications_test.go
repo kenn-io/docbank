@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/stacktest"
@@ -622,6 +623,7 @@ func TestWatchNotificationBackendFailureClosesPartialSubscriptions(t *testing.T)
 	}
 }
 
+// Polling fallback runs on the watcher's scan ticker; fake time drives it.
 func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -631,133 +633,135 @@ func TestPromptWatchNotificationFailureFallsBack(t *testing.T) {
 		{name: "vanished during add", vanished: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ing := newTestIngester(t)
-			source := writeTree(t, map[string]string{"notes.txt": "first", "nested/other.txt": "content"})
-			commits := make(chan struct{}, 8)
-			var logs strings.Builder
-			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
-				Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
-				SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(100 * time.Millisecond),
-			}, func(_ context.Context, fn func() error) error {
-				err := fn()
-				if err == nil {
+			synctest.Test(t, func(t *testing.T) {
+				ing := newTestIngester(t)
+				source := writeTree(t, map[string]string{"notes.txt": "first", "nested/other.txt": "content"})
+				commits := make(chan struct{}, 8)
+				var logs strings.Builder
+				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+					Name: "notes", Source: source, Destination: "/archive", CaptureOnChange: true,
+					SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(100 * time.Millisecond),
+				}, func(_ context.Context, fn func() error) error {
+					err := fn()
+					if err == nil {
+						select {
+						case commits <- struct{}{}:
+						default:
+						}
+					}
+					return err
+				}, slog.New(slog.NewTextHandler(&logs, nil)))
+				require.NoError(t, err)
+				firstBackend := newFakeWatchBackend()
+				if tc.vanished {
+					firstBackend.addErr = func(name string) error {
+						if strings.HasSuffix(name, "nested") {
+							return fs.ErrNotExist
+						}
+						return nil
+					}
+				}
+				factories := make(chan int, 8)
+				attempts := 0
+				watcher.newNotifications = func(root string, _ exclusions) (watchNotificationSource, error) {
+					attempts++
+					factories <- attempts
+					if attempts == 1 {
+						return newWatchNotificationsWithBackend(root, firstBackend), nil
+					}
+					return newWatchNotificationsWithBackend(root, newFakeWatchBackend()), nil
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- watcher.Run(ctx) }()
+				joined := false
+				defer func() {
+					if !joined {
+						cancel()
+						require.ErrorIs(t, <-done, context.Canceled)
+					}
+				}()
+				initialDeadline := time.NewTimer(10 * time.Second)
+				defer initialDeadline.Stop()
+				for {
+					node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+					if err == nil {
+						_, count, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
+						require.NoError(t, err)
+						if count == 1 {
+							break
+						}
+					}
 					select {
-					case commits <- struct{}{}:
+					case <-commits:
+					case <-initialDeadline.C:
+						stacktest.Dump(t)
+						t.Fatal("initial source not committed")
+					}
+				}
+				if !tc.vanished {
+					firstBackend.errs <- errors.New("synthetic backend failure")
+				}
+				select {
+				case <-firstBackend.closed:
+				case <-time.After(10 * time.Second):
+					stacktest.Dump(t)
+					t.Fatal("failed backend still open")
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), []byte("second"), 0600))
+				deadline := time.NewTimer(10 * time.Second)
+				defer deadline.Stop()
+				for {
+					node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
+					if err == nil {
+						_, count, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
+						require.NoError(t, err)
+						if count == 2 {
+							break
+						}
+					}
+					select {
+					case <-commits:
+					case <-deadline.C:
+						stacktest.Dump(t)
+						t.Fatal("polling did not capture later change")
+					}
+				}
+				if tc.vanished {
+					select {
+					case count := <-factories:
+						require.Equal(t, 1, count)
+					default:
+						t.Fatal("initial enrollment missing")
+					}
+					select {
+					case count := <-factories:
+						require.Equal(t, 2, count)
+					case <-time.After(10 * time.Second):
+						stacktest.Dump(t)
+						t.Fatal("no periodic re-enrollment")
+					}
+				} else {
+					select {
+					case count := <-factories:
+						require.Equal(t, 1, count)
+					default:
+						t.Fatal("initial enrollment missing")
+					}
+					select {
+					case count := <-factories:
+						t.Fatalf("runtime failure unexpectedly retried: %d", count)
 					default:
 					}
 				}
-				return err
-			}, slog.New(slog.NewTextHandler(&logs, nil)))
-			require.NoError(t, err)
-			firstBackend := newFakeWatchBackend()
-			if tc.vanished {
-				firstBackend.addErr = func(name string) error {
-					if strings.HasSuffix(name, "nested") {
-						return fs.ErrNotExist
-					}
-					return nil
+				cancel()
+				require.ErrorIs(t, <-done, context.Canceled)
+				joined = true
+				require.Contains(t, logs.String(), "polling continues")
+				if tc.vanished {
+					require.Contains(t, logs.String(), "notifications restored")
 				}
-			}
-			factories := make(chan int, 8)
-			attempts := 0
-			watcher.newNotifications = func(root string, _ exclusions) (watchNotificationSource, error) {
-				attempts++
-				factories <- attempts
-				if attempts == 1 {
-					return newWatchNotificationsWithBackend(root, firstBackend), nil
-				}
-				return newWatchNotificationsWithBackend(root, newFakeWatchBackend()), nil
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			done := make(chan error, 1)
-			go func() { done <- watcher.Run(ctx) }()
-			joined := false
-			defer func() {
-				if !joined {
-					cancel()
-					require.ErrorIs(t, <-done, context.Canceled)
-				}
-			}()
-			initialDeadline := time.NewTimer(10 * time.Second)
-			defer initialDeadline.Stop()
-			for {
-				node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
-				if err == nil {
-					_, count, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
-					require.NoError(t, err)
-					if count == 1 {
-						break
-					}
-				}
-				select {
-				case <-commits:
-				case <-initialDeadline.C:
-					stacktest.Dump(t)
-					t.Fatal("initial source not committed")
-				}
-			}
-			if !tc.vanished {
-				firstBackend.errs <- errors.New("synthetic backend failure")
-			}
-			select {
-			case <-firstBackend.closed:
-			case <-time.After(10 * time.Second):
-				stacktest.Dump(t)
-				t.Fatal("failed backend still open")
-			}
-			require.NoError(t, os.WriteFile(filepath.Join(source, "notes.txt"), []byte("second"), 0600))
-			deadline := time.NewTimer(10 * time.Second)
-			defer deadline.Stop()
-			for {
-				node, err := ing.Store.NodeByPath(t.Context(), "/archive/notes.txt")
-				if err == nil {
-					_, count, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
-					require.NoError(t, err)
-					if count == 2 {
-						break
-					}
-				}
-				select {
-				case <-commits:
-				case <-deadline.C:
-					stacktest.Dump(t)
-					t.Fatal("polling did not capture later change")
-				}
-			}
-			if tc.vanished {
-				select {
-				case count := <-factories:
-					require.Equal(t, 1, count)
-				default:
-					t.Fatal("initial enrollment missing")
-				}
-				select {
-				case count := <-factories:
-					require.Equal(t, 2, count)
-				case <-time.After(10 * time.Second):
-					stacktest.Dump(t)
-					t.Fatal("no periodic re-enrollment")
-				}
-			} else {
-				select {
-				case count := <-factories:
-					require.Equal(t, 1, count)
-				default:
-					t.Fatal("initial enrollment missing")
-				}
-				select {
-				case count := <-factories:
-					t.Fatalf("runtime failure unexpectedly retried: %d", count)
-				default:
-				}
-			}
-			cancel()
-			require.ErrorIs(t, <-done, context.Canceled)
-			joined = true
-			require.Contains(t, logs.String(), "polling continues")
-			if tc.vanished {
-				require.Contains(t, logs.String(), "notifications restored")
-			}
+			})
 		})
 	}
 }

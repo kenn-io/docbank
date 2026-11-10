@@ -59,21 +59,6 @@ func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, e
 	return asset, nil
 }
 
-func (s *Store) photoReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return fmt.Errorf("beginning photo read transaction: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing photo read transaction: %w", err)
-	}
-	return nil
-}
-
 func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, error) {
 	var settings PhotoSettings
 	var preference sql.NullString
@@ -100,7 +85,7 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 // PhotoAssetByID returns one bounded photo graph.
 func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, error) {
 	var asset PhotoAsset
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
@@ -116,9 +101,9 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 		return PhotoAsset{}, fmt.Errorf("invalid photo node: %w", ErrNotFound)
 	}
 	var asset PhotoAsset
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var id string
-		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=$1 AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return fmt.Errorf("finding photo asset for node %d: %w", nodeID, err)
@@ -140,7 +125,7 @@ func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64, coll
 		return nil, err
 	}
 	population := selectCompiledPopulation(compiledQueryFragment{sql: `n.id IN (SELECT value FROM json_each(?))`, args: []any{string(encoded)}}, collapseDuplicates)
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
 		rows, err := tx.QueryContext(ctx, `SELECT pf.node_id,pf.asset_id FROM photo_files pf JOIN (`+population.sql+`) accepted ON accepted.node_id=pf.node_id WHERE pf.asset_id IS NOT NULL`, population.args...)
 		if err != nil {
 			return err
@@ -162,7 +147,7 @@ func (s *Store) PhotoAssetIDsForNodes(ctx context.Context, nodeIDs []int64, coll
 // PhotoSettings returns the virtual or stored vault preference.
 func (s *Store) PhotoSettings(ctx context.Context) (PhotoSettings, error) {
 	var settings PhotoSettings
-	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	if err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		settings, err = photoSettingsTx(ctx, tx)
 		return err
@@ -416,7 +401,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 	if count, err := result.RowsAffected(); err != nil {
 		return err
 	} else if count != 0 {
-		return nil
+		return s.refreshPhotoMemberTx(ctx, tx, member)
 	}
 	fileID, err := newUUIDv4()
 	if err != nil {
@@ -430,7 +415,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
 	}
-	return nil
+	return s.refreshPhotoMemberTx(ctx, tx, member)
 }
 
 func photoRoleValidOrError(role string) error {
@@ -626,6 +611,14 @@ func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID stri
 	}
 	result, err := commitPhotoAssetTx(ctx, tx, before, asset, operation)
 	if err != nil {
+		return PhotoAsset{}, err
+	}
+	for _, file := range before.Files {
+		if err := s.refreshPhotoTimelineTx(ctx, tx, file.NodeID); err != nil {
+			return PhotoAsset{}, err
+		}
+	}
+	if err := s.refreshPhotoAssetWorkTx(ctx, tx, result.ID); err != nil {
 		return PhotoAsset{}, err
 	}
 	return result, validatePhotoAssetGraph(ctx, tx, result.ID)
@@ -845,11 +838,11 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 					return false, err
 				}
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE asset_id=$1 AND sidecar_of_file_id=$2`, asset.ID, fileID); err != nil {
 				return false, err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE file_id=? AND asset_id=?`, fileID, asset.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE file_id=$1 AND asset_id=$2`, fileID, asset.ID); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -983,7 +976,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			}
 		}
 		next.Revision, next.UpdatedAt = current.Revision+1, nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds) VALUES(1,$1,$2,$3,$4,$5,$6,$7) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds,backup_interval_seconds=excluded.backup_interval_seconds,backup_keep_last=excluded.backup_keep_last,hidden_unlock_lifetime_seconds=excluded.hidden_unlock_lifetime_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds, next.BackupIntervalSeconds, next.BackupKeepLast, next.HiddenUnlockLifetimeSeconds); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
@@ -1006,6 +999,9 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 				continue
 			}
 			if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "settings_recompute"); err != nil {
+				return err
+			}
+			if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset.ID); err != nil {
 				return err
 			}
 		}

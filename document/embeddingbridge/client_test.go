@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -57,12 +58,36 @@ type bridgeFixture struct {
 	profile    embeddingbridge.Profile
 	descriptor document.EmbeddingDescriptor
 	client     *embeddingbridge.Client
+	// dial is set when the server is reached over in-memory connections.
+	dial func(context.Context, string, string) (net.Conn, error)
 }
 
+// newBridgeFixture serves handler on a loopback listener and builds a client
+// that reaches it through the sealed egress policy.
 func newBridgeFixture(t *testing.T, handler http.Handler, kinds ...document.EmbeddingInputKind) bridgeFixture {
 	t.Helper()
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
+	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	return serveBridgeFixture(t, listener, tcpAddress.Port, nil, handler, kinds...)
+}
+
+// newPipeBridgeFixture serves handler over in-memory connections. Call it
+// inside a synctest bubble: a loopback socket would keep the bubble from going
+// idle, while these connections let request deadlines, the server's
+// connection-close delay and hang guards all run on fake time.
+func newPipeBridgeFixture(t *testing.T, handler http.Handler) bridgeFixture {
+	t.Helper()
+	listener := newPipeListener()
+	return serveBridgeFixture(t, listener, 8080, listener.dial, handler)
+}
+
+func serveBridgeFixture(
+	t *testing.T, listener net.Listener, port int, dial func(context.Context, string, string) (net.Conn, error),
+	handler http.Handler, kinds ...document.EmbeddingInputKind,
+) bridgeFixture {
+	t.Helper()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
 	serveDone := make(chan struct{})
 	go func() {
@@ -70,11 +95,8 @@ func newBridgeFixture(t *testing.T, handler http.Handler, kinds ...document.Embe
 		_ = server.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		require.NoError(t, server.Shutdown(context.Background()))
+		require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context())))
 	})
-	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
-	require.True(t, ok)
-	port := tcpAddress.Port
 	origin := "http://embedding.invalid:" + strconv.Itoa(port)
 	modelInput, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
 	require.NoError(t, err)
@@ -110,11 +132,67 @@ func newBridgeFixture(t *testing.T, handler http.Handler, kinds ...document.Embe
 	profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
 	require.NoError(t, err)
 	descriptor = profile.Descriptor
-	httpClient := &http.Client{}
-	client, err := embeddingbridge.New(profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"}, fixedResolver{netip.MustParseAddr("127.0.0.1")}, httpClient)
-	require.NoError(t, err)
-	return bridgeFixture{t: t, server: server, listener: listener, serveDone: serveDone, origin: origin, resolver: fixedResolver{netip.MustParseAddr("127.0.0.1")}, profile: profile, descriptor: descriptor, client: client}
+	fixture := bridgeFixture{t: t, server: server, listener: listener, serveDone: serveDone, origin: origin, resolver: fixedResolver{netip.MustParseAddr("127.0.0.1")}, profile: profile, descriptor: descriptor, dial: dial}
+	fixture.client = fixture.newClient(profile, secretMap{"credential:synthetic-bridge": "synthetic-secret"})
+	return fixture
 }
+
+// newClient builds a client for profile that reaches the fixture's server.
+func (fixture bridgeFixture) newClient(profile embeddingbridge.Profile, secrets embeddingbridge.SecretResolver) *embeddingbridge.Client {
+	fixture.t.Helper()
+	client, err := embeddingbridge.New(profile, secrets, fixture.resolver, &http.Client{})
+	require.NoError(fixture.t, err)
+	if fixture.dial != nil {
+		embeddingbridge.SetTestDialer(client, fixture.dial)
+	}
+	return client
+}
+
+// pipeListener accepts the server ends of net.Pipe connections opened by dial.
+type pipeListener struct {
+	connections chan net.Conn
+	closed      chan struct{}
+	closeOnce   sync.Once
+}
+
+func newPipeListener() *pipeListener {
+	return &pipeListener{connections: make(chan net.Conn), closed: make(chan struct{})}
+}
+
+func (listener *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case connection := <-listener.connections:
+		return connection, nil
+	case <-listener.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (listener *pipeListener) Close() error {
+	listener.closeOnce.Do(func() { close(listener.closed) })
+	return nil
+}
+
+func (*pipeListener) Addr() net.Addr { return pipeAddress{} }
+
+func (listener *pipeListener) dial(ctx context.Context, _, _ string) (net.Conn, error) {
+	client, server := net.Pipe()
+	select {
+	case listener.connections <- server:
+		return client, nil
+	case <-listener.closed:
+		_, _ = client.Close(), server.Close()
+		return nil, net.ErrClosed
+	case <-ctx.Done():
+		_, _ = client.Close(), server.Close()
+		return nil, ctx.Err()
+	}
+}
+
+type pipeAddress struct{}
+
+func (pipeAddress) Network() string { return "pipe" }
+func (pipeAddress) String() string  { return "pipe" }
 
 func (fixture bridgeFixture) authorization(items int) document.EmbeddingAuthorization {
 	return document.EmbeddingAuthorization{
@@ -493,36 +571,38 @@ func TestResponseBudgetsAreIndependent(t *testing.T) {
 func TestEmptyUploadReadsDoNotBlockEmbed(t *testing.T) {
 	for _, probe := range []bool{false, true} {
 		t.Run(fmt.Sprintf("probe=%t", probe), func(t *testing.T) {
-			upload := &emptyReadUpload{reader: bytes.NewReader(nil), stop: make(chan struct{})}
-			if probe {
-				upload.reader = bytes.NewReader([]byte("a"))
-			}
-			fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-				_, _ = io.Copy(io.Discard, request.Body)
-			}))
-			done := make(chan error, 1)
-			go func() {
-				_, err := fixture.client.Embed(t.Context(), []document.EmbeddingInput{{
-					Key: "source", Role: document.EmbeddingRoleDocument,
-					Kind: document.EmbeddingInputOriginalFile, Source: upload,
-				}}, fixture.authorization(1))
-				done <- err
-			}()
-			select {
-			case err := <-done:
-				close(upload.stop)
-				require.Error(t, err)
-				assert.Equal(t, embeddingbridge.ErrorAmbiguousSubmission, embeddingbridge.Category(err))
-			case <-time.After(2 * time.Second):
-				close(upload.stop)
+			// The request deadline and hang guards run on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				upload := &emptyReadUpload{reader: bytes.NewReader(nil), stop: make(chan struct{})}
+				if probe {
+					upload.reader = bytes.NewReader([]byte("a"))
+				}
+				fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+					_, _ = io.Copy(io.Discard, request.Body)
+				}))
+				done := make(chan error, 1)
+				go func() {
+					_, err := fixture.client.Embed(t.Context(), []document.EmbeddingInput{{
+						Key: "source", Role: document.EmbeddingRoleDocument,
+						Kind: document.EmbeddingInputOriginalFile, Source: upload,
+					}}, fixture.authorization(1))
+					done <- err
+				}()
 				select {
 				case err := <-done:
-					t.Logf("Embed returned %v after releasing the source", err)
-				case <-time.After(time.Second):
-					t.Error("embedding did not return after releasing the source")
+					close(upload.stop)
+					require.Error(t, err)
+					assert.Equal(t, embeddingbridge.ErrorAmbiguousSubmission, embeddingbridge.Category(err))
+				case <-time.After(2 * time.Second):
+					close(upload.stop)
+					select {
+					case <-done:
+					case <-time.After(time.Second):
+						t.Error("embedding did not return after releasing the source")
+					}
+					t.Fatal("empty reads kept Embed blocked after its request deadline")
 				}
-				t.Fatal("empty reads kept Embed blocked after its request deadline")
-			}
+			})
 		})
 	}
 }
@@ -530,9 +610,19 @@ func TestEmptyUploadReadsDoNotBlockEmbed(t *testing.T) {
 type emptyReadUpload struct {
 	reader *bytes.Reader
 	stop   chan struct{}
+	reads  int
 }
 
+// emptyReadSpinLimit is far above the bridge's consecutive-empty-read bound.
+// Past it, Read blocks until stop, so a bridge that ignored the bound would
+// let the synctest bubble go idle instead of spinning forever.
+const emptyReadSpinLimit = 10_000
+
 func (upload *emptyReadUpload) Read(value []byte) (int, error) {
+	upload.reads++
+	if upload.reads > emptyReadSpinLimit {
+		<-upload.stop
+	}
 	select {
 	case <-upload.stop:
 		return 0, io.EOF
@@ -606,23 +696,26 @@ func TestSecretResolutionRedirectCancellationAndAmbiguousSubmission(t *testing.T
 		assert.Equal(t, embeddingbridge.ErrorPermanent, embeddingbridge.Category(err))
 	})
 	t.Run("cancellation", func(t *testing.T) {
-		started := make(chan struct{})
-		release := make(chan struct{})
-		fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-			close(started)
-			<-release
-		}))
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		go func() {
-			_, err := fixture.client.Embed(ctx, oneTextInput("alpha"), fixture.authorization(1))
-			done <- err
-		}()
-		<-started
-		cancel()
-		err := <-done
-		close(release)
-		require.ErrorIs(t, err, context.Canceled)
+		// The server's connection-close delay runs on fake time.
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				close(started)
+				<-release
+			}))
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				_, err := fixture.client.Embed(ctx, oneTextInput("alpha"), fixture.authorization(1))
+				done <- err
+			}()
+			<-started
+			cancel()
+			err := <-done
+			close(release)
+			require.ErrorIs(t, err, context.Canceled)
+		})
 	})
 	t.Run("ambiguous submission", func(t *testing.T) {
 		fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -710,31 +803,34 @@ func TestDirectFileRejectsHeaderUnsafeFilenameBeforeRequest(t *testing.T) {
 }
 
 func TestCancellationClosesBlockedDirectFileAndReturns(t *testing.T) {
-	source := []byte("synthetic blocked source")
-	upload := newBlockingUpload(uploadMetadata(source))
-	fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		_, _ = io.Copy(io.Discard, request.Body)
-	}))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := fixture.client.Embed(ctx, []document.EmbeddingInput{{
-			Key: "source", Role: document.EmbeddingRoleDocument,
-			Kind: document.EmbeddingInputOriginalFile, Source: upload,
-		}}, fixture.authorization(1))
-		done <- err
-	}()
-	<-upload.started
-	cancel()
-	select {
-	case err := <-done:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(5 * time.Second):
-		_ = upload.Close()
-		err := <-done
-		assert.Fail(t, "embedding bridge did not close the blocked authorized upload", "eventual error: %v", err)
-	}
-	assert.Positive(t, upload.closes.Load())
+	// Hang guards and the server's connection-close delay run on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		source := []byte("synthetic blocked source")
+		upload := newBlockingUpload(uploadMetadata(source))
+		fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			_, _ = io.Copy(io.Discard, request.Body)
+		}))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := fixture.client.Embed(ctx, []document.EmbeddingInput{{
+				Key: "source", Role: document.EmbeddingRoleDocument,
+				Kind: document.EmbeddingInputOriginalFile, Source: upload,
+			}}, fixture.authorization(1))
+			done <- err
+		}()
+		<-upload.started
+		cancel()
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(5 * time.Second):
+			_ = upload.Close()
+			err := <-done
+			assert.Fail(t, "embedding bridge did not close the blocked authorized upload", "eventual error: %v", err)
+		}
+		assert.Positive(t, upload.closes.Load())
+	})
 }
 
 func TestCancellationBeforeSecretResolutionLeavesUnreadSourceOpen(t *testing.T) {
@@ -763,67 +859,73 @@ func TestCancellationBeforeSecretResolutionLeavesUnreadSourceOpen(t *testing.T) 
 }
 
 func TestMultiFileCancellationClosesOnlyActiveSource(t *testing.T) {
-	firstBytes := []byte("synthetic first source")
-	secondBytes := []byte("synthetic blocked second source")
-	thirdBytes := []byte("synthetic unread third source")
-	first := newObservedUpload(firstBytes, uploadMetadata(firstBytes))
-	second := newBlockingUpload(uploadMetadata(secondBytes))
-	third := newObservedUpload(thirdBytes, uploadMetadata(thirdBytes))
-	fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		_, _ = io.Copy(io.Discard, request.Body)
-	}))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, embedErr := fixture.client.Embed(ctx, []document.EmbeddingInput{
-			{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: first},
-			{Key: "second", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: second},
-			{Key: "third", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: third},
-		}, fixture.authorization(3))
-		done <- embedErr
-	}()
-	<-second.started
-	cancel()
-	select {
-	case err := <-done:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(5 * time.Second):
-		_ = second.Close()
-		err := <-done
-		assert.Fail(t, "embedding bridge did not close the active source", "eventual error: %v", err)
-	}
-	assert.Zero(t, first.closes.Load(), "a completed source is no longer owned by the bridge")
-	assert.Positive(t, second.closes.Load(), "the active blocked source must be closed")
-	assert.Zero(t, third.reads.Load(), "later sources must remain unread")
-	assert.Zero(t, third.closes.Load(), "later unread sources remain worker-owned")
+	// Hang guards and the server's connection-close delay run on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		firstBytes := []byte("synthetic first source")
+		secondBytes := []byte("synthetic blocked second source")
+		thirdBytes := []byte("synthetic unread third source")
+		first := newObservedUpload(firstBytes, uploadMetadata(firstBytes))
+		second := newBlockingUpload(uploadMetadata(secondBytes))
+		third := newObservedUpload(thirdBytes, uploadMetadata(thirdBytes))
+		fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			_, _ = io.Copy(io.Discard, request.Body)
+		}))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, embedErr := fixture.client.Embed(ctx, []document.EmbeddingInput{
+				{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: first},
+				{Key: "second", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: second},
+				{Key: "third", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputOriginalFile, Source: third},
+			}, fixture.authorization(3))
+			done <- embedErr
+		}()
+		<-second.started
+		cancel()
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(5 * time.Second):
+			_ = second.Close()
+			err := <-done
+			assert.Fail(t, "embedding bridge did not close the active source", "eventual error: %v", err)
+		}
+		assert.Zero(t, first.closes.Load(), "a completed source is no longer owned by the bridge")
+		assert.Positive(t, second.closes.Load(), "the active blocked source must be closed")
+		assert.Zero(t, third.reads.Load(), "later sources must remain unread")
+		assert.Zero(t, third.closes.Load(), "later unread sources remain worker-owned")
+	})
 }
 
 func TestCancellationWithNonComparableActiveSourceDoesNotPanic(t *testing.T) {
-	source := []byte("synthetic non-comparable source")
-	state := newBlockingUpload(uploadMetadata(source))
-	upload := nonComparableUpload{state}
-	fixture := newBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		_, _ = io.Copy(io.Discard, request.Body)
-	}))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, embedErr := fixture.client.Embed(ctx, []document.EmbeddingInput{{
-			Key: "source", Role: document.EmbeddingRoleDocument,
-			Kind: document.EmbeddingInputOriginalFile, Source: upload,
-		}}, fixture.authorization(1))
-		done <- embedErr
-	}()
-	<-state.started
-	cancel()
-	select {
-	case err := <-done:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(5 * time.Second):
-		_ = state.Close()
-		err := <-done
-		assert.Fail(t, "embedding bridge did not close the active non-comparable source", "eventual error: %v", err)
-	}
+	// Hang guards and the server's connection-close delay run on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		source := []byte("synthetic non-comparable source")
+		state := newBlockingUpload(uploadMetadata(source))
+		upload := nonComparableUpload{state}
+		fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			_, _ = io.Copy(io.Discard, request.Body)
+		}))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, embedErr := fixture.client.Embed(ctx, []document.EmbeddingInput{{
+				Key: "source", Role: document.EmbeddingRoleDocument,
+				Kind: document.EmbeddingInputOriginalFile, Source: upload,
+			}}, fixture.authorization(1))
+			done <- embedErr
+		}()
+		<-state.started
+		cancel()
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(5 * time.Second):
+			_ = state.Close()
+			err := <-done
+			assert.Fail(t, "embedding bridge did not close the active non-comparable source", "eventual error: %v", err)
+		}
+	})
 }
 
 func TestPolicyFingerprintDoesNotMutateCallerEgressOrder(t *testing.T) {
@@ -876,34 +978,38 @@ func TestHTTPFailuresAreClassifiedWithoutProviderBodiesOrSecrets(t *testing.T) {
 }
 
 func TestEarlyHTTPRejectionDoesNotReadDirectFileAndKeepsStatusClassification(t *testing.T) {
-	source := []byte("synthetic early rejection")
-	upload := newBlockingUpload(uploadMetadata(source))
-	fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		assert.Equal(t, "100-continue", request.Header.Get("Expect"))
-		writer.WriteHeader(http.StatusRequestEntityTooLarge)
-	}))
-	done := make(chan error, 1)
-	go func() {
-		_, err := fixture.client.Embed(context.Background(), []document.EmbeddingInput{{
-			Key: "source", Role: document.EmbeddingRoleDocument,
-			Kind: document.EmbeddingInputOriginalFile, Source: upload,
-		}}, fixture.authorization(1))
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		assert.Equal(t, embeddingbridge.ErrorCapacity, embeddingbridge.Category(err))
-	case <-time.After(time.Second):
-		_ = upload.Close()
-		assert.Fail(t, "early rejection did not return within the request bound", "Embed returned %v after the source closed", <-done)
-	}
-	assert.Zero(t, upload.closes.Load(), "the worker retains ownership when no source read starts")
-	select {
-	case <-upload.started:
-		assert.Fail(t, "early rejection read the direct-file source")
-	default:
-	}
+	// Hang guards and the server's connection-close delay run on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		source := []byte("synthetic early rejection")
+		upload := newBlockingUpload(uploadMetadata(source))
+		fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			assert.Equal(t, "100-continue", request.Header.Get("Expect"))
+			writer.WriteHeader(http.StatusRequestEntityTooLarge)
+		}))
+		done := make(chan error, 1)
+		go func() {
+			_, err := fixture.client.Embed(context.Background(), []document.EmbeddingInput{{
+				Key: "source", Role: document.EmbeddingRoleDocument,
+				Kind: document.EmbeddingInputOriginalFile, Source: upload,
+			}}, fixture.authorization(1))
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			assert.Equal(t, embeddingbridge.ErrorCapacity, embeddingbridge.Category(err))
+		case <-time.After(time.Second):
+			_ = upload.Close()
+			<-done
+			assert.Fail(t, "early rejection did not return within the request bound")
+		}
+		assert.Zero(t, upload.closes.Load(), "the worker retains ownership when no source read starts")
+		select {
+		case <-upload.started:
+			assert.Fail(t, "early rejection read the direct-file source")
+		default:
+		}
+	})
 }
 
 func TestDirectFileConnectionLossAfterPartHeaderIsAmbiguous(t *testing.T) {
@@ -998,102 +1104,107 @@ func TestDirectFileConnectionLossDuringBlockedReadIsAmbiguous(t *testing.T) {
 }
 
 func TestKnownHTTPStatusDuringBlockedUploadWinsWriterError(t *testing.T) {
-	source := []byte("synthetic blocked rejected source")
-	upload := newBlockingUpload(uploadMetadata(source))
-	fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-		if !assert.NoError(t, err) || !assert.Equal(t, "multipart/form-data", mediaType) {
-			return
-		}
-		reader := multipart.NewReader(request.Body, parameters["boundary"])
-		manifestPart, err := reader.NextPart()
-		if !assert.NoError(t, err) {
-			return
-		}
-		_, err = io.Copy(io.Discard, manifestPart)
-		if !assert.NoError(t, err) {
-			return
-		}
-		filePart, err := reader.NextPart()
-		if !assert.NoError(t, err) || !assert.Equal(t, "file", filePart.FormName()) {
-			return
-		}
-		<-upload.started
-		writer.WriteHeader(http.StatusRequestEntityTooLarge)
-	}))
-	_, err := fixture.client.Embed(context.Background(), []document.EmbeddingInput{{
-		Key: "source", Role: document.EmbeddingRoleDocument,
-		Kind: document.EmbeddingInputOriginalFile, Source: upload,
-	}}, fixture.authorization(1))
-	require.Error(t, err)
-	assert.Equal(t, embeddingbridge.ErrorCapacity, embeddingbridge.Category(err))
-	assert.False(t, embeddingbridge.IsRetryable(err))
-	assert.NotContains(t, err.Error(), "synthetic blocked reader closed")
-	assert.Positive(t, upload.closes.Load())
+	// The server's connection-close delay runs on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		source := []byte("synthetic blocked rejected source")
+		upload := newBlockingUpload(uploadMetadata(source))
+		fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+			if !assert.NoError(t, err) || !assert.Equal(t, "multipart/form-data", mediaType) {
+				return
+			}
+			reader := multipart.NewReader(request.Body, parameters["boundary"])
+			manifestPart, err := reader.NextPart()
+			if !assert.NoError(t, err) {
+				return
+			}
+			_, err = io.Copy(io.Discard, manifestPart)
+			if !assert.NoError(t, err) {
+				return
+			}
+			filePart, err := reader.NextPart()
+			if !assert.NoError(t, err) || !assert.Equal(t, "file", filePart.FormName()) {
+				return
+			}
+			<-upload.started
+			writer.WriteHeader(http.StatusRequestEntityTooLarge)
+		}))
+		_, err := fixture.client.Embed(context.Background(), []document.EmbeddingInput{{
+			Key: "source", Role: document.EmbeddingRoleDocument,
+			Kind: document.EmbeddingInputOriginalFile, Source: upload,
+		}}, fixture.authorization(1))
+		require.Error(t, err)
+		assert.Equal(t, embeddingbridge.ErrorCapacity, embeddingbridge.Category(err))
+		assert.False(t, embeddingbridge.IsRetryable(err))
+		assert.NotContains(t, err.Error(), "synthetic blocked reader closed")
+		assert.Positive(t, upload.closes.Load())
+	})
 }
 
 func TestExecuteEmbeddingInterruptsBlockedUpload(t *testing.T) {
 	for _, earlyResponse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("early_response=%t", earlyResponse), func(t *testing.T) {
-			upload := newBlockingUpload(uploadMetadata([]byte("synthetic blocked sealed source")))
-			fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				reader, err := request.MultipartReader()
-				if !assert.NoError(t, err) {
-					return
-				}
-				manifestPart, err := reader.NextPart()
-				if !assert.NoError(t, err) {
-					return
-				}
-				_, err = io.Copy(io.Discard, manifestPart)
-				if !assert.NoError(t, err) {
-					return
-				}
-				filePart, err := reader.NextPart()
-				if !assert.NoError(t, err) || !assert.Equal(t, "file", filePart.FormName()) {
-					return
-				}
-				<-upload.started
-				if earlyResponse {
-					controller := http.NewResponseController(writer)
-					if !assert.NoError(t, controller.EnableFullDuplex()) {
+			// The request deadline and hang guards expire on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				upload := newBlockingUpload(uploadMetadata([]byte("synthetic blocked sealed source")))
+				fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					reader, err := request.MultipartReader()
+					if !assert.NoError(t, err) {
 						return
 					}
-					writer.WriteHeader(http.StatusRequestEntityTooLarge)
-					assert.NoError(t, controller.Flush())
-				}
-				_, _ = io.Copy(io.Discard, filePart)
-			}))
-			// Release the blocked reader even when testing a broken cancellation path.
-			t.Cleanup(func() { _ = upload.Close() })
-			done := make(chan error, 1)
-			go func() {
-				_, err := document.ExecuteEmbedding(t.Context(), fixture.client, []document.EmbeddingInput{{
-					Key: "source", Role: document.EmbeddingRoleDocument,
-					Kind: document.EmbeddingInputOriginalFile, Source: upload,
-				}}, fixture.authorization(1))
-				done <- err
-			}()
-			select {
-			case err := <-done:
-				require.Error(t, err)
-				require.NoError(t, t.Context().Err())
-				category := embeddingbridge.ErrorTransient
-				if earlyResponse {
-					category = embeddingbridge.ErrorCapacity
-				}
-				assert.Equal(t, category, embeddingbridge.Category(err))
-				assert.Positive(t, upload.closes.Load())
-			case <-time.After(3 * time.Second):
-				_ = upload.Close()
+					manifestPart, err := reader.NextPart()
+					if !assert.NoError(t, err) {
+						return
+					}
+					_, err = io.Copy(io.Discard, manifestPart)
+					if !assert.NoError(t, err) {
+						return
+					}
+					filePart, err := reader.NextPart()
+					if !assert.NoError(t, err) || !assert.Equal(t, "file", filePart.FormName()) {
+						return
+					}
+					<-upload.started
+					if earlyResponse {
+						controller := http.NewResponseController(writer)
+						if !assert.NoError(t, controller.EnableFullDuplex()) {
+							return
+						}
+						writer.WriteHeader(http.StatusRequestEntityTooLarge)
+						assert.NoError(t, controller.Flush())
+					}
+					_, _ = io.Copy(io.Discard, filePart)
+				}))
+				// Release the blocked reader even when testing a broken cancellation path.
+				t.Cleanup(func() { _ = upload.Close() })
+				done := make(chan error, 1)
+				go func() {
+					_, err := document.ExecuteEmbedding(t.Context(), fixture.client, []document.EmbeddingInput{{
+						Key: "source", Role: document.EmbeddingRoleDocument,
+						Kind: document.EmbeddingInputOriginalFile, Source: upload,
+					}}, fixture.authorization(1))
+					done <- err
+				}()
 				select {
 				case err := <-done:
-					t.Logf("Embed returned %v after releasing the source", err)
-				case <-time.After(time.Second):
-					t.Error("embedding did not return after releasing the source")
+					require.Error(t, err)
+					require.NoError(t, t.Context().Err())
+					category := embeddingbridge.ErrorTransient
+					if earlyResponse {
+						category = embeddingbridge.ErrorCapacity
+					}
+					assert.Equal(t, category, embeddingbridge.Category(err))
+					assert.Positive(t, upload.closes.Load())
+				case <-time.After(3 * time.Second):
+					_ = upload.Close()
+					select {
+					case <-done:
+					case <-time.After(time.Second):
+						t.Error("embedding did not return after releasing the source")
+					}
+					t.Fatal("embedding cancellation blocked on a sealed upload read")
 				}
-				t.Fatal("embedding cancellation blocked on a sealed upload read")
-			}
+			})
 		})
 	}
 }
@@ -1368,46 +1479,54 @@ func TestRequestTimeoutClassification(t *testing.T) {
 	for _, stage := range []string{"secret", "headers", "body"} {
 		for _, callerDeadline := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/caller=%t", stage, callerDeadline), func(t *testing.T) {
-				fixture := newBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-					_, _ = io.Copy(io.Discard, request.Body)
-					if stage == "body" {
-						writer.Header().Set("Content-Type", responseMediaType())
-						writer.WriteHeader(http.StatusOK)
-						assert.NoError(t, http.NewResponseController(writer).Flush())
+				// The blocked secret or HTTP exchange ends only when a deadline
+				// expires on fake time.
+				synctest.Test(t, func(t *testing.T) {
+					fixture := newPipeBridgeFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+						_, _ = io.Copy(io.Discard, request.Body)
+						if stage == "body" {
+							writer.Header().Set("Content-Type", responseMediaType())
+							writer.WriteHeader(http.StatusOK)
+							assert.NoError(t, http.NewResponseController(writer).Flush())
+						}
+						<-request.Context().Done()
+					}))
+					const requestTimeout = time.Minute
+					profile := fixture.profile
+					profile.RequestTimeout = requestTimeout
+					fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
+					require.NoError(t, err)
+					profile.Descriptor.PolicyFingerprint = fingerprint
+					profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
+					require.NoError(t, err)
+					var secrets embeddingbridge.SecretResolver = secretMap{"credential:synthetic-bridge": "synthetic-secret"}
+					if stage == "secret" {
+						secrets = &cancelBlockingSecretResolver{started: make(chan struct{})}
 					}
-					<-request.Context().Done()
-				}))
-				profile := fixture.profile
-				profile.RequestTimeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked secret or HTTP request must expire and retain its timeout classification
-				fingerprint, err := embeddingbridge.PolicyFingerprint(profile)
-				require.NoError(t, err)
-				profile.Descriptor.PolicyFingerprint = fingerprint
-				profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
-				require.NoError(t, err)
-				var secrets embeddingbridge.SecretResolver = secretMap{"credential:synthetic-bridge": "synthetic-secret"}
-				if stage == "secret" {
-					secrets = &cancelBlockingSecretResolver{started: make(chan struct{})}
-				}
-				client, err := embeddingbridge.New(profile, secrets, fixture.resolver, &http.Client{})
-				require.NoError(t, err)
-				authorization := fixture.authorization(1)
-				authorization.DescriptorFingerprint = profile.Descriptor.Fingerprint
-				authorization.PolicyFingerprint = profile.Descriptor.PolicyFingerprint
-				ctx := t.Context()
-				if callerDeadline {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request ends
-					defer cancel()
-				}
-				_, err = client.Embed(ctx, oneTextInput("alpha"), authorization)
-				require.Error(t, err)
-				if callerDeadline {
-					require.ErrorIs(t, err, context.DeadlineExceeded)
-				} else {
-					require.NoError(t, ctx.Err())
-					assert.Equal(t, embeddingbridge.ErrorTransient, embeddingbridge.Category(err))
-					assert.True(t, embeddingbridge.IsRetryable(err))
-				}
+					client := fixture.newClient(profile, secrets)
+					authorization := fixture.authorization(1)
+					authorization.DescriptorFingerprint = profile.Descriptor.Fingerprint
+					authorization.PolicyFingerprint = profile.Descriptor.PolicyFingerprint
+					ctx := t.Context()
+					wantElapsed := requestTimeout
+					if callerDeadline {
+						var cancel context.CancelFunc
+						wantElapsed = requestTimeout / 2
+						ctx, cancel = context.WithTimeout(ctx, wantElapsed)
+						defer cancel()
+					}
+					started := time.Now()
+					_, err = client.Embed(ctx, oneTextInput("alpha"), authorization)
+					require.Error(t, err)
+					assert.Equal(t, wantElapsed, time.Since(started), "the earlier deadline ends the request")
+					if callerDeadline {
+						require.ErrorIs(t, err, context.DeadlineExceeded)
+					} else {
+						require.NoError(t, ctx.Err())
+						assert.Equal(t, embeddingbridge.ErrorTransient, embeddingbridge.Category(err))
+						assert.True(t, embeddingbridge.IsRetryable(err))
+					}
+				})
 			})
 		}
 	}

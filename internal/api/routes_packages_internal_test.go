@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -35,16 +36,20 @@ func TestPackageMemoryBudgetRejectsAggregateGrowth(t *testing.T) {
 
 func TestPackageInventoryDoesNotWaitForVaultMaintenance(t *testing.T) {
 	t.Parallel()
-	gate := NewOperationGate()
-	require.NoError(t, gate.MaintainContext(t.Context(), func() error {
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		defer cancel()
-		_, err := buildPackagePreflight(ctx, Deps{}, gate, "synthetic", PackagePreflightRequest{
-			Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: t.TempDir(),
-		})
-		require.ErrorIs(t, err, loadfile.ErrMalformedInput)
-		return nil
-	}))
+	synctest.Test(t, func(t *testing.T) {
+		gate := NewOperationGate()
+		require.NoError(t, gate.MaintainContext(t.Context(), func() error {
+			// Waiting on the held gate would end at this fake-time deadline
+			// instead of reaching the malformed source.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			_, err := buildPackagePreflight(ctx, Deps{}, gate, "synthetic", PackagePreflightRequest{
+				Profile: "dat-concordance-v1", Encoding: "utf-8", SourceKind: "root", SourceRef: t.TempDir(),
+			})
+			require.ErrorIs(t, err, loadfile.ErrMalformedInput)
+			return nil
+		}))
+	})
 }
 
 func TestPackageMappingReservesMemoryBeforeExpandingFields(t *testing.T) {

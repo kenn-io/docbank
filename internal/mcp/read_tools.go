@@ -60,10 +60,16 @@ func executeReadTool(
 		output, err = checkAnswer(ctx, lease, raw)
 	case "get_vault_info":
 		output, err = getVaultInfo(ctx, daemonDocumentSession(lease), raw)
+	case "list_changes":
+		output, err = listChanges(ctx, lease, raw)
 	case "list_documents":
 		output, links, err = listDocuments(ctx, daemonDocumentSession(lease), raw)
+	case "answer_question":
+		output, links, err = answerQuestion(ctx, daemonAnswerSession(lease), raw)
 	case "search_documents":
 		output, links, err = searchDocuments(ctx, daemonDocumentSession(lease), raw)
+	case "find_conflicts":
+		output, links, err = findConflicts(ctx, lease, raw)
 	case "get_document":
 		output, links, err = getDocument(ctx, lease, raw)
 	case "list_document_versions":
@@ -350,8 +356,8 @@ func listDocuments(
 		return listDocumentsOutput{}, nil, err
 	}
 	type response struct {
-		page api.DocumentPage
-		info api.VaultInfo
+		page    api.DocumentPage
+		vaultID string
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		page, callErr := c.ListDocuments(ctx, api.DocumentQuery{PathPrefix: input.PathPrefix,
@@ -359,18 +365,18 @@ func listDocuments(
 		if callErr != nil {
 			return response{}, callErr
 		}
-		info, callErr := c.VaultInfo(ctx)
+		vaultID, callErr := c.VaultID(ctx)
 
 		if callErr != nil {
 			return response{}, callErr
 		}
-		return response{page: page, info: info}, nil
+		return response{page: page, vaultID: vaultID}, nil
 	})
 	if err != nil {
 		return listDocumentsOutput{}, nil, err
 	}
 	return listDocumentsOutput{DocumentPage: result.page, privateCache: newPrivateCache()},
-		documentResourceLinks(result.info.VaultID, result.page.Items), nil
+		documentResourceLinks(result.vaultID, result.page.Items), nil
 }
 
 type searchDocumentsInput struct {
@@ -415,6 +421,7 @@ type searchDocumentsOutput struct {
 	Fence              *sourceFenceOutput                  `json:"fence,omitzero"`
 	FenceFingerprint   string                              `json:"fence_fingerprint,omitzero"`
 	ObservedScopeCount int                                 `json:"observed_scope_count,omitzero"`
+	Profile            string                              `json:"profile"`
 	RequestedMode      string                              `json:"requested_mode"`
 	ActualMode         string                              `json:"actual_mode"`
 	Coverage           searchCoverageOutput                `json:"coverage"`
@@ -433,49 +440,98 @@ func searchDocuments(
 	}
 	input.Mode = effectiveSearchMode(input.Mode)
 
-	type response struct {
-		resolution api.DocumentSourceFenceResolution
-		vaultID    string
-		report     api.DocumentSearchReport
-		documents  []api.DocumentSummary
-	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
-		request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
-			Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank}
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (documentSearchResponse, error) {
 		var resolution api.DocumentSourceFenceResolution
-		if input.Filters != nil {
-			request.Scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
-		} else {
-			var callErr error
-			resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
-			if callErr != nil {
-				return response{}, callErr
+		if input.Filters == nil {
+			var err error
+			resolution, err = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
+			if err != nil {
+				return documentSearchResponse{}, err
 			}
-			request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
 		}
-		report, callErr := c.SearchDocuments(ctx, request)
-		if callErr != nil {
-			return response{}, callErr
+		profiles, err := c.ListDocumentProcessingProfiles(ctx)
+		if err != nil {
+			return documentSearchResponse{}, err
 		}
-		if len(report.Results) == 0 {
-			return response{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
+		selected, candidates, err := selectAnswerSearch(profiles, answerInput{Profile: input.Profile, BindingID: input.BindingID, Rerank: input.Rerank})
+		if err != nil {
+			facts, _ := toolProblemFacts(err)
+			if facts.Code == "processing_profile_unavailable" {
+				return documentSearchResponse{problem: availableProfilesError(profiles)}, nil
+			}
+			return documentSearchResponse{}, err
 		}
-		identities := make([]api.DocumentIdentity, len(report.Results))
-		for index, item := range report.Results {
-			identities[index] = api.DocumentIdentity{NodeID: item.NodeID,
-				ContentVersionID: item.ContentVersionID, Path: item.Path}
+		if input.BindingID != "" && len(selected.EmbeddingBindings) == 0 {
+			return documentSearchResponse{problem: &searchProfileError{code: "not_found", message: domainErrorMessage("not_found")}}, nil
 		}
-		documents, callErr := c.ResolveDocumentSummaries(ctx,
-			api.DocumentSummaryResolveRequest{Identities: identities})
-		if callErr != nil {
-			return response{}, callErr
+		run := func(profile, binding, mode string) (documentSearchResponse, error) {
+			request := input
+			request.Profile, request.BindingID, request.Mode = profile, binding, mode
+			return runDocumentSearch(ctx, c, request, false, &resolution)
 		}
-		return response{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
+		mode := input.Mode
+		if mode == "auto" && input.Profile == "" {
+			mode = "hybrid"
+		}
+		retry := func(code string) bool {
+			return code == "semantic_unavailable" || daemonconn.BindingSearchFailure(code)
+		}
+		nonQueryBinding := slices.Contains(selected.EmbeddingBindings, input.BindingID) && !slices.Contains(selected.QueryEmbeddingBindings, input.BindingID)
+		attempt := profileSearchAttempt[documentSearchResponse]{profile: selected}
+		if (mode == "hybrid" || mode == "semantic") && len(candidates) > 0 && (mode == "semantic" || !nonQueryBinding) && (input.Profile == "" || len(selected.QueryEmbeddingBindings) > 0) {
+			attempt, err = tryProfileSearch(ctx, profiles, selected, candidates, retry, func(profile, binding string) (documentSearchResponse, error) { return run(profile, binding, mode) })
+		} else if mode == "semantic" {
+			attempt.value, err = run(selected.Name, input.BindingID, mode)
+		}
+		if err != nil {
+			facts, _ := toolProblemFacts(err)
+			if !retry(facts.Code) {
+				return documentSearchResponse{}, err
+			}
+			if mode == "semantic" {
+				if code, _ := stableDomainError(err); code == "consent_required" {
+					return documentSearchResponse{}, err
+				}
+				guidance := semanticSearchGuidance(selected.Name, profiles, attempt.failure, input.Rerank)
+				if nonQueryBinding && len(selected.QueryEmbeddingBindings) > 0 {
+					guidance = fmt.Sprintf("Binding %q cannot search document text by meaning. Try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0])
+				}
+				return documentSearchResponse{problem: &searchProfileError{code: "semantic_unavailable", message: guidance}}, nil
+			}
+		}
+		result := attempt.value
+		if attempt.binding == "" && mode != "semantic" {
+			binding := input.BindingID
+			if mode != "lexical" && nonQueryBinding {
+				binding = ""
+			}
+			result, err = run(selected.Name, binding, "lexical")
+			if err != nil {
+				return documentSearchResponse{}, err
+			}
+			if mode == "hybrid" {
+				if attempt.failure != "" {
+					result.report.Degradations = append(result.report.Degradations, attempt.failure)
+					if guidance := searchFailureGuidance(attempt.failure); guidance != "" {
+						result.report.Degradations = append(result.report.Degradations, guidance)
+					}
+				} else if len(selected.QueryEmbeddingBindings) == 0 {
+					result.report.Degradations = append(result.report.Degradations, semanticSearchGuidance(selected.Name, profiles, "", input.Rerank))
+				} else if nonQueryBinding {
+					result.report.Degradations = append(result.report.Degradations, fmt.Sprintf("Binding %q cannot search document text by meaning. Returned keyword results; try binding %q.", input.BindingID, selected.QueryEmbeddingBindings[0]))
+				}
+			}
+		}
+		result.report.RequestedMode, result.profile = input.Mode, attempt.profile.Name
+		return result, nil
 	})
 	if err != nil {
 		return searchDocumentsOutput{}, nil, err
 	}
-	output := searchDocumentsOutput{VaultID: result.vaultID,
+	if result.problem != nil {
+		return searchDocumentsOutput{}, nil, result.problem
+	}
+	output := searchDocumentsOutput{VaultID: result.vaultID, Profile: result.profile,
 		RequestedMode: result.report.RequestedMode, ActualMode: result.report.ActualMode,
 		Coverage: searchCoverageOutput{BindingRequired: result.report.Coverage.BindingRequired,
 			ScopedDocuments:   result.report.Coverage.ScopedDocuments,
@@ -490,24 +546,79 @@ func searchDocuments(
 		output.ObservedScopeCount = result.resolution.ObservedScopeCount
 	}
 	for index, item := range result.report.Results {
-		evidence := make([]string, len(item.Evidence))
-		for evidenceIndex, identity := range item.Evidence {
-			encoded, marshalErr := json.Marshal(identity, json.Deterministic(true))
-			if marshalErr != nil || len(encoded) > 1024 {
-				return searchDocumentsOutput{}, nil, errors.New("search evidence identity is invalid")
-			}
-			evidence[evidenceIndex] = string(encoded)
+		evidence, err := encodeSearchEvidenceIDs(item.Evidence)
+		if err != nil {
+			return searchDocumentsOutput{}, nil, err
 		}
 		output.Results[index] = searchResultOutput{NodeID: item.NodeID,
 			ContentVersionID: item.ContentVersionID, Rank: item.Rank, Score: item.Score,
-			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence}
-		// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
-		if output.Reranking != nil && output.Reranking.Outcome == "applied" && index < output.Reranking.CandidateCount {
-			score := item.Score
-			output.Results[index].RerankRelevance = &score
-		}
+			Path: item.Path, Excerpt: item.Excerpt, EvidenceIDs: evidence,
+			RerankRelevance: searchRerankRelevance(item, index, output.Reranking)}
 	}
 	return output, documentResourceLinks(result.vaultID, result.documents), nil
+}
+
+type documentSearchResponse struct {
+	problem    *searchProfileError
+	profile    string
+	resolution api.DocumentSourceFenceResolution
+	vaultID    string
+	report     api.DocumentSearchReport
+	documents  []api.DocumentSummary
+}
+
+func runDocumentSearch(ctx context.Context, c documentClient, input searchDocumentsInput, contentFirst bool, resolved *api.DocumentSourceFenceResolution) (documentSearchResponse, error) {
+	request := api.DocumentSearchRequest{Query: input.Query, Mode: input.Mode, Limit: input.Limit,
+		Profile: input.Profile, BindingID: input.BindingID, Explain: input.Explain, Rerank: input.Rerank, ContentFirst: contentFirst}
+	var resolution api.DocumentSourceFenceResolution
+	var report api.DocumentSearchReport
+	var callErr error
+	if input.Filters != nil {
+		request.Scope = &api.DocumentSearchScope{Kind: "all_live", Filters: input.Filters}
+		report, callErr = c.SearchDocuments(ctx, request)
+	} else {
+		if resolved != nil {
+			resolution = *resolved
+		} else {
+			resolution, callErr = c.ResolveDocumentSourceFence(ctx, api.DocumentSourceFenceResolveRequest{ContentVersionIDs: input.ContentVersionIDs})
+			if callErr != nil {
+				return documentSearchResponse{}, callErr
+			}
+		}
+		request.Fence = api.DocumentSourceFence{VaultUID: resolution.Fence.VaultUID, ContentVersionIDs: slices.Clone(resolution.Fence.ContentVersionIDs)}
+		report, callErr = searchResolvedDocuments(ctx, c, request)
+	}
+	if callErr != nil {
+		return documentSearchResponse{}, callErr
+	}
+	if len(report.Results) == 0 {
+		return documentSearchResponse{resolution: resolution, vaultID: resolution.Fence.VaultUID, report: report, documents: []api.DocumentSummary{}}, nil
+	}
+	documents, callErr := resolveSearchSummaries(ctx, c, report.Results)
+	if callErr != nil {
+		return documentSearchResponse{}, callErr
+	}
+	return documentSearchResponse{resolution: resolution, vaultID: report.Results[0].VaultUID, report: report, documents: documents}, nil
+}
+
+// retrieval.(*Searcher).rerank scores and sorts only the candidate prefix.
+func searchRerankRelevance(item api.DocumentSearchResult, index int, reranking *api.DocumentSearchRerankingReceipt) *float64 {
+	if reranking != nil && reranking.Outcome == "applied" && index < reranking.CandidateCount {
+		return &item.Score
+	}
+	return nil
+}
+
+func encodeSearchEvidenceIDs(evidence []api.DocumentEvidenceReference) ([]string, error) {
+	ids := make([]string, len(evidence))
+	for index, identity := range evidence {
+		encoded, err := json.Marshal(identity, json.Deterministic(true))
+		if err != nil || len(encoded) > 1024 {
+			return nil, errors.New("search evidence identity is invalid")
+		}
+		ids[index] = string(encoded)
+	}
+	return ids, nil
 }
 
 func effectiveSearchMode(mode string) string {
@@ -515,6 +626,13 @@ func effectiveSearchMode(mode string) string {
 		return "auto"
 	}
 	return mode
+}
+
+func effectiveEmptySearchMode(mode string) string {
+	if mode == "semantic" || mode == "hybrid" {
+		return mode
+	}
+	return "lexical"
 }
 
 type getDocumentInput struct {
@@ -607,7 +725,7 @@ func getDocument(
 			page.Items[0].ContentVersionID != input.ContentVersionID || page.Items[0].Path != node.Path {
 			return response{}, store.ErrProcessingSourceFenceStaleVersion
 		}
-		info, callErr := c.API().VaultInfo(ctx)
+		info, callErr := c.API().VaultIdentity(ctx)
 		if callErr != nil {
 			return response{}, callErr
 		}
@@ -844,6 +962,15 @@ func documentResourceLinks(vaultID string, documents []api.DocumentSummary) []*s
 	return links
 }
 
+func toolResult(encoded []byte, normalized any, links []*sdkmcp.ResourceLink) *sdkmcp.CallToolResult {
+	content := make([]sdkmcp.Content, 0, 1+len(links))
+	content = append(content, &sdkmcp.TextContent{Text: string(encoded)})
+	for _, link := range links {
+		content = append(content, link)
+	}
+	return &sdkmcp.CallToolResult{Content: content, StructuredContent: normalized}
+}
+
 func boundedToolSuccess(
 	validator *jsonschema.Resolved, output any, links []*sdkmcp.ResourceLink,
 ) (*sdkmcp.CallToolResult, error) {
@@ -858,12 +985,7 @@ func boundedToolSuccess(
 	if validator == nil || validator.Validate(&normalized) != nil {
 		return nil, errors.New("daemon result does not conform to the published tool schema")
 	}
-	content := make([]sdkmcp.Content, 0, 1+len(links))
-	content = append(content, &sdkmcp.TextContent{Text: string(encoded)})
-	for _, link := range links {
-		content = append(content, link)
-	}
-	result := &sdkmcp.CallToolResult{Content: content, StructuredContent: normalized}
+	result := toolResult(encoded, normalized, links)
 	complete, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
@@ -872,4 +994,84 @@ func boundedToolSuccess(
 		return nil, fmt.Errorf("%w: %d bytes", errToolResultTooLarge, len(complete))
 	}
 	return result, nil
+}
+
+// searchResolvedDocuments validates empty scopes without issuing an unscoped search.
+func searchResolvedDocuments(ctx context.Context, c documentClient, req api.DocumentSearchRequest) (api.DocumentSearchReport, error) {
+	if len(req.Fence.ContentVersionIDs) > 0 {
+		return c.SearchDocuments(ctx, req)
+	}
+	err := c.ValidateDocumentSearch(ctx, api.DocumentSearchValidationRequest{
+		Query: req.Query, Mode: req.Mode, Limit: req.Limit, Profile: req.Profile,
+		BindingID: req.BindingID, Explain: req.Explain, Rerank: req.Rerank, ContentFirst: req.ContentFirst,
+	})
+	var reranking *api.DocumentSearchRerankingReceipt
+	if req.Rerank {
+		reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+	}
+	return api.DocumentSearchReport{
+		Reranking: reranking, RequestedMode: effectiveSearchMode(req.Mode), ActualMode: effectiveEmptySearchMode(req.Mode),
+		Coverage:     api.DocumentSearchCoverage{State: "complete"},
+		Degradations: []string{}, Results: []api.DocumentSearchResult{}, Trace: []api.DocumentSearchTrace{},
+	}, err
+}
+
+func resolveSearchSummaries(ctx context.Context, c documentClient, results []api.DocumentSearchResult) ([]api.DocumentSummary, error) {
+	if len(results) == 0 {
+		return []api.DocumentSummary{}, nil
+	}
+	identities := make([]api.DocumentIdentity, len(results))
+	for i, item := range results {
+		identities[i] = api.DocumentIdentity{NodeID: item.NodeID, ContentVersionID: item.ContentVersionID, Path: item.Path}
+	}
+	return c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{Identities: identities})
+}
+
+func searchFailureGuidance(code string) string {
+	var guidance string
+	switch code {
+	case "processing_failed":
+		return "Document search failed; check the daemon log and provider configuration before retrying."
+	case "semantic_unavailable":
+		return "Ask the operator to configure a text-query embedding binding for this profile."
+	case "processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
+		guidance = domainErrorMessage("consent_required")
+	case "index_unavailable", "stale_index":
+		guidance = answerErrorMessages[code]
+	default:
+		return ""
+	}
+	return guidance + " Review docbank processing plan <path-or-id> --profile <profile>, then run docbank processing build <path-or-id> --profile <profile> --plan-fingerprint <reviewed-sha256> --consent."
+}
+
+func semanticSearchGuidance(name string, profiles []api.ProcessingProfileSummary, failure string, rerank bool) string {
+	if failure != "" {
+		return "Search by meaning failed: " + failure + ". " + searchFailureGuidance(failure)
+	}
+	message := fmt.Sprintf("Profile %q has no available search by meaning.", name)
+	_, candidates, _ := selectAnswerSearch(profiles, answerInput{Rerank: rerank})
+	for _, candidate := range candidates {
+		if candidate.Profile != name {
+			return message + fmt.Sprintf(" Try profile %q.", candidate.Profile)
+		}
+	}
+	if rerank {
+		return message + " Ask the operator to configure a profile with text-query embeddings and reranking."
+	}
+	return message + " Run docbank processing local to add it."
+}
+
+func availableProfilesError(profiles []api.ProcessingProfileSummary) *searchProfileError {
+	problem := &searchProfileError{code: "processing_profile_unavailable", message: "Available processing profiles:"}
+	for index, profile := range profiles {
+		message := problem.message + " " + profile.Name
+		suffix := fmt.Sprintf(" (%d names omitted)", len(profiles)-index-1)
+		encoded, err := json.Marshal(toolErrorOutput{Code: problem.code, Message: message + suffix})
+		if err != nil || len(encoded) > maxToolErrorBytes {
+			problem.message += fmt.Sprintf(" (%d names omitted)", len(profiles)-index)
+			break
+		}
+		problem.message = message
+	}
+	return problem
 }

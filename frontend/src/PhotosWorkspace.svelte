@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { webURL } from "./web-path.js";
   import IconAction from "./IconAction.svelte";
   import PhotoSearchStatus from "./PhotoSearchStatus.svelte";
   import { reportAction, reportFailure } from "./action-events.js";
@@ -44,7 +45,7 @@
     type Photos,
     type PhotoReturn,
   } from "./photos.svelte.js";
-  import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
+  import { createPhotoGrouper, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
@@ -279,7 +280,9 @@
         : undefined
       : photoID
         ? current
-        : photos.items.find((row) => row.asset_id === id);
+        : id
+          ? photos.rowByID(id)
+          : undefined;
     const concealed = untrack(() => inspectorFaces.concealed);
     void reloadRevision;
     const controller = new AbortController();
@@ -555,9 +558,9 @@
   let openIntent = $state("");
   let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
-  const listed = $derived(photos.items.some((item) => item.asset_id === photoID));
+  const listed = $derived(!!photoID && !!photos.rowByID(photoID));
   const membershipNote = $derived(
-    photoID && fromGrid && !listed && !photos.loading
+    photoID && fromGrid && !listed && !photos.blocking
       ? "This photo is no longer in the refreshed result."
       : "",
   );
@@ -824,29 +827,13 @@
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
-  const collapsed = $derived(
-    shown.filter(
-      (row) =>
-        !("stack" in row) ||
-        !row.stack ||
-        photos.expandedStacks.has(row.stack.asset_ids[0]!) ||
-        row.asset_id === row.stack.representative_id,
-    ),
-  );
   const selectedStack = $derived.by(() => {
-    if (photos.allResults) return;
-    const selected = shown.filter((row) => photos.selectedIDs.has(row.asset_id));
+    if (photos.allResults || !photos.selectedIDs.size) return;
+    const selected = [...photos.selectedIDs].map((id) => photos.rowByID(id));
     const row = selected[0];
-    if (
-      selected.length !== photos.selectedIDs.size ||
-      !row ||
-      !("stack" in row) ||
-      !row.stack ||
-      row.stack.asset_ids.length < 2
-    )
-      return;
+    if (!row || !("stack" in row) || !row.stack || row.stack.asset_ids.length < 2) return;
     const ids = new Set(row.stack.asset_ids);
-    return selected.every((item) => ids.has(item.asset_id)) ? row.stack : undefined;
+    return selected.every((item) => item && ids.has(item.asset_id)) ? row.stack : undefined;
   });
   // Hold every member's revisions once a stack is selected, so its decision checks what was shown.
   $effect(() => {
@@ -914,16 +901,20 @@
       },
     );
   }
-  const groups = $derived(
-    groupPhotos(
-      collapsed,
+  const grouper = createPhotoGrouper();
+  const grouped = $derived(
+    grouper.sync(
+      shown,
       photos.query.sort?.field === "relevance"
         ? "relevance"
         : albumID && photos.query.sort?.field !== "capture_time"
           ? "flat"
           : photos.grouping,
+      photos.expandedStacks,
+      photos.appendedFrom,
     ),
   );
+  const groups = $derived(grouped.groups);
   const searchable = $derived(searchablePhotoView(albumID, mapMode));
   const activeFilters = $derived(activeFilterCount(photos.query.filters, datedPhotoFacets));
   const filtered = $derived(
@@ -935,7 +926,7 @@
   const outsideSelection = $derived(
     mapMode ? [...photos.selectedIDs].filter((id) => !shownIDs.has(id)).length : 0,
   );
-  const listedRow = $derived(photos.items.find((item) => item.asset_id === photoID));
+  const listedRow = $derived(photoID ? photos.rowByID(photoID) : undefined);
   const listedDetail = $derived(!!listedRow && "content_version_id" in listedRow);
   const current = $derived(
     photoID
@@ -949,7 +940,9 @@
     photoID
       ? current
       : !photos.allResults && photos.selectedIDs.size === 1
-        ? shown.find((item) => photos.selectedIDs.has(item.asset_id))
+        ? mapMode
+          ? shown.find((item) => photos.selectedIDs.has(item.asset_id))
+          : photos.rowByID([...photos.selectedIDs][0]!)
         : undefined,
   );
   $effect(() => {
@@ -1201,7 +1194,7 @@
         >
       </div>
     {/if}
-    {#if mapMode && photos.loading}<div class="photo-loading" role="status">
+    {#if mapMode && photos.blocking}<div class="photo-loading" role="status">
         <Spinner size={14} />Loading located photos: {photos.items.length.toLocaleString()} of {Math.min(
           photos.total,
           mapPhotoLimit,
@@ -1447,7 +1440,7 @@
           {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
           {#if albums?.notice}<div class="photo-notice" role="status">
               {albums.notice}{#if albums.noticeID}<a
-                  href={`/photos/albums/${albums.noticeID}`}
+                  href={webURL(`/photos/albums/${albums.noticeID}`)}
                   onclick={(event) => {
                     event.preventDefault();
                     onnavigate(`/photos/albums/${albums!.noticeID}`);
@@ -1473,7 +1466,10 @@
           <div class="photo-browser">
             {#if searchable && photos.filtersOpen}
               <div id={filtersID} class="photo-facets">
-                {#if photos.facetsLoading}<div class="photo-loading" role="status">
+                {#if photos.facetsLoading && !photos.facets.length}<div
+                    class="photo-loading"
+                    role="status"
+                  >
                     <Spinner size={14} />Loading counts…
                   </div>{/if}
                 {#if photos.facetsError}<div class="photo-error" role="alert">
@@ -1533,6 +1529,8 @@
                       bind:this={grid}
                       bind:scrollTop={photos.scrollTop}
                       {groups}
+                      changedFrom={grouped.changedFrom}
+                      appendedFrom={photos.appendedFrom}
                       loadedItems={shown}
                       narrow={narrow.current}
                       timeline={mapMode ? undefined : photos.timeline}
@@ -1571,7 +1569,7 @@
                     />
                   {/key}
                 {/if}
-                {#if !shown.length && !(photos.loading || photos.error)}
+                {#if !shown.length && !(photos.blocking || photos.error)}
                   <EmptyState
                     title={mapMode
                       ? photos.items.length
@@ -1606,12 +1604,12 @@
                 {/if}
               {/if}
               <div role="status">
-                {#if !mapMode && photos.loading}<div class="photo-pill kit-popover-card">
+                {#if !mapMode && photos.blocking}<div class="photo-pill kit-popover-card">
                     <Spinner size={14} />Loading photos…
                   </div>{/if}
               </div>
               {#if !mapMode && photos.cursor && !photos.error}<div class="photo-loading">
-                  {#if !photos.loading}<Button
+                  {#if !photos.blocking}<Button
                       size="sm"
                       onclick={() => void photos.loadMore(preserve)}>Load more</Button
                     >{/if}
@@ -1665,7 +1663,8 @@
               outsideCount={outsideSelection}
               selectedCount={photos.selectedIDs.size}
               visibleDocumentCount={shown.length}
-              loadedSelected={shown.every((item) => photos.selectedIDs.has(item.asset_id))}
+              loadedSelected={photos.selectsAll ||
+                !shown.findLast((item) => !photos.selectedIDs.has(item.asset_id))}
               wholeQueryCount={photos.allResults && editor.count ? editor.count : photos.total}
               allResults={photos.allResults}
               onallresults={mapMode ? undefined : () => photos.selectAllResults()}

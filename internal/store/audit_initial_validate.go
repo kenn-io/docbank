@@ -68,6 +68,11 @@ func validateAuditAuthorityForLayout(
 	if err != nil {
 		return err
 	}
+	if layout.schemaVersion >= auditEventSequenceStorageSchemaVersion {
+		if err := validateAuditEventSequences(records); err != nil {
+			return err
+		}
+	}
 	scopes, err := loadAuditScopeProjections(ctx, tx)
 	if err != nil {
 		return err
@@ -223,13 +228,16 @@ func loadInitialAuditRecords(
 		}
 		if kind != record.Kind || recordJSON != string(canonical) ||
 			!sameNullString(operationID, index.operationID) ||
-			!sameNullInt64(sequence, index.operationSequence) ||
+			(kind != auditEventField && !sameNullInt64(sequence, index.operationSequence)) ||
 			!sameNullString(scopeID, index.scopeID) ||
 			!sameNullInt64(entryCount, index.entryCount) ||
 			!sameNullString(eventID, index.eventID) ||
 			!sameNullInt64(ordinal, index.eventOrdinal) ||
 			!sameNullInt64(nodeID, index.nodeID) {
 			return nil, fmt.Errorf("audit record %s relational index does not match canonical fields", digest)
+		}
+		if kind == auditEventField && sequence.Valid {
+			index.operationSequence = &sequence.Int64
 		}
 		result[kind] = append(result[kind], storedAuditRecord{
 			digest: digest, record: record, index: index,
@@ -922,4 +930,18 @@ func equalAuditEnvelopeValue(left, right audit.Value) bool {
 		return rightOK && leftTime == rightTime
 	}
 	return false
+}
+
+func validateAuditEventSequences(records map[string][]storedAuditRecord) error {
+	sequences := make(map[string]int64)
+	for _, mutation := range records["canonical_mutation"] {
+		sequences[*mutation.index.operationID] = *mutation.index.operationSequence
+	}
+	for _, event := range records[auditEventField] {
+		sequence, ok := sequences[*event.index.operationID]
+		if !ok || event.index.operationSequence == nil || *event.index.operationSequence != sequence {
+			return fmt.Errorf("audit event %s sequence number does not match its operation record", event.digest)
+		}
+	}
+	return nil
 }

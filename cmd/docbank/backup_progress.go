@@ -217,7 +217,7 @@ func (r *backupProgressRenderer) outputMode() backupProgressMode {
 		return r.mode
 	}
 	r.mode = backupProgressPlain
-	if file, ok := r.writer().(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+	if file, ok := r.writer().(fileDescriptor); ok && term.IsTerminal(int(file.Fd())) {
 		r.mode = backupProgressBar
 	}
 	return r.mode

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,21 +95,20 @@ func TestVoyageTextAllowsOnlyOptionalStringText(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			body := string(voyageTextBody(t, voyage.TextModel, []int{0}, []int{1}))
 			body = strings.Replace(body, `"index":0`, `"index":0`+test.extra, 1)
-			endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(body))
-			}))
-			profile := voyageTextProfile(t, voyage.EmbeddingModeText)
-			profile.Endpoint, profile.EgressPolicy = endpoint, egress
-			profile = refingerprintVoyageProfile(t, profile)
-			provider, err := newVoyageEmbeddingTestProvider(t, profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, resolver)
-			require.NoError(t, err)
-			_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
-			if test.valid {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-			}
+			// The malformed-response retry backs off on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+				provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(body))
+				}))
+				_, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
+				if test.valid {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+				}
+			})
 		})
 	}
 }
@@ -144,24 +144,22 @@ func TestVoyageTextRetrievalIdentityAndNormalization(t *testing.T) {
 	assert.NotEqual(t, profile.Descriptor.Fingerprint, changed.Descriptor.Fingerprint)
 	for _, scale := range []float32{1, 1.00001, 2, 0} {
 		t.Run(fmt.Sprint(scale), func(t *testing.T) {
-			endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				values := unitEmbedding(1)
-				values[1] = scale
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": profile.Descriptor.Model, "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": values, "text": "passage"}}}))
-			}))
-			local := profile
-			local.Endpoint, local.EgressPolicy = endpoint, egress
-			local = refingerprintVoyageProfile(t, local)
-			provider, err := newVoyageEmbeddingTestProvider(t, local, embeddingSecrets{"credential:voyage": "synthetic-secret"}, resolver)
-			require.NoError(t, err)
-			result, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(local.Descriptor))
-			if scale == 1 || scale == 1.00001 {
-				require.NoError(t, err)
-				assert.InDelta(t, scale, result.Vectors[0].Values[1], 0)
-			} else {
-				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
-			}
+			// The malformed-response retry backs off on fake time.
+			synctest.Test(t, func(t *testing.T) {
+				provider := newVoyageMemoryProvider(t, profile, embeddingSecrets{"credential:voyage": "synthetic-secret"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					values := unitEmbedding(1)
+					values[1] = scale
+					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(t, json.MarshalWrite(w, map[string]any{"object": "list", "model": profile.Descriptor.Model, "data": []map[string]any{{"object": "embedding", "index": 0, "embedding": values, "text": "passage"}}}))
+				}))
+				result, err := provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "chunk", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "passage"}}, voyageAuthorization(profile.Descriptor))
+				if scale == 1 || scale == 1.00001 {
+					require.NoError(t, err)
+					assert.InDelta(t, scale, result.Vectors[0].Values[1], 0)
+				} else {
+					require.ErrorIs(t, err, voyage.ErrMalformedResponse)
+				}
+			})
 		})
 	}
 }

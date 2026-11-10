@@ -139,11 +139,15 @@ content and evidence. The batch preserves candidate order and does not change
 ranking or truncation. One content candidate keeps the single-node lookup.
 
 Folder-scoped search builds a recursive set of the selected directory and its
-descendant directories, then tests each result's immediate parent. Files stay
+live descendant directories, then tests each matching result's immediate parent. Files stay
 out of that set, and the selected directory is not its own descendant. The
 query reads current topology, so moving a subdirectory into or out of the scope
-changes which descendants match. Traversal cost still grows with the number of
-child entries examined.
+changes which descendants match. Name and content queries start from index matches;
+name queries select the page before loading full metadata. The directory walk
+uses `nodes_live_children`, and published text finds attachments through the
+`rendition_attachments_build` index. Few-hit searches avoid scanning every file
+in the folder. Cost still grows with live directories and matching copies across
+the vault, so heavily duplicated content can cost as much as unscoped search.
 
 Collection list pages discover active membership once for both the exact total
 and page selection. File counts and current byte totals are calculated only for
@@ -295,6 +299,8 @@ historical—as a reachability root, and backup capture uses the same shared roo
 list for portable blob authority. GC-only holds stay outside portable backup
 authority; new logical reference types must be added to reachability before
 their schema is usable.
+Every column that references `blobs(hash)` needs an index led by that column,
+because deleting a blob row checks each reference.
 
 GC and ingest cross SQLite/filesystem boundaries. The daemon maintenance gate
 prevents a mutation from deduplicating against bytes between GC's reachability
@@ -783,6 +789,8 @@ Manual boxed creates use the caller's face UUID for replay. A replay with the sa
 A merge retargets faces from the absorbed person's duplicate assertions to the survivor's matching assertion before deleting the duplicates. Deleting a content version cascades its faces and assertions. Faces round-trip through JSONL; validation checks the face's version, its assertion's version and `depicted` role, and the 1,000-record bounds. The Loupe draws labeled boxes for manual and detected faces. Detection uses its own consented vision profile and the rendition queue, sending the stripped grid preview. Face-person suggestions remain planned.
 
 Older development schema-43 layouts require recreation. Schema 43 adds nullable roll, facing, eyes-open, and smile measurements and detector provenance to faces. `photo_face_scans` records completed versions by detector request fingerprint, including empty scans; version deletion cascades its markers. Faces and measurements round-trip through JSONL, while markers stay out of backup. A restore permits another scan after fresh consent, with one provider call per photo. Audited vaults refuse detection before provider egress. Publication checks that authority again and classifies capacity and audit refusal as terminal job outcomes.
+
+Older development layouts below schema 46 require recreation; schema 46 stores each event's operation sequence on its row for indexed history pages.
 
 A changed detector reconciles by descending box intersection over union, with a 0.14 floor and stable tie-breaking. Matched untouched automatic faces keep their IDs and refresh measurements; unmatched untouched faces are removed. Manual faces, assignments, candidate references, key faces, and indexed decision history retain their saved rows and undo receipts.
 

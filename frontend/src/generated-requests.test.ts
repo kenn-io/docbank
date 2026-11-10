@@ -32,31 +32,34 @@ it.each([
   expect(Buffer.from(await (response as Response).arrayBuffer())).toEqual(body);
 });
 
-it("sends JSON metadata before the media file without a metadata filename", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
-    const response = new Response(await (request?.body as Blob).text(), {
-      headers: request?.headers,
+it.each([new Blob(["synthetic"]), "synthetic"])(
+  "sends JSON metadata before the media file without a metadata filename (%s)",
+  async (content) => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
+      const response = new Response(await (request?.body as Blob).text(), {
+        headers: request?.headers,
+      });
+      const parts = await response.formData();
+      expect([...parts.keys()]).toEqual(["metadata", "file"]);
+      expect(typeof parts.get("metadata")).toBe("string");
+      const file = parts.get("file") as File;
+      expect(file.name).toBe("sample.txt");
+      expect(await file.text()).toBe("synthetic");
+      return Response.json({});
     });
-    const parts = await response.formData();
-    expect([...parts.keys()]).toEqual(["metadata", "file"]);
-    expect(typeof parts.get("metadata")).toBe("string");
-    const file = parts.get("file") as File;
-    expect(file.name).toBe("sample.txt");
-    expect(await file.text()).toBe("synthetic");
-    return Response.json({});
-  });
-  const metadata: api.MediaArtifactMetadata = {
-    filename: "sample.txt",
-    media_type: "text/plain",
-    byte_length: 9,
-    sha256: "a".repeat(64),
-    operation_id: "synthetic-operation",
-    occurrence_id: "synthetic-occurrence",
-    kind: "transcript",
-  };
-  await api.importMediaArtifact("synthetic-source", { metadata, file: new Blob(["synthetic"]) });
-  expect(fetch).toHaveBeenCalledOnce();
-});
+    const metadata: api.MediaArtifactMetadata = {
+      filename: "sample.txt",
+      media_type: "text/plain",
+      byte_length: 9,
+      sha256: "a".repeat(64),
+      operation_id: "synthetic-operation",
+      occurrence_id: "synthetic-occurrence",
+      kind: "transcript",
+    };
+    await api.importMediaArtifact("synthetic-source", { metadata, file: content });
+    expect(fetch).toHaveBeenCalledOnce();
+  },
+);
 
 it("uses the declared filename when uploading a Blob", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
@@ -153,19 +156,25 @@ it("reads page images as PNG bytes with PNG Accept", async () => {
   expect(headers.get("Accept")).toBe("image/png");
 });
 
-it("preserves export progress as an NDJSON response", async () => {
-  const body =
-    '{"delivery":"current_state","job":{"sequence":1}}\n{"delivery":"current_state","job":{"sequence":2}}\n';
+it.each([
+  {
+    name: "export progress",
+    read: () =>
+      api.getExportJobEvents("synthetic-job", { after: 1 }, { session: "synthetic-session" }),
+    body: '{"delivery":"current_state","job":{"sequence":1}}\n{"delivery":"current_state","job":{"sequence":2}}\n',
+  },
+  {
+    name: "vault changes",
+    read: () => api.vaultChanges(undefined, { session: "synthetic-session" }),
+    body: '{"type":"change","change":{"cursor":"MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjE","kind":"created","node_id":2,"revision":1}}\n{"type":"result","cursor":"MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxOjE"}\n',
+  },
+])("preserves $name as an NDJSON response", async ({ read, body }) => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(body, {
       headers: { "Content-Type": "application/x-ndjson" },
     }),
   );
-  const response = await api.getExportJobEvents(
-    "synthetic-job",
-    { after: 1 },
-    { session: "synthetic-session" },
-  );
+  const response = await read();
   expect(response).toBeInstanceOf(Response);
   expect(await response.text()).toBe(body);
   const [, request] = fetch.mock.calls[0];

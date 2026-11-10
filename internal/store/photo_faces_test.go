@@ -14,11 +14,12 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPersonFacePreviews(t *testing.T) {
+func checkPersonFacePreviews(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, mode := range []string{"dated", "tied", "projection"} {
 		t.Run(mode, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			person, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestPersonFacePreviews(t *testing.T) {
 		})
 	}
 	t.Run("older boxed asset", func(t *testing.T) {
-		s := newTestStore(t)
+		s := newStore(t)
 		ctx := t.Context()
 		person, err := s.CreatePerson(ctx, "Ada", "operator")
 		require.NoError(t, err)
@@ -125,9 +126,10 @@ func TestPersonFacePreviews(t *testing.T) {
 	})
 }
 
-func TestPersonFacePreviewsPreferAssignedSource(t *testing.T) {
+func checkPersonFacePreviewsPreferAssignedSource(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset, members := photoTrashFixture(t, s)
 	jpeg, _, err := s.ReplaceContent(ctx, members[1].ID, members[1].Revision, fakeHash("b2"), 20, "image/jpeg")
@@ -152,9 +154,10 @@ func TestPersonFacePreviewsPreferAssignedSource(t *testing.T) {
 	require.Equal(t, []PersonFacePreview{{AssetID: asset.ID, ContentVersionID: source.CurrentVersionID, Box: &box}}, page.Items)
 }
 
-func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
+func checkPersonPhotoPreviewSourceFollowsAssignment(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset, members := photoTrashFixture(t, s)
 	source := members[0]
@@ -180,9 +183,10 @@ func TestPersonPhotoPreviewSourceFollowsAssignment(t *testing.T) {
 	require.ErrorIs(t, s.PersonPhotoPreviewSource(ctx, asset.ID, source.CurrentVersionID, person.PersonID), ErrNotFound)
 }
 
-func TestWholePhotoMarkCreatesPersonAtomically(t *testing.T) {
+func checkWholePhotoMarkCreatesPersonAtomically(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	personID := uuid.NewString()
@@ -229,9 +233,10 @@ func TestWholePhotoMarkCreatesPersonAtomically(t *testing.T) {
 	require.Len(t, assertions, document.MaxPhotoRecordsPerVersion)
 }
 
-func TestPhotoFaceManualNamesAndBoxValidation(t *testing.T) {
+func checkPhotoFaceManualNamesAndBoxValidation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -268,12 +273,13 @@ func TestPhotoFaceManualNamesAndBoxValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []PhotoFacePerson{{PersonID: person.PersonID, DisplayName: "Ada", State: "retired"}}, people)
 	})
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 }
 
-func TestPhotoFaceMergeRetargetsDuplicateAssertions(t *testing.T) {
+func checkPhotoFaceMergeRetargetsDuplicateAssertions(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	ada, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -297,12 +303,13 @@ func TestPhotoFaceMergeRetargetsDuplicateAssertions(t *testing.T) {
 	}
 	require.Len(t, assertions, 1)
 	require.Equal(t, ada.PersonID, assertions[0].PersonID)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 }
 
-func TestPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T) {
+func checkPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -321,9 +328,10 @@ func TestPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t *testing.T) {
+func checkPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	absorbed, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -361,9 +369,10 @@ func TestPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoFaceHiddenReadsAndWrites(t *testing.T) {
+func checkPhotoFaceHiddenReadsAndWrites(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -435,9 +444,10 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceAuditWritesFailClosed(t *testing.T) {
+func checkPhotoFaceAuditWritesFailClosed(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -596,9 +606,10 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 	require.Equal(t, beforeProjection+1, afterProjection)
 }
 
-func TestPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t *testing.T) {
+func checkPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	box := document.FaceBox{X: 0.1, Y: 0.2, Width: 0.3, Height: 0.4}
@@ -656,12 +667,13 @@ func TestPhotoFacePurgeAndPruneRestoreReferences(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceObservationTargetEligibility(t *testing.T) {
+func checkPhotoFaceObservationTargetEligibility(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, change := range []string{"trashed raw", "sidecar", "replaced image", "replaced raw", "excluded"} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			asset, nodes := photoTrashFixture(t, s)
 			imageFile := fileByRole(asset.Files, PhotoRoleImage)
@@ -700,9 +712,10 @@ func TestPhotoFaceObservationTargetEligibility(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceReadIncludesSuppressedReference(t *testing.T) {
+func checkPhotoFaceReadIncludesSuppressedReference(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -721,9 +734,9 @@ func TestPhotoFaceReadIncludesSuppressedReference(t *testing.T) {
 
 func seedFaceAssertionSlots(t *testing.T, s *Store, version string, count int) {
 	t.Helper()
-	_, err := s.db.ExecContext(t.Context(), `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<?) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) SELECT printf('00000000-0000-4000-9000-%012d',i),'Synthetic person','synthetic person','operator','curated',1,?,? FROM slots`, count, nowRFC3339(), nowRFC3339())
+	_, err := s.db.ExecContext(t.Context(), `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<$1) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) SELECT '00000000-0000-4000-9000-' || substr('000000000000' || CAST(i AS TEXT),length(CAST(i AS TEXT))+1,12),'Synthetic person','synthetic person','operator','curated',1,$2,$3 FROM slots`, count, nowRFC3339(), nowRFC3339())
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) SELECT person_id,?,person_id,'depicted','assert','',?,1 FROM persons WHERE person_id LIKE '00000000-0000-4000-9000-%'`, version, nowRFC3339())
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) SELECT person_id,$1,person_id,'depicted','assert','',$2,1 FROM persons WHERE person_id LIKE '00000000-0000-4000-9000-%'`, version, nowRFC3339())
 	require.NoError(t, err)
 }
 
@@ -782,7 +795,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 			require.NoError(t, err)
 			n, f := faceForDecisionTest(t, s, "")
 			seedFaceAssertionSlots(t, s, n.CurrentVersionID, 1000)
-			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn' WHERE content_version_id=?`, n.CurrentVersionID)
+			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn' WHERE content_version_id=$1`, n.CurrentVersionID)
 			require.NoError(t, err)
 			decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "name")
 			_, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
@@ -845,9 +858,10 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceGenericDepictedAuthorization(t *testing.T) {
+func checkPhotoFaceGenericDepictedAuthorization(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
@@ -876,9 +890,10 @@ func TestPhotoFaceGenericDepictedAuthorization(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPeoplePhotoSummary(t *testing.T) {
+func checkPeoplePhotoSummary(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -973,9 +988,10 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.Empty(t, rows)
 }
 
-func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
+func checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -984,20 +1000,46 @@ func TestPeoplePhotoSummaryExcludesNamesakeWithoutPhotos(t *testing.T) {
 	node := browsePhotoNode(t, s, "ada.jpg", fakeHash("ada-photo"), "image/jpeg")
 	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
 	require.NoError(t, err)
-	for _, recent := range []bool{false, true} {
-		for _, prefix := range []string{"", "ada"} {
-			rows, _, err := s.PeopleByDisplayName(ctx, prefix, "", "", 24, true, PeopleSearchOptions{PhotoSummary: true, RecentFirst: recent})
-			require.NoError(t, err)
-			require.Len(t, rows, 1)
-			require.Equal(t, person.PersonID, rows[0].PersonID)
-			require.Equal(t, int64(1), rows[0].PhotoSummary.LibraryCount)
+	faceOnly, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, faceOnly.PersonID)
+	require.NoError(t, err)
+	hiddenOnly, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	hidden := browsePhotoNode(t, s, "ada-hidden.jpg", fakeHash("ada-hidden"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, hidden.CurrentVersionID, hiddenOnly.PersonID, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	for _, hiddenToken := range []string{"", token} {
+		want := []string{person.PersonID, faceOnly.PersonID}
+		if hiddenToken != "" {
+			want = append(want, hiddenOnly.PersonID)
+		}
+		slices.Sort(want)
+		for _, recent := range []bool{false, true} {
+			for _, prefix := range []string{"", "ada"} {
+				rows, _, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, hiddenToken), prefix, "", "", 24, true, PeopleSearchOptions{PhotoSummary: true, RecentFirst: recent})
+				require.NoError(t, err)
+				var ids []string
+				for _, row := range rows {
+					ids = append(ids, row.PersonID)
+				}
+				require.Equal(t, want, ids)
+			}
 		}
 	}
 }
 
-func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
+func checkPeoplePhotoSummaryPairedSources(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset, nodes := photoTrashFixture(t, s)
 	imageFile := fileByRole(asset.Files, PhotoRoleImage)
@@ -1022,9 +1064,10 @@ func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
 	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 }
 
-func TestPeoplePhotoSummarySharedPhotos(t *testing.T) {
+func checkPeoplePhotoSummarySharedPhotos(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	ada, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -1051,9 +1094,10 @@ func TestPeoplePhotoSummarySharedPhotos(t *testing.T) {
 	require.InDelta(t, .5, page[1].PhotoSummary.Face.Box.X, 1e-9)
 }
 
-func TestMarkPersonInPhotoNamedRetryAfterMerge(t *testing.T) {
+func checkMarkPersonInPhotoNamedRetryAfterMerge(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	id := uuid.NewString()
@@ -1063,11 +1107,11 @@ func TestMarkPersonInPhotoNamedRetryAfterMerge(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, id, uuid.NewString(), 1, 1)
 	require.NoError(t, err)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, id, "Ada duplicate")
 	require.ErrorIs(t, err, ErrNotFound)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 	var count int
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM persons WHERE person_id=?`, id).Scan(&count))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM persons WHERE person_id=$1`, id).Scan(&count))
 	require.Zero(t, count)
 }

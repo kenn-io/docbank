@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -16,34 +17,36 @@ import (
 
 func TestPackageSuppliedTextSearchSurvivesBackupRestore(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		catalog, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+		blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, blobs.Close()) })
 
-	source := createPackageTestFile(t, catalog, blobs, "source.pdf", "application/pdf", []byte("synthetic source"))
-	senderText := createPackageTestFile(t, catalog, blobs, "sender.txt", "text/plain", []byte("quenchwood sender text"))
-	_, err = processing.PublishPackageSuppliedText(t.Context(), catalog, blobs,
-		uuid.NewString(), "row-1", source, senderText, "utf-8")
-	require.NoError(t, err)
+		source := createPackageTestFile(t, catalog, blobs, "source.pdf", "application/pdf", []byte("synthetic source"))
+		senderText := createPackageTestFile(t, catalog, blobs, "sender.txt", "text/plain", []byte("quenchwood sender text"))
+		_, err = processing.PublishPackageSuppliedText(t.Context(), catalog, blobs,
+			uuid.NewString(), "row-1", source, senderText, "utf-8")
+		require.NoError(t, err)
 
-	repository, err := backup.Init(filepath.Join(t.TempDir(), "backup"))
-	require.NoError(t, err)
-	_, err = backupapp.Create(t.Context(), repository, "package-supplied-text", catalog, blobs, backup.CreateOptions{Jobs: 1})
-	require.NoError(t, err)
-	target := filepath.Join(t.TempDir(), "restored")
-	_, err = backupapp.Restore(t.Context(), repository, "package-supplied-text", backup.RestoreOptions{TargetDir: target, Jobs: 1})
-	require.NoError(t, err)
-	restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	hits, _, err := restored.SearchPage(t.Context(), "quenchwood", 10)
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	require.Equal(t, source.ID, hits[0].Node.CurrentVersionID)
+		repository, err := backup.Init(filepath.Join(t.TempDir(), "backup"))
+		require.NoError(t, err)
+		_, err = backupapp.Create(t.Context(), repository, "package-supplied-text", catalog, blobs, backup.CreateOptions{Jobs: 1})
+		require.NoError(t, err)
+		target := filepath.Join(t.TempDir(), "restored")
+		_, err = backupapp.Restore(t.Context(), repository, "package-supplied-text", backup.RestoreOptions{TargetDir: target, Jobs: 1})
+		require.NoError(t, err)
+		restored, err := store.OpenForRestore(t.Context(), filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, restored.Close()) })
+		hits, _, err := restored.SearchPage(t.Context(), "quenchwood", 10)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		require.Equal(t, source.ID, hits[0].Node.CurrentVersionID)
+	})
 }
 
 func createPackageTestFile(t *testing.T, catalog *store.Store, blobs *blob.Store, name, mediaType string, content []byte) store.ContentVersion {

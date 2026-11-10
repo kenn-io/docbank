@@ -2,7 +2,8 @@
 -- restore.
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
-    vault_uid      UUID NOT NULL UNIQUE
+    vault_uid      UUID NOT NULL UNIQUE,
+    schema_fingerprint TEXT COLLATE "C" NOT NULL
 );
 
 -- Allocation is transactional: audit replay requires consecutive committed IDs.
@@ -30,6 +31,9 @@ CREATE UNIQUE INDEX live_sibling_names ON {{schema}}.nodes(parent_id, name)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_parent ON {{schema}}.nodes(parent_id);
 CREATE INDEX nodes_parent_name_id ON {{schema}}.nodes(parent_id, name, id);
+-- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
+CREATE INDEX nodes_live_children ON {{schema}}.nodes(parent_id, kind, name, trashed_at, id)
+    WHERE trashed_at IS NULL;
 CREATE INDEX nodes_live_modified ON {{schema}}.nodes(modified_at DESC, name, id)
     WHERE trashed_at IS NULL;
 CREATE INDEX nodes_trashed ON {{schema}}.nodes(trashed_at) WHERE trashed_at IS NOT NULL;
@@ -87,9 +91,9 @@ CREATE TABLE {{schema}}.audit_records (
 CREATE UNIQUE INDEX audit_record_event
     ON {{schema}}.audit_records(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX audit_record_event_node
-    ON {{schema}}.audit_records(node_id) WHERE kind = 'event';
+    ON {{schema}}.audit_records(node_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE INDEX audit_record_event_scope
-    ON {{schema}}.audit_records(scope_id) WHERE kind = 'event';
+    ON {{schema}}.audit_records(scope_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX audit_record_mutation_operation
     ON {{schema}}.audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX audit_record_mutation_sequence
@@ -239,7 +243,8 @@ CREATE TABLE {{schema}}.photo_technical_metadata (
 CREATE TABLE {{schema}}.tags (
     id       TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     name     TEXT COLLATE "C" NOT NULL UNIQUE,
-    revision BIGINT NOT NULL DEFAULT 1
+    revision BIGINT NOT NULL DEFAULT 1,
+    assignment_count BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE {{schema}}.node_tags (
@@ -304,6 +309,7 @@ CREATE TABLE {{schema}}.photo_sets (
 );
 
 CREATE TABLE {{schema}}.photo_change_receipts (
+    receipt_order BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
     receipt_id     TEXT COLLATE "C" PRIMARY KEY,
     operation      TEXT COLLATE "C" NOT NULL,
     asset_id       TEXT COLLATE "C",
@@ -364,7 +370,7 @@ CREATE INDEX photo_change_receipts_asset
 
 CREATE INDEX photo_change_receipts_set ON {{schema}}.photo_change_receipts(set_id,receipt_id);
 
-CREATE INDEX photo_change_receipts_operation ON {{schema}}.photo_change_receipts(operation);
+CREATE INDEX photo_change_receipts_operation ON {{schema}}.photo_change_receipts(operation,receipt_order);
 
 CREATE INDEX photo_change_receipts_xmp_file
     ON {{schema}}.photo_change_receipts(((after_json::jsonb ->> 'file_id') COLLATE "C"))
@@ -1184,6 +1190,7 @@ CREATE TABLE {{schema}}.rendition_lexical_index (
 
 CREATE TABLE {{schema}}.rendition_lexical_generations (
     generation_id TEXT COLLATE "C" PRIMARY KEY,
+    stream_id     TEXT COLLATE "C" NOT NULL,
     segment_count BIGINT NOT NULL,
     build_count   BIGINT NOT NULL,
     built_at      TEXT COLLATE "C" NOT NULL
@@ -1191,15 +1198,28 @@ CREATE TABLE {{schema}}.rendition_lexical_generations (
 
 CREATE TABLE {{schema}}.rendition_lexical_generation_manifests (
     generation_id  TEXT COLLATE "C" PRIMARY KEY,
-    manifest_digest TEXT COLLATE "C" NOT NULL,
-    build_digest    TEXT COLLATE "C" NOT NULL
+    manifest_digest TEXT COLLATE "C" NOT NULL
 );
 
-CREATE TABLE {{schema}}.rendition_lexical_generation_builds (
-    generation_id TEXT COLLATE "C" NOT NULL,
-    build_id      TEXT COLLATE "C" NOT NULL,
-    PRIMARY KEY (generation_id, build_id)
+CREATE INDEX rendition_lexical_generations_stream
+    ON {{schema}}.rendition_lexical_generations(stream_id);
+
+CREATE TABLE {{schema}}.rendition_lexical_stream_builds (
+    stream_id      TEXT COLLATE "C" NOT NULL,
+    ordinal        BIGINT NOT NULL,
+    build_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.rendition_builds(build_id),
+    PRIMARY KEY (stream_id, ordinal),
+    UNIQUE (stream_id, build_id)
 );
+
+CREATE INDEX rendition_lexical_stream_builds_build
+    ON {{schema}}.rendition_lexical_stream_builds(build_id);
+
+CREATE VIEW {{schema}}.rendition_lexical_generation_builds(generation_id, build_id) AS
+    SELECT g.generation_id, b.build_id
+    FROM {{schema}}.rendition_lexical_generations g
+    JOIN {{schema}}.rendition_lexical_stream_builds b
+      ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count;
 
 CREATE TABLE {{schema}}.rendition_lexical_heads (
     singleton     BIGINT PRIMARY KEY,
@@ -1319,7 +1339,7 @@ CREATE TABLE {{schema}}.term_report_history (
 );
 
 CREATE TABLE {{schema}}.extracted_text (
-    id                BIGINT PRIMARY KEY,
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     blob_hash         TEXT COLLATE "C" NOT NULL,
     extractor         TEXT COLLATE "C" NOT NULL,
     extractor_version BIGINT NOT NULL,
@@ -1397,6 +1417,9 @@ CREATE TABLE {{schema}}.photo_set_members (
     added_at TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (set_id,asset_id)
 );
+
+CREATE INDEX photo_set_members_asset ON {{schema}}.photo_set_members(asset_id,set_id);
+CREATE INDEX photo_set_members_added ON {{schema}}.photo_set_members(set_id,added_at DESC,asset_id);
 
 CREATE TABLE {{schema}}.persons (
     key_face_id TEXT COLLATE "C",
@@ -1690,7 +1713,7 @@ CREATE TABLE {{schema}}.photo_hidden_lockout (
 );
 
 CREATE TABLE {{schema}}.photo_hidden_failures (
-    failure_id BIGINT PRIMARY KEY,
+    failure_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     occurred_at TEXT COLLATE "C" NOT NULL
 );
 
@@ -1700,6 +1723,8 @@ CREATE TABLE {{schema}}.person_candidate_faces (
     content_version_id TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY(candidate_id,face_id,content_version_id)
 );
+
+CREATE INDEX person_candidate_faces_face ON {{schema}}.person_candidate_faces(face_id,candidate_id);
 
 CREATE TABLE {{schema}}.photo_checkouts (
     checkout_id TEXT COLLATE "C" PRIMARY KEY,
@@ -1741,7 +1766,7 @@ CREATE TABLE {{schema}}.photo_checkout_entries (
 );
 
 CREATE TABLE {{schema}}.photo_suggestions (
-    id                   BIGINT PRIMARY KEY,
+    id                   BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     suggestion_id        TEXT COLLATE "C" NOT NULL UNIQUE,
     content_version_id   TEXT COLLATE "C" NOT NULL,
     producer_fingerprint TEXT COLLATE "C" NOT NULL,
@@ -1959,11 +1984,6 @@ ALTER TABLE {{schema}}.rendition_lexical_index ADD FOREIGN KEY (build_id) REFERE
 
 ALTER TABLE {{schema}}.rendition_lexical_generation_manifests ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
 
-ALTER TABLE {{schema}}.rendition_lexical_generation_builds ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE;
-
-ALTER TABLE {{schema}}.rendition_lexical_generation_builds ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
-
 ALTER TABLE {{schema}}.rendition_lexical_heads ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
 
 ALTER TABLE {{schema}}.rendition_lexical_superseded ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id) ON DELETE CASCADE;
@@ -2180,6 +2200,17 @@ CREATE INDEX derivative_purge_suppressions_active_source
     ON {{schema}}.derivative_purge_suppressions(source_sha256, profile_fingerprint)
     WHERE active = 1;
 
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_change_head (
+    singleton BIGINT PRIMARY KEY,
+    epoch TEXT COLLATE "C" NOT NULL
+);
+CREATE TABLE IF NOT EXISTS {{schema}}.vault_changes (
+    seq BIGINT PRIMARY KEY,
+    kind TEXT COLLATE "C" NOT NULL,
+    node_id BIGINT NOT NULL,
+    node_revision BIGINT NOT NULL
+);
+
 -- Derived event catalogs invalidated by provenance changes.
 CREATE TABLE {{schema}}.document_event_state (
     singleton BIGINT PRIMARY KEY, contract_version TEXT COLLATE "C" NOT NULL,
@@ -2250,6 +2281,9 @@ CREATE INDEX export_members_version ON {{schema}}.export_members(version_id);
 CREATE INDEX package_labels_version ON {{schema}}.package_labels(content_version_id);
 CREATE INDEX package_import_receipts_version ON {{schema}}.package_import_receipts(content_version_id);
 CREATE INDEX media_versions_content ON {{schema}}.media_source_versions(content_version_id, source_id);
+CREATE INDEX media_occurrences_principal ON {{schema}}.media_occurrences(caller_principal, visible, source_id, occurrence_id);
+CREATE INDEX media_occurrences_source ON {{schema}}.media_occurrences(source_id, visible, caller_principal, occurrence_id);
+CREATE INDEX media_operations_source_admission ON {{schema}}.media_operations(principal, source_id, created_at);
 CREATE INDEX media_input_artifacts_version ON {{schema}}.media_input_artifacts(content_version_id);
 CREATE INDEX mailbox_transfer_receipts_version ON {{schema}}.mailbox_transfer_receipts(target_version_id);
 CREATE INDEX page_render_jobs_node ON {{schema}}.page_render_jobs(node_id);
@@ -2258,6 +2292,19 @@ CREATE INDEX rendition_job_waiters_job ON {{schema}}.rendition_job_waiters(job_i
 CREATE INDEX rendition_job_waiters_content_version ON {{schema}}.rendition_job_waiters(content_version_id, job_id);
 CREATE INDEX embedding_sets_content_version ON {{schema}}.embedding_sets(content_version_id, embedding_set_id);
 CREATE INDEX embedding_heads_set ON {{schema}}.embedding_heads(embedding_set_id);
+
+-- Blob deletion checks every referencing table.
+CREATE INDEX export_members_blob ON {{schema}}.export_members(blob_hash);
+CREATE INDEX export_role_roots_blob ON {{schema}}.export_role_roots(blob_hash);
+CREATE INDEX bates_artifacts_blob ON {{schema}}.bates_artifacts(blob_hash);
+CREATE INDEX page_images_blob ON {{schema}}.page_images(blob_hash);
+CREATE INDEX visual_preview_generations_source ON {{schema}}.visual_preview_generations(source_sha256);
+CREATE INDEX embedding_input_generations_blob ON {{schema}}.embedding_input_generations(generation_blob_hash);
+CREATE INDEX rendition_jobs_source ON {{schema}}.rendition_jobs(source_sha256);
+CREATE INDEX mailbox_chunks_blob ON {{schema}}.mailbox_chunks(blob_hash);
+CREATE INDEX visual_preview_generations_output
+    ON {{schema}}.visual_preview_generations(output_blob_hash, generation_id)
+    WHERE output_blob_hash IS NOT NULL;
 
 CREATE INDEX embedding_jobs_ready
     ON {{schema}}.embedding_jobs(state,available_at,job_id);
@@ -2282,8 +2329,8 @@ CREATE INDEX embedding_sets_vector_space
 
 CREATE INDEX email_body_results_rendition ON {{schema}}.email_body_results(rendition_attachment_id);
 CREATE INDEX email_document_publications_attachment ON {{schema}}.email_document_publications(email_attachment_id);
-CREATE INDEX email_document_publications_version ON {{schema}}.email_document_publications(parent_version_id);
-CREATE INDEX email_document_relations_version ON {{schema}}.email_document_relations(child_version_id);
+CREATE INDEX email_document_publications_parent ON {{schema}}.email_document_publications(parent_version_id);
+CREATE INDEX email_document_relations_child ON {{schema}}.email_document_relations(child_version_id);
 CREATE INDEX custodian_assignments_node ON {{schema}}.custodian_assignments(node_id);
 CREATE INDEX custodian_assignments_version ON {{schema}}.custodian_assignments(content_version_id);
 CREATE INDEX document_people_node ON {{schema}}.document_people(node_id);
@@ -2294,6 +2341,9 @@ CREATE INDEX photo_assets_display_override_file ON {{schema}}.photo_assets(displ
 CREATE INDEX photo_faces_version ON {{schema}}.photo_faces(content_version_id, face_id);
 CREATE INDEX person_candidate_faces_version ON {{schema}}.person_candidate_faces(content_version_id, candidate_id);
 CREATE INDEX photo_checkout_entries_version ON {{schema}}.photo_checkout_entries(version_id);
+CREATE INDEX photo_change_receipts_checkout_commit ON {{schema}}.photo_change_receipts(
+    (after_json::jsonb #>> '{operation_id}'), (after_json::jsonb #>> '{file_id}')
+) WHERE operation='checkout_commit';
 
 -- Exact cleanup survives removal of logical blob membership.
 CREATE TABLE {{schema}}.gc_loose_retirements (
@@ -2358,3 +2408,78 @@ CREATE INDEX current_rendition_roots_target
 CREATE INDEX current_rendition_roots_expiry
     ON {{schema}}.current_rendition_roots(expires_at)
     WHERE expires_at IS NOT NULL;
+
+CREATE INDEX page_render_jobs_pending ON {{schema}}.page_render_jobs(state,created_at,id);
+CREATE INDEX page_render_jobs_request ON {{schema}}.page_render_jobs(request_sha256);
+CREATE INDEX email_part_artifacts_blob ON {{schema}}.email_part_artifacts(blob_hash);
+CREATE INDEX email_attachments_generation ON {{schema}}.email_attachments(generation_id);
+CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_id)
+    WHERE strpos(lower(COALESCE(mime_type,'')),'message/rfc822')>0;
+
+-- Local import receipts may be pruned only after physical cleanup is complete.
+CREATE TABLE {{schema}}.storage_operation_cleanup (
+    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE,
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    loose_hash TEXT COLLATE "C" NOT NULL DEFAULT '',
+    loose_encoding BIGINT NOT NULL DEFAULT 0,
+    pack_id TEXT COLLATE "C" NOT NULL DEFAULT '',
+    PRIMARY KEY (operation_id, store_id, loose_hash, loose_encoding, pack_id)
+);
+CREATE INDEX storage_operations_state ON {{schema}}.storage_operations(state,created_at,operation_id);
+CREATE INDEX storage_operations_retention ON {{schema}}.storage_operations(retention_until) WHERE retention_until IS NOT NULL;
+
+CREATE INDEX content_versions_photo_size ON {{schema}}.content_versions(size);
+
+-- Worker intent and completion are rebuilt after restoring retained metadata.
+CREATE TABLE {{schema}}.photo_description_explicit_waiters (
+    waiter_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.rendition_job_waiters(waiter_id) ON DELETE CASCADE
+);
+CREATE TABLE {{schema}}.photo_face_scans (
+    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    detector_fingerprint TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (content_version_id, detector_fingerprint)
+);
+CREATE INDEX visual_preview_generations_ready
+    ON {{schema}}.visual_preview_generations(recipe_fingerprint, content_version_id) WHERE state='ready';
+
+-- Retained image indexes used by photo review. Production remains separate.
+CREATE TABLE {{schema}}.vector_index_generations (
+    generation_id TEXT COLLATE "C" PRIMARY KEY,
+    vector_space_id TEXT COLLATE "C" NOT NULL,
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    index_manifest_checksum TEXT COLLATE "C" NOT NULL,
+    generation_bytes BYTEA NOT NULL,
+    byte_size BIGINT NOT NULL,
+    row_count BIGINT NOT NULL,
+    built_at TEXT COLLATE "C" NOT NULL
+);
+CREATE INDEX vector_index_generations_space
+    ON {{schema}}.vector_index_generations(vector_space_id, source_manifest_checksum, generation_id);
+CREATE TABLE {{schema}}.vector_index_heads (
+    vector_space_id TEXT COLLATE "C" PRIMARY KEY,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id),
+    source_manifest_checksum TEXT COLLATE "C" NOT NULL
+);
+
+CREATE INDEX custodian_assignments_person ON {{schema}}.custodian_assignments(person_id, scope_kind);
+
+CREATE INDEX document_people_person ON {{schema}}.document_people(person_id, content_version_id);
+
+CREATE INDEX person_candidate_state
+    ON {{schema}}.person_match_candidates(state, created_at, candidate_id);
+
+CREATE INDEX persons_name_folded ON {{schema}}.persons(display_name_folded, person_id);
+
+CREATE INDEX person_document_assertions_person ON {{schema}}.person_document_assertions(person_id, role, action, recorded_at);
+
+CREATE INDEX person_external_alias_target
+    ON {{schema}}.person_external_uid_aliases(system, archive_id, surviving_uid);
+
+CREATE INDEX person_external_person ON {{schema}}.person_external_identities(person_id);
+
+CREATE INDEX person_identities_person ON {{schema}}.person_identities(person_id, kind);
+
+CREATE INDEX person_identities_value
+    ON {{schema}}.person_identities(value_normalized, kind, scope_kind, scope_value, person_id);
+
+CREATE INDEX photo_faces_assertion ON {{schema}}.photo_faces(assertion_id,content_version_id);

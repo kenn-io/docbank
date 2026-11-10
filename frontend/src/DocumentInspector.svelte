@@ -23,7 +23,7 @@
   import InspectorHistory from "./InspectorHistory.svelte";
   import CopyValue from "./CopyValue.svelte";
   import { pdfRedactionAction } from "./documentReader.js";
-  import RedactionDrawer from "./RedactionDrawer.svelte";
+  import DocumentReader from "./DocumentReader.svelte";
   import DownloadButton from "./DownloadButton.svelte";
   import type { SelectedSource } from "./selectedSource.js";
   import TagLabel from "./TagLabel.svelte";
@@ -55,6 +55,8 @@
     source,
     authorizationRevision = 0,
     onauthfailure,
+    onpublished,
+    onproductions,
     onopen,
     onversions,
     onprovenance,
@@ -84,6 +86,8 @@
     session?: string;
     source?: SelectedSource;
     authorizationRevision?: number;
+    onpublished?: () => void;
+    onproductions?: () => void;
     onauthfailure?: (cause: unknown) => void;
     onopen?: () => void;
     onversions?: () => void;
@@ -407,11 +411,15 @@
   </Modal>
 {/if}
 
-{#if redacting && session && onauthfailure}{#key redacting.source.key}<RedactionDrawer
+{#if redacting && session && onauthfailure}{#key redacting.source.key}<DocumentReader
+      startReview
+      {node}
       {session}
       source={redacting.source}
       authorizationRevision={redacting.revision}
       {onauthfailure}
+      {onpublished}
+      {onproductions}
       onclose={() => (redacting = undefined)}
     />{/key}{/if}
 

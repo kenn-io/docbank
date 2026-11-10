@@ -137,9 +137,10 @@ func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
 	assert.NotNil(t, asset.DisplayFileID)
 }
 
-func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
+func checkPhotoSettingsRecomputeInheritedAssets(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
 	require.NoError(t, err)
@@ -183,7 +184,7 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, PhotoSettingsUpdate{Preference: &preference})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
-	assert.NoError(t, s.ValidateMetadata(ctx))
+	checkRetentionMetadata(t, s)
 }
 
 func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
@@ -790,7 +791,7 @@ type photoReceiptRow struct {
 func photoReceiptRows(t *testing.T, s *Store, assetID string) []photoReceiptRow {
 	t.Helper()
 	rows, err := s.db.QueryContext(t.Context(),
-		`SELECT operation, after_json FROM photo_change_receipts WHERE asset_id=? ORDER BY created_at`, assetID)
+		`SELECT operation, after_json FROM photo_change_receipts WHERE asset_id=$1 ORDER BY created_at`, assetID)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var receipts []photoReceiptRow

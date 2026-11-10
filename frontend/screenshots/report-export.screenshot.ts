@@ -14,7 +14,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const captures = process.env.DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR;
 test.skip(!captures, "DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR enables this qualification");
 
-test("qualifies selected reports and original exports", async ({ page }) => {
+test("qualifies selected reports and original exports under a mount", async ({ page }) => {
   test.setTimeout(240_000);
   const binary = process.env.DOCBANK_SCREENSHOT_BINARY;
   if (!binary || !path.isAbsolute(binary)) {
@@ -23,6 +23,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   await access(binary);
   const scratch = await mkdtemp(path.join(tmpdir(), "docbank-report-export-"));
   const vault = path.join(scratch, "vault");
+  const basePath = "/archive";
   const run = async (...args: string[]) =>
     (
       await exec(binary, args, {
@@ -36,7 +37,8 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   const post = (route: string) =>
     page.waitForResponse(
       (response) =>
-        new URL(response.url()).pathname === route && response.request().method() === "POST",
+        new URL(response.url()).pathname === basePath + route &&
+        response.request().method() === "POST",
     );
   let started = false;
   let failure: unknown;
@@ -57,6 +59,10 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   };
   try {
     await mkdir(captures!, { recursive: true, mode: 0o700 });
+    await mkdir(vault, { mode: 0o700 });
+    await writeFile(path.join(vault, "config.toml"), `[web]\nbase_path = "${basePath}"\n`, {
+      mode: 0o600,
+    });
     const sources = new Map([
       ["one.txt", Buffer.from("alpha. Document dated 2024-05-06.\n")],
       ["two.txt", Buffer.from("beta. Document dated 2024-05-06. Document dated 2024-06-07.\n")],
@@ -176,6 +182,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
         await exportDrawer.getByTestId("export-archive-size").getAttribute("data-bytes"),
       );
       const download = await downloading;
+      expect(new URL(download.url()).pathname).toBe("/archive/api/daemon/web-download/file");
       await download.saveAs(archive);
       expect(await download.failure()).toBeNull();
       const bytes = await readFile(archive);
@@ -221,7 +228,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
       const loading = page.waitForResponse(
-        (r) => new URL(r.url()).pathname === `/api/v1/search-exports/${parent.id}/dates`,
+        (r) => new URL(r.url()).pathname === `${basePath}/api/v1/search-exports/${parent.id}/dates`,
       );
       await drawer.getByRole("button", { name: "Review dates", exact: true }).click();
       const dates: DatePage = await (await loading).json();
@@ -269,7 +276,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
           });
           return { status: response.status, summary: await response.json() };
         },
-        { url: getGetTermReportUrl(parent.id), session },
+        { url: basePath + getGetTermReportUrl(parent.id), session },
       );
       expect(parentRead).toMatchObject({ status: 200, summary: { state: "needs_review" } });
       const counts = {
@@ -326,6 +333,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const downloading = page.waitForEvent("download");
       await drawer.getByRole("button", { name: label!, exact: true }).click();
       const download = await downloading;
+      expect(new URL(download.url()).pathname).toBe("/archive/api/daemon/web-download/file");
       await download.saveAs(destination!);
       expect(await download.failure()).toBeNull();
     }

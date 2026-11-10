@@ -515,10 +515,13 @@ func (s *Store) writePhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, resu
 		if a.Revision == result.Before[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET revision=?,rating=?,flag=?,label=?,caption=?,creator=?,copyright=?,rotation=?,confirmed_fields=?,flag_owner=? WHERE file_id=?`, a.Revision, v.Rating, v.Flag, v.Label, v.Caption, v.Creator, v.Copyright, v.Rotation, v.Confirmed, v.FlagOwner, a.FileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET revision=$1,rating=$2,flag=$3,label=$4,caption=$5,creator=$6,copyright=$7,rotation=$8,confirmed_fields=$9,flag_owner=$10 WHERE file_id=$11`, a.Revision, v.Rating, v.Flag, v.Label, v.Caption, v.Creator, v.Copyright, v.Rotation, v.Confirmed, v.FlagOwner, a.FileID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=? WHERE id=?`, now, a.NodeID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=$1 WHERE id=$2`, now, a.NodeID); err != nil {
+			return err
+		}
+		if err := s.refreshNodePhotoWorkTx(ctx, tx, nodes[i], nil); err != nil {
 			return err
 		}
 		if snapshot, ok := loaded[a.FileID]; ok {
@@ -562,7 +565,7 @@ func persistPhotoAuthoredReceiptTx(ctx context.Context, tx *sql.Tx, result Photo
 // photoAuthoredAccessTx keeps a person's edits and undo of hidden photos behind the unlock session.
 func (s *Store) photoAuthoredAccessTx(ctx context.Context, tx *sql.Tx, assetID string) error {
 	var hidden bool
-	if err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, assetID).Scan(&hidden); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=$1`, assetID).Scan(&hidden); err != nil {
 		return fmt.Errorf("reading hidden state of photo asset %s: %w", assetID, err)
 	}
 	if !hidden {
@@ -609,7 +612,7 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			if err := s.photoAuthoredAccessTx(ctx, tx, change.AssetID); err != nil {
 				return err
 			}
-			restored, err := setPhotoRepresentativeTx(ctx, tx, change.AssetID, change.AfterRevision, change.Before)
+			restored, err := s.setPhotoRepresentativeTx(ctx, tx, change.AssetID, change.AfterRevision, change.Before)
 			if err != nil {
 				return err
 			}
@@ -643,7 +646,7 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			if err != nil {
 				return err
 			}
-			tag, err := tagByIDTx(ctx, tx, tagID)
+			tag, err := tagByIDQuery(ctx, tx, tagID)
 			if errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("keyword no longer exists; reload metadata before undoing: %w", ErrStaleRevision)
 			}
@@ -661,7 +664,7 @@ func loadPhotoAuthoredReceipt(ctx context.Context, q metadataQuerier, id string)
 	var encoded []byte
 	var before []byte
 	var operation string
-	err := q.QueryRowContext(ctx, `SELECT operation,before_json,after_json FROM photo_change_receipts WHERE receipt_id=?`, id).Scan(&operation, &before, &encoded)
+	err := q.QueryRowContext(ctx, `SELECT operation,before_json,after_json FROM photo_change_receipts WHERE receipt_id=$1`, id).Scan(&operation, &before, &encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoAuthoredReceipt{}, ErrNotFound
 	}

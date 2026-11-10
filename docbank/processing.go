@@ -28,7 +28,7 @@ var (
 )
 
 func (v *Vault) PlanProcessing(ctx context.Context, request ProcessingPlanRequest) (ProcessingPlan, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProcessingPlan{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -44,7 +44,7 @@ func (v *Vault) PlanProcessing(ctx context.Context, request ProcessingPlanReques
 // Terminal rendition failures match ErrRenditionFailed; ambiguous outcomes match
 // ErrRenditionOperatorRequired.
 func (v *Vault) StartProcessing(ctx context.Context, request StartProcessingRequest) (ProcessingJob, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProcessingJob{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -64,7 +64,7 @@ func (v *Vault) StartProcessing(ctx context.Context, request StartProcessingRequ
 func (v *Vault) GrantProcessingPlanConsent(
 	ctx context.Context, request ProcessingConsentGrantRequest,
 ) (ProcessingConsentGrant, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProcessingConsentGrant{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -78,7 +78,7 @@ func (v *Vault) GrantProcessingPlanConsent(
 
 // RevokeProcessingPlanConsent advances the embedded operator's processing fence.
 func (v *Vault) RevokeProcessingPlanConsent(ctx context.Context) (ProcessingConsentRevocation, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProcessingConsentRevocation{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -87,7 +87,7 @@ func (v *Vault) RevokeProcessingPlanConsent(ctx context.Context) (ProcessingCons
 }
 
 func (v *Vault) ProcessingStatus(ctx context.Context, request ProcessingStatusRequest) (ProcessingStatus, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return ProcessingStatus{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -101,7 +101,7 @@ func (v *Vault) ProcessingStatus(ctx context.Context, request ProcessingStatusRe
 }
 
 func (v *Vault) Rendition(ctx context.Context, request RenditionRequest) (*RenditionContent, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return nil, err
 	}
 	rendition, err := v.processing.Rendition(ctx, toProcessingSelector(request.Selector), request.MaxBytes)
@@ -127,7 +127,7 @@ func (v *Vault) Rendition(ctx context.Context, request RenditionRequest) (*Rendi
 // ErrInvalidRenditionWindow. The vault lease covers the internal blob read and
 // cleanup, and is released before returning the text window.
 func (v *Vault) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowRequest) (EvidenceWindow, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return EvidenceWindow{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -145,7 +145,7 @@ func (v *Vault) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowRe
 }
 
 func (v *Vault) DocumentCoverage(ctx context.Context, request CoverageRequest) (CoverageReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return CoverageReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -165,8 +165,8 @@ func (v *Vault) DocumentCoverage(ctx context.Context, request CoverageRequest) (
 
 // FormatCoverage reports the capability snapshot captured when the vault's
 // configured processing providers were constructed.
-func (v *Vault) FormatCoverage(_ context.Context) (document.FormatCoverageV1, error) {
-	if err := v.begin(); err != nil {
+func (v *Vault) FormatCoverage(ctx context.Context) (document.FormatCoverageV1, error) {
+	if err := v.begin(ctx); err != nil {
 		return document.FormatCoverageV1{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -175,8 +175,8 @@ func (v *Vault) FormatCoverage(_ context.Context) (document.FormatCoverageV1, er
 
 // LookupFormat resolves a catalog id or extension against the vault's
 // constructor-frozen format coverage snapshot.
-func (v *Vault) LookupFormat(_ context.Context, query string) (document.FormatLookupV1, error) {
-	if err := v.begin(); err != nil {
+func (v *Vault) LookupFormat(ctx context.Context, query string) (document.FormatLookupV1, error) {
+	if err := v.begin(ctx); err != nil {
 		return document.FormatLookupV1{}, err
 	}
 	defer v.lifecycle.RUnlock()
@@ -187,7 +187,7 @@ func (v *Vault) LookupFormat(_ context.Context, query string) (document.FormatLo
 // selectors, or a mode or reranking choice they do not support, match
 // ErrMediaSearchInvalid.
 func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchRequest) (DocumentSearchReport, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return DocumentSearchReport{}, err
 	}
 	defer v.lifecycle.RUnlock()

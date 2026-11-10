@@ -473,9 +473,17 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 	for _, outcome := range []string{"cancelled", "failed", "checkout-pinned"} {
 		t.Run(outcome, func(t *testing.T) {
 			s := newTestStore(t)
-			request, run, _ := prepareReceivedPackage(t, s, "photo-"+outcome)
+			request, run, original := prepareReceivedPackage(t, s, "photo-"+outcome)
 			image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg",
 				fakeHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
+			require.NoError(t, err)
+			tag, err := s.CreateTag(t.Context(), "imported")
+			require.NoError(t, err)
+			for _, id := range []int64{original.ID, image.ID, s.RootID()} {
+				_, err = s.AssignTag(t.Context(), tag.ID, id, UnconditionalRev)
+				require.NoError(t, err)
+			}
+			_, before, err := s.VaultChanges(t.Context(), "", 500)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
 			require.NoError(t, err)
@@ -494,6 +502,18 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 				_, err = s.FinishPackageImportJob(t.Context(), claimed.ID, claimed.Epoch, claimed.Token, "failed", "", nil)
 			}
 			require.NoError(t, err)
+			assertTagAssignmentCounts(t, s)
+			changes, _, err := s.VaultChanges(t.Context(), before, 500)
+			require.NoError(t, err)
+			if outcome == "checkout-pinned" {
+				require.Len(t, changes, 1)
+			} else {
+				require.Len(t, changes, 2)
+				require.Equal(t, "removed", changes[1].Kind)
+				require.Equal(t, image.ID, changes[1].NodeID)
+			}
+			require.Equal(t, "removed", changes[0].Kind)
+			require.Equal(t, original.ID, changes[0].NodeID)
 			var purges int
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))

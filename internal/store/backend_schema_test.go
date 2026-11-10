@@ -39,13 +39,34 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	postgres := newPostgresQueryStore(t)
 	left := describeBackendSchema(t, sqlite)
 	right := describeBackendSchema(t, postgres)
-	// SQLite records its released layout; PostgreSQL is not released yet.
-	require.Contains(t, left["vault_metadata"].Columns, "schema_version")
-	assert.NotContains(t, right["vault_metadata"].Columns, "schema_version")
+	// SQLite retains numbered released layouts; disposable PostgreSQL layouts
+	// identify the embedded SQL directly until retained deployments begin.
+	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, left["vault_metadata"].Columns["schema_version"])
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
 	delete(left["vault_metadata"].Columns, "schema_version")
+	delete(right["vault_metadata"].Columns, "schema_fingerprint")
 	// PostgreSQL's transactional node counter implements SQLite's sqlite_sequence.
 	require.Contains(t, right, "node_allocation")
 	delete(right, "node_allocation")
+	// SQLite's released size lookup indexes zero-padded text; PostgreSQL can
+	// compare the integer directly. Both serve BrowserPhotoSizeCandidates.
+	const photoSizeIndex = "content_versions_photo_size"
+	assert.Equal(t, backendIndex{Columns: []string{"<expression>"}}, left["content_versions"].Indexes[photoSizeIndex])
+	assert.Equal(t, backendIndex{Columns: []string{"size"}}, right["content_versions"].Indexes[photoSizeIndex])
+	delete(left["content_versions"].Indexes, photoSizeIndex)
+	delete(right["content_versions"].Indexes, photoSizeIndex)
+	// Hidden visibility follows receipt insertion order, independent of clocks.
+	// PostgreSQL's ordinal and indexes replace SQLite's implicit rowid.
+	receipts := right["photo_change_receipts"]
+	require.Contains(t, receipts.Columns, "receipt_order")
+	delete(receipts.Columns, "receipt_order")
+	assert.Equal(t, backendIndex{Columns: []string{"receipt_order"}, Unique: true}, receipts.Indexes["unique:receipt_order"])
+	delete(receipts.Indexes, "unique:receipt_order")
+	assert.Equal(t, backendIndex{Columns: []string{"operation", "receipt_order"}}, receipts.Indexes["photo_change_receipts_operation"])
+	delete(receipts.Indexes, "photo_change_receipts_operation")
+	assert.Equal(t, backendIndex{Columns: []string{"operation"}}, left["photo_change_receipts"].Indexes["photo_change_receipts_operation"])
+	delete(left["photo_change_receipts"].Indexes, "photo_change_receipts_operation")
+
 	for table, reason := range sqliteOnlyBackendTables {
 		assert.Contains(t, left, table, "stale table exception: %s", reason)
 		assert.NotContains(t, right, table, "remove resolved table exception: %s", reason)

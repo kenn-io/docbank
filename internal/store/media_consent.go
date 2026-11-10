@@ -65,7 +65,9 @@ func (s *Store) RevokeMediaAcquisitionConsent(
 	ctx context.Context, op MediaOperation, originID string,
 	request ProcessingConsentRevocationRequest,
 ) (MediaConsentReceipt, error) {
-	s.providerEgressMu.Lock()
+	if err := s.providerEgressMu.Lock(ctx); err != nil {
+		return MediaConsentReceipt{}, err
+	}
 	defer s.providerEgressMu.Unlock()
 	principal, err := normalizeConsentLabel("principal", request.Principal)
 	if err != nil {

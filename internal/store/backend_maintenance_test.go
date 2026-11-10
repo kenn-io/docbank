@@ -25,13 +25,13 @@ var backendMaintenanceEffects = []backendMaintenance{
  blob_pack_summary_mapping_update blob_pack_summary_blob_delete blob_pack_summary_blob_insert`},
 	{"content promotion", "document_maintenance.go: promoteContentBlobTx", "documents contracts", `
  content_versions_promote_rendition_staging content_versions_revoke_derivative_purge`},
-	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events contracts; people publication remains unqualified", `
+	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events/document-people contracts", `
  document_event_heads_deleted content_versions_invalidate_person_bindings`},
-	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/sources/retention contracts; SQLite pending table is a trigger intermediate", `
+	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/photo-import/photo-checkout/sources/retention contracts; SQLite pending table is a trigger intermediate", `
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
  photo_timeline_version_delete photo_timeline_version_change
  photo_timeline_binding_insert photo_timeline_correction_insert`},
-	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/trash/retention/organization contracts; XMP publication remains unqualified", `
+	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis/photo-quality-hidden/photo-review contracts", `
  photo_xmp_unsettled_refresh photo_xmp_unsettled_file_insert photo_xmp_unsettled_file_update
  photo_xmp_unsettled_file_delete photo_xmp_unsettled_asset_insert photo_xmp_unsettled_asset_update
  photo_xmp_unsettled_node_update photo_xmp_unsettled_node_insert photo_xmp_unsettled_node_delete
@@ -45,9 +45,10 @@ var backendMaintenanceEffects = []backendMaintenance{
  photo_timeline_head_insert photo_timeline_head_update
  photo_xmp_unsettled_technical_insert photo_xmp_unsettled_technical_delete
  photo_xmp_unsettled_head_insert photo_xmp_unsettled_head_update`},
-	{"photo metadata recovery and XMP publication", "unported: source-head recovery and XMP writers", "must refresh export work when heads or receipts change", `
- photo_xmp_unsettled_head_delete photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
-	{"people candidates", "unported: person candidate publication", "must update the candidate-to-face projection in the publishing transaction", `
+	{"photo XMP publication", "photo_xmp.go: settlePhotoXMPTx; document_maintenance.go: refreshPhotoAssetWorkTx", "photo-edit contracts; receipts are replaced rather than updated", `
+ photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
+	{"photo metadata recovery", "unported: source-head recovery", "must refresh export work when heads are removed", `photo_xmp_unsettled_head_delete`},
+	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation contracts cover inserts; evidence replacement during metadata restore remains unqualified", `
  person_candidate_faces_insert person_candidate_faces_update`},
 	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
  nodes_fts_insert nodes_fts_delete nodes_fts_update
@@ -64,14 +65,23 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"metadata and event evidence", "source_metadata.go and document_events.go; INSERT-only publication grants", "metadata-events contracts; retained evidence is never rewritten", `
  source_metadata_generations_immutable_update document_event_generations_immutable_update
  document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
-	{"retained processing records", "no runtime UPDATE grant; producers unported", "enrollment validates retained rows; derivatives/retention may delete them, never rewrite them", `
- document_people_generations_immutable_update
+	{"document-person generations", "document_people.go; INSERT-only generation grants", "document-people contracts; publication replaces heads without rewriting retained attribution", `
+ document_people_generations_immutable_update`},
+	{"visual preview records", "visual_preview.go; INSERT-only generation grants", "visual-evidence contracts; active heads may change without rewriting retained generations", `
+ visual_preview_generations_immutable_update`},
+	{"media source and input authority", "media_sources.go, media_runtime.go and media_artifacts.go; INSERT-only grants", "media contracts; first binding and revocation update occurrences without rewriting source or input records", `
  media_sources_immutable_update media_source_versions_immutable_update
- media_input_artifacts_immutable_update visual_preview_generations_immutable_update`},
+ media_input_artifacts_immutable_update`},
 	{"embedding records", "embedding_catalog.go; runtime has no UPDATE grant", "embeddings contracts; immutable records may be collected after roots expire", `
  embedding_vector_spaces_immutable_update embedding_input_generations_immutable_update
  embedding_generation_inputs_immutable_update embedding_vector_sets_immutable_update
  embedding_vector_rows_immutable_update embedding_sets_immutable_update`},
+	{"vector source membership epochs", "unported: vector_index.go", "SQLite-only derived state; PostgreSQL ranked search remains unqualified", `
+ vector_source_embedding_heads_insert vector_source_embedding_heads_update vector_source_embedding_heads_delete
+ vector_source_rendition_heads_insert vector_source_rendition_heads_update vector_source_rendition_heads_delete
+ vector_source_visual_preview_generations_insert vector_source_visual_preview_generations_delete
+ vector_source_photo_files_insert vector_source_photo_files_update vector_source_photo_files_delete
+ vector_source_photo_assets_update vector_source_nodes_update`},
 	{"rendition records", "processing_catalog.go and search.go; runtime has no UPDATE grant", "renditions contracts; cleanup may delete immutable records", `
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update

@@ -55,11 +55,15 @@ func TestFolderWatchSettlesExcludesAndReobservesAfterRestart(t *testing.T) {
 func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name          string
-		changeModTime bool
-		retry         bool
+		name                     string
+		changeModTime            bool
+		noChangeTime             bool
+		changeTimeFollowsModTime bool
+		retry                    bool
 	}{
 		{name: "content edit"},
+		{name: "no change time", noChangeTime: true},
+		{name: "change time follows mtime", changeTimeFollowsModTime: true},
 		{name: "metadata edit", changeModTime: true},
 		{name: "retryable failure", retry: true},
 	} {
@@ -84,6 +88,23 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 				return err
 			}, failOnReject(t))
 			require.NoError(t, err)
+			if test.noChangeTime {
+				scanner.watcher.observeFile = func(source watchSource, _ bool) (watchFileState, error) {
+					return source.observe(false)
+				}
+			}
+			if test.changeTimeFollowsModTime {
+				// Model FAT/exFAT and rclone, where restoring mtime also restores change time.
+				var initialChangeTime int64
+				scanner.watcher.observeFile = func(source watchSource, withChange bool) (watchFileState, error) {
+					state, err := source.observe(withChange)
+					if initialChangeTime == 0 {
+						initialChangeTime = state.fingerprint.change
+					}
+					state.fingerprint.change = initialChangeTime
+					return state, err
+				}
+			}
 			now := time.Now()
 			scanner.watcher.now = func() time.Time { return now }
 			root, err := scanner.openRoot()
@@ -95,17 +116,36 @@ func TestFolderWatchRechecksDigestsAndSettlesContentChanges(t *testing.T) {
 			require.Len(t, digests, 1)
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1, "unchanged bytes do not repeat processing")
+			if test.changeTimeFollowsModTime {
+				rewriteSourceWithRestoredMtime(t, file, []byte("other"))
+				for range 12 {
+					now = now.Add(time.Second)
+					require.NoError(t, scanner.watcher.scan(t.Context(), root))
+					require.Len(t, digests, 1, "matching nonzero change time keeps periodic scans quiet")
+					require.True(t, scanner.watcher.observations["notes.txt"].processed, "periodic scans must preserve the accepted observation")
+				}
+				return
+			}
 			modTime := before.ModTime()
 			if test.changeModTime {
 				modTime = modTime.Add(time.Minute)
 			}
-			require.NoError(t, os.WriteFile(file, []byte("other"), 0o600))
-			require.NoError(t, os.Chtimes(file, modTime, modTime))
+			if test.changeModTime || test.noChangeTime {
+				require.NoError(t, os.WriteFile(file, []byte("other"), 0o600))
+				require.NoError(t, os.Chtimes(file, modTime, modTime))
+			} else {
+				rewriteSourceWithRestoredMtime(t, file, []byte("other"))
+			}
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1, "a digest change must settle before processing")
 			now = now.Add(9 * time.Second)
-			require.NoError(t, os.WriteFile(file, []byte("third"), 0o600))
-			require.NoError(t, os.Chtimes(file, modTime, modTime))
+			// This rewrite keeps the size and mtime, so only a moved change time reveals it.
+			if test.noChangeTime {
+				require.NoError(t, os.WriteFile(file, []byte("third"), 0o600))
+				require.NoError(t, os.Chtimes(file, modTime, modTime))
+			} else {
+				rewriteSourceWithRestoredMtime(t, file, []byte("third"))
+			}
 			require.NoError(t, scanner.watcher.scan(t.Context(), root))
 			require.Len(t, digests, 1)
 			now = now.Add(time.Second)
@@ -372,6 +412,12 @@ func TestFolderWatchHintDoesNotHashUnrelatedAcceptedFile(t *testing.T) {
 		return err
 	}, failOnReject(t))
 	require.NoError(t, err)
+	scanner.watcher.observeFile = func(source watchSource, withChange bool) (watchFileState, error) {
+		if source.ref == "two.txt" {
+			return source.observe(false)
+		}
+		return source.observe(withChange)
+	}
 	root, err := scanner.openRoot()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, root.Close()) }()

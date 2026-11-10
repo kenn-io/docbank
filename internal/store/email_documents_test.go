@@ -1,10 +1,9 @@
 package store
 
 import (
-	"context"
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,22 +12,28 @@ import (
 
 func TestEmailDocumentsReleaseUsesRetryingBegin(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	f := newEmailFixture(t, s, "source.eml")
-	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
-	require.NoError(t, err)
-	receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
-	require.NoError(t, err)
-	lock := holdTestSQLiteWriter(t, s)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- s.RemoveEmailDocumentPublication(ctx, receipt.OperationID, receipt.RequestDigest)
-	}()
-	time.Sleep(100 * time.Millisecond) //nolint:kennlint // sleeptest: Keep the writer held beyond the driver's busy timeout so release needs a retry.
-	require.NoError(t, lock.Rollback())
-	require.NoError(t, <-done)
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestStore(t)
+		f := newEmailFixture(t, s, "source.eml")
+		view, err := s.PublishEmailGeneration(t.Context(), f.publication)
+		require.NoError(t, err)
+		receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "contended-publication"))
+		require.NoError(t, err)
+		lock := holdTestSQLiteWriter(t, s)
+		done := make(chan error, 1)
+		go func() {
+			done <- s.RemoveEmailDocumentPublication(t.Context(), receipt.OperationID, receipt.RequestDigest)
+		}()
+		// The release's BEGIN has failed busy; only a retry can finish it.
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("release returned while the writer lock was held: %v", err)
+		default:
+		}
+		require.NoError(t, lock.Rollback())
+		require.NoError(t, <-done)
+	})
 }
 
 func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation string) document.EmailDocumentPublicationRequest {
@@ -40,9 +45,10 @@ func attachmentRequest(t *testing.T, s *Store, view EmailMetadataView, operation
 
 // Losing the response must not duplicate children, and changing retry input
 // must never reinterpret the original operation.
-func TestEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T) {
+func checkEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -64,12 +70,13 @@ func TestEmailDocumentsPublicationRetryAndExactOccurrence(t *testing.T) {
 	req.DestinationRevision++
 	_, err = s.PublishEmailDocuments(t.Context(), req)
 	require.ErrorIs(t, err, ErrEmailDocumentConflict)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
-func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
+func checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -105,7 +112,7 @@ func TestEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), page.Total)
 	require.NotEqual(t, page.Items[0].Relation.Parent.VersionID, page.Items[1].Relation.Parent.VersionID)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	checkRetentionMetadata(t, s)
 }
 
 func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
@@ -158,7 +165,8 @@ func TestEmailDocumentsEncryptedAncestry(t *testing.T) {
 	}
 }
 
-func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
+func checkEmailDocumentsExplicitRootAttachment(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	const payload = "%PDF-1.4\r\nSynthetic attachment\r\n%%EOF\r\n"
 	for _, explicit := range []bool{false, true} {
@@ -169,7 +177,7 @@ func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
 			raw = "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=root.pdf\r\n\r\n" + payload
 		}
 		t.Run(name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			f := newEmailSourceFixture(t, s, "root.eml", raw)
 			view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 			require.NoError(t, err)
@@ -187,7 +195,7 @@ func TestEmailDocumentsExplicitRootAttachment(t *testing.T) {
 			require.Equal(t, []byte(payload), f.bytes[relation.Child.SHA256])
 			require.Equal(t, int64(len(payload)), relation.Child.Size)
 			require.NotEqual(t, view.Version.BlobHash, relation.Child.SHA256)
-			require.NoError(t, s.ValidateMetadata(t.Context()))
+			checkRetentionMetadata(t, s)
 		})
 	}
 }

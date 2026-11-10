@@ -49,7 +49,9 @@ type BatesNamespaceListRequest struct {
 // EnsureBatesNamespace creates or returns one namespace with an immutable
 // prefix, suffix, and padding contract.
 func (v *Vault) EnsureBatesNamespace(ctx context.Context, request BatesNamespaceRequest) (BatesNamespace, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesNamespace{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesNamespace{}, ErrClosed
@@ -65,7 +67,9 @@ func (v *Vault) EnsureBatesNamespace(ctx context.Context, request BatesNamespace
 
 // BatesNamespaces returns one stable bounded page of label namespaces.
 func (v *Vault) BatesNamespaces(ctx context.Context, request BatesNamespaceListRequest) (BatesNamespacePage, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesNamespacePage{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesNamespacePage{}, ErrClosed
@@ -88,7 +92,9 @@ func (v *Vault) BatesNamespaces(ctx context.Context, request BatesNamespaceListR
 // PlanBatesStamp previews exact labels for a sealed snapshot without reserving
 // a range or changing the namespace cursor.
 func (v *Vault) PlanBatesStamp(ctx context.Context, request BatesPlanRequest) (BatesPlan, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesPlan{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesPlan{}, ErrClosed
@@ -110,7 +116,9 @@ func (v *Vault) PlanBatesStamp(ctx context.Context, request BatesPlanRequest) (B
 // chooses the namespace and first number, so the reservation always matches
 // what PublishBatesExport will stamp.
 func (v *Vault) ReserveBatesRange(ctx context.Context, request BatesReserveRequest) (BatesAllocation, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesAllocation{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesAllocation{}, ErrClosed
@@ -133,7 +141,9 @@ func (v *Vault) ReserveBatesRange(ctx context.Context, request BatesReserveReque
 
 // BatesAllocation reads one retained allocation and its page labels.
 func (v *Vault) BatesAllocation(ctx context.Context, allocationID string) (BatesAllocation, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesAllocation{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesAllocation{}, ErrClosed
@@ -146,7 +156,9 @@ func (v *Vault) BatesAllocation(ctx context.Context, allocationID string) (Bates
 // verifies the PDF, and retains it. Retrying the same allocation and recipe
 // returns the existing export.
 func (v *Vault) PublishBatesExport(ctx context.Context, allocationID string, recipe BatesRecipe) (BatesExport, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesExport{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesExport{}, ErrClosed
@@ -165,7 +177,9 @@ func (v *Vault) PublishBatesExport(ctx context.Context, allocationID string, rec
 
 // BatesExport reads one verified export by its allocation ID.
 func (v *Vault) BatesExport(ctx context.Context, allocationID string) (BatesExport, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesExport{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesExport{}, ErrClosed
@@ -180,7 +194,9 @@ func (v *Vault) BatesExport(ctx context.Context, allocationID string) (BatesExpo
 // BatesExports lists verified export history oldest first. Pass the last
 // returned artifact ID as after to read the next page.
 func (v *Vault) BatesExports(ctx context.Context, after string, limit int) (BatesExportPage, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return BatesExportPage{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return BatesExportPage{}, ErrClosed
@@ -209,7 +225,9 @@ func (v *Vault) BatesExports(ctx context.Context, after string, limit int) (Bate
 // ReadBatesExport returns the retained PDF bytes after checking them against
 // the catalog's content hash.
 func (v *Vault) ReadBatesExport(ctx context.Context, allocationID string) ([]byte, BatesExport, error) {
-	v.lifecycle.RLock()
+	if err := v.lifecycle.RLock(ctx); err != nil {
+		return nil, BatesExport{}, err
+	}
 	defer v.lifecycle.RUnlock()
 	if v.closed {
 		return nil, BatesExport{}, ErrClosed

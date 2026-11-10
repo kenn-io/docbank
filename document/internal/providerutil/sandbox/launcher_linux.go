@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -91,7 +93,7 @@ func runLauncher(control launchControl, executableFD, statusFD int) error {
 	unix.CloseOnExec(statusFD)
 	unix.CloseOnExec(executableFD)
 	if control.Policy.Mode == LibreOfficeMode {
-		restarts, err := runSupervisedChild(control, control.Policy.Executable)
+		restarts, err := runSupervisedChild(control, control.Policy.Executable, statusFD)
 		if err != nil {
 			status := launcherFailureStatus
 			if errors.Is(err, ErrChildFailed) {
@@ -137,7 +139,7 @@ func (err launcherStatusError) Error() string { return err.err.Error() }
 
 func (err launcherStatusError) Unwrap() error { return err.err }
 
-func runSupervisedChild(control launchControl, executablePath string) (int, error) {
+func runSupervisedChild(control launchControl, executablePath string, statusFD int) (int, error) {
 	private := control.Policy.PrivateRoot
 	if private == nil || private.InputName == private.OutputName {
 		return 0, errors.New("sandbox supervised private root is invalid")
@@ -190,8 +192,34 @@ func runSupervisedChild(control launchControl, executablePath string) (int, erro
 	command.Stdout = io.Discard
 	command.Stderr = os.Stderr
 	command.WaitDelay = childDrainWindow
+	if control.HoldChildAfterExec {
+		// Linux delivers the exec trap to the tracing thread. Holding that
+		// thread lets the test observe the actual child before cancellation.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		command.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
+	}
 	if err := command.Start(); err != nil {
 		return 0, fmt.Errorf("start sandbox supervised child: %w", err)
+	}
+	if control.HoldChildAfterExec {
+		var status unix.WaitStatus
+		_, waitErr := unix.Wait4(command.Process.Pid, &status, 0, nil)
+		if waitErr != nil || !status.Stopped() || status.StopSignal() != unix.SIGTRAP {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			if waitErr != nil {
+				return 0, fmt.Errorf("wait for supervised child exec trap: %w", waitErr)
+			}
+			return 0, fmt.Errorf("unexpected supervised child exec status: %v", status)
+		}
+	}
+	// Start returns after exec succeeds. The status descriptor is
+	// close-on-exec, so the child never holds it.
+	if err := writeLauncherStatus(statusFD, launcherChildStartedStatus); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return 0, err
 	}
 	runErr := command.Wait()
 	if err := reapSupervisedDescendants(); err != nil {

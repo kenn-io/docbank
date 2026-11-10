@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -165,11 +166,13 @@ func exportTestLease(t *testing.T, url string) *daemonLease {
 }
 
 type nativeExportFixture struct {
-	catalog    *store.Store
-	blobs      *blob.Store
-	worker     *exporter.Worker
-	connection *daemonconn.Connection
-	lease      *daemonLease
+	catalog      *store.Store
+	blobs        *blob.Store
+	worker       *exporter.Worker
+	connection   *daemonconn.Connection
+	lease        *daemonLease
+	handler      http.Handler
+	contentBytes chan int
 }
 
 func newNativeExportFixture(t *testing.T) *nativeExportFixture {
@@ -191,11 +194,42 @@ func newNativeExportFixture(t *testing.T) *nativeExportFixture {
 		Store: catalog, Blobs: blobs, VaultRoot: root, Cfg: cfg, Gate: gate, Exports: worker,
 	})
 	t.Cleanup(daemon.Close)
-	httpServer := httptest.NewServer(daemon.Handler())
+	fixture := &nativeExportFixture{catalog: catalog, blobs: blobs, worker: worker, handler: daemon.Handler()}
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fixture.contentBytes != nil && strings.HasSuffix(r.URL.Path, "/content") {
+			observed := &observedResponseWriter{ResponseWriter: w}
+			fixture.handler.ServeHTTP(observed, r)
+			fixture.contentBytes <- observed.bytes
+			return
+		}
+		fixture.handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(httpServer.Close)
 	connection := daemonconn.New(httpServer.URL, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	return &nativeExportFixture{catalog, blobs, worker, connection, exportTestLease(t, httpServer.URL)}
+	fixture.connection = connection
+	fixture.lease = exportTestLease(t, httpServer.URL)
+	return fixture
+}
+
+func (f *nativeExportFixture) provenConnection(t *testing.T) *daemonconn.Connection {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-proven-key"
+	root := os.Getenv("DOCBANK_HOME")
+	daemon := api.NewServer(api.Deps{Store: f.catalog, Blobs: f.blobs,
+		VaultRoot: root, Cfg: cfg, ShutdownToken: "synthetic-proof"})
+	t.Cleanup(daemon.Close)
+	httpServer := httptest.NewServer(daemon.Handler())
+	t.Cleanup(httpServer.Close)
+	record := daemonconn.NewRecord(strings.TrimPrefix(httpServer.URL, "http://"), cfg.Server.APIKey, "synthetic-proof", "")
+	_, err := daemonconn.RuntimeStore(root).Write(record)
+	require.NoError(t, err)
+	connection, running, err := daemonconn.Running(t.Context())
+	require.NoError(t, err)
+	require.True(t, running)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	return connection
 }
 
 func (f *nativeExportFixture) addFile(t *testing.T, name, content string) bundle.Member {

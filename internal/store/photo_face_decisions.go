@@ -83,7 +83,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	state := PhotoFaceDecisionState{VersionID: versionID}
 	var err error
 	if faceID != "" {
-		f, e := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=? AND content_version_id=?`, faceID, versionID))
+		f, e := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=$1 AND content_version_id=$2`, faceID, versionID))
 		err = e
 		if e == nil {
 			state.Faces = []PhotoFace{f}
@@ -96,7 +96,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	if err != nil {
 		return state, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?)) ORDER BY assertion_id`, versionID, people)
+	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 AND role='depicted' AND person_id IN (SELECT value FROM `+(metadataJSONDialect{s.postgresSchema != ""}).arrayValues("$2")+`) ORDER BY assertion_id`, versionID, people)
 	if err != nil {
 		return state, err
 	}
@@ -112,7 +112,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	if err != nil {
 		return state, err
 	}
-	faceRows, err := tx.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=? AND face_id<>? AND assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?))) ORDER BY face_id`, versionID, faceID, versionID, people)
+	faceRows, err := tx.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=$1 AND face_id<>$2 AND assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE content_version_id=$3 AND role='depicted' AND person_id IN (SELECT value FROM `+(metadataJSONDialect{s.postgresSchema != ""}).arrayValues("$4")+`)) ORDER BY face_id`, versionID, faceID, versionID, people)
 	if err != nil {
 		return state, err
 	}
@@ -128,7 +128,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 		return state, err
 	}
 	slices.SortFunc(state.Faces, func(a, b PhotoFace) int { return cmp.Compare(a.FaceID, b.FaceID) })
-	candidateRows, err := tx.QueryContext(ctx, `SELECT c.candidate_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE ? AND e.face_id=? AND e.content_version_id=? AND c.state IN ('open','rejected') AND c.reason='face_match' ORDER BY c.candidate_id`, includeCandidates, faceID, versionID)
+	candidateRows, err := tx.QueryContext(ctx, `SELECT c.candidate_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE $1 AND e.face_id=$2 AND e.content_version_id=$3 AND c.state IN ('open','rejected') AND c.reason='face_match' ORDER BY c.candidate_id`, includeCandidates, faceID, versionID)
 	if err != nil {
 		return state, err
 	}
@@ -164,7 +164,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	for _, id := range personIDs {
 		var p faceDecisionPerson
 		p.PersonID = id
-		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(p.key_face_id,''),COALESCE(f.content_version_id,''),p.revision FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=?`, id).Scan(&p.KeyFaceID, &p.KeyFaceContentVersionID, &p.Revision); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(p.key_face_id,''),COALESCE(f.content_version_id,''),p.revision FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=$1`, id).Scan(&p.KeyFaceID, &p.KeyFaceContentVersionID, &p.Revision); err != nil {
 			return state, err
 		}
 		state.People = append(state.People, p)
@@ -250,7 +250,7 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	}
 	afterState := photoFaceReceiptAfter{RequestSHA256: requestSHA, ReceiptID: id, After: after, UndoOf: undo, CreatedPerson: createdPerson}
 	var assetID string
-	if err = tx.QueryRowContext(ctx, `SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, before.VersionID).Scan(&assetID); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$1`, before.VersionID).Scan(&assetID); err != nil {
 		return result, err
 	}
 	err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
@@ -417,7 +417,7 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 		return PhotoFaceDecisionReceipt{}, err
 	}
 	if request.AssertionID != "" {
-		_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=0,revision=revision+1,action=CASE WHEN EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN action ELSE 'withdrawn' END WHERE assertion_id=?`, request.AssertionID)
+		_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=0,revision=revision+1,action=CASE WHEN EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN action ELSE 'withdrawn' END WHERE assertion_id=$1`, request.AssertionID)
 	} else if request.Action == "key" {
 		err = setKeyFaceTx(ctx, tx, request, assigned)
 	} else {
@@ -432,7 +432,7 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 		}
 	}
 	if face.FaceID != "" {
-		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=? AND content_version_id=?`, face.FaceID, versionID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=$1 AND content_version_id=$2`, face.FaceID, versionID); err != nil {
 			return PhotoFaceDecisionReceipt{}, err
 		}
 	}
@@ -453,7 +453,7 @@ func decisionFaceTx(ctx context.Context, tx *sql.Tx, versionID string, request P
 	if request.FaceID == "" {
 		return PhotoFace{}, nil
 	}
-	face, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=? AND content_version_id=?`, request.FaceID, versionID))
+	face, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=$1 AND content_version_id=$2`, request.FaceID, versionID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return face, ErrNotFound
 	}
@@ -476,7 +476,7 @@ func decisionPersonTx(ctx context.Context, tx *sql.Tx, request PhotoFaceDecision
 		return resolveActiveCandidatePersonTx(ctx, tx, request.PersonID)
 	}
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?)`, request.PersonID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=$1)`, request.PersonID).Scan(&exists); err != nil {
 		return "", err
 	}
 	if !exists {
@@ -492,7 +492,7 @@ func setKeyFaceTx(ctx context.Context, tx *sql.Tx, request PhotoFaceDecisionRequ
 	if request.FaceID != "" && (assigned.PersonID != request.PersonID || assigned.Action != personAssertionActionAssert) {
 		return ErrPersonIdentityConflict
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=?,revision=revision+1,updated_at=? WHERE person_id=?`, nullableString(request.FaceID), nowRFC3339(), request.PersonID)
+	_, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=$1,revision=revision+1,updated_at=$2 WHERE person_id=$3`, nullableString(request.FaceID), nowRFC3339(), request.PersonID)
 	return err
 }
 
@@ -509,7 +509,7 @@ func (s *Store) applyFaceDecisionTx(ctx context.Context, tx *sql.Tx, before *Pho
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=? WHERE face_id=? AND content_version_id=?`, a.AssertionID, face.FaceID, face.ContentVersionID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=$1 WHERE face_id=$2 AND content_version_id=$3`, a.AssertionID, face.FaceID, face.ContentVersionID); err != nil {
 			return err
 		}
 		return s.clearNamedFaceCandidatesTx(ctx, tx, before, face.FaceID, request.PersonID, request.Action)
@@ -522,13 +522,13 @@ func (s *Store) applyFaceDecisionTx(ctx context.Context, tx *sql.Tx, before *Pho
 }
 
 func retractFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=NULL WHERE face_id=? AND content_version_id=?`, face.FaceID, face.ContentVersionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=NULL WHERE face_id=$1 AND content_version_id=$2`, face.FaceID, face.ContentVersionID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=? WHERE key_face_id=?`, nowRFC3339(), face.FaceID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=$1 WHERE key_face_id=$2`, nowRFC3339(), face.FaceID); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=? AND photo_mark=0 AND action='assert' AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)`, face.AssertionID)
+	_, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=$1 AND photo_mark=0 AND action='assert' AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)`, face.AssertionID)
 	return err
 }
 
@@ -556,7 +556,7 @@ func (s *Store) rejectFaceTx(ctx context.Context, tx *sql.Tx, before *PhotoFaceD
 	if c.State != personCandidateStateOpen && !slices.ContainsFunc(before.Candidates, func(old PersonMatchCandidate) bool { return old.CandidateID == c.CandidateID }) {
 		before.Candidates = append(before.Candidates, c)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='rejected',decided_person_id=NULL,decided_at=?,revision=revision+1 WHERE candidate_id=?`, nowRFC3339(), c.CandidateID)
+	_, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='rejected',decided_person_id=NULL,decided_at=$1,revision=revision+1 WHERE candidate_id=$2`, nowRFC3339(), c.CandidateID)
 	return err
 }
 
@@ -566,7 +566,7 @@ func (s *Store) rejectFaceTx(ctx context.Context, tx *sql.Tx, before *PhotoFaceD
 // on whichever photo the request named.
 func keyFaceVersionTx(ctx context.Context, tx *sql.Tx, personID, fallback string) (string, error) {
 	var versionID string
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(f.content_version_id,'') FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=?`, personID).Scan(&versionID)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(f.content_version_id,'') FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=$1`, personID).Scan(&versionID)
 	if err != nil || versionID == "" {
 		return fallback, err
 	}
@@ -619,7 +619,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 			result = replay
 			return nil
 		}
-		result, err = undoFaceDecisionTx(ctx, tx, r, operationID, requestSHA)
+		result, err = s.undoFaceDecisionTx(ctx, tx, r, operationID, requestSHA)
 		return err
 	})
 	return result, err
@@ -629,7 +629,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 // caller can still see.
 func (s *Store) visibleFaceDecisionTx(ctx context.Context, tx *sql.Tx, id string) (PhotoFaceDecisionReceipt, error) {
 	var raw, beforeRaw []byte
-	err := tx.QueryRowContext(ctx, `SELECT before_json,after_json FROM photo_change_receipts WHERE receipt_id=? AND operation='face_decision'`, id).Scan(&beforeRaw, &raw)
+	err := tx.QueryRowContext(ctx, `SELECT before_json,after_json FROM photo_change_receipts WHERE receipt_id=$1 AND operation='face_decision'`, id).Scan(&beforeRaw, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoFaceDecisionReceipt{}, ErrNotFound
 	}
@@ -643,20 +643,20 @@ func (s *Store) visibleFaceDecisionTx(ctx context.Context, tx *sql.Tx, id string
 	return r, s.facePhotoQuery(ctx, tx, r.After.VersionID)
 }
 
-func undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
+func (s *Store) undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
 	history := faceWithdrawalHistory{}
-	current, err := fenceFaceDecisionUndoTx(ctx, tx, r, history)
+	current, err := s.fenceFaceDecisionUndoTx(ctx, tx, r, history)
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
 	if err = requireUndoKeyFacesTx(ctx, tx, r); err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	detached, attached, err := undoFaceLinksTx(ctx, tx, r, &current, history)
+	detached, attached, err := s.undoFaceLinksTx(ctx, tx, r, &current, history)
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	if err = restoreFaceDecisionRowsTx(ctx, tx, r); err != nil {
+	if err = s.restoreFaceDecisionRowsTx(ctx, tx, r); err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
 	if err = relinkUndoAssertionsTx(ctx, tx, r, detached, attached); err != nil {
@@ -665,9 +665,9 @@ func undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionRece
 	if r.CreatedPerson.PersonID != "" {
 		var unused bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p
-			WHERE p.person_id=? AND p.state<>'retired' AND p.revision=?
+			WHERE p.person_id=$1 AND p.state<>'retired' AND p.revision=$2
 			AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=p.person_id
-				AND NOT (a.role='depicted' AND a.action='withdrawn' AND a.content_version_id=?))
+				AND NOT (a.role='depicted' AND a.action='withdrawn' AND a.content_version_id=$3))
 			AND NOT EXISTS(SELECT 1 FROM custodian_assignments c WHERE c.person_id=p.person_id AND c.retired_at IS NULL))`,
 			r.CreatedPerson.PersonID, r.CreatedPerson.Revision, r.After.VersionID).Scan(&unused); err != nil {
 			return PhotoFaceDecisionReceipt{}, err
@@ -698,7 +698,7 @@ func undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionRece
 
 // fenceFaceDecisionUndoTx returns the current rows the receipt touched,
 // or ErrStaleRevision when any of them changed after the decision.
-func fenceFaceDecisionUndoTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, history faceWithdrawalHistory) (PhotoFaceDecisionState, error) {
+func (s *Store) fenceFaceDecisionUndoTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, history faceWithdrawalHistory) (PhotoFaceDecisionState, error) {
 	current, err := faceDecisionRowsTx(ctx, tx, r.After)
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound) {
 		return current, ErrStaleRevision
@@ -715,7 +715,7 @@ func fenceFaceDecisionUndoTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisio
 		}
 		observed := current.Assertions[i]
 		if observed.Action == personAssertionActionWithdrawn {
-			automatic, err := history.automatic(ctx, tx, observed)
+			automatic, err := history.automatic(ctx, tx, s, observed)
 			if err != nil {
 				return current, err
 			}
@@ -754,7 +754,7 @@ func requireUndoKeyFacesTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionR
 			return ErrStaleRevision
 		}
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=? AND content_version_id=?)`, p.KeyFaceID, p.KeyFaceContentVersionID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=$1 AND content_version_id=$2)`, p.KeyFaceID, p.KeyFaceContentVersionID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -767,7 +767,7 @@ func requireUndoKeyFacesTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionR
 // undoFaceLinksTx lists the assertions the undo detaches from and
 // reattaches to faces, and adds them to current so the undo receipt
 // captures dependencies that older receipts omitted.
-func undoFaceLinksTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, current *PhotoFaceDecisionState, history faceWithdrawalHistory) ([]string, []string, error) {
+func (s *Store) undoFaceLinksTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, current *PhotoFaceDecisionState, history faceWithdrawalHistory) ([]string, []string, error) {
 	var detached, attached []string
 	for i, f := range r.After.Faces {
 		old := r.Before.Faces[i].AssertionID
@@ -789,7 +789,7 @@ func undoFaceLinksTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt
 				return nil, nil, err
 			}
 			if assertionID == old {
-				if err = requireReattachableAssertionTx(ctx, tx, r, a, history); err != nil {
+				if err = s.requireReattachableAssertionTx(ctx, tx, r, a, history); err != nil {
 					return nil, nil, err
 				}
 			}
@@ -805,7 +805,7 @@ func undoFaceLinksTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt
 // requireReattachableAssertionTx refuses to reattach a face to an assertion
 // whose person merged away, that an operator withdrew or suppressed, or
 // that changed in a way the receipt does not explain.
-func requireReattachableAssertionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, a PersonDocumentAssertion, history faceWithdrawalHistory) error {
+func (s *Store) requireReattachableAssertionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, a PersonDocumentAssertion, history faceWithdrawalHistory) error {
 	resolved, err := resolveActiveCandidatePersonTx(ctx, tx, a.PersonID)
 	if err != nil {
 		return err
@@ -814,7 +814,7 @@ func requireReattachableAssertionTx(ctx context.Context, tx *sql.Tx, r PhotoFace
 		return old.AssertionID == a.AssertionID && old.Action == "suppress"
 	})
 	if a.Action == personAssertionActionWithdrawn && !slices.ContainsFunc(r.After.Assertions, func(after PersonDocumentAssertion) bool { return after.AssertionID == a.AssertionID }) {
-		automatic, err := history.automatic(ctx, tx, a)
+		automatic, err := history.automatic(ctx, tx, s, a)
 		if err != nil {
 			return err
 		}
@@ -830,23 +830,23 @@ func requireReattachableAssertionTx(ctx context.Context, tx *sql.Tx, r PhotoFace
 
 // restoreFaceDecisionRowsTx writes back every row whose revision the
 // decision advanced.
-func restoreFaceDecisionRowsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt) error {
+func (s *Store) restoreFaceDecisionRowsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt) error {
 	for i, f := range r.Before.Faces {
 		if f.Revision == r.After.Faces[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, nullableString(f.AssertionID), f.FaceID, r.After.VersionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=$1,revision=revision+1 WHERE face_id=$2 AND content_version_id=$3`, nullableString(f.AssertionID), f.FaceID, r.After.VersionID); err != nil {
 			return err
 		}
 	}
-	if err := restoreFaceDecisionAssertionsTx(ctx, tx, r); err != nil {
+	if err := s.restoreFaceDecisionAssertionsTx(ctx, tx, r); err != nil {
 		return err
 	}
 	for i, c := range r.Before.Candidates {
 		if c.Revision == r.After.Candidates[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=?,decided_person_id=?,decided_at=?,revision=revision+1 WHERE candidate_id=?`, c.State, nullableString(c.DecidedPersonID), nullableString(c.DecidedAt), c.CandidateID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=$1,decided_person_id=$2,decided_at=$3,revision=revision+1 WHERE candidate_id=$4`, c.State, nullableString(c.DecidedPersonID), nullableString(c.DecidedAt), c.CandidateID); err != nil {
 			return err
 		}
 	}
@@ -854,14 +854,14 @@ func restoreFaceDecisionRowsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecis
 		if p.Revision == r.After.People[i].Revision {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=?,revision=revision+1,updated_at=? WHERE person_id=?`, nullableString(p.KeyFaceID), nowRFC3339(), p.PersonID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=$1,revision=revision+1,updated_at=$2 WHERE person_id=$3`, nullableString(p.KeyFaceID), nowRFC3339(), p.PersonID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt) error {
+func (s *Store) restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt) error {
 	var faceIDs []string
 	for _, face := range r.After.Faces {
 		faceIDs = append(faceIDs, face.FaceID)
@@ -885,14 +885,14 @@ func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 		}
 		if a.Action == personAssertionActionWithdrawn && a.Revision > 0 {
 			var shared bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=? AND face_id NOT IN (SELECT value FROM json_each(?)))`, a.AssertionID, faces).Scan(&shared); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=$1 AND face_id NOT IN (SELECT value FROM `+(metadataJSONDialect{s.postgresSchema != ""}).arrayValues("$2")+`))`, a.AssertionID, faces).Scan(&shared); err != nil {
 				return err
 			}
 			if shared {
 				return ErrStaleRevision
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='assert' AND ?=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.PhotoMark, a.Revision, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN $1='assert' AND $2=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'withdrawn' WHEN $3=0 AND $4='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE $5 END,photo_mark=$6,revision=revision+1 WHERE assertion_id=$7`, a.Action, boolInt(a.PhotoMark), a.Revision, a.Action, a.Action, boolInt(a.PhotoMark), a.AssertionID); err != nil {
 			return err
 		}
 	}
@@ -901,7 +901,7 @@ func restoreFaceDecisionAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFac
 
 func relinkUndoAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecisionReceipt, detached, attached []string) error {
 	for _, assertionID := range detached {
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=? AND photo_mark=0 AND action='assert' AND NOT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=?)`, assertionID, assertionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=$1 AND photo_mark=0 AND action='assert' AND NOT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=$2)`, assertionID, assertionID); err != nil {
 			return err
 		}
 	}
@@ -911,7 +911,7 @@ func relinkUndoAssertionsTx(ctx context.Context, tx *sql.Tx, r PhotoFaceDecision
 		}) {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=? AND action='withdrawn'`, assertionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=$1 AND action='withdrawn'`, assertionID); err != nil {
 			return err
 		}
 	}
@@ -1044,7 +1044,7 @@ func (s *Store) readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []Pho
 	for i, f := range faces {
 		index[f.FaceID] = i
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND f.content_version_id=? ORDER BY 1,2`, faces[0].ContentVersionID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,COALESCE(c.suggested_person_id,'') FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id WHERE `+rejectedFaceMatchPredicate+` AND f.content_version_id=$1 ORDER BY 1,2`, faces[0].ContentVersionID)
 	if err != nil {
 		return err
 	}
@@ -1072,12 +1072,12 @@ func (s *Store) readFaceDecisionsTx(ctx context.Context, tx *sql.Tx, faces []Pho
 
 func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, page PersonAssertionPage) ([]PersonDocumentAssertion, string, bool, error) {
 	var key string
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, id).Scan(&key); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(key_face_id,'') FROM persons WHERE person_id=$1`, id).Scan(&key); err != nil {
 		return nil, "", false, err
 	}
 	if key != "" {
 		var v string
-		if err := tx.QueryRowContext(ctx, `SELECT content_version_id FROM photo_faces WHERE face_id=?`, key).Scan(&v); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT content_version_id FROM photo_faces WHERE face_id=$1`, key).Scan(&v); err != nil {
 			return nil, "", false, err
 		}
 		if err := s.facePhotoQuery(ctx, tx, v); err != nil {
@@ -1093,7 +1093,7 @@ func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, p
 	} else if err != nil {
 		return nil, "", false, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT pa.assertion_id,pa.content_version_id,pa.person_id,pa.role,pa.action,pa.note,pa.recorded_at,pa.revision,pa.photo_mark,COALESCE(member.role,''),n.id,n.name,COALESCE(cv.mime_type,'') FROM person_document_assertions pa JOIN content_versions cv ON cv.version_id=pa.content_version_id JOIN nodes n ON n.id=cv.node_id LEFT JOIN photo_files member ON member.node_id=n.id LEFT JOIN photo_assets asset ON asset.asset_id=member.asset_id WHERE pa.person_id=? AND pa.assertion_id>? AND n.trashed_at IS NULL AND (pa.role<>'depicted' OR (asset.kind='photo' AND asset.excluded_at IS NULL AND n.kind='file' AND member.role IN ('image','raw'))) AND `+visible+` ORDER BY pa.assertion_id`, id, page.After)
+	rows, err := tx.QueryContext(ctx, `SELECT pa.assertion_id,pa.content_version_id,pa.person_id,pa.role,pa.action,pa.note,pa.recorded_at,pa.revision,pa.photo_mark,COALESCE(member.role,''),n.id,n.name,COALESCE(cv.mime_type,'') FROM person_document_assertions pa JOIN content_versions cv ON cv.version_id=pa.content_version_id JOIN nodes n ON n.id=cv.node_id LEFT JOIN photo_files member ON member.node_id=n.id LEFT JOIN photo_assets asset ON asset.asset_id=member.asset_id WHERE pa.person_id=$1 AND pa.assertion_id>$2 AND n.trashed_at IS NULL AND (pa.role<>'depicted' OR (asset.kind='photo' AND asset.excluded_at IS NULL AND n.kind='file' AND member.role IN ('image','raw'))) AND `+visible+` ORDER BY pa.assertion_id`, id, page.After)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -1149,7 +1149,7 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 			continue
 		}
 		if len(kept) == 0 {
-			if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=?`, c.CandidateID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=$1`, c.CandidateID); err != nil {
 				return err
 			}
 			continue
@@ -1162,7 +1162,7 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=?`, c.CandidateID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=$1`, c.CandidateID); err != nil {
 			return err
 		}
 		existing, e := personCandidateByIdentityTx(ctx, tx, next)
@@ -1194,12 +1194,12 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 			if full {
 				return ErrInvalidPhotoFace
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='open',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=?`, existing.CandidateID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='open',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=$1`, existing.CandidateID); err != nil {
 				return err
 			}
 		}
 		if c.State == personCandidateStateRejected {
-			if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='rejected',decided_at=?,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=?`, c.DecidedAt, existing.CandidateID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='rejected',decided_at=$1,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=$2`, c.DecidedAt, existing.CandidateID); err != nil {
 				return err
 			}
 		}
@@ -1216,11 +1216,11 @@ type faceWithdrawalHistory map[string][]PhotoFaceDecisionReceipt
 // as a side effect of detaching its last face, rather than an operator
 // withdrawing it directly. A whole-photo clear detaches no face, so it never
 // counts.
-func (h faceWithdrawalHistory) automatic(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
+func (h faceWithdrawalHistory) automatic(ctx context.Context, tx *sql.Tx, s *Store, assertion PersonDocumentAssertion) (bool, error) {
 	receipts, ok := h[assertion.ContentVersionID]
 	if !ok {
 		var err error
-		receipts, err = faceDecisionReceiptsTx(ctx, tx, assertion.ContentVersionID)
+		receipts, err = s.faceDecisionReceiptsTx(ctx, tx, assertion.ContentVersionID)
 		if err != nil {
 			return false, err
 		}
@@ -1242,8 +1242,15 @@ func (h faceWithdrawalHistory) automatic(ctx context.Context, tx *sql.Tx, assert
 	return false, nil
 }
 
-func faceDecisionReceiptsTx(ctx context.Context, tx *sql.Tx, versionID string) ([]PhotoFaceDecisionReceipt, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts INDEXED BY photo_change_receipts_face_version WHERE operation='face_decision' AND json_extract(before_json,'$.content_version_id')=?`, versionID)
+func (s *Store) faceDecisionReceiptsTx(ctx context.Context, tx *sql.Tx, versionID string) ([]PhotoFaceDecisionReceipt, error) {
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	index := " INDEXED BY photo_change_receipts_face_version"
+	version := d.text("before_json", "content_version_id")
+	if d.postgres {
+		index = ""
+		version = d.indexedText("before_json", "content_version_id")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts`+index+` WHERE operation='face_decision' AND `+version+`=$1`, versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1292,7 +1299,7 @@ func changedFaceRows[T any](before, after []T) ([]T, []T) {
 func faceDecisionRowsTx(ctx context.Context, tx *sql.Tx, template PhotoFaceDecisionState) (PhotoFaceDecisionState, error) {
 	current := PhotoFaceDecisionState{VersionID: template.VersionID}
 	for _, v := range template.Faces {
-		f, e := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=? AND content_version_id=?`, v.FaceID, template.VersionID))
+		f, e := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=$1 AND content_version_id=$2`, v.FaceID, template.VersionID))
 		if e != nil {
 			return current, e
 		}
@@ -1314,7 +1321,7 @@ func faceDecisionRowsTx(ctx context.Context, tx *sql.Tx, template PhotoFaceDecis
 	}
 	for _, v := range template.People {
 		p := faceDecisionPerson{PersonID: v.PersonID}
-		e := tx.QueryRowContext(ctx, `SELECT COALESCE(p.key_face_id,''),COALESCE(f.content_version_id,''),p.revision FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=?`, p.PersonID).Scan(&p.KeyFaceID, &p.KeyFaceContentVersionID, &p.Revision)
+		e := tx.QueryRowContext(ctx, `SELECT COALESCE(p.key_face_id,''),COALESCE(f.content_version_id,''),p.revision FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=$1`, p.PersonID).Scan(&p.KeyFaceID, &p.KeyFaceContentVersionID, &p.Revision)
 		if e != nil {
 			return current, e
 		}
@@ -1329,7 +1336,7 @@ func replayFaceDecisionTx(ctx context.Context, tx *sql.Tx, id, requestSHA string
 	}
 	var before, after []byte
 	var operation string
-	err := tx.QueryRowContext(ctx, `SELECT operation,before_json,after_json FROM photo_change_receipts WHERE receipt_id=?`, id).Scan(&operation, &before, &after)
+	err := tx.QueryRowContext(ctx, `SELECT operation,before_json,after_json FROM photo_change_receipts WHERE receipt_id=$1`, id).Scan(&operation, &before, &after)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoFaceDecisionReceipt{}, false, nil
 	}

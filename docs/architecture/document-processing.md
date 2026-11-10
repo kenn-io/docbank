@@ -28,7 +28,7 @@ start with [Document understanding in Go](../document-understanding.md).
 | Web app and TUI | Preview processing, record consent, inspect jobs, and read retained sanitized renditions |
 
 The default configuration has no processing profiles. The daemon can execute
-its built-in plaintext and EPUB rendition adapters and the OpenAI-compatible
+its built-in plaintext, EPUB, and PDF text rendition adapters and the OpenAI-compatible
 and Voyage embedding runtimes listed in [Configuration][embedding-runtime].
 Other public provider packages are available to embedded Go callers. Adding a
 package does not register a daemon runtime. Configuration alone does not grant
@@ -39,8 +39,14 @@ consent or enqueue work.
 `configureRenditionProviders` selects `document/epub` for `docbank-epub-rendition/v1`
 and passes the existing byte and unit limits to its constructor. The provider
 owns the `epub.in-process-v1` descriptor and virtual-unit policy. Startup
-rejects descriptor or trust-boundary drift. Unknown adapters remain
-unavailable.
+rejects descriptor or trust-boundary drift. The same checks apply to
+`document/pdftext` and `docbank-pdftext-rendition/v1`, with byte and page limits
+bound into the descriptor. Its sealed `PDFTextOnly` inspection policy admits
+opaque image streams and external references while retaining parser bounds.
+The PDF text provider releases PDFium's shared lease after each page.
+Omission-only partial PDFs retain normalized evidence and a canonical
+frontmatter envelope with an empty body. Verified-empty reads require that
+exact envelope's size and checksum. Unknown adapters remain unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
 workflow from profile selection through preview, consent, execution, and reads.
@@ -144,7 +150,12 @@ origin and allowed network ranges when establishing the actual connection.
 PDF format detection requires a versioned `%PDF-` header at byte zero and a
 `startxref` within the final 64 KiB. Its offset must point backward to a
 recognized cross-reference table or stream. Each cross-reference read is capped
-at 4 KiB. Linearized (Fast Web View) streams may need a second read to validate
+at 4 KiB. A cross-reference table is governed by its own trailer when that
+trailer fits in the read, otherwise by the final trailer. Either way, a complete
+trailer must immediately precede the last `startxref`. This accepts linearized
+(Fast Web View) tables, whose final trailer may omit `/Root`, and
+hybrid-reference updates, whose empty table links to another section through
+`/Prev` or `/XRefStm`. Linearized streams may need a second read to validate
 the forward link to the final cross-reference section. A final `%%EOF` marker
 may be followed by whitespace, NULs, or short text or binary residue within
 the tail window. Appended ZIP signatures, `<` or `>` bytes, repeated end
@@ -236,11 +247,16 @@ and [vector-index catalog](https://github.com/kenn-io/docbank/blob/main/internal
 
 The internal searcher treats omitted and `auto` modes as lexical. Explicit
 semantic and hybrid modes require compatible active vector authority and a
-query encoder. The source-version fence selects eligible vectors from current,
-live attachments before scoring. Missing vector-row authority stops the search.
+query encoder. A source-version fence selects eligible vectors from current,
+live attachments before scoring. Unscoped searches score the whole leased
+generation and recheck each inspected neighbor against current vault authority.
+Missing vector-row authority stops the search.
 Results retain source references, lexical and semantic rank contributions,
 coverage, truncation, and degradation information. Candidates are checked
 against current vault authority before they are passed to optional reranking.
+
+SQLite maintains a derived membership revision for each vector space as embedding heads, rendition heads, content versions, previews, and photo eligibility change.
+Search checkpoints reuse an in-process checksum memo while the snapshot's revision matches; the first checkpoint after a membership change or restart captures the source again without writing bookkeeping.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact
@@ -374,6 +390,11 @@ Choose the largest useful page size. Existing short citations still stream
 artifacts up to 64 MiB, independently of navigation slots. `rendition get` can
 retrieve an attachment still active for its version; it cannot retrieve a
 superseded attachment. Navigation does not add historical bulk download.
+
+Omission-only PDF builds settle chunk processing across restarts;
+original-file embedding bindings still need their own results.
+Older binaries refuse omission-only evidence or its empty
+Markdown body, so downgrading requires a version that can read these results.
 
 ## Retain, restore, or remove derived results
 

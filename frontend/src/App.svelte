@@ -1,5 +1,6 @@
 <script lang="ts">
-  import VaultDrawer from "./VaultDrawer.svelte";
+  import { webURL, webPath } from "./web-path.js";
+  import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
   import ToolPage from "./ToolPage.svelte";
   import ExportMenu from "./ExportMenu.svelte";
@@ -41,6 +42,7 @@
     MenuItem,
     MenuTrigger,
     Modal,
+    SearchByMeaningHint,
     SearchInput,
     FormField,
     SelectDropdown,
@@ -52,6 +54,7 @@
     ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
+    type MenuAlign,
     type SortDirection,
   } from "@kenn-io/kit-ui";
   import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
@@ -240,6 +243,7 @@
           | "trash"
           | "tagCatalog"
           | "telemetry"
+          | "searchByMeaning"
           | "photoImport";
       }
     | {
@@ -273,6 +277,7 @@
     upload: "upload",
     mailbox: "mailbox",
     loadFile: "load_file",
+    searchByMeaning: null,
     photoImport: null,
   };
 
@@ -392,7 +397,7 @@
     isMapPath(path) ||
     ["/photos", "/photos/hidden", "/photos/albums", "/photos/people"].includes(path) ||
     path.startsWith("/photos/albums/");
-  let photoMode = $state(isPhotoPath(location.pathname));
+  let photoMode = $state(isPhotoPath(webPath()));
   let openedPhotos = false;
   $effect(() => {
     if (photoMode) openedPhotos = true;
@@ -429,7 +434,7 @@
       window.removeEventListener("pageshow", resume);
     };
   });
-  let photoPath = $state(location.pathname);
+  let photoPath = $state(webPath());
   $effect(() => {
     void photoPath;
     void photoMode;
@@ -482,7 +487,7 @@
   const photoNavigation = photoNavigationGuard((url) => {
     const id = new URLSearchParams(url.hash.slice(1)).get("photo") ?? "";
     return (
-      (url.pathname !== photoPath || id !== photoID) &&
+      (webPath(url.pathname) !== photoPath || id !== photoID) &&
       photoMode &&
       !!retainedPhotoEditor() &&
       !retainedPhotoEditor()!.canChangeTarget()
@@ -490,9 +495,9 @@
   });
   onMount(() => photoNavigation.listen());
   function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
-    photoNavigation.push(state, url);
+    photoNavigation.push(state, webURL(url));
     nodeVersionHash = location.hash;
-    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
+    if (!isPhotoPath(webPath())) docsPage = pageAt(webPath());
   }
   function guardPhotoUnload(event: BeforeUnloadEvent) {
     if (!photoMode || !retainedPhotoEditor()?.dirty) return;
@@ -508,7 +513,7 @@
       ? (path.slice(1) as DocsPage)
       : null;
   }
-  let docsPage = $state(pageAt(location.pathname));
+  let docsPage = $state(pageAt(webPath()));
   const docsScreens = {
     searches: "saved_queries",
     productions: "bates",
@@ -524,10 +529,10 @@
   function syncPhotoLocation() {
     if (photoNavigation.blocked()) return;
     nodeVersionHash = location.hash;
-    if (!isPhotoPath(location.pathname)) docsPage = pageAt(location.pathname);
+    if (!isPhotoPath(webPath())) docsPage = pageAt(webPath());
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "",
-      path = location.pathname;
+      path = webPath();
     const showing = photoMode && path === photoPath;
     // Album views are recreated when their path changes, so only the open album can keep a return record.
     const photos =
@@ -1050,7 +1055,7 @@
       return;
     clearPhotoNotice();
     navOpen = false;
-    if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
+    if (photoMode && path === photoPath && path === webPath() && !photoID) return;
     if (!photoMode || path !== photoPath) void invalidateLibrary(false);
     if (path !== photoPath) revalidatedChangeID = null;
     hiddenPhotoActionError = "";
@@ -1167,6 +1172,12 @@
   let naturalRerank = $state(false);
   let naturalSearchNote = $state("");
   let naturalProfilesError = $state("");
+  let naturalProfilesLoaded = $state(false);
+  // Shown as the shared Turn on hint rather than as text.
+  const searchByMeaningOff = "Search by meaning is off";
+  // Setup can outlast the drawer, so its request and result belong to the session.
+  let localText = $state<SearchByMeaningSetup>({ readError: "", pending: false, error: "" });
+  let localTextRead: AbortController | undefined;
   let naturalRerankPending = $state(false);
   let naturalProfileDefaultPending = $state<{ request: number; session: string } | null>(null);
   let profileGeneration = 0;
@@ -1373,6 +1384,7 @@
     sortedRows.filter((row) => row.node.kind === "file").length,
   );
   const showingResults = $derived(activeQuery !== "" || tagBrowse);
+  const emptyRoot = $derived(!showingResults && directory?.path === "/");
   const columns = $derived(
     snapshotActive
       ? resultColumns(snapshotResultsWidth, { match: false, actions: false })
@@ -1640,6 +1652,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = profiles;
       naturalProfilesError = "";
+      naturalProfilesLoaded = true;
       const selected = selectNaturalSearchProfile(profiles);
       const defaultMode: NaturalSearchMode = selected ? "auto" : "names";
       if (snapshotActive) {
@@ -1665,6 +1678,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfileDefaultPending = null;
       naturalProfiles = [];
+      naturalProfilesLoaded = false;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else
         naturalProfilesError = naturalSearchFallbackNote(
@@ -1930,6 +1944,9 @@
     activeQuery = "";
     activeTagID = "";
     naturalProfiles = [];
+    naturalProfilesLoaded = false;
+    localTextRead?.abort();
+    localText = { readError: "", pending: false, error: "" };
     naturalSearchMode = "names";
     naturalRerank = false;
     submittedSearchQuery = "";
@@ -1956,6 +1973,51 @@
       return;
     }
     error = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  function readLocalTextStatus(): () => void {
+    localTextRead?.abort();
+    const controller = (localTextRead = new AbortController());
+    const session = webSession;
+    localText.readError = "";
+    void generated
+      .getLocalTextStatus({ session, signal: controller.signal })
+      .then((status) => {
+        if (controller.signal.aborted || session !== webSession) return;
+        localText.status = status;
+        if (status.active || status.restart_required) localText.error = "";
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted || session !== webSession) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else localText.readError = cause instanceof Error ? cause.message : String(cause);
+      });
+    return () => controller.abort();
+  }
+
+  // Clicking Turn on is the consent, so the reviewed plan is applied without another prompt.
+  async function turnOnLocalText(): Promise<void> {
+    const session = webSession;
+    localText.pending = true;
+    localText.error = "";
+    let error = "";
+    try {
+      const plan = await generated.planLocalText({ server: "auto" }, { session });
+      await generated.applyLocalText(
+        { server: "auto", plan_fingerprint: plan.fingerprint, consent: true },
+        { session },
+      );
+    } catch (cause) {
+      if (session !== webSession) return;
+      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (session !== webSession) return;
+    localText.pending = false;
+    localText.error = error;
+    // Saving always leaves a restart pending, so a failed re-read still shows the restart step.
+    if (!error && localText.status) localText.status.restart_required = true;
+    readLocalTextStatus();
   }
 
   async function loadRoot(): Promise<void> {
@@ -2134,6 +2196,7 @@
           refreshing,
           session,
           controller.signal,
+          profile ? "" : searchByMeaningOff,
         );
         accepted = !!outcome;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -3783,6 +3846,26 @@
   />
 {/snippet}
 
+{#snippet emptyAddMenu()}
+  {@render addMenu("start")}
+{/snippet}
+
+{#snippet addMenu(align: MenuAlign)}
+  <DocumentAddMenu
+    {align}
+    disabledReason={!directory || loading
+      ? "Waiting for the folder to load"
+      : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
+    onselect={(choice) => {
+      if (!directory || loading || !uploadChannel || uploadChannelError) return;
+      activePanel =
+        choice === "files" || choice === "folder"
+          ? { kind: "upload", target: directory, picker: choice }
+          : { kind: choice, target: directory };
+    }}
+  />
+{/snippet}
+
 <svelte:window
   onpopstate={syncPhotoLocation}
   onhashchange={syncPhotoLocation}
@@ -3997,7 +4080,9 @@
         </div>
       {/if}
       <div class="nav-group vault-nav">
-        <AppTooltip text="Disk use, backups, protected folders, and usage reporting" side="right"
+        <AppTooltip
+          text="Disk use, backups, protected folders, usage reporting, and search by meaning"
+          side="right"
           ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
             <ArchiveIcon size="16" aria-hidden="true" />System
           </button></AppTooltip
@@ -4714,18 +4799,7 @@
                     <RefreshCwIcon size="14" aria-hidden="true" />
                   </IconAction>
                   {#if !showingResults}
-                    <DocumentAddMenu
-                      disabledReason={!directory || loading
-                        ? "Waiting for the folder to load"
-                        : uploadChannelError || (!uploadChannel ? "Connecting upload channel" : "")}
-                      onselect={(choice) => {
-                        if (!directory || loading || !uploadChannel || uploadChannelError) return;
-                        activePanel =
-                          choice === "files" || choice === "folder"
-                            ? { kind: "upload", target: directory, picker: choice }
-                            : { kind: choice, target: directory };
-                      }}
-                    />
+                    {@render addMenu("end")}
                   {/if}
                 </div>
               </div>
@@ -4733,7 +4807,14 @@
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
               {/if}
-              {#if naturalSearchNote}
+              {#if naturalSearchNote === searchByMeaningOff}
+                <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
+                {#if naturalProfilesLoaded && !naturalProfile && !localText.status?.restart_required}
+                  <div class="banner search-note" role="status" aria-live="polite">
+                    <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
+                  </div>
+                {/if}
+              {:else if naturalSearchNote}
                 <div class="banner search-note" role="status" aria-live="polite">
                   {naturalSearchNote}
                 </div>
@@ -4769,10 +4850,15 @@
                     ? "No matching documents"
                     : tagBrowse
                       ? "No documents with this tag"
-                      : "Empty folder"}
+                      : emptyRoot
+                        ? "No documents yet"
+                        : "Empty folder"}
                   description={tagBrowse && taggedTrashed > 0
                     ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                    : undefined}
+                    : emptyRoot
+                      ? "Add files or a folder to start your vault."
+                      : undefined}
+                  children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}
@@ -4959,6 +5045,8 @@
           <aside class="detail" aria-label="Document inspector">
             {#if selectedSnapshot}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5039,6 +5127,8 @@
               </DocumentInspector>
             {:else if !snapshotActive && selected}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5171,6 +5261,11 @@
     </div>
     {#if reader}
       <DocumentReader
+        onpublished={() => productionsDiscoveryRevision++}
+        onproductions={() => {
+          closeReader();
+          openDocsPage("productions");
+        }}
         session={webSession}
         source={reader.source}
         authorizationRevision={reader.revision}
@@ -5281,12 +5376,15 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry"].includes(panel.kind)}
+      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry", "searchByMeaning"].includes(panel.kind)}
         <VaultDrawer
           session={webSession}
           initialTab={panel.kind}
+          searchByMeaning={localText}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
+          onreadsearchbymeaning={readLocalTextStatus}
+          onturnonsearchbymeaning={turnOnLocalText}
         />
       {/if}
       {#if panel.kind === "savedQueries"}

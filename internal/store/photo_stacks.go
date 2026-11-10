@@ -403,16 +403,20 @@ const photoStackFrameColumns = `a.asset_id,CASE WHEN a.kind='photo' THEN COALESC
 
 // photoStackFrames reads the live, visible members of ids. Missing IDs are unavailable.
 func (s *Store) photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
-	frames, err := readPhotoStackFrames(ctx, q, ids, hidden, fingerprint)
+	frames, err := s.readPhotoStackFrames(ctx, q, ids, hidden, fingerprint)
 	if err == nil {
 		err = s.hydratePhotoStackVectors(ctx, q, frames)
 	}
 	return frames, err
 }
 
-func readPhotoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
+func (s *Store) readPhotoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidden bool, fingerprint string) (map[string]photoStackFrame, error) {
 	frames := make(map[string]photoStackFrame, len(ids))
-	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+`,COALESCE(mg.extractor_fingerprint,'') FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
+	from := photoBrowseDisplayFrom
+	if s.postgresSchema != "" {
+		from = strings.ReplaceAll(from, "CROSS JOIN", "JOIN")
+	}
+	err := queryInChunks(ctx, q, `SELECT `+photoStackFrameColumns+`,COALESCE(mg.extractor_fingerprint,'') FROM `+from+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden)+` AND a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
 		var actual string
 		if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.CameraMake, &frame.CameraModel, &frame.BodySerialNumber, &frame.Files, &actual); err != nil {
@@ -439,7 +443,7 @@ func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool,
 		}
 		position[id] = i
 	}
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		if hidden {
 			if _, err := s.hiddenSession(ctx, tx); err != nil {
 				return err
@@ -532,7 +536,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 	}
 	var vectors *photoStackVectorReader
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		vectors, err = s.newPhotoStackVectorReader(ctx, tx)
 		return err
@@ -570,7 +574,7 @@ func (s *Store) decidePhotoStack(ctx context.Context, request PhotoStackDecision
 		}
 		// Only the observed query or frozen run defines membership, so unseen
 		// neighboring imports stay untouched.
-		found, err := readPhotoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
+		found, err := s.readPhotoStackFrames(ctx, tx, request.AssetIDs, request.Hidden, request.SourceMetadataFingerprint)
 		if err == nil {
 			err = vectors.hydrate(ctx, tx, found)
 		}
@@ -695,7 +699,7 @@ func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, fra
 	if err := tx.QueryRowContext(ctx, `UPDATE photo_library_settings SET representative_sequence=COALESCE(representative_sequence,0)+1 WHERE singleton=1 RETURNING representative_sequence`).Scan(&rank); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
-	change, err := setPhotoRepresentativeTx(ctx, tx, frame.AssetID, -1, &rank)
+	change, err := s.setPhotoRepresentativeTx(ctx, tx, frame.AssetID, -1, &rank)
 	if err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
@@ -707,7 +711,7 @@ func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, fra
 
 // setPhotoRepresentativeTx changes one asset's rank and revision. A
 // non-negative revision is the precondition an undo checks.
-func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, rank *int64) (PhotoRepresentativeChange, error) {
+func (s *Store) setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, rank *int64) (PhotoRepresentativeChange, error) {
 	change, err := photoRepresentativeStateTx(ctx, tx, assetID, rank)
 	if err != nil {
 		return change, err
@@ -716,7 +720,10 @@ func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, r
 		return change, ErrStaleRevision
 	}
 	change.AfterRevision = change.BeforeRevision + 1
-	_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET representative_rank=?,revision=?,updated_at=? WHERE asset_id=?`, rank, change.AfterRevision, nowRFC3339(), assetID)
+	_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET representative_rank=$1,revision=$2,updated_at=$3 WHERE asset_id=$4`, rank, change.AfterRevision, nowRFC3339(), assetID)
+	if err == nil {
+		err = s.refreshPhotoAssetWorkTx(ctx, tx, assetID)
+	}
 	return change, err
 }
 
@@ -724,7 +731,7 @@ func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, r
 func photoRepresentativeStateTx(ctx context.Context, tx *sql.Tx, assetID string, rank *int64) (PhotoRepresentativeChange, error) {
 	change := PhotoRepresentativeChange{AssetID: assetID, After: rank}
 	var before sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT revision,representative_rank FROM photo_assets WHERE asset_id=?`, assetID).Scan(&change.BeforeRevision, &before); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT revision,representative_rank FROM photo_assets WHERE asset_id=$1`, assetID).Scan(&change.BeforeRevision, &before); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return change, ErrNotFound
 		}

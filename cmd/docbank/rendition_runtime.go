@@ -8,11 +8,13 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/mistral"
+	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/document/vision"
@@ -101,6 +103,8 @@ func configureRenditionProviders(cfg config.Config) (
 		switch configured.AdapterContract {
 		case plaintextRenditionAdapter:
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
+		case pdftext.AdapterContract:
+			provider, err = pdftext.New(pdftext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxPages: int64(configured.MaxUnits)})
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case vision.AdapterContract:
@@ -116,7 +120,7 @@ func configureRenditionProviders(cfg config.Config) (
 		if provider == nil {
 			continue
 		}
-		if configured.AdapterContract == plaintextRenditionAdapter || configured.AdapterContract == epubRenditionAdapter {
+		if configured.AdapterContract == plaintextRenditionAdapter || configured.AdapterContract == epubRenditionAdapter || configured.AdapterContract == pdftext.AdapterContract {
 			descriptor := provider.Descriptor()
 			if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint ||
 				string(descriptor.TrustBoundary) != configured.TrustBoundary {
@@ -192,6 +196,9 @@ func configureExternalRendition(cfg config.Config, name string,
 	secrets, client, err := renditionProviderClient(cfg, configured.Runtime.ProviderEgressConfig)
 	if err != nil {
 		return nil, disclosure, err
+	}
+	if configured.AdapterContract == config.MistralOCRAdapterContract && mistralOCRTestClient != nil {
+		client = mistralOCRTestClient(client)
 	}
 	provider, err := adapter.newProvider(secrets, client)
 	if err != nil {
@@ -327,8 +334,18 @@ func configuredMistralProfile(configured config.RenditionProfileConfig) (mistral
 		return mistral.Profile{}, err
 	}
 	return mistral.Profile{Policy: policy, CapabilityManifest: manifest, Descriptor: descriptor,
-		SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), Timeout: runtime.RequestTimeout.Std()}, nil
+		SecretBinding: strings.TrimPrefix(configured.CredentialBinding, "credential:"), Timeout: runtime.RequestTimeout.Std(),
+		MaxRetryDelay: mistralMaxRetryDelay}, nil
 }
+
+// mistralMaxRetryDelay caps the Mistral client's wait between HTTP retries.
+// Zero keeps the client default. In-process tests set one nanosecond so a
+// transient failure is retried without waiting on the real clock.
+var mistralMaxRetryDelay time.Duration
+
+// mistralOCRTestClient lets in-process tests observe the provider attempt.
+// Production leaves it nil.
+var mistralOCRTestClient func(*http.Client) *http.Client
 
 func configureVision(cfg config.Config, name string, registered map[string]registeredRenditionProvider) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,10 @@ import (
 
 func TestPhotoXMPPlacementCleanupRetryExcludesPublication(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, testPhotoXMPPlacementCleanupRetryExcludesPublication)
+}
+
+func testPhotoXMPPlacementCleanupRetryExcludesPublication(t *testing.T) {
 	fixture := newTestIngester(t)
 	catalog := fixture.Store
 	hash, size, err := fixture.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic JPEG"))
@@ -36,9 +41,10 @@ func TestPhotoXMPPlacementCleanupRetryExcludesPublication(t *testing.T) {
 	plan.Packet, plan.Write = store.PhotoXMPPacket{PhotoAuthored: work.Original.Authored(), Present: store.PhotoConfirmedRating | store.PhotoXMPKeywordsBit, Keywords: work.Keywords}, true
 	ing := &Ingester{Store: catalog, Blobs: fixture.Blobs}
 	// Cleanup retries hold maintenance while retiring old blob paths.
-	// Publishing a sidecar must wait until that maintenance finishes.
+	// Publishing a sidecar must wait until that maintenance finishes. Fake time
+	// reaches the deadline only once publication is parked on the lease.
 	require.NoError(t, fixture.Blobs.WithMaintenance(t.Context(), func() error {
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline proves publication waits for active cleanup
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 		defer cancel()
 		_, publishErr := ing.PublishPhotoXMP(ctx, plan, data)
 		require.ErrorIs(t, publishErr, context.DeadlineExceeded)

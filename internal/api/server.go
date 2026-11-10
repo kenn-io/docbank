@@ -58,6 +58,8 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
+	LocalTextStatus       func(context.Context) (LocalTextStatus, error)
+	LocalText             *processing.LocalTextSetup
 	Store                 *store.Store
 	Blobs                 *blob.Store
 	VaultRoot             string // live vault root; backup restore must remain disjoint
@@ -157,6 +159,8 @@ func NewServer(d Deps) *Server {
 	}
 	cfg.Security = []map[string][]string{{"apiKey": {}}, {"bearer": {}}}
 	humaAPI := humago.New(mux, cfg)
+	// Middlewares bind at registration, so this precedes every route.
+	humaAPI.UseMiddleware(rejectDeclaredOversizeBodies(humaAPI, d.Logger))
 	masterOwner := randomSnapshotOwner()
 	var snapshots *store.QuerySnapshotService
 	if d.Store != nil {
@@ -251,6 +255,7 @@ func NewServer(d Deps) *Server {
 	photoEventsContext, stopPhotoEvents := context.WithCancel(context.Background())
 	s.stopPhotoEvents = stopPhotoEvents
 	registerPhotoEvents(photoEventsContext, mux, humaAPI, d)
+	registerChanges(photoEventsContext, mux, humaAPI, d)
 	registerPhotoRoutes(humaAPI, d, g)
 	registerPhotoFaceRoutes(humaAPI, d, g)
 	registerPhotoFaceDecisionRoutes(humaAPI, d, g)
@@ -278,8 +283,8 @@ func NewServer(d Deps) *Server {
 	if s.webSessions.login != nil {
 		webLoginOrigin = s.webSessions.login.origin
 	}
-	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.MapTiles, d.Logger)
-	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions, d.TelemetryCapture, d.Logger)
+	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.BasePath, d.Cfg.Web.MapTiles, d.Logger)
+	registerWebSession(mux, d.Cfg.Web.Enabled, webLaunchURL(d.WebURL, d.Cfg.Web.BasePath), s.webSessions, d.TelemetryCapture, d.Logger)
 	registerWebSignIn(mux, s.webSessions)
 	registerWebSignInOpenAPI(humaAPI)
 	registerPhotoImportCheckpoint(mux, humaAPI, d)
@@ -291,8 +296,9 @@ func NewServer(d Deps) *Server {
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)
-	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = timeoutMiddleware(h)
+	h = webBasePathMiddleware(h, d.Cfg.Web.BasePath)
+	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = recoverMiddleware(h, d.Logger)
 	h = logMiddleware(h, d.Logger)
 	h = trackMiddleware(h, d.Tracker)

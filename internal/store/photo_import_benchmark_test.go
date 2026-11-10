@@ -24,7 +24,7 @@ func subscribeWarm(b *testing.B, s *Store) func() {
 // blob I/O; fixture creation and checkpointing are outside the timer.
 func BenchmarkPhotoImportMetadata(b *testing.B) {
 	const batch = 32
-	for _, existing := range []int{100, 10000} {
+	for _, existing := range ingestBenchmarkSizes(100, 1000, 10000) {
 		for _, mode := range []struct{ edit, subscribed bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 			edit, subscribed := mode.edit, mode.subscribed
 			b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%t", existing, edit, subscribed), func(b *testing.B) {

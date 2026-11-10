@@ -94,7 +94,7 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 		selection.Limit = maxBatchTagTargets
 	}
 	result := PhotoAuthoredPreparation{Assets: []PhotoAsset{}, Targets: []PhotoPreparedTarget{}}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		ids, err := s.photoAuthoredSelectionIDs(ctx, tx, selection)
 		if err != nil {
 			return err
@@ -162,7 +162,7 @@ type photoAuthoredPreparer struct {
 }
 
 func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error {
-	in, args := placeholders(len(ids)), anyArgs(ids)
+	in, args := numberedPlaceholders(len(ids), 0), anyArgs(ids)
 	assets, err := p.loadAssets(ctx, in, args)
 	if err != nil {
 		return err
@@ -522,7 +522,7 @@ func planPhotoKeywordsTx(ctx context.Context, tx *sql.Tx, keywords []PhotoKeywor
 		if _, duplicate := plan.states[keyword.TagID]; duplicate {
 			return plan, ErrInvalidPhotoAsset
 		}
-		tag, err := tagByIDTx(ctx, tx, keyword.TagID)
+		tag, err := tagByIDQuery(ctx, tx, keyword.TagID)
 		if err != nil {
 			return plan, err
 		}
@@ -670,7 +670,7 @@ func queryRows(ctx context.Context, q metadataQuerier, query string, args []any,
 // photoSelectionChunkSize IDs and a closing parenthesis, once per chunk.
 func queryInChunks[T any](ctx context.Context, q metadataQuerier, prefix string, ids []T, scan func(*sql.Rows) error, args ...any) error {
 	for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
-		if err := queryRows(ctx, q, prefix+placeholders(len(chunk))+`)`, append(slices.Clone(args), anyArgs(chunk)...), scan); err != nil {
+		if err := queryRows(ctx, q, prefix+numberedPlaceholders(len(chunk), len(args))+`)`, append(slices.Clone(args), anyArgs(chunk)...), scan); err != nil {
 			return err
 		}
 	}

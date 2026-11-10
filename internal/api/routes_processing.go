@@ -25,6 +25,7 @@ import (
 )
 
 func registerProcessingRoutes(api huma.API, d Deps) {
+	registerLocalTextRoutes(api, d)
 	registerTextCitationRoute(api, d)
 	registerRedactionPreparationRoute(api, d)
 	registerTextNavigationRoutes(api, d)
@@ -53,14 +54,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		profiles := d.Processing.Profiles()
-		result := make([]ProcessingProfileSummary, len(profiles))
-		for index, profile := range profiles {
-			result[index] = ProcessingProfileSummary{Name: profile.Name, Fingerprint: profile.Fingerprint,
-				Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings,
-				QueryEmbeddingBindings: profile.QueryEmbeddingBindings,
-				RerankingAvailable:     profile.RerankingAvailable}
-		}
+		result := processingProfileSummaries(d.Processing)
 		return &profilesOutput{Body: result}, nil
 	})
 
@@ -399,9 +393,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			Selector:  processing.Selector{NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID, Profile: input.Body.Selector.Profile},
 			BindingID: input.Body.BindingID, Limit: input.Body.Limit,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID, ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
-		if errors.Is(err, store.ErrVectorIndexSourceStale) {
-			return nil, NewError(http.StatusConflict, "stale_index", "vector index source changed")
-		}
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -567,7 +558,7 @@ func renditionRangeStream(rendition processing.Rendition, requested string) (*hu
 	if readErr != nil || verifyErr != nil || closeErr != nil || int64(len(data)) != rendition.Size {
 		return nil, NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
 	}
-	start, end, err := parseRenditionRange(requested, rendition.Size)
+	start, end, err := parseByteRange(requested, rendition.Size)
 	if err != nil {
 		return nil, NewError(http.StatusRequestedRangeNotSatisfiable, "invalid_rendition_range",
 			"rendition byte range is invalid or unsatisfiable")
@@ -599,31 +590,31 @@ func setRenditionHeaders(ctx huma.Context, rendition processing.Rendition) {
 	ctx.SetHeader(BlobSizeHeader, strconv.FormatInt(rendition.Size, 10))
 }
 
-func parseRenditionRange(value string, size int64) (int64, int64, error) {
+func parseByteRange(value string, size int64) (int64, int64, error) {
 	if size < 1 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
-		return 0, 0, errors.New("invalid rendition range")
+		return 0, 0, errors.New("invalid byte range")
 	}
 	spec := strings.TrimPrefix(value, "bytes=")
 	left, right, ok := strings.Cut(spec, "-")
 	if !ok || (left == "" && right == "") {
-		return 0, 0, errors.New("invalid rendition range")
+		return 0, 0, errors.New("invalid byte range")
 	}
 	if left == "" {
 		suffix, err := strconv.ParseInt(right, 10, 64)
 		if err != nil || suffix < 1 {
-			return 0, 0, errors.New("invalid rendition range")
+			return 0, 0, errors.New("invalid byte range")
 		}
 		return max(int64(0), size-suffix), size, nil
 	}
 	start, err := strconv.ParseInt(left, 10, 64)
 	if err != nil || start < 0 || start >= size {
-		return 0, 0, errors.New("invalid rendition range")
+		return 0, 0, errors.New("invalid byte range")
 	}
 	end := size
 	if right != "" {
 		inclusive, err := strconv.ParseInt(right, 10, 64)
 		if err != nil || inclusive < start {
-			return 0, 0, errors.New("invalid rendition range")
+			return 0, 0, errors.New("invalid byte range")
 		}
 		if inclusive < size-1 {
 			end = inclusive + 1
@@ -819,8 +810,11 @@ func fromProcessingError(err error) error {
 		{processing.ErrPurgePlanChanged, http.StatusConflict, "derivative_purge_plan_changed", "derivative purge plan changed after preview"},
 		{processing.ErrInvalidPurgeRequest, http.StatusUnprocessableEntity, "invalid_derivative_purge", "derivative purge request is invalid"},
 		{processing.ErrInvalidConsentExpiry, http.StatusUnprocessableEntity, "invalid_processing_consent_expiry", "processing consent expiry is invalid"},
+		{processing.ErrSemanticUnavailable, http.StatusUnprocessableEntity, "semantic_unavailable", "semantic retrieval is not configured"},
 		{processing.ErrRerankingUnavailable, http.StatusUnprocessableEntity, "reranking_unavailable", "reranking is not configured"},
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
+		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
+		{store.ErrVectorIndexUnavailable, http.StatusConflict, "index_unavailable", "The search index needs building."},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},

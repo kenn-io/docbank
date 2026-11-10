@@ -6,7 +6,11 @@ Instructions for autonomous coding agents working in this repository.
 
 - Use GitHub-hosted runners for repository workflows. See the
   [development guide](docs/internal/development.md#verification-contract)
-  for CI routing.
+  for CI routing. The `CI gate` job runs on a Namespace profile that uses
+  Namespace's
+  [Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+  which disables workload access to Namespace features and APIs. GitHub fork
+  approvals, token permissions, and secrets are separate controls.
 - PostgreSQL checks use `DOCBANK_TEST_POSTGRES_DSN` and `make test-pg` against
   a disposable server. CI owns its service container; each test owns and drops
   its database. An explicitly configured but unavailable server fails the test.
@@ -85,6 +89,9 @@ Instructions for autonomous coding agents working in this repository.
 - Tests use `t.Context()` or `b.Context()`. A `t.Cleanup` function uses
   `context.WithoutCancel(t.Context())` because the test context is already
   canceled. Inside `synctest.Test`, use the bubble's `t`.
+- Tests never wait on the real clock. Run waits inside `testing/synctest` or
+  drive the event directly, and never suppress `sleeptest` or `deadlinetest`.
+  See [Timing checks](docs/internal/development.md#timing-checks).
 - `make lint` enforces the mechanical rules with `noctx`, `fatcontext`,
   `usetesting` and `govet`; `.golangci.yml` records why `containedctx` and
   `contextcheck` stay off.
@@ -189,6 +196,34 @@ Instructions for autonomous coding agents working in this repository.
    experience, and the body must say which one.
 10. Write issues and pull requests in English.
 
+## Commit Messages
+
+Commit subjects must use the Conventional Commits format. Pull requests are
+squash-merged: the PR title becomes the commit subject and the PR description
+becomes the commit body, so PR titles use the same format.
+
+```text
+type(scope): summary
+```
+
+The scope is optional and names the part of the project the change touches.
+Use one of these types:
+
+- `feat`: a new capability users can see or use.
+- `fix`: a bug fix users can notice.
+- `perf`: faster or lighter behavior users can notice.
+- `refactor`, `test`, `docs`, `build`, `ci`, or `chore`: a change that leaves
+  product behavior as it was.
+
+Mark a breaking change with `!` before the colon, as in
+`feat(api)!: remove the v1 endpoints`, and describe the break in a
+`BREAKING CHANGE:` footer at the end of the commit body or PR description.
+
+This format is required. Releases and release notes are generated from these
+messages: the type decides whether a change appears in the notes and under
+which heading, and the version bump follows the largest change since the last
+release, from a breaking change to `feat` to `fix`.
+
 ## Releases
 
 - Release creation and publication belong to the central distribution pipeline.
@@ -237,10 +272,16 @@ Instructions for autonomous coding agents working in this repository.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
-  Until the first release with PostgreSQL support, edit canonical DDL directly:
-  no layout version bumps, compatibility gates or migrations for development
-  schemas. That release establishes the baseline for Kata-style numbered
-  forward migrations, without changing msgvault's or SQLite's existing history.
+  PostgreSQL schemas remain disposable until the first deployment whose data
+  must survive upgrades. Until then, edit canonical DDL directly. Setup records
+  the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a
+  missing or different fingerprint. Recreate disposable development schemas on
+  mismatch, never retained data. No manual version bump is required.
+  Before that first retained deployment, capture the current schema as migration
+  1 and add CI comparison of the canonical schema with the numbered forward chain.
+  After that cutoff every schema change, including indexes and defaults, needs a
+  migration. A port that changes only Go or queries needs none. This does not
+  change msgvault's or SQLite's existing history.
   The [PostgreSQL guide](docs/internal/development.md#postgresql-schema-lifecycle)
   owns the concrete contracts and intentional differences.
 - Register PostgreSQL operation tests in `internal/store/backend_contract_test.go`;

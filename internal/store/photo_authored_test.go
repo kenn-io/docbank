@@ -423,9 +423,8 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	assert.Equal(t, 5, current.Rating)
 }
 
-func authoredSidecar(t *testing.T) (*Store, PhotoAsset, PhotoFile, Node) {
+func authoredSidecar(t *testing.T, s *Store) (*Store, PhotoAsset, PhotoFile, Node) {
 	t.Helper()
-	s := newTestStore(t)
 	asset := authoredPair(t, s)
 	file := fileByRole(asset.Files, PhotoRoleRAW)
 	sidecar, err := s.CreateFile(t.Context(), s.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml")
@@ -535,7 +534,7 @@ func TestPhotoAuthoredRegroupingPreservesAuthority(t *testing.T) {
 		require.NoError(t, err)
 	})
 	t.Run("sidecar", func(t *testing.T) {
-		s, asset, raw, sidecar := authoredSidecar(t)
+		s, asset, raw, sidecar := authoredSidecar(t, newTestStore(t))
 		receipt := importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
 		asset, err := s.DetachPhotoFile(ctx, asset.ID, asset.Revision, receipt.Sidecar.FileID, PhotoDetachOptions{})
 		require.NoError(t, err)

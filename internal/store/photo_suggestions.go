@@ -53,11 +53,11 @@ var photoRotationConfirmedSQL = `EXISTS(SELECT 1 FROM content_versions v JOIN ph
 func photoSuggestionSettledSQL(version, producer string, explicit bool) string {
 	filter := ""
 	if explicit {
-		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (NOT s.dismissed AND ` + photoRotationConfirmedSQL + `))`
+		filter = ` AND (s.producer_fingerprint=` + producer + ` OR (s.dismissed=0 AND ` + photoRotationConfirmedSQL + `))`
 	}
 	return `(EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + filter + `)
- AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting AND NOT ((s.dismissed OR s.text_settled) AND ` + photoRotationConfirmedSQL + `))
-  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed AND NOT s.awaiting AND s.producer_fingerprint=` + producer + `)))`
+ AND (NOT EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.awaiting<>0 AND NOT ((s.dismissed<>0 OR s.text_settled<>0) AND ` + photoRotationConfirmedSQL + `))
+  OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=` + version + ` AND s.dismissed<>0 AND s.awaiting=0 AND s.producer_fingerprint=` + producer + `)))`
 }
 
 // photoDescriptionEligibility is the rule for a query that has joined the
@@ -83,7 +83,7 @@ func (s *Store) photoDescriptionSettled(ctx context.Context, versionID, producer
 
 func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID, producer string, explicit bool) (bool, error) {
 	var settled bool
-	err := q.QueryRowContext(ctx, `SELECT `+photoSuggestionSettledSQL("?1", "?2", explicit), versionID, producer).Scan(&settled)
+	err := q.QueryRowContext(ctx, `SELECT `+photoSuggestionSettledSQL("$1", "$2", explicit), versionID, producer).Scan(&settled)
 	return settled, err
 }
 
@@ -92,13 +92,13 @@ func photoDescriptionSettledTx(ctx context.Context, q metadataQuerier, versionID
 // version has no photo file.
 func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version string, description *document.PhotoDescription) (bool, error) {
 	var authored string
-	if err := q.QueryRowContext(ctx, `SELECT f.caption FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, version).Scan(&authored); errors.Is(err, sql.ErrNoRows) {
+	if err := q.QueryRowContext(ctx, `SELECT f.caption FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$1`, version).Scan(&authored); errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	} else if err != nil {
 		return false, err
 	}
 	var assigned []string
-	if err := queryRows(ctx, q, `SELECT t.name FROM content_versions v JOIN node_tags nt ON nt.node_id=v.node_id JOIN tags t ON t.id=nt.tag_id WHERE v.version_id=?`, []any{version}, func(rows *sql.Rows) error {
+	if err := queryRows(ctx, q, `SELECT t.name FROM content_versions v JOIN node_tags nt ON nt.node_id=v.node_id JOIN tags t ON t.id=nt.tag_id WHERE v.version_id=$1`, []any{version}, func(rows *sql.Rows) error {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return err
@@ -121,21 +121,21 @@ func dropOwnedPhotoFieldsTx(ctx context.Context, q metadataQuerier, version stri
 func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer string, explicit bool, description document.PhotoDescription, at time.Time) error {
 	// A new provider result replaces its previous orientation answer, including
 	// uncertainty or an upright answer, without reopening settled caption work.
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL WHERE content_version_id=?`, version); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=NULL WHERE content_version_id=$1`, version); err != nil {
 		return err
 	}
 	// Explicit work can replace another producer's dismissal. Pending or
 	// accepted text stays settled even when admission allowed a rotation refresh.
-	textSettled := photoSuggestionSettledSQL("?1", "?2", false)
+	textSettled := photoSuggestionSettledSQL("$1", "$2", false)
 	if explicit {
-		textSettled += ` AND EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=?1 AND (NOT s.dismissed OR s.producer_fingerprint=?2))`
+		textSettled += ` AND EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=$1 AND (s.dismissed=0 OR s.producer_fingerprint=$2))`
 	}
 	var settled bool
 	if err := tx.QueryRowContext(ctx, `SELECT `+textSettled, version, producer).Scan(&settled); err != nil || settled {
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=? WHERE id=(SELECT id FROM photo_suggestions WHERE content_version_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`, description.Rotation, version)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET rotation=$1 WHERE id=(SELECT id FROM photo_suggestions WHERE content_version_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1)`, description.Rotation, version)
 		return err
 	}
 	if ok, err := dropOwnedPhotoFieldsTx(ctx, tx, version, &description); err != nil || !ok {
@@ -144,7 +144,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 	var awaiting int64
 	var captionResolved, dismissed, settledText bool
 	var resolvedJSON, owner string
-	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,text_settled,resolved_tags_json,producer_fingerprint FROM photo_suggestions WHERE content_version_id=? AND awaiting ORDER BY producer_fingerprint=? DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &settledText, &resolvedJSON, &owner)
+	err := tx.QueryRowContext(ctx, `SELECT id,caption_resolved,dismissed,text_settled,resolved_tags_json,producer_fingerprint FROM photo_suggestions WHERE content_version_id=$1 AND awaiting<>0 ORDER BY producer_fingerprint=$2 DESC,id LIMIT 1`, version, producer).Scan(&awaiting, &captionResolved, &dismissed, &settledText, &resolvedJSON, &owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -152,7 +152,7 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		// An explicit request replaces another producer's restored dismissal.
 		// That dismissal stays settled with its producer, and the reply becomes
 		// a new suggestion, as it would before a backup.
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET awaiting=0 WHERE id=?`, awaiting); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET awaiting=0 WHERE id=$1`, awaiting); err != nil {
 			return err
 		}
 		awaiting, dismissed, captionResolved, resolvedJSON = 0, false, false, ""
@@ -180,19 +180,23 @@ func publishPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, version, producer
 		// while retaining the owner's restored decisions.
 		if !dismissed && !settledText {
 			owner = producer
-			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=? AND producer_fingerprint=? AND id<>?`, version, producer, awaiting); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id=$1 AND producer_fingerprint=$2 AND id<>$3`, version, producer, awaiting); err != nil {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=?,caption=?,tags_json=?,visible_text=?,rotation=?,awaiting=0 WHERE id=?`, owner, description.Caption, string(tags), description.VisibleText, description.Rotation, awaiting)
+		_, err = tx.ExecContext(ctx, `UPDATE photo_suggestions SET producer_fingerprint=$1,caption=$2,tags_json=$3,visible_text=$4,rotation=$5,awaiting=0 WHERE id=$6`, owner, description.Caption, string(tags), description.VisibleText, description.Rotation, awaiting)
+	} else {
+		var id string
+		id, err = newUUIDv4()
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,rotation,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, version, producer, description.Caption, string(tags), description.VisibleText, description.Rotation, at.UTC().Format(timestampLayout))
+	}
+	if err != nil || description.Caption == "" && len(description.Tags) == 0 && description.VisibleText == "" {
 		return err
 	}
-	id, err := newUUIDv4()
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,caption,tags_json,visible_text,rotation,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, version, producer, description.Caption, string(tags), description.VisibleText, description.Rotation, at.UTC().Format(timestampLayout))
-	return err
+	return recordProcessedTx(ctx, tx, version, "")
 }
 
 // normalizePhotoDescription gives tags their stored NFC identity and drops duplicates.
@@ -270,7 +274,7 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 			result, err = s.respondPhotoRotationTx(ctx, tx, id, request)
 			return err
 		}
-		row, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.suggestion_id=?`, id))
+		row, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.suggestion_id=$1`, id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -306,12 +310,12 @@ func (s *Store) RespondPhotoSuggestion(ctx context.Context, id string, request P
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET caption=?,tags_json=?,visible_text=?,dismissed=?,awaiting=?,caption_resolved=?,resolved_tags_json=? WHERE id=?`,
-			row.Value.Caption, string(tags), row.Value.VisibleText, row.dismissed, row.awaiting, row.captionResolved, string(resolved), row.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_suggestions SET caption=$1,tags_json=$2,visible_text=$3,dismissed=$4,awaiting=$5,caption_resolved=$6,resolved_tags_json=$7 WHERE id=$8`,
+			row.Value.Caption, string(tags), row.Value.VisibleText, boolInt(row.dismissed), boolInt(row.awaiting), boolInt(row.captionResolved), string(resolved), row.id); err != nil {
 			return err
 		}
 		// The response carries the revisions the accepted edit just produced.
-		current, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.id=?`, row.id))
+		current, err := scanPhotoSuggestion(tx.QueryRowContext(ctx, photoSuggestionRowSQL+` WHERE s.id=$1`, row.id))
 		current.AuthoredReceipt = row.AuthoredReceipt
 		result = current.PhotoSuggestion
 		return err
@@ -378,7 +382,7 @@ func (s *Store) acceptPhotoSuggestionTx(ctx context.Context, tx *sql.Tx, row *ph
 // variant of an existing tag becomes its own tag.
 func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?`, name).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=$1`, name).Scan(&id)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return id, err
 	}
@@ -391,7 +395,7 @@ func (s *Store) suggestedTagTx(ctx context.Context, tx *sql.Tx, name string) (st
 // photoSuggestionsQuery lists the pending description of an asset's displayed photo.
 func (s *Store) photoSuggestionsQuery(ctx context.Context, q *sql.Tx, assetID string) ([]PhotoSuggestion, error) {
 	out := []PhotoSuggestion{}
-	err := queryRows(ctx, q, photoSuggestionRowSQL+` WHERE a.asset_id=? AND a.display_file_id=f.file_id AND NOT s.dismissed AND NOT s.awaiting
+	err := queryRows(ctx, q, photoSuggestionRowSQL+` WHERE a.asset_id=$1 AND a.display_file_id=f.file_id AND s.dismissed=0 AND s.awaiting=0
  AND (s.caption<>'' OR s.tags_json<>'[]' OR s.visible_text<>'') ORDER BY s.created_at,s.suggestion_id`, []any{assetID}, func(rows *sql.Rows) error {
 		row, err := scanPhotoSuggestion(rows)
 		if err != nil {
@@ -427,23 +431,29 @@ func (s *Store) photoSuggestionsQuery(ctx context.Context, q *sql.Tx, assetID st
 // in version order after the cursor. It walks the ready grid previews in index
 // order and checks each one, settled or not, until the page fills. A page with
 // many targets costs about its own length; an empty page examines every ready
-// preview after the cursor, which is the library for an idle pass. The CROSS
-// JOINs keep that order. Arguments: recipe, cursor, profile, limit, producer, restored only, face provider ID, detection.
+// preview after the cursor, which is the library for an idle pass. SQLite CROSS
+// JOINs keep that order; PostgreSQL chooses its join order. Arguments: cursor,
+// recipe, producer, restored only, profile, face provider ID, detection, limit.
 // Active work for the same task excludes a photo across profiles, so providers run one task on it at a time.
-func photoDescriptionTargetsSQL(settled string) string {
+func (s *Store) photoDescriptionTargetsSQL(settled string) string {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	join := "CROSS JOIN"
+	if d.postgres {
+		join = "JOIN"
+	}
 	return `SELECT ` + contentVersionCols + ` FROM content_versions WHERE version_id IN (
  SELECT v.version_id FROM visual_preview_generations g
- CROSS JOIN content_versions v ON v.version_id=g.content_version_id AND v.blob_hash=g.source_sha256
- CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
- CROSS JOIN photo_files f ON f.node_id=n.id
- CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
- WHERE g.content_version_id>?2 AND g.recipe_fingerprint=?1 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + settled + `
- AND (NOT ?6 OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=g.content_version_id AND s.awaiting))
+ ` + join + ` content_versions v ON v.version_id=g.content_version_id AND v.blob_hash=g.source_sha256
+ ` + join + ` nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
+ ` + join + ` photo_files f ON f.node_id=n.id
+ ` + join + ` photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ WHERE g.content_version_id>$1 AND g.recipe_fingerprint=$2 AND ` + photoDescriptionEligibility + ` AND g.state='ready' AND NOT ` + settled + `
+ AND (NOT $4 OR EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=g.content_version_id AND s.awaiting<>0))
  AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=v.version_id
-  AND (w.profile_fingerprint=?3 AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
+  AND (w.profile_fingerprint=$5 AND (w.state='waiting' AND NOT (j.state='failed' AND j.failure_code IN ('consent','stale_authority'))
     OR w.state='rejected' AND w.failure_code IN ('terminal','ambiguous'))
-   OR w.state='waiting' AND j.state IN ('queued','retry_wait','running') AND NOT ` + originalFileWaiterSQL + ` AND (json_extract(j.execution_identity_json,'$.authorization.provider_id')=?7)=?8))
- ORDER BY g.content_version_id LIMIT ?4) ORDER BY version_id`
+   OR w.state='waiting' AND j.state IN ('queued','retry_wait','running') AND NOT ` + d.originalFileWaiter() + ` AND (` + d.text("j.execution_identity_json", "authorization.provider_id") + `=$6)=$7))
+ ORDER BY g.content_version_id LIMIT $8) ORDER BY version_id`
 }
 
 // PhotoDescriptionTargets lists displayed photos in version order after the
@@ -454,15 +464,15 @@ func photoDescriptionTargetsSQL(settled string) string {
 // RestoredOnly lists only those restored photos.
 func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, producer, after string, limit int, restoredOnly, detection bool) ([]ContentVersion, error) {
 	result := []ContentVersion{}
-	settled := photoSuggestionSettledSQL("g.content_version_id", "?5", false)
+	settled := photoSuggestionSettledSQL("g.content_version_id", "$3", false)
 	if detection {
-		settled = `EXISTS(SELECT 1 FROM photo_face_scans WHERE content_version_id=g.content_version_id AND detector_fingerprint=?5)`
+		settled = `EXISTS(SELECT 1 FROM photo_face_scans WHERE content_version_id=g.content_version_id AND detector_fingerprint=$3)`
 	}
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return nil, err
 	}
-	err = queryRows(ctx, s.db, photoDescriptionTargetsSQL(settled), []any{fingerprints.GridRecipe, after, profile, limit, producer, restoredOnly, document.FaceDetectionProviderID, detection}, func(rows *sql.Rows) error {
+	err = queryRows(ctx, s.db, s.photoDescriptionTargetsSQL(settled), []any{after, fingerprints.GridRecipe, producer, restoredOnly, profile, document.FaceDetectionProviderID, detection, limit}, func(rows *sql.Rows) error {
 		version, err := scanContentVersion(rows)
 		if err != nil {
 			return err
@@ -478,7 +488,7 @@ func (s *Store) PhotoDescriptionTargets(ctx context.Context, profile, producer, 
 func (s *Store) UnclaimedPhotoDescriptionWaiters(ctx context.Context, profile string, now time.Time) (int, error) {
 	var count int
 	at := now.UTC().Format(timestampLayout)
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.profile_fingerprint=? AND w.state='waiting' AND (j.state='queued' OR j.state='retry_wait' AND j.available_at<=? OR j.state='running' AND j.lease_expires_at<=?)`, profile, at, at).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.profile_fingerprint=$1 AND w.state='waiting' AND (j.state='queued' OR j.state='retry_wait' AND j.available_at<=$2 OR j.state='running' AND j.lease_expires_at<=$3)`, profile, at, at).Scan(&count)
 	return count, err
 }
 
@@ -536,15 +546,15 @@ func joinPhotoDescriptionTx(ctx context.Context, tx *sql.Tx, jobID, waiterID, ve
 		return RenditionJob{}, RenditionJobWaiter{}, err
 	}
 	if settled {
-		if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters SET state='published',failure_code=NULL,updated_at=? WHERE waiter_id=?`, now, waiterID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters SET state='published',failure_code=NULL,updated_at=$1 WHERE waiter_id=$2`, now, waiterID); err != nil {
 			return RenditionJob{}, RenditionJobWaiter{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='completed',phase='published',updated_at=? WHERE job_id=? AND state='queued' AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=? AND state='waiting')`, now, jobID, jobID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='completed',phase='published',updated_at=$1 WHERE job_id=$2 AND state='queued' AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=$3 AND state='waiting')`, now, jobID, jobID); err != nil {
 			return RenditionJob{}, RenditionJobWaiter{}, err
 		}
-	} else if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=?,
+	} else if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,lease_expires_at=NULL,available_at=$1,
  provider_started=0,provider_resume_handle=NULL,execution_snapshot_json=NULL,selected_waiter_id=NULL,authorization_grant_id=NULL,
- authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,failure_code=NULL,updated_at=? WHERE job_id=? AND state='completed'`, now, now, jobID); err != nil {
+ authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$2 WHERE job_id=$3 AND state='completed'`, now, now, jobID); err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, err
 	}
 	job, err := loadRenditionJobTx(ctx, tx, jobID)

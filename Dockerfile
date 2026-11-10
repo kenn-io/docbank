@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS frontend
+FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS frontend
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-COPY frontend/scripts/patch-embedpdf.mjs ./scripts/patch-embedpdf.mjs
+COPY frontend/scripts/patch-embedpdf.mjs frontend/scripts/embedpdf-page-hooks.mjs ./scripts/
 RUN npm ci
 COPY frontend/ ./
 COPY document/format_metadata.json /src/document/format_metadata.json
@@ -15,6 +15,7 @@ RUN npm run build
 # Keep the Go version aligned with go.mod: source-metadata qualification
 # includes the exact toolchain version.
 FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
+ENV GOPROXY=https://proxy.golang.org|direct
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +23,7 @@ COPY . .
 COPY --from=frontend /src/frontend/dist/ ./internal/web/dist/
 ARG VERSION=dev
 ARG COMMIT=unknown
-RUN CGO_ENABLED=1 go build -tags fts5 \
+RUN CGO_ENABLED=1 go build -trimpath -tags fts5 \
     -ldflags="-X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}" \
     -o /out/docbank ./cmd/docbank
 

@@ -59,6 +59,9 @@
 .md-typeset h4 { color: var(--db-text); font-weight: 600; letter-spacing: -0.018em; }
 .md-typeset h1 { max-width: 24ch; margin-bottom: 0.65em; font-size: clamp(1.5rem, 3.5vw, 2.4rem); line-height: 1.1; }
 .md-typeset h2 { padding-bottom: 0.32em; border-bottom: 1px solid var(--db-rule); }
+/* A table, code block or diagram directly under a section heading draws its
+   own top edge, so the heading rule would stack a second line above it. */
+.md-typeset h2:has(+ .md-typeset__scrollwrap, + .highlight, + .mermaid) { padding-bottom: 0; border-bottom: 0; }
 .md-typeset .eyebrow { margin: 0 0 0.8rem; color: var(--db-teal); font-family: var(--md-code-font); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.14em; }
 .md-typeset .hero-actions { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 1.4rem 0 2rem; }
 .md-typeset .image-caption { margin: -0.65rem 0 2rem; color: var(--db-muted); font-size: 0.72rem; text-align: center; }

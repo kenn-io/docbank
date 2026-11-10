@@ -30,7 +30,7 @@ const (
 // release. Each version older than the current schema needs a cutover adapter.
 // Add a release's version here when it ships; scripts/check-released-schemas.sh
 // fails CI when a release tag's schema is missing.
-var releasedStorageSchemaVersions = []int{1, 2, 3, 28, 29, 41}
+var releasedStorageSchemaVersions = []int{1, 2, 3, 28, 29, 41, 48}
 
 // Metadata JSONL does not carry unfinished storage work. Cutovers copy these
 // tables verbatim so queued imports, placements, evacuations, and pending
@@ -397,7 +397,7 @@ func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver) (c
 	if err != nil {
 		return nil, fmt.Errorf("beginning temporary schema transaction: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+	if err := applySchema(ctx, tx); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("applying current schema to temporary database: %w", err), tx.Rollback(),
 		)

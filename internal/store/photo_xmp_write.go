@@ -77,7 +77,7 @@ func (s *Store) PublishPhotoXMP(ctx context.Context, plan PhotoXMPPlan, hash str
 // identity, including a settlement by another worker with unchanged inputs.
 func checkPhotoXMPWorkTx(ctx context.Context, tx *sql.Tx, w PhotoXMPWork) error {
 	var token, receiptID string
-	err := tx.QueryRowContext(ctx, `SELECT token,COALESCE(receipt_id,'') FROM photo_xmp_inputs WHERE file_id=?`, w.Original.ID).Scan(&token, &receiptID)
+	err := tx.QueryRowContext(ctx, `SELECT token,COALESCE(receipt_id,'') FROM photo_xmp_inputs WHERE file_id=$1`, w.Original.ID).Scan(&token, &receiptID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrStaleRevision
 	}
@@ -192,7 +192,7 @@ func livePhotoXMPSourcesTx(ctx context.Context, tx *sql.Tx, nodeID int64, source
 // CheckPhotoXMPPairing validates the packet against its saved attachment. Publication
 // checks the work's freshness, so the pairing read does not.
 func (s *Store) CheckPhotoXMPPairing(ctx context.Context, w PhotoXMPWork, extension string) error {
-	return s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	return s.withReadTx(ctx, func(tx *sql.Tx) error {
 		intended, err := photoSidecarIntendedTarget(ctx, tx, PhotoFile{Role: PhotoRoleSidecar, AssetID: w.Original.AssetID, SidecarOfID: &w.Original.ID}, w.Sidecar.Node, extension)
 		if err != nil {
 			return err
@@ -214,11 +214,11 @@ func (s *Store) CheckPhotoXMPClaim(ctx context.Context, w PhotoXMPWork, sourcePa
 		return nil
 	}
 	names := []string{}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		folder := strings.ToLower(path.Dir(normalizePhotoSourcePath(sourcePath)))
 		var local []string
 		err := queryRows(ctx, tx, `SELECT p.original_path FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=? AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`, []any{w.Node.ID}, func(rows *sql.Rows) error {
+ WHERE p.node_id=$1 AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND i.source_kind<>'url' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)`, []any{w.Node.ID}, func(rows *sql.Rows) error {
 			var source string
 			if err := rows.Scan(&source); err != nil {
 				return err
@@ -273,7 +273,7 @@ func (s *Store) importPhotoXMPTx(ctx context.Context, tx *sql.Tx, w PhotoXMPWork
 // that do not exist yet.
 func (s *Store) photoXMPKeywordEditsTx(ctx context.Context, tx *sql.Tx, nodeID int64, names []string) ([]PhotoKeywordEdit, error) {
 	current := map[string]string{}
-	err := queryRows(ctx, tx, `SELECT t.id,t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=?`, []any{nodeID}, func(rows *sql.Rows) error {
+	err := queryRows(ctx, tx, `SELECT t.id,t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=$1`, []any{nodeID}, func(rows *sql.Rows) error {
 		var id, name string
 		if err := rows.Scan(&id, &name); err != nil {
 			return err
@@ -291,7 +291,7 @@ func (s *Store) photoXMPKeywordEditsTx(ctx context.Context, tx *sql.Tx, nodeID i
 			continue
 		}
 		var id string
-		err = tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=?`, name).Scan(&id)
+		err = tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name=$1`, name).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			if id, err = newUUIDv4(); err != nil {
 				return nil, err
@@ -335,7 +335,7 @@ func (s *Store) writePhotoXMPSidecarTx(ctx context.Context, tx *sql.Tx, run Inge
 		return PhotoSidecarProvenance{}, err
 	}
 	var fileID string
-	if err := tx.QueryRowContext(ctx, `SELECT file_id FROM photo_files WHERE node_id=?`, written.Node.ID).Scan(&fileID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT file_id FROM photo_files WHERE node_id=$1`, written.Node.ID).Scan(&fileID); err != nil {
 		return PhotoSidecarProvenance{}, err
 	}
 	return PhotoSidecarProvenance{NodeID: written.Node.ID, VersionID: written.Node.CurrentVersionID, FileID: fileID}, validatePhotoAssetGraph(ctx, tx, before.ID)

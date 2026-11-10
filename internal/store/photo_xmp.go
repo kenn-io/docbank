@@ -650,9 +650,9 @@ func (s *Store) resumeDetachedPhotoXMPTx(ctx context.Context, tx *sql.Tx, id str
 	sidecar := w.History.Sidecar
 	var detached bool
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_files f JOIN nodes n ON n.id=f.node_id
- WHERE f.file_id=? AND n.id=? AND f.asset_id IS NULL AND n.trashed_at IS NULL
- AND n.parent_id=? AND n.name=? AND EXISTS(SELECT 1 FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=n.id AND i.source_kind=? AND p.original_path=?))`,
+ WHERE f.file_id=$1 AND n.id=$2 AND f.asset_id IS NULL AND n.trashed_at IS NULL
+ AND n.parent_id=$3 AND n.name=$4 AND EXISTS(SELECT 1 FROM provenance p JOIN ingests i ON i.id=p.ingest_id
+ WHERE p.node_id=n.id AND i.source_kind=$5 AND p.original_path=$6))`,
 		sidecar.FileID, sidecar.NodeID, w.Node.ParentID, w.Node.Name+".xmp", callerSuppliedSourceKindPrefix+"photo-xmp", "docbank:xmp:"+w.Original.ID).Scan(&detached)
 	if err != nil || !detached {
 		return w, err
@@ -717,7 +717,7 @@ func (s *Store) deletePhotoXMPReceiptTx(ctx context.Context, tx *sql.Tx, fileID 
 
 // PhotoXMPConflict loads a recorded conflict for a person's choice.
 func (s *Store) PhotoXMPConflict(ctx context.Context, id, conflictID string) (w PhotoXMPWork, err error) {
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
+	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
 		w, err = s.loadPhotoXMPSyncWorkTx(ctx, tx, id)
 		if errors.Is(err, ErrNotFound) || err == nil && w.Original.AssetID == "" {
 			return ErrStaleRevision

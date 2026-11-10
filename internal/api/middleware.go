@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
@@ -66,7 +67,7 @@ func timeoutExempt(method, path string) bool {
 	if strings.HasPrefix(path, redactionPreviewsPath+"/") && method == http.MethodGet && (strings.Contains(path, "/pages/") || strings.HasSuffix(path, "/text") || strings.HasSuffix(path, "/bundle")) {
 		return true
 	}
-	if method == http.MethodGet && path == photoEventsPath || packageContainerTimeoutExempt(method, path) {
+	if method == http.MethodGet && (path == photoEventsPath || path == changesPath) || packageContainerTimeoutExempt(method, path) {
 		return true
 	}
 	switch path {
@@ -75,7 +76,7 @@ func timeoutExempt(method, path string) bool {
 	case "/api/v1/push/uploads":
 		return method == http.MethodPost
 	case "/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/packages/exports", "/api/v1/gc", "/api/v1/verify", "/api/v1/audit/verify", "/api/v1/trash/empty",
-		"/api/v1/processing/jobs", "/api/v1/derivatives/purge-jobs",
+		"/api/v1/processing/jobs", "/api/v1/processing/local/setup", "/api/v1/derivatives/purge-jobs",
 		"/api/v1/exports/sources", "/api/v1/exports/plans", "/api/v1/bates/allocations", "/api/v1/bates/exports",
 		"/api/v1/storage/pack", "/api/v1/storage/repack", "/api/v1/uploads",
 		"/api/v1/backup/snapshots", "/api/v1/backup/snapshots/stream",
@@ -223,6 +224,24 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 	}
 }
 
+// rejectDeclaredOversizeBodies answers 413 from Content-Length before Huma
+// reads the body. Huma enforces MaxBodyBytes only by reading up to the limit
+// under its five-second body-read deadline, so a declared-oversize body sent
+// slowly drew 408 after the server had read it in full.
+func rejectDeclaredOversizeBodies(api huma.API, logger *slog.Logger) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		limit := ctx.Operation().MaxBodyBytes
+		r, _ := humago.Unwrap(ctx)
+		if limit <= 0 || r.ContentLength <= limit {
+			next(ctx)
+			return
+		}
+		if err := huma.WriteErr(api, ctx, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body is too large limit=%d bytes", limit)); err != nil {
+			logger.Debug("write oversize body rejection", "path", r.URL.Path, "error", err)
+		}
+	}
+}
+
 // auth-exempt: discovery, credential-free ownership proof, docs, and static
 // web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
@@ -337,6 +356,12 @@ func isLoopbackContext(ctx context.Context) bool {
 
 func timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == redactionPublicationsPath {
+			ctx, cancel := redactionPublicationContext(w, r)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if timeoutExemptRequest(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -344,7 +369,7 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 		ctx := r.Context()
 		if r.Method == http.MethodPost {
 			switch r.URL.Path {
-			case processingPlansPath, kataCitePath, kataContextPath, "/api/v1/redaction/prepare", "/api/v1/redaction/resolve":
+			case processingPlansPath, kataCitePath, kataContextPath, "/api/v1/redaction/prepare", "/api/v1/redaction/resolve", "/api/v1/redaction/reservations":
 				ctx = context.WithValue(ctx, responseControllerContextKey{}, http.NewResponseController(w))
 			}
 			if r.URL.Path == processingPlansPath {

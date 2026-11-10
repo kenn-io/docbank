@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -30,6 +31,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/redactiontest"
@@ -685,25 +687,27 @@ func TestWASMBackingSessionLifetime(t *testing.T) {
 }
 
 func TestWASMBackingConcurrentAcquireCancellation(t *testing.T) {
-	manager := newBackingManager(128)
-	first, err := manager.acquire(t.Context(), 128)
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the first lease holds the only backing
-	defer cancel()
-	result := make(chan error, 1)
-	go func() {
-		_, err := manager.acquire(ctx, 128)
-		result <- err
-	}()
-	require.ErrorIs(t, <-result, context.DeadlineExceeded)
-	first.release()
-	second, err := manager.acquire(t.Context(), 128)
-	require.NoError(t, err, "canceled wait must not leak the exclusive reservation")
-	second.release()
-	canceled, stop := context.WithCancel(t.Context())
-	stop()
-	_, err = manager.acquire(canceled, 128)
-	require.ErrorIs(t, err, context.Canceled)
+	synctest.Test(t, func(t *testing.T) {
+		manager := newBackingManager(128)
+		first, err := manager.acquire(t.Context(), 128)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() {
+			_, err := manager.acquire(ctx, 128)
+			result <- err
+		}()
+		require.ErrorIs(t, <-result, context.DeadlineExceeded)
+		first.release()
+		second, err := manager.acquire(t.Context(), 128)
+		require.NoError(t, err, "canceled wait must not leak the exclusive reservation")
+		second.release()
+		canceled, stop := context.WithCancel(t.Context())
+		stop()
+		_, err = manager.acquire(canceled, 128)
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
 
 func TestPDFiumCloseKeepsBackingLeaseUntilScavengeCompletes(t *testing.T) {
@@ -755,26 +759,33 @@ func TestPDFiumCloseKeepsBackingLeaseUntilScavengeCompletes(t *testing.T) {
 }
 
 func TestPDFiumSequentialEnginesReuseBacking(t *testing.T) {
-	first, err := NewPDFium(qualificationRecipe())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, first.Close()) }()
-	e1, ok := first.(*pdfiumEngine)
-	require.True(t, ok)
-	require.NoError(t, e1.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
-	address := &e1.session.memory.buffer[0]
-	second, err := NewPDFium(qualificationRecipe())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, second.Close()) }()
-	e2, ok := second.(*pdfiumEngine)
-	require.True(t, ok)
-	require.Same(t, e1.cache, e2.cache, "concurrent engine acquisition shares only pinned compiled code")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the first engine holds the shared session
-	defer cancel()
-	require.ErrorIs(t, e2.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("concurrent session entered WASM"); return nil }), context.DeadlineExceeded)
-	require.Nil(t, e2.session, "waiting must not allocate a second backing")
-	require.NoError(t, first.Close())
-	require.NoError(t, e2.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
-	require.Same(t, address, &e2.session.memory.buffer[0])
+	synctest.Test(t, func(t *testing.T) {
+		// The token must belong to this bubble for the wait to use fake time.
+		// Reuse the process backing instead of keeping a second allocation live.
+		token := wasmBacking.token
+		wasmBacking.token = make(chan struct{}, 1)
+		t.Cleanup(func() { wasmBacking.token = token })
+		first, err := NewPDFium(qualificationRecipe())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, first.Close()) }()
+		e1, ok := first.(*pdfiumEngine)
+		require.True(t, ok)
+		require.NoError(t, e1.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
+		address := &e1.session.memory.buffer[0]
+		second, err := NewPDFium(qualificationRecipe())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, second.Close()) }()
+		e2, ok := second.(*pdfiumEngine)
+		require.True(t, ok)
+		require.Same(t, e1.cache, e2.cache, "concurrent engine acquisition shares only pinned compiled code")
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		require.ErrorIs(t, e2.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("concurrent session entered WASM"); return nil }), context.DeadlineExceeded)
+		require.Nil(t, e2.session, "waiting must not allocate a second backing")
+		require.NoError(t, first.Close())
+		require.NoError(t, e2.withInstance(t.Context(), func(pdfium.Pdfium) error { return nil }))
+		require.Same(t, address, &e2.session.memory.buffer[0])
+	})
 }
 
 func TestPDFiumDeniedFilesystemAndCancellation(t *testing.T) {
@@ -952,4 +963,75 @@ func TestVerifyFreshIndependentEvidence(t *testing.T) {
 		input.NextText = func(context.Context) (int, []byte, error) { return 1, []byte("café給与[REDACTED]"), nil }
 		require.Error(t, VerifyFresh(t.Context(), bytes.NewReader(output.Bytes()), int64(output.Len()), input))
 	})
+}
+
+func TestPDFTextWaitingForLeaseUsesCallerContext(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		previous := wasmBacking
+		wasmBacking = newBackingManager(512 << 20)
+		defer func() { wasmBacking = previous }()
+		held, err := wasmBacking.acquire(t.Context(), uint64(QualifiedRecipe().WASMMemoryBytes))
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { _, err := ReadPDFTextPage(ctx, nil, 0, 1, 1024); result <- err }()
+		// A held renderer may run past the PDF text execution deadline. The text
+		// operation must continue waiting until its own caller's deadline.
+		synctest.Wait()
+		time.Sleep(61 * time.Second)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatalf("page deadline included lease wait: %v", err)
+		default:
+		}
+		cancel()
+		require.ErrorIs(t, <-result, context.Canceled)
+		held.release()
+	})
+}
+
+func TestPDFTextNormalizesWrappedWords(t *testing.T) {
+	data := redactiontest.PDF(t, []string{"inter-", "national", "shared PDF text"}, "lease handoff")
+	page, err := ReadPDFTextPage(t.Context(), data, 0, 1, 1024)
+	require.NoError(t, err)
+	require.Contains(t, page.Text, "international")
+	require.NotContains(t, page.Text, "\ufffe")
+}
+
+func TestPDFTextReleasesPageLeaseToRenderer(t *testing.T) {
+	data := redactiontest.PDF(t, []string{"shared PDF text"}, "lease handoff")
+	_, err := ReadPDFTextPage(t.Context(), data, 0, 1, 1024)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	// Starting a renderer after the page returns must acquire the same backing.
+	engine, err := NewPDFium(QualifiedRecipe())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	concrete, ok := engine.(*pdfiumEngine)
+	require.True(t, ok)
+	err = concrete.withInstance(ctx, func(instance pdfium.Pdfium) error {
+		doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
+		if err != nil {
+			return fmt.Errorf("open renderer PDF: %w", err)
+		}
+		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+		require.NoError(t, err)
+		require.Equal(t, 1, count.PageCount)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestPDFTextLargeScanPage(t *testing.T) {
+	pages := make([]string, 100)
+	pages[99] = "synthetic scanned page"
+	data := mediatest.PDFTextScanPages(pages)
+	require.Greater(t, len(data), 30<<20)
+	page, err := ReadPDFTextPage(t.Context(), data, 99, 100, 1024)
+	require.NoError(t, err)
+	require.Equal(t, 100, page.Pages)
+	require.Equal(t, "synthetic scanned page", page.Text)
 }

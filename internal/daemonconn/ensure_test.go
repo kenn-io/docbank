@@ -6,16 +6,21 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -35,15 +40,62 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if ready := os.Getenv("DOCBANK_START_TEST_CHILD"); ready != "" && os.Getenv(EnvBackgroundDaemon) == "1" {
-		if err := os.WriteFile(ready, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-			os.Exit(2)
-		}
-		// Stand in for a child that has not published its runtime record yet.
-		time.Sleep(time.Minute) //nolint:kennlint // sleeptest: runs in a child process that stands in for an unready daemon
-		os.Exit(0)
+	if address := os.Getenv("DOCBANK_START_TEST_CHILD"); address != "" && os.Getenv(EnvBackgroundDaemon) == "1" {
+		runUnreadyDaemonChild(address)
 	}
 	os.Exit(packagetest.RunWithLockRegistry(m))
+}
+
+// runUnreadyDaemonChild stands in for a spawned daemon that has not published
+// its runtime record yet. It reports its PID over a connection to the test and
+// keeps the connection open until it exits on SIGTERM or is killed.
+func runUnreadyDaemonChild(address string) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, os.Interrupt)
+	// The child runs from TestMain, which has no caller context.
+	connection, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", address)
+	if err != nil {
+		os.Exit(2)
+	}
+	if _, err := fmt.Fprintf(connection, "%d\n", os.Getpid()); err != nil {
+		os.Exit(2)
+	}
+	<-stop
+	os.Exit(0)
+}
+
+// processExitWaits records the exit waits the stop code asks for, in order.
+type processExitWaits struct {
+	mu      sync.Mutex
+	budgets []time.Duration
+}
+
+func (w *processExitWaits) list() []time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.budgets)
+}
+
+// recordProcessExitWaits replaces waitProcessExit for one test. Windows has no
+// graceful stop request for a detached daemon, so a graceful budget always
+// ends with the process still alive; the fake checks the process once instead
+// of waiting out the real 25-second window. Every other wait expects the
+// process to exit and uses the real wait.
+func recordProcessExitWaits(t *testing.T) *processExitWaits {
+	t.Helper()
+	waits := &processExitWaits{}
+	previous := waitProcessExit
+	waitProcessExit = func(ctx context.Context, rec kitdaemon.RuntimeRecord, timeout time.Duration) (bool, error) {
+		waits.mu.Lock()
+		waits.budgets = append(waits.budgets, timeout)
+		waits.mu.Unlock()
+		if runtime.GOOS == "windows" && timeout == daemon.GracefulExitTimeout {
+			return !kitdaemon.ProcessAlive(rec.PID), ctx.Err()
+		}
+		return waitDead(ctx, rec, timeout)
+	}
+	t.Cleanup(func() { waitProcessExit = previous })
+	return waits
 }
 
 func TestDaemonStartFailureConfigDiagnostic(t *testing.T) {
@@ -69,24 +121,26 @@ func TestDaemonStartFailureConfigDiagnostic(t *testing.T) {
 
 func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 	root := t.TempDir()
-	ready := filepath.Join(t.TempDir(), "child-pid")
-	t.Setenv("DOCBANK_START_TEST_CHILD", ready)
+	waits := recordProcessExitWaits(t)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	t.Setenv("DOCBANK_START_TEST_CHILD", listener.Addr().String())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Start(ctx, root)
+		_, err := Start(ctx, root, false)
 		done <- err
 	}()
-	var pid int
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(ready)
-		if err != nil {
-			return false
-		}
-		pid, err = strconv.Atoi(string(data))
-		return err == nil
-	}, 10*time.Second, 10*time.Millisecond)
+	// The child reports its PID once it runs, before any runtime record exists.
+	connection, err := listener.Accept()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	line, err := bufio.NewReader(connection).ReadString('\n')
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	require.NoError(t, err)
 	child, err := os.FindProcess(pid)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -103,6 +157,13 @@ func TestStartCancellationStopsUnreadyChild(t *testing.T) {
 		t.Fatal("launcher did not return after cancellation")
 	}
 	assert.False(t, kitdaemon.ProcessAlive(pid), "failed startup must release its child process")
+	want := []time.Duration{daemon.GracefulExitTimeout}
+	if runtime.GOOS == "windows" {
+		// Nothing can ask the child to stop gracefully, so the launcher kills it
+		// after the graceful budget.
+		want = append(want, daemon.ForcedExitTimeout)
+	}
+	assert.Equal(t, want, waits.list())
 }
 
 func TestVerifyRecordProcess(t *testing.T) {
@@ -157,6 +218,16 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	require.True(t, discoverOptions(true).Accept(rec, info))
 	rec.Metadata[metaProtocolVersion] = "94" // Before source_present filtering.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-filter daemons must not silently ignore source_present")
+	rec.Metadata[metaProtocolVersion] = "115" // Before local text setup.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without local text setup must be replaced")
+	rec.Metadata[metaProtocolVersion] = "116" // Reserved by another incompatible daemon contract.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "protocol 116 daemons must be replaced")
+	rec.Metadata[metaProtocolVersion] = "120" // Before original-content byte ranges.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-range daemons must be replaced before reading content windows")
+	rec.Metadata[metaProtocolVersion] = "121" // Before preserving existing Nomic indexes.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "setup must replace daemons that create a separate local index")
+	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
@@ -209,8 +280,8 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 				root = filepath.Join(root, "missing", "vault")
 			}
 			started := false
-			_, err := ensureDaemon(t.Context(), root,
-				func(context.Context, string) (kitdaemon.RuntimeRecord, error) {
+			_, err := ensureDaemon(t.Context(), root, false,
+				func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error) {
 					started = true
 					if test.missing {
 						_, err := os.Stat(filepath.Dir(root))
@@ -234,6 +305,11 @@ func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 }
 
 func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	root, rec := startUnresponsiveRuntime(t)
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
@@ -278,13 +354,14 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	protocolVersion, err := strconv.Atoi(daemonProtocolVersion)
+	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	rec.Metadata[MetaExplicitStart] = "true"
+	rec.Metadata[metaProtocolVersion] = "119"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
-	rec.Metadata[metaProtocolVersion] = strconv.Itoa(protocolVersion - 1)
-	_, err = RuntimeStore(root).Write(rec)
-	require.NoError(t, err)
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+			assert.True(t, persistent, "replacement inherits the stopped owner's explicit lifetime")
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			started.Store(true)
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
@@ -307,8 +384,8 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	result, err := ensureDaemonWithOptions(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemonWithOptions(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", "127.0.0.1:3"), nil
 		}, webDiscoverOptions())
@@ -324,12 +401,16 @@ func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
 // Ensure signals only the verified PID and starts replacement after it exits.
 func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
+	require.NoError(t, err)
 	canonicalRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	started := false
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, gotRoot string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, gotRoot string, persistent bool) (kitdaemon.RuntimeRecord, error) {
 			started = true
+			assert.False(t, persistent, "a draining owner contributes no explicit launch intent")
 			assert.Equal(t, canonicalRoot, gotRoot)
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID),
 				"replacement must wait for the recorded owner to exit")
@@ -342,9 +423,6 @@ func TestEnsureStopsPinglessRuntimeBeforeReplacement(t *testing.T) {
 }
 
 func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows intentionally consumes the full graceful wait before force termination")
-	}
 	root, rec := startUnresponsiveRuntime(t)
 	var leaked atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -370,8 +448,8 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 
-	result, err := ensureDaemon(t.Context(), root,
-		func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+	result, err := ensureDaemon(t.Context(), root, false,
+		func(_ context.Context, _ string, _ bool) (kitdaemon.RuntimeRecord, error) {
 			assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 			return NewRecord("127.0.0.1:2", "new-key", "new-token", ""), nil
 		})
@@ -464,6 +542,61 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 		require.NoError(t, err)
 		_, err = c.API().Health(t.Context())
 		require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
+	})
+}
+
+// MCP pages vault changes over one proven socket, so a finished change read
+// must leave it reusable even when the chunk terminator trails the result.
+func TestProvenClientReusedAfterChangePage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const token = "synthetic-change-page-token"
+		const head = "synthetic-change-head"
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer func() { _ = serverConn.Close() }()
+			reader := bufio.NewReader(serverConn)
+			req, err := http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading challenge request: %v", err)
+				return
+			}
+			body := challengeResponse(t, req, token)
+			if _, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+
+				"Content-Length: %d\r\n\r\n%s", len(body), body); err != nil {
+				t.Errorf("writing challenge response: %v", err)
+				return
+			}
+			for page := range 2 {
+				// The second page arrives only if the first left the socket open.
+				if req, err = http.ReadRequest(reader); err != nil {
+					return
+				}
+				assert.Equal(t, "/api/v1/changes", req.URL.Path)
+				record := `{"type":"result","cursor":"` + head + `"}` + "\n"
+				if _, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n"+
+					"Transfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n", len(record), record); err != nil {
+					t.Errorf("writing page %d result: %v", page, err)
+					return
+				}
+				// The daemon flushes each record and ends the stream in a later write.
+				time.Sleep(time.Second)
+				if _, err := io.WriteString(serverConn, "0\r\n\r\n"); err != nil {
+					return
+				}
+			}
+		}()
+		rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
+		c, err := newProvenClientForDial(t.Context(), rec, func(context.Context, string, string) (net.Conn, error) {
+			return clientConn, nil
+		})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, c.Close()) }()
+		limit := int64(500)
+		for range 2 {
+			cursor, err := c.WatchChanges(t.Context(), "synthetic-cursor", false, &limit, nil)
+			require.NoError(t, err)
+			require.Equal(t, head, cursor)
+		}
 	})
 }
 
@@ -580,9 +713,14 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	stopped, err := Stop(t.Context(), root)
-	assert.True(t, stopped, "the live runtime PID must be recognized as stopping")
+	rec.Metadata[MetaExplicitStart] = "true"
+	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
+	stopped, err := Stop(t.Context(), root)
+	require.NoError(t, err)
+	require.NotNil(t, stopped, "the live runtime PID must be recognized as stopping")
+	assert.Equal(t, rec.PID, stopped.PID)
+	assert.False(t, Explicit(*stopped), "a draining owner contributes no explicit launch intent")
 	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
@@ -609,24 +747,23 @@ func TestShutdownHTTPRejectionUsesProcessStop(t *testing.T) {
 	t.Cleanup(ts.Close)
 	rec.Address = strings.TrimPrefix(ts.URL, "http://")
 
-	started := time.Now()
+	waits := recordProcessExitWaits(t)
 	require.NoError(t, stopRecord(t.Context(), rec))
-	elapsed := time.Since(started)
+	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 	if runtime.GOOS == "windows" {
-		assert.GreaterOrEqual(t, elapsed, daemon.GracefulExitTimeout-time.Second,
+		assert.Equal(t, []time.Duration{daemon.GracefulExitTimeout, daemon.ForcedExitTimeout}, waits.list(),
 			"Windows must preserve graceful draining before native termination")
 	} else {
-		assert.Less(t, elapsed, 5*time.Second,
-			"a definitive rejection must take the graceful process-signal path immediately")
+		assert.Equal(t, []time.Duration{daemon.GracefulExitTimeout}, waits.list(),
+			"a definitive rejection must take the graceful process-signal path, and SIGTERM stops the process")
 	}
-	assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 }
 
 func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	stopped, err := Stop(t.Context(), root)
 	require.NoError(t, err)
-	assert.False(t, stopped)
+	assert.Nil(t, stopped)
 	_, err = os.Stat(root)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -649,6 +786,11 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	//nolint:gosec // os.Args[0] is not user-controlled command text in this test.
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
 	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stdin.Close() })
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
 	done := make(chan struct{})
 	go func() {
@@ -664,12 +806,14 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		}
 	})
 
-	var identity kitdaemon.ProcessIdentity
-	require.Eventually(t, func() bool {
-		var ok bool
-		identity, ok = kitdaemon.ReadProcessIdentity(cmd.Process.Pid)
-		return ok
-	}, 5*time.Second, 10*time.Millisecond)
+	// The helper prints once it runs, so its process identity is readable.
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, unresponsiveHelperReady+"\n", line)
+	identity, ok := kitdaemon.ReadProcessIdentity(cmd.Process.Pid)
+	require.True(t, ok)
+	// Stopping it never waits out a real Windows grace window.
+	recordProcessExitWaits(t)
 
 	root := t.TempDir()
 	rec := kitdaemon.NewRuntimeRecord(Service, version.Version, kitdaemon.Endpoint{
@@ -682,14 +826,66 @@ func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 		metaAPIKey: "key", metaProtocolVersion: daemonProtocolVersion,
 		metaShutdownToken: "token",
 	}
-	_, err := RuntimeStore(root).Write(rec)
+	_, err = RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	return root, rec
 }
 
+const unresponsiveHelperReady = "unresponsive-helper-ready"
+
+// TestUnresponsiveDaemonHelper stands in for an unresponsive daemon. It runs
+// until a signal or the test kills it.
 func TestUnresponsiveDaemonHelper(_ *testing.T) {
 	if os.Getenv("DOCBANK_UNRESPONSIVE_HELPER") != "1" {
 		return
 	}
-	time.Sleep(30 * time.Second) //nolint:kennlint // sleeptest: runs in a helper process that stands in for an unresponsive daemon
+	fmt.Println(unresponsiveHelperReady)
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: os.Getpid()}, daemon.GracefulExitTimeout)
+		require.NoError(t, err)
+		assert.False(t, dead, "this test process is still running")
+		assert.Equal(t, daemon.GracefulExitTimeout, time.Since(started))
+
+		started = time.Now()
+		dead, err = waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: 0}, daemon.GracefulExitTimeout)
+		require.NoError(t, err)
+		assert.True(t, dead)
+		assert.Zero(t, time.Since(started), "an exited process ends the wait at once")
+	})
+}
+
+func TestRestartPreservesLifetime(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			root := t.TempDir()
+			assertLocked := func() {
+				t.Helper()
+				if !explicit {
+					return
+				}
+				lock, err := (home.Layout{Root: root}).TryLockLaunch()
+				if lock != nil {
+					_ = lock.Release()
+				}
+				require.ErrorIs(t, err, home.ErrVaultLocked, "a racing autostart must wait throughout stop/start")
+			}
+			_, wasRunning, err := restart(t.Context(), root, false,
+				func(context.Context, string) (*kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					return &kitdaemon.RuntimeRecord{Metadata: map[string]string{MetaExplicitStart: strconv.FormatBool(explicit)}}, nil
+				},
+				func(_ context.Context, _ string, persistent bool) (kitdaemon.RuntimeRecord, error) {
+					assertLocked()
+					assert.Equal(t, explicit, persistent, "restarting a daemon keeps its lifetime")
+					return kitdaemon.RuntimeRecord{}, nil
+				})
+			require.NoError(t, err)
+			assert.True(t, wasRunning)
+		})
+	}
 }

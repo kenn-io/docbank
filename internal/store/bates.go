@@ -513,3 +513,29 @@ func loadBatesAllocation(ctx context.Context, q metadataQuerier, id string) (Bat
 	}
 	return a, rows.Err()
 }
+
+// BatesNamespaceDetail keeps the moving cursor out of recorded namespace identities.
+type BatesNamespaceDetail struct {
+	Namespace    BatesNamespace
+	NextSequence int64
+}
+
+func (s *Store) BatesNamespaceDetail(ctx context.Context, id string) (BatesNamespaceDetail, error) {
+	var detail BatesNamespaceDetail
+	var next sql.NullInt64
+	n := &detail.Namespace
+	err := s.db.QueryRowContext(ctx, `SELECT n.namespace_id,n.prefix,n.suffix,n.padding,n.created_at,c.next_sequence
+ FROM bates_namespaces n LEFT JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=?`, id).
+		Scan(&n.NamespaceID, &n.Prefix, &n.Suffix, &n.Padding, &n.CreatedAt, &next)
+	if errors.Is(err, sql.ErrNoRows) {
+		return detail, ErrNotFound
+	}
+	if err != nil {
+		return detail, err
+	}
+	if !next.Valid || n.Padding < 1 || n.Padding > maxBatesPadding || next.Int64 < 1 || next.Int64 > batesMaxSequence(n.Padding)+1 {
+		return detail, ErrInvalidBatesLedger
+	}
+	detail.NextSequence = next.Int64
+	return detail, nil
+}

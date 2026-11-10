@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"uuid"
 
-	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -24,14 +23,14 @@ func validateInspectionSelection(version, profile string) error {
 }
 
 func inspectionVaultID(ctx context.Context, c *daemonconn.Connection) (uuid.UUID, error) {
-	status, err := c.API().AuditStatus(ctx, &apiclient.AuditStatusRequestOptions{})
+	identity, err := c.API().VaultIdentity(ctx)
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	if status == nil || !daemonconn.IsCanonicalUUIDv4(status.VaultID) {
-		return uuid.Nil(), errors.New("audit status returned an invalid vault identity")
+	if identity == nil || !daemonconn.IsCanonicalUUIDv4(identity.VaultID) {
+		return uuid.Nil(), errors.New("daemon returned an invalid vault identity")
 	}
-	return uuid.MustParse(status.VaultID), nil
+	return uuid.MustParse(identity.VaultID), nil
 }
 
 func inspectionProfileError(profile string, cause error) error {

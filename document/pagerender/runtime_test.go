@@ -10,12 +10,13 @@ import (
 	"hash/crc32"
 	"image/color"
 	"image/png"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -77,7 +78,7 @@ func densityPNG(ppm uint32) []byte {
 
 func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [-20 -30 220 330]"}, "/MediaBox [-10 -20 210 320] /CropBox [10.125 20.25 170.625 250.75] /Rotate 90")
-	inspection, err := InspectSource(data, testSource(data), "application/pdf")
+	inspection, err := InspectSource(t.Context(), data, testSource(data), "application/pdf")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Len(t, frames, 1)
@@ -85,14 +86,14 @@ func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing
 	require.Equal(t, 90, frames[0].Rotation)
 	for _, extra := range []string{"/UserUnit 2", "/Rotate 45", "/CropBox [-1 0 1000 1000]"} {
 		data = syntheticPDF([]string{extra}, "/MediaBox [0 0 612 792]")
-		_, err = InspectSource(data, testSource(data), "application/pdf")
+		_, err = InspectSource(t.Context(), data, testSource(data), "application/pdf")
 		require.Error(t, err)
 	}
 }
 
 func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [220 330 -20 -30]"}, "/CropBox [170.625 20.25 10.125 250.75]")
-	inspection, err := InspectSource(data, testSource(data), "application/pdf")
+	inspection, err := InspectSource(t.Context(), data, testSource(data), "application/pdf")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Equal(t, [4]int64{-200000, -300000, 2200000, 3300000}, frames[0].MediaBox)
@@ -101,17 +102,17 @@ func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
 
 func TestPNGInspectionRequiresPhysicalDensityAndRejectsOrientation(t *testing.T) {
 	data := densityPNG(10000)
-	inspection, err := InspectSource(data, testSource(data), "image/png")
+	inspection, err := InspectSource(t.Context(), data, testSource(data), "image/png")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Equal(t, int64(10000), frames[0].Width)
 	plain := mediatest.PNG(2, 2, color.White)
-	_, err = InspectSource(plain, testSource(plain), "image/png")
+	_, err = InspectSource(t.Context(), plain, testSource(plain), "image/png")
 	require.Error(t, err)
 	oriented := append([]byte{}, data[:33]...)
 	oriented = append(oriented, pngChunk("eXIf", []byte("synthetic"))...)
 	oriented = append(oriented, data[33:]...)
-	_, err = InspectSource(oriented, testSource(oriented), "image/png")
+	_, err = InspectSource(t.Context(), oriented, testSource(oriented), "image/png")
 	require.Error(t, err)
 }
 
@@ -281,8 +282,57 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = engine.command(t.Context(), compiled, nil, 2<<30, 1024)
 	require.ErrorIs(t, err, ErrUnsupported, "3 GiB allocation must fail under the actual 2 GiB pre-exec limit")
-	timeout, stop := context.WithTimeout(t.Context(), 200*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the probe's wait mode runs until it is killed
-	defer stop()
-	_, _, err = engine.command(timeout, compiled, nil, 2<<30, 1024, "wait")
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// The probe's wait mode connects back and then runs until it is killed.
+	// Expire the caller's deadline only once the probe is running.
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	deadline := newExpiringContext(t.Context())
+	finished := make(chan error, 1)
+	go func() {
+		_, _, commandErr := engine.command(deadline, compiled, []byte(listener.Addr().String()), 2<<30, 1024, "wait")
+		finished <- commandErr
+	}()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if connection, acceptErr := listener.Accept(); acceptErr == nil {
+			accepted <- connection
+		}
+	}()
+	var connection net.Conn
+	select {
+	case connection = <-accepted:
+		t.Cleanup(func() { _ = connection.Close() })
+	case err := <-finished:
+		t.Fatalf("probe finished before it was running: %v", err)
+	}
+	deadline.expire()
+	require.ErrorIs(t, <-finished, context.DeadlineExceeded)
+	_, err = connection.Read(make([]byte, 1))
+	require.Error(t, err, "the probe must be killed when the deadline expires")
 }
+
+// expiringContext reports an expired deadline when the test calls expire.
+type expiringContext struct {
+	context.Context
+
+	done chan struct{}
+	once sync.Once
+}
+
+func newExpiringContext(parent context.Context) *expiringContext {
+	return &expiringContext{Context: parent, done: make(chan struct{})}
+}
+
+func (ctx *expiringContext) Done() <-chan struct{} { return ctx.done }
+
+func (ctx *expiringContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (ctx *expiringContext) expire() { ctx.once.Do(func() { close(ctx.done) }) }

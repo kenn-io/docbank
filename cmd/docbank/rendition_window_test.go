@@ -90,8 +90,8 @@ func TestRenditionWindowCLI(t *testing.T) {
 						profiles = append(profiles, api.ProcessingProfileSummary{Name: "archive", Fingerprint: profile})
 					}
 					assert.NoError(t, json.MarshalWrite(w, profiles))
-				case "GET /api/v1/audit/status":
-					assert.NoError(t, json.MarshalWrite(w, api.AuditStatus{VaultID: inspectionTestVaultID}))
+				case "GET /api/v1/vault":
+					assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
 				case "POST /api/v1/documents/resolve":
 					summaryCalls++
 					var request api.DocumentSummaryResolveRequest

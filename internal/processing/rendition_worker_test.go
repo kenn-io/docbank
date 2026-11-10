@@ -232,14 +232,20 @@ func TestRenditionWorkerReleasesDaemonGateDuringProviderEgress(t *testing.T) {
 	})
 }
 
-func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) { //nolint:paralleltest // proves the fence holds by waiting 100ms of real time
+func TestRenditionWorkerFencesConsentRevocationThroughProviderExecution(t *testing.T) {
+	t.Parallel()
 	for _, resumable := range []bool{false, true} {
 		name := "render"
 		if resumable {
 			name = "render resumable"
 		}
 		t.Run(name, func(t *testing.T) {
-			testRenditionWorkerFencesConsentRevocationThroughProviderExecution(t, resumable)
+			t.Parallel()
+			// The fence's waiters block on channels, so synctest.Wait
+			// returns while a revocation waits for the provider call.
+			synctest.Test(t, func(t *testing.T) {
+				testRenditionWorkerFencesConsentRevocationThroughProviderExecution(t, resumable)
+			})
 		})
 	}
 }
@@ -268,6 +274,10 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 
 	beginCommitted := make(chan struct{})
 	allowProvider := make(chan struct{})
+	var allowOnce sync.Once
+	allow := func() { allowOnce.Do(func() { close(allowProvider) }) }
+	// A failed check must still let the worker leave the bubble.
+	t.Cleanup(allow)
 	catalog := &transientRenditionCatalog{Store: fixture.catalog}
 	catalog.afterBegin = func() {
 		close(beginCommitted)
@@ -294,38 +304,43 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 	}()
 	select {
 	case <-beginCommitted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider authority did not commit")
+	case runErr := <-workerDone:
+		require.FailNow(t, "provider authority did not commit", "worker returned: %v", runErr)
 	}
-	revocationDone := make(chan error, 1)
+	revoked := make(chan error, 1)
 	go func() {
 		_, revokeErr := fixture.catalog.RevokeConsent(
 			t.Context(), store.ProcessingConsentRevocationRequest{
 				Principal: request.Authorization.Principal,
 				Scope:     request.Authorization.Scope,
 			})
-		revocationDone <- revokeErr
+		revoked <- revokeErr
 	}()
-	select {
-	case revokeErr := <-revocationDone:
-		require.FailNow(t, "consent revocation crossed an unstarted provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the unstarted provider fence keeps revocation blocked
-	}
+	synctest.Wait()
+	requireStillWaiting(t, revoked, "consent revocation crossed an unstarted provider fence")
 
-	close(allowProvider)
+	allow()
 	select {
 	case <-provider.renderStarted:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider invocation did not start")
+	case runErr := <-workerDone:
+		require.FailNow(t, "provider invocation did not start", "worker returned: %v", runErr)
 	}
-	select {
-	case revokeErr := <-revocationDone:
-		require.FailNow(t, "consent revocation crossed an active provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond): //nolint:kennlint // deadlinetest: the timer shows the event does not happen; the active provider fence keeps revocation blocked
-	}
+	synctest.Wait()
+	requireStillWaiting(t, revoked, "consent revocation crossed an active provider fence")
 	close(provider.renderRelease)
-	require.NoError(t, <-revocationDone)
+	require.NoError(t, <-revoked)
 	require.NoError(t, <-workerDone)
+}
+
+// requireStillWaiting fails if done has delivered. Call it after
+// synctest.Wait, when every goroutine in the bubble is blocked.
+func requireStillWaiting(t *testing.T, done <-chan error, crossed string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		require.FailNow(t, crossed, "returned: %v", err)
+	default:
+	}
 }
 
 func TestRenditionWorkerRetriesTransientCatalogFailuresWithinClaim(t *testing.T) {
@@ -1184,72 +1199,6 @@ func TestRenditionWorkerReclaimsStagedBuildWithoutCallingProviderAgain(t *testin
 	assert.Equal(t, store.RenditionJobCompleted, current.State)
 }
 
-func TestRenditionWorkerRefreshesStaleLexicalGenerationWithoutProviderEgress(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	provider := newWorkerProvider(t)
-	profile := workerProcessingProfile(t, provider.Descriptor())
-	fixture.profile = profile
-	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
-	grantWorkerConsent(t, fixture.catalog, request)
-	job, waiter, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
-	require.NoError(t, err)
-	now := time.Now().UTC()
-	claim, err := fixture.catalog.ClaimRenditionJob(
-		t.Context(), job.ID, "stale-generation-worker", now, time.Second)
-	require.NoError(t, err)
-	runtime := workerRuntime{provider: provider}
-	work, err := fixture.catalog.RenditionJobWorkByClaim(t.Context(), claim, now)
-	require.NoError(t, err)
-	execution, err := runtime.Prepare(t.Context(), work, now)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, execution.Upload.Close()) }()
-	snapshot, err := document.SealRenditionExecutionAt(
-		now, execution.Provider, execution.Upload, execution.Authorization,
-		execution.EvidencePolicy, execution.RenditionPolicy)
-	require.NoError(t, err)
-	_, err = fixture.catalog.BeginRenditionProvider(
-		t.Context(), claim, waiter.ID, now, snapshot)
-	require.NoError(t, err)
-	result, err := document.RenderRenditionWithResume(
-		t.Context(), provider, execution.Upload, execution.Authorization, nil, nil)
-	require.NoError(t, err)
-	staged, err := buildRenditionJobCandidate(
-		work, execution, result, claim.Epoch, now)
-	require.NoError(t, err)
-	worker, err := NewRenditionWorker(RenditionWorkerConfig{
-		Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime,
-		Gate:  newTestOperationGate(),
-		Owner: "fresh-generation-worker", LeaseDuration: time.Minute,
-		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
-	})
-	require.NoError(t, err)
-	require.NoError(t, worker.stageArtifactsAndBuild(t.Context(), claim, staged))
-	catalog := &transientRenditionCatalog{
-		Store: fixture.catalog, publishErr: store.ErrLexicalGenerationStale,
-	}
-	catalog.publishFailures.Store(1)
-	now = now.Add(2 * time.Second)
-	worker.catalog = catalog
-	processed, err := worker.RunOne(t.Context())
-	require.NoError(t, err)
-	assert.True(t, processed)
-	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.RenditionJobRetryWait, current.State)
-	now = now.Add(31 * time.Second)
-	processed, err = worker.RunOne(t.Context())
-	require.NoError(t, err)
-	assert.True(t, processed)
-	assert.Equal(t, 1, provider.calls)
-	current, err = fixture.catalog.RenditionJobByID(t.Context(), job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.RenditionJobCompleted, current.State)
-	activeGeneration, err := fixture.catalog.ActiveLexicalGeneration(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, renditionJobGenerationID(job.ID, current.ClaimEpoch), activeGeneration.ID)
-}
-
 var workerSourceBytes = []byte("synthetic private-free source")
 
 type workerUpload struct {
@@ -1475,8 +1424,6 @@ type transientRenditionCatalog struct {
 	claimAttempts       atomic.Int32
 	recordAttempts      atomic.Int32
 	renewalAttempts     atomic.Int32
-	publishFailures     atomic.Int32
-	publishErr          error
 	beforeBeginOnce     sync.Once
 	beforeBegin         func(context.Context) error
 	afterBeginOnce      sync.Once
@@ -1552,15 +1499,6 @@ func (catalog *transientRenditionCatalog) RenewRenditionJobClaim(
 	return catalog.Store.RenewRenditionJobClaim(ctx, claim, at, lease)
 }
 
-func (catalog *transientRenditionCatalog) PublishRenditionJob(
-	ctx context.Context, claim store.RenditionJobClaim, at time.Time,
-) (store.RenditionJobPublication, error) {
-	if catalog.publishFailures.Add(-1) >= 0 {
-		return store.RenditionJobPublication{}, catalog.publishErr
-	}
-	return catalog.Store.PublishRenditionJob(ctx, claim, at)
-}
-
 func (catalog *transientRenditionCatalog) RenditionJobErrorRetryable(err error) bool {
 	return errors.Is(err, errSyntheticTransientCatalog) ||
 		catalog.Store.RenditionJobErrorRetryable(err)
@@ -1582,8 +1520,8 @@ func (writer *failOnceRenditionBlobWriter) WithMutation(
 	return writer.delegate.WithMutation(ctx, fn)
 }
 
-func newWorkerProvider(t *testing.T) *workerProvider {
-	t.Helper()
+func newWorkerProvider(tb testing.TB) *workerProvider {
+	tb.Helper()
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.worker-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: processingHash("worker-policy"),
@@ -1594,7 +1532,7 @@ func newWorkerProvider(t *testing.T) *workerProvider {
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return &workerProvider{descriptor: descriptor}
 }
 

@@ -22,7 +22,1118 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; excludes image preparation and ranked search.", scenarios: []backendScenario{
+	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
+		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
+		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
+		{"Rollback", nil, checkDocumentPeopleRollbackPostgres},
+		{"DocumentPeopleResolverInputsProvisionEligibleIdentityOnce", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleProvisioningKeepsPublishedVersionsCurrent", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleNameAliasIsOnlyASuggestion", func(t *testing.T) { t.Helper(); checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleReusedIdentitySuggestsOnlyActiveOwner", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleRetiredNameAliasKeepsUnassignedCandidate", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleDisplayOnlyActorRemainsUnresolved", func(t *testing.T) { t.Helper(); checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleLoadFailureHasNoPublishableInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleLoadFailureHasNoPublishableInputs(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleLoadFailureHasNoPublishableInputs(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleDerivationDoesNotMutateAuditedAuthority", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleResolverInputsOpensNameOnlyCandidate", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleResolverInputsHonorsExternalUIDUnlink", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentPeopleRejectsChangedInputsBeforeWriting", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentPeopleReplayInputIdentity", func(t *testing.T) { t.Helper(); checkPublishDocumentPeopleReplayInputIdentity(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleReplayInputIdentity(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFailureReplacesOlderSuccessfulCoverage", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleReadsWithholdStaleAttributionAndRetainHistory", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildReplay", func(t *testing.T) { t.Helper(); checkPeopleRebuildReplay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRebuildReplay(t, newPostgresQueryStore) }},
+		{"DocumentPeopleCoverageCountsCurrentVersionWaitingForEvents", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildWaitsForFailureRetryAndLateNodeRevision", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildCountsFailureAfterNodeRevisionChanges", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildStopsRetryingTerminalFailure", func(t *testing.T) { t.Helper(); checkPeopleRebuildStopsRetryingTerminalFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildStopsRetryingTerminalFailure(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "people-browsing", postgres: "native operations", scope: "Name and recent pages, Unicode prefixes, evidence visibility, identity labels and photo summaries.", scenarios: []backendScenario{
+		{"UnicodePrefixes", func(t *testing.T) { t.Helper(); checkPeopleBrowseUnicode(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleBrowseUnicode(t, newPostgresQueryStore) }},
+		{"Snapshot", nil, checkPeopleBrowseSnapshotPostgres},
+		{"NameIndex", nil, checkPeopleBrowseNameIndexPostgres},
+		{"PeopleRecentFirstFollowsVisibleEvidence", func(t *testing.T) { t.Helper(); checkPeopleRecentFirstFollowsVisibleEvidence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRecentFirstFollowsVisibleEvidence(t, newPostgresQueryStore) }},
+		{"PeopleRecentIgnoresUnavailablePhotoEvidence", func(t *testing.T) { t.Helper(); checkPeopleRecentIgnoresUnavailablePhotoEvidence(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentIgnoresUnavailablePhotoEvidence(t, newPostgresQueryStore)
+		}},
+		{"PeopleRecentFirstAfterNaming", func(t *testing.T) { t.Helper(); checkPeopleRecentFirstAfterNaming(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRecentFirstAfterNaming(t, newPostgresQueryStore) }},
+		{"PeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newPostgresQueryStore)
+		}},
+		{"PeopleByDisplayNameEvidenceVisibility", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newPostgresQueryStore) }},
+		{"PeopleByDisplayNameOperatorCandidateAcceptance", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newPostgresQueryStore)
+		}},
+		{"PeopleByDisplayNameMatchesWordPrefixes", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameMatchesWordPrefixes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameMatchesWordPrefixes(t, newPostgresQueryStore) }},
+		{"PeopleSearchIdentityLabelsRespectEvidenceVisibility", func(t *testing.T) {
+			t.Helper()
+			checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t, newPostgresQueryStore)
+		}},
+		{"PeoplePhotoSummary", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummary(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummary(t, newPostgresQueryStore) }},
+		{"PeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder", func(t *testing.T) {
+			t.Helper()
+			checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t, newPostgresQueryStore)
+		}},
+		{"PeoplePhotoSummaryPairedSources", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummaryPairedSources(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummaryPairedSources(t, newPostgresQueryStore) }},
+		{"PeoplePhotoSummarySharedPhotos", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummarySharedPhotos(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummarySharedPhotos(t, newPostgresQueryStore) }},
+		{"PersonNameSearchFollowsAuthority", func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newPostgresQueryStore) }},
+	}},
+	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; people-browsing covers discovery; document-people covers resolver production.", scenarios: []backendScenario{
+		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
+		{"Rollback", nil, checkPeopleRollbackPostgres},
+		{"RetainedPackageCustody", nil, checkPeopleRetainedPackageCustodyPostgres},
+		{"PersonRevisionFence", func(t *testing.T) { t.Helper(); checkPersonRevisionFence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonRevisionFence(t, newPostgresQueryStore) }},
+		{"PersonIdentityAuthorityAndSharedContactPoints", func(t *testing.T) { t.Helper(); checkPersonIdentityAuthorityAndSharedContactPoints(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPersonIdentityAuthorityAndSharedContactPoints(t, newPostgresQueryStore)
+		}},
+		{"PersonMutationsAdvanceBindingEpoch", func(t *testing.T) { t.Helper(); checkPersonMutationsAdvanceBindingEpoch(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonMutationsAdvanceBindingEpoch(t, newPostgresQueryStore) }},
+		{"PersonDetailResolvesAlias", func(t *testing.T) { t.Helper(); checkPersonDetailResolvesAlias(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonDetailResolvesAlias(t, newPostgresQueryStore) }},
+		{"RetirePersonTombstonesResolution", func(t *testing.T) { t.Helper(); checkRetirePersonTombstonesResolution(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRetirePersonTombstonesResolution(t, newPostgresQueryStore) }},
+		{"RetirePersonCutsOffInboundMergeAliases", func(t *testing.T) { t.Helper(); checkRetirePersonCutsOffInboundMergeAliases(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRetirePersonCutsOffInboundMergeAliases(t, newPostgresQueryStore) }},
+		{"RecordExternalUIDAliasesPreservesExistingHopBound", func(t *testing.T) {
+			t.Helper()
+			checkRecordExternalUIDAliasesPreservesExistingHopBound(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRecordExternalUIDAliasesPreservesExistingHopBound(t, newPostgresQueryStore)
+		}},
+		{"PersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate", func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t, newPostgresQueryStore)
+		}},
+		{"PersonExternalIdentityForwardsAndHonorsUnlinkedTombstone", func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t, newPostgresQueryStore)
+		}},
+		{"RecordExternalUIDAliasesRetiresCurrentIdentity", func(t *testing.T) { t.Helper(); checkRecordExternalUIDAliasesRetiresCurrentIdentity(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRecordExternalUIDAliasesRetiresCurrentIdentity(t, newPostgresQueryStore)
+		}},
+		{"LinkExternalIdentityRejectsCurrentAlias", func(t *testing.T) { t.Helper(); checkLinkExternalIdentityRejectsCurrentAlias(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkLinkExternalIdentityRejectsCurrentAlias(t, newPostgresQueryStore) }},
+		{"PersonExternalCurrentIdentityRequiresAliasTransition", func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalCurrentIdentityRequiresAliasTransition(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalCurrentIdentityRequiresAliasTransition(t, newPostgresQueryStore)
+		}},
+		{"PersonExternalIdentityCannotBeLinkedToAnotherPerson", func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalIdentityCannotBeLinkedToAnotherPerson(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPersonExternalIdentityCannotBeLinkedToAnotherPerson(t, newPostgresQueryStore)
+		}},
+		{"RecordExternalUIDAliasesRetargetsAfterSplit", func(t *testing.T) { t.Helper(); checkRecordExternalUIDAliasesRetargetsAfterSplit(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRecordExternalUIDAliasesRetargetsAfterSplit(t, newPostgresQueryStore)
+		}},
+		{"PersonActorKeysPaginationValidatesCursor", func(t *testing.T) { t.Helper(); checkPersonActorKeysPaginationValidatesCursor(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPersonActorKeysPaginationValidatesCursor(t, newPostgresQueryStore)
+		}},
+		{"RecordExternalUIDAliasesRejectsCycleAtomically", func(t *testing.T) { t.Helper(); checkRecordExternalUIDAliasesRejectsCycleAtomically(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRecordExternalUIDAliasesRejectsCycleAtomically(t, newPostgresQueryStore)
+		}},
+		{"ActorKeysForPersonForwardsMergedPersonID", func(t *testing.T) { t.Helper(); checkActorKeysForPersonForwardsMergedPersonID(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkActorKeysForPersonForwardsMergedPersonID(t, newPostgresQueryStore)
+		}},
+		{"CustodianPackageScopeKeepsDefaultAndRecordsSeparate", func(t *testing.T) {
+			t.Helper()
+			checkCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t, newTestStore)
+		}, nil},
+		{"CustodianAssignmentUsesRealVersion", func(t *testing.T) { t.Helper(); checkCustodianAssignmentUsesRealVersion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCustodianAssignmentUsesRealVersion(t, newPostgresQueryStore) }},
+		{"CustodianAdditionalRejectsDuplicateClaim", func(t *testing.T) { t.Helper(); checkCustodianAdditionalRejectsDuplicateClaim(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkCustodianAdditionalRejectsDuplicateClaim(t, newPostgresQueryStore)
+		}},
+		{"CustodianCollectionAppliesOnlyToMembers", func(t *testing.T) { t.Helper(); checkCustodianCollectionAppliesOnlyToMembers(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCustodianCollectionAppliesOnlyToMembers(t, newPostgresQueryStore) }},
+		{"CustodianCollectionRejectsCallerSuppliedProvenance", func(t *testing.T) {
+			t.Helper()
+			checkCustodianCollectionRejectsCallerSuppliedProvenance(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkCustodianCollectionRejectsCallerSuppliedProvenance(t, newPostgresQueryStore)
+		}},
+		{"CustodiansIncludesRetiredPersonAsUnresolved", func(t *testing.T) { t.Helper(); checkCustodiansIncludesRetiredPersonAsUnresolved(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkCustodiansIncludesRetiredPersonAsUnresolved(t, newPostgresQueryStore)
+		}},
+		{"CustodianMutationUsesRevisionFenceAndNullableCoordinates", func(t *testing.T) {
+			t.Helper()
+			checkCustodianMutationUsesRevisionFenceAndNullableCoordinates(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkCustodianMutationUsesRevisionFenceAndNullableCoordinates(t, newPostgresQueryStore)
+		}},
+		{"CustodiansForVersionOrdersDocumentBeforeCollectionClaims", func(t *testing.T) {
+			t.Helper()
+			checkCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkCustodiansForVersionOrdersDocumentBeforeCollectionClaims(t, newPostgresQueryStore)
+		}},
+		{"ResolveCustodianPreservesSenderClaimAndResolvesAlias", func(t *testing.T) {
+			t.Helper()
+			checkResolveCustodianPreservesSenderClaimAndResolvesAlias(t, newTestStore)
+		}, nil},
+		{"OperatorPackageCustodianDoesNotReplaceSenderPrimary", func(t *testing.T) {
+			t.Helper()
+			checkOperatorPackageCustodianDoesNotReplaceSenderPrimary(t, newTestStore)
+		}, nil},
+		{"MergePersonsDeduplicatesAliasesAndReplaysReceipt", func(t *testing.T) { t.Helper(); checkMergePersonsDeduplicatesAliasesAndReplaysReceipt(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMergePersonsDeduplicatesAliasesAndReplaysReceipt(t, newPostgresQueryStore)
+		}},
+		{"MergePersonsRejectsMovedRecordsBeyondReceiptLimit", func(t *testing.T) {
+			t.Helper()
+			checkMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t, newPostgresQueryStore)
+		}},
+		{"MergeReceiptKeepsExternalTupleComponentsDistinct", func(t *testing.T) { t.Helper(); checkMergeReceiptKeepsExternalTupleComponentsDistinct(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMergeReceiptKeepsExternalTupleComponentsDistinct(t, newPostgresQueryStore)
+		}},
+		{"MergePersonsRejectsConflictingCurrentExternalUIDs", func(t *testing.T) {
+			t.Helper()
+			checkMergePersonsRejectsConflictingCurrentExternalUIDs(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMergePersonsRejectsConflictingCurrentExternalUIDs(t, newPostgresQueryStore)
+		}},
+		{"MergePersonsPreservesExternalUIDTransitions", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesExternalUIDTransitions(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMergePersonsPreservesExternalUIDTransitions(t, newPostgresQueryStore)
+		}},
+		{"MergePersonsRewritesAliasChainsToOneHop", func(t *testing.T) { t.Helper(); checkMergePersonsRewritesAliasChainsToOneHop(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsRewritesAliasChainsToOneHop(t, newPostgresQueryStore) }},
+		{"SplitPersonMovesOnlyExplicitIdentitiesAndReplays", func(t *testing.T) { t.Helper(); checkSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t, newPostgresQueryStore)
+		}},
+		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
+		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
+		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+		{"OpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence", func(t *testing.T) {
+			t.Helper()
+			checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t, newPostgresQueryStore)
+		}},
+		{"DecidePersonCandidateLinksOnlyCapturedOccurrences", func(t *testing.T) {
+			t.Helper()
+			checkDecidePersonCandidateLinksOnlyCapturedOccurrences(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDecidePersonCandidateLinksOnlyCapturedOccurrences(t, newPostgresQueryStore)
+		}},
+		{"DecidePersonCandidateCreatesCuratedPersonAtomically", func(t *testing.T) {
+			t.Helper()
+			checkDecidePersonCandidateCreatesCuratedPersonAtomically(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDecidePersonCandidateCreatesCuratedPersonAtomically(t, newPostgresQueryStore)
+		}},
+		{"CandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions", func(t *testing.T) {
+			t.Helper()
+			checkCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkCandidateDecisionsAdvanceBindingEpochEvenWithoutNewAssertions(t, newPostgresQueryStore)
+		}},
+		{"AssertDocumentPersonUsesRevisionFenceAndBindingEpoch", func(t *testing.T) {
+			t.Helper()
+			checkAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAssertDocumentPersonUsesRevisionFenceAndBindingEpoch(t, newPostgresQueryStore)
+		}},
+		{"OpenPersonCandidateReportsQueueCapacity", func(t *testing.T) { t.Helper(); checkOpenPersonCandidateReportsQueueCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkOpenPersonCandidateReportsQueueCapacity(t, newPostgresQueryStore) }},
+		{"CandidateAuthoritySurvivesPersonMerge", func(t *testing.T) { t.Helper(); checkCandidateAuthoritySurvivesPersonMerge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCandidateAuthoritySurvivesPersonMerge(t, newPostgresQueryStore) }},
+		{"CandidateRetirementPreservesAssertionsAndSupersedesSuggestions", func(t *testing.T) {
+			t.Helper()
+			checkCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkCandidateRetirementPreservesAssertionsAndSupersedesSuggestions(t, newPostgresQueryStore)
+		}},
+		{"CandidateAssertionsMergeMatchingActions", func(t *testing.T) { t.Helper(); checkCandidateAssertionsMergeMatchingActions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCandidateAssertionsMergeMatchingActions(t, newPostgresQueryStore) }},
+		{"CandidateAuthorityPreventsMetadataImport", func(t *testing.T) { t.Helper(); checkCandidateAuthorityPreventsMetadataImport(t, newTestStore) }, nil},
+		{"CandidateLinksSkipPrunedVersions", func(t *testing.T) { t.Helper(); checkCandidateLinksSkipPrunedVersions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkCandidateLinksSkipPrunedVersions(t, newPostgresQueryStore) }},
+		{"PersonAssertionDeletionAdvancesBindingEpoch", func(t *testing.T) { t.Helper(); checkPersonAssertionDeletionAdvancesBindingEpoch(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPersonAssertionDeletionAdvancesBindingEpoch(t, newPostgresQueryStore)
+		}},
+		{"BrowserMergeHiddenCustodian", func(t *testing.T) {
+			t.Helper()
+			checkBrowserMergeHiddenCustodian(t, newTestStore, []string{"document", "collection", "package", "package-snapshot", "package-record"})
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBrowserMergeHiddenCustodian(t, newPostgresQueryStore, []string{"document", "collection"})
+		}},
+		{"BrowserMergeRequiresHiddenUnlock", func(t *testing.T) { t.Helper(); checkBrowserMergeRequiresHiddenUnlock(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserMergeRequiresHiddenUnlock(t, newPostgresQueryStore) }},
+		{"PersonFacePreviews", func(t *testing.T) { t.Helper(); checkPersonFacePreviews(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonFacePreviews(t, newPostgresQueryStore) }},
+		{"PersonFacePreviewsPreferAssignedSource", func(t *testing.T) { t.Helper(); checkPersonFacePreviewsPreferAssignedSource(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonFacePreviewsPreferAssignedSource(t, newPostgresQueryStore) }},
+		{"PersonPhotoPreviewSourceFollowsAssignment", func(t *testing.T) { t.Helper(); checkPersonPhotoPreviewSourceFollowsAssignment(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPersonPhotoPreviewSourceFollowsAssignment(t, newPostgresQueryStore)
+		}},
+		{"WholePhotoMarkCreatesPersonAtomically", func(t *testing.T) { t.Helper(); checkWholePhotoMarkCreatesPersonAtomically(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkWholePhotoMarkCreatesPersonAtomically(t, newPostgresQueryStore) }},
+		{"PhotoFaceManualNamesAndBoxValidation", func(t *testing.T) { t.Helper(); checkPhotoFaceManualNamesAndBoxValidation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceManualNamesAndBoxValidation(t, newPostgresQueryStore) }},
+		{"PhotoFaceMergeRetargetsDuplicateAssertions", func(t *testing.T) { t.Helper(); checkPhotoFaceMergeRetargetsDuplicateAssertions(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceMergeRetargetsDuplicateAssertions(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceReplaysNamedFaceAfterPersonRetires", func(t *testing.T) { t.Helper(); checkPhotoFaceReplaysNamedFaceAfterPersonRetires(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceReplaysNamedFaceAfterPersonRetires(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceReplaysMergedPersonAfterSurvivorRetires", func(t *testing.T) { t.Helper(); checkPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceHiddenReadsAndWrites", func(t *testing.T) { t.Helper(); checkPhotoFaceHiddenReadsAndWrites(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceHiddenReadsAndWrites(t, newPostgresQueryStore) }},
+		{"PhotoFaceAuditWritesFailClosed", func(t *testing.T) { t.Helper(); checkPhotoFaceAuditWritesFailClosed(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceAuditWritesFailClosed(t, newPostgresQueryStore) }},
+		{"PhotoFaceBoxStaysStoredWhenPhotoRotationChanges", func(t *testing.T) { t.Helper(); checkPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceObservationTargetEligibility", func(t *testing.T) { t.Helper(); checkPhotoFaceObservationTargetEligibility(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceObservationTargetEligibility(t, newPostgresQueryStore) }},
+		{"PhotoFaceReadIncludesSuppressedReference", func(t *testing.T) { t.Helper(); checkPhotoFaceReadIncludesSuppressedReference(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceReadIncludesSuppressedReference(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceGenericDepictedAuthorization", func(t *testing.T) { t.Helper(); checkPhotoFaceGenericDepictedAuthorization(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceGenericDepictedAuthorization(t, newPostgresQueryStore) }},
+		{"MarkPersonInPhotoNamedRetryAfterMerge", func(t *testing.T) { t.Helper(); checkMarkPersonInPhotoNamedRetryAfterMerge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMarkPersonInPhotoNamedRetryAfterMerge(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionNameRetractUndo", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionNameRetractUndo(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionNameRetractUndo(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionRejectDismissRename", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionRejectDismissRename(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionRejectDismissRename(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionUndoFencesChangedRecords", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionUndoFencesChangedRecords(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionUndoFencesChangedRecords(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceDecisionGroupedRejection", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionGroupedRejection(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionGroupedRejection(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionUndoRejectsReusedPreviousKeyFace", func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionUndoRejectsReusedPreviousKeyFace(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionUndoRejectsReusedPreviousKeyFace(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceDecisionWithdrawalMerge", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionWithdrawalMerge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionWithdrawalMerge(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionPhotoMarkMerge", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionPhotoMarkMerge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionPhotoMarkMerge(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionUndoClearRefusesRetiredPerson", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionUndoClearRefusesRetiredPerson(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionUndoClearRefusesRetiredPerson(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceNamingPreservesReplayDigestsAndClearedPeople", func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceNamingPreservesReplayDigestsAndClearedPeople(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceNamingPreservesReplayDigestsAndClearedPeople(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceCandidateAcceptanceClearsDecisions", func(t *testing.T) { t.Helper(); checkPhotoFaceCandidateAcceptanceClearsDecisions(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceCandidateAcceptanceClearsDecisions(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceDecisionWithdrawalPreservesOpenSuggestion", func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionWithdrawalPreservesOpenSuggestion(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionWithdrawalPreservesOpenSuggestion(t, newPostgresQueryStore)
+		}},
+		{"PersonAssertionSelectorsFilterBeforePaging", func(t *testing.T) { t.Helper(); checkPersonAssertionSelectorsFilterBeforePaging(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPersonAssertionSelectorsFilterBeforePaging(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess", func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceDecisionCandidateCapacity", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionCandidateCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionCandidateCapacity(t, newPostgresQueryStore) }},
+		{"PhotoFaceDecisionRepeatedGroupedDismissal", func(t *testing.T) { t.Helper(); checkPhotoFaceDecisionRepeatedGroupedDismissal(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceDecisionRepeatedGroupedDismissal(t, newPostgresQueryStore)
+		}},
+		{"PersonMergeBumpsAffectedFaceOnce", func(t *testing.T) { t.Helper(); checkPersonMergeBumpsAffectedFaceOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonMergeBumpsAffectedFaceOnce(t, newPostgresQueryStore) }},
+		{"PhotoFaceMergeUnionsRejections", func(t *testing.T) { t.Helper(); checkPhotoFaceMergeUnionsRejections(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceMergeUnionsRejections(t, newPostgresQueryStore) }},
+		{"PhotoFaceCandidateHistoryDoesNotFollowReusedFaceID", func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceCandidateHistoryDoesNotFollowReusedFaceID(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceCandidateHistoryDoesNotFollowReusedFaceID(t, newPostgresQueryStore)
+		}},
+		{"FaceCandidateRetainsMembershipForReusedFaceID", func(t *testing.T) { t.Helper(); checkFaceCandidateRetainsMembershipForReusedFaceID(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkFaceCandidateRetainsMembershipForReusedFaceID(t, newPostgresQueryStore)
+		}},
+		{"PersonMergeIgnoresCandidateFromPrunedFaceVersion", func(t *testing.T) { t.Helper(); checkPersonMergeIgnoresCandidateFromPrunedFaceVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPersonMergeIgnoresCandidateFromPrunedFaceVersion(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceMergeKeepsSurvivorSuggestion", func(t *testing.T) { t.Helper(); checkPhotoFaceMergeKeepsSurvivorSuggestion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceMergeKeepsSurvivorSuggestion(t, newPostgresQueryStore) }},
+		{"PhotoFaceNamingSupersedesOtherSuggestions", func(t *testing.T) { t.Helper(); checkPhotoFaceNamingSupersedesOtherSuggestions(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceNamingSupersedesOtherSuggestions(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceWithdrawalUndoFencedByLaterRejection", func(t *testing.T) { t.Helper(); checkPhotoFaceWithdrawalUndoFencedByLaterRejection(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceWithdrawalUndoFencedByLaterRejection(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceClearedKeyUndoIgnoresRequestPhoto", func(t *testing.T) { t.Helper(); checkPhotoFaceClearedKeyUndoIgnoresRequestPhoto(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoFaceClearedKeyUndoIgnoresRequestPhoto(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "photo-review", postgres: "native operations", scope: "Explicit-selection grouping, keeper and representative decisions, best-shot responses and undo; query browsing and people curation remain separate.", scenarios: []backendScenario{
+		{"PhotoStackTimeRules", func(t *testing.T) { t.Helper(); checkPhotoStackTimeRules(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackTimeRules(t, newPostgresQueryStore) }},
+		{"PhotoStackCameraSerialMatching", func(t *testing.T) { t.Helper(); checkPhotoStackCameraSerialMatching(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackCameraSerialMatching(t, newPostgresQueryStore) }},
+		{"PhotoStackDecisionAfterSidecarPublication", func(t *testing.T) { t.Helper(); checkPhotoStackDecisionAfterSidecarPublication(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackDecisionAfterSidecarPublication(t, newPostgresQueryStore)
+		}},
+		{"PhotoStackRejectsStaleMembershipAndTargetsWithoutWrites", func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t, newPostgresQueryStore)
+		}},
+		{"PhotoStackAutomaticDecisionsPreserveCompanionFlags", func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackAutomaticDecisionsPreserveCompanionFlags(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoStackAutomaticDecisionsPreserveCompanionFlags(t, newPostgresQueryStore)
+		}},
+		{"PhotoRepresentativeDecisionKeepsDefaultSettings", func(t *testing.T) { t.Helper(); checkPhotoRepresentativeDecisionKeepsDefaultSettings(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoRepresentativeDecisionKeepsDefaultSettings(t, newPostgresQueryStore)
+		}},
+		{"PhotoStackDecisionsRefuseStaleMetadata", func(t *testing.T) { t.Helper(); checkPhotoStackDecisionsRefuseStaleMetadata(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoStackDecisionsRefuseStaleMetadata(t, newPostgresQueryStore) }},
+		{"PhotoBestShotsDecisions", func(t *testing.T) { t.Helper(); checkPhotoBestShotsDecisions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBestShotsDecisions(t, newPostgresQueryStore) }},
+		{"PhotoBestShotsReadsAndStaleOffers", func(t *testing.T) { t.Helper(); checkPhotoBestShotsReadsAndStaleOffers(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBestShotsReadsAndStaleOffers(t, newPostgresQueryStore) }},
+		{"PhotoBestShotsFailedEnrichmentPublishesNothing", func(t *testing.T) { t.Helper(); checkPhotoBestShotsFailedEnrichmentPublishesNothing(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoBestShotsFailedEnrichmentPublishesNothing(t, newPostgresQueryStore)
+		}},
+		{"PhotoBestShotsConfirmedWinner", func(t *testing.T) { t.Helper(); checkPhotoBestShotsConfirmedWinner(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoBestShotsConfirmedWinner(t, newPostgresQueryStore) }},
+		{"PhotoReviewRepresentatives", func(t *testing.T) { t.Helper(); checkPhotoReviewRepresentatives(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoReviewRepresentatives(t, newPostgresQueryStore) }},
+		{"PhotoReviewHidden", func(t *testing.T) { t.Helper(); checkPhotoReviewHidden(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoReviewHidden(t, newPostgresQueryStore) }},
+		{"PhotoReviewRollback", nil, checkPhotoReviewRollbackPostgres},
+		{"PhotoReviewSnapshot", nil, checkPhotoReviewSnapshotPostgres},
+		{"PhotoReviewRetainedVectors", nil, checkPhotoReviewRetainedVectorsPostgres},
+	}},
+	{name: "photo-albums", postgres: "native operations", scope: "Album lifecycle, explicit membership and cover summaries; query selection and snapshot delivery remain unqualified.", scenarios: []backendScenario{
+		{"PhotoSetLifecycle", func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetLifecycle(t, newPostgresQueryStore) }},
+		{"PhotoSetCovers", nil, func(t *testing.T) {
+			t.Helper()
+			t.Parallel()
+			s, _, _ := photoSetCoverScenario(t, newPostgresQueryStore)
+			checkRetentionMetadata(t, s)
+		}},
+		{"PhotoHiddenCoverAndPromoteAuthorization", func(t *testing.T) { t.Helper(); checkPhotoHiddenCoverAndPromoteAuthorization(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenCoverAndPromoteAuthorization(t, newPostgresQueryStore) }},
+		{"PhotoSetReceiptsAndOrdering", func(t *testing.T) { t.Helper(); checkPhotoSetReceiptsAndOrdering(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetReceiptsAndOrdering(t, newPostgresQueryStore) }},
+		{"PhotoSetHiddenSummaries", func(t *testing.T) { t.Helper(); checkPhotoSetHiddenSummaries(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSetHiddenSummaries(t, newPostgresQueryStore) }},
+		{"PhotoSetSnapshots", nil, checkPhotoSetSnapshotsPostgres},
+		{"PhotoSetRollback", nil, checkPhotoSetRollbackPostgres},
+	}},
+	{name: "photo-quality-hidden", postgres: "native operations", scope: "Quality publication, hidden sessions and photo settings; excludes query browsing and people curation.", scenarios: []backendScenario{
+		{"PhotoQualityLifecycle", func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityLifecycle(t, newPostgresQueryStore) }},
+		{"PhotoQualityDetectedInputs", func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityDetectedInputs(t, newPostgresQueryStore) }},
+		{"PhotoHiddenLifecycle", nil, checkPhotoHiddenLifecyclePostgres},
+		{"PhotoSettingsRecomputeInheritedAssets", func(t *testing.T) { t.Helper(); checkPhotoSettingsRecomputeInheritedAssets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSettingsRecomputeInheritedAssets(t, newPostgresQueryStore) }},
+		{"PhotoQualityRetainedDismissal", nil, checkPhotoQualityRetainedDismissalPostgres},
+		{"PhotoQualityHiddenSnapshots", nil, checkPhotoQualityHiddenSnapshotsPostgres},
+		{"PhotoQualityHiddenRollback", nil, checkPhotoQualityHiddenRollbackPostgres},
+		{"PhotoQualityDisplayAndPublicationFence", func(t *testing.T) { t.Helper(); checkPhotoQualityDisplayAndPublicationFence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoQualityDisplayAndPublicationFence(t, newPostgresQueryStore) }},
+		{"PhotoHiddenPasscodeNormalization", func(t *testing.T) { t.Helper(); checkPhotoHiddenPasscodeNormalization(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenPasscodeNormalization(t, newPostgresQueryStore) }},
+		{"PhotoHiddenRestorePreservesHidden", func(t *testing.T) { t.Helper(); checkPhotoHiddenRestorePreservesHidden(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenRestorePreservesHidden(t, newPostgresQueryStore) }},
+		{"PhotoHiddenVisibilityChangeID", func(t *testing.T) { t.Helper(); checkPhotoHiddenVisibilityChangeID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenVisibilityChangeID(t, newPostgresQueryStore) }},
+		{"PhotoHiddenDisableRecordsEveryAsset", func(t *testing.T) { t.Helper(); checkPhotoHiddenDisableRecordsEveryAsset(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenDisableRecordsEveryAsset(t, newPostgresQueryStore) }},
+		{"PhotoHiddenMutationGate", func(t *testing.T) { t.Helper(); checkPhotoHiddenMutationGate(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenMutationGate(t, newPostgresQueryStore) }},
+		{"PhotoHiddenUnlockLifetimeOverride", func(t *testing.T) { t.Helper(); checkPhotoHiddenUnlockLifetimeOverride(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoHiddenUnlockLifetimeOverride(t, newPostgresQueryStore) }},
+	}},
+	{name: "photo-analysis", postgres: "native operations", scope: "Description and face-detection jobs and suggestion responses; excludes provider network calls and people curation.", scenarios: []backendScenario{
+		{"PhotoFaceDetectionJob", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionJob(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionJob(t, newPostgresQueryStore) }},
+		{"PhotoAnalysisTargetPlan", func(t *testing.T) { t.Helper(); checkPhotoAnalysisTargetPlan(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAnalysisTargetPlan(t, newPostgresQueryStore) }},
+		{"PhotoAnalysisPublicationRollback", nil, checkPhotoAnalysisPublicationRollbackPostgres},
+		{"PhotoSuggestionResponseRollback", nil, checkPhotoSuggestionResponseRollbackPostgres},
+		{"PhotoFaceDetectionStableOverlap", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionStableOverlap(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionStableOverlap(t, newPostgresQueryStore) }},
+		{"PhotoFaceDetectionProtectsCandidatesAndUndoReceipts", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t, false) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionProtectsCandidatesAndUndoReceipts(t, true) }},
+		{"PhotoDescriptionTargetsRespectActiveTaskScope", func(t *testing.T) { t.Helper(); checkPhotoDescriptionTargetsRespectActiveTaskScope(t, false) }, func(t *testing.T) { t.Helper(); checkPhotoDescriptionTargetsRespectActiveTaskScope(t, true) }},
+
+		{"PhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest", func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionAcceptsSelectedFieldsAndDismissesTheRest(t, newPostgresQueryStore)
+		}},
+		{"PhotoSuggestionResponseChecksTheAssetItWasReviewedUnder", func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionResponseChecksTheAssetItWasReviewedUnder(t, newPostgresQueryStore)
+		}},
+		{"PhotoSuggestionOffersNothingTheOwnerAlreadyHas", func(t *testing.T) { t.Helper(); checkPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoSuggestionOffersNothingTheOwnerAlreadyHas(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionJobPublishesOneSuggestionAndSettles", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionJobPublishesOneSuggestionAndSettles(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionJobPublishesOneSuggestionAndSettles(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionTargetsReadsOnePageInOrder", func(t *testing.T) { t.Helper(); checkPhotoDescriptionTargetsReadsOnePageInOrder(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionTargetsReadsOnePageInOrder(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExpiredGrantOverlappedByRenewalPublishesNothing(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionWaitersKeepTheirOwnDismissalRule", func(t *testing.T) { t.Helper(); checkPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionWaitersKeepTheirOwnDismissalRule(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionLeaseExpiryRetriesInsteadOfQuarantining(t, newPostgresQueryStore)
+		}},
+		{"PhotoRotationResponses", func(t *testing.T) { t.Helper(); checkPhotoRotationResponses(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRotationResponses(t, newPostgresQueryStore) }},
+		{"PhotoRotationResetsOnRepublish", func(t *testing.T) { t.Helper(); checkPhotoRotationResetsOnRepublish(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoRotationResetsOnRepublish(t, newPostgresQueryStore) }},
+		{"PhotoRotationResponseRequiresCurrentProposal", func(t *testing.T) { t.Helper(); checkPhotoRotationResponseRequiresCurrentProposal(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoRotationResponseRequiresCurrentProposal(t, newPostgresQueryStore)
+		}},
+		{"PhotoDescriptionExplicitRefreshKeepsTextDecisions", func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExplicitRefreshKeepsTextDecisions(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoDescriptionExplicitRefreshKeepsTextDecisions(t, newPostgresQueryStore)
+		}},
+		{"PhotoFaceDetectionCapacityRollback", func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionCapacityRollback(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoFaceDetectionCapacityRollback(t, newPostgresQueryStore) }},
+	}},
+	{name: "photo-checkout", postgres: "native operations", scope: "Checkout selection, publication, observation, commit-back and retirement; excludes public vault opening and filesystem workers.", scenarios: []backendScenario{
+		{"PhotoCheckoutCommitAndRebind", func(t *testing.T) { t.Helper(); checkPhotoCheckoutCommitAndRebind(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutCommitAndRebind(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutAlbumSelection", nil, checkPhotoCheckoutAlbumSelectionPostgres},
+		{"PhotoCheckoutPublicationRecovery", nil, checkPhotoCheckoutPublicationRecoveryPostgres},
+		{"PhotoCheckoutCommitRollback", nil, checkPhotoCheckoutCommitRollbackPostgres},
+		{"PhotoCheckoutCommitSnapshot", nil, checkPhotoCheckoutCommitSnapshotPostgres},
+		{"PhotoCheckoutObservationBatches", nil, checkPhotoCheckoutObservationBatchesPostgres},
+		{"PreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication", func(t *testing.T) {
+			t.Helper()
+			checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutCreateValidation", func(t *testing.T) { t.Helper(); checkPhotoCheckoutCreateValidation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutCreateValidation(t, newPostgresQueryStore) }},
+
+		{"PhotoCheckoutStatusTracksOperationAcrossPauseAndFinish", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutConflictsAndEntryPaths", func(t *testing.T) { t.Helper(); checkPhotoCheckoutConflictsAndEntryPaths(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutConflictsAndEntryPaths(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutPreservesNodeBasenameWithoutProvenance", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutSkipsNamesTooLongForTheDestination", func(t *testing.T) { t.Helper(); checkPhotoCheckoutSkipsNamesTooLongForTheDestination(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutSkipsNamesTooLongForTheDestination(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutNamesURLImportsByDocument", func(t *testing.T) { t.Helper(); checkPhotoCheckoutNamesURLImportsByDocument(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutNamesURLImportsByDocument(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutEntryRequiresFrozenEligibleSource", func(t *testing.T) { t.Helper(); checkPhotoCheckoutEntryRequiresFrozenEligibleSource(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutEntryRequiresFrozenEligibleSource(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutRetireAfterAuditActivation", func(t *testing.T) { t.Helper(); checkPhotoCheckoutRetireAfterAuditActivation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutRetireAfterAuditActivation(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutYearFolderUsesTimelineDay", func(t *testing.T) { t.Helper(); checkPhotoCheckoutYearFolderUsesTimelineDay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoCheckoutYearFolderUsesTimelineDay(t, newPostgresQueryStore) }},
+		{"PhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutSkipsDuplicateNamesWithBoundedDetails", func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t, newPostgresQueryStore)
+		}},
+		{"PhotoCheckoutScanOrCommitRequiresReservation", func(t *testing.T) { t.Helper(); checkPhotoCheckoutScanOrCommitRequiresReservation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoCheckoutScanOrCommitRequiresReservation(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "photo-import", postgres: "native operations", scope: "Grouped RAW/JPEG/sidecar ingestion, source replay, explicit pairing, browser continuation and import progress; excludes authored editing and XMP publication.", scenarios: []backendScenario{
+		{"PhotoImportRollback", nil, checkPhotoImportRollbackPostgres},
+		{"PhotoImportAcceptedSidecar", nil, checkPhotoImportAcceptedSidecarPostgres},
+		{"PhotoImportEmbeddedObservation", func(t *testing.T) { t.Helper(); checkPhotoImportEmbeddedObservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportEmbeddedObservation(t, newPostgresQueryStore) }},
+		{"OrdinaryPhotoMediaEnrollment", func(t *testing.T) { t.Helper(); checkOrdinaryPhotoMediaEnrollment(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkOrdinaryPhotoMediaEnrollment(t, newPostgresQueryStore) }},
+		{"PhotoImportLateSidecarUpdatesLockedHiddenAsset", func(t *testing.T) { t.Helper(); checkPhotoImportLateSidecarUpdatesLockedHiddenAsset(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportLateSidecarUpdatesLockedHiddenAsset(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportAtomicGroup", func(t *testing.T) { t.Helper(); checkPhotoImportAtomicGroup(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportAtomicGroup(t, newPostgresQueryStore) }},
+		{"PhotoImportQualifiedSidecarTargets", func(t *testing.T) { t.Helper(); checkPhotoImportQualifiedSidecarTargets(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportQualifiedSidecarTargets(t, newPostgresQueryStore) }},
+		{"PhotoImportSeparatePhotosAreReported", func(t *testing.T) { t.Helper(); checkPhotoImportSeparatePhotosAreReported(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportSeparatePhotosAreReported(t, newPostgresQueryStore) }},
+		{"PhotoImportMultipleRAWsImportAlone", func(t *testing.T) { t.Helper(); checkPhotoImportMultipleRAWsImportAlone(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportMultipleRAWsImportAlone(t, newPostgresQueryStore) }},
+		{"PhotoImportLoneSidecarWaitsForItsImage", func(t *testing.T) { t.Helper(); checkPhotoImportLoneSidecarWaitsForItsImage(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportLoneSidecarWaitsForItsImage(t, newPostgresQueryStore) }},
+		{"PhotoImportOperatorPairedRAWsAreSettled", func(t *testing.T) { t.Helper(); checkPhotoImportOperatorPairedRAWsAreSettled(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportOperatorPairedRAWsAreSettled(t, newPostgresQueryStore) }},
+		{"PhotoImportDedupObservation", func(t *testing.T) { t.Helper(); checkPhotoImportDedupObservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportDedupObservation(t, newPostgresQueryStore) }},
+		{"PhotoImportReusesOrdinaryRAWInAnotherFolder", func(t *testing.T) { t.Helper(); checkPhotoImportReusesOrdinaryRAWInAnotherFolder(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportReusesOrdinaryRAWInAnotherFolder(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportEditedSourceBecomesNewVersion", func(t *testing.T) { t.Helper(); checkPhotoImportEditedSourceBecomesNewVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportEditedSourceBecomesNewVersion(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportCreateOnlyPreservesGroupContent", func(t *testing.T) { t.Helper(); checkPhotoImportCreateOnlyPreservesGroupContent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportCreateOnlyPreservesGroupContent(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportEditedSourceLeavesSharedNodeAlone", func(t *testing.T) { t.Helper(); checkPhotoImportEditedSourceLeavesSharedNodeAlone(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportEditedSourceLeavesSharedNodeAlone(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportDuplicateRawNextToSeparateJPEGIsReported", func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportVideoWithSameNameJPEG", func(t *testing.T) { t.Helper(); checkPhotoImportVideoWithSameNameJPEG(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportVideoWithSameNameJPEG(t, newPostgresQueryStore) }},
+		{"PhotoImportSidecarDedupStaysWithinSourceGroup", func(t *testing.T) { t.Helper(); checkPhotoImportSidecarDedupStaysWithinSourceGroup(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportSidecarDedupStaysWithinSourceGroup(t, newPostgresQueryStore)
+		}},
+		{"PhotoSidecarImageTarget", func(t *testing.T) { t.Helper(); checkPhotoSidecarImageTarget(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoSidecarImageTarget(t, newPostgresQueryStore) }},
+		{"PhotoImportNodeStates", func(t *testing.T) { t.Helper(); checkPhotoImportNodeStates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportNodeStates(t, newPostgresQueryStore) }},
+		{"PhotoImportVersionStates", func(t *testing.T) { t.Helper(); checkPhotoImportVersionStates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportVersionStates(t, newPostgresQueryStore) }},
+		{"PhotoImportOperationLifecycle", func(t *testing.T) { t.Helper(); checkPhotoImportOperationLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportOperationLifecycle(t, newPostgresQueryStore) }},
+		{"FinalizeLocalOperationSettlesCancelRace", func(t *testing.T) { t.Helper(); checkFinalizeLocalOperationSettlesCancelRace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFinalizeLocalOperationSettlesCancelRace(t, newPostgresQueryStore) }},
+		{"PhotoImportRefusesAuditedVault", func(t *testing.T) { t.Helper(); checkPhotoImportRefusesAuditedVault(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoImportRefusesAuditedVault(t, newPostgresQueryStore) }},
+		{"PhotoImportDestinationCreatesAndReusesPath", func(t *testing.T) { t.Helper(); checkPhotoImportDestinationCreatesAndReusesPath(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationCreatesAndReusesPath(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportDestinationRollsBackOnInvalidComponent", func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationRollsBackOnInvalidComponent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationRollsBackOnInvalidComponent(t, newPostgresQueryStore)
+		}},
+		{"PhotoImportDestinationRejectsAuditedVault", func(t *testing.T) { t.Helper(); checkPhotoImportDestinationRejectsAuditedVault(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoImportDestinationRejectsAuditedVault(t, newPostgresQueryStore)
+		}},
+		{"PreparePhotoImportDestination", func(t *testing.T) { t.Helper(); checkPreparePhotoImportDestination(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreparePhotoImportDestination(t, newPostgresQueryStore) }},
+		{"BrowserPhotoDirectoryContinuation", func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoDirectoryContinuation(t, newPostgresQueryStore) }},
+		{"BrowserPhotoSizeCandidates", func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBrowserPhotoSizeCandidates(t, newPostgresQueryStore) }},
+	}},
+	{name: "photo-edit", postgres: "native operations", scope: "Explicit photo metadata edits, keywords and undo; XMP classification, conflicts and sidecar publication. Excludes ranked photo selection and people curation.", scenarios: []backendScenario{
+		{"PhotoXMPEmbeddedSourceClaim", func(t *testing.T) { t.Helper(); checkPhotoXMPEmbeddedSourceClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPEmbeddedSourceClaim(t, newPostgresQueryStore) }},
+		{"PhotoEditRollback", nil, checkPhotoEditRollbackPostgres},
+		{"PhotoPreparationSnapshot", nil, checkPhotoPreparationSnapshotPostgres},
+		{"PhotoEditRetainedSuggestions", nil, checkPhotoEditRetainedSuggestionsPostgres},
+		{"PhotoXMPPublication", func(t *testing.T) { t.Helper(); checkPhotoXMPPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPPublication(t, newPostgresQueryStore) }},
+		{"PhotoXMPConflictResolution", func(t *testing.T) { t.Helper(); checkPhotoXMPConflictResolution(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPConflictResolution(t, newPostgresQueryStore) }},
+
+		{"PhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo", func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchRotationDeltaPreservesMemberDifferencesAndUndo(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchConflictsAndAtomicFailure", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchConflictsAndAtomicFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchConflictsAndAtomicFailure(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchViewedContent", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchViewedContent(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchViewedContent(t, newPostgresQueryStore) }},
+		{"PhotoAuthoredBatchRevisionGroups", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchRevisionGroups(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchRevisionGroups(t, newPostgresQueryStore) }},
+		{"PhotoKeywordEditNoop", func(t *testing.T) { t.Helper(); checkPhotoKeywordEditNoop(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoKeywordEditNoop(t, newPostgresQueryStore) }},
+		{"PhotoKeywordUndo", func(t *testing.T) { t.Helper(); checkPhotoKeywordUndo(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoKeywordUndo(t, newPostgresQueryStore) }},
+		{"PhotoAuthoredInitialDecisionUndoRestoresConfirmation", func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredInitialDecisionUndoRestoresConfirmation(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchTargetChecksFollowRequestOrder", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchTargetChecksFollowRequestOrder(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchTargetChecksFollowRequestOrder(t, newPostgresQueryStore)
+		}},
+		{"PhotoAuthoredBatchEditsTargetsAcrossLoadChunks", func(t *testing.T) { t.Helper(); checkPhotoAuthoredBatchEditsTargetsAcrossLoadChunks(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoAuthoredBatchEditsTargetsAcrossLoadChunks(t, newPostgresQueryStore)
+		}},
+		{"PhotoXMPTargetCursorVisitsEveryOriginalOnce", func(t *testing.T) { t.Helper(); checkPhotoXMPTargetCursorVisitsEveryOriginalOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoXMPTargetCursorVisitsEveryOriginalOnce(t, newPostgresQueryStore)
+		}},
+		{"PhotoXMPInvalidation", func(t *testing.T) { t.Helper(); checkPhotoXMPInvalidation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPInvalidation(t, newPostgresQueryStore) }},
+		{"PhotoXMPInputEligibilityMatchesTargetRoles", func(t *testing.T) { t.Helper(); checkPhotoXMPInputEligibilityMatchesTargetRoles(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPhotoXMPInputEligibilityMatchesTargetRoles(t, newPostgresQueryStore)
+		}},
+		{"PhotoXMPURLSidecarPairingAndClaim", func(t *testing.T) { t.Helper(); checkPhotoXMPURLSidecarPairingAndClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPURLSidecarPairingAndClaim(t, newPostgresQueryStore) }},
+		{"PhotoXMPReceiptLimit", func(t *testing.T) { t.Helper(); checkPhotoXMPReceiptLimit(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPReceiptLimit(t, newPostgresQueryStore) }},
+		{"PhotoXMPAuditClassification", func(t *testing.T) { t.Helper(); checkPhotoXMPAuditClassification(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPhotoXMPAuditClassification(t, newPostgresQueryStore) }},
+	}},
+	{name: "visual-evidence", postgres: "native operations", scope: "Preview publication, exact-version reads, image preparation and retained email PDF evidence; excludes renderer executables and photo/person workflows.", scenarios: []backendScenario{
+		{"VisualEvidenceSnapshots", nil, checkVisualEvidenceSnapshotsPostgres},
+		{"VisualPreviewPublicationRollback", nil, checkVisualPreviewPublicationRollbackPostgres},
+		{"PreviewBatchRecipes", func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPreviewBatchRecipes(t, newPostgresQueryStore) }},
+		{"MissingPhotoVisualPreviewTargetsAfter", func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMissingPhotoVisualPreviewTargetsAfter(t, newPostgresQueryStore) }},
+		{"VisualPreviewPublicationIsExactVersionAndIdempotent", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewPublicationIsExactVersionAndIdempotent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewPublicationIsExactVersionAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAdvancesOnFirstRecordingAndHoldsOnRepublication(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewHeadAppearsWhenMissingForRecordedGeneration", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewHeadAppearsWhenMissingForRecordedGeneration(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewTerminalHeadsHoldOnRepublication", func(t *testing.T) { t.Helper(); checkVisualPreviewTerminalHeadsHoldOnRepublication(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewTerminalHeadsHoldOnRepublication(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewRecordsDeterministicFailureWithoutBlobAuthority", func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewRecordsDeterministicFailureWithoutBlobAuthority(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewLifecycleFollowsExactContentVersion", func(t *testing.T) { t.Helper(); checkVisualPreviewLifecycleFollowsExactContentVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewLifecycleFollowsExactContentVersion(t, newPostgresQueryStore)
+		}},
+		{"VisualPreviewGenerationByRecipe", func(t *testing.T) { t.Helper(); checkVisualPreviewGenerationByRecipe(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkVisualPreviewGenerationByRecipe(t, newPostgresQueryStore) }},
+		{"VisualPreviewNonActiveRecipesKeepLargeHead", func(t *testing.T) { t.Helper(); checkVisualPreviewNonActiveRecipesKeepLargeHead(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkVisualPreviewNonActiveRecipesKeepLargeHead(t, newPostgresQueryStore)
+		}},
+		{"EmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile", func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationRestoresPendingImageGenerationInMixedProfile(t, newPostgresQueryStore)
+		}},
+		{"EmbeddingReconciliationPreparesEachImageOnce", func(t *testing.T) { t.Helper(); checkEmbeddingReconciliationPreparesEachImageOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationPreparesEachImageOnce(t, newPostgresQueryStore)
+		}},
+		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
+	}},
+	{name: "text-extraction", postgres: "native operations", scope: "Plain-text queue discovery, retries, results and rendition authority publication; excludes ranked search and recovery.", scenarios: []backendScenario{
+		{"TextPublication", nil, checkTextPublicationPostgres},
+		{"TextChangedResult", nil, checkTextChangedResultPostgres},
+		{"TextPublicationRollback", nil, checkTextPublicationRollbackPostgres},
+		{"TextPurgeScopes", nil, checkTextPurgeScopesPostgres},
+		{"PendingAndFailedTextExtractions", func(t *testing.T) { t.Helper(); checkPendingAndFailedTextExtractions(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPendingAndFailedTextExtractions(t, newPostgresQueryStore) }},
+		{"RecordExtractionNotifiesCurrentLiveNodesOnce", func(t *testing.T) { t.Helper(); checkRecordExtractionNotifiesCurrentLiveNodesOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRecordExtractionNotifiesCurrentLiveNodesOnce(t, newPostgresQueryStore)
+		}},
+		{"RecordExtractionRetiresFailureAfterLegacyMigration", func(t *testing.T) {
+			t.Helper()
+			checkRecordExtractionRetiresFailureAfterLegacyMigration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRecordExtractionRetiresFailureAfterLegacyMigration(t, newPostgresQueryStore)
+		}},
+		{"PendingTextExtractionsSkipsSupersededQueuedContent", func(t *testing.T) {
+			t.Helper()
+			checkPendingTextExtractionsSkipsSupersededQueuedContent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPendingTextExtractionsSkipsSupersededQueuedContent(t, newPostgresQueryStore)
+		}},
+		{"TextExtractionQueueDefersFailuresBehindReadyWork", func(t *testing.T) { t.Helper(); checkTextExtractionQueueDefersFailuresBehindReadyWork(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkTextExtractionQueueDefersFailuresBehindReadyWork(t, newPostgresQueryStore)
+		}},
+		{"MigrateLegacyPlainTextRetryPreservesQueuedWork", func(t *testing.T) { t.Helper(); checkMigrateLegacyPlainTextRetryPreservesQueuedWork(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMigrateLegacyPlainTextRetryPreservesQueuedWork(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "pages", postgres: "native operations", scope: "Native page job replay, claims, cancellation, frames and image publication; excludes rendering processes and recovery.", scenarios: []backendScenario{
+		{"PagePublicationRollback", nil, checkPagePublicationRollbackPostgres},
+		{"EmailPageSnapshots", nil, checkEmailPageSnapshotsPostgres},
+		{"PagePublicationFencesClaimsAndPreservesPartialAuthority", func(t *testing.T) {
+			t.Helper()
+			checkPagePublicationFencesClaimsAndPreservesPartialAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPagePublicationFencesClaimsAndPreservesPartialAuthority(t, newPostgresQueryStore)
+		}},
+		{"PageJobRestartCannotPublishAnOldClaim", func(t *testing.T) { t.Helper(); checkPageJobRestartCannotPublishAnOldClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPageJobRestartCannotPublishAnOldClaim(t, newPostgresQueryStore) }},
+		{"PageJobNewOperationRetriesFailedAndCanceledRequests", func(t *testing.T) {
+			t.Helper()
+			checkPageJobNewOperationRetriesFailedAndCanceledRequests(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPageJobNewOperationRetriesFailedAndCanceledRequests(t, newPostgresQueryStore)
+		}},
+		{"PageJobStaleCompletionRetiresClaim", func(t *testing.T) { t.Helper(); checkPageJobStaleCompletionRetiresClaim(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPageJobStaleCompletionRetiresClaim(t, newPostgresQueryStore) }},
+		{"PageJobStaleCompletionRetiresOnlyItsOwnedClaim", func(t *testing.T) { t.Helper(); checkPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPageJobStaleCompletionRetiresOnlyItsOwnedClaim(t, newPostgresQueryStore)
+		}},
+		{"PageJobsConcurrentIdentityLimitsAndSourceFences", func(t *testing.T) { t.Helper(); checkPageJobsConcurrentIdentityLimitsAndSourceFences(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPageJobsConcurrentIdentityLimitsAndSourceFences(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "email", postgres: "native operations", scope: "Native MIME inventories, body renditions, child documents, retention and relation reads; excludes plain-text extraction and recovery.", scenarios: []backendScenario{
+		{"EmailPublicationRollback", nil, checkEmailPublicationRollbackPostgres},
+		{"EmailBodyPublication", func(t *testing.T) { t.Helper(); checkEmailBodyPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailBodyPublication(t, newPostgresQueryStore) }},
+
+		{"EmailDocumentsProcessingReportsServingRenditionOutcomes", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsProcessingReportsServingRenditionOutcomes(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsProcessingReportsServingRenditionOutcomes(t, newPostgresQueryStore)
+		}},
+
+		{"EmailPublicationSharesGenerationAndRetiresStaging", func(t *testing.T) {
+			t.Helper()
+			checkEmailPublicationSharesGenerationAndRetiresStaging(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailPublicationSharesGenerationAndRetiresStaging(t, newPostgresQueryStore)
+		}},
+		{"EmailSupersededBeforeBodyPublication", func(t *testing.T) { t.Helper(); checkEmailSupersededBeforeBodyPublication(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailSupersededBeforeBodyPublication(t, newPostgresQueryStore) }},
+		{"EmailMissingStatesAndDeterministicRefusal", func(t *testing.T) { t.Helper(); checkEmailMissingStatesAndDeterministicRefusal(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailMissingStatesAndDeterministicRefusal(t, newPostgresQueryStore)
+		}},
+		{"EmailPurgeSharedGenerationAndPendingSuppression", func(t *testing.T) { t.Helper(); checkEmailPurgeSharedGenerationAndPendingSuppression(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailPurgeSharedGenerationAndPendingSuppression(t, newPostgresQueryStore)
+		}},
+		{"EmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins", func(t *testing.T) {
+			t.Helper()
+			checkEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailTargetsKeysetRetriesPendingBodiesAndSuppressionWins(t, newPostgresQueryStore)
+		}},
+		{"EmailVersionPruneAndLastTrashLeaveOrphansForCollection", func(t *testing.T) {
+			t.Helper()
+			checkEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailVersionPruneAndLastTrashLeaveOrphansForCollection(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsPublicationRetryAndExactOccurrence", func(t *testing.T) { t.Helper(); checkEmailDocumentsPublicationRetryAndExactOccurrence(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsPublicationRetryAndExactOccurrence(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsAtomicStaleDestinationAndExplicitReuse", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsAtomicStaleDestinationAndExplicitReuse(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsExplicitRootAttachment", func(t *testing.T) { t.Helper(); checkEmailDocumentsExplicitRootAttachment(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailDocumentsExplicitRootAttachment(t, newPostgresQueryStore) }},
+		{"EmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsDuplicateNamesBytesPartialAndAuditedCreation(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRetainReferencesAcrossTrashReprocessPruneAndPurge(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsConcurrentReplayBoundedPagesAndRollback", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsConcurrentReplayBoundedPagesAndRollback(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsUnavailableOutcomesNeverCreateEmptyChildren(t, newPostgresQueryStore)
+		}},
+		{"EmailDocumentsBulkPurgeSkipsRetainedInventory", func(t *testing.T) { t.Helper(); checkEmailDocumentsBulkPurgeSkipsRetainedInventory(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsBulkPurgeSkipsRetainedInventory(t, newPostgresQueryStore)
+		}},
+
+		{"EmailDocumentsRepublishReleasedReceiptReportsConflict", func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRepublishReleasedReceiptReportsConflict(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmailDocumentsRepublishReleasedReceiptReportsConflict(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "media", postgres: "native operations", scope: "Media source retention, input artifacts, occurrence visibility and operation receipts; excludes provider execution.", scenarios: []backendScenario{
+		{"MediaConsentAndContinuations", func(t *testing.T) { t.Helper(); checkMediaConsentAndContinuations(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMediaConsentAndContinuations(t, newPostgresQueryStore) }},
+		{"MediaPublicationRollback", nil, checkMediaPublicationRollbackPostgres},
+		{"MediaSnapshots", nil, checkMediaSnapshotsPostgres},
+		{"MediaRevocationRemovesInputBoundRendition", func(t *testing.T) { t.Helper(); checkMediaRevocationRemovesInputBoundRendition(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaRevocationRemovesInputBoundRendition(t, newPostgresQueryStore)
+		}},
+		{"MediaIdentityConflicts", nil, checkMediaIdentityConflictsPostgres},
+		{"RetainSuppliedMediaReusesCallerRevisionAcrossOperations", func(t *testing.T) {
+			t.Helper()
+			checkRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t, newPostgresQueryStore)
+		}},
+		{"ImportMediaInputArtifactRejectsChangedImmutableAuthority", func(t *testing.T) {
+			t.Helper()
+			checkImportMediaInputArtifactRejectsChangedImmutableAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkImportMediaInputArtifactRejectsChangedImmutableAuthority(t, newPostgresQueryStore)
+		}},
+		{"SuppliedInputSelectorsFilterKind", func(t *testing.T) { t.Helper(); checkSuppliedInputSelectorsFilterKind(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSuppliedInputSelectorsFilterKind(t, newPostgresQueryStore) }},
+		{"MediaSourcesPageSelectsNewestVisibleOccurrences", func(t *testing.T) { t.Helper(); checkMediaSourcesPageSelectsNewestVisibleOccurrences(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaSourcesPageSelectsNewestVisibleOccurrences(t, newPostgresQueryStore)
+		}},
+		{"MediaSourceVersionSelectsTheExactVisibleRevision", func(t *testing.T) { t.Helper(); checkMediaSourceVersionSelectsTheExactVisibleRevision(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaSourceVersionSelectsTheExactVisibleRevision(t, newPostgresQueryStore)
+		}},
+		{"RetainRemoteRecordingMedia", func(t *testing.T) { t.Helper(); checkRetainRemoteRecordingMedia(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRetainRemoteRecordingMedia(t, newPostgresQueryStore) }},
+		{"MediaRevokeIsPrincipalScopedAndIdempotent", func(t *testing.T) { t.Helper(); checkMediaRevokeIsPrincipalScopedAndIdempotent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaRevokeIsPrincipalScopedAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"MediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible", func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceRejectsChangedClaimsAndKeepsOtherPrincipalVisible(t, newPostgresQueryStore)
+		}},
+		{"MediaOccurrenceConcurrentDeclarationCreatesOneRevision", func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkMediaOccurrenceConcurrentDeclarationCreatesOneRevision(t, newPostgresQueryStore)
+		}},
+		{"PublishMediaSourceVersionBindsOnlyUnboundOccurrences", func(t *testing.T) {
+			t.Helper()
+			checkPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishMediaSourceVersionBindsOnlyUnboundOccurrences(t, newPostgresQueryStore)
+		}},
+		{"MediaOperationReplaysWithoutRepeatingMutation", func(t *testing.T) { t.Helper(); checkMediaOperationReplaysWithoutRepeatingMutation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaOperationReplaysWithoutRepeatingMutation(t, newPostgresQueryStore)
+		}},
+		{"MediaOperationConcurrentReplayRunsMutationOnce", func(t *testing.T) { t.Helper(); checkMediaOperationConcurrentReplayRunsMutationOnce(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkMediaOperationConcurrentReplayRunsMutationOnce(t, newPostgresQueryStore)
+		}},
+		{"RemoteRecordingReceiptScopesPrincipalAndVerb", func(t *testing.T) { t.Helper(); checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRemoteRecordingReceiptScopesPrincipalAndVerb(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "embeddings", postgres: "native operations", scope: "Document embedding catalogs, job claims, consent, reconciliation and publication; includes native image preparation; excludes ranked search.", scenarios: []backendScenario{
+		{"EmbeddingWriteRevision", func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmbeddingWriteRevision(t, newPostgresQueryStore) }},
 		{"EmbeddingAttachmentPurgeLeavesDirectBindingPublishable", func(t *testing.T) {
 			t.Helper()
 			checkEmbeddingAttachmentPurgeLeavesDirectBindingPublishable(t, newTestStore)
@@ -55,6 +1166,7 @@ var backendSuites = []backendSuite{
 			checkEmbeddingLegacyProfilesReuseOnlyMatchingProducer(t, newPostgresQueryStore)
 		}},
 		{"EmbeddingPublication", nil, checkEmbeddingPublicationPostgres},
+		{"ImageEmbeddingPublication", nil, checkImageEmbeddingPublicationPostgres},
 		{"EmbeddingCoverageSnapshot", nil, checkEmbeddingCoverageSnapshotPostgres},
 		{"ProcessingCoverageReportsRebuildWhilePreviousGenerationServes", func(t *testing.T) {
 			t.Helper()
@@ -319,12 +1431,12 @@ var backendSuites = []backendSuite{
 			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newPostgresQueryStore)
 		}},
 		{"PublishRenditionJobFencesLeaseTheft", func(t *testing.T) { t.Helper(); checkPublishRenditionJobFencesLeaseTheft(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPublishRenditionJobFencesLeaseTheft(t, newPostgresQueryStore) }},
-		{"RenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress", func(t *testing.T) {
+		{"RenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress", func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t, newTestStore)
+			checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t, newTestStore)
 		}, func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobRecoversFromStaleLexicalPublicationWithoutRepeatingEgress(t, newPostgresQueryStore)
+			checkRenditionJobPublishesCurrentLexicalGenerationWithoutRepeatingEgress(t, newPostgresQueryStore)
 		}},
 		{"PublishRenditionJobRejectsRevokedEgressAndPreservesPreviousHead", func(t *testing.T) {
 			t.Helper()
@@ -348,6 +1460,8 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPublishRenditionJobPersistsRejectionsOnFailure(t, newPostgresQueryStore)
 		}},
+		{"ResolveRenditionTextOmissionOnlyPDF", func(t *testing.T) { t.Helper(); checkResolveRenditionTextOmissionOnlyPDF(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkResolveRenditionTextOmissionOnlyPDF(t, newPostgresQueryStore) }},
+		{"EmptyPDFChunkSettlement", func(t *testing.T) { t.Helper(); checkEmptyPDFChunkSettlement(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmptyPDFChunkSettlement(t, newPostgresQueryStore) }},
 		{"ResolveRenditionTextReportsExactFailedAttempts", func(t *testing.T) { t.Helper(); checkResolveRenditionTextReportsExactFailedAttempts(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkResolveRenditionTextReportsExactFailedAttempts(t, newPostgresQueryStore)
@@ -377,6 +1491,13 @@ var backendSuites = []backendSuite{
 		{"StorageWritersSeparateSchemas", nil, checkStorageWritersSeparateSchemasPostgres},
 	}},
 	{name: "audit", postgres: "native operations", scope: "Canonical records, status, history, head advancement and transactional node allocation.", scenarios: []backendScenario{
+		{"AuditTrashOriginMove", func(t *testing.T) {
+			t.Helper()
+			checkAuditTrashOriginMove(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAuditTrashOriginMove(t, newPostgresQueryStore)
+		}},
 		{"AuditHistory", nil, checkAuditHistoryPostgres},
 		{"AuditHistorySnapshot", nil, checkAuditHistorySnapshotPostgres},
 		{"AuditRecords", nil, checkAuditRecordsPostgres},
@@ -524,6 +1645,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPublishDocumentEventsAcceptsCanonicalEmptyProjection(t, newPostgresQueryStore)
 		}},
+		{"PublishDocumentEventsFeedDetectsOutputChanges", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsFeedDetectsOutputChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentEventsFeedDetectsOutputChanges(t, newPostgresQueryStore)
+		}},
 		{"PublishDocumentEventsRetainsActorEvidenceInProjections", func(t *testing.T) {
 			t.Helper()
 			checkPublishDocumentEventsRetainsActorEvidenceInProjections(t, newTestStore)
@@ -602,8 +1730,8 @@ var backendSuites = []backendSuite{
 			checkOlderCompleteReceiptCanCoexistWithNewerPendingCurrentCoverage(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "processing-publication", postgres: "unqualified", scope: "Extraction, image embedding preparation, page, email and media producers remain unqualified; retained-state cleanup is covered above."},
-	{name: "photo-editing", postgres: "unqualified", scope: "Grouped import, XMP writing, authored metadata, people/face publication and photo review workflows remain unqualified."},
+	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
+	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
@@ -646,6 +1774,13 @@ var backendSuites = []backendSuite{
 		}, func(t *testing.T) {
 			t.Helper()
 			checkTagLifecycleAndNodeRevisions(t, newPostgresQueryStore)
+		}},
+		{"TagAssignmentCountsStayExact", func(t *testing.T) {
+			t.Helper()
+			checkTagAssignmentCountsStayExact(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTagAssignmentCountsStayExact(t, newPostgresQueryStore)
 		}},
 		{"TagPagesKeepAssignmentCounts", func(t *testing.T) {
 			t.Helper()
@@ -697,7 +1832,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Photo sets, custodian assignments, snapshots, Bates and delivery jobs remain unqualified."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Custodian assignments, query-selected albums, snapshots, Bates and delivery jobs remain unqualified; explicit album operations are covered above."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }

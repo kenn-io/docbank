@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"io"
@@ -27,6 +26,7 @@ func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 		deadline     bool
 	}{
 		{http.MethodPost, download, false},
+		{http.MethodGet, changesPath, false},
 		{http.MethodPost, "/api/v1/backup/forget", false},
 		{http.MethodPost, "/api/v1/backup/prune", false},
 		{http.MethodPost, "/api/v1/photos/rejects/trash", false},
@@ -45,6 +45,7 @@ func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 		{http.MethodGet, "/api/v1/bates/exports/candidates", true},
 		{http.MethodGet, "/api/v1/bates/exports/not-an-export/content", true},
 		{http.MethodPost, "/api/v1/processing/plans", false},
+		{http.MethodPost, "/api/v1/processing/local/setup", false},
 		{http.MethodGet, "/api/v1/processing/plans", true},
 	} {
 		t.Run(test.method+test.path, func(t *testing.T) {
@@ -138,80 +139,95 @@ func TestTimeoutExemptOperationsClearBodyReadDeadline(t *testing.T) {
 
 func TestLongRunningHumaOperationOutlivesDefaultBodyDeadline(t *testing.T) {
 	t.Parallel()
-	mux := http.NewServeMux()
-	humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	type input struct {
-		Body struct{} `json:"body"`
-	}
-	type output struct {
-		Body struct {
-			Completed bool `json:"completed"`
+	synctest.Test(t, func(t *testing.T) {
+		mux := http.NewServeMux()
+		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		type input struct {
+			Body struct{} `json:"body"`
 		}
-	}
-	huma.Register(humaAPI, huma.Operation{
-		OperationID: "testLongRunningBackup", Method: http.MethodPost,
-		Path: "/api/v1/backup/snapshots",
-	}, func(ctx context.Context, _ *input) (*output, error) {
-		close(entered)
+		type output struct {
+			Body struct {
+				Completed bool `json:"completed"`
+			}
+		}
+		huma.Register(humaAPI, huma.Operation{
+			OperationID: "testLongRunningBackup", Method: http.MethodPost,
+			Path: "/api/v1/backup/snapshots",
+		}, func(ctx context.Context, _ *input) (*output, error) {
+			close(entered)
+			select {
+			case <-release:
+				out := &output{}
+				out.Body.Completed = true
+				return out, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+		clearLongRunningBodyReadDeadlines(humaAPI)
+
+		// The in-memory network applies Huma's connection read deadline on the
+		// bubble's fake clock.
+		server := httptest.NewTestServer(t, mux)
+		client := server.Client()
+		var releaseOnce sync.Once
+		t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+		type result struct {
+			status int
+			body   []byte
+			err    error
+		}
+		done := make(chan result, 1)
+		// The body arrives more slowly than Huma's default five-second read
+		// deadline allows.
+		bodyReader, bodyWriter := io.Pipe()
+		go func() {
+			_, _ = bodyWriter.Write([]byte(`{`))
+			select {
+			case <-time.After(time.Minute):
+				_, _ = bodyWriter.Write([]byte(`}`))
+			case <-t.Context().Done():
+			}
+			_ = bodyWriter.Close()
+		}()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/backup/snapshots", bodyReader)
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		go func() {
+			resp, err := client.Do(request)
+			if err != nil {
+				done <- result{err: err}
+				return
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			done <- result{status: resp.StatusCode, body: body, err: readErr}
+		}()
+
 		select {
-		case <-release:
-			out := &output{}
-			out.Body.Completed = true
-			return out, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-entered:
+		case got := <-done:
+			t.Fatalf("slow request body failed before its handler ran: %+v", got)
 		}
-	})
-	clearLongRunningBodyReadDeadlines(humaAPI)
-
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	var releaseOnce sync.Once
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
-	type result struct {
-		status int
-		body   []byte
-		err    error
-	}
-	done := make(chan result, 1)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/backup/snapshots", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	request.Header.Set("Content-Type", "application/json")
-	go func() {
-		resp, err := http.DefaultClient.Do(request)
-		if err != nil {
-			done <- result{err: err}
-			return
+		// The handler also outlasts the deadline after reading its body.
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		select {
+		case got := <-done:
+			t.Fatalf("request ended before release: %+v", got)
+		default:
 		}
-		body, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		done <- result{status: resp.StatusCode, body: body, err: readErr}
-	}()
+		releaseOnce.Do(func() { close(release) })
 
-	select {
-	case <-entered:
-	case <-time.After(10 * time.Second):
-		t.Fatal("long-running handler did not start")
-	}
-	select {
-	case got := <-done:
-		t.Fatalf("request ended before Huma's default deadline was exceeded: %+v", got)
-	case <-time.After(5200 * time.Millisecond):
-	}
-	releaseOnce.Do(func() { close(release) })
-
-	select {
-	case got := <-done:
+		got := <-done
 		require.NoError(t, got.err)
 		assert.Equal(t, http.StatusOK, got.status, string(got.body))
 		var response map[string]any
 		require.NoError(t, json.Unmarshal(got.body, &response))
 		assert.Equal(t, true, response["completed"])
-	case <-time.After(10 * time.Second):
-		t.Fatal("long-running request did not finish after release")
-	}
+	})
 }
 
 func TestEmailPartStreamAndEnsureHaveNoRequestDeadline(t *testing.T) {

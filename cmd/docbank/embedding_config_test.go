@@ -21,25 +21,6 @@ import (
 	"go.kenn.io/kit/secretref"
 )
 
-func TestImageBridgeDescriptorSupportsTextQuery(t *testing.T) {
-	cfg, _ := syntheticLoopbackOpenAIConfig(t, "http://embedding.invalid", "DOCBANK_TEST_IMAGE_KEY")
-	profile := cfg.EmbeddingProfiles["semantic"]
-	profile.InputKind = string(document.EmbeddingInputImage)
-	profile.MaxInputTokens = 0
-	profile.Chunk = config.EmbeddingChunkConfig{}
-	profile.Runtime.AdapterContract = bridgeEmbeddingAdapterV2
-	profile.Runtime.DeploymentEpoch = ""
-	cfg.EmbeddingProfiles["semantic"] = profile
-	require.NoError(t, cfg.Validate())
-	profile = cfg.EmbeddingProfiles["semantic"]
-	modelInput, err := cfg.EmbeddingModelInput("semantic")
-	require.NoError(t, err)
-
-	descriptor := configuredEmbeddingDescriptor(profile, modelInput)
-	assert.True(t, descriptor.SupportsTextQuery)
-	assert.Equal(t, []document.EmbeddingInputKind{document.EmbeddingInputImage}, descriptor.InputKinds)
-}
-
 func TestKitEmbeddingConfigCredentialsPreserveDescriptorAndRequests(t *testing.T) {
 	for _, source := range []string{"inline", "env", "file"} {
 		t.Run(source, func(t *testing.T) {

@@ -16,6 +16,7 @@ import type {
 } from "./generated/docbank.js";
 import { streamExportJobEvents } from "./export-events.js";
 import { snapshotMemberHash, type SnapshotMember } from "./snapshots.js";
+import { webURL } from "./web-path.js";
 
 export type {
   ExportSource,
@@ -930,7 +931,7 @@ export async function exportTicket(
 export function offerExportDownload(ticket: ExportTicket, basename: string): void {
   if (!/^\/api\/daemon\/web-download\/file\?ticket=[A-Za-z0-9_-]{43}$/.test(ticket.url)) fail();
   const link = document.createElement("a");
-  link.href = ticket.url;
+  link.href = webURL(ticket.url);
   link.download = safeExportBasename(basename);
   link.rel = "noreferrer";
   link.hidden = true;

@@ -137,6 +137,20 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 			})
 		}
 	}
+	value, err := query.Parse([]byte(`{"sort":{"field":"capture_time","direction":"desc"}}`))
+	require.NoError(b, err)
+	b.Run("timeline", func(b *testing.B) {
+		request := SnapshotRequest{FacetsOnly: true, Query: value, Facets: []string{"capture_day"}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			projection, err := s.MaterializeQuerySnapshot(ctx, request)
+			require.NoError(b, err)
+			require.Len(b, projection.Facets, 1)
+			require.NotNil(b, projection.Facets[0].Total)
+			require.Equal(b, int64(assetCount), *projection.Facets[0].Total)
+		}
+	})
 }
 
 // BenchmarkPhotoStackMixed100K measures browsing, including freshness checks,

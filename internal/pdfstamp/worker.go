@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"slices"
 	"sync"
+
+	"go.kenn.io/kit/consolewindow"
 )
 
 const maxWorkerRequestBytes = 1 << 20
@@ -112,7 +114,7 @@ func CombineStampedSupervised(ctx context.Context, groups [][]byte, labels []Pag
 // source the stamper would refuse never consumes a range.
 func InspectSupervised(ctx context.Context, source io.ReadSeeker) (int, error) {
 	if configuredWorker() == "" {
-		return Inspect(source)
+		return Inspect(ctx, source)
 	}
 	data, err := readWorkerSource(source)
 	if err != nil {
@@ -165,6 +167,7 @@ func runWorker(ctx context.Context, request workerRequest, sources [][]byte) (in
 		_, _ = input.Write(source)
 	}
 	command := exec.CommandContext(ctx, executable, "internal-pdfstamp-worker") //nolint:gosec // executable is the running Docbank binary.
+	consolewindow.Hide(command)
 	command.Stdin = &input
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &limitedStampWriter{Writer: &stdout, Remaining: MaxOutputBytes + 8}
@@ -226,7 +229,7 @@ func RunWorker(ctx context.Context, input io.Reader, output io.Writer) error {
 		result, err = CombineStamped(ctx, sources, request.Labels, &staged)
 		pageCount = result.PageCount
 	case "inspect":
-		pageCount, err = Inspect(bytes.NewReader(sources[0]))
+		pageCount, err = Inspect(ctx, bytes.NewReader(sources[0]))
 	default:
 		return stampFailure("decode worker request", fmt.Errorf("unknown operation %q", request.Operation))
 	}

@@ -19,6 +19,7 @@ var ErrEmbeddingJobFenced = errors.New("embedding job claim is fenced")
 const embeddingJobMaxClaims = 3
 
 type EmbeddingJobRequest struct {
+	RetryUnavailable bool
 	VectorSpaceID    string
 	ContentVersionID string
 	Profile          ProcessingProfileRecord
@@ -203,6 +204,11 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 			now, now, jobID); err != nil {
 			return err
 		}
+		if request.RetryUnavailable {
+			if err := s.requeueUnavailableEmbeddingJob(ctx, tx, jobID, now); err != nil {
+				return err
+			}
+		}
 		// Abandonment fences an attempt, not the retained intent. Reopen only
 		// after rechecking current source authority in this transaction. The job
 		// retains its admitted consent receipt, while the exact generation was
@@ -383,7 +389,8 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			AND (j.state<>'running' OR j.lease_expires_at<=$4)
 			  AND NOT EXISTS(SELECT 1 FROM embedding_heads h
 			    JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
-			    WHERE h.content_version_id=j.content_version_id AND h.binding_id=j.binding_id
+			    WHERE h.content_version_id=j.content_version_id AND h.profile_fingerprint=j.profile_fingerprint
+			      AND h.binding_id=j.binding_id
 			      AND h.input_kind=j.input_kind AND s.profile_fingerprint=j.profile_fingerprint
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
@@ -533,7 +540,9 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 // BeginEmbeddingProviderEgress rechecks the claim and consent under the shared
 // provider fence. The caller must close the fence when Embed returns.
 func (s *Store) BeginEmbeddingProviderEgress(ctx context.Context, claim EmbeddingJobClaim, work EmbeddingJobWork, prior *ProviderOperationAuthorization, at time.Time) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
-	s.providerEgressMu.RLock()
+	if err := s.providerEgressMu.RLock(ctx); err != nil {
+		return ProviderOperationAuthorization{}, nil, err
+	}
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
 	var auth ProviderOperationAuthorization
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -808,4 +817,17 @@ func embeddingJobID(vaultID, versionID, profileID, bindingID string, inputKind d
 		_, _ = fmt.Fprint(hash, value, "\x00")
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// Requeue retains the cumulative claim budget and fencing epoch. A queued
+// job can take one new claim; another unavailable result ends that claim.
+func (s *Store) requeueUnavailableEmbeddingJob(ctx context.Context, tx *sql.Tx, jobID, now string) error {
+	query := `UPDATE embedding_jobs SET state='queued',claim_owner=NULL,lease_expires_at=NULL,
+	available_at=?,failure_code=NULL,updated_at=? WHERE job_id=? AND state='failed' AND failure_code='provider_unavailable'`
+	if s.postgresSchema != "" {
+		query = `UPDATE embedding_jobs SET state='queued',claim_owner=NULL,lease_expires_at=NULL,
+		available_at=$1,failure_code=NULL,updated_at=$2 WHERE job_id=$3 AND state='failed' AND failure_code='provider_unavailable'`
+	}
+	_, err := tx.ExecContext(ctx, query, now, now, jobID)
+	return err
 }

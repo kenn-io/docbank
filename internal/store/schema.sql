@@ -1,4 +1,5 @@
 -- docbank core schema. Idempotent: applied on every Open.
+-- Blank lines separate executable groups; keep each SQL statement within one group.
 
 CREATE TABLE IF NOT EXISTS export_sources (
     id TEXT PRIMARY KEY,
@@ -23,6 +24,8 @@ CREATE TABLE IF NOT EXISTS export_members (
     canonical_json BLOB NOT NULL,
     PRIMARY KEY(source_id,node_id,version_id)
 );
+-- Deleting a blob checks every referencing table; lead each index with its blob column.
+CREATE INDEX IF NOT EXISTS export_members_blob ON export_members(blob_hash);
 CREATE INDEX IF NOT EXISTS export_members_version ON export_members(version_id);
 CREATE TABLE IF NOT EXISTS export_plans (
     id TEXT PRIMARY KEY,
@@ -43,6 +46,7 @@ CREATE TABLE IF NOT EXISTS export_role_roots (
     blob_hash TEXT NOT NULL REFERENCES blobs(hash),
     PRIMARY KEY(plan_id,blob_hash)
 );
+CREATE INDEX IF NOT EXISTS export_role_roots_blob ON export_role_roots(blob_hash);
 CREATE TABLE IF NOT EXISTS export_jobs (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
@@ -217,6 +221,7 @@ CREATE TABLE IF NOT EXISTS bates_artifacts (
     state TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS bates_artifacts_blob ON bates_artifacts(blob_hash);
 CREATE INDEX IF NOT EXISTS bates_artifacts_history ON bates_artifacts(created_at,artifact_id);
 CREATE TABLE IF NOT EXISTS bates_artifact_pages (
     artifact_id TEXT NOT NULL REFERENCES bates_artifacts(artifact_id) ON DELETE CASCADE,
@@ -377,6 +382,7 @@ CREATE TABLE IF NOT EXISTS page_images (
     PRIMARY KEY(version_id,recipe_sha256,page),
     FOREIGN KEY(version_id,page) REFERENCES page_frames(version_id,page) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS page_images_blob ON page_images(blob_hash);
 CREATE TABLE IF NOT EXISTS page_render_jobs (
     id TEXT PRIMARY KEY,
     node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
@@ -433,7 +439,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS live_sibling_names
     ON nodes(parent_id, name) WHERE trashed_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS nodes_trash_parent ON nodes(trash_parent);
 CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
+-- Cover dirs-first pages and counts; trashed_at covers SQLite, id covers PostgreSQL.
+CREATE INDEX IF NOT EXISTS nodes_live_children ON nodes(parent_id, kind, name, trashed_at, id)
+    WHERE trashed_at IS NULL;
 CREATE INDEX IF NOT EXISTS nodes_live_modified ON nodes(modified_at DESC, name, id)
     WHERE trashed_at IS NULL;
 CREATE INDEX IF NOT EXISTS nodes_photo_import ON nodes(created_at)
@@ -1091,6 +1101,7 @@ CREATE TABLE IF NOT EXISTS visual_preview_generations (
     UNIQUE (content_version_id, recipe_fingerprint),
     UNIQUE (content_version_id, generation_id)
 );
+CREATE INDEX IF NOT EXISTS visual_preview_generations_source ON visual_preview_generations(source_sha256);
 
 CREATE INDEX IF NOT EXISTS visual_preview_generations_output
     ON visual_preview_generations(output_blob_hash, generation_id)
@@ -1409,6 +1420,8 @@ CREATE TABLE IF NOT EXISTS rendition_attachments (
     UNIQUE (content_version_id, profile_fingerprint, build_id)
 );
 
+CREATE INDEX IF NOT EXISTS rendition_attachments_build ON rendition_attachments(build_id, content_version_id);
+
 -- A head can resolve only through the exact attachment at its version/profile
 -- key. Updating this small pointer is the sole rendition activation mutation.
 CREATE TABLE IF NOT EXISTS rendition_heads (
@@ -1462,6 +1475,7 @@ CREATE TABLE IF NOT EXISTS embedding_input_generations (
     CHECK ((generation_blob_hash IS NULL AND generation_encoded_size = 0)
         OR (generation_blob_hash IS NOT NULL AND generation_encoded_size > 0))
 );
+CREATE INDEX IF NOT EXISTS embedding_input_generations_blob ON embedding_input_generations(generation_blob_hash);
 
 -- Embedding jobs are rebuildable operational state. Immutable input
 -- generations, vector spaces, consent grants, failures, and published heads
@@ -1620,6 +1634,7 @@ END;
 -- the FTS table is an external-content index over it. A generation names one
 -- exact set of builds, and the head selects the generation that search reads,
 -- so publishing a new generation never copies text an earlier one indexed.
+-- Membership shares an append-only stream with a fixed cutoff per generation.
 CREATE TABLE IF NOT EXISTS rendition_lexical_index (
     row_id     INTEGER PRIMARY KEY,
     build_id   TEXT NOT NULL REFERENCES rendition_builds(build_id),
@@ -1650,6 +1665,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
     generation_id TEXT PRIMARY KEY,
+    stream_id     TEXT NOT NULL,
     segment_count INTEGER NOT NULL CHECK (segment_count >= 0),
     build_count   INTEGER NOT NULL CHECK (build_count >= 0),
     built_at      TEXT NOT NULL
@@ -1657,19 +1673,28 @@ CREATE TABLE IF NOT EXISTS rendition_lexical_generations (
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_generation_manifests (
     generation_id  TEXT PRIMARY KEY REFERENCES rendition_lexical_generations(generation_id),
-    manifest_digest TEXT NOT NULL,
-    build_digest    TEXT NOT NULL
+    manifest_digest TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS rendition_lexical_generation_builds (
-    generation_id TEXT NOT NULL REFERENCES rendition_lexical_generations(generation_id)
-        ON DELETE CASCADE,
-    build_id      TEXT NOT NULL REFERENCES rendition_builds(build_id),
-    PRIMARY KEY (generation_id, build_id)
+CREATE INDEX IF NOT EXISTS rendition_lexical_generations_stream
+    ON rendition_lexical_generations(stream_id);
+
+CREATE TABLE IF NOT EXISTS rendition_lexical_stream_builds (
+    stream_id      TEXT NOT NULL,
+    ordinal        INTEGER NOT NULL,
+    build_id       TEXT NOT NULL REFERENCES rendition_builds(build_id),
+    PRIMARY KEY (stream_id, ordinal),
+    UNIQUE (stream_id, build_id)
 );
 
-CREATE INDEX IF NOT EXISTS rendition_lexical_generation_builds_build
-    ON rendition_lexical_generation_builds(build_id);
+CREATE INDEX IF NOT EXISTS rendition_lexical_stream_builds_build
+    ON rendition_lexical_stream_builds(build_id);
+
+CREATE VIEW IF NOT EXISTS rendition_lexical_generation_builds(generation_id, build_id) AS
+    SELECT g.generation_id, b.build_id
+    FROM rendition_lexical_generations g
+    JOIN rendition_lexical_stream_builds b
+      ON b.stream_id=g.stream_id AND b.ordinal<=g.build_count;
 
 CREATE TABLE IF NOT EXISTS rendition_lexical_heads (
     singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -1774,6 +1799,7 @@ CREATE TABLE IF NOT EXISTS rendition_jobs (
     CHECK ((authorization_grant_id IS NULL) =
            (authorization_incarnation_id IS NULL AND authorization_revocation_fence IS NULL))
 );
+CREATE INDEX IF NOT EXISTS rendition_jobs_source ON rendition_jobs(source_sha256);
 
 CREATE INDEX IF NOT EXISTS rendition_jobs_claimable
     ON rendition_jobs(state, available_at, lease_expires_at, job_id);
@@ -1917,7 +1943,8 @@ END;
 CREATE TABLE IF NOT EXISTS tags (
     id       TEXT PRIMARY KEY NOT NULL,
     name     TEXT NOT NULL UNIQUE,
-    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    assignment_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS node_tags (
@@ -2020,9 +2047,9 @@ CREATE TABLE IF NOT EXISTS audit_records (
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_event
     ON audit_records(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS audit_record_event_node
-    ON audit_records(node_id) WHERE kind = 'event';
+    ON audit_records(node_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE INDEX IF NOT EXISTS audit_record_event_scope
-    ON audit_records(scope_id) WHERE kind = 'event';
+    ON audit_records(scope_id, operation_sequence, event_ordinal, event_id) WHERE kind = 'event';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_operation
     ON audit_records(operation_id) WHERE kind = 'canonical_mutation';
 CREATE UNIQUE INDEX IF NOT EXISTS audit_record_mutation_sequence
@@ -2841,6 +2868,8 @@ CREATE TABLE IF NOT EXISTS document_people_generations (
     canonical_json BLOB NOT NULL, checksum TEXT NOT NULL, created_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS document_people_generations_version ON document_people_generations(content_version_id);
+
 CREATE TRIGGER IF NOT EXISTS document_people_generations_immutable_update
 BEFORE UPDATE ON document_people_generations BEGIN
     SELECT RAISE(ABORT, 'document people generations are immutable');
@@ -3082,4 +3111,148 @@ CREATE TRIGGER IF NOT EXISTS tag_fts_update AFTER UPDATE OF name ON tags BEGIN
 END;
 CREATE TRIGGER IF NOT EXISTS tag_fts_delete AFTER DELETE ON tags BEGIN
     DELETE FROM tag_fts WHERE tag_id=old.id;
+END;
+
+CREATE TABLE IF NOT EXISTS vault_change_head (
+    singleton INTEGER PRIMARY KEY,
+    epoch TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vault_changes (
+    seq INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    node_id INTEGER NOT NULL,
+    node_revision INTEGER NOT NULL
+);
+
+-- Membership epochs are local derived state, rebuilt from retained authority.
+CREATE TABLE IF NOT EXISTS vector_membership_epochs (
+    vector_space_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_insert
+AFTER INSERT ON embedding_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM (SELECT NEW.vector_space_id AS vector_space_id) WHERE 1
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_update
+AFTER UPDATE OF content_version_id,binding_id,input_kind,embedding_set_id,vector_space_id,profile_fingerprint ON embedding_heads
+WHEN OLD.content_version_id IS NOT NEW.content_version_id OR OLD.binding_id IS NOT NEW.binding_id OR OLD.input_kind IS NOT NEW.input_kind OR OLD.embedding_set_id IS NOT NEW.embedding_set_id OR OLD.vector_space_id IS NOT NEW.vector_space_id OR OLD.profile_fingerprint IS NOT NEW.profile_fingerprint
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM (SELECT OLD.vector_space_id AS vector_space_id UNION SELECT NEW.vector_space_id AS vector_space_id) WHERE 1
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_embedding_heads_delete
+AFTER DELETE ON embedding_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM (SELECT OLD.vector_space_id AS vector_space_id) WHERE 1
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_insert
+AFTER INSERT ON rendition_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind<>'image' AND ((h.content_version_id=NEW.content_version_id AND es.profile_fingerprint=NEW.profile_fingerprint AND g.attachment_id=NEW.attachment_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_update
+AFTER UPDATE OF content_version_id,profile_fingerprint,attachment_id ON rendition_heads
+WHEN OLD.content_version_id IS NOT NEW.content_version_id OR OLD.profile_fingerprint IS NOT NEW.profile_fingerprint OR OLD.attachment_id IS NOT NEW.attachment_id
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind<>'image' AND ((h.content_version_id=OLD.content_version_id AND es.profile_fingerprint=OLD.profile_fingerprint AND g.attachment_id=OLD.attachment_id) OR (h.content_version_id=NEW.content_version_id AND es.profile_fingerprint=NEW.profile_fingerprint AND g.attachment_id=NEW.attachment_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_rendition_heads_delete
+AFTER DELETE ON rendition_heads
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind<>'image' AND ((h.content_version_id=OLD.content_version_id AND es.profile_fingerprint=OLD.profile_fingerprint AND g.attachment_id=OLD.attachment_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_insert
+AFTER INSERT ON visual_preview_generations
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind='image' AND es.content_version_id=NEW.content_version_id
+      AND g.evidence_fingerprint=NEW.checksum AND NEW.state='ready'
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_visual_preview_generations_delete
+AFTER DELETE ON visual_preview_generations
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT h.vector_space_id,1 FROM embedding_heads h
+    JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id
+    JOIN embedding_input_generations g ON g.generation_id=es.input_generation_id
+    WHERE es.input_kind='image' AND es.content_version_id=OLD.content_version_id
+      AND g.evidence_fingerprint=OLD.checksum AND OLD.state='ready'
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_insert
+AFTER INSERT ON photo_files
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT version_id FROM content_versions WHERE (node_id=NEW.node_id AND (EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=NEW.asset_id AND a.display_file_id=NEW.file_id))))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_update
+AFTER UPDATE OF asset_id,node_id,file_id ON photo_files
+WHEN OLD.asset_id IS NOT NEW.asset_id OR OLD.node_id IS NOT NEW.node_id OR OLD.file_id IS NOT NEW.file_id
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT version_id FROM content_versions WHERE (node_id=OLD.node_id AND (EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=OLD.asset_id AND a.display_file_id=OLD.file_id))) OR (node_id=NEW.node_id AND (EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=NEW.asset_id AND a.display_file_id=NEW.file_id))))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_files_delete
+AFTER DELETE ON photo_files
+BEGIN
+    -- Foreign-key actions may already have cleared the asset's display link.
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT version_id FROM content_versions WHERE node_id=OLD.node_id)
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_photo_assets_update
+AFTER UPDATE OF kind,display_file_id,hidden_at,excluded_at ON photo_assets
+WHEN OLD.kind IS NOT NEW.kind OR OLD.display_file_id IS NOT NEW.display_file_id OR OLD.hidden_at IS NOT NEW.hidden_at OR OLD.excluded_at IS NOT NEW.excluded_at
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE input_kind='image' AND content_version_id IN (SELECT v.version_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE (f.asset_id=OLD.asset_id AND f.file_id=OLD.display_file_id) OR (f.asset_id=NEW.asset_id AND f.file_id=NEW.display_file_id))
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS vector_source_nodes_update
+AFTER UPDATE OF current_version_id,trashed_at ON nodes
+WHEN OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at
+BEGIN
+    INSERT INTO vector_membership_epochs(vector_space_id,revision)
+    SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
+    ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
 END;

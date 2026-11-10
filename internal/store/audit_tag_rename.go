@@ -62,6 +62,10 @@ func (s *Store) touchAuditedTagDefinitionNodesTx(
 	// Revisions cover every assigned node. modified_at is changed only where the
 	// scoped mutation commits the operation timestamp; the allocation-only form
 	// deliberately has no timestamp from which replay could derive that field.
+	ids, err := tagAssignmentNodeIDsTx(ctx, tx, tagID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1
 		WHERE id IN (SELECT node_id FROM node_tags WHERE tag_id=$1)`, tagID); err != nil {
 		return fmt.Errorf("advancing nodes assigned tag %s: %w", tagID, err)
@@ -72,6 +76,9 @@ func (s *Store) touchAuditedTagDefinitionNodesTx(
 		); err != nil {
 			return fmt.Errorf("recording audited tag rename on node %d: %w", node.ID, err)
 		}
+	}
+	if err := recordVaultChangesTx(ctx, tx, "tagged", ids...); err != nil {
+		return err
 	}
 	return s.refreshTagPhotoWorkTx(ctx, tx, `node_id IN (SELECT node_id FROM node_tags WHERE tag_id=$1)`, tagID)
 }
@@ -215,13 +222,6 @@ func persistAuditedTagRename(
 		mutationDigest, err := hashAuditRecord(mutation)
 		if err != nil {
 			return err
-		}
-		for _, event := range events {
-			if err := insertAuditRecord(ctx, tx, audit.Record{Kind: auditEventField, Fields: []audit.Field{
-				{Name: auditEventField, Value: audit.Nested(event)},
-			}}); err != nil {
-				return err
-			}
 		}
 		if err := insertAuditRecord(ctx, tx, mutation); err != nil {
 			return err

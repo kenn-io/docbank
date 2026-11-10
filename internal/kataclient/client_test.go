@@ -211,7 +211,7 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 		supported bool
 	}{
 		{"0.20.9", false}, {"0.21.0-rc.1", false}, {"0.21.0", true},
-		{"0.28.0", true}, {"0.29.0", false}, {"1.0.0", false}, {"2.21.0", false},
+		{"0.41.0", true}, {"0.42.0", false}, {"1.0.0", false}, {"2.21.0", false},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			var operationRequests atomic.Int32
@@ -231,8 +231,7 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "Synthetic issue", issue.Title)
 			} else {
-				require.ErrorContains(t, err, "unsupported Kata API schema")
-				require.EqualError(t, err, "unsupported Kata API schema: require 0.21.0 through 0.28.x")
+				require.EqualError(t, err, "unsupported Kata API schema: require 0.21.0 through 0.41.x")
 				failure, ok := errors.AsType[*Error](err)
 				require.True(t, ok)
 				require.Equal(t, "incompatible_api", failure.Code)

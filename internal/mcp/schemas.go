@@ -15,12 +15,14 @@ import (
 const (
 	jsonSchemaDraft           = "https://json-schema.org/draft/2020-12/schema"
 	packageIDField            = "package_id"
+	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
 	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
 	schemaOffsetField         = "offset"
+	schemaCursorField         = "cursor"
 	schemaJobIDField          = "job_id"
 	schemaCreatedAtField      = "created_at"
 	jsonSchemaConst           = "const"
@@ -465,7 +467,7 @@ func batesRecipeSchema() schema {
 		"opacity": schema{"type": jsonSchemaNumber, jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
 		"rotation_policy": schema{"type": "string", jsonSchemaConst: "follow_page"}, "restamp": schema{"type": "boolean", jsonSchemaConst: false},
 		"engine_identity": objectSchema(schema{
-			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.15.0"},
+			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.16.4"},
 			"api":     schema{"type": "string", jsonSchemaConst: "AddWatermarksMap"},
 			"options": schema{"type": "array", jsonSchemaConst: []string{"onTop=true", "update=restamp"}},
 		}, "name", "version", "api", "options"),
@@ -631,6 +633,19 @@ func getVaultInfoSchemas() (schema, schema) {
 	return input, output
 }
 
+func listChangesSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{schemaCursorField: stringSchema(maxChangeCursorBytes)})
+	event := objectSchema(schema{
+		schemaCursorField: stringSchema(maxChangeCursorBytes), "kind": stringSchema(64),
+		"node_id": integerSchema(1, 0), "revision": integerSchema(1, 0),
+	}, schemaCursorField, "kind", "node_id", "revision")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"events":      arraySchema(event, maxChangesPage),
+		"next_cursor": stringSchema(maxChangeCursorBytes), "has_more": booleanSchema(),
+	}), cacheRequired("events", "next_cursor", "has_more")...)
+	return input, output
+}
+
 func listDocumentsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"source_present": booleanSchema(),
@@ -653,6 +668,15 @@ func listDocumentsSchemas() (schema, schema) {
 	return input, output
 }
 
+func searchCoverageSchema() schema {
+	return objectSchema(schema{
+		"binding_required":   booleanSchema(),
+		"scoped_documents":   integerSchema(0, 4096),
+		"complete_documents": integerSchema(0, 4096),
+		schemaStateField:     stringSchema(64),
+	}, "binding_required", "scoped_documents", "complete_documents", schemaStateField)
+}
+
 func searchDocumentsSchemas() (schema, schema) {
 	properties := fenceInputProperties()
 	properties["query"] = schema{"type": "string", "minLength": 1, "maxLength": 8192}
@@ -662,7 +686,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
 	properties["rerank"] = booleanSchema()
-	input := rootObjectSchema(properties, "query", "profile")
+	input := rootObjectSchema(properties, "query")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
@@ -678,9 +702,10 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
+		"profile":              stringSchema(128),
 		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
-		"fence_fingerprint":    schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71},
+		"fence_fingerprint":    fenceFingerprintSchema(),
 		"observed_scope_count": integerSchema(0, 0),
 		"requested_mode":       enumSchema("auto", "lexical", "semantic", "hybrid"),
 		"actual_mode":          enumSchema("lexical", "semantic", "hybrid"),
@@ -690,15 +715,11 @@ func searchDocumentsSchemas() (schema, schema) {
 			"complete_documents": integerSchema(0, 0),
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
-		"reranking": objectSchema(schema{
-			"outcome":         enumSchema("applied", "skipped", "degraded"),
-			"cause":           stringSchema(64),
-			"candidate_count": integerSchema(0, 1000),
-		}, "outcome", "candidate_count"),
-		"skipped_reasons": arraySchema(stringSchema(64), 64),
+		"reranking":       searchRerankingSchema(),
+		"skipped_reasons": arraySchema(stringSchema(2048), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("requested_mode",
+	}), cacheRequired("profile", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	output["if"] = schema{kataRequiredField: []string{"fence"}}
 	output["then"] = schema{
@@ -711,6 +732,14 @@ func searchDocumentsSchemas() (schema, schema) {
 		},
 	}
 	return input, output
+}
+
+func searchRerankingSchema() schema {
+	return objectSchema(schema{
+		"outcome":         enumSchema("applied", "skipped", "degraded"),
+		"cause":           stringSchema(64),
+		"candidate_count": integerSchema(0, 1000),
+	}, "outcome", "candidate_count")
 }
 
 func getDocumentSchemas() (schema, schema) {
@@ -1025,4 +1054,8 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"kind":              enumSchema("photo", "video"),
 		"role":              enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
+}
+
+func fenceFingerprintSchema() schema {
+	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
 }

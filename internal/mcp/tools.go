@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -73,8 +74,11 @@ var readToolDefinitions = []toolDefinition{
 	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
+	{name: "list_changes", title: "List changes", description: "Without a cursor, return an empty page and the current checkpoint. Save next_cursor before scanning documents, then resume from it. Later calls return up to 500 changes; repeat while has_more is true.", schemas: listChangesSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
+	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
+	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Omit profile to use answer_question's profile selection; results name the profile used. Skipped reasons can include failure codes and setup guidance. With no profile, auto may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
+	findConflictsTool,
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
@@ -307,10 +311,23 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		}
 		value, ok := nodeID.(float64)
 		return ok && value >= 1
+	case "list_changes":
+		return stringBytesWithin(arguments, "cursor", maxChangeCursorBytes)
 	case "list_documents":
 		return stringBytesWithin(arguments, "path_prefix", maxPathBytes) &&
 			stringBytesWithin(arguments, "cursor", maxCursorBytes)
-	case "search_documents":
+	case "answer_question":
+		question, _ := arguments["question"].(string)
+		if strings.TrimSpace(question) == "" {
+			return false
+		}
+		fallthrough
+	case "search_documents", "find_conflicts":
+		if _, binding := arguments["binding_id"]; binding {
+			if _, profile := arguments["profile"]; !profile {
+				return false
+			}
+		}
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil
@@ -386,12 +403,27 @@ type toolErrorOutput struct {
 	ObservedScopeCount int    `json:"observed_scope_count,omitzero"`
 }
 
+type searchProfileError struct{ code, message string }
+
+func (e *searchProfileError) Error() string { return e.message }
+
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
+	if guidance, ok := errors.AsType[*searchProfileError](err); ok {
+		return toolErrorResult(toolErrorOutput{Code: guidance.code, Message: guidance.message})
+	}
 	code, observed := stableDomainError(err)
+	return domainToolErrorResult(code, observed)
+}
+
+func domainToolErrorResult(code string, observed int) (*sdkmcp.CallToolResult, bool) {
 	if code == "" {
 		return nil, false
 	}
 	output := toolErrorOutput{Code: code, Message: domainErrorMessage(code), ObservedScopeCount: observed}
+	return toolErrorResult(output)
+}
+
+func toolErrorResult(output toolErrorOutput) (*sdkmcp.CallToolResult, bool) {
 	encoded, marshalErr := json.Marshal(output)
 	if marshalErr != nil || len(encoded) > maxToolErrorBytes {
 		return nil, false
@@ -401,6 +433,17 @@ func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
 		StructuredContent: output,
 		IsError:           true,
 	}, true
+}
+
+func toolProblemFacts(err error) (daemonconn.ProblemFacts, bool) {
+	facts, ok := daemonProblemFacts(err)
+	if native, isNative := errors.AsType[*api.Error](err); isNative {
+		facts, ok = daemonconn.ProblemFacts{Code: native.Code, ObservedScopeCount: native.ObservedScopeCount}, true
+	}
+	if !ok {
+		facts, ok = daemonconn.ExtractProblemFacts(err)
+	}
+	return facts, ok
 }
 
 func stableDomainError(err error) (string, int) {
@@ -470,13 +513,7 @@ func stableDomainError(err error) (string, int) {
 	case errors.Is(err, store.ErrInvalidBatesSelector):
 		return "invalid_bates_selector", 0
 	}
-	facts, ok := daemonProblemFacts(err)
-	if native, isNative := errors.AsType[*api.Error](err); isNative {
-		facts, ok = daemonconn.ProblemFacts{Code: native.Code, ObservedScopeCount: native.ObservedScopeCount}, true
-	}
-	if !ok {
-		facts, ok = daemonconn.ExtractProblemFacts(err)
-	}
+	facts, ok := toolProblemFacts(err)
 	if !ok {
 		return "", 0
 	}
@@ -496,7 +533,7 @@ func stableDomainError(err error) (string, int) {
 		"incomplete_date_coverage", "date_review_required", "report_unavailable", "report_capacity",
 		"report_limit", "report_timeout", "report_retained":
 		return facts.Code, 0
-	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
+	case "changes_cursor_expired", "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
 		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
 		"export_unavailable":
 		return facts.Code, 0
@@ -532,6 +569,9 @@ func stableDomainError(err error) (string, int) {
 }
 
 func domainErrorMessage(code string) string {
+	if message, ok := answerErrorMessages[code]; ok {
+		return message
+	}
 	switch code {
 	case "kata_token_invalid":
 		return "Kata token was rejected; configure Kata with that token"
@@ -565,10 +605,6 @@ func domainErrorMessage(code string) string {
 		return "The Kata operation failed; inspect the issue before deliberately retrying the same request."
 	case "kata_outcome_unknown":
 		return "The Kata write may have succeeded without a usable reply. Do not retry automatically; inspect the issue and deliberately retry the same create key or exact append selection."
-	case "reranking_unavailable":
-		return "The processing profile has no configured reranking provider; ask the operator to configure it."
-	case "reranking_failed":
-		return "Document reranking failed; check the daemon log before retrying."
 	case "invalid_text_navigation":
 		return "Fetch the outline for this rendition and correct the section bounds or offset."
 	case "text_navigation_limit":
@@ -662,6 +698,8 @@ func domainErrorMessage(code string) string {
 		return "The local Docbank daemon is unavailable; check the daemon and retry."
 	case "scope_too_large":
 		return "The exact source scope exceeds the supported limit; narrow the source scope."
+	case "changes_cursor_expired":
+		return "Call list_changes without a cursor, save next_cursor, rescan the vault, then resume with that cursor."
 	case "cursor_expired":
 		return "The cursor expired; restart the listing from the first page."
 	case "invalid_document_cursor":

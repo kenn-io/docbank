@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -184,38 +185,52 @@ func TestMixedStoreLifecyclePreservesMembershipAndBytes(t *testing.T) {
 
 func TestMaintainerSharesDocbankMutationCoordinator(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
-	root := t.TempDir()
-	metadata, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, metadata.Close()) })
-	blobsDir := filepath.Join(root, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
-	physical, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, physical.Close()) })
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		root := t.TempDir()
+		metadata, err := store.Open(t.Context(), filepath.Join(root, "docbank.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+		blobsDir := filepath.Join(root, "blobs")
+		require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+		physical, err := blob.New(store.NewPackCatalog(metadata), blobsDir)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, physical.Close()) })
 
-	require.NoError(t, physical.WithMutation(ctx, func() error {
-		hash, size, writeErr := physical.WriteContext(ctx, strings.NewReader("coordinated content"))
-		if writeErr != nil {
-			return writeErr
+		require.NoError(t, physical.WithMutation(ctx, func() error {
+			hash, size, writeErr := physical.WriteContext(ctx, strings.NewReader("coordinated content"))
+			if writeErr != nil {
+				return writeErr
+			}
+			_, createErr := metadata.CreateFile(ctx, metadata.RootID(), "coordinated.txt",
+				hash, size, "text/plain")
+			return createErr
+		}))
+
+		lease, err := physical.Coordinator().AcquireMutation(ctx)
+		require.NoError(t, err)
+		waitCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		waited := make(chan error, 1)
+		go func() {
+			_, packErr := physical.Maintainer().Pack(waitCtx, packstore.PackOptions{})
+			waited <- packErr
+		}()
+		// Pack parks on the coordinator once it queues for maintenance.
+		synctest.Wait()
+		select {
+		case err := <-waited:
+			t.Fatalf("Pack ran while a Docbank mutation lease was held: %v", err)
+		default:
 		}
-		_, createErr := metadata.CreateFile(ctx, metadata.RootID(), "coordinated.txt",
-			hash, size, "text/plain")
-		return createErr
-	}))
+		cancel()
+		require.ErrorIs(t, <-waited, context.Canceled)
+		require.NoError(t, lease.Release())
 
-	lease, err := physical.Coordinator().AcquireMutation(ctx)
-	require.NoError(t, err)
-	waitCtx, cancel := context.WithTimeout(ctx, 25*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held mutation lease keeps Pack waiting
-	_, err = physical.Maintainer().Pack(waitCtx, packstore.PackOptions{})
-	cancel()
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.NoError(t, lease.Release())
-
-	packed, err := physical.Maintainer().Pack(ctx, packstore.PackOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, 1, packed.BlobsPacked)
+		packed, err := physical.Maintainer().Pack(ctx, packstore.PackOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, packed.BlobsPacked)
+	})
 }
 
 func TestActiveStreamSurvivesRepackRetirementAndStoreClose(t *testing.T) {

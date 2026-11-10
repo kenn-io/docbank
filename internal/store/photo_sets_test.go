@@ -22,9 +22,10 @@ func albumAsset(t *testing.T, s *Store, name string) PhotoAsset {
 	return asset
 }
 
-func TestPhotoSetLifecycle(t *testing.T) {
+func checkPhotoSetLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	a := albumAsset(t, s, "first.jpg")
 	b := albumAsset(t, s, "second.jpg")
@@ -70,7 +71,7 @@ func TestPhotoSetLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, asset, actual)
 	}
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, false))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion, s.postgresSchema != ""))
 }
 
 func TestPhotoSetSelectionRollback(t *testing.T) {
@@ -295,9 +296,9 @@ func TestPhotoSetBrowseFiltersVisibilityAndCursor(t *testing.T) {
 	require.Equal(t, int64(3), summary.IncludedCount)
 }
 
-func TestPhotoSetCoverAndBackup(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func photoSetCoverScenario(t *testing.T, newStore func(*testing.T) *Store) (*Store, PhotoSet, PhotoAsset) {
+	t.Helper()
+	s := newStore(t)
 	ctx := t.Context()
 	a := albumAsset(t, s, "first.jpg")
 	b := albumAsset(t, s, "last.jpg")
@@ -315,14 +316,35 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 	require.NoError(t, err)
 	set, err := s.CreatePhotoSet(ctx, "Covers")
 	require.NoError(t, err)
-	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_set_members SET added_at='2024-01-01T00:00:00.000000000Z' WHERE set_id=? AND asset_id=?`, set.ID, a.ID)
-	require.NoError(t, err)
+	require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		set, err = s.changePhotoSetMembersTx(ctx, tx, set, true, []string{a.ID, b.ID}, []photoSetMemberStamp{
+			{ID: a.ID, AddedAt: "2024-01-01T00:00:00.000000000Z"},
+			{ID: b.ID, AddedAt: "2024-01-02T00:00:00.000000000Z"},
+		})
+		return err
+	}))
 	summary, err := s.PhotoSet(ctx, set.ID, recipe)
 	require.NoError(t, err)
 	require.Equal(t, b.ID, *summary.EffectiveCoverAssetID)
 	require.Equal(t, 90, summary.CoverRotation)
+	if s.postgresSchema == "" {
+		// SQLite has no ANALYZE statistics here. Start from this album's
+		// ordered membership index, then seek the cover's dependent rows.
+		rows, err := s.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+s.photoSetCoverSQL()+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe)
+		require.NoError(t, err)
+		defer func() { _ = rows.Close() }()
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+			plan = append(plan, detail)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		require.Contains(t, strings.Join(plan, "\n"), "SEARCH m USING COVERING INDEX photo_set_members_added (set_id=?)")
+		require.NotContains(t, strings.Join(plan, "\n"), "USE TEMP B-TREE FOR ORDER BY")
+	}
 	wrongRecipe, err := s.PhotoSet(ctx, set.ID, browseHash("old-recipe"))
 	require.NoError(t, err)
 	require.Nil(t, wrongRecipe.EffectiveCoverAssetID)
@@ -353,6 +375,13 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.DetachPhotoFile(ctx, empty.ID, empty.Revision, empty.Files[0].ID, PhotoDetachOptions{})
 	require.NoError(t, err)
+	return s, set, a
+}
+
+func TestPhotoSetCoverAndBackup(t *testing.T) {
+	t.Parallel()
+	s, set, a := photoSetCoverScenario(t, newTestStore)
+	ctx := t.Context()
 	var original bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &original))
 	target := newTestStore(t)

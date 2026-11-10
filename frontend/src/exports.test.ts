@@ -7,6 +7,7 @@ import {
   parseExportPreview,
   readExportEvents,
   exportTicket,
+  offerExportDownload,
   safeExportBasename,
   validateExportOptions,
   sealPhotoExportSource,
@@ -79,7 +80,10 @@ function events(lines: string[]) {
     headers: { "Content-Type": "application/x-ndjson" },
   });
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  document.querySelector('meta[name="docbank-base-path"]')?.remove();
+});
 
 it("copies exact content members, drops observed mutation revisions, and rejects duplicates and unsafe sizes", () => {
   const members = [{ node_id: 1, content_version_id: id, blob_hash: hash, size: 12, revision: 99 }];
@@ -325,6 +329,32 @@ it("requires exact receipt and native same-origin ticket and rejects unsafe base
   await expect(
     exportTicket("s", plan, complete, "Review.zip", new AbortController().signal),
   ).rejects.toThrow();
+});
+
+it.each(["", "/archive"])("offers archive downloads under mount %s", (basePath) => {
+  const meta = document.createElement("meta");
+  meta.name = "docbank-base-path";
+  meta.content = basePath;
+  document.head.append(meta);
+  const clicked: { href: string | null; name: string }[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push({ href: this.getAttribute("href"), name: this.download });
+  });
+  offerExportDownload(
+    {
+      url: "/api/daemon/web-download/file?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      receipt: complete.receipt,
+    },
+    "Review.zip",
+  );
+  expect(clicked).toEqual([
+    {
+      href: `${basePath}/api/daemon/web-download/file?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
+      name: "Review.zip",
+    },
+  ]);
 });
 
 it("sends an explicit attachment set without requiring the plan header to echo it", async () => {

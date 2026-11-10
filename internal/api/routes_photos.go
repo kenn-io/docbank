@@ -239,9 +239,11 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	})
 	// A Cull run can hold 250,000 photos. The body limit applies before
 	// parsing; the response stays below it because each submitted ID appears once.
+	// Reading a body that size can outlast Huma's five-second default on a
+	// slow link, so the read shares the handler's request timeout.
 	huma.Register(api, huma.Operation{
 		OperationID: "groupPhotoStacks", Method: http.MethodPost, Path: "/api/v1/photos/stacks/group",
-		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20,
+		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20, BodyReadTimeout: requestTimeout,
 	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
 		groups, unavailable, gap, incomplete, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden, processing.SourceMetadataExtractorFingerprint)
 		if err != nil {

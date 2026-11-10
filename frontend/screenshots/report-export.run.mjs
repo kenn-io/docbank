@@ -12,6 +12,10 @@ const dirty = git("status", "--porcelain") !== "";
 console.log(`Browser qualification: ${commit} (${dirty ? "dirty" : "clean"} tree)`);
 const scratch = await mkdtemp(path.join(tmpdir(), "docbank-browser-build-"));
 const failures = [];
+// Playwright stops its own run, retries included, before the watchdog kills it,
+// so its JSON reporter always writes the result.
+const browserWatchdog = 360_000;
+const browserGlobalTimeout = browserWatchdog - 30_000;
 try {
   for (const [mode, cgo] of [
     ["cgo", "1"],
@@ -22,7 +26,10 @@ try {
       scratch,
       `docbank-${mode}${process.platform === "win32" ? ".exe" : ""}`,
     );
-    const report = path.join(scratch, `${mode}.json`);
+    // CI keeps each mode's JSON report for upload.
+    const report = process.env.CI
+      ? path.join(repository, "frontend/test-results/playwright", `report-export-${mode}.json`)
+      : path.join(scratch, `${mode}.json`);
     const env = {
       ...process.env,
       CGO_ENABLED: cgo,
@@ -56,8 +63,10 @@ try {
           "chromium",
           "--reporter",
           "line,json",
+          "--global-timeout",
+          String(browserGlobalTimeout),
         ],
-        { cwd: repository, env, stdio: "inherit", timeout: 360_000 },
+        { cwd: repository, env, stdio: "inherit", timeout: browserWatchdog },
       );
       if (run.error) throw run.error;
       assert.equal(run.status, 0, `${mode} browser case failed`);

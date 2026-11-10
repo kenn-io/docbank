@@ -57,22 +57,20 @@ func visionProcessingConfig(t *testing.T, endpoint, task string) config.Config {
 
 func TestDaemonDescribesAPhotoWithAConfiguredVisionProfile(t *testing.T) {
 	daemon, _, asset := startVisionDaemonWithPhoto(t, vision.ProviderID, `{"caption":"A white panorama.","tags":["panorama"],"visible_text":""}`)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		prepared, err := daemon.API().PreparePhotoAuthored(t.Context(), &apiclient.PreparePhotoAuthoredRequestOptions{Body: &api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}}})
-		require.NoError(c, err)
-		require.Len(c, prepared.Suggestions, 1)
-	}, 20*time.Second, 50*time.Millisecond)
+	settleDaemon(t)
+	prepared, err := daemon.API().PreparePhotoAuthored(t.Context(), &apiclient.PreparePhotoAuthoredRequestOptions{Body: &api.PhotoAuthoredPrepareRequest{AssetIDs: []string{asset.ID}}})
+	require.NoError(t, err)
+	require.Len(t, prepared.Suggestions, 1)
 }
 
 func TestDaemonFindsFacesWithAConfiguredDetectionProfile(t *testing.T) {
 	daemon, node, _ := startVisionDaemonWithPhoto(t, document.FaceDetectionProviderID, `{"faces":[{"box":{"x":0.25,"y":0.2,"width":0.2,"height":0.3},"roll":0,"facing":0.9,"eyes_open":true,"smile":false}]}`)
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		page, err := daemon.API().ListPhotoFaces(t.Context(), &apiclient.ListPhotoFacesRequestOptions{PathParams: &apiclient.ListPhotoFacesPath{ContentVersionID: uuid.MustParse(node.CurrentVersionID)}})
-		require.NoError(c, err)
-		require.Len(c, page.Faces, 1)
-		require.Equal(c, document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, page.Faces[0].Box)
-		require.NotEmpty(c, page.Faces[0].DetectorFingerprint)
-	}, 20*time.Second, 50*time.Millisecond)
+	settleDaemon(t)
+	page, err := daemon.API().ListPhotoFaces(t.Context(), &apiclient.ListPhotoFacesRequestOptions{PathParams: &apiclient.ListPhotoFacesPath{ContentVersionID: uuid.MustParse(node.CurrentVersionID)}})
+	require.NoError(t, err)
+	require.Len(t, page.Faces, 1)
+	assert.Equal(t, document.FaceBox{X: .25, Y: .2, Width: .2, Height: .3}, page.Faces[0].Box)
+	assert.NotEmpty(t, page.Faces[0].DetectorFingerprint)
 }
 
 // startVisionDaemonWithPhoto serves a daemon whose vision profile runs task,
@@ -114,15 +112,13 @@ func startVisionDaemonWithPhoto(t *testing.T, task, reply string) (*daemonconn.C
 	asset, err := daemon.API().GetPhotoAssetByNode(t.Context(), &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: node.ID}})
 	require.NoError(t, err)
 	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
-	// The photo can be sent once its grid preview exists. The preview can
-	// land between planning and enqueueing, which changes the plan, so plan
-	// again after processing_plan_changed as a client would.
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
-		require.NoError(c, err)
-		require.Empty(c, plan.RenditionIneligibleReason)
-		_, err = daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-		require.NoError(c, err)
-	}, 20*time.Second, 50*time.Millisecond)
+	// The photo can be sent once its grid preview exists. Settling the
+	// preview worker first keeps the plan from changing before the enqueue.
+	settleDaemon(t)
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	require.Empty(t, plan.RenditionIneligibleReason)
+	_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
+	require.NoError(t, err)
 	return daemon, node, asset
 }

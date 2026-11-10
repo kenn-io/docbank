@@ -4,9 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,10 +17,11 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/formatdetect"
+	"go.kenn.io/docbank/document/media/mediatest"
 )
 
 type testUpload struct {
-	reader   *bytes.Reader
+	reader   *mediatest.Upload
 	metadata document.AuthorizedUploadMetadata
 	reads    int
 	closes   int
@@ -30,17 +29,10 @@ type testUpload struct {
 }
 
 func newTestUpload(data []byte) *testUpload {
-	digest := sha256.Sum256(data)
-	return &testUpload{
-		reader: bytes.NewReader(data),
-		metadata: document.AuthorizedUploadMetadata{
-			Filename: "book.epub", MediaFamily: "ebook", MediaType: "application/epub+zip",
-			ByteLength: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
-			CapabilityRecordChecksum: strings.Repeat("2", 64),
-			ProviderMetadataChecksum: strings.Repeat("3", 64),
-			InputKind:                document.RenditionInputOriginalFile,
-		},
-	}
+	source := mediatest.NewUpload(data, document.AuthorizedUploadMetadata{
+		Filename: "book.epub", MediaFamily: "ebook", MediaType: "application/epub+zip",
+	})
+	return &testUpload{reader: source, metadata: source.Metadata()}
 }
 
 func (upload *testUpload) Read(buffer []byte) (int, error) {
@@ -61,24 +53,6 @@ func (upload *testUpload) Metadata() document.AuthorizedUploadMetadata { return 
 
 var _ document.AuthorizedUpload = (*testUpload)(nil)
 var _ io.ReadCloser = (*testUpload)(nil)
-
-func testAuthorization(
-	descriptor document.RenditionDescriptor, metadata document.AuthorizedUploadMetadata,
-) document.RenditionAuthorization {
-	started := time.Now().UTC().Add(-time.Minute)
-	return document.RenditionAuthorization{
-		ProviderID: descriptor.ID, DescriptorFingerprint: descriptor.Fingerprint,
-		PolicyFingerprint:           descriptor.PolicyFingerprint,
-		RenditionRequestFingerprint: strings.Repeat("4", 64),
-		SourceSHA256:                metadata.SHA256, SourceBytes: metadata.ByteLength,
-		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
-		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
-		MediaFamily:              metadata.MediaFamily, MediaType: metadata.MediaType,
-		InputKind: metadata.InputKind, MaxTotalResultBytes: 1 << 20,
-		AuthorizedAt: started.Format("2006-01-02T15:04:05.000000000Z"),
-		ExpiresAt:    started.Add(10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z"),
-	}
-}
 
 func epubBytes(t *testing.T, overrides map[string]string) []byte {
 	t.Helper()
@@ -121,7 +95,7 @@ func renderTest(t *testing.T, data []byte, maxUnits int64) (document.RenditionRe
 	p, err := New(Profile{MaxDocumentBytes: max(1<<20, int64(len(data))), MaxUnits: maxUnits})
 	require.NoError(t, err)
 	upload := newTestUpload(data)
-	result, err := document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+	result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	require.Equal(t, 1, upload.closes)
 	return result, err
 }
@@ -307,7 +281,7 @@ func TestProviderProfileIdentityAndPreReadLimits(t *testing.T) {
 	}
 	upload := newTestUpload([]byte("x"))
 	upload.metadata.ByteLength = formatdetect.MaxDocumentBytes + 1
-	result, err := document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+	result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 	require.Zero(t, upload.reads)
 	require.Equal(t, 1, upload.closes)
@@ -317,7 +291,7 @@ func TestProviderRejectsV1PolicyAuthorization(t *testing.T) {
 	p, err := New(Profile{formatdetect.MaxDocumentBytes, 1_000_000})
 	require.NoError(t, err)
 	upload := newTestUpload(epubBytes(t, nil))
-	authorization := testAuthorization(p.Descriptor(), upload.Metadata())
+	authorization := mediatest.Authorization(p.Descriptor(), upload.Metadata())
 	// The main-branch epub/v1 policy for this profile.
 	authorization.PolicyFingerprint = "1fe8b20ad28df1dfa5d15516ef501974e8f8d68426bab39caab13c924576c29e"
 	_, err = document.RenderRendition(t.Context(), p, upload, authorization)
@@ -356,7 +330,7 @@ func TestProviderSourceAuthorizationFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			upload := newTestUpload(data)
 			test.change(upload)
-			result, err := document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+			result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 			requireClass(t, result, err, test.code)
 			require.Equal(t, 1, upload.closes)
 		})
@@ -364,7 +338,7 @@ func TestProviderSourceAuthorizationFailures(t *testing.T) {
 	for _, mode := range []string{"canceled", "expired", "mismatch", "output"} {
 		t.Run(mode, func(t *testing.T) {
 			upload := newTestUpload(data)
-			authorization := testAuthorization(p.Descriptor(), upload.Metadata())
+			authorization := mediatest.Authorization(p.Descriptor(), upload.Metadata())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			switch mode {
@@ -418,13 +392,13 @@ func TestProviderConfiguredByteCapAndInputWork(t *testing.T) {
 	p, err := New(Profile{MaxDocumentBytes: int64(len(data)), MaxUnits: 3})
 	require.NoError(t, err)
 	upload := newTestUpload(data)
-	_, err = document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+	_, err = document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	require.NoError(t, err)
 	require.Equal(t, 1, upload.closes)
 	p, err = New(Profile{MaxDocumentBytes: int64(len(data)) - 1, MaxUnits: 3})
 	require.NoError(t, err)
 	upload = newTestUpload(data)
-	result, err := document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+	result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 	require.Zero(t, upload.reads)
 	require.Equal(t, 1, upload.closes)
@@ -432,7 +406,7 @@ func TestProviderConfiguredByteCapAndInputWork(t *testing.T) {
 	p, err = New(Profile{MaxDocumentBytes: int64(len(data)), MaxUnits: 100})
 	require.NoError(t, err)
 	upload = newTestUpload(data)
-	result, err = document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+	result, err = document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 }
 
@@ -446,7 +420,7 @@ func TestProviderCumulativeExpandedWorkChargesRepeatedOccurrences(t *testing.T) 
 	p, err := New(Profile{MaxDocumentBytes: 2 << 20, MaxUnits: 1})
 	require.NoError(t, err)
 	upload := newTestUpload(data)
-	result, err := document.RenderRendition(t.Context(), p, upload, testAuthorization(p.Descriptor(), upload.Metadata()))
+	result, err := document.RenderRendition(t.Context(), p, upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
 	requireClass(t, result, err, document.RenditionErrorPolicyRejected)
 	require.Equal(t, 1, upload.closes)
 	t.Log("501 repeated 1 MiB XHTML occurrences reject at the 500 MiB cumulative work ceiling")

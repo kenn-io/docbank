@@ -3,6 +3,7 @@ package api_test
 import (
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -15,6 +16,46 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
+
+func TestPhotoImportCheckpointMountedCookieJar(t *testing.T) {
+	t.Parallel()
+	for _, basePath := range []string{"", "/archive"} {
+		t.Run(basePath, func(t *testing.T) {
+			t.Parallel()
+			ts, _ := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.Web.BasePath = basePath
+				d.WebURL = "http://localhost/"
+			})
+			token := issueWebSession(t, ts)
+			jar, err := cookiejar.New(nil)
+			require.NoError(t, err)
+			ts.Client().Jar = jar
+			endpoint := basePath + "/api/daemon/photo-import-checkpoint"
+			request := func(method, path, body string, status int) string {
+				t.Helper()
+				req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, strings.NewReader(body))
+				require.NoError(t, err)
+				req.Host = "localhost"
+				req.Header.Set("X-Api-Key", "")
+				req.Header.Set(api.WebSessionHeader, token)
+				req.Header.Set("Origin", "http://localhost")
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := ts.Client().Do(req)
+				require.NoError(t, err)
+				defer func() { _ = resp.Body.Close() }()
+				data, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.Equal(t, status, resp.StatusCode, string(data))
+				return string(data)
+			}
+			require.JSONEq(t, `{"ready":false}`, request("GET", endpoint+"/header", "", 200))
+			require.JSONEq(t, `{"ready":true}`, request("GET", endpoint+"/header", "", 200))
+			checkpoint := `{"sourceID":"11111111-1111-4111-8111-111111111111","revision":"22222222-2222-4222-8222-222222222222","destination":"/photos","manifestVersion":2,"pickerKind":"folder","manifestHash":"` + strings.Repeat("a", 64) + `"}`
+			request("PUT", endpoint, `{"next":`+checkpoint+`,"expected":null}`, 204)
+			require.JSONEq(t, `{"checkpoint":`+checkpoint+`}`, request("GET", endpoint, "", 200))
+		})
+	}
+}
 
 func TestPhotoImportCheckpointBrowserProfile(t *testing.T) {
 	t.Parallel()

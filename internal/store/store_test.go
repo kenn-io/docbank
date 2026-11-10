@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,13 +16,37 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-func newTestStore(t *testing.T) *Store {
+func newTestStore[T testing.TB](t T) *Store {
 	t.Helper()
 	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
 }
+
+// waitForPoolWaiter yields until a caller queues for one of db's connections
+// after waits was read from db.Stats, until done delivers, or until ctx ends.
+// database/sql reports a queued caller only through its pool statistics. It
+// returns the delivered value and whether done delivered before any caller
+// queued.
+func waitForPoolWaiter[T any](ctx context.Context, db *sql.DB, waits int64, done <-chan T) (T, bool, error) {
+	var zero T
+	for db.Stats().WaitCount == waits {
+		select {
+		case got := <-done:
+			return got, true, nil
+		case <-ctx.Done():
+			return zero, false, ctx.Err()
+		default:
+		}
+		runtime.Gosched()
+	}
+	return zero, false, nil
+}
+
+// poolWaitBudget bounds a stalled waitForPoolWaiter; a passing run never
+// reaches it.
+const poolWaitBudget = 30 * time.Second
 
 func TestStorageMutationDuringReadSnapshot(t *testing.T) {
 	t.Parallel()
@@ -107,6 +133,30 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	require.NoError(t, s2.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM nodes WHERE parent_id IS NULL`).Scan(&count))
 	assert.Equal(t, 1, count)
+}
+
+func TestOpenSchemaFailureLeavesNoTables(t *testing.T) { //nolint:paralleltest // swaps the package-level schemaSQL
+	originalSchema := schemaSQL
+	t.Cleanup(func() { schemaSQL = originalSchema })
+	schemaSQL += "\n\nINSERT INTO missing_schema_table VALUES (1);"
+
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(t.Context(), dbPath)
+	if s != nil {
+		require.NoError(t, s.Close())
+	}
+	require.ErrorContains(t, err, "applying schema:")
+	require.ErrorContains(t, err, "missing_schema_table")
+
+	db, err := DefaultSQLiteDriver().Open(dbPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var tables int
+	require.NoError(t, db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'export_sources'`).Scan(&tables))
+	require.Zero(t, tables, "a late schema error rolls back earlier groups")
 }
 
 func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns concurrent opens within the five-second bootstrap budget

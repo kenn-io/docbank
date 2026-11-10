@@ -124,6 +124,14 @@
   list-style: none;
 }
 
+/* A list that opens a drawer's tool body sits right under the drawer
+   header, whose rule already marks its top. Its own top border would run
+   one padding lower as a second, inset line. */
+.kit-detail-drawer .tool-body > .tool-list:first-child,
+.kit-detail-drawer .tool-body > .tool-section:first-child > .tool-list:first-child {
+  border-top: 0;
+}
+
 .tool-list > li,
 .tool-list > .tool-row {
   display: flex;
@@ -203,33 +211,8 @@
 
 /* Collapsed group of rarely changed settings, with their current values. */
 .tool-disclosure {
-  display: grid;
   border-top: 1px solid var(--border-muted);
   border-bottom: 1px solid var(--border-muted);
-}
-
-.tool-disclosure > summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-4) 0;
-  cursor: pointer;
-  list-style: none;
-}
-
-.tool-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.tool-disclosure > summary > svg {
-  flex-shrink: 0;
-  color: var(--text-muted);
-  transition: transform var(--transition-fast, 0.1s);
-}
-
-.tool-disclosure[open] > summary > svg {
-  transform: rotate(90deg);
 }
 
 .tool-disclosure-value {
@@ -240,6 +223,6 @@
   white-space: nowrap;
 }
 
-.tool-disclosure > :not(summary):last-child {
+.tool-disclosure > .kit-disclosure__content {
   padding: var(--space-4) 0 var(--space-6);
 }

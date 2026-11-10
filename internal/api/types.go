@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -543,6 +544,8 @@ type ProvenanceFact struct {
 	OriginalMTime     *string `json:"original_mtime,omitempty" format:"date-time"`
 	Supersedes        *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
 	Active            bool    `json:"active"`
+
+	URLFetch *ingest.URLFetch `json:"url_fetch,omitempty"`
 }
 
 // ProvenanceAppendRequest is the wire form of one post-ingest origin fact.
@@ -889,6 +892,7 @@ type ContentVerification struct {
 // now names them. Status is "added" for a new node and "skipped" for an
 // idempotent retry that converged on an existing node.
 type UploadReceipt struct {
+	IngestID     string `json:"ingest_id,omitempty" format:"uuid"`
 	Status       string `json:"status" enum:"added,skipped"`
 	Node         Node   `json:"node"`
 	ComputedHash string `json:"computed_hash" pattern:"^[0-9a-f]{64}$"`
@@ -923,6 +927,13 @@ type SearchHit struct {
 type FuzzyReceipt struct {
 	Status  string   `json:"status" enum:"complete,limited,not_run"`
 	Reasons []string `json:"reasons" enum:"candidate_limit,name_limit,path_limit,query_ineligible,result_limit,time_budget"`
+}
+
+// SearchTextCoverage reports recoverable gaps in the current search scope.
+type SearchTextCoverage struct {
+	NoText   int      `json:"no_text" minimum:"0"`
+	Families []string `json:"families" enum:"pdf,office,other"`
+	Pending  int      `json:"pending" minimum:"0"`
 }
 
 // SearchReport is one bounded search result page.
@@ -1175,6 +1186,11 @@ type StorageOperation struct {
 	FinishedAt       string `json:"finished_at,omitzero"`
 }
 
+// VaultIdentity identifies the selected vault without enumerating its contents.
+type VaultIdentity struct {
+	VaultID string `json:"vault_id" format:"uuid"`
+}
+
 // VaultInfo identifies the selected vault and summarizes its logical and
 // physical contents. VaultPath is machine-local placement, not vault identity.
 type VaultInfo struct {
@@ -1246,6 +1262,8 @@ type VerifyReport struct {
 type Job struct {
 	Processing *WatchProcessingStatus `json:"processing,omitzero"`
 
+	Tags              []string         `json:"tags,omitempty" doc:"Existing tag names applied to files imported by this watch."`
+	TagError          string           `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
 	Busy              bool             `json:"busy" doc:"Whether this job is processing work rather than waiting for an item or its next scheduled run."`
 	Lane              string           `json:"lane"`
 	CheckoutResults   map[string]int64 `json:"checkout_results,omitempty"`
@@ -1313,6 +1331,8 @@ type WatchProcessingStatus struct {
 type WatchedInbox struct {
 	Processing *WatchProcessingStatus `json:"processing,omitzero"`
 
+	Tags            []string `json:"tags" doc:"Existing tag names applied to files imported by this watch."`
+	TagError        string   `json:"tag_error,omitempty" doc:"Why configured watch tags are unavailable."`
 	CaptureOnChange bool     `json:"capture_on_change"`
 	Name            string   `json:"name"`
 	Source          string   `json:"source"`
@@ -1492,6 +1512,7 @@ func fromStoreSourceMetadata(view store.SourceMetadataView, redactSensitive bool
 
 func fromStoreProvenanceFact(fact store.ProvenanceFact) ProvenanceFact {
 	return ProvenanceFact{
+		URLFetch: ingest.ParseURLFetch(fact.SourceKind, fact.SourceDescription),
 		Identity: fact.Identity, NodeID: fact.NodeID, IngestID: fact.IngestID,
 		IngestStartedAt: fact.IngestStartedAt, SourceKind: fact.SourceKind,
 		SourceDescription: fact.SourceDescription, OriginalPath: fact.OriginalPath,

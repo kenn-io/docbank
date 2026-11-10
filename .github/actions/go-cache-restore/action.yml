@@ -10,6 +10,9 @@ inputs:
     description: Additional cache directory owned by the group
     required: false
     default: ""
+  save-owner:
+    description: This job owns the group's daily main cache save
+    default: "false"
 runs:
   using: composite
   steps:
@@ -67,3 +70,45 @@ runs:
     - name: Record exact cache hit
       shell: bash
       run: echo "GO_CACHE_HIT=${{ steps.restore.outputs.cache-hit }}" >> "$GITHUB_ENV"
+
+    - name: Track cache use for the daily save
+      if: >-
+        inputs.save-owner == 'true'
+        && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        && steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        EXTRA_PATH: ${{ inputs.extra-path }}
+      run: |
+        modcache=$(go env GOMODCACHE | tr '\\' '/')
+        if [ -d "$modcache" ]; then
+          # Replay restored downloads to drop stale versions and retain modules and tools requested by this job.
+          mv "$modcache" "${modcache}.restored"
+          # Tool builds outside go.sum, such as custom-gcl, verify against these records.
+          mkdir -p "$modcache/cache/download"
+          if [ -d "${modcache}.restored/cache/download/sumdb" ]; then
+            cp -R "${modcache}.restored/cache/download/sumdb" "$modcache/cache/download/"
+          fi
+          proxy=$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' "${modcache}.restored/cache/download")
+          echo "GOPROXY=$proxy|$(go env GOPROXY)" >> "$GITHUB_ENV"
+        fi
+        paths=$(go env GOCACHE | tr '\\' '/')
+        if [ -n "$EXTRA_PATH" ]; then paths+=$'\n'"${EXTRA_PATH/#\~/$HOME}"; fi
+        {
+          echo 'GO_CACHE_TRIM_PATHS<<EOF'
+          echo "$paths"
+          echo EOF
+        } >> "$GITHUB_ENV"
+        while IFS= read -r path; do
+          if [ -d "$path" ]; then
+            # Go refreshes cache mtimes at most hourly; force used entries to refresh.
+            find "$path" -mindepth 2 -maxdepth 2 -name '*-a' -exec perl -e '$t=time-7200; utime $t,$t,@ARGV or die $!' {} +
+          fi
+        done <<< "$paths"
+        touch "$RUNNER_TEMP/go-cache-use"
+
+    - name: Rehydrate module sources
+      shell: bash
+      run: |
+        # workflowretry: allow Rehydrate module sources from restored downloads.
+        go mod download

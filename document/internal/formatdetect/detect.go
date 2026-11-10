@@ -27,8 +27,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-	"golang.org/x/text/secure/precis"
-	"golang.org/x/text/unicode/norm"
+	"github.com/xdg-go/stringprep"
 )
 
 const (
@@ -408,6 +407,7 @@ var (
 // PDFLimits binds parser allocations and decoded stream measurements to one
 // inspection policy.
 type PDFLimits struct {
+	TextOnly         bool
 	MaxExpandedBytes int64
 	MaxEntryBytes    int64
 	MaxEntries       int64
@@ -445,10 +445,10 @@ type PDFInfoMetadata struct {
 }
 
 // InspectPDF validates the authoritative PDF object graph and measures every
-// supported stream under the supplied limits. Opaque image filters are rejected
-// because their decoded size cannot be established without rendering them.
-func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
-	context, err := validatePDFObjectGraph(data, limits, false)
+// supported stream under the supplied limits. Text-only inspection admits
+// opaque image streams without decoding pixels; other inspection rejects them.
+func InspectPDF(ctx context.Context, data []byte, limits PDFLimits) (PDFMeasurements, error) {
+	context, err := validatePDFObjectGraph(ctx, data, limits, false)
 	if err != nil {
 		return PDFMeasurements{}, err
 	}
@@ -481,7 +481,7 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 		}
 		measurements.CompressedBytes += encodedBytes
 
-		decodedBytes, err := boundedPDFStreamBytes(stream, limits, measurements.ExpandedBytes)
+		decodedBytes, err := boundedPDFStreamBytes(context, stream, limits, measurements.ExpandedBytes)
 		if err != nil {
 			return PDFMeasurements{}, fmt.Errorf("measure PDF stream %d: %w", number, err)
 		}
@@ -494,19 +494,19 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 // CountPDFPages returns the authoritative page-tree count without decoding
 // unrelated content streams. Parsing remains bounded by the source size.
 // It rejects encrypted PDFs. Provider and generated-output callers rely on this refusal.
-func CountPDFPages(data []byte) (int64, error) {
-	return countPDFPages(data, false)
+func CountPDFPages(ctx context.Context, data []byte) (int64, error) {
+	return countPDFPages(ctx, data, false)
 }
 
 // CountPDFPagesWithEmptyPassword also counts encrypted PDFs that open with an
 // empty user password. It uses the same parsing limits as CountPDFPages.
-func CountPDFPagesWithEmptyPassword(data []byte) (int64, error) {
-	return countPDFPages(data, true)
+func CountPDFPagesWithEmptyPassword(ctx context.Context, data []byte) (int64, error) {
+	return countPDFPages(ctx, data, true)
 }
 
-func countPDFPages(data []byte, allowEmptyPassword bool) (int64, error) {
+func countPDFPages(ctx context.Context, data []byte, allowEmptyPassword bool) (int64, error) {
 	sourceBytes := int64(len(data))
-	context, err := validatePDFObjectGraph(data, PDFLimits{
+	context, err := validatePDFObjectGraph(ctx, data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -522,9 +522,9 @@ func countPDFPages(data []byte, allowEmptyPassword bool) (int64, error) {
 
 // ReadPDFMetadata resolves the document information dictionary and catalog XMP
 // stream instead of scanning unrelated object or page-stream bytes.
-func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
+func ReadPDFMetadata(ctx context.Context, data []byte) (PDFMetadata, error) {
 	sourceBytes := int64(len(data))
-	context, err := readPDFMetadataObjectGraph(data, PDFLimits{
+	context, err := readPDFMetadataObjectGraph(ctx, data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -588,9 +588,9 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	return metadata, nil
 }
 
-func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+func readPDFMetadataObjectGraph(ctx context.Context, data []byte, limits PDFLimits) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	context, err := api.ReadContext(bytes.NewReader(data), configuration)
+	context, err := api.ReadContext(ctx, bytes.NewReader(data), configuration)
 	if err != nil {
 		return nil, fmt.Errorf("read PDF object graph: %w", err)
 	}
@@ -603,7 +603,7 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 	if hasMetadata {
 		context.RootDict.Delete("Metadata")
 	}
-	err = api.ValidateContext(context)
+	err = api.ValidateContext(ctx, context)
 	context.Info = info
 	if hasMetadata {
 		context.RootDict.Insert("Metadata", metadata)
@@ -634,9 +634,9 @@ func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
 	}
 }
 
-func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
+func validatePDFObjectGraph(ctx context.Context, data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
+	context, err := api.ReadAndValidate(ctx, bytes.NewReader(data), configuration)
 	if err != nil {
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
 			return nil, ErrPDFEncrypted
@@ -646,10 +646,10 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bo
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
-	return checkPDFReferences(context, allowEmptyPassword)
+	return checkPDFReferences(context, allowEmptyPassword, limits.TextOnly)
 }
 
-func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model.Context, error) {
+func checkPDFReferences(context *model.Context, allowEmptyPassword, allowExternalReferences bool) (*model.Context, error) {
 	if context.Encrypt != nil && !allowEmptyPassword {
 		return nil, ErrPDFEncrypted
 	}
@@ -660,7 +660,7 @@ func checkPDFReferences(context *model.Context, allowEmptyPassword bool) (*model
 		}
 		return nil, fmt.Errorf("inspect PDF object graph: %w", err)
 	}
-	if external {
+	if external && !allowExternalReferences {
 		return nil, ErrPDFExternalReference
 	}
 	return context, nil
@@ -873,10 +873,19 @@ func pdfStreamDictionary(object types.Object) (*types.StreamDict, bool) {
 	}
 }
 
-func boundedPDFStreamBytes(stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
+func boundedPDFStreamBytes(context *model.Context, stream *types.StreamDict, limits PDFLimits, expanded int64) (int64, error) {
 	for _, pipeline := range stream.FilterPipeline {
 		switch pipeline.Name {
 		case filter.DCT, filter.JBIG2, filter.JPX:
+			if limits.TextOnly {
+				subtype, err := pdfDictName(context, stream.Dict, "Subtype")
+				if err != nil {
+					return 0, err
+				}
+				if subtype == "Image" {
+					return 0, nil
+				}
+			}
 			return 0, ErrPDFUnbounded
 		}
 	}
@@ -918,44 +927,118 @@ func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
 	return validPDFTableXRefWithRoot(xref, beforeStartXRef, nil)
 }
 
+// A table's own trailer governs it. Linearized files put the first-page
+// table and its trailer near the start, and their final trailer may omit
+// /Root. When that trailer lies beyond the bounded read, the final trailer
+// governs, as it does for an ordinary table. The final trailer must still
+// immediately precede startxref, so appended data cannot borrow a trailer.
 func validPDFTableXRefWithRoot(xref, beforeStartXRef []byte, inheritedRoot []string) bool {
 	position := 0
 	line, ok := nextPDFLine(xref, &position)
 	if !ok || !bytes.Equal(trimPDFWhitespace(line), []byte("xref")) {
 		return false
 	}
-	header, ok := nextNonemptyPDFLine(xref, &position)
+	end, records, trailer, ok := scanPDFTableXRef(xref, position)
 	if !ok {
 		return false
 	}
-	headerFields := bytes.Fields(header)
-	if len(headerFields) != 2 {
+	final, ok := finalPDFTrailer(beforeStartXRef)
+	if !ok {
 		return false
 	}
-	first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
-	count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
-	if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count {
+	if _, ok := pdfPositiveInteger(final["Size"]); !ok {
 		return false
 	}
-	validatedRecords := uint64(0)
-	for validatedRecords < count {
-		record, ok := nextPDFLine(xref, &position)
+	if trailer == nil {
+		trailer = final
+	}
+	// A hybrid-reference update may add no table entries and defer to the
+	// /XRefStm stream or the /Prev section.
+	_, stream := pdfPositiveInteger(trailer["XRefStm"])
+	_, previous := pdfPositiveInteger(trailer["Prev"])
+	if records == 0 && !stream && !previous {
+		return false
+	}
+	root := trailer["Root"]
+	if len(root) == 0 {
+		root = inheritedRoot
+	}
+	size, sizeOK := pdfPositiveInteger(trailer["Size"])
+	return validPDFRootReference(root) && sizeOK && end <= size
+}
+
+// Scan subsections until the trailer keyword. Return the highest object number
+// covered plus one, the number of validated records, and the table's own
+// trailer, or nil when the bounded read ends first.
+func scanPDFTableXRef(xref []byte, position int) (uint64, int, map[string][]string, bool) {
+	end, records := uint64(0), 0
+	for {
+		start := position
+		header, ok := nextNonemptyPDFLine(xref, &position)
 		if !ok {
+			return end, records, nil, true
+		}
+		if firstPDFKeyword(header, "trailer") == 0 {
+			trailerIndex := start + firstPDFKeyword(xref[start:], "trailer") + len("trailer")
+			return end, records, pdfOwnTrailer(xref[trailerIndex:]), true
+		}
+		// A line cut off by the bounded read is truncation, not a bad header.
+		if position == len(xref) && !bytes.ContainsAny(xref[len(xref)-1:], "\r\n") {
+			return end, records, nil, true
+		}
+		if header[0] == '%' {
+			continue
+		}
+		headerFields := bytes.Fields(header)
+		if len(headerFields) != 2 {
+			return 0, 0, nil, false
+		}
+		first, firstErr := strconv.ParseUint(string(headerFields[0]), 10, 64)
+		count, countErr := strconv.ParseUint(string(headerFields[1]), 10, 64)
+		if firstErr != nil || countErr != nil || first > math.MaxUint64-count {
+			return 0, 0, nil, false
+		}
+		end = max(end, first+count)
+		for range count {
+			record, ok := nextPDFLine(xref, &position)
+			if !ok {
+				return end, records, nil, true
+			}
+			if !validPDFXRefRecord(record) {
+				if position == len(xref) {
+					return end, records, nil, true
+				}
+				return 0, 0, nil, false
+			}
+			records++
+		}
+	}
+}
+
+// Parse the dictionary after a table's trailer keyword. It ends at a following
+// startxref; that keyword may also appear inside a string or comment. When no
+// startxref closes it, the bounded read may end after the dictionary. Return
+// nil when no complete dictionary is found, so the final trailer governs.
+func pdfOwnTrailer(data []byte) map[string][]string {
+	for start := 0; ; {
+		index := firstPDFKeyword(data[start:], "startxref")
+		if index < 0 {
 			break
 		}
-		if !validPDFXRefRecord(record) {
-			if position == len(xref) {
-				break
-			}
-			return false
+		if trailer, ok := parsePDFDictionary(data[:start+index]); ok {
+			return trailer
 		}
-		validatedRecords++
+		start += index + len("startxref")
 	}
-	if validatedRecords == 0 {
-		return false
+	tokens, ok := tokenizePDF(data)
+	if !ok {
+		return nil
 	}
-
-	return validPDFTrailerWithRoot(beforeStartXRef, first, count, inheritedRoot)
+	trailer, _, ok := parsePDFDictionaryTokens(tokens, 0, 0)
+	if !ok {
+		return nil
+	}
+	return trailer
 }
 
 func validPDFStreamXRef(xref []byte) bool {
@@ -993,27 +1076,20 @@ func validPDFStreamXRefWithRoot(xref []byte, inheritedRoot []string) bool {
 		validPDFStreamLength(dictionary["Length"])
 }
 
-func validPDFTrailerWithRoot(data []byte, first, count uint64, inheritedRoot []string) bool {
+// Return the trailer dictionary that immediately precedes startxref. A later
+// trailer keyword may appear inside a string, so try earlier ones in turn.
+func finalPDFTrailer(data []byte) (map[string][]string, bool) {
 	for end := len(data); end > 0; {
 		trailerIndex := lastPDFKeyword(data[:end], "trailer")
 		if trailerIndex < 0 {
-			return false
+			return nil, false
 		}
-		trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):])
-		if ok {
-			root := trailer["Root"]
-			if len(root) == 0 {
-				root = inheritedRoot
-			}
-			if !validPDFRootReference(root) {
-				return false
-			}
-			size, sizeOK := pdfPositiveInteger(trailer["Size"])
-			return sizeOK && first+count <= size
+		if trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):]); ok {
+			return trailer, true
 		}
 		end = trailerIndex
 	}
-	return false
+	return nil, false
 }
 
 func nextPDFLine(data []byte, position *int) ([]byte, bool) {
@@ -1923,18 +1999,20 @@ func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
 }
 
 // UnlockPDF decrypts a bounded copy and returns the password that opened it.
-func UnlockPDF(data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
+func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
 	for _, password := range pdfPasswordCandidates(passwords) {
-		output, err := DecryptPDF(data, password, maxBytes)
+		output, err := DecryptPDF(ctx, data, password, maxBytes)
 		if err == nil {
 			return output, password, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
 		}
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
 			continue
 		}
-		// pdfcpu v0.15.0 rejects some AES-256 password characters during preparation.
-		_, preparationErr := precis.NewIdentifier(precis.BidiRule, precis.Norm(norm.NFKC)).String(password)
-		if preparationErr != nil && errors.Is(err, preparationErr) {
+		// A rejected candidate must not prevent trying the remaining passwords.
+		if _, invalid := errors.AsType[stringprep.Error](err); invalid || !utf8.ValidString(password) {
 			continue
 		}
 		return nil, "", fmt.Errorf("decrypt PDF: %w", err)
@@ -1973,12 +2051,12 @@ var pdfDocBytes = sync.OnceValue(func() map[rune]byte {
 })
 
 // DecryptPDF decrypts once with the password selected by local inspection.
-func DecryptPDF(data []byte, password string, maxBytes int64) ([]byte, error) {
+func DecryptPDF(ctx context.Context, data []byte, password string, maxBytes int64) ([]byte, error) {
 	configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
 	configuration.UserPW, configuration.OwnerPW = password, password
 	configuration.Eol = types.EolLF
 	output := pdfOutput{limit: maxBytes}
-	err := api.Decrypt(bytes.NewReader(data), &output, configuration)
+	err := api.Decrypt(ctx, bytes.NewReader(data), &output, configuration)
 	if errors.Is(err, filter.ErrDecodeLimitExceeded) {
 		err = ErrPDFExpandedBytes
 	}

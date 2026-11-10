@@ -5,14 +5,46 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
+	"golang.org/x/sys/unix"
+
+	"go.kenn.io/docbank/internal/daemon"
 )
+
+func TestWaitDeadReturnsForUnreapedChild(t *testing.T) {
+	//nolint:gosec // Run the existing helper in the current test executable.
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestUnresponsiveDaemonHelper$")
+	cmd.Env = append(os.Environ(), "DOCBANK_UNRESPONSIVE_HELPER=1")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	require.NoError(t, stdin.Close())
+
+	// Observe the exit without reaping the child, as in a container without init.
+	var info unix.Siginfo
+	require.NoError(t, unix.Waitid(unix.P_PID, cmd.Process.Pid, &info, unix.WEXITED|unix.WNOWAIT, nil))
+
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		dead, err := waitDead(t.Context(), kitdaemon.RuntimeRecord{PID: cmd.Process.Pid}, daemon.GracefulExitTimeout)
+		require.NoError(t, err)
+		require.True(t, dead, "an exited child must finish the daemon stop wait")
+		require.Zero(t, time.Since(started), "an unreaped child must end the wait at once")
+	})
+}
 
 func TestDaemonDiscoveryAfterBootTimeChange(t *testing.T) {
 	// Keep the real process start ticks while changing the boot-time estimate

@@ -17,7 +17,7 @@ func checkSourceMetadataPhotoEffectsPostgres(t *testing.T) {
 	t.Helper()
 	// The retained XMP receipt is produced by SQLite. Both engines then execute
 	// native metadata publication/reprojection against that settled receipt.
-	source, asset, raw := xmpSidecarPhoto(t)
+	source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	importXMP(t, source, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
 	require.Empty(t, xmpTargets(t, source))
 	target, _ := copyRetentionStore(t, source)

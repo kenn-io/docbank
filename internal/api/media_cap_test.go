@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,7 +18,8 @@ import (
 // is reported as unsupported and the exact file reaches processing manually.
 func TestCapCloudRecordingManualHTTP(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureRemoteManualTestService(t))
+	var worker renditionTestWorker
+	ts, catalog := newTestServer(t, configureRemoteManualTestService(t, &worker))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	reference := "https://cap.so/s/synthcap-http?t=private-synthetic"
 	remote, err := c.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
@@ -71,12 +71,11 @@ func TestCapCloudRecordingManualHTTP(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "queued", queued.OperationState)
-	var processed api.MediaReceipt
-	require.Eventually(t, func() bool {
-		processed, err = c.MediaStatus(t.Context(), remote.SourceID)
-		return err == nil && processed.OperationID == queued.OperationID &&
-			processed.OperationState == "succeeded" && processed.CoverageState == "transcribed"
-	}, 30*time.Second, 20*time.Millisecond)
+	worker.runQueued(t)
+	processed, err := c.MediaStatus(t.Context(), remote.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, queued.OperationID, processed.OperationID)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{processed.OperationState, processed.CoverageState})
 	require.Equal(t, original.ContentVersionID, processed.ContentVersionID)
 	search, err := c.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: phrase, Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 10,

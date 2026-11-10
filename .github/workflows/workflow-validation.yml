@@ -5,9 +5,13 @@ on:
     paths:
       - ".github/actions/**"
       - ".github/workflows/**"
+      - "Makefile"
 
 permissions:
   contents: read
+
+env:
+  GOPROXY: https://proxy.golang.org|direct
 
 cache-mode: read
 concurrency:
@@ -16,13 +20,26 @@ concurrency:
 
 jobs:
   actionlint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Check workflow download retries
+        run: |
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
+          make lint-workflow-retries
+      - name: Build pinned jactionlint
+        env:
+          GOBIN: ${{ runner.temp }}/jactionlint
+        run: kit-retry 3 5 go install github.com/jdx/jactionlint/v2/cmd/jactionlint@v2.3.0
       - uses: step-security/jactionlint@v2.2.0
         with:
-          version: 2.3.0
+          executable: ${{ runner.temp }}/jactionlint/jactionlint
           profile: correctness
           online: "false"
           args: --shellcheck= --pyflakes=
@@ -32,7 +49,7 @@ jobs:
   # action, including ones that other actions call, so a stale lockfile fails
   # jobs at setup.
   actions-lock:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1

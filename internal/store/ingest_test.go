@@ -11,6 +11,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The candidate query drives from the smaller of the content's versions and
+// the folder's live files, so neither a large folder nor popular content scans.
+func TestResolveIngestNameDrivesFromSmallerSide(t *testing.T) {
+	t.Parallel()
+	for caseIndex, tc := range []struct {
+		copies, files int
+		blobFirst     bool
+	}{
+		{20, 100, true},
+		{33, 1, false},
+		{4, 2049, true},
+	} {
+		t.Run(fmt.Sprintf("copies=%d/files=%d", tc.copies, tc.files), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			elsewhere, err := s.Mkdir(ctx, s.RootID(), "elsewhere")
+			require.NoError(t, err)
+			for i := range tc.copies - 1 {
+				_, err := s.CreateFile(ctx, elsewhere.ID, fmt.Sprintf("copy-%d.txt", i), fakeHash("a1"), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			for i := range tc.files - 1 {
+				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("file-%d.txt", i), fmt.Sprintf("%064x", i+1000), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			prior, err := s.CreateFile(ctx, s.RootID(), "report (2).txt", fakeHash("a1"), 1, "text/plain")
+			require.NoError(t, err)
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if caseIndex == 0 {
+					query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("c3"), s.RootID())
+					require.NoError(t, err)
+					assert.Empty(t, query, "new content needs no candidate query")
+				}
+				query, err := resolveIngestCandidatesQueryTx(ctx, tx, fakeHash("a1"), s.RootID())
+				require.NoError(t, err)
+				plan := explainQueryPlan(t, s, query, fakeHash("a1"), s.RootID())
+				if tc.blobFirst {
+					assert.Contains(t, plan, "SEARCH cv USING INDEX content_versions_blob (blob_hash=?)")
+					assert.NotContains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+				} else {
+					assert.Contains(t, plan, "SEARCH candidate USING INDEX nodes_live_children")
+				}
+				name, id, skipped, err := resolveIngestNameTx(ctx, tx, s.RootID(), "report.txt", fakeHash("a1"), "cli", "report.txt")
+				require.NoError(t, err)
+				assert.True(t, skipped)
+				assert.Equal(t, prior.ID, id)
+				assert.Empty(t, name)
+				return nil
+			}))
+		})
+	}
+}
+
 func TestIngestFileIdempotency(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -536,6 +589,39 @@ func TestIngestFileDistinctSourceNamedLikeSuffix(t *testing.T) {
 	assert.False(t, added)
 }
 
+func TestIngestFileMatchesURLBySourceNotName(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	dir, err := s.Mkdir(ctx, s.RootID(), "urls")
+	require.NoError(t, err)
+	urlRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=7","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	original, added, err := s.IngestFile(ctx, urlRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	moved, _, err := s.Move(ctx, original.ID, dir.ID, "reviewed.txt", UnconditionalRev)
+	require.NoError(t, err)
+	before, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	retryRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=7","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	skipped, added, err := s.IngestFile(ctx, retryRun, dir.ID, "changed-name.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=7", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, moved.ID, skipped.ID)
+	assert.Equal(t, moved.Revision, skipped.Revision)
+	after, err := s.NodeProvenance(ctx, moved.ID, 100, 0)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	mirrorRun, err := s.BeginIngest(ctx, "url", `{"version":1,"requested_url":"https://example.com/download?id=8","final_url":"https://example.com/filing.txt","fetched_at":"2026-10-01T12:34:56Z"}`)
+	require.NoError(t, err)
+	_, added, err = s.IngestFile(ctx, mirrorRun, dir.ID, "filing.txt", fakeHash("a1"), 1, "text/plain", "https://example.com/download?id=8", "")
+	require.NoError(t, err)
+	require.True(t, added)
+}
+
 func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -620,6 +706,43 @@ func TestIngestMatchesOnlyLiveCurrentContentInDestination(t *testing.T) {
 			require.True(t, added)
 			require.NotEqual(t, original.ID, imported.ID)
 			require.Equal(t, wantName, imported.Name)
+		})
+	}
+}
+
+func TestIngestFileExactTaggedRollsBackOnMissingTag(t *testing.T) {
+	t.Parallel()
+	for _, audited := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "audited"}[audited], func(t *testing.T) {
+			s := newTestStore(t)
+			parent := s.RootID()
+			if audited {
+				dir, err := s.MkdirAll(t.Context(), "/Receipts")
+				require.NoError(t, err)
+				parent = dir.ID
+				seedInitialAuditAuthority(t, s, parent)
+			}
+			_, err := s.CreateTag(t.Context(), "café")
+			require.NoError(t, err)
+			_, err = s.CreateTag(t.Context(), "2026")
+			require.NoError(t, err)
+			run, err := s.BeginIngest(t.Context(), "watch", "receipts")
+			require.NoError(t, err)
+			for name, want := range map[string]error{"missing": ErrNotFound, "": ErrInvalidTag} {
+				_, err = s.IngestFileExactTagged(t.Context(), run, parent, "receipt.txt", fakeHash("a1"), 10, "text/plain", "receipt.txt", "", []string{"café", name})
+				require.ErrorIs(t, err, want)
+				require.ErrorAs(t, err, new(*TagResolutionError))
+				var retained int
+				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM nodes WHERE name = 'receipt.txt') + (SELECT COUNT(*) FROM provenance WHERE original_path = 'receipt.txt')`).Scan(&retained))
+				assert.Zero(t, retained)
+			}
+			node, err := s.IngestFileExactTagged(t.Context(), run, parent, "receipt.txt", fakeHash("a1"), 10, "text/plain", "receipt.txt", "", []string{"café", "cafe\u0301", "café", "2026"})
+			require.NoError(t, err)
+			tags, total, err := s.NodeTags(t.Context(), node.ID, 10, 0)
+			require.NoError(t, err)
+			require.Equal(t, 2, total)
+			assert.Equal(t, "café", tags[1].Name)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
 		})
 	}
 }

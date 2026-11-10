@@ -14,11 +14,13 @@ var ErrInvalidProcessingConsentRequest = store.ErrInvalidProcessingConsentReques
 func (v *Vault) GrantProcessingConsent(
 	ctx context.Context, r document.ProcessingConsentRequest,
 ) (document.ProcessingConsentReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return document.ProcessingConsentReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return document.ProcessingConsentReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	return v.metadata.GrantProcessingConsent(ctx, r)
 }
@@ -27,11 +29,13 @@ func (v *Vault) GrantProcessingConsent(
 func (v *Vault) RevokeProcessingConsent(
 	ctx context.Context, r document.ProcessingConsentRevocationRequest,
 ) (document.ProcessingConsentRevocationReceipt, error) {
-	if err := v.begin(); err != nil {
+	if err := v.begin(ctx); err != nil {
 		return document.ProcessingConsentRevocationReceipt{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	v.mutation.Lock()
+	if err := v.mutation.Lock(ctx); err != nil {
+		return document.ProcessingConsentRevocationReceipt{}, err
+	}
 	defer v.mutation.Unlock()
 	return v.metadata.RevokeProcessingConsent(ctx, r)
 }

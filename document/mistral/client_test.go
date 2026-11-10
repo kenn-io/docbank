@@ -236,7 +236,7 @@ func TestClientReverifiesDocumentBeforeRetry(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer mutating.Close()
-	client := newServerClient(t, mutating, policy, ClientConfig{MaxRetryDelay: time.Millisecond})
+	client := newServerClient(t, mutating, policy, ClientConfig{})
 	_, err = client.Process(t.Context(), prepared, authorization)
 	require.ErrorContains(t, err, "hash mismatch")
 	assert.Equal(t, 1, requests)
@@ -247,32 +247,34 @@ func TestClientDoesNotRetryReleasedDocument(t *testing.T) {
 	prepared := prepareTestDocument(t, policy, testPDF("release-during-backoff"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
-	firstResponse := make(chan struct{})
-	requests := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		requests++
-		_, copyErr := io.Copy(io.Discard, request.Body)
-		assert.NoError(t, copyErr)
-		w.Header().Set("Retry-After", "60")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if requests == 1 {
-			close(firstResponse)
-		}
-	}))
-	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{MaxRetryDelay: 500 * time.Millisecond})
-	done := make(chan error, 1)
-	go func() {
-		_, processErr := client.Process(t.Context(), prepared, authorization)
-		done <- processErr
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		firstResponse := make(chan struct{})
+		requests := 0
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			requests++
+			_, copyErr := io.Copy(io.Discard, request.Body)
+			assert.NoError(t, copyErr)
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			if requests == 1 {
+				close(firstResponse)
+			}
+		}))
+		client := newServerClient(t, server, policy, ClientConfig{})
+		done := make(chan error, 1)
+		go func() {
+			_, processErr := client.Process(t.Context(), prepared, authorization)
+			done <- processErr
+		}()
 
-	<-firstResponse
-	require.NoError(t, prepared.Release())
-	err = <-done
-	require.ErrorContains(t, err, "released")
-	assert.Equal(t, 1, requests)
-	assert.Equal(t, 1, MetricsFromError(err).Requests)
+		<-firstResponse
+		// Fake time cannot pass the retry wait until Release has returned.
+		require.NoError(t, prepared.Release())
+		err := <-done
+		require.ErrorContains(t, err, "released")
+		assert.Equal(t, 1, requests)
+		assert.Equal(t, 1, MetricsFromError(err).Requests)
+	})
 }
 
 func TestClientUploadsVerifiedSnapshot(t *testing.T) {
@@ -317,28 +319,31 @@ func TestClientRejectsSuccessfulResponseForIncompleteUpload(t *testing.T) {
 	prepared := prepareTestDocument(t, policy, testPDF("incomplete"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
-	requests := 0
-	client, err := NewClient(policy, ClientConfig{
-		APIKey:     "synthetic-key",
-		MaxRetries: 1,
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			requests++
-			require.NoError(t, request.Body.Close())
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
-				Request:    request,
-			}, nil
-		})},
-	})
-	require.NoError(t, err)
+	// The retry waits out the one-second fallback backoff on fake time.
+	synctest.Test(t, func(t *testing.T) {
+		requests := 0
+		client, err := NewClient(policy, ClientConfig{
+			APIKey:     "synthetic-key",
+			MaxRetries: 1,
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				requests++
+				require.NoError(t, request.Body.Close())
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(testSuccessfulResponse)),
+					Request:    request,
+				}, nil
+			})},
+		})
+		require.NoError(t, err)
 
-	_, err = client.Process(t.Context(), prepared, authorization)
-	require.ErrorIs(t, err, ErrTransientResponse)
-	require.ErrorContains(t, err, "stream Mistral OCR request")
-	assert.Equal(t, 2, requests)
-	assert.Equal(t, 2, MetricsFromError(err).Requests)
+		_, err = client.Process(t.Context(), prepared, authorization)
+		require.ErrorIs(t, err, ErrTransientResponse)
+		require.ErrorContains(t, err, "stream Mistral OCR request")
+		assert.Equal(t, 2, requests)
+		assert.Equal(t, 2, MetricsFromError(err).Requests)
+	})
 }
 
 func TestClientReadsEarlySuccessResponseWhileUploadContinues(t *testing.T) {
@@ -346,32 +351,33 @@ func TestClientReadsEarlySuccessResponseWhileUploadContinues(t *testing.T) {
 	prepared := prepareTestDocument(t, policy, testPDF("early-response"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
-	bridgeDone := make(chan error, 1)
-	client, err := NewClient(policy, ClientConfig{
-		APIKey: "synthetic-key",
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			responseReader, responseWriter := io.Pipe()
-			go func() {
-				_, responseErr := io.WriteString(responseWriter, testSuccessfulResponse)
-				_, uploadErr := io.Copy(io.Discard, request.Body)
-				closeErr := responseWriter.CloseWithError(errors.Join(responseErr, uploadErr))
-				bridgeDone <- errors.Join(responseErr, uploadErr, closeErr)
-			}()
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       responseReader,
-				Request:    request,
-			}, nil
-		})},
-	})
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
+	synctest.Test(t, func(t *testing.T) {
+		bridgeDone := make(chan error, 1)
+		client, err := NewClient(policy, ClientConfig{
+			APIKey: "synthetic-key",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				responseReader, responseWriter := io.Pipe()
+				go func() {
+					_, responseErr := io.WriteString(responseWriter, testSuccessfulResponse)
+					_, uploadErr := io.Copy(io.Discard, request.Body)
+					closeErr := responseWriter.CloseWithError(errors.Join(responseErr, uploadErr))
+					bridgeDone <- errors.Join(responseErr, uploadErr, closeErr)
+				}()
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       responseReader,
+					Request:    request,
+				}, nil
+			})},
+		})
+		require.NoError(t, err)
 
-	_, err = client.Process(ctx, prepared, authorization)
-	require.NoError(t, err)
-	require.NoError(t, <-bridgeDone)
+		// A Process or upload that never finished would deadlock the bubble.
+		_, err = client.Process(t.Context(), prepared, authorization)
+		require.NoError(t, err)
+		require.NoError(t, <-bridgeDone)
+	})
 }
 
 func TestClientCancellationStopsEarlyResponseAndUpload(t *testing.T) {
@@ -379,40 +385,38 @@ func TestClientCancellationStopsEarlyResponseAndUpload(t *testing.T) {
 	prepared := prepareTestDocument(t, policy, testPDF("cancel-early-response"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
-	requestStarted := make(chan struct{})
-	responseReader, responseWriter := io.Pipe()
-	t.Cleanup(func() {
-		_ = responseReader.Close()
-		_ = responseWriter.Close()
-	})
-	client, err := NewClient(policy, ClientConfig{
-		APIKey: "synthetic-key",
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			close(requestStarted)
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       responseReader,
-				Request:    request,
-			}, nil
-		})},
-	})
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	result := make(chan error, 1)
-	go func() {
-		_, processErr := client.Process(ctx, prepared, authorization)
-		result <- processErr
-	}()
-	<-requestStarted
-	cancel()
+	synctest.Test(t, func(t *testing.T) {
+		requestStarted := make(chan struct{})
+		responseReader, responseWriter := io.Pipe()
+		t.Cleanup(func() {
+			_ = responseReader.Close()
+			_ = responseWriter.Close()
+		})
+		client, err := NewClient(policy, ClientConfig{
+			APIKey: "synthetic-key",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				close(requestStarted)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       responseReader,
+					Request:    request,
+				}, nil
+			})},
+		})
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() {
+			_, processErr := client.Process(ctx, prepared, authorization)
+			result <- processErr
+		}()
+		<-requestStarted
+		cancel()
 
-	select {
-	case err := <-result:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("Process did not return after cancellation closed its request pipe")
-	}
+		// A Process that kept reading the response would deadlock the bubble.
+		require.ErrorIs(t, <-result, context.Canceled)
+	})
 }
 
 func TestClientPreservesRequestAccounting(t *testing.T) {
@@ -422,13 +426,12 @@ func TestClientPreservesRequestAccounting(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, test := range []struct {
-		name          string
-		statuses      []int
-		retryAfter    string
-		maxRetryDelay time.Duration
-		timeout       time.Duration
-		wantError     error
-		wantMetrics   RequestMetrics
+		name        string
+		statuses    []int
+		retryAfter  string
+		deadline    bool
+		wantError   error
+		wantMetrics RequestMetrics
 	}{
 		{
 			name: "success", statuses: []int{http.StatusOK},
@@ -436,17 +439,17 @@ func TestClientPreservesRequestAccounting(t *testing.T) {
 		},
 		{
 			name: "success after retry", statuses: []int{http.StatusTooManyRequests, http.StatusOK},
-			retryAfter: "0", maxRetryDelay: time.Millisecond,
+			retryAfter:  "0",
 			wantMetrics: RequestMetrics{Requests: 2, Retries: 1, Latency: 20 * time.Millisecond},
 		},
 		{
 			name: "retries exhausted", statuses: []int{http.StatusServiceUnavailable},
-			retryAfter: "0", maxRetryDelay: time.Millisecond, wantError: ErrTransientResponse,
+			retryAfter: "0", wantError: ErrTransientResponse,
 			wantMetrics: RequestMetrics{Requests: 2, Retries: 1, Latency: 20 * time.Millisecond},
 		},
 		{
 			name: "retry wait canceled", statuses: []int{http.StatusTooManyRequests},
-			retryAfter: "60", timeout: 20 * time.Millisecond, wantError: context.DeadlineExceeded, //nolint:kennlint // deadlinetest: this timeout is consumed only inside the synctest bubble below
+			retryAfter: "60", deadline: true, wantError: context.DeadlineExceeded,
 			wantMetrics: RequestMetrics{Requests: 1, Retries: 0, Latency: 10 * time.Millisecond},
 		},
 	} {
@@ -469,13 +472,14 @@ func TestClientPreservesRequestAccounting(t *testing.T) {
 					assert.NoError(t, writeErr)
 				}))
 				client, err := NewClient(policy, ClientConfig{
-					APIKey: "synthetic-key", HTTPClient: server.Client(), MaxRetries: 1, MaxRetryDelay: test.maxRetryDelay,
+					APIKey: "synthetic-key", HTTPClient: server.Client(), MaxRetries: 1,
 				})
 				require.NoError(t, err)
 				ctx := t.Context()
-				if test.timeout > 0 {
+				if test.deadline {
 					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, test.timeout)
+					// The deadline expires during the 30-second capped retry wait.
+					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
 					defer cancel()
 				}
 				result, err := client.Process(ctx, prepared, authorization)
@@ -556,10 +560,10 @@ func newServerClient(t *testing.T, server *httptest.Server, policy Policy, confi
 	if config.APIKey == "" {
 		config.APIKey = "synthetic-key"
 	}
+	// Client sets URL for a server on the in-memory network.
+	transport := server.Client().Transport
 	target, err := url.Parse(server.URL)
 	require.NoError(t, err)
-	base := server.Client()
-	transport := base.Transport
 	config.HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		clone := request.Clone(request.Context())
 		clone.URL.Scheme = target.Scheme

@@ -189,17 +189,21 @@ func (m *fixedLinearMemory) Free() {
 // Close a rendering engine before starting another engine or VerifyFresh;
 // concurrent sessions wait with their page context and deadline.
 func NewPDFium(recipe redaction.Recipe) (Engine, error) {
-	return newPDFium(recipe, readProcessRSS)
+	engine, err := newPDFium(recipe, readProcessRSS)
+	if err != nil {
+		return nil, err
+	}
+	return engine, nil
 }
 
-func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (Engine, error) {
+func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (*pdfiumEngine, error) {
 	if err := validateRecipe(recipe); err != nil {
 		return nil, err
 	}
 	if hashBytes(wasmBytes) != wasmSHA256 || recipe.RendererSHA256 != "" && recipe.RendererSHA256 != wasmSHA256 {
 		return nil, errors.New("qualified PDFium WASM asset unavailable or hash mismatch")
 	}
-	if err := checkRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
+	if err := admitRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
 		return nil, err
 	}
 	return &pdfiumEngine{gate: make(chan struct{}, 1), recipe: recipe, cache: wasmCode, scavenge: debug.FreeOSMemory, rssRead: read}, nil
@@ -606,6 +610,9 @@ func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.
 	if err != nil {
 		return err
 	}
+	// Reclaim retired runtime metadata before another page decodes the module.
+	// Keep the engine gate and process-wide backing lease through cleanup.
+	defer e.scavenge()
 	defer lease.Free() // Also release when initialization fails before runtime ownership.
 	// Reserve the already bounded linear-memory capacity once. Wazero's
 	// default growth path reallocates/copies the old buffer, which can exceed
@@ -680,7 +687,7 @@ func renderPage(instance pdfium.Pdfium, ref requests.Page, page redaction.Page, 
 	if err != nil {
 		return Raster{}, fmt.Errorf("read PDF page dimensions: %w", err)
 	}
-	if math.Abs(size.Width-physicalPoints(page.Width)) > 0.001 || math.Abs(size.Height-physicalPoints(page.Height)) > 0.001 {
+	if !sourceDimensionMatches(size.Width, page.Width) || !sourceDimensionMatches(size.Height, page.Height) {
 		return Raster{}, errors.New("PDF page dimensions differ from declared frame")
 	}
 	rendered, err := instance.RenderPageInPixels(&requests.RenderPageInPixels{Page: ref, Width: w, Height: h, RenderForm: true})

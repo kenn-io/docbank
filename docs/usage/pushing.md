@@ -50,12 +50,13 @@ API key. The check cannot detect a process that relays the challenge to the
 real daemon, which requires access to the daemon itself. Use HTTPS when the
 path between the client and the daemon is not trusted.
 
-A long-running `--watch` also needs the target daemon to stay available. A
-background daemon with no configured `[[watch]]`, scheduled packing, or scheduled backups
+A long-running `--watch` also needs the target daemon to stay available. An
+automatically started daemon with no configured `[[watch]]`, scheduled packing, or scheduled backups
 shuts down after `[server] idle_timeout` (30 minutes by default) when no API
 requests arrive. Push sends no requests while the folder is unchanged, so it
-cannot wake a daemon that has already stopped. Before starting push watch, set
-`[server] idle_timeout = "0"` or run `docbank daemon run` in the foreground.
+cannot wake a daemon that has already stopped. Before starting push watch, run
+`docbank daemon restart`, set `[server] idle_timeout = "0"`, or run
+`docbank daemon run` in the foreground.
 See [daemon idle shutdown](../architecture/daemon.md#auto-start-and-idle-shutdown).
 
 The first push preserves the folder's relative hierarchy under `--dest`. The
@@ -76,11 +77,11 @@ Use a new name when you want an independent push source.
 When it starts, the client reads the last hash the daemon accepted for every
 identity of the push name, a page at a time. This also checks the key and the
 push name before any file is read, so those mistakes fail immediately, even
-with `--watch`. A one-shot run hashes every local file. A periodic watch scan rechecks accepted
-file hashes; notification scans limit content rechecks to dirty or
-metadata-changed files. Push does not trust modification times, which some
-tools preserve across edits. Equal
-bytes require no upload. Changed bytes append a version
+with `--watch`. A one-shot run hashes every local file. Periodic watch scans
+compare file identity, size, modification time, and native change time. They
+reread changed files, or every file when the filesystem reports no change time.
+Notification scans also recheck files named by notifications. Equal bytes
+require no upload. Changed bytes append a version
 to the same node, even if you moved or renamed the archived node. An unchanged
 source leaves a later archive edit or revert intact. The daemon retains each
 source's accepted hash separately from the node's current content and retained
@@ -119,13 +120,16 @@ example because of their permissions or a read error during upload. In
 readable. If the daemon cannot be reached, answers with a
 server error, or loses an acknowledgment, a one-shot push stops with an error
 and reports only acknowledged files. Other uploads may already be in flight;
-push cancels them and waits for its source readers to finish. Ctrl+C stops the
-run and still prints the final count. Run the same command again to resume from
-server state. Files already committed do not need another upload. There is no local
-cursor database. [Backup and restore](backup.md) preserve push provenance and
-source cursors even when a source's accepted version was pruned. A cursor does
-not keep those pruned bytes in the backup; backups include bytes still required
-by retained content and other authority.
+push cancels them and waits for its source readers to finish. The daemon
+acknowledges a file only after committing it, and push keeps up to 32 uploads
+in flight, so a busy or slow daemon can take a while to answer. Push waits up to
+five minutes for each acknowledgment before it treats the answer as lost.
+Ctrl+C stops the run and still prints the final count. Run the same command
+again to resume from server state. Files already committed do not need another
+upload. There is no local cursor database. [Backup and restore](backup.md)
+preserve push provenance and source cursors even when a source's accepted
+version was pruned. A cursor does not keep those pruned bytes in the backup;
+backups include bytes still required by retained content and other authority.
 
 ## Switch from a daemon-owned watch
 
@@ -183,13 +187,21 @@ still apply. For example, add `--capture-on-change --scan-interval 1h` to the
 command above. The flag is rejected without `--watch`, before a credential or
 daemon connection is resolved.
 
-In settled mode, each periodic scan rechecks accepted file hashes. An
-equal-length edit with a restored modification time starts a new settle window
-and is then uploaded. In prompt mode, a notification hint can read that changed
-file sooner, while periodic scans keep the full digest check. A matching hash
-sends no daemon request and leaves an independent Docbank edit intact.
-Periodic checks reread local files; increase `--scan-interval` to reduce disk
-activity for large folders.
+Periodic scans compare file identity, size, modification time, and native change
+time. Unchanged files keep their accepted hashes without rereading their bytes.
+An equal-length edit with a restored modification time starts a new settle
+window and uploads when the native change time reveals the edit. Some filesystems,
+including FAT/exFAT on Linux and rclone mounts, make change time follow
+modification time. On those filesystems, an edit that keeps the size and restores
+the modification time can go unseen while `push --watch` runs in settled mode.
+In prompt mode, a notification hint can read that changed file sooner.
+
+On filesystems that report no change time, periodic scans reread every file to
+detect these edits. Increase `--scan-interval` there to reduce disk activity for
+large folders. Metadata-only changes, such as permissions, extended attributes,
+or a hard link, also move the change time. The file settles again, is reread, and
+is checked against the daemon. A matching hash skips the upload and leaves an
+independent Docbank edit intact.
 
 Prompt capture is best effort. Notifications can merge saves, and slow uploads
 can miss bytes overwritten before the client reads them. Readable intermediate
@@ -201,8 +213,8 @@ requests a full scan. Native subscriptions use a 32,768-entry-unit budget:
 each admitted directory costs one plus its immediate entry count. A backend
 or budget failure closes subscriptions, reports degraded polling, and keeps
 periodic scans running. A directory that vanishes during enrollment is retried
-at the next periodic tick. Polling uses existing digest checks, so a later
-same-size, restored-mtime edit remains detectable while the client runs.
+at the next periodic tick. Polling uses the file metadata and digest checks
+described above, with the same change-time limits.
 
 Repeat `--exclude` for literal rules. A basename matches anywhere; a relative
 path excludes that entry and its descendants from the source root. These rules
