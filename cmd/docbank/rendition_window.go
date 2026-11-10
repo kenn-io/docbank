@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -154,11 +153,7 @@ func runRenditionWindow(
 		options.profile = windowProfileName(*profiles, window.ProfileFingerprint)
 	}
 	if options.asJSON {
-		return writeCLIJSON(cmd.OutOrStdout(), struct {
-			api.RenditionTextWindow
-
-			Profile string `json:"profile"`
-		}{RenditionTextWindow: window, Profile: options.profile})
+		return writeCLIJSON(cmd.OutOrStdout(), window)
 	}
 	return writeRenditionWindow(cmd.OutOrStdout(), options, window)
 }
@@ -220,8 +215,6 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 		return selected, fmt.Errorf("no readable rendition is currently available for this version: %w", store.ErrNotFound)
 	}
 	if len(names) > 1 {
-		sort.Strings(names)
-		sort.Strings(pins)
 		return selected, usageError(fmt.Errorf("multiple readable profiles: %s; choose %s", strings.Join(names, ", "), strings.Join(pins, "; ")))
 	}
 	return selected, nil

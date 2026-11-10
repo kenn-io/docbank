@@ -217,7 +217,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
 		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: "no readable rendition is currently available"},
 		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
-		{name: "ambiguous sorted", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: "alpha, zeta"},
+		{name: "ambiguous", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: "multiple readable profiles"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var profiles []api.ProcessingProfileSummary
@@ -285,7 +285,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 			c := daemonconn.New(server.URL, "test-key")
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
 			cmd, output := processingTestCommand()
-			options := renditionWindowOptions{selector: nodeSelector{id: 42}, maxChars: 8000, asJSON: true}
+			options := renditionWindowOptions{selector: nodeSelector{id: 42}, maxChars: 8000}
 			err := runRenditionWindow(cmd, c, options)
 			if tc.code != 0 {
 				require.Error(t, err)
@@ -293,16 +293,15 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 				if tc.wantErr != "" {
 					require.Contains(t, err.Error(), tc.wantErr)
 				}
+				if tc.name == "ambiguous" {
+					require.Contains(t, err.Error(), "alpha: --profile alpha")
+					require.Contains(t, err.Error(), "zeta: --profile zeta")
+				}
 				return
 			}
 			require.NoError(t, err)
-			var result struct {
-				Profile string `json:"profile"`
-				Text    string `json:"text"`
-			}
-			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-			require.Equal(t, tc.want, result.Profile)
-			require.Equal(t, "page text", result.Text)
+			require.Contains(t, output.String(), "profile: \""+tc.want+"\"")
+			require.Contains(t, output.String(), "page text")
 		})
 	}
 }

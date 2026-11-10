@@ -788,7 +788,7 @@ the listed `--attachment` to choose it. `--version` pins
 the current version, and the selected version must remain current and live.
 It returns at most
 8,000 characters by default. Use `--max-chars` for 1–16,000 characters and
-`--json` for the text, profile name, full rendition identity, offsets, and EOF flag.
+`--json` for the text, full rendition identity, offsets, and EOF flag.
 The text is stored Markdown, including its metadata envelope and escaped
 punctuation. It is not rendered or unescaped.
 
