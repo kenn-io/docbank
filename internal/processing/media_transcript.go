@@ -89,9 +89,6 @@ func (service *Service) MediaTranscript(
 		Origin: origin, Completeness: string(view.Build.Completeness),
 		Truncated: view.Build.Truncated, HasOmissions: len(evidence.Omissions) > 0,
 		Units: make([]MediaTranscriptUnit, len(evidence.Units))}
-	if origin != "generated" {
-		transcript.SpeechState = statusPartial
-	}
 	for i, unit := range evidence.Units {
 		span, err := retrieval.MediaTimeSpanFromLocator(unit.Locator)
 		if err != nil {

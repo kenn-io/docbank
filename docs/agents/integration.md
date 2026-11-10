@@ -132,8 +132,9 @@ search evidence's `build_id`. When a supplied input is bound, also compare
 `source_sha256`, `profile_fingerprint`, and `evidence_checksum` to the
 recording. Require `artifact_sha256` when the application needs the retained
 transcript's exact identity; it is absent when the profile did not retain a
-typed artifact. Use `speech_state` to assess speech readiness. Supplied-origin
-transcripts report `partial`, including timed captions.
+typed artifact. Use `speech_state` to assess speech readiness. Supplied
+transcript artifacts report `partial`, including timed captions even without a
+bound input.
 
 Replace cached text when the build or a bound hash changes. Invalidate text and
 its derived search data when the recording is replaced or trashed, its source is

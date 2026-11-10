@@ -453,8 +453,8 @@ the normalized evidence of the active rendition for that content version and
 processing profile, the same build `/api/v1/renditions/select` serves. Each
 unit keeps its text, an optional `speaker`, and an optional `time_span` with
 `start_ms` and `end_ms`, the same shape search evidence uses. Untimed units
-omit `time_span`. `origin` is `supplied` when the build came from a supplied
-transcript or caption, and `generated` otherwise.
+omit `time_span`. `origin` is `supplied` when the build has a bound supplied
+input, and `generated` otherwise.
 
 `transcript.build_id` identifies that exact active build. When a supplied input
 is bound to the build, `transcript.supplied_input_id` identifies it. A failed
@@ -473,6 +473,7 @@ Supplied-origin transcripts always report `speech_state: "partial"`, including
 timed captions; this preserves provenance and does not assert missing speech.
 Provider-reported partial success also yields partial speech, even when the
 retained segments otherwise look complete.
+Evidence without a retained transcript artifact also reports partial speech.
 Empty ASR output fails. See [exact transcript attribution](../agents/integration.md#read-an-exact-media-transcript)
 for consumer readiness and lifecycle rules.
 

@@ -659,10 +659,11 @@ Neither field is inferred from the sender or the filename.
 no omissions except the field `non_speech_content`. A transcript does not
 describe sound effects, so the ordinary `completeness: "partial"` and
 `has_omissions: true` remain accurate. Other omissions yield
-`speech_state: "partial"`. Supplied-origin transcripts always report partial
-speech provenance, including timed captions; this rule does not assert that
-speech is missing. A build whose provider reported partial success also yields
+`speech_state: "partial"`. A bound supplied input or a supplied transcript
+artifact yields partial speech provenance, including when no input is bound.
+This rule does not assert that speech is missing. A build whose provider reported partial success also yields
 `speech_state: "partial"`, even if its retained segments otherwise look complete.
+Evidence without a retained transcript artifact also yields partial speech.
 Speech readiness does not assert verbatim accuracy,
 identify people, or prove silence; empty ASR output fails.
 

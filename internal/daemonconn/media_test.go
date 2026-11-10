@@ -117,7 +117,7 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 func TestMediaTranscriptClientRejectsInconsistentBuildIdentity(t *testing.T) {
 	for name, evidence := range map[string]string{
 		"missing build":           `{"origin":"generated","units":[]}`,
-		"unknown origin":          `{"build_id":"build","origin":"unknown","units":[]}`,
+		"supplied without input":  `{"build_id":"build","origin":"supplied","units":[]}`,
 		"generated with an input": `{"build_id":"build","origin":"generated","supplied_input_id":"input","units":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -154,16 +154,4 @@ func TestMediaTranscriptClientRejectsUnsupportedContract(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestMediaTranscriptClientAcceptsUnboundSuppliedTranscript(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"build_id":"build","origin":"supplied","speech_state":"partial","units":[]}}`))
-	}))
-	t.Cleanup(server.Close)
-	result, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
-	require.NoError(t, err)
-	require.Equal(t, "supplied", result.Transcript.Origin)
-	require.Empty(t, result.Transcript.SuppliedInputID)
 }

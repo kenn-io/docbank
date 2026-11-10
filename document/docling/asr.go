@@ -137,7 +137,6 @@ func (client *ASRClient) Render(
 		return document.RenditionResult{}, err
 	}
 	defer run.operation.Cancel()
-	defer clear(run.source)
 	if run.metadata.Filename == "" {
 		run.metadata.Filename = map[string]string{"audio/mpeg": "document.mp3", "audio/wav": "document.wav", "audio/mp4": "document.m4a"}[run.metadata.MediaType]
 	}
