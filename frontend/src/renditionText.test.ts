@@ -123,10 +123,7 @@ it("accepts the worker's bounded digest-form artifact identity", async () => {
       observation,
       new AbortController().signal,
     ),
-  ).resolves.toMatchObject({
-    state: "ready",
-    artifact: { id: "f".repeat(64) },
-  });
+  ).resolves.toMatchObject({ state: "ready", artifact: { id: "f".repeat(64) } });
 });
 
 it("validates page fields", async () => {
@@ -177,7 +174,7 @@ it.each([
   ["unknown receipt field", receipt({ extra: true })],
   ["invalid schema link", receipt({ $schema: "" })],
   ["unbounded artifact identity", receipt({ artifact: { ...artifact, id: "x".repeat(129) } })],
-])("validates the %s receipt", async (_name, value) => {
+])("rejects a mismatched or widened %s receipt", async (_name, value) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify(value), {
       headers: { "Content-Type": "application/json" },

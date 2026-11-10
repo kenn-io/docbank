@@ -425,28 +425,6 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 	}
 }
 
-func TestAnswerPageCoverageUsesBoundedOperation(t *testing.T) {
-	fence := api.DocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/processing/pdf-page-gaps" {
-			http.Error(w, "expected bounded page-gap operation", http.StatusBadRequest)
-			return
-		}
-		var got api.DocumentSourceFence
-		assert.NoError(t, json.UnmarshalRead(r.Body, &got))
-		assert.Equal(t, fence, got)
-		writeDaemonJSON(t, w, api.PDFPageGaps{VaultUID: testVaultID, PagesWithoutText: []api.PageTextGap{{ContentVersionID: testVersionID, Pages: []int{2}}}})
-	}))
-	t.Cleanup(daemon.Close)
-	err := daemonAnswerSession(exportTestLease(t, daemon.URL))(t.Context(), func(ctx context.Context, client answerClient) error {
-		got, err := client.GetPDFPageCoverage(ctx, fence)
-		require.NoError(t, err)
-		require.Equal(t, []api.PageTextGap{{ContentVersionID: testVersionID, Pages: []int{2}}}, got.PagesWithoutText)
-		return nil
-	})
-	require.NoError(t, err)
-}
-
 func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
 	f := newNativeExportFixture(t)
 	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")

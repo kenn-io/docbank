@@ -411,7 +411,7 @@ func (w *PackageImportWorker) processClaim(ctx context.Context, job store.Packag
 	snapshotID := packageImportSnapshotID(pkg.PackageID)
 	state := "complete"
 	if gaps > 0 {
-		state = statusPartial
+		state = "partial"
 	}
 	return w.cfg.Mutate(ctx, func() error {
 		_, finishErr := w.cfg.Catalog.FinishPackageImportJob(ctx, job.ID, job.Epoch, job.Token, state, snapshotID, spool)
