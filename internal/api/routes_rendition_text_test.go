@@ -411,3 +411,18 @@ func configureAutomaticPDFText(t *testing.T, d *api.Deps) *processing.PDFTextRun
 	require.NoError(t, runner.Initialize(t.Context()))
 	return runner
 }
+
+func TestRenditionTextHTTPAcceptsSuppliedProfiles(t *testing.T) {
+	ts, s := newTestServer(t, configureLoomManualTestService(t, nil))
+	node := createFileWithContent(t, ts, s, "/source.txt", "synthetic source")
+	for _, name := range []string{processing.SuppliedMediaProfileName, processing.SuppliedCaptionProfileName} {
+		t.Run(name, func(t *testing.T) {
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, map[string]any{
+				"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
+				"blob_hash": node.BlobHash, "size": node.Size, "profile": name,
+			})
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			require.Contains(t, body, `"state":"unprocessed"`)
+		})
+	}
+}

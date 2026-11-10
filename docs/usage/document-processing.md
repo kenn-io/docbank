@@ -753,10 +753,10 @@ version without starting processing:
 ```bash
 docbank document stat /inbox/notes.txt --json
 docbank processing coverage <version-uuid> --profile <name> --json
-docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
+docbank rendition window /inbox/notes.txt
 ```
 
-Both commands require a profile listed by `docbank processing profiles --json`.
+Coverage and explicit window selections require a profile listed by `docbank processing profiles --json`.
 A configured profile whose runtime is unavailable is not enough, even if its
 renditions are retained. Reports can still use retained evidence under such a
 configured profile. A profile error here does not mean that evidence is missing.
@@ -775,8 +775,11 @@ succeed.
 
 ### Read and continue a text window
 
-`rendition window` requires the selected version to remain current and live.
-It discovers the active rendition for the named profile and returns at most
+`rendition window` reads the current version and selects the one executable
+profile with readable text. If several profiles have text, it lists their names
+and exits with a usage error; pass `--profile` to choose one. `--version` pins
+the current version, and the selected version must remain current and live.
+It returns at most
 8,000 characters by default. Use `--max-chars` for 1–16,000 characters and
 `--json` for the text, full rendition identity, offsets, and EOF flag.
 The text is stored Markdown, including its metadata envelope and escaped
@@ -792,7 +795,7 @@ docbank rendition window id:<node-id> --version <version-uuid> --profile <name> 
 
 Offsets count Unicode scalar values, not bytes or visible grapheme clusters.
 Offsets range from 0 to 2,147,483,647. A nonzero offset requires an attachment
-ID, and a pinned first window can also use `--attachment` at offset zero. The
+ID and `--profile`, and a pinned first window can also use `--attachment` at offset zero. The
 command refuses a replaced rendition instead of continuing into its
 replacement. An offset exactly at EOF succeeds with empty text. An offset past
 EOF fails. No command automatically fetches the remaining windows.

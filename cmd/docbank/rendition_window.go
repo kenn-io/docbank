@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"unicode/utf8"
 	"uuid"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -25,24 +27,35 @@ type renditionWindowOptions struct {
 
 func newRenditionWindowCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Example: `  docbank document stat id:12 # version: <version-uuid>
+		Example: `  docbank rendition window id:12
   docbank rendition window id:12 --version <version-uuid> --profile <profile>`,
-		Long: `--version is the current version UUID (document stat); --profile names the
-profile that built it. Prints a continuation command when more text remains.`,
+		Long: `Reads the current version and selects its readable profile by default.
+Prints a continuation command when more text remains.`,
 		Use:   "window <path-or-id>",
 		Short: "Read a bounded slice of a document's derived text",
 		Args:  cobra.ExactArgs(1)}
 	var options renditionWindowOptions
 	var version string
-	cmd.Flags().StringVar(&version, "version", "", "exact content-version UUID (required)")
-	cmd.Flags().StringVar(&options.profile, "profile", "", "executable processing profile (required)")
+	cmd.Flags().StringVar(&version, "version", "", "current content-version UUID (default: current version)")
+	cmd.Flags().StringVar(&options.profile, "profile", "", "executable processing profile (default: unique readable profile)")
 	cmd.Flags().StringVar(&options.attachment, "attachment", "", "pin an active rendition attachment")
 	cmd.Flags().IntVar(&options.offset, "offset", 0, "unicode character offset (0–2147483647)")
 	cmd.Flags().IntVar(&options.maxChars, "max-chars", 8000, "maximum characters to read (1–16000)")
 	cmd.Flags().BoolVar(&options.asJSON, "json", false, "print JSON to stdout")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if err := validateInspectionSelection(version, options.profile); err != nil {
-			return err
+		options.version = uuid.Nil()
+		if version != "" || cmd.Flags().Changed("version") {
+			if !daemonconn.IsCanonicalUUIDv4(version) {
+				return usageError(errors.New("version must be a canonical lowercase UUIDv4"))
+			}
+		}
+		if options.profile != "" || cmd.Flags().Changed("profile") {
+			if len(options.profile) > 128 || !inspectionProfilePattern.MatchString(options.profile) {
+				return usageError(errors.New("--profile must match [a-z][a-z0-9_-]* (1–128 characters)"))
+			}
+		}
+		if cmd.Flags().Changed("attachment") && options.profile == "" {
+			return usageError(errors.New("--attachment requires --profile"))
 		}
 		if options.offset < 0 || options.offset > 1<<31-1 ||
 			options.maxChars < 1 || options.maxChars > 16000 {
@@ -59,9 +72,11 @@ profile that built it. Prints a continuation command when more text remains.`,
 		if err != nil {
 			return err
 		}
-		options.version, err = uuid.Parse(version)
-		if err != nil {
-			return usageError(err)
+		if version != "" {
+			options.version, err = uuid.Parse(version)
+			if err != nil {
+				return usageError(err)
+			}
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -83,14 +98,37 @@ func runRenditionWindow(
 	if node.Kind != "file" {
 		return usageError(errors.New("rendition window requires a file"))
 	}
+	if options.version == uuid.Nil() {
+		options.version, err = uuid.Parse(node.CurrentVersionID)
+		if err != nil {
+			return fmt.Errorf("invalid current version: %w", err)
+		}
+	}
 	if node.CurrentVersionID != options.version.String() {
 		return errors.New("document version changed; refresh and reselect the document")
 	}
-	profile, err := windowProfileFingerprint(cmd.Context(), c, options.profile)
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
 	if err != nil {
 		return err
 	}
+	if profiles == nil {
+		return errors.New("daemon returned an invalid processing profile list")
+	}
+	var profile string
 	attachment, build := options.attachment, ""
+	if options.profile == "" {
+		var selected api.DocumentRenditionIdentity
+		options.profile, selected, err = selectWindowProfile(cmd.Context(), c, node, *profiles)
+		if err != nil {
+			return err
+		}
+		profile, attachment, build = selected.ProfileFingerprint, selected.AttachmentID, selected.BuildID
+	} else {
+		profile, err = windowProfileFingerprint(*profiles, options.profile)
+		if err != nil {
+			return err
+		}
+	}
 	if attachment == "" {
 		selected, err := discoverWindowRendition(cmd.Context(), c, node, profile)
 		if err != nil {
@@ -121,17 +159,8 @@ func runRenditionWindow(
 	return writeRenditionWindow(cmd.OutOrStdout(), options, window)
 }
 
-func windowProfileFingerprint(
-	ctx context.Context, c *daemonconn.Connection, name string,
-) (string, error) {
-	profiles, err := c.API().ListDocumentProcessingProfiles(ctx)
-	if err != nil {
-		return "", err
-	}
-	if profiles == nil {
-		return "", errors.New("daemon returned an invalid processing profile list")
-	}
-	for _, profile := range *profiles {
+func windowProfileFingerprint(profiles []api.ProcessingProfileSummary, name string) (string, error) {
+	for _, profile := range profiles {
 		if profile.Name == name {
 			return profile.Fingerprint, nil
 		}
@@ -139,24 +168,61 @@ func windowProfileFingerprint(
 	return "", inspectionProfileError(name, errors.New("processing_profile_unavailable"))
 }
 
+func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api.Node,
+	profiles []api.ProcessingProfileSummary,
+) (string, api.DocumentRenditionIdentity, error) {
+	renditions, err := windowRenditions(ctx, c, node)
+	if err != nil {
+		return "", api.DocumentRenditionIdentity{}, err
+	}
+	var names []string
+	selected := map[string]api.DocumentRenditionIdentity{}
+	for _, profile := range profiles {
+		for _, rendition := range renditions {
+			if rendition.ProfileFingerprint != profile.Fingerprint {
+				continue
+			}
+			version, err := uuid.Parse(node.CurrentVersionID)
+			if err != nil {
+				return "", api.DocumentRenditionIdentity{}, err
+			}
+			receipt, err := c.API().ResolveRenditionText(ctx, &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.RenditionTextRequest{
+				NodeID: node.ID, Revision: node.Revision, VersionID: version, BlobHash: node.BlobHash, Size: node.Size,
+				Profile: &profile.Name, Observed: &apiclient.RenditionTextObserved{Configuration: apiclient.Configured,
+					ProfileFingerprint: &profile.Fingerprint, AttachmentID: &rendition.AttachmentID, BuildID: &rendition.BuildID},
+			}})
+			if err != nil {
+				if code, _ := daemonconn.ProblemCode(err); code != "rendition_text_too_large" {
+					return "", api.DocumentRenditionIdentity{}, err
+				}
+			} else if receipt == nil {
+				return "", api.DocumentRenditionIdentity{}, errors.New("daemon returned an invalid rendition text receipt")
+			} else if receipt.State != apiclient.Ready {
+				continue
+			}
+			names = append(names, profile.Name)
+			selected[profile.Name] = rendition
+		}
+	}
+	if len(names) == 0 {
+		return "", api.DocumentRenditionIdentity{}, fmt.Errorf("no readable rendition; pass --profile to select one: %w", store.ErrNotFound)
+	}
+	if len(names) > 1 {
+		sort.Strings(names)
+		return "", api.DocumentRenditionIdentity{}, usageError(fmt.Errorf("multiple readable profiles: %s; use --version %s --profile <name>", strings.Join(names, ", "), node.CurrentVersionID))
+	}
+	return names[0], selected[names[0]], nil
+}
+
 func discoverWindowRendition(ctx context.Context, c *daemonconn.Connection,
 	node api.Node, profile string,
 ) (api.DocumentRenditionIdentity, error) {
 	var selected api.DocumentRenditionIdentity
-	if err := checkWindowCatalogBounds(node); err != nil {
-		return selected, err
-	}
-	items, err := c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{
-		Identities: []api.DocumentIdentity{{NodeID: node.ID,
-			ContentVersionID: node.CurrentVersionID, Path: node.Path}},
-	})
+	renditions, err := windowRenditions(ctx, c, node)
 	if err != nil {
-		if code, _ := daemonconn.ProblemCode(err); code == "stale_version" {
-			return selected, fmt.Errorf("document selection changed; refresh and reselect: %w", err)
-		}
 		return selected, err
 	}
-	for _, rendition := range items[0].ActiveRenditions {
+	for _, rendition := range renditions {
 		if rendition.ProfileFingerprint != profile {
 			continue
 		}
@@ -169,6 +235,22 @@ func discoverWindowRendition(ctx context.Context, c *daemonconn.Connection,
 		return selected, fmt.Errorf("no active rendition for the selected profile: %w", store.ErrNotFound)
 	}
 	return selected, nil
+}
+
+func windowRenditions(ctx context.Context, c *daemonconn.Connection, node api.Node) ([]api.DocumentRenditionIdentity, error) {
+	if err := checkWindowCatalogBounds(node); err != nil {
+		return nil, err
+	}
+	items, err := c.ResolveDocumentSummaries(ctx, api.DocumentSummaryResolveRequest{
+		Identities: []api.DocumentIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: node.Path}},
+	})
+	if err != nil {
+		if code, _ := daemonconn.ProblemCode(err); code == "stale_version" {
+			return nil, fmt.Errorf("document selection changed; refresh and reselect: %w", err)
+		}
+		return nil, err
+	}
+	return items[0].ActiveRenditions, nil
 }
 
 func checkWindowCatalogBounds(node api.Node) error {

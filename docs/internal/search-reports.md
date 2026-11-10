@@ -170,7 +170,9 @@ local delivery.
 ## Inspect current evidence separately
 
 CLI coverage and rendition windows use the daemon's executable-profile
-inventory. Reports can use retained evidence under a configured profile omitted
+inventory. A window without a profile selects the sole readable active rendition;
+multiple readable profiles require an explicit choice. Reports can use retained
+evidence under a configured profile omitted
 from that inventory. A profile lookup failure therefore does not prove that
 retained evidence is missing or justify starting processing.
 
