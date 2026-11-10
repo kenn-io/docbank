@@ -214,11 +214,12 @@ func TestRenditionTextHTTPExactRenditionWithChangedProfile(t *testing.T) {
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
 	require.NoError(t, err)
 	fixture := publishRenditionTextFixture(t, s, cfg, node)
+	observed := map[string]any{"configuration": "configured", "profile_fingerprint": fixture.profile.Fingerprint,
+		"generation_id": fixture.generation, "coverage_state": "complete", "attachment_id": fixture.attachment, "build_id": fixture.build}
 	body := map[string]any{
 		"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
 		"blob_hash": node.BlobHash, "size": node.Size,
-		"observed": map[string]any{"configuration": "configured", "profile_fingerprint": fixture.profile.Fingerprint,
-			"generation_id": fixture.generation, "coverage_state": "complete", "attachment_id": fixture.attachment, "build_id": fixture.build},
+		"observed": observed,
 	}
 
 	resp, encoded := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
@@ -232,7 +233,6 @@ func TestRenditionTextHTTPExactRenditionWithChangedProfile(t *testing.T) {
 	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
 	require.Contains(t, encoded, `"state":"ready"`)
-	observed := body["observed"].(map[string]any)
 	observed["attachment_id"] = testHash("stale-attachment")
 	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
 	require.Equal(t, http.StatusConflict, resp.StatusCode, encoded)

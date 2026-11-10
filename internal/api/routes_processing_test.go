@@ -1975,6 +1975,7 @@ func TestDocumentSearchAllLiveScope(t *testing.T) {
 }
 
 func TestProcessingProfilesIncludeConfiguredWithoutRuntime(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) {
 		renditionTextConfig(d)
 		configureLoomManualTestService(t, nil)(d)
