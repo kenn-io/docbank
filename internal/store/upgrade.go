@@ -187,6 +187,7 @@ var currentSchemaTables = [...]string{
 	"document_people_state", "person_match_candidates", "person_document_assertions", "photo_faces", "photo_face_scans",
 	"document_people_generations", "document_people_heads", "document_people_builds",
 	"document_people",
+	"node_supersessions", "node_effective_windows",
 }
 
 // prepareReleasedSchemaUpgrade recognizes only storage layouts that shipped in
