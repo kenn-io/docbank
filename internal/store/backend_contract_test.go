@@ -906,7 +906,7 @@ var backendSuites = []backendSuite{
 		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
 	}},
 	{name: "text-extraction", postgres: "native operations", scope: "Plain-text queue discovery, retries, results and rendition authority publication; excludes ranked search and recovery.", scenarios: []backendScenario{
-		{"PDFTextDiscoveryAndWaitingCoverage", func(t *testing.T) { t.Helper(); checkPDFTextDiscoveryAndWaitingCoverage(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPDFTextDiscoveryAndWaitingCoverage(t, newPostgresQueryStore) }},
+		{"PDFTextDiscovery", func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newPostgresQueryStore) }},
 		{"TextPublication", nil, checkTextPublicationPostgres},
 		{"TextChangedResult", nil, checkTextChangedResultPostgres},
 		{"TextPublicationRollback", nil, checkTextPublicationRollbackPostgres},

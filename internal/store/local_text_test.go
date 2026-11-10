@@ -127,13 +127,19 @@ func versionIDsForLocalText(items []DocumentSummary) []string {
 	return ids
 }
 
-func checkPDFTextDiscoveryAndWaitingCoverage(t *testing.T, open func(*testing.T) *Store) {
+func pdfTextTestCatalog(t *testing.T, open func(*testing.T) *Store) (*Store, []string, ProcessingProfileRecord) {
 	t.Helper()
 	s := open(t)
 	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 		profile.Rendition.Descriptor.ID = document.PDFTextProviderID
 	})
+	return s, versions, profile
+}
+
+func checkPDFTextDiscovery(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s, versions, profile := pdfTextTestCatalog(t, open)
 	page, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 1, false)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
@@ -143,6 +149,19 @@ func checkPDFTextDiscoveryAndWaitingCoverage(t *testing.T, open func(*testing.T)
 	oversized, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 50, false)
 	require.NoError(t, err)
 	require.Empty(t, oversized)
+	request := renditionJobTestRequest(versions[0], profile)
+	request.ExecutionIdentity.Authorization.ProviderID = document.PDFTextProviderID
+	grantRenditionJobConsent(t, s, request)
+	_, _, err = s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	items, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 50, false)
+	require.NoError(t, err)
+	require.NotContains(t, versionIDsForLocalText(items), versions[0])
+}
+
+func TestPDFTextWaitingCoverage(t *testing.T) {
+	t.Parallel()
+	s, versions, profile := pdfTextTestCatalog(t, newTestStore)
 	coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 	require.NoError(t, err)
 	require.Zero(t, coverage.Pending)
@@ -152,9 +171,6 @@ func checkPDFTextDiscoveryAndWaitingCoverage(t *testing.T, open func(*testing.T)
 	grantRenditionJobConsent(t, s, request)
 	job, _, err := s.EnqueueRenditionJob(t.Context(), request)
 	require.NoError(t, err)
-	items, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 50, false)
-	require.NoError(t, err)
-	require.NotContains(t, versionIDsForLocalText(items), versions[0])
 	coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, coverage.Pending)
