@@ -83,13 +83,8 @@ func (service *Service) PDFHasNoTextLayer(ctx context.Context, buildID string) (
 type PDFTextRunner struct {
 	Service    *Service
 	mu         sync.Mutex
-	skips      map[string]pdfTextSkip
+	skips      map[string]bool
 	skipWarned bool
-}
-
-type pdfTextSkip struct {
-	revision uint64
-	stale    bool
 }
 
 // Initialize grants local consent only when no prior decision exists.
@@ -118,7 +113,6 @@ func (r *PDFTextRunner) listTargets(ctx context.Context, after string, limit int
 		return nil, err
 	}
 	p := r.Service.profiles[PDFTextProfileName]
-	revision := r.Service.catalog.WriteRevision()
 	var out []store.DocumentSummary
 	for len(out) < limit {
 		const pageSize = 1000
@@ -128,12 +122,7 @@ func (r *PDFTextRunner) listTargets(ctx context.Context, after string, limit int
 		}
 		r.mu.Lock()
 		for _, item := range items {
-			skip, skipped := r.skips[item.ContentVersionID]
-			if skipped && skip.stale && skip.revision != revision {
-				delete(r.skips, item.ContentVersionID)
-				skipped = false
-			}
-			if !skipped {
+			if !r.skips[item.ContentVersionID] {
 				out = append(out, item)
 				if len(out) == limit {
 					break
@@ -155,7 +144,6 @@ func (r *PDFTextRunner) listTargets(ctx context.Context, after string, limit int
 func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary) error {
 	s := r.Service
 	p := s.profiles[PDFTextProfileName]
-	revision := s.catalog.WriteRevision()
 	node, err := s.catalog.NodeByID(ctx, item.NodeID)
 	if err == nil {
 		if node.TrashedAt != nil {
@@ -170,16 +158,25 @@ func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary)
 			_, _, err = s.enqueueRendition(ctx, node, version, p, s.renditionConsentRequest(p), "", false)
 		}
 	}
-	if errors.Is(err, store.ErrRenditionJobStaleAuthority) && revision != s.catalog.WriteRevision() {
-		return nil
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) {
+		current, readErr := s.catalog.NodeByID(ctx, item.NodeID)
+		if errors.Is(readErr, store.ErrNotFound) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if current.TrashedAt != nil || current.CurrentVersionID != item.ContentVersionID || current.Revision != node.Revision {
+			return nil
+		}
 	}
 	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, ErrSourceIneligible) || errors.Is(err, ErrPDFPasswordRequired) || errors.Is(err, ErrPlanChanged) || errors.Is(err, ErrRenditionFailed) || errors.Is(err, ErrRenditionOperatorRequired) || errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired) || errors.Is(err, store.ErrNotFound) {
 		r.mu.Lock()
 		if r.skips == nil {
-			r.skips = make(map[string]pdfTextSkip)
+			r.skips = make(map[string]bool)
 		}
 		if len(r.skips) < localTextSkipLimit {
-			r.skips[item.ContentVersionID] = pdfTextSkip{revision: revision, stale: errors.Is(err, store.ErrRenditionJobStaleAuthority)}
+			r.skips[item.ContentVersionID] = true
 		} else if !r.skipWarned {
 			slog.Warn("PDF text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
 			r.skipWarned = true

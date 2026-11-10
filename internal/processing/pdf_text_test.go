@@ -225,14 +225,11 @@ func TestPDFTextPurgeSettlesDiscovery(t *testing.T) {
 	pending, err := runner.Pending(t.Context())
 	require.NoError(t, err)
 	require.False(t, pending)
-	trashed, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
+	_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "unrelated.txt", node.BlobHash, node.Size, "text/plain")
 	require.NoError(t, err)
-	_, _, err = fixture.catalog.Restore(t.Context(), trashed.ID, trashed.Revision)
+	pending, err = runner.Pending(t.Context())
 	require.NoError(t, err)
-	items, err := runner.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.Equal(t, node.CurrentVersionID, items[0].ContentVersionID)
+	require.False(t, pending)
 }
 
 func TestPDFTextSkipCacheBound(t *testing.T) {
@@ -241,9 +238,9 @@ func TestPDFTextSkipCacheBound(t *testing.T) {
 	_, profile, err := NewPDFTextProfile()
 	require.NoError(t, err)
 	service := newPDFTextService(t, fixture, profile)
-	runner := &PDFTextRunner{Service: service, skips: make(map[string]pdfTextSkip, localTextSkipLimit)}
+	runner := &PDFTextRunner{Service: service, skips: make(map[string]bool, localTextSkipLimit)}
 	for i := range localTextSkipLimit {
-		runner.skips[fmt.Sprint(i)] = pdfTextSkip{}
+		runner.skips[fmt.Sprint(i)] = true
 	}
 	node := replacePDFSource(t, fixture, []byte("invalid PDF"))
 	require.NoError(t, runner.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}))
