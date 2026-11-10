@@ -207,6 +207,7 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	assert.Equal(t, http.StatusConflict, badResp.StatusCode, badBody)
 }
 
+//nolint:paralleltest // PDFium uses process-wide resources.
 func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	var runner *processing.PDFTextRunner
 	ts, s := newTestServer(t, func(d *api.Deps) {
@@ -477,6 +478,7 @@ func configureAutomaticPDFText(t *testing.T, d *api.Deps) *processing.PDFTextRun
 	return runner
 }
 
+//nolint:paralleltest // PDFium uses process-wide resources.
 func TestCoverageHTTPReportsPartialAndUnavailable(t *testing.T) {
 	var runner *processing.PDFTextRunner
 	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); runner = configureAutomaticPDFText(t, d) })

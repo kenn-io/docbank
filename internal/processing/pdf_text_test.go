@@ -91,6 +91,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 }
 
 func TestCoveragePageBounds(t *testing.T) {
+	t.Parallel()
 	ids := make([]string, 17)
 	builds := make(map[string]string)
 	for i := range ids {
@@ -133,8 +134,10 @@ func TestCoveragePageBounds(t *testing.T) {
 	require.Equal(t, "unavailable", state)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, _, err = readPDFCoveragePage(ctx, ids, builds, func(context.Context, string) ([]int, error) { return nil, nil })
+	_, state, unavailable, err = readPDFCoveragePage(ctx, ids, builds, func(context.Context, string) ([]int, error) { return nil, nil })
 	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, state)
+	require.False(t, unavailable)
 }
 
 func newPDFTextService(t *testing.T, fixture publicationFixture, profile ProfileConfig) *Service {

@@ -77,9 +77,10 @@ type answerPageGap struct {
 }
 
 type answerOutput struct {
+	privateCache
+
 	PagesWithoutText        []answerPageGap `json:"pages_without_text,omitempty"`
 	OmittedPageGapDocuments int             `json:"omitted_page_gap_documents"`
-	privateCache
 
 	Status           answer.Status    `json:"status"`
 	CoverageComplete bool             `json:"coverage_complete"`
@@ -96,7 +97,7 @@ type answerOutput struct {
 
 type answerClient interface {
 	documentClient
-	GetPDFPageCoverage(context.Context, api.DocumentSourceFence) (api.CoverageReport, error)
+	GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error)
 }
 
 type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
@@ -108,7 +109,7 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
 	vaultID, err := uuid.Parse(fence.VaultUID)
 	if err != nil {
-		return api.CoverageReport{}, err
+		return api.CoverageReport{}, fmt.Errorf("parsing coverage vault ID: %w", err)
 	}
 	query := &apiclient.GetDocumentProcessingCoverageQuery{Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}
 	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: query})
@@ -116,7 +117,7 @@ func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.
 		return api.CoverageReport{}, err
 	}
 	if report.VaultUID != fence.VaultUID {
-		return api.CoverageReport{}, fmt.Errorf("processing coverage escaped its vault fence")
+		return api.CoverageReport{}, errors.New("processing coverage escaped its vault fence")
 	}
 	return *report, nil
 }

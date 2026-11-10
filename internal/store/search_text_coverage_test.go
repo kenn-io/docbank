@@ -127,6 +127,7 @@ func TestSearchTextCoverage(t *testing.T) {
 }
 
 func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, state                     string
 		pages                           []int
@@ -156,6 +157,7 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 }
 
 func TestSearchTextCoverageLimitsEvidenceReads(t *testing.T) {
+	t.Parallel()
 	s, _, nodes, profile := collectionCoverageFixture(t, 17)
 	var expected []string
 	for i, node := range nodes {
