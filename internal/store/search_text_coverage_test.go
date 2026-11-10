@@ -62,11 +62,11 @@ func TestSearchTextCoverage(t *testing.T) {
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, "", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
-	t.Run("blank_segments", func(t *testing.T) {
+	t.Run("blank_text_without_candidate", func(t *testing.T) {
 		t.Parallel()
 		s, _, pdfs, profile := collectionCoverageFixture(t, 1)
 		collectionCoveragePublish(t, s, pdfs[0], profile, "blank_segments")
-		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) { return []int{1}, nil }, nil)
+		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
 	})

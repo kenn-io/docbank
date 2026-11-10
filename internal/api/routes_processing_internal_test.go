@@ -94,7 +94,8 @@ func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
 
 func TestFromProcessingCoveragePreservesPartialAndUnavailable(t *testing.T) {
 	t.Parallel()
-	report := fromProcessingCoverage(processing.Coverage{PageCoverage: "partial", PageCoverageUnavailable: true})
+	report := fromProcessingCoverage(processing.Coverage{PageCoverage: "partial", PageCoverageUnavailable: true, PagesWithoutText: []processing.PageTextGap{{ContentVersionID: "version", Pages: []int{2, 4}}}})
 	assert.Equal(t, "partial", report.PageCoverage)
 	assert.True(t, report.PageCoverageUnavailable)
+	assert.Equal(t, []PageTextGap{{ContentVersionID: "version", Pages: []int{2, 4}}}, report.PagesWithoutText)
 }

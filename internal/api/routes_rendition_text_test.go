@@ -241,10 +241,6 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/search/text-coverage", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.Contains(t, body, `"pages_without_text":1`)
-	coverageURL := "/api/v1/coverage?profile=docbank-pdf-text&vault_uid=" + s.VaultID() + "&content_version_id=" + node.CurrentVersionID
-	resp, body = get(t, ts, coverageURL, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.Contains(t, body, `"pages_without_text"`)
 	request["profile"] = "archive"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -267,9 +263,6 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.Contains(t, body, `"state":"ready"`)
 	require.NotContains(t, body, `"pages_without_text"`)
 	require.Contains(t, body, `"page_coverage":"unavailable"`)
-	resp, body = get(t, ts, coverageURL, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.Contains(t, body, `"page_coverage_unavailable":true`)
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {

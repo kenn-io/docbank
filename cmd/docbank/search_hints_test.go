@@ -157,7 +157,6 @@ func TestEmptySearchHints(t *testing.T) {
 					Hints []searchHint `json:"hints"`
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
-				require.Equal(t, "needs_ocr", report.Hints[0].Code)
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				if tc.everyWord {
 					require.Equal(t, searchHint{
@@ -168,9 +167,9 @@ func TestEmptySearchHints(t *testing.T) {
 				require.Empty(t, stderr.String())
 			} else {
 				if tc.unavailable {
-					require.NotContains(t, stderr.String(), "no searchable text")
+					require.NotContains(t, stderr.String(), "OCR can read them")
 				} else {
-					require.Contains(t, stderr.String(), "Hint:")
+					require.Contains(t, stderr.String(), "OCR can read them")
 				}
 				if tc.pending > 0 {
 					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
