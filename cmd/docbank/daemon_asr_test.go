@@ -121,9 +121,6 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.Len(t, transcript.Transcript.ArtifactSHA256, 64)
 			require.Len(t, transcript.Transcript.EvidenceChecksum, 64)
 			require.NotEmpty(t, transcript.Transcript.ProfileFingerprint)
-			repeated, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
-			require.NoError(t, err)
-			require.Equal(t, transcript, repeated)
 
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())

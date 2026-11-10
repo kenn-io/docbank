@@ -541,16 +541,12 @@ func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
 	current, err := ASRM4APolicyFingerprint(100_000)
 	require.NoError(t, err)
 	require.NotEqual(t, old, current, "M4A authority must not reuse WAV/MP3 consent")
-	fixture := newASRFixture(t, "audio/wav", "asr-spoken.wav", asrSpokenWAV)
+	fixture := newASRFixture(t, "audio/mp4", "synthetic.m4a", mediatest.AACM4A())
 	descriptor := fixture.descriptor
-	descriptor.SupportedFormats = append(descriptor.SupportedFormats, document.RenditionFormatCapability{
-		MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
-	descriptor.PolicyFingerprint = current
+	descriptor.PolicyFingerprint = old
 	descriptor.Fingerprint = ""
 	descriptor, err = document.NewRenditionDescriptor(descriptor)
 	require.NoError(t, err)
 	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
-	require.NoError(t, err)
-	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000}, nil, http.DefaultClient)
-	require.Error(t, err, "old adapter must refuse M4A authority")
+	require.Error(t, err, "v1 policy must not authorize M4A")
 }

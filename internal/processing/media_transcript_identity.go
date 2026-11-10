@@ -59,7 +59,7 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 		}
 		switch identity.ContractVersion {
 		case "supplied-transcript/v1":
-			return nil
+			return document.ValidateSuppliedTranscriptArtifactV1(raw)
 		case "media-transcript/v1":
 			timed, err := mediatranscript.Unmarshal(raw)
 			if err != nil {

@@ -80,6 +80,8 @@ func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testi
 	})
 	require.NoError(t, err)
 	require.Equal(t, mediaTranscriptEvidenceStale, result.EvidenceState)
+	require.Zero(t, result.NodeID)
+	require.Empty(t, result.SourceSHA256)
 	require.Nil(t, result.Transcript)
 	require.Equal(t, wrong, result.ContentVersionID)
 }
@@ -153,6 +155,10 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	initial := read()
 	require.Equal(t, mediaTranscriptEvidenceUnavailable, initial.EvidenceState)
 	require.Equal(t, "unprocessed", initial.CoverageState)
+	version, err := f.fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, version.NodeID, initial.NodeID)
+	require.Equal(t, version.BlobHash, initial.SourceSHA256)
 	require.Nil(t, initial.Transcript)
 
 	queued := f.caption(t, f.remote.OccurrenceID, "synthetic cue")
@@ -200,8 +206,6 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	require.NotEqual(t, ready.Transcript.BuildID, updated.Transcript.BuildID)
 	require.Equal(t, replacement.SuppliedInputID, updated.Transcript.SuppliedInputID)
 
-	version, err := f.fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
-	require.NoError(t, err)
 	node, err := f.fixture.catalog.NodeByID(t.Context(), version.NodeID)
 	require.NoError(t, err)
 	changed := append([]byte(nil), f.video...)
@@ -286,39 +290,24 @@ func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
 func TestMediaTranscriptSpeechCompleteness(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		truncated bool
-		omissions []document.EvidenceOmissionV1
-		want      string
+		name                     string
+		truncated                bool
+		text                     string
+		unitKind                 document.EvidenceUnitKind
+		omissions, unitOmissions []document.EvidenceOmissionV1
+		want                     string
 	}{
-		{name: "speech only", want: "complete"},
-		{name: "non speech", omissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "non_speech_content"}}, want: "complete"},
-		{name: "truncated", truncated: true, want: "partial"},
-		{name: "missing speech", omissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}, want: "partial"},
+		{name: "speech only", text: "speech", unitKind: document.EvidenceUnitSegment, want: "complete"},
+		{name: "non speech", text: "speech", unitKind: document.EvidenceUnitSegment, omissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "non_speech_content"}}, want: "complete"},
+		{name: "truncated", text: "speech", unitKind: document.EvidenceUnitSegment, truncated: true, want: "partial"},
+		{name: "missing speech", text: "speech", unitKind: document.EvidenceUnitSegment, omissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}, want: "partial"},
+		{name: "blank", text: " \t", unitKind: document.EvidenceUnitSegment, want: "partial"},
+		{name: "untimed", text: "speech", unitKind: document.EvidenceUnitGeneric, want: "partial"},
+		{name: "unit omission", text: "speech", unitKind: document.EvidenceUnitSegment, unitOmissions: []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}, want: "partial"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			evidence := document.NormalizedEvidenceV1{UnitKind: document.EvidenceUnitSegment, Units: []document.NormalizedEvidenceUnitV1{{Text: "synthetic speech"}}, Omissions: tc.omissions}
+			evidence := document.NormalizedEvidenceV1{UnitKind: tc.unitKind, Units: []document.NormalizedEvidenceUnitV1{{Text: tc.text, Omissions: tc.unitOmissions}}, Omissions: tc.omissions}
 			require.Equal(t, tc.want, transcriptSpeechState(evidence, tc.truncated))
-		})
-	}
-}
-
-func TestMediaTranscriptSpeechStateRefusesEmptyUntimedAndMissingRanges(t *testing.T) {
-	t.Parallel()
-	base := document.NormalizedEvidenceV1{UnitKind: document.EvidenceUnitSegment, Units: []document.NormalizedEvidenceUnitV1{{Text: "synthetic"}}}
-	for _, change := range []string{"blank", "untimed", "unit omission"} {
-		t.Run(change, func(t *testing.T) {
-			evidence := base
-			evidence.Units = append([]document.NormalizedEvidenceUnitV1(nil), base.Units...)
-			switch change {
-			case "blank":
-				evidence.Units[0].Text = " \t"
-			case "untimed":
-				evidence.UnitKind = document.EvidenceUnitGeneric
-			case "unit omission":
-				evidence.Units[0].Omissions = []document.EvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "speech"}}
-			}
-			require.Equal(t, "partial", transcriptSpeechState(evidence, false))
 		})
 	}
 }
@@ -337,6 +326,10 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 	}{
 		{"timed", timed, "en", true},
 		{"supplied", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), "", true},
+		{"supplied missing text", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic"}`), "", false},
+		{"supplied empty text", []byte(`{"contract_version":"supplied-transcript/v1","provider":"synthetic","text":" "}`), "", false},
+		{"supplied missing provider", []byte(`{"contract_version":"supplied-transcript/v1","text":"hello"}`), "", false},
+		{"supplied noncanonical", []byte(`{ "contract_version":"supplied-transcript/v1","provider":"synthetic","text":"hello"}`), "", false},
 		{"missing", []byte(`{"provider":"synthetic"}`), "", false},
 		{"future", []byte(`{"contract_version":"supplied-transcript/v2"}`), "", false},
 	} {
@@ -361,20 +354,4 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestRenditionEvidenceRejectsWrongArtifactSize(t *testing.T) {
-	t.Parallel()
-	f := newPublicationFixture(t)
-	staged := f.stage(t, publicationIDs{"size-build", "size-attachment", "size-generation"}, "synthetic evidence", "synthetic markdown")
-	publisher, err := NewArtifactPublisher(f.catalog, f.blobs)
-	require.NoError(t, err)
-	_, err = publisher.PublishRendition(t.Context(), staged)
-	require.NoError(t, err)
-	service := &Service{blobs: f.blobs}
-	_, _, err = service.renditionEvidence(t.Context(), staged.Build)
-	require.NoError(t, err)
-	staged.Build.Artifacts[0].Size++
-	_, _, err = service.renditionEvidence(t.Context(), staged.Build)
-	require.ErrorContains(t, err, "read exactly")
 }

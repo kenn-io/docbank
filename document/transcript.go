@@ -25,6 +25,33 @@ type suppliedTranscriptArtifactV1 struct {
 	Text            string `json:"text"`
 }
 
+// ValidateSuppliedTranscriptArtifactV1 checks the exact retained transcript contract.
+func ValidateSuppliedTranscriptArtifactV1(raw []byte) error {
+	_, err := canonical.DecodeWith(raw, func(artifact suppliedTranscriptArtifactV1) ([]byte, error) {
+		if artifact.ContractVersion != suppliedTranscriptContractV1 {
+			return nil, errors.New("invalid supplied transcript contract")
+		}
+		if err := validateSuppliedTranscript(SuppliedTranscript{Provider: artifact.Provider, Text: artifact.Text}); err != nil {
+			return nil, err
+		}
+		return canonical.Marshal(artifact)
+	})
+	return err
+}
+
+func validateSuppliedTranscript(transcript SuppliedTranscript) error {
+	if err := validateEvidenceIdentifier(transcript.Provider, "transcript provider"); err != nil {
+		return err
+	}
+	if err := validateEvidenceText(transcript.Text, "transcript text"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(transcript.Text) == "" {
+		return errors.New("transcript text must contain non-whitespace text")
+	}
+	return nil
+}
+
 // BuildTranscriptSourceEvidenceV1 builds the source evidence and retained
 // artifact returned by a rendition provider. BuildTranscriptEvidenceV1
 // normalizes that result. Both calls must use the same EvidencePolicy.
@@ -34,14 +61,8 @@ func BuildTranscriptSourceEvidenceV1(
 	if err := policy.validate(); err != nil {
 		return SourceEvidenceV1{}, RenditionArtifact{}, err
 	}
-	if err := validateEvidenceIdentifier(transcript.Provider, "transcript provider"); err != nil {
+	if err := validateSuppliedTranscript(transcript); err != nil {
 		return SourceEvidenceV1{}, RenditionArtifact{}, err
-	}
-	if err := validateEvidenceText(transcript.Text, "transcript text"); err != nil {
-		return SourceEvidenceV1{}, RenditionArtifact{}, err
-	}
-	if strings.TrimSpace(transcript.Text) == "" {
-		return SourceEvidenceV1{}, RenditionArtifact{}, errors.New("transcript text must contain non-whitespace text")
 	}
 
 	source := SourceEvidenceV1{

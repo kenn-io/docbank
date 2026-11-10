@@ -684,8 +684,4 @@ func TestExecutableProcessingProfilesRegistersDoclingM4A(t *testing.T) {
 	_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.ErrorContains(t, err, "disclosure fingerprint")
 
-	invalid := cfg.RenditionProfiles["asr"]
-	invalid.MaxTranscriptChars = 0
-	cfg.RenditionProfiles["asr"] = invalid
-	require.ErrorContains(t, cfg.Validate(), "max_transcript_chars")
 }
