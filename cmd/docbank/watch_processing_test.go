@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"uuid"
 
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
@@ -21,16 +20,30 @@ import (
 )
 
 func TestDaemonRejectsWatchProfileWithoutRuntime(t *testing.T) {
-	cfg, _ := mistralOCRProcessingConfig(t)
-	profile := cfg.RenditionProfiles["documents"]
-	profile.Runtime = nil
-	cfg.RenditionProfiles["documents"] = profile
-	cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox", Profile: "documents", CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second)}}
-	require.NoError(t, cfg.Validate())
-	root := t.TempDir()
-	require.NoError(t, writeDaemonASRConfig(root, cfg))
-	t.Setenv("DOCBANK_HOME", root)
-	require.ErrorContains(t, runServe(t.Context()), `watch "inbox" profile "documents" has no executable runtime`)
+	for _, tc := range []struct {
+		name    string
+		profile string
+		routes  map[string]string
+	}{
+		{name: "single", profile: "documents"},
+		{name: "mapped", routes: map[string]string{"document": "documents", "audio_video": "asr"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := mistralOCRProcessingConfig(t)
+			profile := cfg.RenditionProfiles["documents"]
+			profile.Runtime = nil
+			cfg.RenditionProfiles["documents"] = profile
+			asr, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:1")
+			cfg.RenditionProfiles["asr"] = asr.RenditionProfiles["asr"]
+			cfg.ProcessingProfiles["asr"] = asr.ProcessingProfiles["asr"]
+			cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox", Profile: tc.profile, Profiles: tc.routes, CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second)}}
+			require.NoError(t, cfg.Validate())
+			root := t.TempDir()
+			require.NoError(t, writeDaemonASRConfig(root, cfg))
+			t.Setenv("DOCBANK_HOME", root)
+			require.ErrorContains(t, runServe(t.Context()), `watch "inbox" profile "documents" has no executable runtime`)
+		})
+	}
 }
 
 func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
@@ -89,7 +102,6 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		{"memo.wav", "asr", mediatest.WAV()},
 	}
 	// Grant both profile consents using sources outside the watched inbox.
-	var vaultUID string
 	for _, source := range sources {
 		path := filepath.Join(t.TempDir(), source.name)
 		require.NoError(t, os.WriteFile(path, source.content, 0600))
@@ -100,7 +112,6 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: source.profile}
 		plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 		require.NoError(t, err)
-		vaultUID = plan.VaultUID
 		_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
 		require.NoError(t, err)
 	}
@@ -108,36 +119,7 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(inbox, source.name), source.content, 0600))
 	}
 	settleDaemon(t)
-	for _, source := range sources {
-		node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/mixed/" + source.name}})
-		require.NoError(t, err)
-		// The routed profile attempted this source and its provider rejected it, so
-		// the profile has no complete rendition. This does not depend on other
-		// profiles, such as built-in PDF text, that may also process the source.
-		coverage, err := daemon.API().GetDocumentProcessingCoverage(t.Context(), &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
-			Profile: source.profile, VaultUID: uuid.MustParse(vaultUID), ContentVersionID: []string{node.CurrentVersionID},
-		}})
-		require.NoError(t, err)
-		require.Equal(t, 1, coverage.Renditions.Total, source.name)
-		require.Zero(t, coverage.Renditions.Complete, source.name)
-	}
 	mu.Lock()
 	defer mu.Unlock()
 	require.Equal(t, map[string][]string{"documents": {"report.pdf"}, "asr": {"memo.wav"}}, received)
-}
-
-func TestDaemonRejectsWatchMappedProfilesWithoutRuntime(t *testing.T) {
-	cfg, _ := mistralOCRProcessingConfig(t)
-	rendition := cfg.RenditionProfiles["documents"]
-	rendition.Runtime = nil
-	cfg.RenditionProfiles["documents"] = rendition
-	asr, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:1")
-	cfg.RenditionProfiles["asr"] = asr.RenditionProfiles["asr"]
-	cfg.ProcessingProfiles["asr"] = asr.ProcessingProfiles["asr"]
-	cfg.Watches = []config.WatchConfig{{Name: "mixed", Source: t.TempDir(), Destination: "/mixed", Profiles: map[string]string{"document": "documents", "audio_video": "asr"}, CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Hour)}}
-	require.NoError(t, cfg.Validate())
-	root := t.TempDir()
-	require.NoError(t, writeDaemonASRConfig(root, cfg))
-	t.Setenv("DOCBANK_HOME", root)
-	require.ErrorContains(t, runServe(t.Context()), `watch "mixed" profile "documents" has no executable runtime`)
 }

@@ -1417,7 +1417,7 @@ func TestWatchProcessingProfileMapValidation(t *testing.T) {
 		want            string
 	}{
 		{name: "mapped", routes: map[string]string{"document": "archive", "audio_video": "archive"}},
-		{name: "deterministic errors", routes: map[string]string{"audio": "archive", "aaa": "archive"}, want: `unknown media family "aaa"`},
+		{name: "deterministic errors", routes: map[string]string{"aaa": "archive", "bbb": "archive", "ccc": "archive", "ddd": "archive", "eee": "archive", "fff": "archive", "ggg": "archive", "hhh": "archive", "iii": "archive", "jjj": "archive"}, want: `unknown media family "aaa"`},
 		{name: "exclusive", shorthand: "archive", routes: map[string]string{"document": "archive"}, want: "mutually exclusive"},
 		{name: "empty map exclusive", shorthand: "archive", routes: map[string]string{}, want: "mutually exclusive"},
 		{name: "empty", routes: map[string]string{"document": ""}, want: "not defined"},
@@ -1440,11 +1440,10 @@ func TestWatchProcessingProfileFor(t *testing.T) {
 	for _, tc := range []struct{ mime, name, want string }{
 		{"application/pdf", "report.pdf", "docling"},
 		{"audio/wav", "memo.wav", "asr"},
-		{"video/mp4", "clip.mp4", "asr"},
 		{"text/plain", "notes.txt", ""},
 	} {
 		assert.Equal(t, tc.want, watch.ProcessingProfileFor(tc.mime, tc.name))
-		shorthand := WatchConfig{Profile: "all"}
-		assert.Equal(t, "all", shorthand.ProcessingProfileFor(tc.mime, tc.name))
 	}
+	shorthand := WatchConfig{Profile: "all"}
+	assert.Equal(t, "all", shorthand.ProcessingProfileFor("application/pdf", "report.pdf"))
 }

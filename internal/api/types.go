@@ -1321,7 +1321,7 @@ type JobList struct {
 }
 
 type WatchProcessingStatus struct {
-	MediaFamily  string `json:"media_family,omitzero" doc:"Media family for a route; omitted for a single profile."`
+	MediaFamily  string `json:"media_family,omitzero"`
 	Profile      string `json:"profile"`
 	ConsentState string `json:"consent_state,omitzero" enum:"active,required,expired,revoked"`
 	Error        string `json:"error,omitzero"`

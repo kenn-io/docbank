@@ -21924,7 +21924,6 @@ components:
         error:
           type: string
         media_family:
-          description: Media family for a route; omitted for a single profile.
           type: string
         profile:
           type: string
