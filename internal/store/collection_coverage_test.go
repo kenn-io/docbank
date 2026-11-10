@@ -297,7 +297,6 @@ func collectionCoveragePublish(t *testing.T, s *Store, node Node, profile Proces
 		text := ""
 		if state == "blank_segments" {
 			text = "   "
-			build.ProviderReceipt = jsontext.Value(`{"provider":"synthetic","request_id":"request-1","usage":{"units":1}}`)
 		}
 		build.LexicalSegments[0].Text = text
 		build.LexicalSegments[0].CharEnd = len(text)

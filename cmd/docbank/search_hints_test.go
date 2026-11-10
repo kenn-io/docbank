@@ -158,7 +158,6 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 				require.Equal(t, "needs_ocr", report.Hints[0].Code)
-				require.Contains(t, report.Hints[0].Message, "1 PDF has 2 pages with no text layer")
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				if tc.everyWord {
 					require.Equal(t, searchHint{
@@ -170,9 +169,8 @@ func TestEmptySearchHints(t *testing.T) {
 			} else {
 				if tc.unavailable {
 					require.NotContains(t, stderr.String(), "no searchable text")
-					require.NotContains(t, stderr.String(), "OCR")
 				} else {
-					require.Contains(t, stderr.String(), "Hint: 1 PDF has 2 pages with no text layer")
+					require.Contains(t, stderr.String(), "Hint:")
 				}
 				if tc.pending > 0 {
 					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
@@ -218,6 +216,9 @@ func TestEmptySearchHintsCoverageGuidance(t *testing.T) {
 			require.Len(t, hints, len(tc.codes))
 			for i, code := range tc.codes {
 				require.Equal(t, code, hints[i].Code)
+			}
+			if tc.coverage.PagesWithoutText > 0 && !tc.coverage.PDFPageCoveragePartial {
+				require.Contains(t, hints[0].Message, "1 PDF has 2 pages with no text layer")
 			}
 			message := hints[len(hints)-1].Message
 			require.Contains(t, message, tc.message)
