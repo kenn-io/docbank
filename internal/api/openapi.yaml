@@ -3390,7 +3390,6 @@ components:
         page_coverage:
           enum:
             - partial
-            - unavailable
           type: string
         page_coverage_unavailable:
           type: boolean

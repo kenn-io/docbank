@@ -460,9 +460,7 @@ winner.
 
 ### Answer questions
 
-`answer_question` reports bounded `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. Gaps, partial page coverage, and unavailable evidence make coverage incomplete. Both partial coverage and unavailable evidence can be reported together. Narrow the scope or call `get_processing_coverage` with specific content version IDs to inspect more pages. See [OCR](document-processing.md#ocr) for options.
-
-The `page_coverage_unavailable` coverage reason means some PDF page evidence could not be read. The answer may still contain passages.
+`answer_question` reports bounded `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. Gaps, partial page coverage, and unreadable evidence (`page_coverage_unavailable`) make coverage incomplete; the answer can still contain passages. Narrow the scope or call `get_processing_coverage` with specific content version IDs to inspect more pages. See [OCR](document-processing.md#ocr) for options.
 
 `answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the

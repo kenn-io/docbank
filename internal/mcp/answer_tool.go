@@ -244,11 +244,8 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if len(fence.Fence.ContentVersionIDs) > 0 {
 			pageCoverage, err = c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs})
 			if err != nil {
-				if ctx.Err() != nil {
-					return response{}, ctx.Err()
-				}
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return response{}, err
+				if canceled := contextCancellation(ctx, err); canceled != nil {
+					return response{}, canceled
 				}
 				pageCoverage.PageCoverageUnavailable = true
 			}

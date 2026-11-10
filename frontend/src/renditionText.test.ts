@@ -71,9 +71,12 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 it("resolves an exact snapshot rendition and submits every observed authority", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(receipt()), {
-      headers: { "Content-Type": "application/json" },
-    }),
+    new Response(
+      JSON.stringify(receipt({ pages_without_text: [2, 3], page_coverage: "unavailable" })),
+      {
+        headers: { "Content-Type": "application/json" },
+      },
+    ),
   );
   const resolved = await resolveRenditionText(
     "session",
@@ -84,6 +87,8 @@ it("resolves an exact snapshot rendition and submits every observed authority", 
     new AbortController().signal,
   );
   expect(resolved.state).toBe("ready");
+  expect(resolved.pagesWithoutText).toEqual([2, 3]);
+  expect(resolved.pageCoverage).toBe("unavailable");
   const [, init] = fetchMock.mock.calls[0] ?? [];
   expect(JSON.parse(String(init?.body))).toEqual({
     node_id: 7,
@@ -101,43 +106,6 @@ it("resolves an exact snapshot rendition and submits every observed authority", 
       build_id: observation.buildID,
     },
   });
-});
-
-it("accepts page gaps and rejects invalid page numbers", async () => {
-  const fetchMock = vi.spyOn(globalThis, "fetch");
-  fetchMock.mockResolvedValueOnce(
-    new Response(
-      JSON.stringify(receipt({ pages_without_text: [2, 3], page_coverage: "unavailable" })),
-      {
-        headers: { "Content-Type": "application/json" },
-      },
-    ),
-  );
-  const resolved = await resolveRenditionText(
-    "session",
-    source,
-    9,
-    "archive",
-    observation,
-    new AbortController().signal,
-  );
-  expect(resolved.pagesWithoutText).toEqual([2, 3]);
-  expect(resolved.pageCoverage).toBe("unavailable");
-  fetchMock.mockResolvedValueOnce(
-    new Response(JSON.stringify(receipt({ pages_without_text: [0] })), {
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
-  await expect(
-    resolveRenditionText(
-      "session",
-      source,
-      9,
-      "archive",
-      observation,
-      new AbortController().signal,
-    ),
-  ).rejects.toThrow("pages_without_text is invalid");
 });
 
 it("accepts the worker's bounded digest-form artifact identity", async () => {
@@ -169,6 +137,7 @@ it.each([
   ["artifact fields", receipt({ artifact: { ...artifact, extra: true } })],
   ["unknown receipt field", receipt({ extra: true })],
   ["invalid schema link", receipt({ $schema: "" })],
+  ["invalid page number", receipt({ pages_without_text: [0] })],
   ["unbounded artifact identity", receipt({ artifact: { ...artifact, id: "x".repeat(129) } })],
 ])("rejects a mismatched or widened %s receipt", async (_name, value) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
