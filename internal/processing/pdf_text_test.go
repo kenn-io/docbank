@@ -2,7 +2,7 @@ package processing
 
 import (
 	"bytes"
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -163,10 +163,10 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 			case "cap":
 				runner.skips = make(map[string]bool, localTextSkipLimit)
 				for i := range localTextSkipLimit {
-					runner.skips[fmt.Sprint(i)] = true
+					runner.skips[strconv.Itoa(i)] = true
 				}
 				require.NoError(t, runner.process(t.Context(), item))
-				require.Equal(t, localTextSkipLimit, len(runner.skips))
+				require.Len(t, runner.skips, localTextSkipLimit)
 			}
 		})
 	}
