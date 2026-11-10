@@ -225,7 +225,7 @@ func TestPDFTextPurgeSettlesDiscovery(t *testing.T) {
 	pending, err := runner.Pending(t.Context())
 	require.NoError(t, err)
 	require.False(t, pending)
-	_, err = fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "unrelated.txt", node.BlobHash, node.Size, "text/plain")
+	_, err = fixture.catalog.EnsureDir(t.Context(), fixture.catalog.RootID(), "unrelated")
 	require.NoError(t, err)
 	pending, err = runner.Pending(t.Context())
 	require.NoError(t, err)
