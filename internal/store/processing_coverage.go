@@ -81,7 +81,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT cv.version_id, COALESCE(h.attachment_id,''),
+	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
@@ -100,14 +100,14 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		buildID, profileFingerprint string
 	}
 	type renditionHead struct {
-		versionID, attachmentID string
-		rebuilding              bool
-		key                     renditionValidationKey
+		attachmentID string
+		rebuilding   bool
+		key          renditionValidationKey
 	}
 	heads := make([]renditionHead, 0, len(opts.ContentVersionIDs))
 	for rows.Next() {
 		var head renditionHead
-		if err := rows.Scan(&head.versionID, &head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
+		if err := rows.Scan(&head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
 		heads = append(heads, head)

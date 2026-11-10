@@ -174,7 +174,7 @@ func WriteLoadFileExport(ctx context.Context, catalog *store.Store, blobs *blob.
 	}
 	if request.SourcePackageID != "" {
 		pkg, err := catalog.Package(ctx, request.SourcePackageID)
-		if err != nil || pkg.SnapshotID != request.SnapshotID || pkg.State != "complete" && pkg.State != statusPartial {
+		if err != nil || pkg.SnapshotID != request.SnapshotID || pkg.State != "complete" && pkg.State != "partial" {
 			return result, store.ErrPackageConflict
 		}
 	}

@@ -136,7 +136,6 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 					return ctx.Err()
 				}
 				if err != nil {
-					pages = nil
 					unavailable[check.buildID] = true
 				}
 				read[check.buildID] = pages

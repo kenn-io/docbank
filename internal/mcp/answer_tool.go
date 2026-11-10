@@ -404,7 +404,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if len(out.PagesWithoutText) > 0 {
 			out.PagesWithoutText = out.PagesWithoutText[:len(out.PagesWithoutText)-1]
 			out.OmittedPageGapDocuments++
-			out.CoverageComplete = false
 			if !slices.Contains(out.CoverageReasons, "page_coverage_incomplete") {
 				out.CoverageReasons = append(out.CoverageReasons, "page_coverage_incomplete")
 			}
