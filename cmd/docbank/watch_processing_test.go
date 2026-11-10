@@ -133,3 +133,27 @@ func TestDaemonRejectsWatchMappedProfilesWithoutRuntime(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", root)
 	require.ErrorContains(t, runServe(t.Context()), `watch "mixed" profile "documents" has no executable runtime`)
 }
+
+func TestWatchProfileNames(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		watches []config.WatchConfig
+		want    []string
+	}{
+		{name: "single profile", watches: []config.WatchConfig{{Profile: "docling"}}, want: []string{"docling"}},
+		{
+			name: "deduplicate and sort across watches",
+			watches: []config.WatchConfig{
+				{Profile: "docling"},
+				{Profiles: map[string]string{"document": "docling", "audio_video": "asr", "image": "docling"}},
+			},
+			want: []string{"asr", "docling"},
+		},
+		{name: "empty names", watches: []config.WatchConfig{{}, {Profiles: map[string]string{"document": ""}}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, watchProfileNames(tt.watches))
+		})
+	}
+}

@@ -465,10 +465,15 @@ Consent skips and missing or stale document authority end admission quietly.
 Imports stay accepted. A daemon stop between import and queue admission can leave
 a version unprocessed; use explicit processing for that version.
 
-Scheduling happens only at import. Granting consent later or adding a profile
-doesn't process older imports; use explicit processing for those documents.
-Unchanged rescans add no work. The existing durable workers execute the queued
-rendition; embedding stages require explicit profile execution.
+Watches queue renditions only at import. If you grant consent or add a profile
+later, use explicit processing for earlier imports that lack a rendition.
+Unchanged rescans add no work.
+
+When a routed profile has text-chunk embeddings and current build consent, the
+daemon embeds the text of current versions with a published rendition for that
+profile, including ASR transcripts. The `embed:watch:<profile>` worker runs only
+`rendition_chunk` bindings. It also picks up already published renditions with
+missing chunk embeddings when consent is granted.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,

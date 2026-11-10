@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -20,7 +21,7 @@ func (service *Service) RenditionConsentState(ctx context.Context, name string) 
 
 // AdmitImportedRendition queues the exact imported version as automatic work.
 // Missing consent and unsupported sources leave the committed import alone.
-// It never executes the provider or schedules the profile's embedding stages.
+// The watch embedding lane handles text chunks after the rendition publishes.
 func (service *Service) AdmitImportedRendition(ctx context.Context, node store.Node, name string) (err error) {
 	defer func() {
 		state, consentErr := processingConsentState(err)
@@ -42,4 +43,19 @@ func (service *Service) AdmitImportedRendition(ctx context.Context, node store.N
 	}
 	_, _, err = service.enqueueRendition(ctx, node, version, profile, service.renditionConsentRequest(profile), "", false)
 	return err
+}
+
+// WatchEmbeddings embeds only text chunks of versions this profile already rendered.
+// Listing and execution retain the profile's existing build-consent checks.
+func (service *Service) WatchEmbeddings(name string) *LocalTextSetup {
+	profile, ok := service.profiles[name]
+	if !ok {
+		return nil
+	}
+	for _, binding := range profile.portable.Embeddings {
+		if binding.InputKind == document.EmbeddingInputRenditionChunk {
+			return &LocalTextSetup{Service: service, Selected: name, rendered: true, lane: "watch-embeddings:" + name}
+		}
+	}
+	return nil
 }

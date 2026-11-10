@@ -251,7 +251,10 @@ type Plan struct {
 	RenditionIneligibleReason string `json:",omitzero"`
 }
 
-type processingRunOptions struct{ retryUnavailable, deferIndex bool }
+type processingRunOptions struct {
+	retryUnavailable, deferIndex bool
+	embeddingInputKind           document.EmbeddingInputKind
+}
 
 type StartRequest struct {
 	runOptions      processingRunOptions
@@ -1777,6 +1780,9 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	vectorSpaces := make([]string, 0, len(profile.portable.Embeddings))
 	var ineligibleErr error
 	for _, binding := range profile.portable.Embeddings {
+		if options.embeddingInputKind != "" && binding.InputKind != options.embeddingInputKind {
+			continue
+		}
 		var generation store.EmbeddingInputGenerationRecord
 		switch binding.InputKind {
 		case document.EmbeddingInputImage:

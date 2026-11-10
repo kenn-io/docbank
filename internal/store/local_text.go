@@ -14,7 +14,9 @@ func (s *Store) HasEmbeddingHeads(ctx context.Context, profile, binding string) 
 
 // MissingProcessingTargetsAfter excludes published work at the selected
 // profile, including after daemon restart. Failed text jobs remain eligible.
-func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, after string, bindings, limit int) ([]DocumentSummary, error) {
+// Rendered targets must have a rendition head for the profile and are
+// settled only by its chunk bindings.
+func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, after string, bindings, limit int, rendered bool) ([]DocumentSummary, error) {
 	if bindings < 1 || limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid processing backfill bounds")
 	}
@@ -25,10 +27,16 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
  JOIN content_versions v ON v.version_id=n.current_version_id
 `
 	d := metadataJSONDialect{s.postgresSchema != ""}
-	filter := ` WHERE n.trashed_at IS NULL AND v.version_id>$1
+	headKind := "h.input_kind<>'image'"
+	renderedFilter := ""
+	if rendered {
+		headKind = "h.input_kind='rendition_chunk'"
+		renderedFilter = ` AND EXISTS(SELECT 1 FROM rendition_heads rh WHERE rh.content_version_id=v.version_id AND rh.profile_fingerprint=$2)`
+	}
+	filter := ` WHERE n.trashed_at IS NULL AND v.version_id>$1` + renderedFilter + `
  AND (SELECT COUNT(DISTINCT binding_id) FROM (
  SELECT h.binding_id FROM embedding_heads h
- WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2 AND h.input_kind<>'image'
+ WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2 AND ` + headKind + `
  UNION SELECT ` + d.text("value", "name") + ` FROM processing_profiles p CROSS JOIN ` + d.arrayValues(d.text("p.canonical_profile", "embeddings")) + `
  WHERE p.profile_fingerprint=$2 AND ` + d.text("value", "input_kind") + `='rendition_chunk'
  AND ` + emptyRenditionChunkSQL("v.version_id", "$2") + `

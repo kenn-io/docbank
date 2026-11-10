@@ -359,14 +359,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	for _, watch := range cfg.Watches {
-		names := []string{watch.Profile}
-		for _, family := range slices.Sorted(maps.Keys(watch.Profiles)) {
-			names = append(names, watch.Profiles[family])
-		}
-		for _, name := range names {
-			if name == "" {
-				continue
-			}
+		for _, name := range watchProfileNames([]config.WatchConfig{watch}) {
 			if _, ok := processingProfiles[name]; !ok {
 				return fmt.Errorf("watch %q profile %q has no executable runtime", watch.Name, name)
 			}
@@ -428,6 +421,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if choice.Profile != "" {
 		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
 			return err
+		}
+	}
+	for _, name := range watchProfileNames(cfg.Watches) {
+		if name == choice.Profile {
+			continue
+		}
+		if setup := processingService.WatchEmbeddings(name); setup != nil {
+			if err := jobSupervisor.StartWorker("embed:watch:"+name, func(ctx context.Context) error { return setup.Backfill(ctx, logger) }); err != nil {
+				return err
+			}
 		}
 	}
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
@@ -1452,4 +1455,20 @@ func watchImportAdmission(watch config.WatchConfig, admit func(context.Context, 
 		}
 		return admit(ctx, node, name)
 	}
+}
+
+// watchProfileNames returns the effective routed profiles once, in stable order.
+func watchProfileNames(watches []config.WatchConfig) []string {
+	names := make(map[string]bool)
+	for _, watch := range watches {
+		if watch.Profile != "" {
+			names[watch.Profile] = true
+		}
+		for _, name := range watch.Profiles {
+			if name != "" {
+				names[name] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
 }

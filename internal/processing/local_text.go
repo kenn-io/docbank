@@ -52,6 +52,8 @@ type LocalTextSetup struct {
 	skips      map[localTextSkipKey]*localTextSkip
 	skipWarned bool
 	logger     *slog.Logger
+	rendered   bool
+	lane       string
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
@@ -237,19 +239,25 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 	profile := setup.Service.profiles[setup.Selected]
 	bindings := 0
 	for _, binding := range profile.portable.Embeddings {
-		if binding.InputKind != document.EmbeddingInputImage {
+		if binding.InputKind != document.EmbeddingInputImage && (!setup.rendered || binding.InputKind == document.EmbeddingInputRenditionChunk) {
 			bindings++
 		}
 	}
+	if bindings == 0 {
+		return nil, nil
+	}
 	var result []store.DocumentSummary
 	for len(result) < limit {
-		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000)
+		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000, setup.rendered)
 		if err != nil {
 			return nil, err
 		}
 		keys := make([]store.EmbeddingHeadKey, 0, len(items)*len(profile.portable.Embeddings))
 		for _, item := range items {
 			for _, binding := range profile.portable.Embeddings {
+				if setup.rendered && binding.InputKind != document.EmbeddingInputRenditionChunk {
+					continue
+				}
 				keys = append(keys, store.EmbeddingHeadKey{ContentVersionID: item.ContentVersionID, BindingID: binding.Name, InputKind: binding.InputKind})
 			}
 		}
@@ -303,8 +311,12 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 		}
 		return nil
 	}
+	options := processingRunOptions{retryUnavailable: true, deferIndex: true}
+	if setup.rendered {
+		options.embeddingInputKind = document.EmbeddingInputRenditionChunk
+	}
 	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
-		runOptions: processingRunOptions{retryUnavailable: true, deferIndex: true}})
+		runOptions: options})
 	if errors.Is(err, document.ErrTokenizerLimit) {
 		setup.skip(item, "tokenizer_limit")
 		return nil
@@ -354,10 +366,10 @@ func (setup *LocalTextSetup) skip(item store.DocumentSummary, code string) {
 	if len(setup.skips) < localTextSkipLimit {
 		setup.skips[key] = &localTextSkip{seen: true}
 		if code != "" {
-			logger.Warn("local text document skipped", "version", item.ContentVersionID, "code", code)
+			logger.Warn(cmp.Or(setup.lane, "local-text")+" document skipped", "version", item.ContentVersionID, "code", code)
 		}
 	} else if !setup.skipWarned {
-		logger.Warn("local text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
+		logger.Warn(cmp.Or(setup.lane, "local-text")+" skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
 		setup.skipWarned = true
 	}
 }
@@ -406,7 +418,7 @@ func (setup *LocalTextSetup) Backfill(ctx context.Context, logger *slog.Logger) 
 	}
 	defer release()
 	// Publication can finish without a counted write, so poll while holding activity.
-	lane := Backfill[store.DocumentSummary]{Name: "local-text", Page: 50, IdleDelay: time.Second, Logger: logger,
+	lane := Backfill[store.DocumentSummary]{Name: cmp.Or(setup.lane, "local-text"), Page: 50, IdleDelay: time.Second, Logger: logger,
 		WriteRevision: setup.Service.catalog.WriteRevision, Busy: func() bool { return holding },
 		List: func(ctx context.Context, after string, limit int) ([]store.DocumentSummary, error) {
 			items, err := setup.targets(ctx, after, limit)
