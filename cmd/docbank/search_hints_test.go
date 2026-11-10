@@ -170,6 +170,7 @@ func TestEmptySearchHints(t *testing.T) {
 			} else {
 				if tc.unavailable {
 					require.NotContains(t, stderr.String(), "no searchable text")
+					require.NotContains(t, stderr.String(), "OCR")
 				} else {
 					require.Contains(t, stderr.String(), "Hint: 1 PDF has 2 pages with no text layer")
 				}
@@ -210,6 +211,7 @@ func TestEmptySearchHintsCoverageGuidance(t *testing.T) {
 	}{
 		{"office and pdf gaps", api.SearchTextCoverage{NoText: 1, PDFsWithoutText: 1, PagesWithoutText: 2, Families: []string{"office"}}, []string{"needs_ocr", "no_searchable_text"}, "1 file (Office)"},
 		{"unavailable pdf", api.SearchTextCoverage{NoText: 1, PDFPageCoverageUnavailable: 1, Families: []string{"pdf"}}, []string{"pdf_page_coverage_unavailable", "no_searchable_text"}, "1 file (PDF)"},
+		{"partial pdf", api.SearchTextCoverage{PDFsWithoutText: 2, PagesWithoutText: 3, PDFPageCoveragePartial: true}, []string{"pdf_page_coverage_partial", "needs_ocr"}, "at least 2 PDFs"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hints := emptySearchHints("missing", tc.coverage, true, false, false)
@@ -217,19 +219,15 @@ func TestEmptySearchHintsCoverageGuidance(t *testing.T) {
 			for i, code := range tc.codes {
 				require.Equal(t, code, hints[i].Code)
 			}
-			generic := hints[len(hints)-1].Message
-			require.Contains(t, generic, tc.message)
-			require.Contains(t, generic, "use or set up a profile")
-			require.Contains(t, generic, "list profiles with docbank processing profiles")
+			message := hints[len(hints)-1].Message
+			require.Contains(t, message, tc.message)
+			if tc.coverage.PDFPageCoveragePartial {
+				require.Contains(t, hints[0].Message, "narrow the search scope")
+				require.Contains(t, message, "at least 3 pages")
+			} else {
+				require.Contains(t, message, "use or set up a profile")
+				require.Contains(t, message, "list profiles with docbank processing profiles")
+			}
 		})
 	}
-}
-
-func TestEmptySearchHintsPartialPDFCoverage(t *testing.T) {
-	hints := emptySearchHints("missing", api.SearchTextCoverage{PDFsWithoutText: 2, PagesWithoutText: 3, PDFPageCoveragePartial: true}, true, false, false)
-	require.Len(t, hints, 2)
-	require.Equal(t, "pdf_page_coverage_partial", hints[0].Code)
-	require.Equal(t, "needs_ocr", hints[1].Code)
-	require.Contains(t, hints[1].Message, "at least 2 PDFs")
-	require.Contains(t, hints[1].Message, "at least 3 pages")
 }
