@@ -70,7 +70,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			} else {
 				require.Empty(t, report.PagesWithoutText)
 			}
-			coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
+			coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText, nil)
 			require.NoError(t, err)
 			require.Zero(t, coverage.Pending)
 			require.Equal(t, len(test.gaps), coverage.PagesWithoutText)
@@ -85,7 +85,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 				require.Equal(t, report.Renditions, corruptReport.Renditions)
 				require.Empty(t, corruptReport.PagesWithoutText)
 				require.Equal(t, "unavailable", corruptReport.PageCoverage)
-				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
+				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText, nil)
 				require.NoError(t, err)
 				require.Equal(t, test.unavailable, coverage.PDFPageCoverageUnavailable)
 				require.Equal(t, test.generic, coverage.NoText)
@@ -103,7 +103,7 @@ func TestCoveragePageBounds(t *testing.T) {
 		builds[ids[i]] = ids[i]
 	}
 	calls := 0
-	gaps, state, err := readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
+	gaps, state, _, err := readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
 	require.NoError(t, err)
 	require.Equal(t, 16, calls)
 	require.Len(t, gaps, 16)
@@ -112,7 +112,7 @@ func TestCoveragePageBounds(t *testing.T) {
 		builds[id] = "shared"
 	}
 	calls = 0
-	gaps, state, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
+	gaps, state, _, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
 	require.Len(t, gaps, 17)
@@ -121,17 +121,17 @@ func TestCoveragePageBounds(t *testing.T) {
 	for i := range pages {
 		pages[i] = i + 1
 	}
-	gaps, state, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { return pages, nil })
+	gaps, state, _, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { return pages, nil })
 	require.NoError(t, err)
 	require.Len(t, gaps, 2)
 	require.Len(t, gaps[1].Pages, 3192)
 	require.Equal(t, "partial", state)
-	_, state, err = readPDFCoveragePage(t.Context(), ids[:1], builds, func(context.Context, string) ([]int, error) { return nil, errors.New("missing") })
+	_, state, _, err = readPDFCoveragePage(t.Context(), ids[:1], builds, func(context.Context, string) ([]int, error) { return nil, errors.New("missing") })
 	require.NoError(t, err)
 	require.Equal(t, "unavailable", state)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, err = readPDFCoveragePage(ctx, ids, builds, func(context.Context, string) ([]int, error) { return nil, nil })
+	_, _, _, err = readPDFCoveragePage(ctx, ids, builds, func(context.Context, string) ([]int, error) { return nil, nil })
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -213,7 +213,17 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 				require.NoError(t, err)
 				second, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "second.pdf", written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
 				require.NoError(t, err)
+				unqueued, err := runner.UnqueuedPending(t.Context())
+				require.NoError(t, err)
+				require.False(t, unqueued("oversized", PDFTextMaxDocumentBytes+1))
+				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, service.profiles[PDFTextProfileName].record.Fingerprint, service.PDFPagesWithoutText, unqueued)
+				require.NoError(t, err)
+				require.Equal(t, 2, coverage.Pending)
 				require.NoError(t, runner.process(t.Context(), item))
+				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, service.profiles[PDFTextProfileName].record.Fingerprint, service.PDFPagesWithoutText, unqueued)
+				require.NoError(t, err)
+				require.Equal(t, 1, coverage.Pending)
+				require.Equal(t, 1, coverage.NoText)
 				items, err := runner.targets(t.Context(), "", 1)
 				require.NoError(t, err)
 				require.Len(t, items, 1)
@@ -241,4 +251,36 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCoveragePageReportsPartialAndUnavailable(t *testing.T) {
+	ids := make([]string, 17)
+	builds := make(map[string]string)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i)
+		builds[ids[i]] = ids[i]
+	}
+	_, state, unavailable, err := readPDFCoveragePage(t.Context(), ids, builds, func(_ context.Context, build string) ([]int, error) {
+		if build == "0" {
+			return nil, errors.New("missing evidence")
+		}
+		return []int{2}, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, "partial", state)
+	require.True(t, unavailable)
+	pages := make([]int, 5000)
+	for i := range pages {
+		pages[i] = i + 1
+	}
+	builds = map[string]string{"0": "bad", "1": "good", "2": "good"}
+	_, state, unavailable, err = readPDFCoveragePage(t.Context(), ids[:3], builds, func(_ context.Context, build string) ([]int, error) {
+		if build == "bad" {
+			return nil, errors.New("missing evidence")
+		}
+		return pages, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, "partial", state)
+	require.True(t, unavailable)
 }

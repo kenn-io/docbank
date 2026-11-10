@@ -237,13 +237,14 @@ type PageTextGap struct {
 }
 
 type CoverageReport struct {
-	VaultUID           string          `json:"vault_uid" format:"uuid"`
-	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
-	State              string          `json:"state"`
-	Renditions         CoverageClass   `json:"renditions"`
-	Embeddings         []CoverageClass `json:"embeddings"`
-	PagesWithoutText   []PageTextGap   `json:"pages_without_text,omitzero"`
-	PageCoverage       string          `json:"page_coverage,omitempty" enum:"partial,unavailable"`
+	VaultUID                string          `json:"vault_uid" format:"uuid"`
+	ProfileFingerprint      string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
+	State                   string          `json:"state"`
+	Renditions              CoverageClass   `json:"renditions"`
+	Embeddings              []CoverageClass `json:"embeddings"`
+	PagesWithoutText        []PageTextGap   `json:"pages_without_text,omitzero"`
+	PageCoverage            string          `json:"page_coverage,omitempty" enum:"partial,unavailable"`
+	PageCoverageUnavailable bool            `json:"page_coverage_unavailable,omitzero"`
 }
 
 type DocumentSearchScope struct {

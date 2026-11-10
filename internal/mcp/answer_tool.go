@@ -312,7 +312,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "pages_without_text")
 	}
-	if result.pageCoverage.PageCoverage == "unavailable" {
+	if result.pageCoverage.PageCoverage == "unavailable" || result.pageCoverage.PageCoverageUnavailable {
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "page_coverage_unavailable")
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -262,6 +263,10 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "mixed.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)
+	pendingResp, pendingBody := get(t, ts, "/api/v1/search/text-coverage", nil)
+	require.Equal(t, http.StatusOK, pendingResp.StatusCode, pendingBody)
+	require.Contains(t, pendingBody, `"pending":1`)
+	require.Contains(t, pendingBody, `"no_text":0`)
 	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
 	plan, err := runner.Service.Plan(t.Context(), selector)
 	require.NoError(t, err)
@@ -508,6 +513,52 @@ func configureAutomaticPDFText(t *testing.T, d *api.Deps) *processing.PDFTextRun
 	t.Cleanup(service.Stop)
 	runner := &processing.PDFTextRunner{Service: service}
 	d.Processing = service
+	d.PDFText = runner
 	require.NoError(t, runner.Initialize(t.Context()))
 	return runner
+}
+
+func TestCoverageHTTPReportsPartialAndUnavailable(t *testing.T) {
+	var runner *processing.PDFTextRunner
+	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); runner = configureAutomaticPDFText(t, d) })
+	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
+	require.NoError(t, err)
+	var versions []string
+	builds := make(map[string]string)
+	for i := range 17 {
+		data := append(bytes.Clone(pdf), []byte("\n%"+strconv.Itoa(i)+"\n")...)
+		hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(data))
+		require.NoError(t, err)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "scan-"+strconv.Itoa(i)+".pdf", hash, size, "application/pdf")
+		require.NoError(t, err)
+		selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
+		plan, err := runner.Service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = runner.Service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+		require.NoError(t, err)
+		request := map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "profile": processing.PDFTextProfileName}
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var receipt struct {
+			BuildID string `json:"build_id"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+		versions = append(versions, node.CurrentVersionID)
+		builds[node.CurrentVersionID] = receipt.BuildID
+	}
+	slices.Sort(versions)
+	build, err := s.RenditionBuild(t.Context(), builds[versions[0]])
+	require.NoError(t, err)
+	for _, artifact := range build.Artifacts {
+		if artifact.Role == "normalized_evidence" {
+			require.NoError(t, s.Blobs.Remove(artifact.BlobHash))
+		}
+	}
+	query := url.Values{"profile": {processing.PDFTextProfileName}, "vault_uid": {s.VaultID()}, "content_version_id": versions}
+	resp, body := get(t, ts, "/api/v1/coverage?"+query.Encode(), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.CoverageReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	require.Equal(t, "partial", report.PageCoverage)
+	require.True(t, report.PageCoverageUnavailable)
 }

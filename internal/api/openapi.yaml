@@ -3392,6 +3392,8 @@ components:
             - partial
             - unavailable
           type: string
+        page_coverage_unavailable:
+          type: boolean
         pages_without_text:
           items:
             $ref: "#/components/schemas/PageTextGap"

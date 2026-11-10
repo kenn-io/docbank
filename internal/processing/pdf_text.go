@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 	"sync"
 	"time"
 
@@ -17,7 +16,7 @@ const PDFTextProfileName = "docbank-pdf-text"
 const PDFTextMaxDocumentBytes = 500 << 20
 
 // readPDFCoveragePage bounds both evidence reads and returned page numbers.
-func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, error) {
+func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, bool, error) {
 	type result struct {
 		pages []int
 		err   error
@@ -26,9 +25,10 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 	var gaps []PageTextGap
 	remaining := 8192
 	state := ""
+	unavailable := false
 	for i, id := range ids {
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
 		build := builds[id]
 		if build == "" {
@@ -37,16 +37,17 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 		r, ok := cache[build]
 		if !ok {
 			if len(cache) == 16 {
-				return gaps, "partial", nil
+				return gaps, "partial", unavailable, nil
 			}
 			r.pages, r.err = read(ctx, build)
 			cache[build] = r
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
 		if r.err != nil {
 			state = "unavailable"
+			unavailable = true
 			continue
 		}
 		end := min(len(r.pages), remaining)
@@ -56,17 +57,17 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 		}
 		if remaining == 0 {
 			if end < len(r.pages) {
-				return gaps, "partial", nil
+				return gaps, "partial", unavailable, nil
 			}
 			for _, later := range ids[i+1:] {
 				if builds[later] != "" {
-					return gaps, "partial", nil
+					return gaps, "partial", unavailable, nil
 				}
 			}
-			return gaps, state, nil
+			return gaps, state, unavailable, nil
 		}
 	}
-	return gaps, state, nil
+	return gaps, state, unavailable, nil
 }
 
 // NewPDFTextProfile constructs the daemon's local PDF text profile.
@@ -130,8 +131,6 @@ func (service *Service) PDFPagesWithoutText(ctx context.Context, buildID string)
 			}
 		}
 	}
-	slices.Sort(pages)
-	pages = slices.Compact(pages)
 	return pages, nil
 }
 
@@ -254,6 +253,20 @@ func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary)
 		return nil
 	}
 	return err
+}
+
+// UnqueuedPending reports which eligible sources the runner has yet to queue.
+func (r *PDFTextRunner) UnqueuedPending(ctx context.Context) (func(string, int64) bool, error) {
+	active, err := r.Service.ProfileConsentActive(ctx, PDFTextProfileName)
+	if err != nil || !active {
+		return nil, err
+	}
+	maxBytes := r.Service.profiles[PDFTextProfileName].portable.Rendition.MaxDocumentBytes
+	return func(version string, size int64) bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return size > 0 && size <= maxBytes && !r.skips[version]
+	}, nil
 }
 
 // Pending includes current sources and jobs that have not published yet.
