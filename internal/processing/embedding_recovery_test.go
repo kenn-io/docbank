@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -54,62 +55,63 @@ func TestEmbeddingWorkerKitTimeoutAndCapacity(t *testing.T) {
 	for _, failure := range []string{"timeout", "capacity"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
-			var mu sync.Mutex
-			var sizes []int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var request struct {
-					Input []string `json:"input"`
+			synctest.Test(t, func(t *testing.T) {
+				var mu sync.Mutex
+				var sizes []int
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var request struct {
+						Input []string `json:"input"`
+					}
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+						return
+					}
+					mu.Lock()
+					sizes = append(sizes, len(request.Input))
+					mu.Unlock()
+					if failure == "timeout" {
+						<-r.Context().Done()
+						return
+					}
+					if len(request.Input) > 1 {
+						w.WriteHeader(http.StatusRequestEntityTooLarge)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"object":"list","model":"synthetic","data":[{"object":"embedding","index":0,"embedding":[1,0]}]}`))
+				}))
+				fixture := newEmbeddingWorkerFixture(t)
+				descriptor := fixture.descriptor
+				descriptor.ID, descriptor.TrustBoundary = openaicompat.ProviderID, document.EmbeddingTrustOperatorNetwork
+				descriptor.DocumentFormatter, descriptor.QueryFormatter = openaicompat.DocumentFormatterV1, openaicompat.QueryFormatterV1
+				descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}
+				profile := openaicompat.Profile{Origin: "http://example.com", Descriptor: descriptor, ModelInput: descriptor.ModelInput, DeploymentEpoch: descriptor.ModelRevision, RequestTimeout: time.Second, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20}
+				var err error
+				profile.Descriptor.PolicyFingerprint, err = openaicompat.PolicyFingerprint(profile)
+				require.NoError(t, err)
+				profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
+				require.NoError(t, err)
+				provider, err := openaicompat.New(profile, nil, server.Client())
+				require.NoError(t, err)
+				fixture.descriptor = provider.Descriptor()
+				fixture.profile = embeddingWorkerProfile(t, fixture.descriptor)
+				fixture.runtimeRegistry = timeoutTestRuntime{embeddingWorkerFakeRuntime: fixture.runtime, provider: provider}
+				work := fixture.work("kit-"+failure, document.EmbeddingInputRenditionChunk, "semantic")
+				for i := range work.Inputs {
+					work.InputGeneration.Inputs[i].RenderedChecksum = workerHash(work.Binding.ModelInput.EncodeDocument(work.Inputs[i].Text))
 				}
-				if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
-					return
-				}
+				fixture.catalog.enqueue(work)
+				_, err = fixture.worker(t).ScanOnce(t.Context())
+				require.NoError(t, err)
 				mu.Lock()
-				sizes = append(sizes, len(request.Input))
-				mu.Unlock()
+				defer mu.Unlock()
 				if failure == "timeout" {
-					<-r.Context().Done()
-					return
+					assert.Equal(t, []int{2, 1}, sizes)
+					assert.Equal(t, store.EmbeddingFailureProviderUnavailable, fixture.catalog.failures[headKey(work)])
+				} else {
+					assert.Equal(t, []int{2, 1, 1}, sizes)
+					assert.Contains(t, fixture.catalog.heads, headKey(work))
 				}
-				if len(request.Input) > 1 {
-					w.WriteHeader(http.StatusRequestEntityTooLarge)
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"object":"list","model":"synthetic","data":[{"object":"embedding","index":0,"embedding":[1,0]}]}`))
-			}))
-			defer server.Close()
-			fixture := newEmbeddingWorkerFixture(t)
-			descriptor := fixture.descriptor
-			descriptor.ID, descriptor.TrustBoundary = openaicompat.ProviderID, document.EmbeddingTrustOperatorNetwork
-			descriptor.DocumentFormatter, descriptor.QueryFormatter = openaicompat.DocumentFormatterV1, openaicompat.QueryFormatterV1
-			descriptor.InputKinds = []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}
-			profile := openaicompat.Profile{Origin: server.URL, Descriptor: descriptor, ModelInput: descriptor.ModelInput, DeploymentEpoch: descriptor.ModelRevision, RequestTimeout: time.Second, MaxBatchItems: 8, MaxInputBytes: 1 << 20, MaxRequestBytes: 2 << 20, MaxResponseBytes: 1 << 20}
-			var err error
-			profile.Descriptor.PolicyFingerprint, err = openaicompat.PolicyFingerprint(profile)
-			require.NoError(t, err)
-			profile.Descriptor, err = document.NewEmbeddingDescriptor(profile.Descriptor)
-			require.NoError(t, err)
-			provider, err := openaicompat.New(profile, nil, server.Client())
-			require.NoError(t, err)
-			fixture.descriptor = provider.Descriptor()
-			fixture.profile = embeddingWorkerProfile(t, fixture.descriptor)
-			fixture.runtimeRegistry = timeoutTestRuntime{embeddingWorkerFakeRuntime: fixture.runtime, provider: provider}
-			work := fixture.work("kit-"+failure, document.EmbeddingInputRenditionChunk, "semantic")
-			for i := range work.Inputs {
-				work.InputGeneration.Inputs[i].RenderedChecksum = workerHash(work.Binding.ModelInput.EncodeDocument(work.Inputs[i].Text))
-			}
-			fixture.catalog.enqueue(work)
-			_, err = fixture.worker(t).ScanOnce(t.Context())
-			require.NoError(t, err)
-			mu.Lock()
-			defer mu.Unlock()
-			if failure == "timeout" {
-				assert.Equal(t, []int{2, 1}, sizes)
-				assert.Equal(t, store.EmbeddingFailureProviderUnavailable, fixture.catalog.failures[headKey(work)])
-			} else {
-				assert.Equal(t, []int{2, 1, 1}, sizes)
-				assert.Contains(t, fixture.catalog.heads, headKey(work))
-			}
+			})
 		})
 	}
 }

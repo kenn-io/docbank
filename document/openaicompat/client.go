@@ -398,6 +398,9 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 	if client.profile.ManagedService != "" {
 		origin, err := client.profile.ResolveOrigin(request.Context())
 		if err != nil {
+			if cause := requestFailure(request, err); cause != nil {
+				return nil, cause
+			}
 			return nil, fmt.Errorf("%w: resolve managed origin: %w", ErrTransientResponse, err)
 		}
 		origin, err = validateOrigin(origin)
@@ -414,8 +417,8 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 	if client.profile.SecretBinding != "" {
 		secret, err := client.secrets.ResolveSecret(request.Context(), client.profile.SecretBinding)
 		if err != nil {
-			if contextErr := request.Context().Err(); contextErr != nil {
-				return nil, fmt.Errorf("openaicompat: credential resolution canceled: %w", contextErr)
+			if cause := requestFailure(request, err); cause != nil {
+				return nil, fmt.Errorf("openaicompat: credential resolution canceled: %w", cause)
 			}
 			return nil, ErrUnauthorized
 		}
@@ -424,13 +427,10 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 		}
 		request.Header.Set("Authorization", "Bearer "+secret)
 	}
-	response, err := client.http.Do(request)
+	response, err := client.http.Do(request) //nolint:gosec // The origin is validated and the transport enforces the configured egress policy.
 	if err != nil {
-		if contextErr := request.Context().Err(); contextErr != nil {
-			return nil, contextErr
-		}
-		if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
-			return nil, context.DeadlineExceeded
+		if cause := requestFailure(request, err); cause != nil {
+			return nil, cause
 		}
 		return nil, &ProviderError{Kind: ErrTransientResponse}
 	}
@@ -460,7 +460,7 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 	if err := client.validateRevisionEcho(response.Header); err != nil {
 		return nil, errors.Join(ErrMalformedResponse, err)
 	}
-	body, err := readBounded(request.Context(), response.Body, client.profile.MaxResponseBytes)
+	body, err := readBounded(request, response.Body, client.profile.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -769,14 +769,34 @@ func validateResponseContentType(value string) error {
 	return nil
 }
 
-func readBounded(ctx context.Context, reader io.Reader, maximum int64) ([]byte, error) {
+// requestFailure handles both deadline cancellation and net/http's legacy
+// request-cancel channel, which can fire before the deadline context is done.
+func requestFailure(request *http.Request, err error) error {
+	ctx := request.Context()
+	if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
+		return context.DeadlineExceeded
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		select {
+		case <-request.Cancel: //nolint:staticcheck // net/http sets this channel for custom transports.
+			return context.DeadlineExceeded
+		default:
+		}
+	}
+	return nil
+}
+
+func readBounded(request *http.Request, reader io.Reader, maximum int64) ([]byte, error) {
 	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, contextErr
-		}
-		if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
-			return nil, context.DeadlineExceeded
+		if cause := requestFailure(request, err); cause != nil {
+			return nil, cause
 		}
 		return nil, fmt.Errorf("openaicompat: could not read provider response: %w", ErrTransientResponse)
 	}

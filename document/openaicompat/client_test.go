@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -53,20 +54,6 @@ type capturedRequest struct {
 	EncodingFormat string   `json:"encoding_format"`
 }
 
-type waitForCanceledRead struct {
-	io.ReadCloser
-
-	ctx context.Context
-}
-
-func (body waitForCanceledRead) Read(p []byte) (int, error) {
-	n, err := body.ReadCloser.Read(p)
-	if err != nil && err != io.EOF {
-		<-body.ctx.Done()
-	}
-	return n, err
-}
-
 func TestEmbedSplitsTimedOutBatch(t *testing.T) {
 	contract := modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
 	profile := testProfile(t, contract)
@@ -88,97 +75,149 @@ func TestEmbedSplitsTimedOutBatch(t *testing.T) {
 }
 
 func TestEmbedSplitsHTTPClientTimeout(t *testing.T) {
-	t.Parallel()
 	for _, phase := range []string{"headers", "body"} {
 		t.Run(phase, func(t *testing.T) {
-			t.Parallel()
-			var mu sync.Mutex
-			var sizes []int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body capturedRequest
-				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-					return
-				}
+			synctest.Test(t, func(t *testing.T) {
+				var mu sync.Mutex
+				var sizes []int
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var body capturedRequest
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+						return
+					}
+					mu.Lock()
+					sizes = append(sizes, len(body.Input))
+					mu.Unlock()
+					w.Header().Set("Content-Type", "application/json")
+					if len(body.Input) > 1 {
+						if phase == "body" {
+							w.WriteHeader(http.StatusOK)
+							if !assert.NoError(t, http.NewResponseController(w).Flush()) {
+								return
+							}
+						}
+						<-r.Context().Done()
+						return
+					}
+					_, _ = w.Write([]byte(`{"object":"list","model":"synthetic-model","data":[{"object":"embedding","index":0,"embedding":[1,0,0]}]}`))
+				}))
+				profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+				profile.Origin, profile.RequestTimeout = "http://example.com", time.Second
+				profile.Descriptor = descriptorFor(t, profile)
+				client, err := New(profile, nil, server.Client())
+				require.NoError(t, err)
+				result, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(profile.Descriptor))
+				require.NoError(t, err)
+				require.Len(t, result.Vectors, 2)
 				mu.Lock()
-				sizes = append(sizes, len(body.Input))
-				mu.Unlock()
-				w.Header().Set("Content-Type", "application/json")
-				if len(body.Input) > 1 {
+				defer mu.Unlock()
+				assert.Equal(t, []int{2, 1, 1}, sizes)
+			})
+		})
+	}
+}
+
+func TestResponsePolicyPreservesContextDeadlineTimeout(t *testing.T) {
+	for _, phase := range []string{"headers", "body"} {
+		t.Run(phase, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if phase == "body" {
+						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusOK)
 						if !assert.NoError(t, http.NewResponseController(w).Flush()) {
 							return
 						}
 					}
 					<-r.Context().Done()
-					return
+				}))
+				profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+				profile.Origin = "http://example.com"
+				profile.Descriptor = descriptorFor(t, profile)
+				client, err := New(profile, nil, server.Client())
+				require.NoError(t, err)
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com", nil)
+				require.NoError(t, err)
+				var policyErr error
+				httpClient := &http.Client{Timeout: time.Second, Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					response, err := (responsePolicy{client: client}).RoundTrip(r)
+					policyErr = err
+					return response, err
+				})}
+				response, err := httpClient.Do(request)
+				if response != nil {
+					defer func() { _ = response.Body.Close() }()
 				}
-				_, _ = w.Write([]byte(`{"object":"list","model":"synthetic-model","data":[{"object":"embedding","index":0,"embedding":[1,0,0]}]}`))
-			}))
-			defer server.Close()
-			profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
-			profile.Origin, profile.RequestTimeout = server.URL, time.Second
-			profile.Descriptor = descriptorFor(t, profile)
-			transport := server.Client().Transport
-			client, err := New(profile, nil, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				response, err := transport.RoundTrip(r)
-				if err != nil {
-					<-r.Context().Done()
-				} else {
-					response.Body = waitForCanceledRead{ReadCloser: response.Body, ctx: r.Context()}
-				}
-				return response, err
-			})})
-			require.NoError(t, err)
-			result, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(profile.Descriptor))
-			require.NoError(t, err)
-			require.Len(t, result.Vectors, 2)
-			mu.Lock()
-			defer mu.Unlock()
-			assert.Equal(t, []int{2, 1, 1}, sizes)
+				require.Error(t, err)
+				timeout, ok := errors.AsType[net.Error](policyErr)
+				require.True(t, ok)
+				assert.True(t, timeout.Timeout())
+			})
 		})
 	}
 }
 
-func TestResponsePolicyPreservesContextDeadlineTimeout(t *testing.T) {
-	t.Parallel()
-	for _, phase := range []string{"headers", "body"} {
-		t.Run(phase, func(t *testing.T) {
-			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if phase == "body" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusOK)
-					if !assert.NoError(t, http.NewResponseController(w).Flush()) {
-						return
-					}
-				}
-				<-r.Context().Done()
-			}))
-			defer server.Close()
-			profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
-			profile.Origin = server.URL
-			profile.Descriptor = descriptorFor(t, profile)
-			client, err := New(profile, nil, server.Client())
-			require.NoError(t, err)
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, nil)
-			require.NoError(t, err)
-			var policyErr error
-			httpClient := &http.Client{Timeout: time.Second, Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				response, err := (responsePolicy{client: client}).RoundTrip(r)
-				policyErr = err
-				return response, err
-			})}
-			response, err := httpClient.Do(request)
-			if response != nil {
-				defer func() { _ = response.Body.Close() }()
-			}
-			require.Error(t, err)
-			timeout, ok := errors.AsType[net.Error](policyErr)
-			require.True(t, ok)
-			assert.True(t, timeout.Timeout())
-		})
+type expiredDeadlineContext struct{ context.Context }
+
+func (ctx expiredDeadlineContext) Deadline() (time.Time, bool) { return time.Now(), true }
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("connection canceled") }
+
+func TestResponsePolicyCancellationAtDeadline(t *testing.T) {
+	cancel := make(chan struct{})
+	close(cancel)
+	request, err := http.NewRequestWithContext(expiredDeadlineContext{t.Context()}, http.MethodPost, "http://example.com", nil)
+	require.NoError(t, err)
+	request.Cancel = cancel //nolint:staticcheck // Reproduce net/http cancellation before the context deadline fires.
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	client := newTestClient(t, profile, nil, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection canceled")
+	}))
+	response, err := (responsePolicy{client: client}).RoundTrip(request)
+	if response != nil {
+		defer func() { _ = response.Body.Close() }()
 	}
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	_, err = readBounded(request, failingReader{}, 100)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestResponsePolicyCancellationCause(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(context.DeadlineExceeded)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.com", nil)
+	require.NoError(t, err)
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	client := newTestClient(t, profile, nil, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	}))
+	response, err := (responsePolicy{client: client}).RoundTrip(request)
+	if response != nil {
+		defer func() { _ = response.Body.Close() }()
+	}
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	_, err = readBounded(request, failingReader{}, 100)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestResponsePolicyPreservesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.com", nil)
+	require.NoError(t, err)
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+	client := newTestClient(t, profile, nil, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	}))
+	response, err := (responsePolicy{client: client}).RoundTrip(request)
+	if response != nil {
+		defer func() { _ = response.Body.Close() }()
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = readBounded(request, failingReader{}, 100)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestEmbedReportsTimeout(t *testing.T) {
