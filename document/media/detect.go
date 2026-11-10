@@ -1197,6 +1197,11 @@ func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 	if track.handlerType != "vide" {
 		return isNonVisualHandler(track.handlerType) && !presentation && !track.hasVisualSamples
 	}
+	if info.audioInspection {
+		// ASR proves sound samples only; visual decoding retains its own bounds.
+		info.pictureTracks++
+		return true
+	}
 	if !presentation || !track.hasVisualSamples || track.stsdCount != 1 || track.unknownSampleEntries != 0 ||
 		track.codedWidth <= 0 || track.codedHeight <= 0 || track.codec == "" {
 		return false

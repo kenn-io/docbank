@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
@@ -2521,7 +2522,8 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 	if baseType, _, err := mime.ParseMediaType(declaredMediaType); err == nil {
 		declaredMediaType = baseType
 	}
-	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
+	videoAudioTrack := profile.portable.Rendition.AdapterContract == docling.ASRVideoAdapterContract
+	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType, VideoAudioTrack: videoAudioTrack,
 		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,

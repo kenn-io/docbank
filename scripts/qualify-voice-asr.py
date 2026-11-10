@@ -19,9 +19,28 @@ subprocess.run([
     "-map_metadata", "-1", "-c:a", "aac", "-b:a", "96k",
     str(output / "asr-spoken.m4a"),
 ], check=True)
+# Synthetic speech only. Provider-host FFmpeg generates inputs; Docbank never demuxes.
+for name, duration, bitrate, loops in (
+    ("asr-spoken.mp4", "6", "1M", 0),
+    ("asr-large.mp4", "25", "16M", 0),
+    ("asr-multisegment.mp4", "40", "1M", 12),
+):
+    subprocess.run([
+        "ffmpeg", "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25",
+        "-stream_loop", str(loops), "-i", str(root / "document/docling/testdata/asr-spoken.wav"),
+        "-t", duration, "-map_metadata", "-1", "-c:v", "libx264", "-preset", "ultrafast",
+        "-b:v", bitrate, "-minrate", bitrate, "-maxrate", bitrate, "-bufsize", "32M",
+        "-x264-params", "nal-hrd=cbr", "-c:a", "aac", "-af", "apad", str(output / name),
+    ], check=True)
+assert (output / "asr-large.mp4").stat().st_size > 38 << 20
 versions = {name: importlib.metadata.version(name) for name in (
     "docling-serve", "docling-slim", "docling-core", "docling-jobkit", "openai-whisper"
 )}
+expected_versions = {"docling-serve": "1.32.0", "docling-slim": "2.124.0",
+                     "docling-core": "2.105.0", "docling-jobkit": "3.5.0",
+                     "openai-whisper": "20250625"}
+if versions != expected_versions:
+    raise RuntimeError(f"unqualified provider versions: {versions}")
 (output / "versions.json").write_text(json.dumps(versions, indent=2) + "\n")
 with (output / "service.log").open("w") as log:
     service = subprocess.Popen([
@@ -60,11 +79,17 @@ with (output / "service.log").open("w") as log:
             "mp3_artifact_sha256": hashlib.sha256((output / "mp3-transcript.json").read_bytes()).hexdigest(),
             "versions": versions,
             "decoder": json.loads(probe.stdout),
-            "adapter": "docbank-docling-asr/v2",
+            "adapter": "docbank-docling-asr/v3",
+            "accuracy": "not qualified",
+            "videos": {name: {
+                "source_bytes": (output / name).stat().st_size,
+                "decoder": json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(output / name)], check=True, capture_output=True, text=True).stdout),
+                "adapter_measurement": json.loads((output / (name + "-transcript.json.measurement.json")).read_text()),
+            } for name in ("asr-spoken.mp4", "asr-large.mp4", "asr-multisegment.mp4")},
             "document_schema": "1.10.0",
             "expected_terms": ["delivery", "arrives", "friday"],
             "expected_synthetic_phrase": "Telescope delivery arrives Friday at 3.",
-            "accuracy": "ASR may misrecognize words; this qualification verifies decoding and timed speech, not verbatim accuracy",
+            "accuracy_note": "ASR may misrecognize words; this qualification verifies decoding and timed speech, not verbatim accuracy",
         }
         (output / "qualification.json").write_text(json.dumps(report, indent=2) + "\n")
     finally:

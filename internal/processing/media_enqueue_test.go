@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -406,7 +408,7 @@ func newMediaStateFixture(tb testing.TB) mediaStateFixture {
 	return f
 }
 
-func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
+func newMediaStateFixtureWithoutConsent(tb testing.TB, contracts ...string) mediaStateFixture {
 	tb.Helper()
 	fixture := newPublicationFixture(tb)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
@@ -420,10 +422,21 @@ func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 	})
 	require.NoError(tb, err)
+	if len(contracts) > 0 {
+		descriptor.SupportedFormats = []document.RenditionFormatCapability{{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile}}
+		descriptor.ArtifactRoles = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
+		descriptor.Fingerprint = ""
+		descriptor, err = document.NewRenditionDescriptor(descriptor)
+		require.NoError(tb, err)
+	}
 	provider := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
 	record := workerProcessingProfile(tb, provider.Descriptor())
 	var portable document.ProcessingProfileV1
 	require.NoError(tb, json.Unmarshal(record.CanonicalProfile, &portable))
+	if len(contracts) > 0 {
+		portable.Rendition.AdapterContract = contracts[0]
+		portable.Rendition.RequestedArtifacts = descriptor.ArtifactRoles
+	}
 	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
 	service, err := NewService(tb.Context(), ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
@@ -756,4 +769,83 @@ func TestWatchImportAdmission(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWatchMP4ImportAdmission(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"missing", "active", "revoked"} {
+		t.Run(state, func(t *testing.T) {
+			f := newMediaStateFixtureWithoutConsent(t, docling.ASRVideoAdapterContract)
+			raw := mediatest.H264AACMP4()
+			written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+			require.NoError(t, err)
+			node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "phone.mp4", written.Hash, written.Size, "video/mp4", processingBlobPhysical(t, written))
+			require.NoError(t, err)
+			selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "speech"}
+			plan, err := f.service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			if state != "missing" {
+				_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+				require.NoError(t, err)
+			}
+			if state == "revoked" {
+				_, err = f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+			}
+			require.NoError(t, f.service.AdmitImportedRendition(t.Context(), node, "speech"))
+			_, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, state == "active", queued)
+		})
+	}
+}
+
+func TestMP4InspectionContractSelection(t *testing.T) {
+	t.Parallel()
+	data := mediatest.H264AACMP4()
+	for _, contract := range []string{docling.ASRVideoAdapterContract, docling.ASRM4AAdapterContract, "rendition-adapter/v1"} {
+		t.Run(contract, func(t *testing.T) {
+			f := newMediaStateFixtureWithoutConsent(t, contract)
+			profile := f.service.profiles["speech"]
+			version := store.ContentVersion{Size: int64(len(data)), MimeType: "video/mp4", BlobHash: processingSHA256(data)}
+			policy := inspectionPolicy("phone.mp4", version, profile)
+			require.Equal(t, contract == docling.ASRVideoAdapterContract, policy.VideoAudioTrack)
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			if contract != docling.ASRVideoAdapterContract {
+				legacy := policy
+				legacy.VideoAudioTrack = false
+				previous, err := media.InspectCapability(bytes.NewReader(data), legacy)
+				require.NoError(t, err)
+				require.Equal(t, previous, record, "supplied captions and existing contracts retain sealed identities")
+				require.Equal(t, previous.Checksum, record.Checksum)
+			}
+		})
+	}
+}
+
+func TestSuppliedCaptionsMP4InspectionIdentity(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	name, supplied, err := NewSuppliedCaptionProfile(f.catalog, f.blobs, "operator:synthetic")
+	require.NoError(t, err)
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:synthetic",
+		Profiles: map[string]ProfileConfig{name: supplied}})
+	require.NoError(t, err)
+	data := mediatest.H264AACMP4()
+	version := store.ContentVersion{Size: int64(len(data)), MimeType: "video/mp4", BlobHash: processingSHA256(data)}
+	policy := inspectionPolicy("phone.mp4", version, service.profiles[name])
+	require.False(t, policy.VideoAudioTrack)
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	legacy := policy
+	legacy.VideoAudioTrack = false
+	previous, err := media.InspectCapability(bytes.NewReader(data), legacy)
+	require.NoError(t, err)
+	require.Equal(t, previous, record)
+	require.Equal(t, previous.Checksum, record.Checksum)
+	encoded, err := json.Marshal(policy)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "video_audio_track", "legacy policy bytes must omit the new flag")
 }

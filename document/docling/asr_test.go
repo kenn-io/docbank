@@ -263,6 +263,8 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 		{name: "WAV withheld filename", withholdFilename: true, mediaType: "audio/wav", filename: "asr-spoken.wav", taskID: "asr-wav", source: asrSpokenWAV, providerEnd: 3.06, wantEnd: 3060},
 		{name: "MP3 withheld filename", withholdFilename: true, mediaType: "audio/mpeg", filename: "asr-spoken.mp3", taskID: "asr-mp3", source: asrSpokenMP3, providerEnd: 3.08, wantEnd: 3080},
 		{name: "MP3", mediaType: "audio/mpeg", filename: "asr-spoken.mp3", taskID: "asr-mp3", source: asrSpokenMP3, providerEnd: 3.08, wantEnd: 3080},
+		{name: "MP4 video", mediaType: "video/mp4", filename: "synthetic.mp4", taskID: "asr-video", source: mediatest.H264AACMP4(), providerEnd: 2.42, wantEnd: 2420},
+		{name: "MP4 withheld filename", mediaType: "video/mp4", filename: "synthetic.mp4", taskID: "asr-video", source: mediatest.H264AACMP4(), providerEnd: 2.42, wantEnd: 2420, withholdFilename: true},
 		{name: "M4A AAC", mediaType: "audio/mp4", filename: "synthetic.m4a", taskID: "asr-m4a", source: mediatest.AACM4A(), providerEnd: 0.03, wantEnd: 30},
 		{name: "M4A withheld filename", mediaType: "audio/mp4", filename: "synthetic.m4a", taskID: "asr-m4a", source: mediatest.AACM4A(), providerEnd: 0.03, wantEnd: 30, withholdFilename: true},
 	} {
@@ -271,7 +273,7 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			fixture.authorization.DiscloseFilename = !testCase.withholdFilename
 			submittedMetadata := fixture.metadata
 			if testCase.withholdFilename {
-				submittedMetadata.Filename = map[string]string{"audio/wav": "document.wav", "audio/mpeg": "document.mp3", "audio/mp4": "document.m4a"}[testCase.mediaType]
+				submittedMetadata.Filename = map[string]string{"audio/wav": "document.wav", "audio/mpeg": "document.mp3", "audio/mp4": "document.m4a", "video/mp4": "document.mp4"}[testCase.mediaType]
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
@@ -290,6 +292,7 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			require.NoError(t, err)
 			require.Len(t, result.Evidence.Units, 1)
+			assert.Equal(t, submittedMetadata.MediaFamily, result.Evidence.Family)
 			assert.Equal(t, document.EvidenceUnitSegment, result.Evidence.UnitKind)
 			assert.Equal(t, int64(0), result.Evidence.Units[0].Locator.Start)
 			assert.Equal(t, testCase.wantEnd, result.Evidence.Units[0].Locator.End)
@@ -409,7 +412,9 @@ func (fixture asrFixture) upload() document.AuthorizedUpload {
 func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrFixture {
 	t.Helper()
 	policyFingerprint, err := ASRPolicyFingerprint(100_000)
-	if mediaType == "audio/mp4" {
+	if mediaType == "video/mp4" {
+		policyFingerprint, err = ASRVideoPolicyFingerprint(100_000)
+	} else if mediaType == "audio/mp4" {
 		policyFingerprint, err = ASRM4APolicyFingerprint(100_000)
 	}
 	require.NoError(t, err)
@@ -417,8 +422,15 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
 	}
-	if mediaType == "audio/mp4" {
+	if mediaType == "audio/mp4" || mediaType == "video/mp4" {
 		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
+	}
+	if mediaType == "video/mp4" {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
+	}
+	family := "audio"
+	if mediaType == "video/mp4" {
+		family = "video"
 	}
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
@@ -431,22 +443,27 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 	require.NoError(t, err)
 	digest := sha256.Sum256(source)
 	metadata := document.AuthorizedUploadMetadata{
-		Filename: filename, MediaFamily: "audio", MediaType: mediaType,
+		Filename: filename, MediaFamily: family, MediaType: mediaType,
 		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
 		CapabilityRecordChecksum: "2222222222222222222222222222222222222222222222222222222222222222",
 		ProviderMetadataChecksum: "3333333333333333333333333333333333333333333333333333333333333333",
 		InputKind:                document.RenditionInputOriginalFile,
+	}
+	durationLimit := int64(10_000)
+	if mediaType == "video/mp4" {
+		durationLimit = (24 * time.Hour).Milliseconds()
 	}
 	record, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType,
 		ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: descriptor.Fingerprint,
 		ProfileFingerprint:    strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
-		InputKind:      document.RenditionInputOriginalFile,
-		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
+		InputKind:       document.RenditionInputOriginalFile,
+		VideoAudioTrack: mediaType == "video/mp4",
+		MaxSourceBytes:  max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
-		MaxDurationMS: 10_000,
+		MaxDurationMS: durationLimit,
 	})
 	require.NoError(t, err)
 	metadata.CapabilityRecordChecksum = record.Checksum
@@ -475,7 +492,7 @@ func newASRClient(t *testing.T, origin string, descriptor document.RenditionDesc
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
 		MaxPollAttempts:  4,
 		MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
-		MaxTranscriptChars: 100_000, AllowM4A: len(descriptor.SupportedFormats) == 3,
+		MaxTranscriptChars: 100_000, AllowM4A: len(descriptor.SupportedFormats) == 3, AllowMP4: len(descriptor.SupportedFormats) == 4,
 	}, nil, http.DefaultClient)
 	require.NoError(t, err)
 	return client
@@ -507,8 +524,12 @@ func assertDoclingASRSubmission(
 		require.NoError(t, readErr)
 		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
+	fromFormat := "audio"
+	if metadata.MediaType == "video/mp4" {
+		fromFormat = "video"
+	}
 	assert.Equal(t, map[string][]string{
-		"from_formats": {"audio"}, "to_formats": {"json"}, "target_type": {"inbody"},
+		"from_formats": {fromFormat}, "to_formats": {"json"}, "target_type": {"inbody"},
 	}, fields)
 	assert.NotContains(t, fields, "pipeline")
 	assert.NotContains(t, fields, "asr_model")
@@ -553,4 +574,114 @@ func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000}, nil, http.DefaultClient)
 	require.Error(t, err, "old adapter must refuse M4A authority")
+}
+
+func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
+	v1, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	v2, err := ASRM4APolicyFingerprint(100_000)
+	require.NoError(t, err)
+	v3, err := ASRVideoPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.NotEqual(t, v1, v3)
+	require.NotEqual(t, v2, v3)
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: fixture.descriptor,
+		MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
+	require.Error(t, err, "v2 must not authorize video")
+	for _, frameBytes := range []int{128 << 10, 2 << 20} {
+		t.Run(fmt.Sprint(frameBytes), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == convertPath {
+					writeJSON(t, w, doclingTask("video", "success"))
+					return
+				}
+				result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 2.42)
+				body := result["document"].(map[string]any)["json_content"].(map[string]any)
+				body["pictures"] = []any{map[string]any{"image": strings.Repeat("A", frameBytes)}}
+				writeJSON(t, w, result)
+			}))
+			t.Cleanup(server.Close)
+			client := newASRClient(t, server.URL, fixture.descriptor)
+			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			if frameBytes > 1<<20 {
+				require.Error(t, err)
+				require.Empty(t, result.Artifacts)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, result.Evidence.Units, 1, "only texts become transcript segments")
+			}
+		})
+	}
+}
+
+func TestDoclingASRExistingPolicyIdentity(t *testing.T) {
+	v1, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.Equal(t, "4ba382a79b92197618690ece585479aba1b499cacfc4028a65c4a7b2c830f7d6", v1)
+	v2, err := ASRM4APolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.Equal(t, "c83aebb1a1fb7617db0aca97216df3234d8ce3e9676dcb6f46179456b283adde", v2)
+}
+
+func TestDoclingASRV2RejectsVideoBeforeSubmission(t *testing.T) {
+	video := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	audio := newASRFixture(t, "audio/mp4", "synthetic.m4a", mediatest.AACM4A())
+	var submissions int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { submissions++ }))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, audio.descriptor)
+	_, err := document.RenderRendition(t.Context(), client, video.upload(), video.authorization)
+	require.Error(t, err)
+	require.Zero(t, submissions)
+}
+
+func TestDoclingASRVideoPreservesTrackSegments(t *testing.T) {
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == convertPath {
+			writeJSON(t, w, doclingTask("video", "success"))
+			return
+		}
+		result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 1.0001)
+		body := result["document"].(map[string]any)["json_content"].(map[string]any)
+		body["texts"] = append(body["texts"].([]any), map[string]any{
+			"text": "second cue", "source": []any{map[string]any{"kind": "track", "start_time": 0.75, "end_time": 2.0}}})
+		writeJSON(t, w, result)
+	}))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, fixture.descriptor)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	require.Equal(t, "video", result.Evidence.Family)
+	artifact, err := mediatranscript.Unmarshal(result.Artifacts[0].Payload)
+	require.NoError(t, err)
+	require.Len(t, artifact.Segments, 2)
+	require.EqualValues(t, 1001, artifact.Segments[0].EndMS)
+	require.EqualValues(t, 750, artifact.Segments[1].StartMS)
+	require.EqualValues(t, 2000, artifact.Segments[1].EndMS)
+}
+
+func TestDoclingASRVideoRejectsVisualOnlyCapability(t *testing.T) {
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	record, err := media.InspectCapability(bytes.NewReader(fixture.source), media.InspectionPolicy{
+		Filename: fixture.metadata.Filename, DeclaredMediaType: fixture.metadata.MediaType,
+		ExpectedBytes: fixture.metadata.ByteLength, ExpectedSHA256: fixture.metadata.SHA256,
+		DescriptorFingerprint: fixture.descriptor.Fingerprint, ProfileFingerprint: strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
+		InputKind: document.RenditionInputOriginalFile, MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20,
+		MaxEntries: 100000, MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
+		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
+		MaxPixels: 1 << 20, MaxFrames: 1000, MaxDurationMS: 10000,
+	})
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	fixture.capability = record.UploadCapability()
+	fixture.metadata.CapabilityRecordChecksum, fixture.authorization.CapabilityRecordChecksum = record.Checksum, record.Checksum
+	var submissions int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { submissions++ }))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, fixture.descriptor)
+	_, err = document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.Error(t, err)
+	require.Zero(t, submissions, "a video capability without sound proof must never be uploaded")
 }

@@ -99,6 +99,8 @@ type InspectionPolicy struct {
 	MaxPixels        int64 `json:"max_pixels"`
 	MaxFrames        int64 `json:"max_frames"`
 	MaxDurationMS    int64 `json:"max_duration_ms"`
+	// VideoAudioTrack streams qualified MP4 sound tracks for video ASR.
+	VideoAudioTrack bool `json:"video_audio_track,omitzero"`
 }
 
 // CapabilityMeasurements records only finite, locally verified measurements.
@@ -161,7 +163,7 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	}
 	baseType, _, _ := mime.ParseMediaType(policy.DeclaredMediaType)
 	ext := strings.ToLower(filepath.Ext(policy.Filename))
-	if streamingAudio(baseType, ext) {
+	if streamingAudio(baseType, ext) || policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4" {
 		return inspectAudio(reader, policy, baseType, ext)
 	}
 	data, err := io.ReadAll(io.LimitReader(reader, policy.MaxSourceBytes+1))
@@ -1425,8 +1427,10 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 	var err error
 	if baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav" {
 		record, err = inspectWAV(buffered, policy)
-	} else if baseType == "audio/mp4" || baseType == "audio/x-m4a" || ext == ".m4a" {
-		record, err = inspectM4A(buffered, policy)
+	} else if baseType == "audio/mp4" || baseType == "audio/x-m4a" || ext == ".m4a" || policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4" {
+		moviePolicy := policy
+		moviePolicy.VideoAudioTrack = policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4"
+		record, err = inspectM4A(buffered, moviePolicy)
 	} else {
 		record, err = inspectMP3(buffered, policy)
 	}
@@ -1451,7 +1455,8 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 	validIdentity := record.Format == "wav" && ext == ".wav" &&
 		(baseType == "audio/wav" || baseType == "audio/x-wav") ||
 		record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg" ||
-		record.Format == "m4a" && ext == ".m4a" && (baseType == "audio/mp4" || baseType == "audio/x-m4a")
+		record.Format == "m4a" && ext == ".m4a" && (baseType == "audio/mp4" || baseType == "audio/x-m4a") ||
+		policy.VideoAudioTrack && record.Format == "mp4" && ext == ".mp4" && baseType == "video/mp4"
 	if record.Eligible && !validIdentity {
 		record.Eligible, record.Reason = false, CapabilityReasonMalformed
 	}

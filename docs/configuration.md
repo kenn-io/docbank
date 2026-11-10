@@ -768,7 +768,9 @@ Set `MISTRAL_API_KEY` in the daemon's environment, then use
 `docbank processing plan /documents/report.pdf --profile ocr` to review the
 upload before granting consent with `docbank processing build`.
 
-### Supplied audio transcription
+<span id="supplied-audio-transcription"></span>
+
+### Audio and video transcription
 
 The daemon can transcribe supplied WAV, MP3, and M4A audio through a configured
 Docling Serve deployment with speech recognition installed. The profile's
@@ -790,15 +792,43 @@ The adapter requests `from_formats=audio`, JSON output, and in-body results;
 it accepts only timed tracks in document schema 1.10.0. It does not select or
 claim a particular model. Qualify the configured deployment with synthetic
 speech before authorizing real recordings. The M4A path inspects audio-only
-AAC/ALAC containers; the ASR qualification targets AAC, without promising other
-codecs or video transcription.
+AAC/ALAC containers; the ASR qualification targets AAC.
+
+Use `adapter_contract = "docbank-docling-asr/v3"` to add original MP4 video
+with an AAC or ALAC sound track. This contract also accepts every v2 audio
+format, so a watch can route `audio_video` to one profile. Automatic watch
+routing requires the per-family watch profile configuration. The worker uses
+the selected profile's consent; v1/v2 grants never authorize an MP4 upload.
+MP4s without qualified sound, fragmented containers, MOV, MKV, and WebM are
+not admitted. Non-visual metadata and timecode tracks are allowed.
+
+The v3 deployment requires Docling Serve 1.32.0, `docling-slim` 2.124.0,
+`docling-core` 2.105.0, `docling-jobkit` 3.5.0, and ASR dependencies
+(the synthetic lane uses `openai-whisper` 20250625). FFmpeg must be on the
+provider host's `PATH`; Docbank hosts need no FFmpeg. The adapter sends
+`from_formats=video` for MP4 and maps only timed transcript text.
+
+The pinned provider embeds one PNG frame per ten seconds of video. No request
+option disables those frames. Size `max_response_bytes` for approximately
+`(duration_seconds / 10 + 1) × frame_PNG_bytes + transcript_bytes`, up to
+**512 MiB**. This cap sets a maximum video duration for a given frame size;
+1080p/4K frame sizes depend on content and need deployment qualification. A
+response beyond the bound fails without retaining a partial transcript.
+Set `max_document_bytes` for the largest MP4 (default 64 MiB, at most 1 GiB);
+the client buffers uploads in memory. Set `total_timeout` and
+`max_poll_attempts × poll_interval` for the full transcription. Recognition
+accuracy is not qualified by the synthetic lane.
 
 For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
 and include `audio/mp4` in the descriptor alongside `audio/wav` and
 `audio/mpeg`, each with `original_file` input. Use
 `docling.ASRDisclosureFingerprint` with that descriptor and the exact endpoint
 and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
-A v1 descriptor cannot authorize that upload.
+A v1 descriptor cannot authorize that upload. For v3, use
+`docling.ASRVideoPolicyFingerprint`, add `{video, video/mp4, original_file}`
+to the three audio formats, and set `ASRProfile.AllowMP4=true`. This flag
+implies M4A support. Recompute the descriptor and disclosure fingerprints and
+grant fresh consent when changing contracts.
 
 Set `credential_binding = "credential:<name>"` on the rendition profile. Its
 `runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
@@ -876,6 +906,9 @@ the 4 GiB default.
 This setting does not raise document inspection, image/video, transcript,
 caption, or hosted-provider bounds. Audio retains its 24-hour duration and codec
 qualification bounds. Remote MP4 video originals keep their 20 MiB limit.
+The v3 transcription path streams a retained MP4's audio-track inspection
+under the separate 1 GiB document/upload ceiling and does not use the visual
+20 MiB limit or visual frame-count proof.
 Transcript and caption uploads and the built-in profiles' responses
 keep their 16 MiB limits. A staging disk or quota failure releases the reservation,
 removes the failed file, and returns HTTP 503 with `media_staging_unavailable`;

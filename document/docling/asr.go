@@ -19,7 +19,9 @@ const (
 	// ASRAdapterContract identifies the daemon's qualified audio rendition policy.
 	ASRAdapterContract = "docbank-docling-asr/v1"
 	// ASRM4AAdapterContract opts into M4A upload authority with a separate policy.
-	ASRM4AAdapterContract       = "docbank-docling-asr/v2"
+	ASRM4AAdapterContract = "docbank-docling-asr/v2"
+	// ASRVideoAdapterContract opts into MP4 sound tracks with separate consent.
+	ASRVideoAdapterContract     = "docbank-docling-asr/v3"
 	qualifiedASRSchemaVersion   = "1.10.0"
 	qualifiedASRProviderVersion = "1.32.0"
 )
@@ -32,6 +34,8 @@ type ASRProfile struct {
 	MaxTranscriptChars int
 	// AllowM4A requires the v2 policy and an M4A-capable deployment.
 	AllowM4A bool
+	// AllowMP4 selects v3 and also admits all v2 audio formats.
+	AllowMP4 bool
 }
 
 // ASRClient maps qualified Docling audio tracks to retained transcripts.
@@ -39,6 +43,7 @@ type ASRClient struct {
 	client         *Client
 	evidencePolicy document.EvidencePolicy
 	allowM4A       bool
+	allowMP4       bool
 }
 
 var _ document.RenditionProvider = (*ASRClient)(nil)
@@ -52,6 +57,11 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 // ASRM4APolicyFingerprint binds M4A support independently of WAV/MP3 consent.
 func ASRM4APolicyFingerprint(maxTranscriptChars int) (string, error) {
 	return asrPolicyFingerprint(maxTranscriptChars, ASRM4AAdapterContract)
+}
+
+// ASRVideoPolicyFingerprint binds MP4 authority independently of audio consent.
+func ASRVideoPolicyFingerprint(maxTranscriptChars int) (string, error) {
+	return asrPolicyFingerprint(maxTranscriptChars, ASRVideoAdapterContract)
 }
 
 func asrPolicyFingerprint(maxTranscriptChars int, contract string) (string, error) {
@@ -77,7 +87,7 @@ func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint,
 	return providerutil.RenditionDisclosureFingerprint(ASRAdapterContract, descriptor, endpoint, deployment)
 }
 
-// NewASR constructs the WAV/MP3 provider or the opt-in M4A-capable v2 provider.
+// NewASR constructs the qualified audio provider or an opt-in M4A/MP4 provider.
 func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client) (*ASRClient, error) {
 	client, err := newTransportClient(profile.Profile, secrets, httpClient)
 	if err != nil {
@@ -86,12 +96,15 @@ func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client)
 	descriptor := client.descriptor
 	if descriptor.ReturnsMarkdown || !descriptor.ReturnsStructured ||
 		len(descriptor.ArtifactRoles) != 1 || descriptor.ArtifactRoles[0] != document.EvidenceArtifactTranscript ||
-		!qualifiedASRFormats(descriptor.SupportedFormats, profile.AllowM4A) {
+		!qualifiedASRFormats(descriptor.SupportedFormats, profile.AllowM4A || profile.AllowMP4, profile.AllowMP4) {
 		return nil, errors.New("docling: ASR profile does not match the qualified deployment")
 	}
 	contract := ASRAdapterContract
 	if profile.AllowM4A {
 		contract = ASRM4AAdapterContract
+	}
+	if profile.AllowMP4 {
+		contract = ASRVideoAdapterContract
 	}
 	fingerprint, err := asrPolicyFingerprint(profile.MaxTranscriptChars, contract)
 	if err != nil || descriptor.PolicyFingerprint != fingerprint {
@@ -101,7 +114,7 @@ func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client)
 	if err != nil {
 		return nil, err
 	}
-	return &ASRClient{client: client, evidencePolicy: policy, allowM4A: profile.AllowM4A}, nil
+	return &ASRClient{client: client, evidencePolicy: policy, allowM4A: profile.AllowM4A || profile.AllowMP4, allowMP4: profile.AllowMP4}, nil
 }
 
 func (client *ASRClient) Descriptor() document.RenditionDescriptor {
@@ -134,10 +147,14 @@ func (client *ASRClient) Render(
 	defer run.operation.Cancel()
 	defer clear(run.source)
 	if run.metadata.Filename == "" {
-		run.metadata.Filename = map[string]string{"audio/mpeg": "document.mp3", "audio/wav": "document.wav", "audio/mp4": "document.m4a"}[run.metadata.MediaType]
+		run.metadata.Filename = map[string]string{"audio/mpeg": "document.mp3", "audio/wav": "document.wav", "audio/mp4": "document.m4a", "video/mp4": "document.mp4"}[run.metadata.MediaType]
+	}
+	fromFormat := "audio"
+	if run.metadata.MediaType == "video/mp4" {
+		fromFormat = "video"
 	}
 	task, result, err := client.client.convert(run, [][2]string{
-		{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"},
+		{"from_formats", fromFormat}, {"to_formats", "json"}, {"target_type", "inbody"},
 	})
 	if err != nil {
 		return document.RenditionResult{}, err
@@ -154,11 +171,12 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 	}
 	facts, local := carrier.CapabilityProof().Facts()
 	metadata := upload.Metadata()
-	supportedType := facts.MediaType == "audio/wav" || facts.MediaType == "audio/mpeg" || (client.allowM4A && facts.MediaType == "audio/mp4")
+	supportedType := facts.MediaFamily == "audio" && (facts.MediaType == "audio/wav" || facts.MediaType == "audio/mpeg" || (client.allowM4A && facts.MediaType == "audio/mp4")) ||
+		client.allowMP4 && facts.VideoAudioTrack && facts.MediaFamily == "video" && facts.MediaType == "video/mp4"
 	if !local || facts.Checksum != authorization.CapabilityRecordChecksum ||
 		facts.Checksum != metadata.CapabilityRecordChecksum || facts.SourceSHA256 != metadata.SHA256 ||
 		facts.SourceBytes != metadata.ByteLength || facts.DescriptorFingerprint != client.client.descriptor.Fingerprint ||
-		facts.MediaFamily != "audio" || facts.MediaFamily != metadata.MediaFamily || facts.MediaType != metadata.MediaType ||
+		facts.MediaFamily != metadata.MediaFamily || facts.MediaType != metadata.MediaType ||
 		!supportedType ||
 		facts.DurationMS <= 0 || facts.DurationMS > (24*time.Hour).Milliseconds() {
 		return 0, provider.Classified(document.RenditionErrorPolicyRejected, "Docling ASR audio capability does not match the upload", nil)
@@ -168,9 +186,12 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 
 var errASRTimingUnavailable = errors.New("timing_unavailable")
 
-func qualifiedASRFormats(formats []document.RenditionFormatCapability, allowM4A bool) bool {
+func qualifiedASRFormats(formats []document.RenditionFormatCapability, allowM4A, allowMP4 bool) bool {
 	count := 2
 	if allowM4A {
+		count++
+	}
+	if allowMP4 {
 		count++
 	}
 	if len(formats) != count {
@@ -182,6 +203,9 @@ func qualifiedASRFormats(formats []document.RenditionFormatCapability, allowM4A 
 	}
 	if allowM4A {
 		want[document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile}] = true
+	}
+	if allowMP4 {
+		want[document.RenditionFormatCapability{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile}] = true
 	}
 	for _, format := range formats {
 		if !want[format] {

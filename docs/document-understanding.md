@@ -225,7 +225,7 @@ staging, hashing, inspection, publication, and sealed provider spooling use
 bounded buffers. The built-in supplied-transcript and supplied-captions profiles
 accept these originals without loading their audio into memory. Their transcript
 and response limits remain 16 MiB. Configure a smaller source ceiling in
-[`[media].max_source_bytes`](configuration.md#supplied-audio-transcription), or
+[`[media].max_source_bytes`](configuration.md#audio-and-video-transcription), or
 use `ProcessingOptions.MediaMaxBytes` for an embedded vault. Smaller caller
 inspection and profile policies still apply. Hosted transcription providers keep
 their own input limits. Audio duration remains limited to 24 hours.
@@ -257,9 +257,20 @@ decoding audio. See [media recordings](cli-reference.md#docbank-media) for the
 container requirements and byte ceilings. The opt-in Docling ASR v2 adapter
 submits those original bytes for speech recognition through the existing
 consent-bound rendition worker. Its separate descriptor preserves the v1
-WAV/MP3 consent boundary. See [audio transcription configuration](configuration.md#supplied-audio-transcription)
+WAV/MP3 consent boundary. See [audio transcription configuration](configuration.md#audio-and-video-transcription)
 for service and decoder requirements. Gemini audio qualification remains
 limited to WAV and MP3.
+
+The opt-in Docling ASR v3 contract adds `video/mp4` with `.mp4`. Its sealed
+`video_audio_track` inspection policy streams the original, proves at least
+one qualified AAC/ALAC sound track and local sound-sample ranges, and admits
+non-visual metadata/timecode tracks. It keeps the 16 MiB movie-metadata bound
+and 1 GiB source ceiling while avoiding the visual 20 MiB and 10,000-frame
+limits. It rejects fragmented containers and videos without qualified sound.
+The flag is omitted from existing policies, preserving their bytes and
+checksums; supplied captions keep visual inspection. Provider-host FFmpeg
+demuxes the audio. Timed text becomes video-family transcript evidence;
+embedded frame images remain subject to the existing response bound.
 
 Use `document/mediatranscript` when the source supplies segment timing. Its
 `media-transcript/v1` artifact retains ordered text, start and end

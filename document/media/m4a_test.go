@@ -274,3 +274,65 @@ func TestInspectM4ABoundsChunkCount(t *testing.T) {
 		require.Equal(t, want, record.Reason, "chunks=%d", chunks)
 	}
 }
+
+func TestInspectMP4AudioTrack(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"AAC video":     mediatest.H264AACMP4(),
+		"no sound":      mediatest.H265MP4(),
+		"metadata only": bytes.Replace(mediatest.M4A("mp4a"), []byte("soun"), []byte("meta"), 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack = true
+			policy.MaxDurationMS = 300000
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.Equal(t, name == "AAC video", record.Eligible, record.Reason)
+			if record.Eligible {
+				require.Equal(t, "video", record.MediaFamily)
+				require.Equal(t, "mp4", record.Format)
+				require.Equal(t, "video/mp4", record.MediaType)
+				require.GreaterOrEqual(t, record.Measurements.DurationMS, int64(5000))
+				require.NoError(t, media.ValidateCapabilityRecord(record))
+			}
+		})
+	}
+	data := mediatest.H264AACMP4()
+	policy := inspectionPolicy(data, "phone.mov", "video/quicktime")
+	policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.False(t, record.Eligible)
+	policy.Filename, policy.DeclaredMediaType, policy.MaxEntryBytes = "phone.mp4", "video/mp4", 32
+	record, err = media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.Equal(t, media.CapabilityReasonEntryBytes, record.Reason)
+}
+
+func TestInspectMP4AudioWithNonVisualTracks(t *testing.T) {
+	for _, handler := range []string{"meta", "tmcd"} {
+		t.Run(handler, func(t *testing.T) {
+			data := mediatest.M4A("mp4a")
+			movie := bytes.Index(data, []byte("moov")) - 4
+			track := bytes.Index(data, []byte("trak")) - 4
+			extra := bytes.Replace(bytes.Clone(data[track:]), []byte("soun"), []byte(handler), 1)
+			data = append(data, extra...)
+			binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie)) //nolint:gosec // small synthetic movie
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.True(t, record.Eligible, record.Reason)
+		})
+	}
+}
+
+func TestInspectMP4ExistingPolicyIdentity(t *testing.T) {
+	data := mediatest.H264AACMP4()
+	policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+	policy.MaxDurationMS, policy.MaxPixels, policy.MaxFrames = 300000, 1<<20, 18000
+	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible)
+	require.Equal(t, "9f37322a2e4c62b23f3dd604abf00aac709fc189a71289f9bd902d0e7724e0e8", record.PolicyFingerprint)
+}

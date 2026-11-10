@@ -28,6 +28,9 @@ type m4aAudioFormat struct {
 
 func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
 	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/mp4", Format: "m4a", Reason: CapabilityReasonMalformed}
+	if policy.VideoAudioTrack {
+		record.MediaFamily, record.MediaType, record.Format = "video", "video/mp4", "mp4"
+	}
 	info := mp4Info{audioInspection: true, localDataReferences: true, maxBoxes: policy.MaxEntries}
 	var movie []byte
 	var offset int64
@@ -107,7 +110,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 	if ftypCount != 1 || info.moovCount != 1 || info.mdatCount == 0 {
 		return record, nil
 	}
-	if reason := qualifyM4AMovie(movie, &info); reason != CapabilityReasonEligible {
+	if reason := qualifyM4AMovie(movie, &info, policy.VideoAudioTrack); reason != CapabilityReasonEligible {
 		record.Reason = reason
 		return record, nil
 	}
@@ -124,28 +127,35 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 	return record, nil
 }
 
-// qualifyM4AMovie scans the movie box and proves that every track is
-// qualified sound whose samples occupy disjoint local media-data bytes. It
-// returns CapabilityReasonEligible when the movie qualifies.
-func qualifyM4AMovie(movie []byte, info *mp4Info) CapabilityReason {
+// qualifyM4AMovie proves qualified sound samples occupy disjoint local data.
+// Video mode also admits picture and known non-visual tracks without proving
+// their sample payloads; sound is still required.
+func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityReason {
 	if !scanMP4Boxes(movie, info, nil, "moov", 1) {
 		if info.boxCount > info.maxBoxes {
 			return CapabilityReasonEntryCount
 		}
 		return CapabilityReasonMalformed
 	}
-	if info.mvhdCount != 1 || len(info.tracks) == 0 || !info.localDataReferences || info.pictureTracks != 0 {
+	if info.mvhdCount != 1 || len(info.tracks) == 0 || !info.localDataReferences || !allowVideo && info.pictureTracks != 0 {
 		return CapabilityReasonMalformed
 	}
 	chunks := 0
 	for _, track := range info.tracks {
-		chunks += len(track.chunkOffsets)
+		if track.handlerType == "soun" {
+			chunks += len(track.chunkOffsets)
+		}
 	}
 	if chunks > maxM4AChunks {
 		return CapabilityReasonEntryCount
 	}
 	info.sampleRanges = make([]mp4SampleRange, 0, chunks)
+	soundTracks := 0
 	for _, track := range info.tracks {
+		if allowVideo && (track.handlerType == "vide" || track.handlerType != "soun" && isNonVisualHandler(track.handlerType)) {
+			continue
+		}
+		soundTracks++
 		if track.handlerType != "soun" || track.stsdCount != 1 || len(track.audioFormats) == 0 {
 			return CapabilityReasonMalformed
 		}
@@ -158,7 +168,7 @@ func qualifyM4AMovie(movie []byte, info *mp4Info) CapabilityReason {
 			return CapabilityReasonMalformed
 		}
 	}
-	if !mp4SampleRangesDoNotOverlap(info.sampleRanges) {
+	if soundTracks == 0 || !mp4SampleRangesDoNotOverlap(info.sampleRanges) {
 		return CapabilityReasonMalformed
 	}
 	return CapabilityReasonEligible

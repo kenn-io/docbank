@@ -50,11 +50,13 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 	}{
 		{name: "WAV", filename: "recording.wav", mediaType: "audio/wav", extension: ".wav", content: mediatest.WAV()},
 		{name: "MP3", filename: "recording.mp3", mediaType: "audio/mpeg", extension: ".mp3", content: mediatest.MP3()},
+		{name: "MP4 video", filename: "recording.mp4", mediaType: "video/mp4", extension: ".mp4", content: mediatest.H264AACMP4()},
 		{name: "M4A AAC", filename: "recording.m4a", mediaType: "audio/mp4", extension: ".m4a", content: mediatest.AACM4A()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := newDaemonDoclingServer(t)
 			provider.allowM4A = test.mediaType == "audio/mp4"
+			provider.allowVideo = test.mediaType == "video/mp4"
 			provider.resultGate = make(chan struct{})
 			_, daemon, _ := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 
@@ -79,6 +81,9 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			wantAdapter := docling.ASRAdapterContract
 			if provider.allowM4A {
 				wantAdapter = docling.ASRM4AAdapterContract
+			}
+			if provider.allowVideo {
+				wantAdapter = docling.ASRVideoAdapterContract
 			}
 			assert.Equal(t, wantAdapter, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
 			assert.Equal(t, "docling.serve-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
@@ -143,6 +148,9 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, stream.Close())
 			require.Contains(t, rendition.String(), "Telescope delivery arrives Friday at 3")
+			if provider.allowVideo {
+				require.Contains(t, rendition.String(), `"family":"video"`)
+			}
 
 			search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 				Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
@@ -805,8 +813,9 @@ type daemonDoclingTask struct {
 }
 
 type daemonDoclingServer struct {
-	server   *httptest.Server
-	allowM4A bool
+	server     *httptest.Server
+	allowM4A   bool
+	allowVideo bool
 
 	mu                  sync.Mutex
 	tasks               map[string]daemonDoclingTask
@@ -887,7 +896,11 @@ func (provider *daemonDoclingServer) handleSubmit(response http.ResponseWriter, 
 		}
 		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
-	if !equalDaemonASRFields(fields) {
+	fromFormat := "audio"
+	if provider.allowVideo {
+		fromFormat = "video"
+	}
+	if !equalDaemonASRFields(fields, fromFormat) {
 		http.Error(response, "unexpected fields", http.StatusBadRequest)
 		return
 	}
@@ -950,8 +963,8 @@ func (provider *daemonDoclingServer) submissionSource() []byte {
 	return nil
 }
 
-func equalDaemonASRFields(fields map[string][]string) bool {
-	want := map[string][]string{"from_formats": {"audio"}, "to_formats": {"json"}, "target_type": {"inbody"}}
+func equalDaemonASRFields(fields map[string][]string, fromFormat string) bool {
+	want := map[string][]string{"from_formats": {fromFormat}, "to_formats": {"json"}, "target_type": {"inbody"}}
 	if len(fields) != len(want) {
 		return false
 	}
@@ -1011,6 +1024,9 @@ func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret stri
 	cfg, _ := doclingASRProcessingConfig(t, provider.URL())
 	if provider.allowM4A {
 		enableDaemonASRM4A(t, &cfg)
+	}
+	if provider.allowVideo {
+		enableDaemonASRVideo(t, &cfg)
 	}
 	cfg.Server.APIKey = daemonASRAPIKey
 	asrProfile := cfg.RenditionProfiles["asr"]
@@ -1158,6 +1174,17 @@ func enableDaemonASRM4A(t *testing.T, cfg *config.Config) {
 	t.Helper()
 	profile := cfg.RenditionProfiles["asr"]
 	profile.AdapterContract = config.DoclingASRM4AAdapterContract
+	resolved, err := configuredDoclingASRProfile(profile)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
+	profile.DisclosureFingerprint = docling.ASRDisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = profile
+}
+
+func enableDaemonASRVideo(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	profile := cfg.RenditionProfiles["asr"]
+	profile.AdapterContract = config.DoclingASRVideoAdapterContract
 	resolved, err := configuredDoclingASRProfile(profile)
 	require.NoError(t, err)
 	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
