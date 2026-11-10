@@ -238,7 +238,9 @@ func TestPDFTextSkipCacheBound(t *testing.T) {
 	_, profile, err := NewPDFTextProfile()
 	require.NoError(t, err)
 	service := newPDFTextService(t, fixture, profile)
-	runner := &PDFTextRunner{Service: service, skips: make(map[string]bool, localTextSkipLimit)}
+	runner := &PDFTextRunner{Service: service}
+	require.NoError(t, runner.Initialize(t.Context()))
+	runner.skips = make(map[string]bool, localTextSkipLimit)
 	for i := range localTextSkipLimit {
 		runner.skips[fmt.Sprint(i)] = true
 	}
