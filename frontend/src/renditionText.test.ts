@@ -71,12 +71,9 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 it("resolves an exact snapshot rendition and submits every observed authority", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      JSON.stringify(receipt({ pages_without_text: [2, 3], page_coverage: "unavailable" })),
-      {
-        headers: { "Content-Type": "application/json" },
-      },
-    ),
+    new Response(JSON.stringify(receipt({ pages_without_text: [2, 3] })), {
+      headers: { "Content-Type": "application/json" },
+    }),
   );
   const resolved = await resolveRenditionText(
     "session",
@@ -88,7 +85,6 @@ it("resolves an exact snapshot rendition and submits every observed authority", 
   );
   expect(resolved.state).toBe("ready");
   expect(resolved.pagesWithoutText).toEqual([2, 3]);
-  expect(resolved.pageCoverage).toBe("unavailable");
   const [, init] = fetchMock.mock.calls[0] ?? [];
   expect(JSON.parse(String(init?.body))).toEqual({
     node_id: 7,
@@ -114,6 +110,7 @@ it("accepts the worker's bounded digest-form artifact identity", async () => {
       JSON.stringify(
         receipt({
           artifact: { ...artifact, id: "f".repeat(64) },
+          page_coverage: "unavailable",
         }),
       ),
       { headers: { "Content-Type": "application/json" } },
@@ -128,7 +125,11 @@ it("accepts the worker's bounded digest-form artifact identity", async () => {
       observation,
       new AbortController().signal,
     ),
-  ).resolves.toMatchObject({ state: "ready", artifact: { id: "f".repeat(64) } });
+  ).resolves.toMatchObject({
+    state: "ready",
+    artifact: { id: "f".repeat(64) },
+    pageCoverage: "unavailable",
+  });
 });
 
 it.each([

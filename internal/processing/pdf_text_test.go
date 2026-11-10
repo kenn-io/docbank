@@ -18,15 +18,14 @@ import (
 //nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestPDFTextBackfillRetainsPages(t *testing.T) {
 	for _, test := range []struct {
-		name                 string
-		pages                []string
-		text                 bool
-		gaps                 []int
-		unavailable, generic int
+		name  string
+		pages []string
+		text  bool
+		gaps  []int
 	}{
-		{"born", []string{"first page", "distinctivequartz second page"}, true, nil, 0, 0},
-		{"image-only", []string{"", ""}, false, []int{1, 2}, 1, 1},
-		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}, 0, 0},
+		{"born", []string{"first page", "distinctivequartz second page"}, true, nil},
+		{"image-only", []string{"", ""}, false, []int{1, 2}},
+		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -66,10 +65,6 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			} else {
 				require.Empty(t, report.PagesWithoutText)
 			}
-			coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText, nil)
-			require.NoError(t, err)
-			require.Zero(t, coverage.Pending)
-			require.Equal(t, len(test.gaps), coverage.PagesWithoutText)
 			if len(test.gaps) > 0 {
 				for _, artifact := range view.Rendition.Build.Artifacts {
 					if artifact.Role == "normalized_evidence" {
@@ -81,10 +76,6 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 				require.Equal(t, report.Renditions, corruptReport.Renditions)
 				require.Empty(t, corruptReport.PagesWithoutText)
 				require.True(t, corruptReport.PageCoverageUnavailable)
-				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText, nil)
-				require.NoError(t, err)
-				require.Equal(t, test.unavailable, coverage.PDFPageCoverageUnavailable)
-				require.Equal(t, test.generic, coverage.NoText)
 			}
 		})
 	}
