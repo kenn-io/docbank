@@ -365,11 +365,13 @@ func validateMediaTranscript(
 		return nil
 	}
 	evidence := transcript.Transcript
-	if evidence == nil || evidence.BuildID == "" || transcript.NodeID <= 0 || !canonical.IsSHA256Hex(transcript.SourceSHA256) ||
-		!canonical.IsSHA256Hex(evidence.ProfileFingerprint) || !canonical.IsSHA256Hex(evidence.EvidenceChecksum) ||
-		(evidence.ArtifactSHA256 != "" && !canonical.IsSHA256Hex(evidence.ArtifactSHA256)) ||
-		(evidence.SpeechState != "complete" && evidence.SpeechState != "partial") ||
-		(evidence.Origin != "supplied" || evidence.SuppliedInputID == "") && (evidence.Origin != "generated" || evidence.SuppliedInputID != "") {
+	if evidence == nil || evidence.BuildID == "" {
+		return errors.New("daemon returned an invalid ready media transcript")
+	}
+	switch {
+	case evidence.Origin == "supplied" && evidence.SuppliedInputID != "":
+	case evidence.Origin == "generated" && evidence.SuppliedInputID == "":
+	default:
 		return errors.New("daemon returned an invalid ready media transcript")
 	}
 	return nil
