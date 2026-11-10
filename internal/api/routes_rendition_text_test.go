@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
@@ -203,6 +204,31 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	params.Set("artifact_id", "artifact_"+testHash("wrong-artifact"))
 	badResp, badBody := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
 	assert.Equal(t, http.StatusConflict, badResp.StatusCode, badBody)
+}
+
+func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
+	var runner *processing.PDFTextRunner
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		runner = configureAutomaticPDFText(t, d)
+	})
+	pdf := mediatest.PDFTextPages([]string{"searchable", ""}, false)
+	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "mixed.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
+	plan, err := runner.Service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = runner.Service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	request := map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "profile": processing.PDFTextProfileName}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var receipt struct {
+		Pages []int `json:"pages_without_text"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.Equal(t, []int{2}, receipt.Pages)
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {

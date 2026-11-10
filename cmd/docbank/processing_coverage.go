@@ -78,6 +78,11 @@ func writeProcessingCoverage(w io.Writer, version, profile string, coverage api.
 	var text strings.Builder
 	fmt.Fprintf(&text, "version: %s\nvault: %s\nprofile: %q\nfingerprint: %s\nstate: %q\n",
 		version, coverage.VaultUID, profile, coverage.ProfileFingerprint, coverage.State)
+	for _, gap := range coverage.PagesWithoutText {
+		if gap.ContentVersionID == version {
+			fmt.Fprintf(&text, "pages without text: %v\n", gap.Pages)
+		}
+	}
 	writeCoverageClass(&text, "rendition", coverage.Renditions)
 	for _, class := range coverage.Embeddings {
 		writeCoverageClass(&text, "embedding", class)

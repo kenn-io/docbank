@@ -1752,10 +1752,16 @@ export interface CoverageClass {
   unavailable: number;
 }
 
+export interface PageTextGap {
+  content_version_id: string;
+  pages: number[];
+}
+
 export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
+  pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
   renditions: CoverageClass;
@@ -7868,6 +7874,7 @@ export interface RenditionTextReceipt {
   attachment_id: string;
   build_id: string;
   generation_id: string;
+  pages_without_text?: number[];
   profile: RenditionTextProfile;
   source: RenditionTextSource;
   state: RenditionTextReceiptState;
@@ -8347,6 +8354,10 @@ export interface SearchTextCoverage {
   families: SearchTextCoverageFamiliesItem[];
   /** @minimum 0 */
   no_text: number;
+  /** @minimum 0 */
+  pages_without_text: number;
+  /** @minimum 0 */
+  pdfs_without_text: number;
   /** @minimum 0 */
   pending: number;
 }

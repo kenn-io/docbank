@@ -58,25 +58,35 @@ func NewPDFTextProfile() (string, ProfileConfig, error) {
 	return PDFTextProfileName, ProfileConfig{Profile: profile, RenditionProvider: provider}, nil
 }
 
-// PDFHasNoTextLayer reads a retained build through the canonical evidence reader.
-func (service *Service) PDFHasNoTextLayer(ctx context.Context, buildID string) (bool, error) {
+// PDFPagesWithoutText reads omissions from one retained build.
+func (service *Service) PDFPagesWithoutText(ctx context.Context, buildID string) ([]int, error) {
 	build, err := service.catalog.RenditionBuild(ctx, buildID)
 	if err != nil {
-		return false, err
+		return nil, err
+	}
+	found := false
+	for _, artifact := range build.Artifacts {
+		if artifact.Role == "normalized_evidence" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, nil
 	}
 	evidence, _, err := service.renditionEvidence(ctx, build)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	if evidence.Family != "pdf" || len(evidence.Units) != 0 || len(evidence.Omissions) == 0 {
-		return false, nil
-	}
-	for _, omission := range evidence.Omissions {
-		if omission.Reason != "no_text_layer" {
-			return false, nil
+	var pages []int
+	if evidence.Family == "pdf" {
+		for _, omission := range evidence.Omissions {
+			if omission.Reason == "no_text_layer" && omission.Locator != nil {
+				pages = append(pages, int(omission.Locator.Start))
+			}
 		}
 	}
-	return true, nil
+	return pages, nil
 }
 
 // PDFTextRunner admits automatic PDFs through the shared rendition lifecycle.

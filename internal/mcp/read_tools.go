@@ -907,6 +907,7 @@ type processingCoverageOutput struct {
 	ProfileFingerprint string                `json:"profile_fingerprint"`
 	State              string                `json:"state"`
 	Coverage           []coverageClassOutput `json:"coverage"`
+	PagesWithoutText   []api.PageTextGap     `json:"pages_without_text,omitempty"`
 }
 
 func getProcessingCoverage(
@@ -938,7 +939,8 @@ func getProcessingCoverage(
 	output := processingCoverageOutput{VaultID: report.VaultUID,
 		ContentVersionIDs:  slices.Clone(input.ContentVersionIDs),
 		ProfileFingerprint: report.ProfileFingerprint, State: report.State,
-		Coverage: make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
+		PagesWithoutText: report.PagesWithoutText,
+		Coverage:         make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
 	for index, item := range classes {
 		output.Coverage[index] = coverageClassOutput{Name: item.Name, Required: item.Required,
 			State: item.State, Complete: item.Complete, Unavailable: item.Unavailable,

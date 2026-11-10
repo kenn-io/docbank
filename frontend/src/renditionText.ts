@@ -30,6 +30,7 @@ export interface ReadyRenditionText {
   attachmentID: string;
   buildID: string;
   artifact: { id: string; sha256: string; size: number; mediaType: string };
+  pagesWithoutText?: number[];
 }
 
 export type RenditionTextResolution =
@@ -44,6 +45,7 @@ export type RenditionTextResolution =
       generationID: string;
       attachmentID: string;
       buildID: string;
+      pagesWithoutText?: number[];
     };
 
 const sha = /^[0-9a-f]{64}$/;
@@ -138,7 +140,7 @@ export async function resolveRenditionText(
   exactKeys(
     raw,
     ["state", "source", "profile", "generation_id", "attachment_id", "build_id"],
-    ["$schema", "artifact"],
+    ["$schema", "artifact", "pages_without_text"],
     "receipt",
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0) {
@@ -193,10 +195,17 @@ export async function resolveRenditionText(
   ) {
     malformed("rendition identities do not match the accepted snapshot");
   }
+  let pagesWithoutText: number[] | undefined;
+  if (raw.pages_without_text !== undefined) {
+    if (!Array.isArray(raw.pages_without_text)) malformed("pages_without_text is invalid");
+    pagesWithoutText = raw.pages_without_text.map((page) =>
+      safeInteger(page, "pages_without_text", 1),
+    );
+  }
   const profile = { name, configuration, fingerprint };
   if (state !== "ready") {
     if (raw.artifact !== undefined) malformed("non-ready state contains an artifact");
-    return { state, profile, generationID, attachmentID, buildID };
+    return { state, profile, generationID, attachmentID, buildID, pagesWithoutText };
   }
   if (configuration !== "configured" || !sha.test(fingerprint))
     malformed("ready state has no configured profile");
@@ -224,6 +233,7 @@ export async function resolveRenditionText(
     attachmentID,
     buildID,
     artifact: { id, sha256: artifactHash, size, mediaType },
+    pagesWithoutText,
   };
 }
 

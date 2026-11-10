@@ -79,7 +79,7 @@ func TestEmptySearchHints(t *testing.T) {
 						http.Error(w, "unavailable", http.StatusServiceUnavailable)
 						return
 					}
-					assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1, Families: []string{"pdf"}, Pending: tc.pending}))
+					assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1, Families: []string{"pdf"}, PDFsWithoutText: 1, PagesWithoutText: 2, Pending: tc.pending}))
 				case "/api/v1/tags/" + processingTestVersionID:
 					w.Header().Set("ETag", `"1"`)
 					assert.NoError(t, json.MarshalWrite(w, api.Tag{ID: processingTestVersionID, Name: "urgent", Revision: 1}))
@@ -157,9 +157,8 @@ func TestEmptySearchHints(t *testing.T) {
 					Hints []searchHint `json:"hints"`
 				}
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
-				require.Equal(t, "no_searchable_text", report.Hints[0].Code)
-				require.Contains(t, report.Hints[0].Message, "use or set up a profile that can extract these files; build it; choose another profile if a build returns no text")
-				require.Contains(t, report.Hints[0].Message, "list profiles with docbank processing profiles")
+				require.Equal(t, "needs_ocr", report.Hints[0].Code)
+				require.Contains(t, report.Hints[0].Message, "1 PDF has 2 pages with no text layer")
 				require.Equal(t, "indexing_pending", report.Hints[1].Code)
 				if tc.everyWord {
 					require.Equal(t, searchHint{
@@ -172,7 +171,7 @@ func TestEmptySearchHints(t *testing.T) {
 				if tc.unavailable {
 					require.NotContains(t, stderr.String(), "no searchable text")
 				} else {
-					require.Contains(t, stderr.String(), "Hint: 1 file (PDF) has no searchable text")
+					require.Contains(t, stderr.String(), "Hint: 1 PDF has 2 pages with no text layer")
 				}
 				if tc.pending > 0 {
 					require.Contains(t, stderr.String(), "Hint: 1 file is still being indexed; search again later")
@@ -200,4 +199,11 @@ func TestEmptySearchHints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEmptySearchHintsKeepOfficeGuidance(t *testing.T) {
+	hints := emptySearchHints("missing", api.SearchTextCoverage{NoText: 1, Families: []string{"office"}}, true, false, false)
+	require.Len(t, hints, 1)
+	require.Equal(t, "no_searchable_text", hints[0].Code)
+	require.Contains(t, hints[0].Message, "1 file (Office)")
 }

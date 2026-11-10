@@ -59,13 +59,14 @@ type renditionTextArtifact struct {
 }
 
 type renditionTextReceipt struct {
-	State        string                 `json:"state" enum:"ready,verified_empty,failed,unprocessed,unconfigured,profile_required,historical_unavailable"`
-	Source       renditionTextSource    `json:"source"`
-	Profile      renditionTextProfile   `json:"profile"`
-	GenerationID string                 `json:"generation_id"`
-	AttachmentID string                 `json:"attachment_id"`
-	BuildID      string                 `json:"build_id"`
-	Artifact     *renditionTextArtifact `json:"artifact,omitempty"`
+	State            string                 `json:"state" enum:"ready,verified_empty,failed,unprocessed,unconfigured,profile_required,historical_unavailable"`
+	Source           renditionTextSource    `json:"source"`
+	Profile          renditionTextProfile   `json:"profile"`
+	GenerationID     string                 `json:"generation_id"`
+	AttachmentID     string                 `json:"attachment_id"`
+	BuildID          string                 `json:"build_id"`
+	Artifact         *renditionTextArtifact `json:"artifact,omitempty"`
+	PagesWithoutText []int                  `json:"pages_without_text,omitzero"`
 }
 
 func exactRenditionTextSource(ctx context.Context, d Deps, request renditionTextRequest) (store.ContentVersionView, error) {
@@ -171,6 +172,12 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	receipt.GenerationID = binding.GenerationID
 	receipt.AttachmentID = view.Rendition.Attachment.ID
 	receipt.BuildID = view.Rendition.Build.ID
+	if d.Processing != nil {
+		receipt.PagesWithoutText, err = d.Processing.PDFPagesWithoutText(ctx, receipt.BuildID)
+		if err != nil {
+			return renditionTextReceipt{}, FromStoreError(err)
+		}
+	}
 	if view.Empty {
 		receipt.State = "verified_empty"
 		return receipt, nil
@@ -269,13 +276,13 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 }
 
 // pdfSearchTextCoverage supplies the built-in profile and retained evidence reader.
-func pdfSearchTextCoverage(d Deps) (string, func(context.Context, string) (bool, error)) {
+func pdfSearchTextCoverage(d Deps) (string, func(context.Context, string) ([]int, error)) {
 	if d.Processing == nil {
 		return "", nil
 	}
 	for _, summary := range d.Processing.Profiles() {
 		if summary.Name == processing.PDFTextProfileName {
-			return summary.Fingerprint, d.Processing.PDFHasNoTextLayer
+			return summary.Fingerprint, d.Processing.PDFPagesWithoutText
 		}
 	}
 	return "", nil

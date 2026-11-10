@@ -3387,6 +3387,10 @@ components:
           items:
             $ref: "#/components/schemas/CoverageClass"
           type: array
+        pages_without_text:
+          items:
+            $ref: "#/components/schemas/PageTextGap"
+          type: array
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -12343,6 +12347,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PageTextGap:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        pages:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - content_version_id
+        - pages
+      type: object
+      x-go-type: api.PageTextGap
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Pending:
       additionalProperties: false
       properties:
@@ -18259,6 +18282,11 @@ components:
           type: string
         generation_id:
           type: string
+        pages_without_text:
+          items:
+            format: int64
+            type: integer
+          type: array
         profile:
           $ref: "#/components/schemas/RenditionTextProfile"
         source:
@@ -19542,6 +19570,14 @@ components:
           format: int64
           minimum: 0
           type: integer
+        pages_without_text:
+          format: int64
+          minimum: 0
+          type: integer
+        pdfs_without_text:
+          format: int64
+          minimum: 0
+          type: integer
         pending:
           format: int64
           minimum: 0
@@ -19550,6 +19586,8 @@ components:
         - no_text
         - families
         - pending
+        - pdfs_without_text
+        - pages_without_text
       type: object
       x-go-type: api.SearchTextCoverage
       x-go-type-import:
