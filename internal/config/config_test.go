@@ -838,6 +838,38 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, c.Validate())
 }
 
+func TestLoadWatchProfileRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		wantError   bool
+	}{
+		{"string", `"asr"`, true},
+		{"integer", `42`, true},
+		{"boolean", `true`, true},
+		{"array", `["asr"]`, true},
+		{"non-string value", `{ document = 42 }`, true},
+		{"table", `{ document = "docs" }`, false},
+		{"empty table", `{}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			body := "[[watch]]\nname = 'first'\nprofiles = {}\n[[watch]]\nname = 'second'\nprofiles = " + tc.value + "\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0600))
+			cfg, err := Load(dir)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, cfg.Watches, 2)
+			require.NotNil(t, cfg.Watches[1].Profiles)
+			if tc.name == "table" {
+				assert.Equal(t, "docs", cfg.Watches[1].Profiles["document"])
+			}
+		})
+	}
+}
+
 func TestWatchDefaultExcludes(t *testing.T) {
 	for _, tc := range []struct {
 		name, setting string
