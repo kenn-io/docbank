@@ -57,6 +57,12 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".collection_snapshots,"+schema+".collection_snapshot_members,"+schema+".collection_snapshot_representations,"+schema+".packages,"+schema+".package_volumes,"+schema+".bates_namespaces,"+schema+".bates_namespace_cursors,"+schema+".bates_allocations,"+schema+".bates_page_labels,"+schema+".bates_artifacts,"+schema+".bates_artifact_pages TO "+quotedRole+
+		"; GRANT UPDATE(next_sequence) ON "+schema+".bates_namespace_cursors TO "+quotedRole+
+		"; GRANT UPDATE(state,committed_at) ON "+schema+".bates_allocations TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".package_preflights TO "+quotedRole)
+	require.NoError(t, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(display_name,display_name_folded,state,revision,updated_at,key_face_id) ON "+schema+".persons TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(person_id) ON "+schema+".person_identities TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(person_id,uid_kind,uid_state,last_seen_revision,display_name_snapshot,updated_at) ON "+schema+".person_external_identities TO "+quotedRole+

@@ -29,6 +29,7 @@ type Profile struct {
 type Provider struct {
 	descriptor document.RenditionDescriptor
 	profile    Profile
+	readPage   func(context.Context, []byte, int, int64, int) (pdfproduction.PDFTextPage, error)
 }
 
 // New constructs a provider with immutable admission and extraction limits.
@@ -38,7 +39,7 @@ func New(profile Profile) (*Provider, error) {
 	}
 	identity := pdfproduction.PDFTextPolicy + "\x00" + formatdetect.DetectionImplementationID + "\x00" + strconv.FormatInt(profile.MaxDocumentBytes, 10) + "\x00" + strconv.FormatInt(profile.MaxPages, 10)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
-		ID: "pdftext.in-process-v1", ContractVersion: document.RenditionProviderContractVersion,
+		ID: document.PDFTextProviderID, ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: providerutil.SHA256Hex([]byte(identity)), TrustBoundary: document.RenditionTrustLocalProcess,
 		SupportedFormats:  []document.RenditionFormatCapability{{MediaFamily: "pdf", MediaType: "application/pdf", InputKind: document.RenditionInputOriginalFile}},
 		ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
@@ -46,7 +47,7 @@ func New(profile Profile) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{descriptor: descriptor, profile: profile}, nil
+	return &Provider{descriptor: descriptor, profile: profile, readPage: pdfproduction.ReadPDFTextPage}, nil
 }
 
 // Descriptor returns a defensive copy of the provider identity.
@@ -91,12 +92,16 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	remaining := authorization.MaxTotalResultBytes
 	resultBudget := int64(authorization.MaxTotalResultBytes)
 	for index := range int(pages) {
-		page, err := pdfproduction.ReadPDFTextPage(ctx, data, index, p.profile.MaxPages, min(remaining, 4_000_000))
+		page, err := p.readPage(ctx, data, index, p.profile.MaxPages, min(remaining, 4_000_000))
 		if err != nil {
 			if operationErr := operation.Check(); operationErr != nil {
 				return document.RenditionResult{}, operationErr
 			}
-			return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "extract PDF text", err)
+			code := document.RenditionErrorPolicyRejected
+			if _, ok := errors.AsType[*pdfproduction.RSSLimitError](err); ok || errors.Is(err, context.DeadlineExceeded) {
+				code = document.RenditionErrorCapacity
+			}
+			return document.RenditionResult{}, provider.Classified(code, "extract PDF text", err)
 		}
 		if int64(page.Pages) != pages {
 			return document.RenditionResult{}, rejected("PDF page counts disagree")

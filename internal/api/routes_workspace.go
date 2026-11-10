@@ -7,7 +7,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -26,7 +25,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if err != nil {
 			return nil, err
 		}
-		coverage, err := workspaceQueryCoverage(d.Cfg, in.Body.Photos, in.Body.Profile)
+		coverage, err := workspaceQueryCoverage(d, in.Body.Photos, in.Body.Profile)
 		if err != nil {
 			return nil, err
 		}
@@ -73,11 +72,11 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 	})
 }
 
-func workspaceQueryCoverage(cfg config.Config, photos bool, profile string) (store.CoverageSelection, error) {
+func workspaceQueryCoverage(d Deps, photos bool, profile string) (store.CoverageSelection, error) {
 	if photos && profile == "" {
 		return store.CoverageSelection{Configuration: "unconfigured"}, nil
 	}
-	selection, err := selectCollectionProfile(cfg, profile)
+	selection, err := selectCollectionProfile(d, profile, true)
 	return selection.Coverage, err
 }
 

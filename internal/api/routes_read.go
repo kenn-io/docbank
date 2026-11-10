@@ -461,7 +461,8 @@ func registerReadRoutes(api huma.API, d Deps) {
 		opts := searchFilterOptions(&DocumentSourceFenceFilters{SourcePresent: in.SourcePresent, TagID: in.TagID,
 			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, ModifiedSince: since, ModifiedBefore: before})
 		opts.PDFFilter = in.PDFFilter
-		coverage, err := d.Store.SearchTextCoverage(ctx, opts)
+		profile, noTextLayer := pdfSearchTextCoverage(d)
+		coverage, err := d.Store.SearchTextCoverage(ctx, opts, profile, noTextLayer)
 		if err != nil {
 			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())

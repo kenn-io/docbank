@@ -62,6 +62,12 @@ func (d *visualJPEGDCDecoder) check() error {
 	return nil
 }
 
+// visualJPEGFormatError keeps the jpeg.FormatError type so callers classify
+// malformed data the same way as image/jpeg decode failures.
+func visualJPEGFormatError(reason string) error {
+	return fmt.Errorf("decoding JPEG: %w", jpeg.FormatError(reason))
+}
+
 func decodeVisualPreviewJPEGDC(ctx context.Context, reader *bufio.Reader) (image.Image, error) {
 	d := visualJPEGDCDecoder{reader: reader, ctx: ctx}
 	if _, err := reader.Discard(2); err != nil {
@@ -82,7 +88,7 @@ func decodeVisualPreviewJPEGDC(ctx context.Context, reader *bufio.Reader) (image
 		}
 		n := int(binary.BigEndian.Uint16(length[:])) - 2
 		if n < 0 {
-			return nil, jpeg.FormatError("short marker length")
+			return nil, visualJPEGFormatError("short marker length")
 		}
 		payload := make([]byte, n)
 		if _, err = io.ReadFull(reader, payload); err != nil {
@@ -97,7 +103,7 @@ func decodeVisualPreviewJPEGDC(ctx context.Context, reader *bufio.Reader) (image
 			err = d.tables(payload)
 		case 0xdd:
 			if len(payload) != 2 {
-				err = jpeg.FormatError("bad restart interval")
+				err = visualJPEGFormatError("bad restart interval")
 			} else {
 				d.restart = int(binary.BigEndian.Uint16(payload))
 			}
@@ -164,11 +170,11 @@ func (d *visualJPEGDCDecoder) marker() (byte, error) {
 
 func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
 	if len(d.components) != 0 || len(p) < 6 {
-		return jpeg.FormatError("bad frame header")
+		return visualJPEGFormatError("bad frame header")
 	}
 	count := int(p[5])
 	if (count != 1 && count != 3) || len(p) < 6+3*count {
-		return jpeg.FormatError("bad frame header")
+		return visualJPEGFormatError("bad frame header")
 	}
 	d.height, d.width = int(binary.BigEndian.Uint16(p[1:3])), int(binary.BigEndian.Uint16(p[3:5]))
 	d.progressive, d.baseline = marker == 0xc2, marker == 0xc0
@@ -181,7 +187,7 @@ func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
 		c.id, c.h, c.v, c.quant = p[6+3*i], p[7+3*i]>>4, p[7+3*i]&15, p[8+3*i]
 		if c.h < 1 || c.h > 4 || c.v < 1 || c.v > 4 || c.quant > 3 {
 			d.components = nil
-			return jpeg.FormatError("bad frame header")
+			return visualJPEGFormatError("bad frame header")
 		}
 		c.precision = -1
 		d.maxH, d.maxV = max(d.maxH, int(c.h)), max(d.maxV, int(c.v))
@@ -204,7 +210,7 @@ func (d *visualJPEGDCDecoder) quantization(p []byte) error {
 		precision, table := p[0]>>4, p[0]&15
 		n := 64 * (1 + int(precision))
 		if precision > 1 || table > 3 || len(p) < n+1 {
-			return jpeg.FormatError("bad quantization table")
+			return visualJPEGFormatError("bad quantization table")
 		}
 		if precision == 0 {
 			d.quant[table] = uint16(p[1])
@@ -219,7 +225,7 @@ func (d *visualJPEGDCDecoder) quantization(p []byte) error {
 func (d *visualJPEGDCDecoder) tables(p []byte) error {
 	for len(p) > 0 {
 		if len(p) < 17 || p[0]>>4 > 1 || p[0]&15 > 3 || d.baseline && p[0]&15 > 1 {
-			return jpeg.FormatError("bad Huffman table")
+			return visualJPEGFormatError("bad Huffman table")
 		}
 		t := &d.huffman[p[0]>>4][p[0]&15]
 		n, available := 0, 1
@@ -228,11 +234,11 @@ func (d *visualJPEGDCDecoder) tables(p []byte) error {
 			n += t.counts[i]
 			available = available*2 - t.counts[i]
 			if available < 0 {
-				return jpeg.FormatError("oversubscribed Huffman table")
+				return visualJPEGFormatError("oversubscribed Huffman table")
 			}
 		}
 		if n == 0 || n > 256 || len(p) < 17+n {
-			return jpeg.FormatError("bad Huffman values")
+			return visualJPEGFormatError("bad Huffman values")
 		}
 		t.values = p[17 : 17+n]
 		t.lutLength = [256]uint8{}
@@ -304,7 +310,7 @@ func (d *visualJPEGDCDecoder) readBits(n int) (int32, error) {
 			if d.fillErr != nil {
 				return 0, fmt.Errorf("reading JPEG entropy: %w", d.fillErr)
 			}
-			return 0, jpeg.FormatError("marker inside entropy data")
+			return 0, visualJPEGFormatError("marker inside entropy data")
 		}
 	}
 	d.nacc -= n
@@ -336,21 +342,21 @@ func (d *visualJPEGDCDecoder) symbol(table *visualJPEGDCHuffman) (byte, error) {
 		offset += count
 		first = (first + count) << 1
 	}
-	return 0, jpeg.FormatError("invalid Huffman code")
+	return 0, visualJPEGFormatError("invalid Huffman code")
 }
 
 func (d *visualJPEGDCDecoder) scan(p []byte) error {
 	if len(d.components) == 0 || len(p) < 6 || p[0] == 0 || int(p[0]) > len(d.components) || len(p) != 4+2*int(p[0]) {
-		return jpeg.FormatError("bad scan header")
+		return visualJPEGFormatError("bad scan header")
 	}
 	n := int(p[0])
 	ss, se, ah, al := p[len(p)-3], p[len(p)-2], p[len(p)-1]>>4, p[len(p)-1]&15
 	if d.progressive {
 		if ss > se || se > 63 || ss == 0 && se != 0 || ss > 0 && n != 1 || al > 13 || ah != 0 && ah != al+1 {
-			return jpeg.FormatError("bad progressive scan")
+			return visualJPEGFormatError("bad progressive scan")
 		}
 	} else if ss != 0 || se != 63 || ah != 0 || al != 0 {
-		return jpeg.FormatError("bad sequential scan")
+		return visualJPEGFormatError("bad sequential scan")
 	}
 	var indices [3]int
 	total := 0
@@ -362,14 +368,14 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 			}
 		}
 		if indices[i] < 0 || p[2+2*i]>>4 > 3 || p[2+2*i]&15 > 3 {
-			return jpeg.FormatError("bad scan component")
+			return visualJPEGFormatError("bad scan component")
 		}
 		if d.baseline && (p[2+2*i]>>4 > 1 || p[2+2*i]&15 > 1) {
-			return jpeg.FormatError("bad baseline Huffman selector")
+			return visualJPEGFormatError("bad baseline Huffman selector")
 		}
 		for j := range i {
 			if indices[i] == indices[j] {
-				return jpeg.FormatError("duplicate scan component")
+				return visualJPEGFormatError("duplicate scan component")
 			}
 		}
 		c := &d.components[indices[i]]
@@ -380,13 +386,13 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 		total += int(c.h) * int(c.v)
 		if ss == 0 {
 			if ah == 0 && c.precision != -1 || ah != 0 && c.precision != int(ah) {
-				return jpeg.FormatError("bad DC scan order")
+				return visualJPEGFormatError("bad DC scan order")
 			}
 			c.precision = int(al)
 		}
 	}
 	if n > 1 && total > 10 {
-		return jpeg.FormatError("too many MCU blocks")
+		return visualJPEGFormatError("too many MCU blocks")
 	}
 	if ss > 0 {
 		return nil
@@ -406,7 +412,7 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 				return err
 			}
 			if int(marker) != 0xd0+(mcu/d.restart-1)%8 {
-				return jpeg.FormatError("wrong restart marker")
+				return visualJPEGFormatError("wrong restart marker")
 			}
 			predictors = [3]int32{}
 		}
@@ -462,7 +468,7 @@ func (d *visualJPEGDCDecoder) blockDC(
 			return 0, err
 		}
 		if category > 11 {
-			return 0, jpeg.FormatError("bad DC magnitude")
+			return 0, visualJPEGFormatError("bad DC magnitude")
 		}
 		diff, err := d.readBits(int(category))
 		if err != nil {
@@ -475,7 +481,7 @@ func (d *visualJPEGDCDecoder) blockDC(
 		dc = *predictor << al
 	}
 	if dc < -32768 || dc > 32767 {
-		return 0, jpeg.FormatError("DC coefficient overflow")
+		return 0, visualJPEGFormatError("DC coefficient overflow")
 	}
 	return int16(dc), nil
 }
@@ -495,20 +501,20 @@ func (d *visualJPEGDCDecoder) discardAC(table *visualJPEGDCHuffman) error {
 				return nil
 			}
 			if run != 15 {
-				return jpeg.FormatError("bad AC run")
+				return visualJPEGFormatError("bad AC run")
 			}
 			k += 16
 		} else {
 			k += run + 1
 			if size > 10 || k > 64 {
-				return jpeg.FormatError("bad AC magnitude or run")
+				return visualJPEGFormatError("bad AC magnitude or run")
 			}
 			if _, err := d.readBits(size); err != nil {
 				return err
 			}
 		}
 		if k > 64 {
-			return jpeg.FormatError("AC run overflow")
+			return visualJPEGFormatError("AC run overflow")
 		}
 	}
 	return nil
@@ -535,7 +541,7 @@ func (d *visualJPEGDCDecoder) skipAC() (byte, error) {
 			hasEntropy = true
 		} else if b < 0xd0 || b > 0xd7 {
 			if !hasEntropy {
-				return 0, jpeg.FormatError("empty AC scan")
+				return 0, visualJPEGFormatError("empty AC scan")
 			}
 			return b, nil
 		}
@@ -544,7 +550,7 @@ func (d *visualJPEGDCDecoder) skipAC() (byte, error) {
 
 func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 	if len(d.components) == 0 {
-		return nil, jpeg.FormatError("missing frame")
+		return nil, visualJPEGFormatError("missing frame")
 	}
 	for i := range d.components {
 		c := &d.components[i]
@@ -552,7 +558,7 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 			c.quantValue = d.quant[c.quant]
 		}
 		if c.precision < 0 || c.quantValue == 0 {
-			return nil, jpeg.FormatError("missing DC scan or quantization table")
+			return nil, visualJPEGFormatError("missing DC scan or quantization table")
 		}
 	}
 	if err := d.ctx.Err(); err != nil {

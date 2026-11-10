@@ -450,6 +450,15 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
+GRANT INSERT ON documents.collection_snapshots,
+    documents.collection_snapshot_members, documents.collection_snapshot_representations,
+    documents.packages, documents.package_volumes, documents.bates_namespaces,
+    documents.bates_namespace_cursors, documents.bates_allocations,
+    documents.bates_page_labels, documents.bates_artifacts, documents.bates_artifact_pages
+    TO docbank_runtime;
+GRANT UPDATE(next_sequence) ON documents.bates_namespace_cursors TO docbank_runtime;
+GRANT UPDATE(state, committed_at) ON documents.bates_allocations TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.package_preflights TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
@@ -709,6 +718,48 @@ foreign-key columns used by cascading deletes; PostgreSQL does not add those
 automatically. Keep structural uniqueness in the canonical schema. Enrollment
 qualification establishes correctness, not validation or cascade performance
 on large vaults; those paths need representative query-plan and workload checks.
+
+#### Sealed delivery catalogs
+
+The native Store seals inline and streaming collection snapshots, records package
+identity and volumes, retains preflight results, reserves Bates page numbers,
+and publishes verified numbered PDF artifacts on both backends. These operations
+start with explicit, already-selected versions. Query-driven selection,
+received-package record imports, filesystem delivery workers, transfer/recovery
+and public PostgreSQL vault opening remain separate.
+
+A sealed snapshot keeps its exact versions, source collections, page selections,
+representations and canonical bytes. Replaying the same request returns the
+original header; a different request cannot overwrite it. Streaming writes bounded
+member batches and writes the immutable header last. SQLite uses its existing
+foreign-key deferral pragma. PostgreSQL makes the member-to-header reference
+`DEFERRABLE INITIALLY IMMEDIATE` and defers it for the streaming transaction.
+Failure leaves neither a partial header nor member rows. The canonical JSON stays
+byte storage so hashing and readback preserve the exact bytes; PostgreSQL decodes
+UTF-8 only where a query reads frozen source-collection evidence.
+
+Bates previews allocate nothing. Reservations serialize under the existing writer
+lock, preserve namespace cursors and globally unique labels, and commit the sealed
+snapshot and range together. Semantic replay can reuse the original reservation
+after its live source changes. Publication commits the output blob, immutable
+artifact and page receipts, and allocation transition together. The first verified
+publisher wins an exact retry, including when a later render has different PDF
+container bytes. Runtime roles can insert identities, advance `next_sequence`,
+and change only `state` and `committed_at` on allocations; they cannot rewrite
+snapshot, namespace, label, artifact or volume identities.
+
+Package and artifact pages, member representations, publication plans and custodian
+evidence use repeatable-read transactions. A concurrent custodian change affects
+the next request, including its binding epoch. Custodian evidence follows the
+snapshot's frozen source membership after the source leaves the live library.
+Preflight reads enforce their deadline even before the expiry sweep removes rows.
+
+The `sealed-delivery` contracts run existing snapshot, streaming, package and Bates
+scenarios on both backends. PostgreSQL cases exercise late-write rollback during
+reservation and publication, concurrent connections sharing one namespace, and
+custodian changes committed between statements in a read. Access indexes cover
+artifact history and labels, namespace ranges, package predecessors, preflight
+expiry and retained representation versions.
 
 #### PostgreSQL reference implementations
 

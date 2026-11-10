@@ -596,7 +596,8 @@ func TestEmptyUploadReadsDoNotBlockEmbed(t *testing.T) {
 				case <-time.After(2 * time.Second):
 					close(upload.stop)
 					select {
-					case <-done:
+					case err := <-done:
+						t.Logf("Embed returned %v after releasing the source", err)
 					case <-time.After(time.Second):
 						t.Error("embedding did not return after releasing the source")
 					}
@@ -1000,8 +1001,7 @@ func TestEarlyHTTPRejectionDoesNotReadDirectFileAndKeepsStatusClassification(t *
 			assert.Equal(t, embeddingbridge.ErrorCapacity, embeddingbridge.Category(err))
 		case <-time.After(time.Second):
 			_ = upload.Close()
-			<-done
-			assert.Fail(t, "early rejection did not return within the request bound")
+			assert.Fail(t, "early rejection did not return within the request bound", "Embed returned %v after the source closed", <-done)
 		}
 		assert.Zero(t, upload.closes.Load(), "the worker retains ownership when no source read starts")
 		select {
@@ -1198,7 +1198,8 @@ func TestExecuteEmbeddingInterruptsBlockedUpload(t *testing.T) {
 				case <-time.After(3 * time.Second):
 					_ = upload.Close()
 					select {
-					case <-done:
+					case err := <-done:
+						t.Logf("ExecuteEmbedding returned %v after releasing the source", err)
 					case <-time.After(time.Second):
 						t.Error("embedding did not return after releasing the source")
 					}

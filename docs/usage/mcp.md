@@ -460,7 +460,7 @@ winner.
 
 ### Answer questions
 
-`answer_question` returns evidence without writing an answer. Content passages require every word of `question` to appear in one segment; key terms match better than a sentence. `ANSWERED` means
+`answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the
 question. Open the source to verify any quotation: excerpts can include omission
 markers and are not necessarily contiguous spans. Results without content text
