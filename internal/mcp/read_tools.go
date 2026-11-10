@@ -1097,10 +1097,11 @@ type documentByHashOutput struct {
 type findDocumentsByHashOutput struct {
 	privateCache
 
-	Items  []documentByHashOutput `json:"items"`
-	Total  int                    `json:"total"`
-	Limit  int                    `json:"limit"`
-	Offset int                    `json:"offset"`
+	Items      []documentByHashOutput `json:"items"`
+	Total      int                    `json:"total"`
+	Limit      int                    `json:"limit"`
+	Offset     int                    `json:"offset"`
+	NextOffset *int                   `json:"next_offset,omitzero"`
 }
 
 func findDocumentsByHash(ctx context.Context, lease *daemonLease, raw []byte) (findDocumentsByHashOutput, error) {
@@ -1124,5 +1125,25 @@ func findDocumentsByHash(ctx context.Context, lease *daemonLease, raw []byte) (f
 		out.Items[i] = documentByHashOutput{NodeID: ref.Node.ID, ContentVersionID: ref.Version.ID,
 			Path: ref.Path, Size: ref.Version.Size, MediaType: ref.Version.MimeType, BlobHash: ref.Version.BlobHash}
 	}
-	return out, nil
+	// Paths and media types can make a row-count-bounded page exceed the
+	// complete MCP envelope, which contains two copies of the output.
+	const envelopeBudget = maxToolResponseBytes - 8<<10
+	for {
+		out.NextOffset = nil
+		if next := out.Offset + len(out.Items); next < out.Total {
+			out.NextOffset = &next
+		}
+		envelope, err := toolEnvelopeBytes(out, nil)
+		if err != nil {
+			return findDocumentsByHashOutput{}, err
+		}
+		if envelope <= envelopeBudget {
+			return out, nil
+		}
+		if len(out.Items) <= 1 {
+			return findDocumentsByHashOutput{}, errToolResultTooLarge
+		}
+		end := max(1, min(len(out.Items)-1, len(out.Items)*envelopeBudget/envelope))
+		out.Items = out.Items[:end]
+	}
 }

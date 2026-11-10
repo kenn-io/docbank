@@ -1074,6 +1074,7 @@ func findDocumentsByHashSchemas() (schema, schema) {
 	}, "node_id", "content_version_id", "path", "size", "media_type", "blob_hash")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"items": arraySchema(item, 100), "total": integerSchema(0, 0),
+		"next_offset":    integerSchema(1, 0),
 		schemaLimitField: integerSchema(1, 100), schemaOffsetField: integerSchema(0, 1_000_000),
 	}), cacheRequired("items", "total", schemaLimitField, schemaOffsetField)...)
 	return input, output
