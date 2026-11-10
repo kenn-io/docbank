@@ -89,12 +89,9 @@ func watchTagError(ctx context.Context, d Deps, tags []string) string {
 }
 
 func watchProcessingRoutes(ctx context.Context, d Deps, profiles map[string]string) []WatchProcessingStatus {
-	routes := make([]WatchProcessingStatus, 0, len(profiles))
+	var routes []WatchProcessingStatus
 	for family, profile := range profiles {
 		status := watchProcessingStatus(ctx, d, profile)
-		if status == nil {
-			continue
-		}
 		status.MediaFamily = family
 		routes = append(routes, *status)
 	}

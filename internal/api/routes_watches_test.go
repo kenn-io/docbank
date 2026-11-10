@@ -194,3 +194,21 @@ func TestWatchProcessingRoutes(t *testing.T) {
 	assert.Equal(t, routes, jobs.Items[0].ProcessingRoutes)
 	assert.Empty(t, jobs.Items[0].Error)
 }
+
+func TestWatchWithoutRoutesOmitsProcessingRoutes(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) })
+	require.NoError(t, supervisor.Start("watch:inbox", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }))
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = supervisor
+		d.Cfg.Watches = []config.WatchConfig{{Name: "inbox"}}
+	})
+	for _, path := range []string{"/api/v1/watches", "/api/v1/jobs"} {
+		t.Run(path, func(t *testing.T) {
+			resp, body := get(t, ts, path, nil)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			assert.NotContains(t, body, `"processing_routes"`)
+		})
+	}
+}

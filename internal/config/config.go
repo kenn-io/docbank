@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"net"
 	"net/netip"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -792,7 +794,8 @@ func (c Config) Validate() error {
 				return err
 			}
 		}
-		for family, name := range watch.Profiles {
+		for _, family := range slices.Sorted(maps.Keys(watch.Profiles)) {
+			name := watch.Profiles[family]
 			if !query.ValidMediaFamily(family) {
 				return fmt.Errorf("watch %q unknown media family %q", watch.Name, family)
 			}

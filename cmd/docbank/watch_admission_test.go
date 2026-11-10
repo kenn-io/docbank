@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
-	"testing"
 )
 
 func TestWatchImportAdmissionRoutes(t *testing.T) {

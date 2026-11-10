@@ -9,12 +9,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -358,8 +360,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	for _, watch := range cfg.Watches {
 		names := []string{watch.Profile}
-		for _, name := range watch.Profiles {
-			names = append(names, name)
+		for _, family := range slices.Sorted(maps.Keys(watch.Profiles)) {
+			names = append(names, watch.Profiles[family])
 		}
 		for _, name := range names {
 			if name == "" {

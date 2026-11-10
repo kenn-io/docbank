@@ -440,13 +440,15 @@ version. The profile must include a rendition that accepts original documents;
 photo vision and embedding-only profiles aren't supported here. Omit both routing
 forms to use only baseline plain-text extraction.
 
-For a mixed folder, use `profiles = { document = "docling", audio_video = "asr" }`
-instead of `profile`. The forms are mutually exclusive. Keys use search
+For a mixed folder, use `profiles = { document = "docling", presentation = "docling", spreadsheet = "docling", image = "docling", audio_video = "asr" }`
+instead of `profile`. The forms are mutually exclusive. The `document` family
+covers only PDF and word-processing files. Keys use search
 `media_family` values: `email`, `document`, `spreadsheet`, `presentation`, `image`,
 `audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, `unknown`.
 Each value names a profile with an original-file rendition. Only the matching
 family's rendition is queued; unmapped families get baseline extraction only.
-An MP4 routed to an ASR profile that cannot read video is skipped as ineligible.
+Docling ASR reads only MP3 and WAV; M4A, MP4, and MOV files in `audio_video`
+are skipped as ineligible.
 No current automatic transcription adapter extracts MP4 audio. Photo descriptions
 and image embeddings continue to use vault-wide consent, independently of watches.
 

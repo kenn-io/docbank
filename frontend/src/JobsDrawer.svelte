@@ -5,7 +5,7 @@
   import { Button, IconButton, Spinner, SelectDropdown, Table } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import { APIError } from "./api-transport.js";
-  import { type Job, type LaneControl } from "./generated/docbank.js";
+  import { type Job, type LaneControl, type WatchProcessingStatus } from "./generated/docbank.js";
   import { jobLanes, laneTitle } from "./jobs.js";
   import { formatBytes } from "./format.js";
 
@@ -200,6 +200,20 @@
   {/if}
 {/snippet}
 
+{#snippet processingStatus(status: WatchProcessingStatus)}
+  <p class="operation processing">
+    {#if status.media_family}{status.media_family.replaceAll("_", " ")}:
+    {/if}
+    {#if status.error}
+      {status.media_family ? "" : "Processing profile: "}{status.profile}. {status.error}
+    {:else if status.consent_state === "active"}
+      {status.media_family ? "" : "Processing profile: "}{status.profile}
+    {:else}
+      {status.media_family ? "waiting" : "Waiting"} on consent for {status.profile} ({status.consent_state})
+    {/if}
+  </p>
+{/snippet}
+
 <DrawerShell title="Running now" closeLabel="Close background jobs" {onclose}>
   {#snippet actions()}
     {#if busy > 0}<span class="busy-count">{busy} running</span>{/if}
@@ -317,27 +331,10 @@
                 <th scope="row"
                   >{lane.title}
                   {#if processing}
-                    <p class="operation processing">
-                      {#if processing.error}
-                        Processing profile: {processing.profile}. {processing.error}
-                      {:else if processing.consent_state === "active"}
-                        Processing profile: {processing.profile}
-                      {:else}
-                        Waiting on consent for {processing.profile} ({processing.consent_state})
-                      {/if}
-                    </p>
+                    {@render processingStatus(processing)}
                   {/if}
                   {#each routes as route (route.media_family)}
-                    <p class="operation processing">
-                      {route.media_family?.replaceAll("_", " ")}:
-                      {#if route.error}
-                        {route.profile}. {route.error}
-                      {:else if route.consent_state === "active"}
-                        {route.profile}
-                      {:else}
-                        waiting on consent for {route.profile} ({route.consent_state})
-                      {/if}
-                    </p>
+                    {@render processingStatus(route)}
                   {/each}
                   {#if watch}
                     <p class="operation processing">

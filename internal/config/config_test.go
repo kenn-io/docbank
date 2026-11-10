@@ -1372,6 +1372,7 @@ func TestWatchProcessingProfileMapValidation(t *testing.T) {
 		want            string
 	}{
 		{name: "mapped", routes: map[string]string{"document": "archive", "audio_video": "archive"}},
+		{name: "deterministic errors", routes: map[string]string{"zzz": "archive", "aaa": "archive"}, want: `unknown media family "aaa"`},
 		{name: "unknown family", routes: map[string]string{"audio": "archive"}, want: "unknown media family"},
 		{name: "exclusive", shorthand: "archive", routes: map[string]string{"document": "archive"}, want: "mutually exclusive"},
 		{name: "empty map exclusive", shorthand: "archive", routes: map[string]string{}, want: "mutually exclusive"},
