@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 )
 
@@ -34,6 +35,22 @@ func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, 
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// PDFTextCandidate returns the active build only when its metadata records omitted pages.
+func (s *Store) PDFTextCandidate(ctx context.Context, version, profile string) (string, error) {
+	d := metadataJSONDialect{s.postgresSchema != ""}
+	var buildID string
+	err := s.db.QueryRowContext(ctx, `SELECT b.build_id FROM rendition_heads h
+		JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+		 AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
+		JOIN rendition_builds b ON b.build_id=a.build_id
+		WHERE h.content_version_id=$1 AND h.profile_fingerprint=$2
+		 AND b.unit_count < `+d.number("b.provider_receipt_json", "usage.units"), version, profile).Scan(&buildID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return buildID, err
 }
 
 func pdfWaitingSQL(version, profile string) string {

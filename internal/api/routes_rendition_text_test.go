@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
@@ -253,9 +253,11 @@ func TestRenditionTextHTTPExactRendition(t *testing.T) {
 func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	var runner *processing.PDFTextRunner
 	ts, s := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
 		runner = configureAutomaticPDFText(t, d)
 	})
-	pdf := mediatest.PDFTextPages([]string{"searchable", ""}, false)
+	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
+	require.NoError(t, err)
 	hash, size, err := s.Blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "mixed.pdf", hash, size, "application/pdf")
@@ -269,10 +271,42 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var receipt struct {
-		Pages []int `json:"pages_without_text"`
+		Pages   []int  `json:"pages_without_text"`
+		BuildID string `json:"build_id"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
 	require.Equal(t, []int{2}, receipt.Pages)
+	buildID := receipt.BuildID
+	resp, body = get(t, ts, "/api/v1/search/text-coverage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var searchCoverage api.SearchTextCoverage
+	require.NoError(t, json.Unmarshal([]byte(body), &searchCoverage))
+	require.Equal(t, 1, searchCoverage.PDFsWithoutText)
+	require.Equal(t, 1, searchCoverage.PagesWithoutText)
+	coverageURL := "/api/v1/coverage?profile=docbank-pdf-text&vault_uid=" + s.VaultID() + "&content_version_id=" + node.CurrentVersionID
+	resp, body = get(t, ts, coverageURL, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var report api.CoverageReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	require.Equal(t, []api.PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: []int{2}}}, report.PagesWithoutText)
+	request["profile"] = "archive"
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.Contains(t, body, `"state":"unprocessed"`)
+	require.Equal(t, []int{2}, receipt.Pages)
+	build, err := s.RenditionBuild(t.Context(), buildID)
+	require.NoError(t, err)
+	for _, artifact := range build.Artifacts {
+		if artifact.Role == "normalized_evidence" {
+			require.NoError(t, s.Blobs.Remove(artifact.BlobHash))
+		}
+	}
+	request["profile"] = processing.PDFTextProfileName
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"state":"ready"`)
+	require.NotContains(t, body, `"pages_without_text"`)
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {

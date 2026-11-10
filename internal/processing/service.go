@@ -379,6 +379,7 @@ type Coverage struct {
 	Renditions                          CoverageClass
 	Embeddings                          []CoverageClass
 	PagesWithoutText                    []PageTextGap
+	BuildManifest                       string
 }
 
 type SearchRequest struct {
@@ -1533,11 +1534,22 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 		return Coverage{}, err
 	}
 	var pageGaps []PageTextGap
+	read := make(map[string][]int)
 	for _, id := range ids {
+		if profileName != PDFTextProfileName {
+			break
+		}
 		if buildID := snapshot.RenditionBuilds[id]; buildID != "" {
-			pages, err := service.PDFPagesWithoutText(ctx, buildID)
-			if err != nil {
-				return Coverage{}, err
+			pages, ok := read[buildID]
+			if !ok {
+				pages, err = service.PDFPagesWithoutText(ctx, buildID)
+				if ctx.Err() != nil {
+					return Coverage{}, ctx.Err()
+				}
+				if err != nil {
+					pages = nil
+				}
+				read[buildID] = pages
 			}
 			if len(pages) > 0 {
 				pageGaps = append(pageGaps, PageTextGap{ContentVersionID: id, Pages: pages})
@@ -1552,6 +1564,11 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}, PagesWithoutText: pageGaps}
+	manifestParts := []string{profile.record.Fingerprint}
+	for _, id := range ids {
+		manifestParts = append(manifestParts, id, snapshot.BuildManifest[id])
+	}
+	report.BuildManifest = store.LengthPrefixedSHA256(manifestParts...)
 	// A description profile attaches no rendition, so there is none to cover.
 	if profile.portable.Rendition != nil && profileRenditionInput(profile) == document.RenditionInputOriginalFile {
 		report.Renditions = toClass(snapshot.Renditions)

@@ -3387,6 +3387,8 @@ components:
           items:
             $ref: "#/components/schemas/CoverageClass"
           type: array
+        next_cursor:
+          type: string
         pages_without_text:
           items:
             $ref: "#/components/schemas/PageTextGap"
@@ -19633,6 +19635,10 @@ components:
           format: int64
           minimum: 0
           type: integer
+        other_without_text:
+          format: int64
+          minimum: 0
+          type: integer
         pages_without_text:
           format: int64
           minimum: 0
@@ -19651,6 +19657,7 @@ components:
         - pending
         - pdfs_without_text
         - pages_without_text
+        - other_without_text
       type: object
       x-go-type: api.SearchTextCoverage
       x-go-type-import:
@@ -24116,6 +24123,12 @@ paths:
             maxItems: 4096
             minItems: 1
             type: array
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 2048
+            type: string
       responses:
         "200":
           content:

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -426,6 +427,31 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 		})
 		require.Equal(t, "processing_profile_unavailable", unknown["code"])
 	}
+}
+
+func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
+	f := newNativeExportFixture(t)
+	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
+	require.NoError(t, err)
+	hash, size, err := f.blobs.WriteContext(t.Context(), bytes.NewReader(pdf))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "mixed.pdf", hash, size, "application/pdf")
+	require.NoError(t, err)
+	server, service, _ := newProcessingDocumentServer(t, f)
+	require.NoError(t, (&processing.PDFTextRunner{Service: service}).Initialize(t.Context()))
+	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
+	plan, err := service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	output := exportCall(t, server, "answer_question", map[string]any{"question": "absentword", "profile": processing.PDFTextProfileName})
+	require.Equal(t, false, output["coverage_complete"])
+	gaps, ok := output["pages_without_text"].([]any)
+	require.True(t, ok)
+	require.Len(t, gaps, 1)
+	gap := schemaMap(t, gaps[0])
+	require.Equal(t, node.CurrentVersionID, gap["content_version_id"])
+	require.Equal(t, []any{[]any{float64(2), float64(2)}}, gap["pages"])
 }
 
 func newSearchTestEmbeddingProfile(t *testing.T, f *nativeExportFixture, kind document.EmbeddingInputKind, failQuery bool) processing.ProfileConfig {

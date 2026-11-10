@@ -2722,6 +2722,7 @@ func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *Get
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"cursor":    {Style: "form", Explode: &[]bool{false}[0]},
 		"profile":   {Style: "form", Explode: &[]bool{false}[0]},
 		"vault_uid": {Style: "form", Explode: &[]bool{false}[0]},
 	}
@@ -28526,6 +28527,7 @@ type GetDocumentProcessingCoverageQuery struct {
 	Profile          string    `json:"profile"`
 	VaultUID         uuid.UUID `json:"vault_uid"`
 	ContentVersionID []string  `json:"content_version_id"`
+	Cursor           *string   `json:"cursor,omitempty"`
 }
 
 type ListDocumentsQuery struct {

@@ -879,6 +879,7 @@ func getProcessingCoverageSchemas() (schema, schema) {
 		"profile":             schema{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$"},
 		"vault_id":            uuidSchema(),
 		"content_version_ids": schema{"type": "array", "items": uuidSchema(), "minItems": 1, "maxItems": 4096, "uniqueItems": true},
+		"cursor":              stringSchema(2048),
 	}, "profile", "vault_id", "content_version_ids")
 	class := objectSchema(schema{
 		"name": stringSchema(128), "required": booleanSchema(), schemaStateField: stringSchema(64),
@@ -891,6 +892,7 @@ func getProcessingCoverageSchemas() (schema, schema) {
 		"vault_id": uuidSchema(), "content_version_ids": arraySchema(uuidSchema(), 4096),
 		"profile_fingerprint": sha256Schema(), schemaStateField: stringSchema(64), "coverage": arraySchema(class, 65),
 		"pages_without_text": arraySchema(objectSchema(schema{versionField: uuidSchema(), "pages": arraySchema(integerSchema(1, 0), 5000)}, versionField, "pages"), 4096),
+		"next_cursor":        stringSchema(2048),
 	}), cacheRequired("vault_id", "content_version_ids", "profile_fingerprint", schemaStateField, "coverage")...)
 	return input, output
 }

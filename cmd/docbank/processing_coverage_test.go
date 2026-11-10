@@ -81,6 +81,32 @@ func TestProcessingCoverageCLI(t *testing.T) {
 	}
 }
 
+func TestProcessingCoverageContinuesPageList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/vault" {
+			require.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
+			return
+		}
+		coverage := api.CoverageReport{VaultUID: inspectionTestVaultID, Embeddings: []api.CoverageClass{}}
+		if r.URL.Query().Get("cursor") == "" {
+			coverage.PagesWithoutText = []api.PageTextGap{{ContentVersionID: processingTestVersionID, Pages: []int{1, 2}}}
+			coverage.NextCursor = "next"
+		} else {
+			require.Equal(t, "next", r.URL.Query().Get("cursor"))
+			coverage.PagesWithoutText = []api.PageTextGap{{ContentVersionID: processingTestVersionID, Pages: []int{3, 4}}}
+		}
+		require.NoError(t, json.MarshalWrite(w, coverage))
+	}))
+	t.Cleanup(server.Close)
+	c := daemonconn.New(server.URL, "test-key")
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	cmd, output := processingTestCommand()
+	require.NoError(t, runProcessingCoverage(cmd, c, processingTestVersionID, "docbank-pdf-text", false))
+	require.Contains(t, output.String(), "[1 2]")
+	require.Contains(t, output.String(), "[3 4]")
+}
+
 func TestProcessingCoverageRefusesInvalidResponses(t *testing.T) {
 	for _, scenario := range []string{"vault", "nil identity", "bad identity", "profile"} {
 		t.Run(scenario, func(t *testing.T) {

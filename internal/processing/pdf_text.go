@@ -2,8 +2,11 @@ package processing
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,6 +17,60 @@ import (
 
 const PDFTextProfileName = "docbank-pdf-text"
 const PDFTextMaxDocumentBytes = 500 << 20
+
+func coveragePage(gaps []PageTextGap, scope, manifest, cursor string) ([]PageTextGap, string, error) {
+	type position struct {
+		Scope, Manifest string
+		Offset          int
+	}
+	pos := position{Scope: scope, Manifest: manifest}
+	if cursor != "" {
+		data, err := base64.RawURLEncoding.DecodeString(cursor)
+		if err != nil || json.Unmarshal(data, &pos) != nil || pos.Scope != scope || pos.Manifest != manifest || pos.Offset < 1 {
+			return nil, "", errors.New("invalid or stale coverage cursor")
+		}
+	}
+	start, remaining := pos.Offset, 8192
+	var page []PageTextGap
+	for _, gap := range gaps {
+		if start >= len(gap.Pages) {
+			start -= len(gap.Pages)
+			continue
+		}
+		end := min(len(gap.Pages), start+remaining)
+		page = append(page, PageTextGap{ContentVersionID: gap.ContentVersionID, Pages: gap.Pages[start:end]})
+		remaining -= end - start
+		start = 0
+		if remaining == 0 {
+			break
+		}
+	}
+	total := 0
+	for _, gap := range gaps {
+		total += len(gap.Pages)
+	}
+	if pos.Offset > total {
+		return nil, "", errors.New("invalid or stale coverage cursor")
+	}
+	pos.Offset += 8192 - remaining
+	if pos.Offset < total {
+		data, err := json.Marshal(pos)
+		if err != nil {
+			return nil, "", err
+		}
+		return page, base64.RawURLEncoding.EncodeToString(data), nil
+	}
+	return page, "", nil
+}
+
+// CoveragePage returns a bounded page list for one unchanged source snapshot.
+func CoveragePage(report Coverage, fence SourceFence, cursor string) ([]PageTextGap, string, error) {
+	scope, err := SourceFenceFingerprint(fence)
+	if err != nil {
+		return nil, "", err
+	}
+	return coveragePage(report.PagesWithoutText, scope, report.BuildManifest, cursor)
+}
 
 // NewPDFTextProfile constructs the daemon's local PDF text profile.
 func NewPDFTextProfile() (string, ProfileConfig, error) {
@@ -86,7 +143,22 @@ func (service *Service) PDFPagesWithoutText(ctx context.Context, buildID string)
 			}
 		}
 	}
+	slices.Sort(pages)
+	pages = slices.Compact(pages)
 	return pages, nil
+}
+
+// PDFSourcePagesWithoutText reads gaps from the built-in profile for a source version.
+func (service *Service) PDFSourcePagesWithoutText(ctx context.Context, versionID string) ([]int, error) {
+	profile, ok := service.profiles[PDFTextProfileName]
+	if !ok {
+		return nil, nil
+	}
+	buildID, err := service.catalog.PDFTextCandidate(ctx, versionID, profile.record.Fingerprint)
+	if err != nil || buildID == "" {
+		return nil, err
+	}
+	return service.PDFPagesWithoutText(ctx, buildID)
 }
 
 // PDFTextRunner admits automatic PDFs through the shared rendition lifecycle.

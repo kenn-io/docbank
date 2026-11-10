@@ -18,6 +18,7 @@ type SearchTextCoverage struct {
 	Pending          int
 	PDFsWithoutText  int
 	PagesWithoutText int
+	OtherWithoutText int
 }
 
 func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfProfile string, noTextLayer func(context.Context, string) ([]int, error)) (out SearchTextCoverage, err error) {
@@ -41,6 +42,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 	}
 	families := make(map[string]bool)
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) (retErr error) {
+		d := metadataJSONDialect{s.postgresSchema != ""}
 		scope, args := liveSearchScopeSQL(searchFilterSQL(opts))
 		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID}, args...)
 		rows, err := q.QueryContext(ctx, `WITH coverage AS (
@@ -50,6 +52,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
  JOIN rendition_builds b ON b.build_id=a.build_id
  JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id
  WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=?
+ AND b.unit_count < `+d.number("b.provider_receipt_json", "usage.units")+`
  LIMIT 1),'') pdf_evidence,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
@@ -97,6 +100,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 			}
 			if family, ok := formats[mediaType]; ok && !native && !serving {
 				out.NoText += count
+				out.OtherWithoutText += count
 				families[family] = true
 			}
 		}
@@ -104,8 +108,20 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
 		}
+		read := make(map[string][]int)
 		for _, check := range checks {
-			if pages, err := noTextLayer(ctx, check.buildID); err == nil && len(pages) > 0 {
+			pages, ok := read[check.buildID]
+			if !ok {
+				pages, err = noTextLayer(ctx, check.buildID)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if err != nil {
+					pages = nil
+				}
+				read[check.buildID] = pages
+			}
+			if len(pages) > 0 {
 				out.PDFsWithoutText += check.count
 				out.PagesWithoutText += len(pages) * check.count
 				if !check.serving && !check.waiting {

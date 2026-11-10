@@ -202,8 +202,9 @@ func TestEmptySearchHints(t *testing.T) {
 }
 
 func TestEmptySearchHintsKeepOfficeGuidance(t *testing.T) {
-	hints := emptySearchHints("missing", api.SearchTextCoverage{NoText: 1, Families: []string{"office"}}, true, false, false)
-	require.Len(t, hints, 1)
-	require.Equal(t, "no_searchable_text", hints[0].Code)
-	require.Contains(t, hints[0].Message, "1 file (Office)")
+	hints := emptySearchHints("missing", api.SearchTextCoverage{NoText: 2, OtherWithoutText: 1, PDFsWithoutText: 1, PagesWithoutText: 2, Families: []string{"pdf", "office"}}, true, false, false)
+	require.Len(t, hints, 2)
+	require.Equal(t, "needs_ocr", hints[0].Code)
+	require.Equal(t, "no_searchable_text", hints[1].Code)
+	require.Contains(t, hints[1].Message, "1 file (Office)")
 }

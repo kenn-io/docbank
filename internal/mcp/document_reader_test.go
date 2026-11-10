@@ -25,7 +25,7 @@ func newProcessingDocumentServer(t *testing.T, f *nativeExportFixture) (*Server,
 	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
 	require.NoError(t, err)
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{profileName: profile, pdfName: pdfProfile}})
+		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{profileName: profile, pdfName: pdfProfile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, service.Shutdown(context.Background())) })
 	return newSearchProcessingServer(t, f, service), service, profileName

@@ -1761,6 +1761,7 @@ export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
+  next_cursor?: string;
   pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
@@ -8377,6 +8378,8 @@ export interface SearchTextCoverage {
   /** @minimum 0 */
   no_text: number;
   /** @minimum 0 */
+  other_without_text: number;
+  /** @minimum 0 */
   pages_without_text: number;
   /** @minimum 0 */
   pdfs_without_text: number;
@@ -9510,6 +9513,10 @@ vault_uid: string;
  * @maxItems 4096
  */
 content_version_id: string[];
+/**
+ * @maxLength 2048
+ */
+cursor?: string;
 };
 
 export type ListDocumentsParams = {

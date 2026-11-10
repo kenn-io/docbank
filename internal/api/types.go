@@ -243,6 +243,7 @@ type CoverageReport struct {
 	Renditions         CoverageClass   `json:"renditions"`
 	Embeddings         []CoverageClass `json:"embeddings"`
 	PagesWithoutText   []PageTextGap   `json:"pages_without_text,omitzero"`
+	NextCursor         string          `json:"next_cursor,omitempty"`
 }
 
 type DocumentSearchScope struct {
@@ -942,6 +943,7 @@ type SearchTextCoverage struct {
 	Pending          int      `json:"pending" minimum:"0"`
 	PDFsWithoutText  int      `json:"pdfs_without_text" minimum:"0"`
 	PagesWithoutText int      `json:"pages_without_text" minimum:"0"`
+	OtherWithoutText int      `json:"other_without_text" minimum:"0"`
 }
 
 // SearchReport is one bounded search result page.

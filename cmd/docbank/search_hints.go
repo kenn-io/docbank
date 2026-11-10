@@ -42,21 +42,18 @@ func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, sc
 			}
 		}
 		if len(families) > 0 {
-			if len(families) != len(coverage.Families) {
-				hints = append(hints, searchHint{Code: "no_searchable_text", Message: fmt.Sprintf("Some files (%s) have no searchable text; use or set up a profile that can extract these files; build it; choose another profile if a build returns no text; list profiles with docbank processing profiles", strings.Join(families, ", "))})
-			} else {
-				noun, verb, names := "files", "have", "their names"
-				if coverage.NoText == 1 {
-					noun, verb, names = fileNoun, "has", "its name"
-				}
-				hints = append(hints, searchHint{
-					Code: "no_searchable_text",
-					Message: fmt.Sprintf("%d %s (%s) %s no searchable text, only %s; "+
-						"use or set up a profile that can extract these files; build it; choose another profile if a build returns no text; "+
-						"list profiles with docbank processing profiles",
-						coverage.NoText, noun, strings.Join(families, ", "), verb, names),
-				})
+			count := coverage.OtherWithoutText
+			noun, verb, names := "files", "have", "their names"
+			if count == 1 {
+				noun, verb, names = fileNoun, "has", "its name"
 			}
+			hints = append(hints, searchHint{
+				Code: "no_searchable_text",
+				Message: fmt.Sprintf("%d %s (%s) %s no searchable text, only %s; "+
+					"use or set up a profile that can extract these files; build it; choose another profile if a build returns no text; "+
+					"list profiles with docbank processing profiles",
+					count, noun, strings.Join(families, ", "), verb, names),
+			})
 		}
 	}
 	if coverage.Pending > 0 {
