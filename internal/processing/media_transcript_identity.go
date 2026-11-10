@@ -11,6 +11,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const suppliedOrigin = "supplied"
+
 // Speech completeness excludes only the explicitly documented non-speech field.
 // It does not upgrade the evidence's completeness or erase its omissions.
 func transcriptSpeechState(evidence document.NormalizedEvidenceV1, truncated bool) string {
@@ -43,7 +45,7 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 		if artifact.Role != string(document.EvidenceArtifactTranscript) {
 			continue
 		}
-		if artifact.State != store.RenditionArtifactVerified || artifact.BlobHash != artifact.Checksum || artifact.Size < 1 || artifact.Size > mediatranscript.MaxArtifactBytes {
+		if artifact.State != store.RenditionArtifactVerified || artifact.BlobHash != artifact.Checksum || artifact.Size < 1 || artifact.Size > document.MaxRenditionArtifactBytes {
 			return errors.New("retained transcript artifact authority is invalid")
 		}
 		transcript.ArtifactSHA256 = artifact.Checksum
@@ -59,13 +61,21 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 		}
 		switch identity.ContractVersion {
 		case "supplied-transcript/v1":
-			return document.ValidateSuppliedTranscriptArtifactV1(raw)
+			if err := document.ValidateSuppliedTranscriptArtifactV1(raw); err != nil {
+				return err
+			}
+			transcript.Origin = suppliedOrigin
+			transcript.SpeechState = statusPartial
 		case "media-transcript/v1":
 			timed, err := mediatranscript.Unmarshal(raw)
 			if err != nil {
 				return err
 			}
 			transcript.Language = timed.Language
+			if timed.Origin == suppliedOrigin {
+				transcript.Origin = suppliedOrigin
+				transcript.SpeechState = statusPartial
+			}
 		default:
 			return errors.New("saved transcript is invalid")
 		}

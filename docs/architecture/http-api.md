@@ -456,8 +456,8 @@ unit keeps its text, an optional `speaker`, and an optional `time_span` with
 omit `time_span`. `origin` is `supplied` when the build came from a supplied
 transcript or caption, and `generated` otherwise.
 
-`transcript.build_id` identifies that exact active build. Supplied evidence also
-includes `transcript.supplied_input_id`, the input bound to that build. A failed
+`transcript.build_id` identifies that exact active build. When a supplied input
+is bound to the build, `transcript.supplied_input_id` identifies it. A failed
 retry keeps the identities of the earlier covering build. Generated evidence
 omits `supplied_input_id`. Responses without ready evidence omit `transcript`.
 

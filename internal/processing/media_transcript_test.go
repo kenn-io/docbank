@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -354,4 +355,37 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestMediaTranscriptRetainedArtifactSupportsLargeSuppliedText(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	policy, err := document.NewEvidencePolicy(18 << 20)
+	require.NoError(t, err)
+	_, artifact, err := document.BuildTranscriptSourceEvidenceV1(document.SuppliedTranscript{Provider: "synthetic", Text: strings.Repeat("a", (16<<20)+1)}, policy)
+	require.NoError(t, err)
+	blob, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(artifact.Payload))
+	require.NoError(t, err)
+	require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), blob.Hash, blob.Size, processingBlobPhysical(t, blob)))
+	build := store.RenditionBuildRecord{Artifacts: []store.RenditionArtifactRecord{{Role: string(document.EvidenceArtifactTranscript), BlobHash: blob.Hash, Checksum: blob.Hash, Size: blob.Size, State: store.RenditionArtifactVerified}}}
+	result := MediaTranscriptEvidence{Origin: "generated"}
+	err = (&Service{blobs: f.blobs}).mediaTranscriptArtifactIdentity(t.Context(), build, &result)
+	require.NoError(t, err)
+	require.Equal(t, blob.Hash, result.ArtifactSHA256)
+}
+
+func TestMediaTranscriptUnboundSuppliedTimedProvenance(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	raw, _, err := mediatranscript.Marshal(mediatranscript.ArtifactV1{ContractVersion: "media-transcript/v1", Origin: "supplied", Provider: "synthetic", Segments: []mediatranscript.Segment{{Text: "hello", EndMS: 1000}}})
+	require.NoError(t, err)
+	blob, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+	require.NoError(t, err)
+	require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), blob.Hash, blob.Size, processingBlobPhysical(t, blob)))
+	build := store.RenditionBuildRecord{Artifacts: []store.RenditionArtifactRecord{{Role: string(document.EvidenceArtifactTranscript), BlobHash: blob.Hash, Checksum: blob.Hash, Size: blob.Size, State: store.RenditionArtifactVerified}}}
+	result := MediaTranscriptEvidence{Origin: "generated", SpeechState: "complete"}
+	err = (&Service{blobs: f.blobs}).mediaTranscriptArtifactIdentity(t.Context(), build, &result)
+	require.NoError(t, err)
+	require.Equal(t, "supplied", result.Origin)
+	require.Equal(t, "partial", result.SpeechState)
 }

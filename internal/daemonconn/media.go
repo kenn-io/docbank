@@ -369,7 +369,7 @@ func validateMediaTranscript(
 		return errors.New("daemon returned an invalid ready media transcript")
 	}
 	switch {
-	case evidence.Origin == "supplied" && evidence.SuppliedInputID != "":
+	case evidence.Origin == "supplied":
 	case evidence.Origin == "generated" && evidence.SuppliedInputID == "":
 	default:
 		return errors.New("daemon returned an invalid ready media transcript")

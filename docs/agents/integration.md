@@ -126,7 +126,7 @@ docbank media transcript SOURCE_ID \
 ```
 
 Before attributing a search excerpt, compare `transcript.build_id` with the
-search evidence's `build_id`. For supplied text, also compare
+search evidence's `build_id`. When a supplied input is bound, also compare
 `transcript.supplied_input_id` with your original import receipt's
 `supplied_input_id`. Bind the response's vault and media IDs, `node_id`,
 `source_sha256`, `profile_fingerprint`, and `evidence_checksum` to the
