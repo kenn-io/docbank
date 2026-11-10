@@ -125,47 +125,37 @@ func newTestBackfill(catalog *fakeBackfillCatalog, page int, drain bool) *Backfi
 
 func TestBackfillSettlesUntilWriteRevisionChanges(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name               string
-		maxIdle, wakeAfter time.Duration
-	}{
-		{"revision", 0, backfillMaxIdleDelay},
-		{"max idle delay", time.Second, time.Second},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				catalog := newFakeBackfillCatalog("a")
-				var revision atomic.Uint64
-				backfill := newTestBackfill(catalog, 1, false)
-				backfill.IdleDelay = time.Second
-				backfill.MaxIdleDelay = tc.maxIdle
-				backfill.WriteRevision = revision.Load
-				ctx, cancel := context.WithCancel(t.Context())
-				done := make(chan error, 1)
-				go func() { done <- backfill.Run(ctx) }()
-				synctest.Wait()
-				time.Sleep(3 * backfillMaxIdleDelay)
-				synctest.Wait()
-				catalog.mu.Lock()
-				listed := catalog.listed
-				assert.True(t, catalog.done["a"])
-				catalog.mu.Unlock()
-				time.Sleep(3 * backfillMaxIdleDelay)
-				synctest.Wait()
-				catalog.mu.Lock()
-				assert.Equal(t, listed, catalog.listed, "a drained catalog stays idle")
-				catalog.keys = append(catalog.keys, "b")
-				catalog.mu.Unlock()
-				revision.Add(1)
-				time.Sleep(tc.wakeAfter)
-				synctest.Wait()
-				cancel()
-				require.ErrorIs(t, <-done, context.Canceled)
-				assert.True(t, catalog.done["b"], "a committed write wakes the backfill")
-				assert.Equal(t, 1, catalog.attempts["b"])
-			})
+	t.Run("revision", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			catalog := newFakeBackfillCatalog("a")
+			var revision atomic.Uint64
+			backfill := newTestBackfill(catalog, 1, false)
+			backfill.WriteRevision = revision.Load
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- backfill.Run(ctx) }()
+			synctest.Wait()
+			time.Sleep(3 * backfillMaxIdleDelay)
+			synctest.Wait()
+			catalog.mu.Lock()
+			listed := catalog.listed
+			assert.True(t, catalog.done["a"])
+			catalog.mu.Unlock()
+			time.Sleep(3 * backfillMaxIdleDelay)
+			synctest.Wait()
+			catalog.mu.Lock()
+			assert.Equal(t, listed, catalog.listed, "a drained catalog stays idle")
+			catalog.keys = append(catalog.keys, "b")
+			catalog.mu.Unlock()
+			revision.Add(1)
+			time.Sleep(backfillMaxIdleDelay)
+			synctest.Wait()
+			cancel()
+			require.ErrorIs(t, <-done, context.Canceled)
+			assert.True(t, catalog.done["b"], "a committed write wakes the backfill")
+			assert.Equal(t, 1, catalog.attempts["b"])
 		})
-	}
+	})
 	t.Run("supervisor", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			catalog := newFakeBackfillCatalog("a")
@@ -188,6 +178,23 @@ func TestBackfillSettlesUntilWriteRevisionChanges(t *testing.T) {
 			require.NoError(t, supervisor.Settle(ctx))
 			require.Equal(t, listed, listCount(), "settling the supervisor does not relist an unchanged catalog")
 		})
+	})
+}
+
+func TestBackfillCapsIdleDelay(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog()
+		backfill := newTestBackfill(catalog, 1, false)
+		backfill.IdleDelay, backfill.MaxIdleDelay = time.Second, time.Second
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- backfill.Run(ctx) }()
+		time.Sleep(10*time.Second + time.Millisecond)
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		assert.Equal(t, 11, catalog.listed, "an empty scan waits at most one second")
 	})
 }
 

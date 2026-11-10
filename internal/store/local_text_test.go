@@ -134,12 +134,15 @@ func TestPDFTextDiscoveryAndWaitingCoverage(t *testing.T) {
 	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 		profile.Rendition.Descriptor.ID = document.PDFTextProviderID
 	})
-	page, err := s.MissingPDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 1)
+	page, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 1, false)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
-	next, err := s.MissingPDFTextTargetsAfter(t.Context(), profile.Fingerprint, page[0].ContentVersionID, 500<<20, 1)
+	next, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, page[0].ContentVersionID, 500<<20, 1, false)
 	require.NoError(t, err)
 	require.Len(t, next, 1)
+	oversized, err := s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 1, 50, false)
+	require.NoError(t, err)
+	require.Empty(t, oversized)
 	coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 	require.NoError(t, err)
 	require.Zero(t, coverage.Pending)

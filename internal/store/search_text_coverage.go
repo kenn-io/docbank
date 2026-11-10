@@ -38,16 +38,16 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		formats[entry.MediaType] = family
 	}
 	families := make(map[string]bool)
-	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) (retErr error) {
 		scope, args := liveSearchScopeSQL(searchFilterSQL(opts))
-		args = append([]any{pdfProfile, generation.ID, generation.ID}, args...)
-		rows, err := q.QueryContext(ctx, `WITH pdf_profile AS (SELECT CAST(? AS TEXT) fingerprint), coverage AS (
+		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID}, args...)
+		rows, err := q.QueryContext(ctx, `WITH coverage AS (
 		 SELECT COALESCE(cv.mime_type, '') AS mime_type,
- `+pdfWaitingSQL("cv.version_id", "(SELECT fingerprint FROM pdf_profile)")+` pdf_waiting,
+ `+pdfWaitingSQL("cv.version_id", "?")+` pdf_waiting,
  COALESCE((SELECT b.build_id FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
  JOIN rendition_builds b ON b.build_id=a.build_id
  JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id
- WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=(SELECT fingerprint FROM pdf_profile) AND gb.generation_id=?
+ WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=?
  AND b.lexical_segment_count=0 LIMIT 1),'') pdf_evidence,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
@@ -63,27 +63,19 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		if err != nil {
 			return fmt.Errorf("counting search text coverage: %w", err)
 		}
-		defer func() { _ = rows.Close() }()
-		type coverageRow struct {
-			mediaType, pdfEvidence                       string
-			native, pending, extracted, serving, waiting bool
-			count                                        int
+		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		type evidenceCheck struct {
+			buildID, family string
+			count           int
 		}
-		var records []coverageRow
+		var checks []evidenceCheck
 		for rows.Next() {
-			var r coverageRow
-			if err := rows.Scan(&r.mediaType, &r.native, &r.pending, &r.extracted, &r.serving, &r.pdfEvidence, &r.waiting, &r.count); err != nil {
-				_ = rows.Close()
+			var mediaType, pdfEvidence string
+			var native, pending, extracted, serving, waiting bool
+			var count int
+			if err := rows.Scan(&mediaType, &native, &pending, &extracted, &serving, &pdfEvidence, &waiting, &count); err != nil {
 				return err
 			}
-			records = append(records, r)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return err
-		}
-		for _, r := range records {
-			mediaType, pdfEvidence, waiting := r.mediaType, r.pdfEvidence, r.waiting
-			native, pending, extracted, serving, count := r.native, r.pending, r.extracted, r.serving, r.count
 			if native && pending && !serving && (generation.ID != "" || !extracted) {
 				out.Pending += count
 			}
@@ -94,19 +86,24 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 			if mediaType == "application/pdf" && !serving {
 				if waiting {
 					out.Pending += count
-					continue
+				} else if family, ok := formats[mediaType]; ok && !native && pdfEvidence != "" && noTextLayer != nil {
+					checks = append(checks, evidenceCheck{pdfEvidence, family, count})
 				}
-				if pdfEvidence == "" || noTextLayer == nil {
-					continue
-				}
-				empty, err := noTextLayer(ctx, pdfEvidence)
-				if err != nil || !empty {
-					continue
-				}
+				continue
 			}
 			if family, ok := formats[mediaType]; ok && !native && !serving {
 				out.NoText += count
 				families[family] = true
+			}
+		}
+		// Evidence reads use their own queries, so they wait for these rows to close.
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, check := range checks {
+			if empty, err := noTextLayer(ctx, check.buildID); err == nil && empty {
+				out.NoText += check.count
+				families[check.family] = true
 			}
 		}
 		return nil

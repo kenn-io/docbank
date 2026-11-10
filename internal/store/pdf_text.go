@@ -5,17 +5,9 @@ import (
 	"errors"
 )
 
-// MissingPDFTextTargetsAfter lists live sources whose automatic text can still be produced.
-func (s *Store) MissingPDFTextTargetsAfter(ctx context.Context, profile, after string, maxBytes int64, limit int) ([]DocumentSummary, error) {
-	return s.pdfTextTargetsAfter(ctx, profile, after, maxBytes, limit, true)
-}
-
-// PendingPDFTextTargetsAfter includes jobs already admitted for processing.
-func (s *Store) PendingPDFTextTargetsAfter(ctx context.Context, profile, after string, maxBytes int64, limit int) ([]DocumentSummary, error) {
-	return s.pdfTextTargetsAfter(ctx, profile, after, maxBytes, limit, false)
-}
-
-func (s *Store) pdfTextTargetsAfter(ctx context.Context, profile, after string, maxBytes int64, limit int, excludeWaiting bool) ([]DocumentSummary, error) {
+// PDFTextTargetsAfter lists live PDFs without the profile's text, optionally
+// including versions whose job is still waiting to publish.
+func (s *Store) PDFTextTargetsAfter(ctx context.Context, profile, after string, maxBytes int64, limit int, includeWaiting bool) ([]DocumentSummary, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("invalid PDF backfill bounds")
 	}
@@ -24,7 +16,7 @@ func (s *Store) pdfTextTargetsAfter(ctx context.Context, profile, after string, 
 		mimeType = "lower(trim(split_part(v.mime_type,';',1)))"
 	}
 	waiting := ""
-	if excludeWaiting {
+	if !includeWaiting {
 		waiting = ` AND NOT ` + pdfWaitingSQL("v.version_id", "$2")
 	}
 	rows, err := s.db.QueryContext(ctx, liveProcessingTargetsSQL+` WHERE v.version_id>$1 AND `+`NOT EXISTS(SELECT 1 FROM rendition_heads h WHERE h.content_version_id=v.version_id AND h.profile_fingerprint=$2)`+waiting+` AND v.size>0 AND v.size<=$3 AND `+mimeType+`='application/pdf'

@@ -578,8 +578,8 @@ func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (Renditio
 }
 
 // ClaimRenditionJob claims or reclaims one exact job. An expired provider
-// phase without a durable provider handle is atomically quarantined unless
-// the provider can safely repeat its side-effect-free work.
+// phase without a durable provider handle is atomically quarantined for
+// operator resolution instead of being resubmitted.
 func (s *Store) ClaimRenditionJob(
 	ctx context.Context, jobID, owner string, at time.Time, lease time.Duration,
 ) (RenditionJobClaim, error) {
@@ -633,9 +633,8 @@ func (s *Store) ClaimRenditionJob(
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
 				// Photo descriptions and local PDFium text extraction can safely run again.
 				var repeatable bool
-				dialect := metadataJSONDialect{s.postgresSchema != ""}
-				if err := tx.QueryRowContext(ctx, `SELECT `+dialect.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+dialect.text("execution_identity_json", "authorization.provider_id")+`='`+document.PDFTextProviderID+`' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
-					return fmt.Errorf("reading rendition job retry safety: %w", err)
+				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "authorization.provider_id")+`='`+document.PDFTextProviderID+`' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
+					return fmt.Errorf("reading rendition job input kind: %w", err)
 				}
 				if repeatable {
 					if _, err := tx.ExecContext(ctx, `
@@ -644,7 +643,7 @@ func (s *Store) ClaimRenditionJob(
 						selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$1 WHERE job_id=$2`,
 						at.Format(timestampLayout), jobID); err != nil {
-						return fmt.Errorf("requeueing expired repeatable rendition: %w", err)
+						return fmt.Errorf("requeueing expired photo description: %w", err)
 					}
 					state, phase, providerStarted = RenditionJobQueued, RenditionPhaseQueued, false
 				}

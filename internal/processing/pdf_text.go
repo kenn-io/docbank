@@ -115,11 +115,7 @@ func (r *PDFTextRunner) listTargets(ctx context.Context, after string, limit int
 	var out []store.DocumentSummary
 	for len(out) < limit {
 		pageSize := limit - len(out)
-		list := r.Service.catalog.MissingPDFTextTargetsAfter
-		if includeWaiting {
-			list = r.Service.catalog.PendingPDFTextTargetsAfter
-		}
-		items, err := list(ctx, p.record.Fingerprint, after, p.portable.Rendition.MaxDocumentBytes, pageSize)
+		items, err := r.Service.catalog.PDFTextTargetsAfter(ctx, p.record.Fingerprint, after, p.portable.Rendition.MaxDocumentBytes, pageSize, includeWaiting)
 		if err != nil {
 			return nil, err
 		}

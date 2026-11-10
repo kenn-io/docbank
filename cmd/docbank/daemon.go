@@ -436,7 +436,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err := jobSupervisor.StartWorker("text:pdf", func(ctx context.Context) error { return pdfText.Backfill(ctx, logger) }); err != nil {
 		return err
 	}
-
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
 	renditionWorkers := 1

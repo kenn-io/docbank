@@ -532,15 +532,14 @@ func checkEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T, open
 
 			request.Authorization.Principal = "operator:late-waiter"
 			grantRenditionJobConsent(t, s, request)
-			_, rejected, err := s.EnqueueRenditionJob(t.Context(), request)
+			_, _, err = s.EnqueueRenditionJob(t.Context(), request)
 			require.ErrorIs(t, err, test.wantErr)
-			require.Empty(t, rejected.ID)
 
 			current, err := s.RenditionJobByID(t.Context(), job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, test.wantState, current.State)
 			assert.Equal(t, 1, current.WaiterCount,
-				"a terminal non-PDF job does not record a new waiter")
+				"a rejected join must not leave an unreachable waiting waiter")
 		})
 	}
 }

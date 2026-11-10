@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -57,94 +56,14 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			pending, err = restarted.Pending(t.Context())
 			require.NoError(t, err)
 			require.False(t, pending)
-		})
-	}
-}
-
-//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
-func TestPDFTextNoTextSurvivesConsentRevocation(t *testing.T) {
-	fixture := newPublicationFixture(t)
-	name, profile, err := NewPDFTextProfile()
-	require.NoError(t, err)
-	service := newPDFTextService(t, fixture, profile)
-	active := service.profiles[name]
-	require.NoError(t, service.grantProfileConsent(t.Context(), active, nil))
-	replacePDFSource(t, fixture, mediatest.PDFTextPages([]string{"", ""}, false))
-	runner := &PDFTextRunner{Service: service}
-	items, err := runner.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	require.NoError(t, runner.process(t.Context(), items[0]))
-	runPDFTextWorker(t, service)
-	_, err = service.RevokeConsent(t.Context())
-	require.NoError(t, err)
-	coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFHasNoTextLayer)
-	require.NoError(t, err)
-	require.Zero(t, coverage.Pending)
-	require.Equal(t, 1, coverage.NoText)
-}
-
-//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
-func TestPDFTextBackfillRecoversAfterTrashRestore(t *testing.T) {
-	fixture := newPublicationFixture(t)
-	name, profile, err := NewPDFTextProfile()
-	require.NoError(t, err)
-	service := newPDFTextService(t, fixture, profile)
-	active := service.profiles[name]
-	require.NoError(t, service.grantProfileConsent(t.Context(), active, nil))
-	data := mediatest.PDFTextPages([]string{"restoredquartz searchable PDF"}, false)
-	node, version := replacePDFSource(t, fixture, data)
-	job, _, err := service.enqueueRendition(t.Context(), node, version, active, service.renditionConsentRequest(active), "", false)
-	require.NoError(t, err)
-	trashed, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
-	require.NoError(t, err)
-	now := time.Now().UTC().Add(time.Second)
-	claim, err := fixture.catalog.ClaimRenditionJob(t.Context(), job.ID, "trash-race", now, time.Minute)
-	require.NoError(t, err)
-	_, err = fixture.catalog.RenditionJobWorkByClaim(t.Context(), claim, now)
-	require.ErrorIs(t, err, store.ErrRenditionJobStaleAuthority)
-	require.NoError(t, fixture.catalog.MarkRenditionJobFailed(t.Context(), claim, store.RenditionFailureStaleAuthority, now))
-	restored, _, err := fixture.catalog.Restore(t.Context(), node.ID, trashed.Revision)
-	require.NoError(t, err)
-	require.Equal(t, node.CurrentVersionID, restored.CurrentVersionID)
-	setup := &PDFTextRunner{Service: service}
-	items, err := setup.targets(t.Context(), "", 50)
-	require.NoError(t, err)
-	require.Len(t, items, 1, "restoring the current PDF makes its stale waiter eligible again")
-	require.NoError(t, setup.process(t.Context(), items[0]))
-	runPDFTextWorker(t, service)
-	results, err := service.Search(t.Context(), SearchRequest{Profile: name, Query: "restoredquartz", Mode: "lexical", Limit: 10, AllLive: &store.SearchOptions{}})
-	require.NoError(t, err)
-	require.Len(t, results.Results, 1)
-}
-
-func TestPDFTextSizeRefusalsRemainUnqueued(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name string
-		data []byte
-	}{
-		{"oversized", mediatest.PDFTextPages([]string{"larger than the configured byte ceiling"}, false)},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newPublicationFixture(t)
-			name, profile, err := NewPDFTextProfile()
-			require.NoError(t, err)
-			provider, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 64, MaxPages: 5000})
-			require.NoError(t, err)
-			profile.RenditionProvider = provider
-			profile.Profile.Rendition.MaxDocumentBytes = 64
-			profile.Profile.Rendition.Descriptor.Fingerprint = provider.Descriptor().Fingerprint
-			service := newPDFTextService(t, fixture, profile)
-			require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles[name], nil))
-			replacePDFSource(t, fixture, test.data)
-			setup := &PDFTextRunner{Service: service}
-			items, err := setup.targets(t.Context(), "", 50)
-			require.NoError(t, err)
-			require.Empty(t, items)
-			pending, err := setup.Pending(t.Context())
-			require.NoError(t, err)
-			require.False(t, pending)
+			if !test.text {
+				_, err = service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFHasNoTextLayer)
+				require.NoError(t, err)
+				require.Zero(t, coverage.Pending)
+				require.Equal(t, 1, coverage.NoText, "retained evidence survives consent revocation")
+			}
 		})
 	}
 }

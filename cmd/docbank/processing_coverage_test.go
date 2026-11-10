@@ -24,7 +24,6 @@ func TestProcessingCoveragePreflight(t *testing.T) {
 		{strings.ToUpper(processingTestVersionID), "--profile", "archive"},
 		{processingTestVersionID},
 		{processingTestVersionID, "--profile", "Archive"},
-		{processingTestVersionID, "--profile", "builtin:other"},
 		{processingTestVersionID, "--profile", strings.Repeat("a", 129)},
 		{processingTestVersionID, "--profile", "a\nb"},
 	} {

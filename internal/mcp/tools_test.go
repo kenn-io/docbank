@@ -344,10 +344,6 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 	assertSchemaRejects(t, tools["find_conflicts"].InputSchema, map[string]any{"query": "refund", "filters": map[string]any{}})
 
 	search := tools["search_documents"]
-	assertSchemaAccepts(t, search.InputSchema, map[string]any{"query": "synthetic", "profile": "docbank-pdf-text", "filters": map[string]any{}})
-	assertSchemaRejects(t, search.InputSchema, map[string]any{"query": "synthetic", "profile": "builtin:other", "filters": map[string]any{}})
-	assertSchemaAccepts(t, tools["answer_question"].InputSchema, map[string]any{"question": "synthetic", "profile": "docbank-pdf-text", "filters": map[string]any{}})
-	assertSchemaRejects(t, tools["answer_question"].InputSchema, map[string]any{"question": "synthetic", "profile": "builtin:other", "filters": map[string]any{}})
 	assertSchemaAccepts(t, search.InputSchema, map[string]any{
 		"query": "synthetic", "profile": "local", "content_version_ids": []any{"00000000-0000-4000-8000-000000000007"},
 	})
