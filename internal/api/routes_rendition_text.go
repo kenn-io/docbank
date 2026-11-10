@@ -11,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -128,7 +129,7 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	if err != nil {
 		return renditionTextReceipt{}, err
 	}
-	selection, err := selectCollectionProfile(d.Cfg, request.Profile)
+	selection, err := selectCollectionProfile(d, request.Profile, true)
 	if err != nil {
 		return renditionTextReceipt{}, err
 	}
@@ -265,4 +266,17 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				_, _ = hctx.BodyWriter().Write(body)
 			}}, nil
 		})
+}
+
+// pdfSearchTextCoverage supplies the built-in profile and retained evidence reader.
+func pdfSearchTextCoverage(d Deps) (string, func(context.Context, string) (bool, error)) {
+	if d.Processing == nil {
+		return "", nil
+	}
+	for _, summary := range d.Processing.Profiles() {
+		if summary.Name == processing.PDFTextProfileName {
+			return summary.Fingerprint, d.Processing.PDFHasNoTextLayer
+		}
+	}
+	return "", nil
 }

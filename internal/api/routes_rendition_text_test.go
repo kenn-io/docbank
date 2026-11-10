@@ -397,3 +397,17 @@ func TestRenditionTextHTTPReportsFailedLiveProcessing(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.Contains(t, body, `"state":"unprocessed"`, "a frozen observation must not become a live failure")
 }
+
+func configureAutomaticPDFText(t *testing.T, d *api.Deps) *processing.PDFTextRunner {
+	t.Helper()
+	name, profile, err := processing.NewPDFTextProfile()
+	require.NoError(t, err)
+	d.Gate = api.NewOperationGate()
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate, SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"), Profiles: map[string]processing.ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	t.Cleanup(service.Stop)
+	runner := &processing.PDFTextRunner{Service: service}
+	d.Processing = service
+	require.NoError(t, runner.Initialize(t.Context()))
+	return runner
+}

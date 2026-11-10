@@ -350,7 +350,8 @@ func exchangeRunnerRaw(t *testing.T, server runner, request []byte) []byte {
 		_ = clientWriter.Close()
 		_ = clientReader.Close()
 		select {
-		case <-done:
+		case err := <-done:
+			t.Logf("MCP server returned %v", err)
 		default:
 		}
 	})

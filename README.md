@@ -110,6 +110,11 @@ docbank document move /archive/Documents/receipt.pdf /archive/Documents/receipt-
 docbank vault verify
 ```
 
+PDF text is indexed locally on import, with no setup. With no configured
+profile, the Text tab shows retained PDF page text. Configured profiles keep
+their own text and processing state. Office text and OCR use [configured
+processing profiles](docs/usage/document-processing.md).
+
 Create a backup, verify it, and restore it into a separate directory to check:
 
 ```bash

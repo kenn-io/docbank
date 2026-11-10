@@ -510,9 +510,10 @@ window does not delay prompt reads, including after restart; `minimum_age`
 still applies. Each content Docbank reads and commits becomes a version.
 Notifications can merge writes, and a source can be overwritten before Docbank
 reads it. Slow reading or ingest can miss intermediate saves. Prompt capture
-may also archive readable intermediate content or temporary files unless an
-`exclude` rule skips them; it cannot know an application's logical save
-boundary. It does not guarantee one version per save.
+may also archive readable intermediate content or temporary files unless the
+[default watch exclusions](../configuration.md#watched-inboxes) or configured
+rules skip them; it cannot know an application's logical save boundary. It does
+not guarantee one version per save.
 
 The watcher keeps periodic scans at `scan_interval` even in prompt mode.
 Notification hints never authorize a direct path read. Each pass uses the

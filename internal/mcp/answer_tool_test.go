@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -301,4 +303,16 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectAnswerSearchKeepsConfiguredDefaultWithPDFText(t *testing.T) {
+	profiles := []api.ProcessingProfileSummary{{Name: "docbank-pdf-text"}, {Name: "z", QueryEmbeddingBindings: []string{"query"}}}
+	selected, candidates, err := selectAnswerSearch(profiles, answerInput{})
+	require.NoError(t, err)
+	require.Equal(t, "z", selected.Name)
+	require.Len(t, candidates, 1)
+	require.Equal(t, "z", candidates[0].Profile)
+	selected, _, err = selectAnswerSearch(profiles, answerInput{Profile: "docbank-pdf-text"})
+	require.NoError(t, err)
+	require.Equal(t, "docbank-pdf-text", selected.Name)
 }

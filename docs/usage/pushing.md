@@ -172,8 +172,11 @@ docbank push ~/documents \
   --minimum-age 0s --exclude cache/ --exclude .DS_Store
 ```
 
-Watch mode uses the same stability and exclusion rules as a
+Watch mode uses the same stability rules as a
 [daemon-owned watched inbox](importing.md#continuously-ingest-a-local-inbox).
+Push does not apply the watch default exclusions. Use repeated `--exclude`
+options to skip specific literal basenames or source-relative paths; push does
+not accept the glob patterns used by watch defaults.
 The defaults are a 30-second settle window, a 5-second scan interval, and no
 minimum age. Set `--minimum-age 168h` for files that may pause for a long time
 between writes. In settled mode, every restart requires a fresh full settle

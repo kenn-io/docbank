@@ -103,7 +103,7 @@ The terminal browser has no screen for managing them.
 
 ## What is planned?
 
-- Automatic PDF and Office extraction for new vault imports and broader
+- Automatic Office extraction for new vault imports and broader
   processing workflows.
 - Overlapping permanent audit scopes.
 - A retention contract for external references to Docbank nodes. Embedded

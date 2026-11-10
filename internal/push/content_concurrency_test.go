@@ -27,8 +27,8 @@ func TestDuplicateUploadWaitIsCancelableAndLeavesOtherContentFree(t *testing.T) 
 		}()
 		synctest.Wait()
 		select {
-		case <-done:
-			t.Fatal("duplicate passed an upload whose receipt is still pending")
+		case err := <-done:
+			t.Fatalf("duplicate passed an upload whose receipt is still pending: %v", err)
 		default:
 		}
 		other, err := p.beginUpload(t.Context(), strings.Repeat("b2", 32))

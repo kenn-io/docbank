@@ -22,11 +22,11 @@ import (
 
 func TestEmptySearchHints(t *testing.T) {
 	for _, tc := range []struct {
-		name, query                                                          string
+		name, query, hintTerms                                               string
 		flags                                                                []string
 		hybrid, fileHit, nonempty, filterOnly, unavailable, folder, filtered bool
 		pending                                                              int
-		everyWord                                                            bool
+		everyWord, fuzzyNotRun                                               bool
 	}{
 		{name: "human", pending: 1},
 		{name: "JSON", flags: []string{"--json"}, pending: 1, everyWord: true},
@@ -39,6 +39,8 @@ func TestEmptySearchHints(t *testing.T) {
 		{name: "PDF", filtered: true, flags: []string{"--pdf-filter", "pdf_has_javascript:true"}},
 		{name: "agent", flags: []string{"--agent"}, pending: 1},
 		{name: "fuzzy", flags: []string{"--fuzzy"}, pending: 1},
+		{name: "quoted fuzzy human", query: `"the +" and`, flags: []string{"--fuzzy"}, pending: 1, fuzzyNotRun: true, hintTerms: `and, "the +"`},
+		{name: "quoted fuzzy JSON", query: `"the +" and`, flags: []string{"--fuzzy", "--json"}, pending: 1, fuzzyNotRun: true, everyWord: true, hintTerms: `and, "the +"`},
 		{name: "hybrid agent with lexical file", flags: []string{"--agent"}, hybrid: true, fileHit: true, pending: 1},
 		{name: "hybrid JSON", flags: []string{"--json"}, hybrid: true, pending: 1},
 		{name: "nonempty", nonempty: true},
@@ -110,6 +112,9 @@ func TestEmptySearchHints(t *testing.T) {
 					}
 					if slices.Contains(tc.flags, "--fuzzy") {
 						report.Fuzzy = &api.FuzzyReceipt{Status: "complete", Reasons: []string{}}
+						if tc.fuzzyNotRun {
+							report.Fuzzy = &api.FuzzyReceipt{Status: "not_run", Reasons: []string{"query_ineligible"}}
+						}
 					}
 					if tc.filterOnly {
 						report.ModifiedSince = "2000-01-01T00:00:00.000000000Z"
@@ -146,6 +151,7 @@ func TestEmptySearchHints(t *testing.T) {
 				return
 			}
 			require.Equal(t, 1, coverageCalls)
+			terms := cmp.Or(tc.hintTerms, "lease, renewal")
 			if slices.Contains(tc.flags, "--json") {
 				var report struct {
 					Hints []searchHint `json:"hints"`
@@ -158,7 +164,7 @@ func TestEmptySearchHints(t *testing.T) {
 				if tc.everyWord {
 					require.Equal(t, searchHint{
 						Code:    "every_word_required",
-						Message: "no name or text segment matches all words; try fewer words if some match",
+						Message: "no name or text segment matches all required terms (" + terms + "); try fewer terms if some match",
 					}, report.Hints[2])
 				}
 				require.Empty(t, stderr.String())
@@ -173,12 +179,12 @@ func TestEmptySearchHints(t *testing.T) {
 				} else {
 					require.NotContains(t, stderr.String(), "still being indexed")
 				}
-				if tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
-					require.NotContains(t, stderr.String(), "matches all words")
+				if tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") && !tc.fuzzyNotRun {
+					require.NotContains(t, stderr.String(), "matches all required terms")
 				} else if tc.filtered {
-					require.Contains(t, stderr.String(), "no name or text segment in this search scope matches all words; try fewer words if some match")
+					require.Contains(t, stderr.String(), "no name or text segment in this search scope matches all required terms (lease, renewal); try fewer terms if some match")
 				} else {
-					require.Contains(t, stderr.String(), "no name or text segment matches all words; try fewer words if some match")
+					require.Contains(t, stderr.String(), "no name or text segment matches all required terms ("+terms+"); try fewer terms if some match")
 				}
 				if slices.Contains(tc.flags, "--agent") {
 					mode := "lexical"

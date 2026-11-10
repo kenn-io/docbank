@@ -6,9 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBatesNamespaceDetailCursor(t *testing.T) {
+func checkBatesNamespaceDetailCursor(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	members, err := s.SnapshotMembers(t.Context(), snapshot.SnapshotID, 0, 1)
 	require.NoError(t, err)
@@ -47,8 +48,10 @@ func TestBatesNamespaceDetailCursor(t *testing.T) {
 	require.Equal(t, 3, count)
 	_, err = s.BatesNamespaceDetail(t.Context(), "00000000-0000-4000-8000-000000000001")
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.db.ExecContext(t.Context(), `DELETE FROM bates_namespace_cursors WHERE namespace_id=?`, ns.NamespaceID)
-	require.NoError(t, err)
-	_, err = s.BatesNamespaceDetail(t.Context(), ns.NamespaceID)
-	require.ErrorIs(t, err, ErrInvalidBatesLedger)
+	if s.postgresSchema == "" {
+		_, err = s.db.ExecContext(t.Context(), `DELETE FROM bates_namespace_cursors WHERE namespace_id=$1`, ns.NamespaceID)
+		require.NoError(t, err)
+		_, err = s.BatesNamespaceDetail(t.Context(), ns.NamespaceID)
+		require.ErrorIs(t, err, ErrInvalidBatesLedger)
+	}
 }
