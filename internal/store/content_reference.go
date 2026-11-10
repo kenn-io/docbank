@@ -41,9 +41,6 @@ func (s *Store) ContentReferencesByHash(
 		return nil, 0, errors.New("content-reference offset must not be negative")
 	}
 
-	if filter.Size != nil && *filter.Size < 0 {
-		return nil, 0, errors.New("content-reference size must not be negative")
-	}
 	where := "v.blob_hash = ?"
 	args := []any{hash}
 	if filter.LiveCurrent {

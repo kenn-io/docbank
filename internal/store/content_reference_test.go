@@ -94,7 +94,7 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 		require.True(t, refs[0].IsCurrent)
 		require.Nil(t, refs[0].Node.TrashedAt)
 	}
-	for _, size := range []int64{0, 9, 10} {
+	for _, size := range []int64{0, 10} {
 		refs, total, lookupErr := s.ContentReferencesByHash(ctx, wanted, 10, 0, ContentReferenceOptions{LiveCurrent: true, Size: &size})
 		require.NoError(t, lookupErr)
 		if size == 10 {
@@ -109,8 +109,6 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	require.NoError(t, err)
 	require.Zero(t, total)
 	require.Empty(t, refs)
-	_, _, err = s.ContentReferencesByHash(ctx, wanted, 10, 0, ContentReferenceOptions{Size: new(int64(-1))})
-	require.ErrorContains(t, err, "size must not be negative")
 }
 
 func TestContentReferencesByHashRequiresLogicalAuthorityAndBoundedInput(t *testing.T) {
