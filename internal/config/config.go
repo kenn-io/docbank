@@ -208,19 +208,64 @@ type StoreBindingConfig struct {
 // source path form the stable, portable source identity; Source itself is a
 // machine-local location and is intentionally not archive metadata.
 type WatchConfig struct {
-	Profiles        map[string]string `toml:"profiles"`
-	Profile         string            `toml:"profile"`
-	Tags            []string          `toml:"tags"`
-	CaptureOnChange bool              `toml:"capture_on_change"`
-	Name            string            `toml:"name"`
-	Source          string            `toml:"source"`
-	Destination     string            `toml:"destination"`
-	SettleTime      Duration          `toml:"settle_time"`
-	MinimumAge      Duration          `toml:"minimum_age"`
-	ScanInterval    Duration          `toml:"scan_interval"`
-	Exclude         []string          `toml:"exclude"`
+	Profiles        WatchProfiles `toml:"profiles"`
+	Profile         string        `toml:"profile"`
+	Tags            []string      `toml:"tags"`
+	CaptureOnChange bool          `toml:"capture_on_change"`
+	Name            string        `toml:"name"`
+	Source          string        `toml:"source"`
+	Destination     string        `toml:"destination"`
+	SettleTime      Duration      `toml:"settle_time"`
+	MinimumAge      Duration      `toml:"minimum_age"`
+	ScanInterval    Duration      `toml:"scan_interval"`
+	Exclude         []string      `toml:"exclude"`
 	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
 	ExcludePatterns []string `toml:"exclude_patterns"`
+	// DefaultExcludes enables built-in partial-file and conflict exclusions unless false.
+	DefaultExcludes *bool `toml:"default_excludes"`
+}
+
+// WatchProfiles maps media families to processing profiles.
+type WatchProfiles map[string]string
+
+// UnmarshalTOML rejects values that cannot represent a profile map.
+func (p *WatchProfiles) UnmarshalTOML(value any) error {
+	table, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("watch profiles must be a table")
+	}
+	routes := make(WatchProfiles, len(table))
+	for family, value := range table {
+		name, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("watch profile for %q must be a string", family)
+		}
+		routes[family] = name
+	}
+	*p = routes
+	return nil
+}
+
+// defaultWatchExcludePatterns lists the built-in watch exclusion glob rules.
+var defaultWatchExcludePatterns = [...]string{
+	".syncthing.*.tmp",
+	"~syncthing~*.tmp",
+	"*.sync-conflict-*",
+	"*.crdownload",
+}
+
+// EffectiveExcludePatterns combines watch defaults with configured glob rules.
+func (w WatchConfig) EffectiveExcludePatterns() []string {
+	if w.DefaultExcludes != nil && !*w.DefaultExcludes {
+		return append([]string{}, w.ExcludePatterns...)
+	}
+	patterns := append([]string{}, defaultWatchExcludePatterns[:]...)
+	for _, pattern := range w.ExcludePatterns {
+		if !slices.Contains(defaultWatchExcludePatterns[:], pattern) {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns
 }
 
 // ProcessingProfileFor selects the configured rendition route for an imported file.
@@ -798,9 +843,6 @@ func (c Config) Validate() error {
 			name := watch.Profiles[family]
 			if !query.ValidMediaFamily(family) {
 				return fmt.Errorf("watch %q unknown media family %q", watch.Name, family)
-			}
-			if name == "" {
-				return fmt.Errorf("watch %q profile for %q must not be empty", watch.Name, family)
 			}
 			if err := c.validateWatchProfile(watch.Name, name); err != nil {
 				return err

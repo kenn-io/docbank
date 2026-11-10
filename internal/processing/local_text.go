@@ -218,21 +218,30 @@ func (setup *LocalTextSetup) targets(ctx context.Context, after string, limit in
 }
 
 func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limit int, sweep bool) ([]store.DocumentSummary, error) {
-	profile, ok := setup.Service.profiles[setup.Selected]
-	if !ok {
-		return nil, nil
-	}
-	for _, request := range setup.Service.profileConsentRequests(profile) {
-		_, err := setup.Service.catalog.AuthorizeProviderOperation(ctx, request)
-		state, err := processingConsentState(err)
-		if err != nil {
-			return nil, err
-		}
-		if state != "active" {
-			return nil, nil
-		}
+	eligible, err := setup.Service.ProfileConsentActive(ctx, setup.Selected)
+	if err != nil || !eligible {
+		return nil, err
 	}
 	return setup.pendingTargets(ctx, after, limit, sweep)
+}
+
+// ProfileConsentActive reports whether every operation in a profile has current consent.
+func (s *Service) ProfileConsentActive(ctx context.Context, name string) (bool, error) {
+	profile, ok := s.profiles[name]
+	if !ok {
+		return false, nil
+	}
+	for _, request := range s.profileConsentRequests(profile) {
+		_, err := s.catalog.AuthorizeProviderOperation(ctx, request)
+		state, err := processingConsentState(err)
+		if err != nil {
+			return false, err
+		}
+		if state != "active" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, limit int, sweep bool) ([]store.DocumentSummary, error) {

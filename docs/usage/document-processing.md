@@ -327,8 +327,9 @@ and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
 a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
 points. The server verifies the content and footer before publication.
 **Download numbered PDF** downloads the retained PDF, and **Open Productions**
-opens its recovery view. The published result stays available while you edit
-other masks, until you close the review. Downloads check the retained file
+opens its recovery view. After editing masks, create another preview to number
+the new review with a separate range. Earlier published PDFs stay downloadable
+until you close the review. Downloads check the retained file
 identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
 until their usual expiry or discard. **Download unnumbered ZIP** saves that
 reviewed preview. Download it before expiry if you need its sanitized-text

@@ -40,7 +40,7 @@ require (
 	github.com/xdg-go/stringprep v1.0.4
 	github.com/yuin/goldmark/v2 v2.1.13
 	go.kenn.io/kata v0.22.0
-	go.kenn.io/kit v0.48.4
+	go.kenn.io/kit v0.49.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 	golang.org/x/mod v0.42.0
@@ -50,7 +50,7 @@ require (
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
-	hegel.dev/go/hegel v0.9.28
+	hegel.dev/go/hegel v0.9.31
 	modernc.org/sqlite v1.61.1
 )
 

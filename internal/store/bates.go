@@ -91,7 +91,7 @@ func batesLabel(namespace BatesNamespace, sequence int64) string {
 // batesLabelCollision reports whether any label in [start,end] is already
 // allocated. Labels are globally unique, so distinct namespaces such as
 // prefix "A" padding 7 and prefix "A1" padding 6 can produce the same text.
-func batesLabelCollision(ctx context.Context, q metadataQuerier, namespace BatesNamespace, start, end int64) error {
+func (s *Store) batesLabelCollision(ctx context.Context, q metadataQuerier, namespace BatesNamespace, start, end int64) error {
 	labels := make([]string, 0, end-start+1)
 	for sequence := start; sequence <= end; sequence++ {
 		labels = append(labels, batesLabel(namespace, sequence))
@@ -102,7 +102,7 @@ func batesLabelCollision(ctx context.Context, q metadataQuerier, namespace Bates
 	}
 	var existing string
 	err = q.QueryRowContext(ctx, `SELECT label FROM bates_page_labels
-		WHERE label IN (SELECT value FROM json_each(?)) LIMIT 1`, string(encoded)).Scan(&existing)
+		WHERE label IN (SELECT value FROM `+metadataJSONDialect{postgres: s.postgresSchema != ""}.arrayValues("$1")+`) LIMIT 1`, string(encoded)).Scan(&existing)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -138,7 +138,7 @@ func (s *Store) PreviewBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	if r.StartAt < 0 {
 		return BatesPlan{}, invalidBatesRequest("start_at must be nonnegative")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return BatesPlan{}, err
 	}
@@ -146,7 +146,7 @@ func (s *Store) PreviewBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	var plan BatesPlan
 	var cursor int64
 	err = tx.QueryRowContext(ctx, `SELECT n.namespace_id,n.prefix,n.suffix,n.padding,n.created_at,c.next_sequence
-		FROM bates_namespaces n JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=?`, r.NamespaceID).
+		FROM bates_namespaces n JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=$1`, r.NamespaceID).
 		Scan(&plan.Namespace.NamespaceID, &plan.Namespace.Prefix, &plan.Namespace.Suffix, &plan.Namespace.Padding, &plan.Namespace.CreatedAt, &cursor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BatesPlan{}, ErrNotFound
@@ -161,7 +161,7 @@ func (s *Store) PreviewBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	if err != nil {
 		return BatesPlan{}, err
 	}
-	if err := batesLabelCollision(ctx, tx, plan.Namespace, plan.StartSequence, plan.EndSequence); err != nil {
+	if err := s.batesLabelCollision(ctx, tx, plan.Namespace, plan.StartSequence, plan.EndSequence); err != nil {
 		return BatesPlan{}, err
 	}
 	for i, page := range r.Pages {
@@ -183,7 +183,7 @@ func (s *Store) EnsureBatesNamespace(ctx context.Context, prefix, suffix string,
 	}
 	var result BatesNamespace
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		err := tx.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE prefix=? AND suffix=?`, prefix, suffix).
+		err := tx.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE prefix=$1 AND suffix=$2`, prefix, suffix).
 			Scan(&result.NamespaceID, &result.Prefix, &result.Suffix, &result.Padding, &result.CreatedAt)
 		if err == nil {
 			if result.Padding != padding {
@@ -200,12 +200,12 @@ func (s *Store) EnsureBatesNamespace(ctx context.Context, prefix, suffix string,
 			return err
 		}
 		result = BatesNamespace{id, prefix, suffix, nowRFC3339(), padding}
-		_, err = tx.ExecContext(ctx, `INSERT INTO bates_namespaces(namespace_id,prefix,suffix,padding,created_at) VALUES(?,?,?,?,?)`,
+		_, err = tx.ExecContext(ctx, `INSERT INTO bates_namespaces(namespace_id,prefix,suffix,padding,created_at) VALUES($1,$2,$3,$4,$5)`,
 			result.NamespaceID, result.Prefix, result.Suffix, result.Padding, result.CreatedAt)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO bates_namespace_cursors(namespace_id,next_sequence) VALUES(?,1)`, id)
+		_, err = tx.ExecContext(ctx, `INSERT INTO bates_namespace_cursors(namespace_id,next_sequence) VALUES($1,1)`, id)
 		return err
 	})
 	if err != nil {
@@ -222,12 +222,17 @@ func (s *Store) BatesNamespaces(ctx context.Context, after string, limit int) ([
 	if after != "" && validateUUIDv4(after) != nil {
 		return nil, 0, "", ErrInvalidBatesCursor
 	}
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bates_namespaces`).Scan(&total); err != nil {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
 		return nil, 0, "", err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces
-		WHERE namespace_id>? ORDER BY namespace_id LIMIT ?`, after, limit+1)
+	defer func() { _ = tx.Rollback() }()
+	var total int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bates_namespaces`).Scan(&total); err != nil {
+		return nil, 0, "", err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces
+		WHERE namespace_id>$1 ORDER BY namespace_id LIMIT $2`, after, limit+1)
 	if err != nil {
 		return nil, 0, "", err
 	}
@@ -248,14 +253,23 @@ func (s *Store) BatesNamespaces(ctx context.Context, after string, limit int) ([
 		items = items[:limit]
 		next = items[len(items)-1].NamespaceID
 	}
-	return items, total, next, nil
+	return items, total, next, tx.Commit()
 }
 
 func (s *Store) BatesAllocation(ctx context.Context, id string) (BatesAllocation, error) {
 	if validateUUIDv4(id) != nil {
 		return BatesAllocation{}, ErrNotFound
 	}
-	return loadBatesAllocation(ctx, s.db, id)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return BatesAllocation{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	allocation, err := loadBatesAllocation(ctx, tx, id)
+	if err != nil {
+		return BatesAllocation{}, err
+	}
+	return allocation, tx.Commit()
 }
 
 func (s *Store) BatesNamespace(ctx context.Context, id, prefix, suffix string, padding int) (BatesNamespace, error) {
@@ -265,10 +279,10 @@ func (s *Store) BatesNamespace(ctx context.Context, id, prefix, suffix string, p
 	var value BatesNamespace
 	var err error
 	if id != "" {
-		err = s.db.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE namespace_id=?`, id).
+		err = s.db.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE namespace_id=$1`, id).
 			Scan(&value.NamespaceID, &value.Prefix, &value.Suffix, &value.Padding, &value.CreatedAt)
 	} else {
-		err = s.db.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE prefix=? AND suffix=?`, prefix, suffix).
+		err = s.db.QueryRowContext(ctx, `SELECT namespace_id,prefix,suffix,padding,created_at FROM bates_namespaces WHERE prefix=$1 AND suffix=$2`, prefix, suffix).
 			Scan(&value.NamespaceID, &value.Prefix, &value.Suffix, &value.Padding, &value.CreatedAt)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -346,7 +360,16 @@ func (s *Store) SnapshotBatesPages(ctx context.Context, snapshotID string) ([]Ba
 	if validateUUIDv4(snapshotID) != nil {
 		return nil, invalidBatesRequest("snapshot_id must be a UUID")
 	}
-	return expectedBatesPagesLimited(ctx, s.db, snapshotID, MaxBatesExportPages)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	pages, err := expectedBatesPagesLimited(ctx, tx, snapshotID, MaxBatesExportPages)
+	if err != nil {
+		return nil, err
+	}
+	return pages, tx.Commit()
 }
 
 func expectedBatesPagesLimited(ctx context.Context, tx metadataQuerier, snapshotID string, limit int) ([]BatesPageInput, error) {
@@ -422,7 +445,7 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 	var allocation BatesAllocation
 	err = func() error {
 		var priorDigest, priorID string
-		err := tx.QueryRowContext(ctx, `SELECT allocation_id,request_sha256 FROM bates_allocations WHERE operation_id=?`, r.OperationID).Scan(&priorID, &priorDigest)
+		err := tx.QueryRowContext(ctx, `SELECT allocation_id,request_sha256 FROM bates_allocations WHERE operation_id=$1`, r.OperationID).Scan(&priorID, &priorDigest)
 		priorID, found, err := replayReceipt(priorID, err, priorDigest == digest, ErrBatesReservationConflict)
 		if err != nil {
 			return err
@@ -434,7 +457,7 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 		var namespace BatesNamespace
 		var cursor int64
 		err = tx.QueryRowContext(ctx, `SELECT n.namespace_id,n.prefix,n.suffix,n.padding,n.created_at,c.next_sequence
-			FROM bates_namespaces n JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=?`, r.NamespaceID).
+			FROM bates_namespaces n JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=$1`, r.NamespaceID).
 			Scan(&namespace.NamespaceID, &namespace.Prefix, &namespace.Suffix, &namespace.Padding, &namespace.CreatedAt, &cursor)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -449,7 +472,7 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 		if err != nil {
 			return err
 		}
-		if err := batesLabelCollision(ctx, tx, namespace, start, end); err != nil {
+		if err := s.batesLabelCollision(ctx, tx, namespace, start, end); err != nil {
 			return err
 		}
 		id, err := newUUIDv4()
@@ -460,7 +483,7 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 			RequestSHA256: digest, RecipeSHA256: r.RecipeSHA256, State: batesAllocationStateReserved, CreatedAt: nowRFC3339(),
 			StartSequence: start, EndSequence: end}
 		_, err = tx.ExecContext(ctx, `INSERT INTO bates_allocations(allocation_id,operation_id,namespace_id,snapshot_id,request_sha256,
-			recipe_sha256,start_sequence,end_sequence,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, r.OperationID, r.NamespaceID,
+			recipe_sha256,start_sequence,end_sequence,state,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, r.OperationID, r.NamespaceID,
 			r.SnapshotID, digest, r.RecipeSHA256, start, end, allocation.State, allocation.CreatedAt)
 		if err != nil {
 			return err
@@ -468,14 +491,14 @@ func (s *Store) reserveBatesRangeTx(ctx context.Context, tx *sql.Tx, r BatesPlan
 		for i, page := range r.Pages {
 			label := batesLabel(namespace, start+int64(i))
 			_, err = tx.ExecContext(ctx, `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,occurrence_id,
-				source_page,output_page,label) VALUES(?,?,?,?,?,?,?,?)`, id, i+1, r.NamespaceID, start+int64(i), page.OccurrenceID,
+				source_page,output_page,label) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, i+1, r.NamespaceID, start+int64(i), page.OccurrenceID,
 				page.SourcePage, i+1, label)
 			if err != nil {
 				return fmt.Errorf("%w: %w", ErrBatesReservationConflict, err)
 			}
 			allocation.Labels = append(allocation.Labels, BatesPageLabel{i + 1, page.OccurrenceID, page.SourcePage, i + 1, label})
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE bates_namespace_cursors SET next_sequence=? WHERE namespace_id=?`, end+1, r.NamespaceID)
+		_, err = tx.ExecContext(ctx, `UPDATE bates_namespace_cursors SET next_sequence=$1 WHERE namespace_id=$2`, end+1, r.NamespaceID)
 		return err
 	}()
 	if err != nil {
@@ -525,7 +548,7 @@ func (s *Store) BatesNamespaceDetail(ctx context.Context, id string) (BatesNames
 	var next sql.NullInt64
 	n := &detail.Namespace
 	err := s.db.QueryRowContext(ctx, `SELECT n.namespace_id,n.prefix,n.suffix,n.padding,n.created_at,c.next_sequence
- FROM bates_namespaces n LEFT JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=?`, id).
+ FROM bates_namespaces n LEFT JOIN bates_namespace_cursors c USING(namespace_id) WHERE n.namespace_id=$1`, id).
 		Scan(&n.NamespaceID, &n.Prefix, &n.Suffix, &n.Padding, &n.CreatedAt, &next)
 	if errors.Is(err, sql.ErrNoRows) {
 		return detail, ErrNotFound

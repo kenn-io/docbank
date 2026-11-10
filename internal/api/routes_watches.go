@@ -42,7 +42,7 @@ func registerWatchRoutes(api huma.API, d Deps) {
 				MinimumAge:      watch.MinimumAge.Std().String(),
 				ScanInterval:    watch.ScanInterval.Std().String(),
 				Exclude:         append([]string{}, watch.Exclude...),
-				ExcludePatterns: append([]string{}, watch.ExcludePatterns...),
+				ExcludePatterns: append([]string{}, watch.EffectiveExcludePatterns()...),
 			}
 			item.Processing = watchProcessingStatus(ctx, d, watch.Profile)
 			item.ProcessingRoutes = watchProcessingRoutes(ctx, d, watch.Profiles)

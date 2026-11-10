@@ -1456,7 +1456,8 @@ with API-key clients.
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
-`watch:<name>` job record.
+`watch:<name>` job record. The `exclude_patterns` list is effective: it includes
+the default patterns unless `default_excludes = false`.
 Watches with a single processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
 Mapped watches instead include `processing_routes`, sorted by `media_family`, with one entry per family containing `media_family`, `profile`, and its consent state or lookup `error`. The corresponding watch jobs include the same routes.
 If consent lookup fails, `error` describes the status failure instead.
