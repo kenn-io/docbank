@@ -102,7 +102,7 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 			t.Errorf("unexpected transcript request: %s %s", r.Method, r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"build_id":"build","origin":"supplied","supplied_input_id":"input","units":[{"text":"cue","time_span":{"start_ms":0,"end_ms":1000}}]}}`))
+		_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","node_id":12,"source_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"profile_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence_checksum":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","speech_state":"partial","build_id":"build","origin":"supplied","supplied_input_id":"input","units":[{"text":"cue","time_span":{"start_ms":0,"end_ms":1000}}]}}`))
 	}))
 	t.Cleanup(server.Close)
 	result, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
@@ -116,14 +116,14 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 
 func TestMediaTranscriptClientRejectsInconsistentBuildIdentity(t *testing.T) {
 	for name, evidence := range map[string]string{
-		"missing build":           `{"origin":"generated","units":[]}`,
-		"supplied without input":  `{"build_id":"build","origin":"supplied","units":[]}`,
-		"generated with an input": `{"build_id":"build","origin":"generated","supplied_input_id":"input","units":[]}`,
+		"missing build":           `{"profile_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence_checksum":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","speech_state":"complete","origin":"generated","units":[]}`,
+		"supplied without input":  `{"profile_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence_checksum":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","speech_state":"partial","build_id":"build","origin":"supplied","units":[]}`,
+		"generated with an input": `{"profile_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence_checksum":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","speech_state":"complete","build_id":"build","origin":"generated","supplied_input_id":"input","units":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":` + evidence + `}`))
+				_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","node_id":12,"source_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":` + evidence + `}`))
 			}))
 			t.Cleanup(server.Close)
 			_, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
@@ -138,9 +138,9 @@ func TestMediaTranscriptClientRejectsUnsupportedContract(t *testing.T) {
 			t.Run(version+"/"+state, func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
-					body := `{"contract_version":"` + version + `","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"` + state + `","coverage_state":"pending","operation_state":"queued"`
+					body := `{"contract_version":"` + version + `","node_id":12,"source_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"` + state + `","coverage_state":"pending","operation_state":"queued"`
 					if state == "ready" {
-						body += `,"transcript":{"build_id":"build","origin":"generated","units":[]}`
+						body += `,"transcript":{"profile_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","evidence_checksum":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","speech_state":"complete","build_id":"build","origin":"generated","units":[]}`
 					}
 					_, _ = w.Write([]byte(body + `}`))
 				}))
@@ -153,5 +153,33 @@ func TestMediaTranscriptClientRejectsUnsupportedContract(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestMediaTranscriptClientRejectsIncompleteReadyV1(t *testing.T) {
+	for _, invalid := range []string{"node_id", "source_sha256", "profile_fingerprint", "evidence_checksum", "speech_state"} {
+		t.Run(invalid, func(t *testing.T) {
+			node, source, profile, evidence, speech := "12", strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), "complete"
+			switch invalid {
+			case "node_id":
+				node = "0"
+			case "source_sha256":
+				source = "bad"
+			case "profile_fingerprint":
+				profile = "bad"
+			case "evidence_checksum":
+				evidence = "bad"
+			case "speech_state":
+				speech = "unknown"
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := `{"contract_version":"media-transcript-read/v1","node_id":` + node + `,"source_sha256":"` + source + `","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"build_id":"build","origin":"generated","profile_fingerprint":"` + profile + `","evidence_checksum":"` + evidence + `","speech_state":"` + speech + `","units":[]}}`
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
+			require.Error(t, err)
+		})
 	}
 }

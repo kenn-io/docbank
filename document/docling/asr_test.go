@@ -300,7 +300,11 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			require.NoError(t, err)
 			assert.Equal(t, "generated", artifact.Origin)
 			assert.Equal(t, "docling.serve-v1", artifact.Provider)
-			assert.Equal(t, "1.32.0", artifact.ProviderVersion)
+			if testCase.mediaType == "audio/mp4" {
+				assert.Empty(t, artifact.ProviderVersion)
+			} else {
+				assert.Equal(t, "1.32.0", artifact.ProviderVersion)
+			}
 			assert.Empty(t, artifact.Model)
 		})
 	}

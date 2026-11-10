@@ -683,5 +683,4 @@ func TestExecutableProcessingProfilesRegistersDoclingM4A(t *testing.T) {
 	cfg.RenditionProfiles["asr"] = binding
 	_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.ErrorContains(t, err, "disclosure fingerprint")
-
 }

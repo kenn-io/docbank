@@ -261,6 +261,14 @@ func asrDocumentVersion(raw []byte) (string, error) {
 	return identity.Version, nil
 }
 
+// The M4A contract has no qualified provider version.
+func asrArtifactProviderVersion(allowM4A bool) string {
+	if allowM4A {
+		return ""
+	}
+	return qualifiedASRProviderVersion
+}
+
 func (client *ASRClient) buildResult(
 	run *rendering, task taskResponse, result doclingResult, durationMS int64,
 ) (document.RenditionResult, error) {
@@ -280,7 +288,7 @@ func (client *ASRClient) buildResult(
 	}
 	evidence, artifact, err := mediatranscript.Build(mediatranscript.ArtifactV1{
 		ContractVersion: "media-transcript/v1", Origin: "generated",
-		Provider: providerID, ProviderVersion: qualifiedASRProviderVersion,
+		Provider: providerID, ProviderVersion: asrArtifactProviderVersion(client.allowM4A),
 		Segments: segments,
 	}, run.authorization.MediaFamily, client.evidencePolicy)
 	if err != nil {
