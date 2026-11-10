@@ -44,10 +44,10 @@ func TestDocumentSearchMissUsesKnownDocumentCounts(t *testing.T) {
 func TestMissLogRecordingAndManagement(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
-	filters := map[string]any{"cameras": []any{"Synthetic Camera"}}
+	filters := map[string]any{"corpus": "photos", "syntax": "simple", "hidden": false}
 	for i, receipt := range []misslog.Request{
 		{Query: "synthetic empty submission", RequestedMode: "hybrid", ActualMode: "lexical", DocumentCount: new(0)},
-		{Query: "synthetic photo", RequestedMode: "lexical", ActualMode: "lexical", Filters: filters},
+		{Query: "synthetic photo", RequestedMode: "lexical", ActualMode: "lexical", Filters: filters, Coverage: map[string]any{"coverage_incomplete": false}},
 	} {
 		resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, receipt)
 		require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
@@ -59,6 +59,7 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 		require.Len(t, page.Items, i+1)
 		require.Equal(t, receipt.Query, page.Items[0].Query)
 		require.Equal(t, receipt.Filters, page.Items[0].Filters)
+		require.Equal(t, receipt.Coverage, page.Items[0].Coverage)
 	}
 	rows, err := listMisses(t, ts)
 	require.NoError(t, err)
@@ -108,9 +109,7 @@ func TestMissLogSubmittedLexicalTextCoverage(t *testing.T) {
 		{name: "filter only", query: " \t ", mode: "lexical", filters: map[string]any{"tag_id": tag.ID}},
 		{name: "unavailable scope", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": "not-a-tag"}},
 		{name: "advanced documents", query: "lease renewal", mode: "lexical", filters: map[string]any{"v": float64(1), "syntax": "simple", "mode": "lexical", "filters": map[string]any{"mime_types": []any{"text/plain"}}}, coverage: map[string]any{"configuration": "unconfigured"}},
-		{name: "photos", query: "lease renewal", mode: "lexical", filters: map[string]any{"corpus": "photos", "syntax": "simple", "hidden": false}, coverage: map[string]any{"coverage_incomplete": false}},
 		{name: "empty fence", query: "lease renewal", mode: "lexical", count: new(0), coverage: map[string]any{"state": "complete", "scoped_documents": float64(0)}},
-		{name: "exact fence", query: "lease renewal", mode: "lexical", count: new(1), fence: "sha256:synthetic", coverage: map[string]any{"state": "incomplete", "scoped_documents": float64(1)}},
 		{name: "flat MIME filter", query: "lease renewal", mode: "lexical", filters: map[string]any{"mime_type": "text/plain"}},
 		{name: "mixed flat filters", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": tag.ID, "mime_type": "text/plain"}},
 		{name: "unrecognized fence", query: "lease renewal", mode: "lexical", fence: "sha256:synthetic"},

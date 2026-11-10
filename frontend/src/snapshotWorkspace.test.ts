@@ -106,15 +106,10 @@ it("notices an unfinished run without touching its in-flight batch", async () =>
   expect(workspace.retained).toBeNull();
 });
 
-it.each([
-  { name: "shows a retained run instead of enumerating results for a new Tag all", receipt: false },
-  { name: "returns the search receipt with query filters and coverage", receipt: true },
-])("$name", async ({ receipt }) => {
+it("shows a retained run instead of enumerating results for a new Tag all", async () => {
   const actionID = await retainSendingAction();
   const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
-  const query = parseQuery(
-    JSON.stringify({ text: "report", ...(receipt ? { filters: { size_min: 20 } } : {}) }),
-  );
+  const query = parseQuery(JSON.stringify({ text: "report" }));
   const rows = Array.from({ length: 100 }, (_, index) => ({
     ...member,
     node_id: index + 1,
@@ -140,18 +135,7 @@ it.each([
         )
       : Response.json({ vault_id: vaultID }),
   );
-  const outcome = await workspace.run(query, { page_size: 100 });
-  if (receipt) {
-    expect(outcome).toMatchObject({
-      receipt: {
-        query: "report",
-        actual_mode: "lexical",
-        filters: { filters: { size_min: 20 } },
-        coverage: { configuration: "unconfigured" },
-      },
-    });
-    return;
-  }
+  await workspace.run(query, { page_size: 100 });
   await workspace.refreshRetained();
   vi.mocked(fetch).mockClear();
   workspace.openActions("query");
@@ -171,6 +155,31 @@ it.each([
   expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(["/api/v1/audit/status"]);
   // The retained run is untouched.
   expect((await ActionJournal.peek(vaultID))?.action_id).toBe(actionID);
+});
+
+it("returns the search receipt with query filters and coverage", async () => {
+  const workspace = new SnapshotWorkspace(() => "session", vi.fn(), vi.fn());
+  const query = parseQuery(JSON.stringify({ text: "report", filters: { size_min: 20 } }));
+  vi.mocked(fetch).mockImplementation(async (input) =>
+    String(input) === "/api/v1/workspace/queries"
+      ? Response.json(await snapshotEnvelope(query, []))
+      : Response.json({ vault_id: vaultID }),
+  );
+
+  const outcome = await workspace.run(query, { page_size: 100 });
+
+  expect(outcome).toMatchObject({
+    type: "text",
+    empty: true,
+    receipt: {
+      query: "report",
+      requested_mode: "lexical",
+      actual_mode: "lexical",
+      filters: { filters: { size_min: 20 } },
+      coverage: { configuration: "unconfigured" },
+      truncated: false,
+    },
+  });
 });
 
 it("opens an imported run in place of a finished one", async () => {

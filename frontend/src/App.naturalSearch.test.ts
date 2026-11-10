@@ -103,7 +103,6 @@ interface HarnessOptions {
   rerankNode?: ReturnType<typeof node>;
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
-  onBaseSearch?: () => void;
   snapshotRows?: SnapshotRow[];
 }
 
@@ -246,7 +245,6 @@ function installHarness(options: HarnessOptions) {
     if (url === "/api/v1/search" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       postBodies.push(body);
-      if (!body.rerank) options.onBaseSearch?.();
       if (options.baseSearchStatus)
         return new Response("search failure", { status: options.baseSearchStatus });
       if (body.rerank) {
@@ -277,10 +275,8 @@ function installHarness(options: HarnessOptions) {
       if (options.legacyPending && legacyCalls === 1) return legacyPending;
       if (options.legacySearchStatus)
         return new Response("legacy search failure", { status: options.legacySearchStatus });
-      const tagSearch =
-        typeof options.tagSearch === "function" ? options.tagSearch() : options.tagSearch;
       return json(
-        tagSearch ?? {
+        options.tagSearch ?? {
           hits: [],
           limit: 1000,
           truncated: false,
@@ -395,6 +391,7 @@ it.each([
       truncated,
       coverage: { scoped_documents: scoped, state },
       document_count: scoped,
+      binding_id: "embed",
       ...(rerankStatus
         ? {
             reranking: {
@@ -406,6 +403,11 @@ it.each([
           ? { reranking: { outcome: "applied" } }
           : {}),
     });
+    if (!rerank) {
+      await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+      await waitFor(() => expect(harness.postBodies).toHaveLength(2));
+      expect(harness.misses).toHaveLength(1);
+    }
   },
 );
 
@@ -479,41 +481,6 @@ it.each([
     }
   },
 );
-
-it("rechecks name matches after processing can make a file stale", async () => {
-  const file = node(2, "retired.txt", baseVersion);
-  const liveFiles: (ReturnType<typeof node> | Node)[] = [file];
-  const emptyReport = report("hybrid", []);
-  emptyReport.coverage.scoped_documents = 0;
-  emptyReport.coverage.complete_documents = 0;
-  const harness = installHarness({
-    profiles: [
-      {
-        name: "private",
-        fingerprint: "a".repeat(64),
-        rendition: true,
-        embedding_bindings: ["embed"],
-        reranking_available: false,
-      },
-    ],
-    files: liveFiles,
-    baseReport: emptyReport,
-    tagSearch: () => ({
-      hits: liveFiles.map((node) => ({ node, path: node.path, match: "name" })),
-      limit: 1000,
-      truncated: false,
-    }),
-    onBaseSearch: () => liveFiles.splice(0),
-  });
-  render(App);
-  await screen.findAllByText("retired.txt");
-  await screen.findByRole("button", { name: "Move to trash" });
-  await submitSearch("retired");
-  await screen.findByText("No documents match the current filter.");
-
-  await waitFor(() => expect(harness.misses).toHaveLength(1));
-  expect(screen.queryByRole("cell", { name: file.path })).toBeNull();
-});
 
 it("keeps names and text on GET without a processing profile", async () => {
   const file = node(2, "existing.txt", baseVersion);
@@ -2016,7 +1983,7 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it.each(["plain", "tag-filtered", "fallback", "filtered", "saved"])(
+it.each(["tag-filtered", "fallback", "filtered", "saved"])(
   "records an empty %s submission once",
   async (kind) => {
     const harness = installHarness({

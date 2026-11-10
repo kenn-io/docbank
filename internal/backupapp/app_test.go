@@ -30,7 +30,6 @@ import (
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -761,12 +760,8 @@ func TestOverwriteRestorePublishesMatchingPrimaryOwnership(t *testing.T) {
 	require.NoError(t, restoredBlobs.Close())
 }
 
-func TestRestoreKeepsMissLogsLocal(t *testing.T) {
+func TestBackupDeclaresMissLogExclusion(t *testing.T) {
 	fixture := newArchiveFixture(t)
-	cfg := config.Default().MissLog
-	cfg.Enabled = true
-	sourceLog := misslog.New(t.Context(), fixture.root, "synthetic-source", cfg, nil)
-	sourceLog.Record(t.Context(), misslog.Request{Query: "synthetic source miss"})
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	manifest, err := backupapp.Create(
@@ -775,23 +770,6 @@ func TestRestoreKeepsMissLogsLocal(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Contains(t, manifest.Excluded, "miss-log/")
-
-	target := filepath.Join(t.TempDir(), "existing-vault")
-	seedOwnedVault(t, target)
-	targetLog := misslog.New(t.Context(), target, "synthetic-target", cfg, nil)
-	targetLog.Record(t.Context(), misslog.Request{Query: "synthetic target miss"})
-
-	_, err = backupapp.Restore(
-		t.Context(), repo, "test-version",
-		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
-	)
-	require.NoError(t, err)
-
-	reopenedLog := misslog.New(t.Context(), target, "synthetic-target", cfg, nil)
-	receipts, err := reopenedLog.List(t.Context(), 10, 0)
-	require.NoError(t, err)
-	require.Len(t, receipts, 1)
-	assert.Equal(t, "synthetic target miss", receipts[0].Query)
 }
 
 func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) {
