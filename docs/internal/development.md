@@ -1908,6 +1908,8 @@ node and content-history query tests. `make test-pg` requires the DSN, bypasses
 cached test results, and runs these groups under the race detector. It limits
 parallel tests to four: each schema installation locks hundreds of catalog
 objects, so CPU-count concurrency can exhaust the default server lock table.
+The Store suite has an eight-minute timeout for the full contract inventory
+at that concurrency; the schema lifecycle suite has a separate three-minute limit.
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
