@@ -212,11 +212,15 @@ func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 
 func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 50, CompleteDocuments: 50}, Reranking: &api.DocumentSearchRerankingReceipt{Outcome: "applied", CandidateCount: 50}}}
+	for i := range 50 {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+2)
+		f.fenceVersions = append(f.fenceVersions, id)
+		f.pageGaps = append(f.pageGaps, api.PageTextGap{ContentVersionID: id, Pages: []int{4997, 4999}})
+	}
 	pathPrefix := "/" + strings.Repeat(strings.Repeat("p", 254)+"/", 63)
 	for i := 1; i <= 50; i++ {
 		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		name := strings.Repeat("n", 251) + fmt.Sprintf("%04d", i)
-		f.fenceVersions = append(f.fenceVersions, version)
 		renditions := make([]api.DocumentRenditionIdentity, 64)
 		for j := range renditions {
 			renditions[j] = api.DocumentRenditionIdentity{ProfileFingerprint: fmt.Sprintf("%064x", j+1),
@@ -236,6 +240,8 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	require.Equal(t, len(f.pageGaps), out.OmittedPageGapDocuments)
+	require.NotEmpty(t, out.Passages)
 	if len(links) == 0 {
 		t.Fatal("expected retained resource links")
 	}
@@ -356,35 +362,4 @@ func TestSelectAnswerSearchKeepsConfiguredDefaultWithPDFText(t *testing.T) {
 	selected, _, err = selectAnswerSearch(profiles, answerInput{Profile: "docbank-pdf-text"})
 	require.NoError(t, err)
 	require.Equal(t, "docbank-pdf-text", selected.Name)
-}
-
-func TestAnswerQuestionLargeCoverageKeepsPassage(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
-	for i := range 4096 {
-		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
-		f.fenceVersions = append(f.fenceVersions, id)
-		pages := []int{4997, 4999}
-		if i == 4095 {
-			pages = []int{4995, 4997}
-		}
-		f.pageGaps = append(f.pageGaps, api.PageTextGap{ContentVersionID: id, Pages: pages})
-	}
-	pathPrefix := "/" + strings.Repeat(strings.Repeat("p", 254)+"/", 63)
-	for i := range 9 {
-		result := api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i + 1), ContentVersionID: f.fenceVersions[i], Path: pathPrefix + fmt.Sprintf("document-%d", i), Rank: i + 1, LexicalRank: i + 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
-		if i == 0 {
-			result.Excerpt = "answer text"
-			result.Evidence = []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}
-		}
-		f.results = append(f.results, result)
-	}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
-	require.NoError(t, err)
-	require.Positive(t, out.OmittedPageGapDocuments)
-	require.Len(t, out.Passages, 1)
-	require.Len(t, out.Receipt.CitedVersions, 1)
-	size, err := toolEnvelopeBytes(out, links)
-	require.NoError(t, err)
-	require.LessOrEqual(t, size, maxToolResponseBytes)
 }

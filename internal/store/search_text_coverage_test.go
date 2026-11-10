@@ -62,13 +62,27 @@ func TestSearchTextCoverage(t *testing.T) {
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, "", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
-	t.Run("blank_text_without_candidate", func(t *testing.T) {
+	t.Run("blank_text_is_not_serving", func(t *testing.T) {
 		t.Parallel()
 		s, _, pdfs, profile := collectionCoverageFixture(t, 1)
 		collectionCoveragePublish(t, s, pdfs[0], profile, "blank_segments")
 		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
+	})
+	t.Run("unqueued pending", func(t *testing.T) {
+		t.Parallel()
+		s, _, pdfs, profile := collectionCoverageFixture(t, 2)
+		skipped := ""
+		unqueued := func(version string, _ int64) bool { return version != skipped }
+		coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil, unqueued)
+		require.NoError(t, err)
+		require.Equal(t, 2, coverage.Pending)
+		skipped = pdfs[0].CurrentVersionID
+		coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil, unqueued)
+		require.NoError(t, err)
+		require.Equal(t, 1, coverage.Pending)
+		require.Equal(t, 1, coverage.NoText)
 	})
 	t.Run("pdf waiting and terminal", func(t *testing.T) {
 		t.Parallel()
