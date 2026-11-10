@@ -337,16 +337,12 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 	} {
 		for _, origin := range []string{"generated", "supplied"} {
 			t.Run(tc.name+"/"+origin, func(t *testing.T) {
-				evidence := document.NormalizedEvidenceV1{Family: "audio", Units: []document.NormalizedEvidenceUnitV1{{Text: "hello", Locator: document.EvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone}}}}
-				if tc.name == "timed" {
-					evidence.Units[0].Locator = document.EvidenceLocatorV1{Kind: document.EvidenceLocatorSegment, IndexOrigin: document.EvidenceIndexOriginZero, End: 1000}
-				}
 				blob, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.raw))
 				require.NoError(t, err)
 				require.NoError(t, f.catalog.RecordRenditionBlob(t.Context(), blob.Hash, blob.Size, processingBlobPhysical(t, blob)))
 				build := store.RenditionBuildRecord{Artifacts: []store.RenditionArtifactRecord{{Role: string(document.EvidenceArtifactTranscript), BlobHash: blob.Hash, Checksum: blob.Hash, Size: blob.Size, State: store.RenditionArtifactVerified}}}
 				result := MediaTranscriptEvidence{Origin: origin}
-				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, evidence, &result)
+				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
 				if !tc.valid {
 					require.Error(t, err)
 					return
@@ -355,7 +351,7 @@ func TestMediaTranscriptArtifactContract(t *testing.T) {
 				require.Equal(t, blob.Hash, result.ArtifactSHA256)
 				require.Equal(t, tc.language, result.Language)
 				build.Artifacts[0].Size++
-				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, evidence, &result)
+				err = service.mediaTranscriptArtifactIdentity(t.Context(), build, &result)
 				require.ErrorContains(t, err, "read exactly")
 			})
 		}

@@ -464,6 +464,8 @@ omits `supplied_input_id`. Responses without ready evidence omit `transcript`.
 The `media-transcript-read/v1` envelope includes `contract_version` and, after
 validating the source binding, `node_id` and original `source_sha256`. Ready
 transcripts include `profile_fingerprint` and `evidence_checksum`.
+The evidence checksum identifies the returned normalized text; a provider may
+transform that text while retaining the original transcript artifact.
 `artifact_sha256` identifies the exact bytes of any verified retained transcript
 artifact, including untimed `supplied-transcript/v1` artifacts. Optional
 `language` comes only from a canonical `media-transcript/v1` artifact. Readers reject other saved transcript contracts and response versions.

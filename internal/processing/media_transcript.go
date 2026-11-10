@@ -97,7 +97,7 @@ func (service *Service) MediaTranscript(
 		transcript.Units[i] = MediaTranscriptUnit{Text: unit.Text, TimeSpan: span, Speaker: unit.Speaker}
 		transcript.HasOmissions = transcript.HasOmissions || len(unit.Omissions) > 0
 	}
-	if err := service.mediaTranscriptArtifactIdentity(ctx, view.Build, evidence, &transcript); err != nil {
+	if err := service.mediaTranscriptArtifactIdentity(ctx, view.Build, &transcript); err != nil {
 		return result, err
 	}
 	result.EvidenceState, result.Transcript = mediaTranscriptEvidenceReady, &transcript

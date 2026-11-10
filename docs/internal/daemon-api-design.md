@@ -650,6 +650,7 @@ these identity fields are available. Ready transcripts carry
 `build_id`, `profile_fingerprint`, `evidence_checksum`, and, when retained,
 `artifact_sha256`. The evidence checksum hashes canonical normalized evidence;
 the artifact hash identifies the exact verified retained transcript bytes.
+Providers may transform returned text while retaining the original artifact.
 Generated speech and timed captions use `media-transcript/v1`; untimed supplied
 text uses `supplied-transcript/v1` and also has an artifact hash when retained.
 Optional language comes only from a canonical `media-transcript/v1` artifact. Readers reject other saved transcript contracts and response versions.

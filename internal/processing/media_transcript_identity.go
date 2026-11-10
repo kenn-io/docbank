@@ -38,7 +38,7 @@ func transcriptSpeechState(evidence document.NormalizedEvidenceV1, truncated boo
 
 // Read metadata only from the verified retained artifact. Legacy/supplied text
 // can have another artifact contract and keeps its existing read behavior.
-func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, build store.RenditionBuildRecord, evidence document.NormalizedEvidenceV1, transcript *MediaTranscriptEvidence) error {
+func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, build store.RenditionBuildRecord, transcript *MediaTranscriptEvidence) error {
 	for _, artifact := range build.Artifacts {
 		if artifact.Role != string(document.EvidenceArtifactTranscript) {
 			continue
@@ -63,16 +63,6 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 				return err
 			}
 			transcript.SpeechState = statusPartial
-			var saved struct {
-				Provider string `json:"provider"`
-				Text     string `json:"text"`
-			}
-			if err := json.Unmarshal(raw, &saved); err != nil {
-				return errors.New("saved transcript is invalid")
-			}
-			if err := validateSuppliedTranscriptEvidence(saved.Provider, saved.Text, evidence); err != nil {
-				return err
-			}
 		case "media-transcript/v1":
 			timed, err := mediatranscript.Unmarshal(raw)
 			if err != nil {
@@ -81,9 +71,6 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 			transcript.Language = timed.Language
 			if timed.Origin != "generated" || transcript.Origin != "generated" {
 				transcript.SpeechState = statusPartial
-			}
-			if err := validateTimedTranscriptEvidence(timed, evidence, transcript.SpeechState != "complete"); err != nil {
-				return err
 			}
 		default:
 			return errors.New("saved transcript is invalid")
