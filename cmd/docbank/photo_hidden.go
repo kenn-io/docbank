@@ -90,7 +90,8 @@ func peopleHiddenCookie(cmd *cobra.Command, c *daemonconn.Connection) (string, e
 }
 
 func init() {
-	hidden := &cobra.Command{Use: "hidden", Short: "Configure Hidden photos access", Long: "setup sets a passcode; change and disable require the current passcode.\nlock revokes sessions; reset removes the passcode and keeps photos hidden.\nAfter reset, run docbank photos hidden setup to set a replacement passcode.\nstate reports whether Hidden is configured.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	hidden := &cobra.Command{Use: "hidden", Short: "Configure Hidden photos access", Long: "setup sets a passcode; change and disable require the current passcode.\nlock revokes sessions; reset removes the passcode and keeps photos hidden.\nAfter reset, run docbank photos hidden setup to set a replacement passcode.\nstate reports whether Hidden is configured.", Args: cobra.NoArgs, Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	photosCmd.AddCommand(hidden)
 	for _, action := range []string{"setup", "change", "disable", "lock", "reset", "state"} {
 		command := &cobra.Command{Use: action, Short: action + " Hidden photos access", Example: "  docbank photos hidden " + action, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
