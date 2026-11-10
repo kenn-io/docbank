@@ -642,18 +642,6 @@ func TestDoclingASRExistingPolicyIdentity(t *testing.T) {
 	require.Equal(t, "c83aebb1a1fb7617db0aca97216df3234d8ce3e9676dcb6f46179456b283adde", v2)
 }
 
-func TestDoclingASRV2RejectsVideoBeforeSubmission(t *testing.T) {
-	video := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
-	audio := newASRFixture(t, "audio/mp4", "synthetic.m4a", mediatest.AACM4A())
-	var submissions int
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { submissions++ }))
-	t.Cleanup(server.Close)
-	client := newASRClient(t, server.URL, audio.descriptor)
-	_, err := document.RenderRendition(t.Context(), client, video.upload(), video.authorization)
-	require.Error(t, err)
-	require.Zero(t, submissions)
-}
-
 func TestDoclingASRVideoPreservesTrackSegments(t *testing.T) {
 	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

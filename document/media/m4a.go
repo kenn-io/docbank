@@ -31,7 +31,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 	if policy.VideoAudioTrack {
 		record.MediaFamily, record.MediaType, record.Format = "video", "video/mp4", "mp4"
 	}
-	info := mp4Info{audioInspection: true, localDataReferences: true, maxBoxes: policy.MaxEntries}
+	info := mp4Info{audioInspection: true, soundTrackVideo: policy.VideoAudioTrack, localDataReferences: true, maxBoxes: policy.MaxEntries}
 	var movie []byte
 	var offset int64
 	ftypCount := 0

@@ -899,6 +899,11 @@ print(hashlib.sha256("\0".join(values).encode()).hexdigest())
 PY
 ```
 
+For a `docbank-docling-asr/v3` profile, replace `profile["adapter_contract"]`
+in that list with the literal `"docbank-docling-asr/v1"`.
+`docling.ASRDisclosureFingerprint` always hashes the v1 contract name, and the
+daemon expects that value for every ASR contract.
+
 The daemon registers one provider per descriptor fingerprint. Profiles with
 the same descriptor must use identical endpoint, credentials, and runtime
 settings. Two Docling deployments with the same descriptor cannot run together

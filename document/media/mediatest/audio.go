@@ -89,7 +89,12 @@ func ALACM4A() []byte {
 
 // SizedMP4Video streams a synthetic MP4 with qualified AAC and 10,001 video
 // samples. Sample payloads are placeholders, never a provider/decoder fixture.
-func SizedMP4Video(size int64) io.Reader {
+func SizedMP4Video(size int64) io.Reader { return sizedMP4Video(size, false) }
+
+// SizedMP4VideoComposition is SizedMP4Video with a valid video composition-offset table.
+func SizedMP4VideoComposition(size int64) io.Reader { return sizedMP4Video(size, true) }
+
+func sizedMP4Video(size int64, composition bool) io.Reader {
 	data := M4A("mp4a")
 	mdat := bytes.Index(data, []byte("mdat")) - 4
 	moov := bytes.Index(data, []byte("moov")) - 4
@@ -116,7 +121,12 @@ func SizedMP4Video(size int64) io.Reader {
 	mdhd := make([]byte, 24)
 	binary.BigEndian.PutUint32(mdhd[12:16], 1000)
 	binary.BigEndian.PutUint32(mdhd[16:20], 10001)
-	stbl := Box("stbl", slices.Concat(Box("stsd", stsd), Box("stts", stts), Box("stsz", stsz), Box("stsc", stsc), Box("stco", stco)))
+	boxes := [][]byte{Box("stsd", stsd), Box("stts", stts)}
+	if composition {
+		boxes = append(boxes, Box("ctts", []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0x27, 0x11, 0, 0, 0, 2}))
+	}
+	boxes = append(boxes, Box("stsz", stsz), Box("stsc", stsc), Box("stco", stco))
+	stbl := Box("stbl", slices.Concat(boxes...))
 	track := Box("trak", slices.Concat(Box("tkhd", tkhd), Box("mdia", slices.Concat(Box("mdhd", mdhd), Box("hdlr", hdlr), Box("minf", slices.Concat(Box("dinf", dref), stbl))))))
 	movie = append(movie, track...)
 	binary.BigEndian.PutUint32(movie[:4], uint32(len(movie))) //nolint:gosec // small metadata

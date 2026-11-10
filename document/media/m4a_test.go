@@ -3,6 +3,7 @@ package media_test
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"strings"
 	"testing"
 
@@ -325,6 +326,18 @@ func TestInspectMP4AudioWithNonVisualTracks(t *testing.T) {
 			require.True(t, record.Eligible, record.Reason)
 		})
 	}
+}
+
+func TestInspectMP4AudioWithVideoCompositionOffsets(t *testing.T) {
+	data, err := io.ReadAll(mediatest.SizedMP4VideoComposition(64 << 10))
+	require.NoError(t, err)
+	policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+	policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	require.Equal(t, "video", record.MediaFamily)
+	require.Positive(t, record.Measurements.DurationMS)
 }
 
 func TestInspectMP4ExistingPolicyIdentity(t *testing.T) {
