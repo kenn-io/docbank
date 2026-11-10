@@ -14,6 +14,8 @@ func TestSearchTextCoverage(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "contract.pdf", testHash("pdf"), 3, "application/pdf")
 	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "report.docx", testHash("office"), 6, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	require.NoError(t, err)
 	resp, body := get(t, ts, "/api/v1/search/text-coverage?mime_type=text/plain", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var got api.SearchTextCoverage
@@ -23,7 +25,7 @@ func TestSearchTextCoverage(t *testing.T) {
 		query          string
 		status, noText int
 	}{
-		{"", http.StatusOK, 0},
+		{"", http.StatusOK, 1},
 		{"?mime_type=invalid/type;bad", http.StatusUnprocessableEntity, 0},
 		{"?modified_since=invalid", http.StatusUnprocessableEntity, 0},
 	} {

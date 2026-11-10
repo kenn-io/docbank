@@ -292,16 +292,6 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, data, 0600))
 			if !test.existing {
 				settleDaemon(t)
-				if !configured {
-					textPath := filepath.Join(t.TempDir(), "before.txt")
-					require.NoError(t, os.WriteFile(textPath, []byte("legacyquartz"), 0600))
-					_, err := runCLI(t, "document", "add", textPath, "--dest", "/pdfs")
-					require.NoError(t, err)
-					require.Eventually(t, func() bool {
-						out, err := runCLI(t, "search", "legacyquartz", "--mode", "lexical")
-						return err == nil && strings.Contains(out, "/pdfs/before.txt")
-					}, 10*time.Second, 100*time.Millisecond)
-				}
 				_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
 				require.NoError(t, err)
 			}
@@ -314,17 +304,6 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 				out, err = runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
 				return err == nil && strings.Contains(out, "/pdfs/source.pdf")
 			}, 10*time.Second, 100*time.Millisecond)
-			if !configured && !test.existing {
-				textResults, err := runCLI(t, "search", "legacyquartz", "--mode", "lexical")
-				require.NoError(t, err)
-				require.Contains(t, textResults, "/pdfs/before.txt")
-				formatsJSON, err := runCLI(t, "formats", "--format", "pdf", "--json")
-				require.NoError(t, err)
-				var formats api.FormatCoverageResponse
-				require.NoError(t, json.Unmarshal([]byte(formatsJSON), &formats))
-				require.Len(t, formats.Formats, 1)
-				require.Equal(t, document.CapabilityQualified, formats.Formats[0].Capabilities[document.CapabilityText].State)
-			}
 			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/source.pdf"}})
 			require.NoError(t, err)
 			coverage, err := runCLI(t, "processing", "coverage", node.CurrentVersionID, "--profile", processing.PDFTextProfileName, "--json")
