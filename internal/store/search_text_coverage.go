@@ -45,7 +45,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) (retErr error) {
 		d := metadataJSONDialect{s.postgresSchema != ""}
 		scope, args := liveSearchScopeSQL(searchFilterSQL(opts))
-		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID, pdfProfile, generation.ID, unqueuedPDF != nil, pdfProfile, pdfProfile}, args...)
+		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID, unqueuedPDF != nil, pdfProfile, pdfProfile}, args...)
 		rows, err := q.QueryContext(ctx, `WITH coverage AS (
 		 SELECT COALESCE(cv.mime_type, '') AS mime_type,
  `+pdfWaitingSQL("cv.version_id", "?")+` pdf_waiting,
@@ -63,36 +63,31 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		  AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		 JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
 		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id")+`) serving,
-		 EXISTS(SELECT 1 FROM rendition_heads h
-		 JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-		  AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
-		 JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
-		 WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id")+`) pdf_serving,
 		 CASE WHEN ? AND lower(trim(cv.mime_type)) LIKE 'application/pdf%'
 		 AND NOT EXISTS(SELECT 1 FROM rendition_heads h WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=?)
 		 AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND (w.state='rejected' OR j.state IN ('failed','operator_required')))
 		 THEN cv.version_id ELSE '' END pdf_unqueued,
 		 cv.size source_size
 		 `+scope+`)
-		 SELECT mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_serving,pdf_unqueued,MAX(source_size),COUNT(*) FROM coverage
-		 GROUP BY mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_serving,pdf_unqueued
+		 SELECT mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_unqueued,MAX(source_size),COUNT(*) FROM coverage
+		 GROUP BY mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_unqueued
 		 ORDER BY pdf_evidence`, args...)
 		if err != nil {
 			return fmt.Errorf("counting search text coverage: %w", err)
 		}
 		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
 		type evidenceCheck struct {
-			buildID, family              string
-			count                        int
-			serving, waiting, pdfServing bool
+			buildID, family  string
+			count            int
+			serving, waiting bool
 		}
 		var checks []evidenceCheck
 		for rows.Next() {
 			var mediaType, pdfEvidence, pdfUnqueued string
 			var sourceSize int64
-			var native, pending, extracted, serving, waiting, pdfServing bool
+			var native, pending, extracted, serving, waiting bool
 			var count int
-			if err := rows.Scan(&mediaType, &native, &pending, &extracted, &serving, &pdfEvidence, &waiting, &pdfServing, &pdfUnqueued, &sourceSize, &count); err != nil {
+			if err := rows.Scan(&mediaType, &native, &pending, &extracted, &serving, &pdfEvidence, &waiting, &pdfUnqueued, &sourceSize, &count); err != nil {
 				return err
 			}
 			if native && pending && !serving && (generation.ID != "" || !extracted) {
@@ -111,7 +106,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 					out.Pending += count
 				}
 				if family, ok := formats[mediaType]; ok && !native && pdfEvidence != "" && noTextLayer != nil {
-					checks = append(checks, evidenceCheck{pdfEvidence, family, count, serving, waiting, pdfServing})
+					checks = append(checks, evidenceCheck{pdfEvidence, family, count, serving, waiting})
 				} else if !serving && !waiting {
 					out.NoText += count
 					families["pdf"] = true
@@ -146,7 +141,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 				}
 				read[check.buildID] = pages
 			}
-			if unavailable[check.buildID] && (check.pdfServing || (!check.serving && !check.waiting)) {
+			if unavailable[check.buildID] && !check.serving && !check.waiting {
 				out.PDFPageCoverageUnavailable += check.count
 			}
 			if len(pages) > 0 {

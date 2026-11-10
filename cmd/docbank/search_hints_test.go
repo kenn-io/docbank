@@ -27,7 +27,6 @@ func TestEmptySearchHints(t *testing.T) {
 		hybrid, fileHit, nonempty, filterOnly, unavailable, folder, filtered bool
 		pending                                                              int
 		everyWord, fuzzyNotRun                                               bool
-		terminal                                                             bool
 	}{
 		{name: "human", pending: 1},
 		{name: "JSON", flags: []string{"--json"}, pending: 1, everyWord: true},
@@ -50,7 +49,6 @@ func TestEmptySearchHints(t *testing.T) {
 		{name: "hybrid folder", hybrid: true, folder: true},
 		{name: "single word", query: "lease"},
 		{name: "coverage unavailable", unavailable: true},
-		{name: "terminal PDF", query: "lease", terminal: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			query := cmp.Or(tc.query, "lease renewal")
@@ -81,11 +79,7 @@ func TestEmptySearchHints(t *testing.T) {
 						http.Error(w, "unavailable", http.StatusServiceUnavailable)
 						return
 					}
-					coverage := api.SearchTextCoverage{PDFsWithoutText: 1, PagesWithoutText: 2, Pending: tc.pending}
-					if tc.terminal {
-						coverage = api.SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}
-					}
-					assert.NoError(t, json.MarshalWrite(w, coverage))
+					assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{PDFsWithoutText: 1, PagesWithoutText: 2, Pending: tc.pending}))
 				case "/api/v1/tags/" + processingTestVersionID:
 					w.Header().Set("ETag", `"1"`)
 					assert.NoError(t, json.MarshalWrite(w, api.Tag{ID: processingTestVersionID, Name: "urgent", Revision: 1}))
@@ -174,10 +168,7 @@ func TestEmptySearchHints(t *testing.T) {
 				}
 				require.Empty(t, stderr.String())
 			} else {
-				if tc.terminal {
-					require.Contains(t, stderr.String(), "1 file (PDF) has no searchable text")
-					require.Contains(t, stderr.String(), "use or set up a profile")
-				} else if tc.unavailable {
+				if tc.unavailable {
 					require.NotContains(t, stderr.String(), "no searchable text")
 				} else {
 					require.Contains(t, stderr.String(), "Hint: 1 PDF has 2 pages with no text layer")

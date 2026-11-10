@@ -36,8 +36,8 @@ func TestProcessingCoveragePreflight(t *testing.T) {
 
 func TestProcessingCoverageCLI(t *testing.T) {
 	coverage := api.CoverageReport{VaultUID: inspectionTestVaultID,
-		PageCoverage:       "unavailable",
-		ProfileFingerprint: strings.Repeat("b", 64), State: "partial",
+		PageCoverageUnavailable: true,
+		ProfileFingerprint:      strings.Repeat("b", 64), State: "partial",
 		Renditions: api.CoverageClass{Name: "rendition", Required: true, State: "rebuilding",
 			Total: 1, Complete: 1, Rebuilding: 1, PreviousGenerationServing: 1},
 		Embeddings: []api.CoverageClass{{Name: "semantic\nquoted", State: "unavailable",

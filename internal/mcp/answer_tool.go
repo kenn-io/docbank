@@ -249,7 +249,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return response{}, err
 				}
-				pageCoverage.PageCoverage = "unavailable"
+				pageCoverage.PageCoverageUnavailable = true
 			}
 		}
 		return response{fence: fence, profile: selected, binding: binding, report: report, failure: failure, executed: len(fence.Fence.ContentVersionIDs) > 0, documents: docs, pageCoverage: pageCoverage}, nil
@@ -312,7 +312,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "pages_without_text")
 	}
-	if result.pageCoverage.PageCoverage == "unavailable" || result.pageCoverage.PageCoverageUnavailable {
+	if result.pageCoverage.PageCoverageUnavailable {
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "page_coverage_unavailable")
 	}

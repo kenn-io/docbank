@@ -448,7 +448,6 @@ func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
 	gap := schemaMap(t, gaps[0])
 	require.Equal(t, node.CurrentVersionID, gap["content_version_id"])
 	require.Equal(t, []any{[]any{float64(2), float64(2)}}, gap["pages"])
-
 }
 
 func newSearchTestEmbeddingProfile(t *testing.T, f *nativeExportFixture, kind document.EmbeddingInputKind, failQuery bool) processing.ProfileConfig {
