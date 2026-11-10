@@ -19,16 +19,16 @@ import (
 //nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestPDFTextBackfillRetainsPages(t *testing.T) {
 	for _, test := range []struct {
-		name        string
-		pages       []string
-		text        bool
-		gaps        []int
-		corrupt     bool
-		unavailable int
+		name                 string
+		pages                []string
+		text                 bool
+		gaps                 []int
+		corrupt              bool
+		unavailable, generic int
 	}{
-		{"born", []string{"first page", "distinctivequartz second page"}, true, nil, false, 0},
-		{"image-only", []string{"", ""}, false, []int{1, 2}, true, 1},
-		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}, true, 0},
+		{"born", []string{"first page", "distinctivequartz second page"}, true, nil, false, 0, 0},
+		{"image-only", []string{"", ""}, false, []int{1, 2}, true, 1, 1},
+		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}, true, 1, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -89,7 +89,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
 				require.NoError(t, err)
 				require.Equal(t, test.unavailable, coverage.PDFPageCoverageUnavailable)
-				require.Equal(t, test.unavailable, coverage.NoText)
+				require.Equal(t, test.generic, coverage.NoText)
 			}
 
 		})
@@ -198,6 +198,25 @@ func TestCoveragePageLimitsCandidateReads(t *testing.T) {
 	require.Equal(t, 16, calls)
 	require.Empty(t, cursor)
 	require.True(t, unavailable)
+	for _, id := range ids {
+		builds[id] = "shared"
+	}
+	calls = 0
+	gaps, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", func(_ context.Context, _ string) ([]int, error) { calls++; return []int{1}, nil })
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Len(t, gaps, 17)
+	require.Empty(t, cursor)
+	for _, id := range ids {
+		builds[id] = id
+	}
+	builds[ids[16]] = ids[0]
+	calls = 0
+	gaps, cursor, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", func(_ context.Context, _ string) ([]int, error) { calls++; return []int{1}, nil })
+	require.NoError(t, err)
+	require.Equal(t, 16, calls)
+	require.Len(t, gaps, 17)
+	require.Empty(t, cursor)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, _, _, err = readPDFCoveragePage(ctx, ids, builds, "scope", "manifest", "", read)

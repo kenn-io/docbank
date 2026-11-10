@@ -945,6 +945,7 @@ type SearchTextCoverage struct {
 	PDFsWithoutText            int      `json:"pdfs_without_text" minimum:"0"`
 	PagesWithoutText           int      `json:"pages_without_text" minimum:"0"`
 	PDFPageCoverageUnavailable int      `json:"pdf_page_coverage_unavailable" minimum:"0"`
+	PDFPageCoveragePartial     bool     `json:"pdf_page_coverage_partial"`
 }
 
 // SearchReport is one bounded search result page.

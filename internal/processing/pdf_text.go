@@ -71,13 +71,13 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 			}
 			continue
 		}
-		if candidates == 16 {
-			next, err := encode(i, 0)
-			return gaps, next, pos.Unavailable, err
-		}
-		candidates++
 		r, ok := cache[build]
 		if !ok {
+			if candidates == 16 {
+				next, err := encode(i, 0)
+				return gaps, next, pos.Unavailable, err
+			}
+			candidates++
 			r.pages, r.err = read(ctx, build)
 			cache[build] = r
 		}

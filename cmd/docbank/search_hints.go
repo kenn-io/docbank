@@ -26,6 +26,9 @@ func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, sc
 	if coverage.PDFPageCoverageUnavailable > 0 {
 		hints = append(hints, searchHint{Code: "pdf_page_coverage_unavailable", Message: "PDF page coverage is unavailable; some pages may lack searchable text."})
 	}
+	if coverage.PDFPageCoveragePartial {
+		hints = append(hints, searchHint{Code: "pdf_page_coverage_partial", Message: "PDF page coverage is incomplete; narrow the search scope to inspect more PDFs."})
+	}
 	if coverage.PagesWithoutText > 0 {
 		pdf, verb, page := "PDFs", "have", "pages"
 		if coverage.PDFsWithoutText == 1 {
@@ -34,7 +37,11 @@ func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, sc
 		if coverage.PagesWithoutText == 1 {
 			page = "page"
 		}
-		hints = append(hints, searchHint{Code: "needs_ocr", Message: fmt.Sprintf("%d %s %s %d %s with no text layer; if they are scans, OCR can read them. See https://docbank.ai/docs/usage/document-processing/#ocr", coverage.PDFsWithoutText, pdf, verb, coverage.PagesWithoutText, page)})
+		lowerBound := ""
+		if coverage.PDFPageCoveragePartial {
+			lowerBound = "at least "
+		}
+		hints = append(hints, searchHint{Code: "needs_ocr", Message: fmt.Sprintf("%s%d %s %s %s%d %s with no text layer; if they are scans, OCR can read them. See https://docbank.ai/docs/usage/document-processing/#ocr", lowerBound, coverage.PDFsWithoutText, pdf, verb, lowerBound, coverage.PagesWithoutText, page)})
 	}
 	if coverage.NoText > 0 {
 		labels := map[string]string{"pdf": "PDF", "office": "Office", "other": "other formats"}

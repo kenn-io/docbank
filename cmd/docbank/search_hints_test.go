@@ -233,3 +233,12 @@ func TestEmptySearchHintsCoverageGuidance(t *testing.T) {
 		})
 	}
 }
+
+func TestEmptySearchHintsPartialPDFCoverage(t *testing.T) {
+	hints := emptySearchHints("missing", api.SearchTextCoverage{PDFsWithoutText: 2, PagesWithoutText: 3, PDFPageCoveragePartial: true}, true, false, false)
+	require.Len(t, hints, 2)
+	require.Equal(t, "pdf_page_coverage_partial", hints[0].Code)
+	require.Equal(t, "needs_ocr", hints[1].Code)
+	require.Contains(t, hints[1].Message, "at least 2 PDFs")
+	require.Contains(t, hints[1].Message, "at least 3 pages")
+}
