@@ -849,6 +849,12 @@ func (s *Store) SelectedSemanticRowsAvailable(ctx context.Context, profile, bind
 	if len(opts.SelectedBuilds) == 0 {
 		return false, ErrInvalidProcessingSourceFence
 	}
+	if err := validateCatalogSHA256(profile, "embedding processing profile fingerprint"); err != nil {
+		return false, err
+	}
+	if err := validateEmbeddingCatalogText(binding, "embedding binding ID"); err != nil {
+		return false, err
+	}
 	normalized, err := s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return false, err
@@ -857,6 +863,16 @@ func (s *Store) SelectedSemanticRowsAvailable(ctx context.Context, profile, bind
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, scope SearchOptions) error {
 		selected, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx, profile, binding)
 		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				var persisted bool
+				if queryErr := tx.QueryRowContext(ctx, `SELECT EXISTS(
+					SELECT 1 FROM processing_profiles WHERE profile_fingerprint=?)`, profile).Scan(&persisted); queryErr != nil {
+					return queryErr
+				}
+				if !persisted {
+					return nil
+				}
+			}
 			return err
 		}
 		space := scope.VectorSpaceID
@@ -1056,7 +1072,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 ) error {
 	var err error
 	filterSQL, filterArgs := semanticSearchFilterSQL(normalized)
-	eligible := make(map[semanticEligibilityKey]SemanticSearchCandidate)
+	eligible := make(map[semanticEligibilityKey][]SemanticSearchCandidate)
 	representatives := make(map[string]int64)
 	prefix, walked := min(limit+1, len(neighbors)), 0
 	for {
@@ -1088,7 +1104,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 		for key, entries := range members {
 			for _, entry := range entries {
 				if !normalized.CollapsesPhotoDuplicates() || entry.NodeID == representatives[entry.BlobHash] {
-					eligible[key] = entry
+					eligible[key] = append(eligible[key], entry)
 				}
 			}
 		}
@@ -1263,31 +1279,33 @@ func loadSemanticMemberships(ctx context.Context, tx metadataQuerier, profileFin
 }
 
 func reduceSemanticCandidates(vaultID, vectorSpaceID string, neighbors []vectorindex.Neighbor,
-	limit int, eligible map[semanticEligibilityKey]SemanticSearchCandidate, excludedNodes map[int64]struct{},
+	limit int, eligible map[semanticEligibilityKey][]SemanticSearchCandidate, excludedNodes map[int64]struct{},
 ) ([]SemanticSearchCandidate, bool, int) {
 	seen := make(map[int64]struct{}, limit+1)
-	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(eligible)))
+	candidates := make([]SemanticSearchCandidate, 0, min(limit+1, len(neighbors)))
 	for index, neighbor := range neighbors {
-		entry, ok := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
+		entries, ok := eligible[semanticEligibilityKey{VectorSetID: neighbor.SetID,
 			InputID: neighbor.InputKey, InputChecksum: neighbor.InputChecksum}]
 		if !ok {
 			continue
 		}
-		if _, excluded := excludedNodes[entry.NodeID]; excluded {
-			continue
-		}
-		if _, duplicate := seen[entry.NodeID]; duplicate {
-			continue
-		}
-		seen[entry.NodeID] = struct{}{}
-		candidate := entry
-		candidate.VaultID = vaultID
-		candidate.VectorSpaceID = vectorSpaceID
-		candidate.InputID = neighbor.InputKey
-		candidate.Score = neighbor.Score
-		candidates = append(candidates, candidate)
-		if len(candidates) == limit+1 {
-			return candidates[:limit], true, index
+		for _, entry := range entries {
+			if _, excluded := excludedNodes[entry.NodeID]; excluded {
+				continue
+			}
+			if _, duplicate := seen[entry.NodeID]; duplicate {
+				continue
+			}
+			seen[entry.NodeID] = struct{}{}
+			candidate := entry
+			candidate.VaultID = vaultID
+			candidate.VectorSpaceID = vectorSpaceID
+			candidate.InputID = neighbor.InputKey
+			candidate.Score = neighbor.Score
+			candidates = append(candidates, candidate)
+			if len(candidates) == limit+1 {
+				return candidates[:limit], true, index
+			}
 		}
 	}
 	return candidates, false, len(neighbors)

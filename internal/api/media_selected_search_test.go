@@ -146,7 +146,7 @@ func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(supplied.Profile, "semantic", supplied, generated))
+		report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(generated.Profile, "semantic", supplied, generated))
 		done <- outcome{report, err}
 	}()
 	select {
@@ -155,14 +155,10 @@ func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
 		require.NoError(t, early.err)
 		t.Fatal("query finished before entering the encoder barrier")
 	}
-	require.NoError(t, f.control(t.Context(), "revoke", supplied.ID))
+	require.NoError(t, f.control(t.Context(), "revoke", generated.ID))
 	require.NoError(t, f.control(t.Context(), "release", ""))
 	result := <-done
-	if result.err != nil {
-		require.Contains(t, result.err.Error(), "stale_index")
-		require.Empty(t, result.report.Results)
-		return
-	}
+	require.NoError(t, result.err)
 	require.Empty(t, result.report.Results)
 	require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
 	require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")
@@ -248,6 +244,36 @@ func TestSelectedMediaSearchSkipsUnavailableEmbeddings(t *testing.T) {
 	report, err := client.SearchDocuments(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, "unavailable", report.ActualMode)
+}
+
+func TestSelectedMediaSearchFallsBackForUnpersistedEmbeddingDonor(t *testing.T) {
+	t.Parallel()
+	f := newMediaQualificationFixture(t, mediaQualificationOptions{UnprocessedDonor: true})
+	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
+	record := f.manifest.Records[0]
+	for _, mode := range []string{"semantic", "hybrid"} {
+		f.unprocessedEncoder.mu.Lock()
+		before := f.unprocessedEncoder.calls
+		f.unprocessedEncoder.mu.Unlock()
+		report, err := client.SearchDocuments(t.Context(), f.request(f.unprocessedProfile, mode, record))
+		require.NoError(t, err)
+		require.Equal(t, mode, report.RequestedMode)
+		require.Equal(t, "incomplete", report.Coverage.State)
+		require.Equal(t, 1, report.Coverage.ScopedDocuments)
+		require.Zero(t, report.Coverage.CompleteDocuments)
+		if mode == "semantic" {
+			require.Equal(t, "unavailable", report.ActualMode)
+			require.Empty(t, report.Results)
+		} else {
+			require.Equal(t, "lexical", report.ActualMode)
+			require.Contains(t, report.Degradations, "semantic_unavailable")
+			require.Len(t, report.Results, 1)
+			require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
+		}
+		f.unprocessedEncoder.mu.Lock()
+		require.Equal(t, before, f.unprocessedEncoder.calls, "an unpersisted donor has no eligible vector rows to query")
+		f.unprocessedEncoder.mu.Unlock()
+	}
 }
 
 func TestSelectedMediaSearchFencesDistractorsBeforeLaneLimit(t *testing.T) {

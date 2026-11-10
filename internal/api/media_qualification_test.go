@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -61,15 +62,19 @@ type mediaQualificationManifest struct {
 }
 
 type mediaQualificationFixture struct {
-	gate     *api.OperationGate
-	manifest mediaQualificationManifest
-	catalog  *testStore
-	service  *processing.Service
-	encoder  *mediaQualificationEncoder
-	server   *httptest.Server
-	stop     chan struct{}
-	stopOnce sync.Once
+	gate               *api.OperationGate
+	manifest           mediaQualificationManifest
+	catalog            *testStore
+	service            *processing.Service
+	encoder            *mediaQualificationEncoder
+	unprocessedEncoder *mediaQualificationEncoder
+	unprocessedProfile string
+	server             *httptest.Server
+	stop               chan struct{}
+	stopOnce           sync.Once
 }
+
+const mediaQualificationUnprocessedProfile = "qualification-new-donor"
 
 type mediaQualificationEncoder struct {
 	endpoint         string
@@ -236,10 +241,11 @@ func (p mediaQualificationTranscriber) Render(_ context.Context, _ document.Auth
 }
 
 type mediaQualificationOptions struct {
-	TranscriptA string
-	ChunkTokens int
-	LaneLimit   int
-	Distractors int
+	TranscriptA      string
+	ChunkTokens      int
+	LaneLimit        int
+	Distractors      int
+	UnprocessedDonor bool
 }
 
 func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOptions) *mediaQualificationFixture {
@@ -310,7 +316,25 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		if option.LaneLimit > 0 {
 			supplied.Profile.Retrieval.LexicalLimit, supplied.Profile.Retrieval.VectorLimit = option.LaneLimit, option.LaneLimit
 		}
-		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, Principal: "daemon:operator", SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: map[string]processing.ProfileConfig{name: supplied, "qualification-generated": generated}})
+		profiles := map[string]processing.ProfileConfig{name: supplied, "qualification-generated": generated}
+		if option.UnprocessedDonor {
+			donorDescriptor := encoder.descriptor
+			donorDescriptor.Fingerprint = ""
+			donorDescriptor.PolicyFingerprint = processingTestHash("qualification-unprocessed-donor")
+			donorDescriptor, err = document.NewEmbeddingDescriptor(donorDescriptor)
+			require.NoError(t, err)
+			donorEncoder := &mediaQualificationEncoder{descriptor: donorDescriptor}
+			f.unprocessedEncoder = donorEncoder
+			unprocessedDonor := generated
+			unprocessedDonor.Profile.Embeddings = slices.Clone(generated.Profile.Embeddings)
+			unprocessedDonor.Profile.Embeddings[0].Descriptor.Fingerprint = donorDescriptor.Fingerprint
+			unprocessedDonor.EmbeddingProviders = map[string]document.EmbeddingProvider{"semantic": donorEncoder}
+			unprocessed, composeErr := processing.WithSuppliedMediaEmbeddings(supplied, unprocessedDonor)
+			require.NoError(t, composeErr)
+			profiles[mediaQualificationUnprocessedProfile] = unprocessed
+			f.unprocessedProfile = mediaQualificationUnprocessedProfile
+		}
+		service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: deps.Store, Blobs: deps.Blobs, Gate: gate, Principal: "daemon:operator", SpoolDirectory: filepath.Join(deps.VaultRoot, "blobs", "tmp"), Profiles: profiles})
 		require.NoError(t, err)
 		t.Cleanup(service.Stop)
 		f.service = service

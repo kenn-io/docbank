@@ -61,6 +61,21 @@ func TestSelectedMediaEmbeddingBuildFence(t *testing.T) {
 	require.Zero(t, current.Coverage.CompleteDocuments)
 }
 
+func TestSelectedSemanticRowsAvailableForUnpersistedProfile(t *testing.T) {
+	t.Parallel()
+	s, version, profile, attachment := newEmbeddingCatalogFixture(t)
+	var buildID string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachment).Scan(&buildID))
+	opts := SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: version, BuildID: buildID}}}
+	available, err := s.SelectedSemanticRowsAvailable(t.Context(), testSHA256([]byte("unpersisted-profile")), "chunk", opts)
+	require.NoError(t, err)
+	require.False(t, available)
+	_, err = s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, "missing-binding", opts)
+	require.ErrorIs(t, err, ErrNotFound, "a missing binding in a stored profile remains an authority error")
+	_, err = s.SelectedSemanticRowsAvailable(t.Context(), "malformed-profile", "chunk", opts)
+	require.ErrorContains(t, err, "fingerprint")
+}
+
 func sRootVersionNode(t *testing.T, s *Store, version string) int64 {
 	t.Helper()
 	value, err := s.ContentVersionByID(t.Context(), version)
