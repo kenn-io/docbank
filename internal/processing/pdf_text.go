@@ -81,9 +81,15 @@ func (service *Service) PDFHasNoTextLayer(ctx context.Context, buildID string) (
 
 // PDFTextRunner admits automatic PDFs through the shared rendition lifecycle.
 type PDFTextRunner struct {
-	Service *Service
-	mu      sync.Mutex
-	skips   map[string]bool
+	Service    *Service
+	mu         sync.Mutex
+	skips      map[string]pdfTextSkip
+	skipWarned bool
+}
+
+type pdfTextSkip struct {
+	revision uint64
+	stale    bool
 }
 
 // Initialize grants local consent only when no prior decision exists.
@@ -112,20 +118,32 @@ func (r *PDFTextRunner) listTargets(ctx context.Context, after string, limit int
 		return nil, err
 	}
 	p := r.Service.profiles[PDFTextProfileName]
+	revision := r.Service.catalog.WriteRevision()
 	var out []store.DocumentSummary
 	for len(out) < limit {
-		pageSize := limit - len(out)
+		const pageSize = 1000
 		items, err := r.Service.catalog.PDFTextTargetsAfter(ctx, p.record.Fingerprint, after, p.portable.Rendition.MaxDocumentBytes, pageSize, includeWaiting)
 		if err != nil {
 			return nil, err
 		}
 		r.mu.Lock()
 		for _, item := range items {
-			if !r.skips[item.ContentVersionID] {
+			skip, skipped := r.skips[item.ContentVersionID]
+			if skipped && skip.stale && skip.revision != revision {
+				delete(r.skips, item.ContentVersionID)
+				skipped = false
+			}
+			if !skipped {
 				out = append(out, item)
+				if len(out) == limit {
+					break
+				}
 			}
 		}
 		r.mu.Unlock()
+		if len(out) == limit {
+			return out, nil
+		}
 		if len(items) < pageSize {
 			return out, nil
 		}
@@ -137,8 +155,12 @@ func (r *PDFTextRunner) listTargets(ctx context.Context, after string, limit int
 func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary) error {
 	s := r.Service
 	p := s.profiles[PDFTextProfileName]
+	revision := s.catalog.WriteRevision()
 	node, err := s.catalog.NodeByID(ctx, item.NodeID)
 	if err == nil {
+		if node.TrashedAt != nil {
+			return nil
+		}
 		var version store.ContentVersion
 		version, err = s.catalog.ContentVersionByID(ctx, item.ContentVersionID)
 		if err == nil {
@@ -148,15 +170,20 @@ func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary)
 			_, _, err = s.enqueueRendition(ctx, node, version, p, s.renditionConsentRequest(p), "", false)
 		}
 	}
-	if errors.Is(err, store.ErrRenditionJobStaleAuthority) {
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) && revision != s.catalog.WriteRevision() {
 		return nil
 	}
-	if errors.Is(err, ErrSourceIneligible) || errors.Is(err, ErrPDFPasswordRequired) || errors.Is(err, ErrPlanChanged) || errors.Is(err, ErrRenditionFailed) || errors.Is(err, ErrRenditionOperatorRequired) || errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired) || errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, ErrSourceIneligible) || errors.Is(err, ErrPDFPasswordRequired) || errors.Is(err, ErrPlanChanged) || errors.Is(err, ErrRenditionFailed) || errors.Is(err, ErrRenditionOperatorRequired) || errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired) || errors.Is(err, store.ErrNotFound) {
 		r.mu.Lock()
 		if r.skips == nil {
-			r.skips = make(map[string]bool)
+			r.skips = make(map[string]pdfTextSkip)
 		}
-		r.skips[item.ContentVersionID] = true
+		if len(r.skips) < localTextSkipLimit {
+			r.skips[item.ContentVersionID] = pdfTextSkip{revision: revision, stale: errors.Is(err, store.ErrRenditionJobStaleAuthority)}
+		} else if !r.skipWarned {
+			slog.Warn("PDF text skip limit reached; additional ineligible files will be inspected again", "limit", localTextSkipLimit)
+			r.skipWarned = true
+		}
 		r.mu.Unlock()
 		return nil
 	}

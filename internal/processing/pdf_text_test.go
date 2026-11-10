@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -204,6 +205,49 @@ func TestPDFTextDiscoversRestoredSourceInSameRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, node.CurrentVersionID, items[0].ContentVersionID)
+}
+
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
+func TestPDFTextPurgeSettlesDiscovery(t *testing.T) {
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewPDFTextProfile()
+	require.NoError(t, err)
+	service := newPDFTextService(t, fixture, profile)
+	runner := &PDFTextRunner{Service: service}
+	require.NoError(t, runner.Initialize(t.Context()))
+	node := replacePDFSource(t, fixture, mediatest.PDFTextPages([]string{"searchable"}, false))
+	item := store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}
+	require.NoError(t, runner.process(t.Context(), item))
+	runPDFTextWorker(t, service)
+	_, err = fixture.catalog.PurgeDerivatives(t.Context(), store.PurgeRequest{ContentVersionIDs: []string{node.CurrentVersionID}})
+	require.NoError(t, err)
+	require.NoError(t, runner.process(t.Context(), item))
+	pending, err := runner.Pending(t.Context())
+	require.NoError(t, err)
+	require.False(t, pending)
+	trashed, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	_, _, err = fixture.catalog.Restore(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	items, err := runner.targets(t.Context(), "", 50)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, node.CurrentVersionID, items[0].ContentVersionID)
+}
+
+func TestPDFTextSkipCacheBound(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewPDFTextProfile()
+	require.NoError(t, err)
+	service := newPDFTextService(t, fixture, profile)
+	runner := &PDFTextRunner{Service: service, skips: make(map[string]pdfTextSkip, localTextSkipLimit)}
+	for i := range localTextSkipLimit {
+		runner.skips[fmt.Sprint(i)] = pdfTextSkip{}
+	}
+	node := replacePDFSource(t, fixture, []byte("invalid PDF"))
+	require.NoError(t, runner.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}))
+	require.Equal(t, localTextSkipLimit, len(runner.skips))
 }
 
 func TestPDFTextDiscoverySkipsRefusedVersionsAcrossPages(t *testing.T) {
