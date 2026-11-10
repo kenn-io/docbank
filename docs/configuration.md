@@ -274,6 +274,8 @@ The optional `[integrations.kata]` section connects document citations to a
 Kata project. It is disabled by default and validates only when a Kata
 operation uses it. See [Cite documents in Kata](usage/kata-evidence.md#connect-kata)
 for fields, credential sources and endpoint restrictions.
+Its `trust_private_network` option defaults to `false`; enable it only when you
+trust the network carrying the plaintext Kata token and document evidence.
 
 ### MCP HTTP credential
 

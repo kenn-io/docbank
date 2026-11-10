@@ -20,12 +20,13 @@ type IntegrationsConfig struct {
 //
 //nolint:recvcheck // TOML decoding mutates config; resolving a connection leaves it unchanged.
 type KataConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	APIKeyEnv      string `toml:"api_key_env"`
-	APIKeyFile     string `toml:"api_key_file"`
-	DefaultProject string `toml:"default_project"`
-	decodeInvalid  bool
+	Enabled             bool   `toml:"enabled"`
+	Endpoint            string `toml:"endpoint"`
+	APIKeyEnv           string `toml:"api_key_env"`
+	APIKeyFile          string `toml:"api_key_file"`
+	DefaultProject      string `toml:"default_project"`
+	TrustPrivateNetwork bool   `toml:"trust_private_network"`
+	decodeInvalid       bool
 }
 
 // UnmarshalTOML defers shape errors in this optional section until a Kata operation.
@@ -36,9 +37,13 @@ func (k *KataConfig) UnmarshalTOML(value any) error {
 		return nil
 	}
 	for field, value := range table {
-		if field == "enabled" {
+		if field == "enabled" || field == "trust_private_network" {
+			target := &k.Enabled
+			if field == "trust_private_network" {
+				target = &k.TrustPrivateNetwork
+			}
 			var valid bool
-			k.Enabled, valid = value.(bool)
+			*target, valid = value.(bool)
 			k.decodeInvalid = k.decodeInvalid || !valid
 			continue
 		}
@@ -84,9 +89,8 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 		u.Scheme != "https" && u.Scheme != "http" {
 		return KataConnection{}, errors.New("integrations.kata: invalid endpoint; use HTTPS or loopback HTTP")
 	}
-	if ip := net.ParseIP(u.Hostname()); u.Scheme == "http" &&
-		!strings.EqualFold(u.Hostname(), "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return KataConnection{}, errors.New("integrations.kata: HTTP endpoint must be loopback")
+	if u.Scheme == "http" && !kataPlaintextAllowed(u.Hostname(), k.TrustPrivateNetwork) {
+		return KataConnection{}, errors.New("integrations.kata: HTTP endpoint requires loopback or trust_private_network = true for a trusted private network; use HTTPS otherwise")
 	}
 	if (k.APIKeyEnv == "") == (k.APIKeyFile == "") {
 		return KataConnection{}, errors.New("integrations.kata: select exactly one of api_key_env or api_key_file")
@@ -123,6 +127,33 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 		return KataConnection{}, errors.New("integrations.kata: invalid default_project")
 	}
 	return KataConnection{Endpoint: strings.TrimRight(u.String(), "/"), APIKey: key, Project: project}, nil
+}
+
+// kataPlaintextAllowed follows kit's embedconfig.CanonicalEndpoint address policy
+// without changing this integration's URL normalization or endpoint restrictions.
+func kataPlaintextAllowed(host string, trustPrivateNetwork bool) bool {
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if strings.Contains(host, ":") {
+		host, _, _ = strings.Cut(host, "%") // Classify the address without its IPv6 zone.
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return trustPrivateNetwork // The operator vouches for DNS names; do not resolve them.
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	if !trustPrivateNetwork {
+		return false
+	}
+	ipv4 := ip.To4()
+	cgnat := ipv4 != nil && ipv4[0] == 100 && ipv4[1]&0xc0 == 0x40
+	return ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || cgnat
 }
 
 // ValidKataProject is shared by configuration and the native Kata client.

@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +27,66 @@ func realClient(t *testing.T) (*Client, *client.Client, int64) {
 	project, err := api.InitProject(t.Context(), &wire.InitProjectRequestOptions{Body: &wire.InitProjectBody{Name: new("docbank"), Actor: new("docbank")}})
 	require.NoError(t, err)
 	return New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"}), api, project.Project.ID
+}
+
+func TestPrivateNetworkConnectionKeepsBearerAndRefusesRedirects(t *testing.T) {
+	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-key")
+	for _, redirect := range []string{"", "/redirected", "http://other.test:7777/redirected"} {
+		t.Run(redirect, func(t *testing.T) {
+			var requests, redirected atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				assert.Equal(t, "kata:7777", r.Host)
+				assert.Equal(t, "Bearer synthetic-key", r.Header.Get("Authorization"))
+				assert.Nil(t, r.URL.User)
+				assert.Empty(t, r.URL.RawQuery)
+				assert.NotContains(t, r.RequestURI, "synthetic-key")
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = fmt.Fprint(w, `{"api_schema_version":"0.41.0"}`)
+				case "/api/v1/projects":
+					if redirect != "" {
+						http.Redirect(w, r, redirect, http.StatusFound)
+						return
+					}
+					_, _ = fmt.Fprint(w, `{"projects":[{"id":1,"name":"docbank","active":true}]}`)
+				default:
+					redirected.Add(1)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+			cfg := config.KataConfig{Enabled: true, Endpoint: "http://kata:7777", APIKeyEnv: "DKE_TEST_KATA_KEY", TrustPrivateNetwork: true}
+			connection, err := cfg.Resolve(t.TempDir())
+			require.NoError(t, err)
+			c := New(connection)
+			// Route only the configured authority to a real test-owned HTTP listener.
+			baseTransport, ok := http.DefaultTransport.(*http.Transport)
+			require.True(t, ok)
+			transport := baseTransport.Clone()
+			transport.Proxy = nil
+			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				if address != "kata:7777" {
+					return nil, errors.New("unexpected authority")
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+			}
+			t.Cleanup(transport.CloseIdleConnections)
+			c.http.Transport = boundedTransport{base: transport}
+			project, err := c.projectID(t.Context(), "docbank")
+			if redirect == "" {
+				require.NoError(t, err)
+				require.EqualValues(t, 1, project)
+			} else {
+				failure, ok := errors.AsType[*Error](err)
+				require.True(t, ok, "%v", err)
+				require.Equal(t, http.StatusFound, failure.Status)
+				require.Zero(t, redirected.Load())
+			}
+			require.EqualValues(t, 2, requests.Load())
+		})
+	}
 }
 
 func TestCreateAndCommentReplay(t *testing.T) {
