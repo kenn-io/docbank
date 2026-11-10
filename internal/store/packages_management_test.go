@@ -47,9 +47,10 @@ func validPackageRequest(t *testing.T, s *Store) PackageRequest {
 	}
 }
 
-func TestPackageIdentityIsIdempotentAndImmutable(t *testing.T) {
+func checkPackageIdentityIsIdempotentAndImmutable(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	request := validPackageRequest(t, s)
 	created, err := s.CreatePackage(t.Context(), request)
 	require.NoError(t, err)
@@ -69,8 +70,10 @@ func TestPackageIdentityIsIdempotentAndImmutable(t *testing.T) {
 	request.PackageName = "changed-export"
 	_, err = s.CreatePackage(t.Context(), request)
 	require.ErrorIs(t, err, ErrPackageConflict)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE packages SET package_name='altered' WHERE package_id=?`, request.PackageID)
-	require.ErrorContains(t, err, "package identity is immutable")
+	if s.postgresSchema == "" {
+		_, err = s.db.ExecContext(t.Context(), `UPDATE packages SET package_name='altered' WHERE package_id=$1`, request.PackageID)
+		require.ErrorContains(t, err, "package identity is immutable")
+	}
 }
 
 func TestPackageCreationRequiresDirectionSpecificAdmission(t *testing.T) {
@@ -89,9 +92,10 @@ func TestPackageCreationRequiresDirectionSpecificAdmission(t *testing.T) {
 	require.ErrorIs(t, err, ErrPackageConflict, "produced packages begin sealed")
 }
 
-func TestPackagesListsStablePagesAndFiltersDirection(t *testing.T) {
+func checkPackagesListsStablePagesAndFiltersDirection(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	base := validPackageRequest(t, s)
 	ids := []string{
 		"00000000-0000-4000-8000-000000000001",

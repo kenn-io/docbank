@@ -15,7 +15,7 @@ func (s *Store) ReplaySnapshotBatesRange(ctx context.Context, request BatesPlanR
 func replaySnapshotBatesRange(ctx context.Context, q metadataQuerier, r BatesPlanRequest) (BatesAllocation, error) {
 	var id string
 	err := q.QueryRowContext(ctx, `SELECT allocation_id FROM bates_allocations
-		WHERE namespace_id=? AND start_sequence=?`, r.NamespaceID, r.StartAt).Scan(&id)
+		WHERE namespace_id=$1 AND start_sequence=$2`, r.NamespaceID, r.StartAt).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BatesAllocation{}, ErrNotFound
 	}
@@ -57,8 +57,8 @@ func (s *Store) ReserveSnapshotBatesRange(ctx context.Context, snapshot Snapshot
 		member := snapshot.Members[0]
 		var name string
 		if err := tx.QueryRowContext(ctx, `SELECT n.name FROM nodes n JOIN content_versions v ON v.node_id=n.id
-			WHERE n.id=? AND n.kind='file' AND n.trashed_at IS NULL AND v.version_id=?
-			AND v.blob_hash=? AND v.size=? AND v.mime_type='application/pdf'`,
+			WHERE n.id=$1 AND n.kind='file' AND n.trashed_at IS NULL AND v.version_id=$2
+			AND v.blob_hash=$3 AND v.size=$4 AND v.mime_type='application/pdf'`,
 			member.NodeID, member.ContentVersionID, member.BlobSHA256, member.Size).Scan(&name); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound

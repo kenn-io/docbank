@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/docbank/internal/loadfile"
 )
 
-func TestPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T) {
+func checkPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	request := validPackageRequest(t, s)
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "synthetic")
 	require.NoError(t, err)

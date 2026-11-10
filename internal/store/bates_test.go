@@ -72,9 +72,10 @@ func TestBatesRangeContinuesAndRejectsExplicitOverlap(t *testing.T) {
 	require.ErrorIs(t, err, ErrBatesOverflow)
 }
 
-func TestBatesPreviewIsTentativeAndRepeatable(t *testing.T) {
+func checkBatesPreviewIsTentativeAndRepeatable(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
@@ -88,15 +89,16 @@ func TestBatesPreviewIsTentativeAndRepeatable(t *testing.T) {
 	require.Equal(t, int64(41), first.StartSequence)
 	require.Equal(t, []string{"OUR000041", "OUR000042", "OUR000043"}, []string{first.Labels[0].Label, first.Labels[1].Label, first.Labels[2].Label})
 	var cursor, allocations int64
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, ns.NamespaceID).Scan(&cursor))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=$1`, ns.NamespaceID).Scan(&cursor))
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM bates_allocations`).Scan(&allocations))
 	require.Equal(t, int64(1), cursor)
 	require.Zero(t, allocations)
 }
 
-func TestABFixtureAllocatesFortyOneToFortyThree(t *testing.T) {
+func checkABFixtureAllocatesFortyOneToFortyThree(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
@@ -126,9 +128,10 @@ func TestABFixtureAllocatesFortyOneToFortyThree(t *testing.T) {
 	require.Equal(t, int64(44), reserved.StartSequence)
 }
 
-func TestBatesReserveRequiresTheRecipeStart(t *testing.T) {
+func checkBatesReserveRequiresTheRecipeStart(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
@@ -141,9 +144,10 @@ func TestBatesReserveRequiresTheRecipeStart(t *testing.T) {
 	require.Zero(t, allocations, "a cursor-following reservation could never match its recipe")
 }
 
-func TestBatesExportPageLimit(t *testing.T) {
+func checkBatesExportPageLimit(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
@@ -155,9 +159,10 @@ func TestBatesExportPageLimit(t *testing.T) {
 	require.ErrorIs(t, err, ErrBatesPageLimit)
 }
 
-func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
+func checkNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	for _, prefix := range []string{"BAD%", `BAD\`, "BÄD"} {
 		_, err := s.EnsureBatesNamespace(t.Context(), prefix, "", 6)
@@ -182,9 +187,10 @@ func TestNamespaceUniquenessOverflowAndUnverifiedPages(t *testing.T) {
 	require.ErrorIs(t, err, ErrBatesPageCountMismatch)
 }
 
-func TestBatesGlobalLabelCollisionRollsBackCursor(t *testing.T) {
+func checkBatesGlobalLabelCollisionRollsBackCursor(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	first, err := s.EnsureBatesNamespace(t.Context(), "A", "", 2)
 	require.NoError(t, err)
@@ -199,7 +205,7 @@ func TestBatesGlobalLabelCollisionRollsBackCursor(t *testing.T) {
 	_, err = s.ReserveBatesRange(t.Context(), secondRequest)
 	require.ErrorIs(t, err, ErrBatesLabelCollision)
 	var cursor int64
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, second.NamespaceID).Scan(&cursor))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=$1`, second.NamespaceID).Scan(&cursor))
 	require.Equal(t, int64(1), cursor)
 	secondRequest.StartAt = 4
 	allocation, err := s.ReserveBatesRange(t.Context(), secondRequest)
@@ -305,9 +311,10 @@ func TestBatesLedgerSurvivesMetadataRestore(t *testing.T) {
 	require.Equal(t, int64(4), reserved.StartSequence)
 }
 
-func TestBatesArtifactReceiptsMustNameTheSealedSourcePDF(t *testing.T) {
+func checkBatesArtifactReceiptsMustNameTheSealedSourcePDF(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	namespace, err := s.EnsureBatesNamespace(t.Context(), "SRC", "", 6)
 	require.NoError(t, err)
@@ -401,9 +408,10 @@ func TestBatesLedgerValidationRejectsAllocationsOverThePageLimit(t *testing.T) {
 	require.ErrorContains(t, err, allocationID)
 }
 
-func TestBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t *testing.T) {
+func checkBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "native.pdf", fakeHash("d1"), 123, "application/pdf")
 	require.NoError(t, err)
 	occurrence := strings.Repeat("d", 32)
@@ -431,9 +439,10 @@ func TestBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t *testing.T) {
 	require.Len(t, plan.Labels, 2)
 }
 
-func TestBatesRefusesToReserveASourceTooLargeToStamp(t *testing.T) {
+func checkBatesRefusesToReserveASourceTooLargeToStamp(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	size := pdfstamp.MaxOutputBytes + 1
 	node, err := s.CreateFile(t.Context(), s.RootID(), "huge.pdf", fakeHash("e1"), size, "application/pdf")
 	require.NoError(t, err)
@@ -461,7 +470,7 @@ func TestBatesRefusesToReserveASourceTooLargeToStamp(t *testing.T) {
 	require.ErrorIs(t, err, ErrBatesSourceTooLarge)
 
 	var cursor int64
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=?`, ns.NamespaceID).Scan(&cursor))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT next_sequence FROM bates_namespace_cursors WHERE namespace_id=$1`, ns.NamespaceID).Scan(&cursor))
 	require.Equal(t, int64(1), cursor, "no numbers may be reserved for a source that cannot be stamped")
 }
 
@@ -529,9 +538,10 @@ func TestBatesLedgerValidationRequiresAnExportForEveryCommit(t *testing.T) {
 	require.ErrorContains(t, err, allocation.AllocationID)
 }
 
-func TestBatesRefusesAnEmptySource(t *testing.T) {
+func checkBatesRefusesAnEmptySource(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "empty.pdf", fakeHash("a0"), 0, "application/pdf")
 	require.NoError(t, err)
 	occurrence := strings.Repeat("a", 32)

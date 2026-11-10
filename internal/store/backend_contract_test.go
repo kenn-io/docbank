@@ -22,6 +22,119 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "sealed-delivery", postgres: "native operations", scope: "Inline and streaming sealed snapshots, package identity and preflights, Bates reservations and verified artifacts with history and custodian evidence; excludes query selection, received-package imports and filesystem delivery.", scenarios: []backendScenario{
+		{"SealedDeliveryReservationRollback", nil, checkSealedDeliveryReservationRollbackPostgres},
+		{"SealedDeliveryArtifactRollback", nil, checkSealedDeliveryArtifactRollbackPostgres},
+		{"SealedDeliveryConcurrentReservations", nil, checkSealedDeliveryConcurrentReservationsPostgres},
+		{"BatesEvidenceSnapshots", nil, checkBatesEvidenceSnapshotsPostgres},
+		{"BatesNamespaceSnapshot", nil, checkBatesNamespaceSnapshotPostgres},
+		{"BatesCollectionEvidenceFollowsFrozenSources", func(t *testing.T) { t.Helper(); checkBatesCollectionEvidenceFollowsFrozenSources(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesCollectionEvidenceFollowsFrozenSources(t, newPostgresQueryStore)
+		}},
+		{"BatesNamespaceDetailCursor", func(t *testing.T) { t.Helper(); checkBatesNamespaceDetailCursor(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesNamespaceDetailCursor(t, newPostgresQueryStore) }},
+		{"BatesSnapshotReservationRechecksLiveSource", func(t *testing.T) { t.Helper(); checkBatesSnapshotReservationRechecksLiveSource(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesSnapshotReservationRechecksLiveSource(t, newPostgresQueryStore)
+		}},
+		{"PackagePreflightOwnerBlockingAndExpiry", func(t *testing.T) { t.Helper(); checkPackagePreflightOwnerBlockingAndExpiry(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPackagePreflightOwnerBlockingAndExpiry(t, newPostgresQueryStore) }},
+		{"SealCollectionSnapshotFreezesExactVersion", func(t *testing.T) { t.Helper(); checkSealCollectionSnapshotFreezesExactVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotFreezesExactVersion(t, newPostgresQueryStore)
+		}},
+		{"SnapshotSourceCollectionsFreezeMembership", func(t *testing.T) { t.Helper(); checkSnapshotSourceCollectionsFreezeMembership(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkSnapshotSourceCollectionsFreezeMembership(t, newPostgresQueryStore)
+		}},
+		{"SnapshotSelectedPagesUseVerifiedFullPDF", func(t *testing.T) { t.Helper(); checkSnapshotSelectedPagesUseVerifiedFullPDF(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSnapshotSelectedPagesUseVerifiedFullPDF(t, newPostgresQueryStore) }},
+		{"SnapshotSourceBatchChecksOverlappingMembershipInOneQuery", func(t *testing.T) {
+			t.Helper()
+			checkSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t, newPostgresQueryStore)
+		}},
+		{"SealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest", func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t, newPostgresQueryStore)
+		}},
+		{"SealCollectionSnapshotStreamRollsBackAndReplaysExactly", func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t, newPostgresQueryStore)
+		}},
+		{"SealCollectionSnapshotStreamValidatesFamilyAcrossBatches", func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t, newPostgresQueryStore)
+		}},
+		{"PackageIdentityIsIdempotentAndImmutable", func(t *testing.T) { t.Helper(); checkPackageIdentityIsIdempotentAndImmutable(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPackageIdentityIsIdempotentAndImmutable(t, newPostgresQueryStore) }},
+		{"PackagesListsStablePagesAndFiltersDirection", func(t *testing.T) { t.Helper(); checkPackagesListsStablePagesAndFiltersDirection(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackagesListsStablePagesAndFiltersDirection(t, newPostgresQueryStore)
+		}},
+		{"ExpiredPreflightsAreSweptAndUnexpiredOnesSurvive", func(t *testing.T) { t.Helper(); checkExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t, newPostgresQueryStore)
+		}},
+		{"BatesPreviewIsTentativeAndRepeatable", func(t *testing.T) { t.Helper(); checkBatesPreviewIsTentativeAndRepeatable(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesPreviewIsTentativeAndRepeatable(t, newPostgresQueryStore) }},
+		{"ABFixtureAllocatesFortyOneToFortyThree", func(t *testing.T) { t.Helper(); checkABFixtureAllocatesFortyOneToFortyThree(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkABFixtureAllocatesFortyOneToFortyThree(t, newPostgresQueryStore) }},
+		{"BatesReserveRequiresTheRecipeStart", func(t *testing.T) { t.Helper(); checkBatesReserveRequiresTheRecipeStart(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesReserveRequiresTheRecipeStart(t, newPostgresQueryStore) }},
+		{"BatesExportPageLimit", func(t *testing.T) { t.Helper(); checkBatesExportPageLimit(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesExportPageLimit(t, newPostgresQueryStore) }},
+		{"NamespaceUniquenessOverflowAndUnverifiedPages", func(t *testing.T) { t.Helper(); checkNamespaceUniquenessOverflowAndUnverifiedPages(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkNamespaceUniquenessOverflowAndUnverifiedPages(t, newPostgresQueryStore)
+		}},
+		{"BatesGlobalLabelCollisionRollsBackCursor", func(t *testing.T) { t.Helper(); checkBatesGlobalLabelCollisionRollsBackCursor(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesGlobalLabelCollisionRollsBackCursor(t, newPostgresQueryStore)
+		}},
+		{"BatesArtifactReceiptsMustNameTheSealedSourcePDF", func(t *testing.T) { t.Helper(); checkBatesArtifactReceiptsMustNameTheSealedSourcePDF(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesArtifactReceiptsMustNameTheSealedSourcePDF(t, newPostgresQueryStore)
+		}},
+		{"BatesExplicitPagesMatchASealedPDFWithoutPageDocument", func(t *testing.T) {
+			t.Helper()
+			checkBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t, newPostgresQueryStore)
+		}},
+		{"BatesRefusesToReserveASourceTooLargeToStamp", func(t *testing.T) { t.Helper(); checkBatesRefusesToReserveASourceTooLargeToStamp(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesRefusesToReserveASourceTooLargeToStamp(t, newPostgresQueryStore)
+		}},
+		{"BatesRefusesAnEmptySource", func(t *testing.T) { t.Helper(); checkBatesRefusesAnEmptySource(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesRefusesAnEmptySource(t, newPostgresQueryStore) }},
+		{"FindBatesArtifactsReturnsCandidatesForExactlyOneSelector", func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t, newPostgresQueryStore)
+		}},
+		{"FindBatesArtifactEvidenceContinuesWithoutChangingCandidate", func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t, newPostgresQueryStore)
+		}},
+		{"PackageMembersReadSealedOccurrenceThroughPackageID", func(t *testing.T) {
+			t.Helper()
+			checkPackageMembersReadSealedOccurrenceThroughPackageID(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageMembersReadSealedOccurrenceThroughPackageID(t, newPostgresQueryStore)
+		}},
+	}},
+
 	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
 		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
@@ -1832,7 +1945,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Custodian assignments, query-selected albums, snapshots, Bates and delivery jobs remain unqualified; explicit album operations are covered above."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums, export jobs and received-package imports remain unqualified; sealed-delivery covers snapshots, package identity and Bates; people-curation covers custodians."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }
