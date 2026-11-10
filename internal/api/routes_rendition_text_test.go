@@ -434,7 +434,7 @@ func configureAutomaticPDFText(t *testing.T, d *api.Deps) *processing.PDFTextRun
 	return runner
 }
 
-func TestRenditionTextHTTPAcceptsSuppliedProfiles(t *testing.T) {
+func TestRenditionTextHTTPRejectsUnconfiguredSuppliedProfiles(t *testing.T) {
 	ts, s := newTestServer(t, configureLoomManualTestService(t, nil))
 	node := createFileWithContent(t, ts, s, "/source.txt", "synthetic source")
 	for _, name := range []string{processing.SuppliedMediaProfileName, processing.SuppliedCaptionProfileName} {
@@ -443,8 +443,8 @@ func TestRenditionTextHTTPAcceptsSuppliedProfiles(t *testing.T) {
 				"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
 				"blob_hash": node.BlobHash, "size": node.Size, "profile": name,
 			})
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			require.Contains(t, body, `"state":"unprocessed"`)
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+			require.Contains(t, body, `"code":"invalid_profile"`)
 		})
 	}
 }

@@ -289,9 +289,6 @@ func writeRenditionWindow(
 	text.WriteString(window.Text)
 	if !window.EOF {
 		fmt.Fprintf(&text, "\n\nNext window: docbank rendition window id:%d --version %s", window.NodeID, window.ContentVersionID)
-		if !canonicalSHA256(options.profile) {
-			fmt.Fprintf(&text, " --profile %s", options.profile)
-		}
 		fmt.Fprintf(&text, " --attachment %s --offset %d --max-chars %d\n", window.AttachmentID, window.NextOffset, options.maxChars)
 	}
 	_, err := io.WriteString(w, text.String())

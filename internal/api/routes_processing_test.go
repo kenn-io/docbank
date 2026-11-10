@@ -1975,7 +1975,7 @@ func TestDocumentSearchAllLiveScope(t *testing.T) {
 }
 
 func TestProcessingProfilesIncludeConfiguredWithoutRuntime(t *testing.T) {
-	ts, _ := newTestServer(t, func(d *api.Deps) {
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
 		renditionTextConfig(d)
 		configureLoomManualTestService(t, nil)(d)
 	})
@@ -1989,4 +1989,17 @@ func TestProcessingProfilesIncludeConfiguredWithoutRuntime(t *testing.T) {
 	require.Equal(t, "archive", profiles[0].Name)
 	require.Len(t, profiles[0].Fingerprint, 64)
 	require.False(t, profiles[0].Rendition)
+	node := createFileWithContent(t, ts, catalog, "/source.txt", "synthetic source")
+	response, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, map[string]any{
+		"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
+		"blob_hash": node.BlobHash, "size": node.Size, "profile": "archive",
+	})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var receipt struct {
+		Profile struct {
+			Fingerprint string `json:"fingerprint"`
+		} `json:"profile"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.Equal(t, profiles[0].Fingerprint, receipt.Profile.Fingerprint)
 }

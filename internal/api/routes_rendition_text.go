@@ -138,7 +138,7 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 		}
 		selection.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: request.Observed.ProfileFingerprint}
 	} else {
-		selection, err = selectCollectionProfile(d, request.Profile, true, true)
+		selection, err = selectCollectionProfile(d, request.Profile, true)
 		if err != nil {
 			return renditionTextReceipt{}, err
 		}

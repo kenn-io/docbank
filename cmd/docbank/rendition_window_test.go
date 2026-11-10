@@ -49,6 +49,8 @@ func TestRenditionWindowCatalogBounds(t *testing.T) {
 	}{
 		{"unicode name boundary", "/" + strings.Repeat("界", 255), strings.Repeat("界", 255), false},
 		{"unicode name exceeded", "/" + strings.Repeat("界", 256), strings.Repeat("界", 256), true},
+		{"path depth boundary", "/" + strings.Repeat("d/", 254) + "d", "d", false},
+		{"path bytes boundary", "/" + strings.Repeat("d", 16383), "d", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := checkWindowCatalogBounds(api.Node{Path: test.path, Name: test.filename})
@@ -201,7 +203,7 @@ func TestRenditionWindowOutput(t *testing.T) {
 	require.Contains(t, output.String(), "[1, 4)")
 	require.Contains(t, output.String(), "é界🙂")
 	require.Contains(t, output.String(), "docbank rendition window id:42 --version "+
-		processingTestVersionID+" --profile archive --attachment "+window.AttachmentID+
+		processingTestVersionID+" --attachment "+window.AttachmentID+
 		" --offset 4 --max-chars 3")
 	output.Reset()
 	window.EOF = true
