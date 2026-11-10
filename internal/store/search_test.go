@@ -1157,52 +1157,48 @@ func TestSearchPrefixAndRename(t *testing.T) {
 func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	for _, name := range []string{"invoice.pdf", "insurance.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf"} {
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "application/pdf")
-		require.NoError(t, err)
-	}
-	for _, tc := range []struct {
-		query string
-		want  []string
+	words, err := s.Mkdir(t.Context(), s.RootID(), "words")
+	require.NoError(t, err)
+	stops, err := s.Mkdir(t.Context(), s.RootID(), "stops")
+	require.NoError(t, err)
+	for _, group := range []struct {
+		parent int64
+		names  []string
 	}{
-		{"the invoices", []string{"invoice.pdf"}},
-		{"insur", []string{"insurance.pdf"}},
-		{`"tax 2026"`, []string{"tax 2026.pdf"}},
-		{`"tax 2026" absent`, nil},
-		{`"invoices`, nil},
-		{`"the invoices`, nil},
+		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf"}},
+		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "the of.pdf"}},
 	} {
-		hits, _, err := s.SearchPage(t.Context(), tc.query, 20)
-		require.NoError(t, err, tc.query)
-		var names []string
-		for _, hit := range hits {
-			names = append(names, hit.Node.Name)
+		for _, name := range group.names {
+			_, err := s.CreateFile(t.Context(), group.parent, name, fakeHash(name), 1, "application/pdf")
+			require.NoError(t, err)
 		}
-		require.Equal(t, tc.want, names, tc.query)
 	}
-}
-
-func TestSearchStopWordsBesidePhrase(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for _, name := range []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "the of.pdf"} {
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "application/pdf")
-		require.NoError(t, err)
-	}
+	content, err := s.CreateFile(t.Context(), words.ID, "memo.txt", fakeHash("bc"), 4, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: content.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "Refunds take five days."}))
 	for _, tc := range []struct {
-		query string
-		want  []string
-		terms []string
+		query  string
+		parent int64
+		want   []string
+		terms  []string
 	}{
-		{`"the" and`, []string{"the and.pdf"}, []string{"and", `"the"`}},
-		{`"the" and absent`, nil, []string{"absent", `"the"`}},
-		{`"tax" and`, []string{"tax.pdf"}, []string{`"tax"`}},
-		{`"of to" and`, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
-		{`"the" "of"`, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
-		{`"the" "of" and`, nil, []string{"and", `"the"`, `"of"`}},
-		{`"the" "tax" and`, nil, []string{`"the"`, `"tax"`}},
+		{"the invoices", 0, []string{"invoice.pdf"}, []string{"invoices"}},
+		{"the invoice absent", 0, nil, []string{"invoice", "absent"}},
+		{`"tax 2026"`, 0, []string{"tax 2026.pdf"}, []string{`"tax 2026"`}},
+		{`"tax 2026" absent`, 0, nil, []string{"absent", `"tax 2026"`}},
+		{`"invoices`, 0, nil, []string{`"invoices`}},
+		{`"the invoices`, 0, nil, []string{`"the`, "invoices"}},
+		{"the refunds", 0, []string{"memo.txt"}, []string{"refunds"}},
+		{`"refunds take"`, 0, []string{"memo.txt"}, []string{`"refunds take"`}},
+		{`"the" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the"`}},
+		{`"the" and absent`, stops.ID, nil, []string{"absent", `"the"`}},
+		{`"tax" and`, stops.ID, []string{"tax.pdf"}, []string{`"tax"`}},
+		{`"of to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
+		{`"the" "of"`, stops.ID, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
+		{`"the" "of" and`, stops.ID, nil, []string{"and", `"the"`, `"of"`}},
+		{`"the" "tax" and`, stops.ID, nil, []string{`"the"`, `"tax"`}},
 	} {
-		hits, _, err := s.SearchPage(t.Context(), tc.query, 20)
+		hits, _, err := s.SearchPageWithOptions(t.Context(), tc.query, 20, SearchOptions{UnderNodeID: tc.parent})
 		require.NoError(t, err)
 		var names []string
 		for _, hit := range hits {

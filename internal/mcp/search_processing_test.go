@@ -28,14 +28,8 @@ func TestSearchDocumentsModeGuidance(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, hits, 1)
 	require.Equal(t, "/refund.txt", schemaMap(t, hits[0])["path"])
-	for _, tc := range []struct {
-		query string
-		count int
-	}{{"the refunds", 1}, {`"refunds take"`, 1}, {`"take refunds"`, 0}} {
-		result := exportCall(t, daemon, "search_documents", map[string]any{"query": tc.query, "filters": map[string]any{}})
-		require.Len(t, result["results"], tc.count, tc.query)
-	}
-
+	result := exportCall(t, daemon, "search_documents", map[string]any{"query": `"take refunds"`, "filters": map[string]any{}})
+	require.Empty(t, result["results"])
 }
 
 func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
