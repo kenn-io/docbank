@@ -195,7 +195,8 @@ func TestDaemonDoclingASRMP4Import(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, stream.Close())
 	require.Contains(t, rendition.String(), "Telescope delivery arrives Friday at 3")
-	require.Contains(t, rendition.String(), `"family":"video"`)
+	require.Contains(t, rendition.String(), "media_type: \"video/mp4\"")
+	require.Contains(t, rendition.String(), "format: \"mp4\"")
 
 	search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,

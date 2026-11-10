@@ -477,7 +477,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		SourceSHA256:                metadata.SHA256, SourceBytes: metadata.ByteLength,
 		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
 		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
-		MediaFamily:              "audio", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile,
+		MediaFamily:              family, MediaType: mediaType, InputKind: document.RenditionInputOriginalFile,
 		DiscloseFilename:     true,
 		AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 		MaxArtifactBytes:     mediatranscript.MaxArtifactBytes, MaxArtifacts: 1,
@@ -579,17 +579,17 @@ func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
 }
 
 // asrAssertType is a checked type assertion for synthetic provider responses.
-func asrAssertType[T any](t testing.TB, value any) T {
-	t.Helper()
+func asrAssertType[T any](tb testing.TB, value any) T {
+	tb.Helper()
 	typed, ok := value.(T)
-	require.True(t, ok)
+	require.True(tb, ok)
 	return typed
 }
 
 // asrJSONContent returns the mutable Docling document body of a synthetic result.
-func asrJSONContent(t testing.TB, result map[string]any) map[string]any {
-	t.Helper()
-	return asrAssertType[map[string]any](t, asrAssertType[map[string]any](t, result["document"])["json_content"])
+func asrJSONContent(tb testing.TB, result map[string]any) map[string]any {
+	tb.Helper()
+	return asrAssertType[map[string]any](tb, asrAssertType[map[string]any](tb, result["document"])["json_content"])
 }
 
 func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
@@ -615,7 +615,9 @@ func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
 				result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 2.42)
 				body := asrJSONContent(t, result)
 				body["pictures"] = []any{map[string]any{"image": strings.Repeat("A", frameBytes)}}
-				writeJSON(t, w, result)
+				w.Header().Set("Content-Type", "application/json")
+				// The client abandons an oversized body, so the write may fail.
+				_ = json.NewEncoder(w).Encode(result)
 			}))
 			t.Cleanup(server.Close)
 			client := newASRClient(t, server.URL, fixture.descriptor)
