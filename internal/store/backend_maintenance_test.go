@@ -96,6 +96,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"received package transitions", "package_import*.go; INSERT-only record, label and receipt grants; column-specific package/job updates", "received-packages contracts; Store fences leases and fills snapshot/completion once; PostgreSQL permits direct SQL rewrites of those columns; SQLite receipts block updates, not deletion", `
  packages_transition_guard package_records_immutable_update
  package_labels_immutable_update package_import_receipts_immutable_update`},
+	{"document validity declarations", "unported: supersession.go", "PutSupersession, DeleteSupersession, PutEffectiveWindow, DeleteEffectiveWindow and NodeValidity are PostgreSQL-unqualified; documents contracts validate copied retained catalogs only", ""},
 	{"batch tag receipts", "batch_tag.go; runtime INSERT-only grants", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
 }
 
