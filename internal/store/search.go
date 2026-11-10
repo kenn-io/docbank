@@ -716,6 +716,8 @@ type SemanticSearchResolution struct {
 	Candidates             []SemanticSearchCandidate
 	Truncated              bool
 	// NextNeighbor is the next index in the supplied neighbors, or their length when exhausted.
+	// Zero is valid when a page ends within the first neighbor; callers must
+	// exclude returned memberships before retrying that neighbor.
 	NextNeighbor int
 }
 

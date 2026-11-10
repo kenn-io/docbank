@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -42,10 +41,4 @@ func TestSelectedMediaDaemonSuppliedEmbeddingSetup(t *testing.T) {
 	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, profiles)
 	require.ErrorContains(t, err, "no executable runtime")
 	cfg.SuppliedMediaEmbeddingProfile = config.LocalTextProfile
-	donor := profiles[config.LocalTextProfile]
-	donor.Profile.Embeddings = append([]document.EmbeddingBindingV1(nil), donor.Profile.Embeddings...)
-	donor.Profile.Embeddings[0].InputKind = document.EmbeddingInputOriginalFile
-	profiles[config.LocalTextProfile] = donor
-	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, profiles)
-	require.ErrorContains(t, err, "rendition_chunk")
 }

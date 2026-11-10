@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
@@ -69,6 +70,51 @@ func TestSearchSkipsUnavailableMediaEvidence(t *testing.T) {
 			require.Equal(t, 1, backend.neighborCount, "refill advances through the leased neighbors")
 		})
 	}
+}
+
+func TestSearchRetriesSameNeighborAfterUnreadableSharedMembership(t *testing.T) {
+	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+	broken := backend.semantic[0]
+	broken.NodeID = 9
+	broken.ContentVersionID = "unavailable-version"
+	broken.InputKind = document.EmbeddingInputRenditionChunk
+	broken.EmbeddingSetID = "broken-membership"
+	broken.MediaEvidence = store.SearchMediaEvidence{BuildID: "build", GenerationBlobHash: "missing",
+		GenerationEncodedSize: 100, GenerationChecksum: "checksum", EvidenceFingerprint: "evidence",
+		EvidenceEncodedSize: 100, InputCount: 1}
+	healthy := backend.semantic[0]
+	healthy.InputKind = document.EmbeddingInputRenditionChunk
+	healthy.EmbeddingSetID = "healthy-membership"
+	healthy.MediaEvidence = store.SearchMediaEvidence{BuildID: "healthy-build", GenerationBlobHash: "healthy-generation",
+		GenerationEncodedSize: 100, GenerationChecksum: "healthy-checksum", EvidenceFingerprint: "healthy-evidence",
+		EvidenceEncodedSize: 100, InputCount: 1}
+	backend.semantic[0] = healthy
+	searcher.mediaEvidence = &MediaEvidenceResolver{blobs: missingMediaBlobs{}, cache: map[store.SearchMediaEvidence]map[string]mediaEvidenceInput{
+		healthy.MediaEvidence: {healthy.InputID: {excerpt: "healthy evidence"}},
+	}}
+	backend.semanticPages = []store.SemanticSearchResolution{
+		{Candidates: []store.SemanticSearchCandidate{broken}, Truncated: true, NextNeighbor: 0},
+		{Candidates: []store.SemanticSearchCandidate{healthy}},
+	}
+
+	report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1, VectorLimit: 1,
+		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
+		Scope: store.SearchOptions{SelectedBuilds: []store.SearchSelectedBuild{
+			{ContentVersionID: broken.ContentVersionID, BuildID: broken.MediaEvidence.BuildID},
+			{ContentVersionID: healthy.ContentVersionID, BuildID: healthy.MediaEvidence.BuildID},
+		}},
+		Authorization: retrievalAuthorization(descriptor)})
+
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	assert.Equal(t, "version-semantic", report.Results[0].Document.ContentVersionID)
+	assert.Equal(t, "healthy evidence", report.Results[0].Excerpt)
+	assert.True(t, report.Truncated, "unreadable shared membership remains a skipped semantic hit")
+	assert.Contains(t, backend.excludedNodes, broken.NodeID, "retry excludes the unreadable membership")
+	assert.Equal(t, 2, backend.vectorLimit, "retry expands the membership page")
+	assert.Equal(t, backend.authority.Lease.Generation.RowCount, backend.neighborCount,
+		"retry keeps the first neighbor in the candidate window")
+	require.Empty(t, backend.semanticPages)
 }
 
 func TestLexicalTimingDoesNotNeedArtifactReadsOrRevalidation(t *testing.T) {

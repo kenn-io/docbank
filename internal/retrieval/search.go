@@ -495,6 +495,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 			return nil, coverage, false, store.ErrVectorIndexSourceStale
 		}
 		truncated = truncated || resolution.Truncated
+		membershipProgress := false
 		for _, item := range resolution.Candidates {
 			if len(candidates) == query.VectorLimit {
 				truncated = true
@@ -504,6 +505,7 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 				continue
 			}
 			seen[item.NodeID] = struct{}{}
+			membershipProgress = true
 			if item.VectorSpaceID != authority.VectorSpace.ID {
 				return nil, coverage, false, errors.New("semantic result escaped the active vector space")
 			}
@@ -537,8 +539,9 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		if len(candidates) == query.VectorLimit || !resolution.Truncated {
 			break
 		}
-		if resolution.NextNeighbor <= 0 || resolution.NextNeighbor >= len(neighbors) {
-			return nil, coverage, false, errors.New("semantic candidate page did not advance through neighbors")
+		if resolution.NextNeighbor < 0 || resolution.NextNeighbor >= len(neighbors) ||
+			(resolution.NextNeighbor == 0 && !membershipProgress) {
+			return nil, coverage, false, errors.New("semantic candidate page did not advance through neighbors or memberships")
 		}
 		neighbors = neighbors[resolution.NextNeighbor:]
 		pageLimit = min(pageLimit*2, document.MaxRetrievalCandidateLimit)

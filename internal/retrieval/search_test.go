@@ -452,7 +452,8 @@ func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Contex
 	}
 	for _, candidate := range backend.semantic {
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
-			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,
+			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID,
+			BuildID: candidate.MediaEvidence.BuildID, Path: candidate.Path,
 		})
 	}
 	return store.SearchCandidateRevalidation{Candidates: candidates, Coverage: backend.revalidationCoverage}, nil
