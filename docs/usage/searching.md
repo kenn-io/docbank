@@ -592,8 +592,8 @@ Saving search choices in QueryV1 does not execute either workflow.
 An empty CLI text search keeps its usual output and prints hints on stderr:
 how many files in the search scope need a processing profile, how many text
 files are still being indexed, and, when a lexical search has more than one
-prepared term, that one name or text segment must contain every term. `--json` carries them in a
-`hints` array of `code` and `message`.
+prepared term, that one name or text segment must contain every term. `--json`
+carries them in a `hints` array of `code` and `message`.
 
 ## Processing search
 
