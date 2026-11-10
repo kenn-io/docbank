@@ -7878,6 +7878,8 @@ export interface RenditionTextRequest {
   readonly $schema?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
+  /** Resolve the exact observed active rendition independently of the current default profile */
+  exact_rendition?: boolean;
   /** @minimum 1 */
   node_id: number;
   observed?: RenditionTextObserved;

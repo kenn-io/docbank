@@ -31731,14 +31731,17 @@ type RenditionTextReceipt struct {
 
 type RenditionTextRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string                `json:"$schema,omitempty"`
-	BlobHash  string                 `json:"blob_hash"`
-	NodeID    int64                  `json:"node_id"`
-	Observed  *RenditionTextObserved `json:"observed,omitempty"`
-	Profile   *string                `json:"profile,omitempty"`
-	Revision  int64                  `json:"revision"`
-	Size      int64                  `json:"size"`
-	VersionID uuid.UUID              `json:"version_id"`
+	Schema   *string `json:"$schema,omitempty"`
+	BlobHash string  `json:"blob_hash"`
+
+	// ExactRendition Resolve the exact observed active rendition independently of the current default profile
+	ExactRendition *bool                  `json:"exact_rendition,omitempty"`
+	NodeID         int64                  `json:"node_id"`
+	Observed       *RenditionTextObserved `json:"observed,omitempty"`
+	Profile        *string                `json:"profile,omitempty"`
+	Revision       int64                  `json:"revision"`
+	Size           int64                  `json:"size"`
+	VersionID      uuid.UUID              `json:"version_id"`
 }
 
 type RenditionTextSource struct {

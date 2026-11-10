@@ -148,7 +148,7 @@ func runRenditionWindow(
 	if build != "" && (window.BuildID != build || window.ProfileFingerprint != profile) {
 		return errors.New("rendition window does not match the selected build and profile")
 	}
-	if profile != "" && window.ProfileFingerprint != profile {
+	if build == "" && profile != "" && window.ProfileFingerprint != profile {
 		return fmt.Errorf("attachment does not belong to profile %q: %w", options.profile, store.ErrNotFound)
 	}
 	if options.profile == "" {
@@ -190,10 +190,11 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 	}
 	var names, pins []string
 	var selected api.DocumentRenditionIdentity
+	exact := true
 	for _, rendition := range renditions {
 		fingerprint := rendition.ProfileFingerprint
 		receipt, err := c.API().ResolveRenditionText(ctx, &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.RenditionTextRequest{
-			NodeID: node.ID, Revision: node.Revision, VersionID: version, BlobHash: node.BlobHash, Size: node.Size,
+			NodeID: node.ID, Revision: node.Revision, VersionID: version, BlobHash: node.BlobHash, Size: node.Size, ExactRendition: &exact,
 			Observed: &apiclient.RenditionTextObserved{Configuration: apiclient.Configured,
 				ProfileFingerprint: &fingerprint, AttachmentID: &rendition.AttachmentID, BuildID: &rendition.BuildID},
 		}})
@@ -266,9 +267,6 @@ func windowRenditions(ctx context.Context, c *daemonconn.Connection, node api.No
 }
 
 func checkWindowCatalogBounds(node api.Node) error {
-	if _, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{PathPrefix: node.Path}); err != nil {
-		return fmt.Errorf("rendition discovery exceeds document catalog path limits: %w", err)
-	}
 	if utf8.RuneCountInString(node.Name) > store.MaxDocumentCatalogNameCharacters {
 		return fmt.Errorf("rendition discovery exceeds the document catalog filename limit of %d "+
 			"characters; use --attachment if the active attachment is already known",

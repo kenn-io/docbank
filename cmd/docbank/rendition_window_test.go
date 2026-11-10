@@ -47,10 +47,6 @@ func TestRenditionWindowCatalogBounds(t *testing.T) {
 		name, path, filename string
 		bad                  bool
 	}{
-		{"depth boundary", "/" + strings.Repeat("d/", 255) + "f", "f", false},
-		{"depth exceeded", "/" + strings.Repeat("d/", 256) + "f", "f", true},
-		{"path boundary", "/" + strings.Repeat("d", 16381) + "/f", "f", false},
-		{"path exceeded", "/" + strings.Repeat("d", 16382) + "/f", "f", true},
 		{"unicode name boundary", "/" + strings.Repeat("界", 255), strings.Repeat("界", 255), false},
 		{"unicode name exceeded", "/" + strings.Repeat("界", 256), strings.Repeat("界", 256), true},
 	} {
@@ -233,8 +229,9 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 					assert.NoError(t, json.MarshalWrite(w, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{NodeID: 42, ContentVersionID: processingTestVersionID, Name: "notes.pdf", Path: "/notes.pdf", ModifiedAt: "2026-10-04T12:00:00Z", ActiveRenditions: renditions}}}))
 				case "POST /api/v1/renditions/text":
 					var request struct {
-						Profile  string `json:"profile"`
-						Observed struct {
+						Profile        string `json:"profile"`
+						ExactRendition bool   `json:"exact_rendition"`
+						Observed       struct {
 							AttachmentID       string `json:"attachment_id"`
 							BuildID            string `json:"build_id"`
 							ProfileFingerprint string `json:"profile_fingerprint"`
@@ -250,6 +247,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 					state, ok := tc.states[name]
 					assert.True(t, ok)
 					assert.Empty(t, request.Profile)
+					assert.True(t, request.ExactRendition)
 					assert.Equal(t, sha256Hex(name+"attachment"), request.Observed.AttachmentID)
 					assert.Equal(t, sha256Hex(name+"build"), request.Observed.BuildID)
 					if state == "rendition_text_too_large" {

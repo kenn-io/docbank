@@ -189,6 +189,18 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
 	require.Contains(t, encoded, `"state":"ready"`)
+	require.Contains(t, encoded, `"name":"archive"`)
+	original := cfg.ProcessingProfiles["archive"]
+	changed := original
+	changed.MaxSegmentRunes--
+	cfg.ProcessingProfiles["archive"] = changed
+	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusConflict, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"code":"rendition_selection_stale"`)
+	body["exact_rendition"] = true
+	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"state":"ready"`)
 	observed := body["observed"].(map[string]any)
 	observed["attachment_id"] = testHash("stale-attachment")
 	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
