@@ -92,7 +92,7 @@ func TestProcessingTerminalEventSeparatesStatusReadFailure(t *testing.T) {
 	assert.True(t, event.Terminal)
 }
 
-func TestCoverageHTTPReportsPartialAndUnavailable(t *testing.T) {
+func TestFromProcessingCoveragePreservesPartialAndUnavailable(t *testing.T) {
 	t.Parallel()
 	report := fromProcessingCoverage(processing.Coverage{PageCoverage: "partial", PageCoverageUnavailable: true})
 	assert.Equal(t, "partial", report.PageCoverage)
