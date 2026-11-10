@@ -266,16 +266,14 @@ func formatByID(t *testing.T, record document.FormatCoverageV1, id string) docum
 }
 
 func TestComputeQualifiesBuiltInPDFText(t *testing.T) {
-	t.Run("qualified PDF text", func(t *testing.T) {
-		provider, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 500 << 20, MaxPages: 5_000})
-		require.NoError(t, err)
-		sources := DefaultSources()
-		sources.ExtractorID = "synthetic-extractor/v1"
-		sources.BoundProviders = []document.RenditionDescriptor{provider.Descriptor()}
-		record, err := Compute(sources)
-		require.NoError(t, err)
-		state := formatByID(t, record, "pdf").Capabilities[document.CapabilityText]
-		require.Equal(t, document.CapabilityQualified, state.State)
-		require.Equal(t, provider.Descriptor().Fingerprint, state.ProviderFingerprint)
-	})
+	provider, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 500 << 20, MaxPages: 5_000})
+	require.NoError(t, err)
+	sources := DefaultSources()
+	sources.ExtractorID = "synthetic-extractor/v1"
+	sources.BoundProviders = []document.RenditionDescriptor{provider.Descriptor()}
+	record, err := Compute(sources)
+	require.NoError(t, err)
+	state := formatByID(t, record, "pdf").Capabilities[document.CapabilityText]
+	require.Equal(t, document.CapabilityQualified, state.State)
+	require.Equal(t, provider.Descriptor().Fingerprint, state.ProviderFingerprint)
 }
