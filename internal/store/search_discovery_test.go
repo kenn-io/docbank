@@ -57,29 +57,6 @@ func TestSearchDiscoveryPrecedence(t *testing.T) {
 	}
 }
 
-func TestSearchDiscoveryQuotedPhrase(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	target := discoveryFile(t, s, s.RootID(), "invoice.pdf")
-	for _, tc := range []struct {
-		query, status string
-		found         bool
-	}{
-		{`"invocie"`, "not_run", false},
-		{`"invocie`, "complete", true},
-	} {
-		hits, _, receipt, err := discoverUnbudgeted(t, s, tc.query, 20, SearchOptions{})
-		require.NoError(t, err)
-		require.Equal(t, tc.status, receipt.Status)
-		if tc.found {
-			require.Len(t, hits, 1)
-			require.Equal(t, target.ID, hits[0].Node.ID)
-		} else {
-			require.Empty(t, hits)
-		}
-	}
-}
-
 func TestSearchDiscoverySupplementalAndPaths(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -91,6 +68,15 @@ func TestSearchDiscoverySupplementalAndPaths(t *testing.T) {
 	acme, err := s.Mkdir(ctx, cases.ID, "acme")
 	require.NoError(t, err)
 	target := discoveryFile(t, s, acme.ID, "invoice.pdf")
+	hits, _, receipt, err := discoverUnbudgeted(t, s, `"invocie"`, 20, SearchOptions{})
+	require.NoError(t, err)
+	require.Empty(t, hits)
+	require.Equal(t, "not_run", receipt.Status)
+	hits, _, receipt, err = discoverUnbudgeted(t, s, `"invocie`, 20, SearchOptions{})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, target.ID, hits[0].Node.ID)
+	require.Equal(t, "complete", receipt.Status)
 	for _, query := range []string{"invocie", "cases/acme/invocie", "caess/acme/invoice"} {
 		hits, tr, r, err := discoverUnbudgeted(t, s, query, 20, SearchOptions{})
 		require.NoError(t, err)

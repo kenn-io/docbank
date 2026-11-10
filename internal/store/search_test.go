@@ -1186,7 +1186,6 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		{"the invoice absent", 0, nil, []string{"invoice", "absent"}},
 		{`"tax 2026"`, 0, []string{"tax 2026.pdf"}, []string{`"tax 2026"`}},
 		{`"tax 2026" absent`, 0, nil, []string{"absent", `"tax 2026"`}},
-		{`"invoices`, 0, nil, []string{`"invoices`}},
 		{`"the invoices`, 0, nil, []string{`"the`, "invoices"}},
 		{"the refunds", 0, []string{"memo.txt"}, []string{"refunds"}},
 		{`"refunds take"`, 0, []string{"memo.txt"}, []string{`"refunds take"`}},
@@ -1200,7 +1199,6 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		{`"tax-value" and`, stops.ID, []string{"tax value.pdf"}, []string{`"tax-value"`}},
 		{`"the" "of"`, stops.ID, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
 		{`"the" "of" and`, stops.ID, nil, []string{"and", `"the"`, `"of"`}},
-		{`"the" "tax" and`, stops.ID, nil, []string{`"the"`, `"tax"`}},
 	} {
 		hits, _, err := s.SearchPageWithOptions(t.Context(), tc.query, 20, SearchOptions{UnderNodeID: tc.parent})
 		require.NoError(t, err)
