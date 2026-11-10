@@ -838,6 +838,41 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, c.Validate())
 }
 
+func TestWatchDefaultExcludes(t *testing.T) {
+	defaults := []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"}
+	for _, tc := range []struct {
+		name, setting string
+		flag          *bool
+	}{
+		{"unset", "", nil},
+		{"enabled", "default_excludes = true\n", new(true)},
+		{"disabled", "default_excludes = false\n", new(false)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			body := "[[watch]]\nname = 'inbox'\nsource = '" + filepath.ToSlash(t.TempDir()) + "'\ndestination = '/inbox'\n" + tc.setting + "exclude_patterns = ['*.swp']\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600))
+			cfg, err := Load(dir)
+			require.NoError(t, err)
+			require.Len(t, cfg.Watches, 1)
+			watch := cfg.Watches[0]
+			assert.Equal(t, tc.flag, watch.DefaultExcludes)
+			want := []string{"*.swp"}
+			if tc.flag == nil || *tc.flag {
+				want = append(append([]string{}, defaults...), want...)
+			}
+			assert.Equal(t, want, watch.EffectiveExcludePatterns())
+			assert.Equal(t, []string{"*.swp"}, watch.ExcludePatterns)
+			watch.ExcludePatterns = nil
+			if tc.flag == nil || *tc.flag {
+				assert.Equal(t, defaults, watch.EffectiveExcludePatterns())
+			} else {
+				assert.Empty(t, watch.EffectiveExcludePatterns())
+			}
+		})
+	}
+}
+
 func TestWatchedInboxConfigRejectsAmbiguousOrUnsafeValues(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	source := filepath.ToSlash(t.TempDir())
