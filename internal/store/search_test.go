@@ -1165,7 +1165,7 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		parent int64
 		names  []string
 	}{
-		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "cash.pdf"}},
+		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf", "cash.pdf"}},
 		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "the of.pdf"}},
 	} {
 		for _, name := range group.names {
@@ -1218,6 +1218,15 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		names = append(names, hit.Node.Name)
 	}
 	require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf"}, names)
+	for _, query := range []string{"case cases", "cases case"} {
+		hits, _, err := s.SearchPage(t.Context(), query, 20)
+		require.NoError(t, err)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf"}, names, query)
+	}
 }
 
 func TestSearchSurvivesOperatorInput(t *testing.T) {

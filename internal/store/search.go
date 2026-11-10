@@ -2427,13 +2427,12 @@ func prepareSearch(query string) (string, []string, bool) {
 	if err != nil {
 		return fallback()
 	}
+	wordless := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r) }
 	// A phrase of stop words alone does not make unquoted stop words optional.
 	if len(natural.Phrases) > 0 && len(natural.Words) == 0 {
 		onlyStopWords := true
 		for _, phrase := range natural.Phrases {
-			words := strings.FieldsFunc(strings.ToLower(phrase), func(r rune) bool {
-				return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r)
-			})
+			words := strings.FieldsFunc(strings.ToLower(phrase), wordless)
 			for _, word := range words {
 				if !lexical.IsStopWord(word) {
 					onlyStopWords = false
@@ -2452,12 +2451,13 @@ func prepareSearch(query string) (string, []string, bool) {
 		}
 	}
 	var groups, terms []string
+	typed := strings.Fields(strings.ReplaceAll(strings.ToLower(quotes), `"`, " "))
 	for _, word := range natural.Words {
 		var forms []string
 		for _, form := range word.Forms {
 			literal, _ := analyzer.PreparePhrase(form)
 			match := literal.Match
-			if form == word.Text {
+			if slices.ContainsFunc(typed, func(t string) bool { return strings.TrimFunc(t, wordless) == form }) {
 				match += "*"
 			}
 			forms = append(forms, match)
