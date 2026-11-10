@@ -661,10 +661,9 @@ committed records and removes unfinished document entries as described in the
 
 ## Process a version and read its text
 
-Processing extracts a document's text and stores it. With a configured
-embedding service, it also prepares the document for search by meaning.
-Configure a [processing profile](../configuration.md) first. A new vault has
-none.
+A PDF's text layer appears in the Text tab without setup. For other formats,
+configure a [processing profile](../configuration.md) to extract and store text.
+With a configured embedding service, processing also prepares documents for search by meaning.
 
 1. Select a document and choose **Extract text** beside its name. This action appears when a configured profile includes text extraction. The processing dialog checks which profiles accept the file. Profiles that only prepare search vectors show **Index for search** instead.
 2. Read where the file goes. A local profile says it runs on this computer;

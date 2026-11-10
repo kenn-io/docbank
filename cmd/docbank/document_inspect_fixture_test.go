@@ -111,6 +111,6 @@ func assertNoProcessingJobs(t *testing.T, root, message string) {
 	defer func() { require.NoError(t, db.Close()) }()
 	var jobs int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
-		(SELECT COUNT(*) FROM rendition_jobs) + (SELECT COUNT(*) FROM embedding_jobs)`).Scan(&jobs))
+		(SELECT COUNT(*) FROM rendition_jobs WHERE json_extract(execution_identity_json, '$.authorization.provider_id') IS NOT ?) + (SELECT COUNT(*) FROM embedding_jobs)`, document.PDFTextProviderID).Scan(&jobs))
 	require.Zero(t, jobs, message)
 }

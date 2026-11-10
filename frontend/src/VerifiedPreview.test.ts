@@ -266,7 +266,7 @@ it("keeps unsupported content on the verified-download fallback without a previe
 it("loads one exact rendition only while Text is active and keeps hostile markup inert", async () => {
   const original = new TextEncoder().encode("%PDF synthetic");
   const selected = source(original, "55555555-5555-4555-8555-555555555555", "application/pdf");
-  const markdown = "Alpha 😀 <script>alert('blocked')</script> alpha";
+  const markdown = "Alpha 😀 <script>alert('blocked')</script> alpha\n\nPage 2: distinctivequartz";
   const envelope = {
     docbank: {
       contract: "docbank-sanitized-markdown/v1",
@@ -280,7 +280,7 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
         completeness: "complete",
         truncated: false,
       },
-      document: { unit_kind: "page", unit_count: 1 },
+      document: { unit_kind: "page", unit_count: 2 },
       navigation: {
         offset_base: "body",
         complete: true,
@@ -312,7 +312,11 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
             size: selected.size,
             media_type: selected.mimeType,
           },
-          profile: { name: "archive", configuration: "configured", fingerprint: authority.profile },
+          profile: {
+            name: "docbank-pdf-text",
+            configuration: "configured",
+            fingerprint: authority.profile,
+          },
           generation_id: authority.generation,
           attachment_id: authority.attachment,
           build_id: authority.build,
@@ -346,7 +350,6 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
     session: "session",
     source: selected,
     authorizationRevision: 8,
-    profileName: "archive",
     observed: {
       configuration: "configured" as const,
       profileFingerprint: authority.profile,
@@ -366,6 +369,7 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(fetchMock).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
+  expect(screen.getByText(/Page 2: distinctivequartz/)).toBeTruthy();
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
   expect(fetchMock).toHaveBeenCalledTimes(3);

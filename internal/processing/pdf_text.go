@@ -148,7 +148,10 @@ func (r *PDFTextRunner) process(ctx context.Context, item store.DocumentSummary)
 			_, _, err = s.enqueueRendition(ctx, node, version, p, s.renditionConsentRequest(p), "", false)
 		}
 	}
-	if errors.Is(err, ErrSourceIneligible) || errors.Is(err, ErrPDFPasswordRequired) || errors.Is(err, ErrPlanChanged) || errors.Is(err, store.ErrRenditionJobStaleAuthority) || errors.Is(err, ErrRenditionFailed) || errors.Is(err, ErrRenditionOperatorRequired) || errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired) || errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrRenditionJobStaleAuthority) {
+		return nil
+	}
+	if errors.Is(err, ErrSourceIneligible) || errors.Is(err, ErrPDFPasswordRequired) || errors.Is(err, ErrPlanChanged) || errors.Is(err, ErrRenditionFailed) || errors.Is(err, ErrRenditionOperatorRequired) || errors.Is(err, ErrConsentRequired) || errors.Is(err, store.ErrProcessingConsentRevoked) || errors.Is(err, store.ErrProcessingConsentExpired) || errors.Is(err, store.ErrNotFound) {
 		r.mu.Lock()
 		if r.skips == nil {
 			r.skips = make(map[string]bool)

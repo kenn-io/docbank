@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 	"uuid"
@@ -289,15 +293,31 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			daemon := daemonconn.New("http://"+runtime.Address, runtime.Metadata["api_key"])
 			defer func() { require.NoError(t, daemon.Close()) }()
 			require.NoError(t, os.WriteFile(path, data, 0600))
+			var deadline context.Context
 			if !test.existing {
 				settleDaemon(t)
+				var cancel context.CancelFunc
+				deadline, cancel = context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
 				_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
 				require.NoError(t, err)
 			}
-			settleDaemon(t)
+			if test.existing {
+				settleDaemon(t)
+			} else {
+				value, ok := testDaemons.Load(home)
+				require.True(t, ok)
+				daemon, ok := value.(serveReady)
+				require.True(t, ok)
+				require.NoError(t, daemon.jobs.Settle(deadline))
+			}
 			out, err := runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
 			require.NoError(t, err)
 			require.Contains(t, out, "/pdfs/source.pdf")
+			if deadline != nil {
+				require.NoError(t, deadline.Err(), "import and search exceeded ten seconds")
+			}
+			requireJob(t, daemonJobs(t), "text:pdf")
 			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/source.pdf"}})
 			require.NoError(t, err)
 			coverage, err := runCLI(t, "processing", "coverage", node.CurrentVersionID, "--profile", processing.PDFTextProfileName, "--json")
@@ -314,10 +334,28 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, apiclient.Ready, explicit.State)
 				require.Equal(t, processing.PDFTextProfileName, explicit.Profile.Name)
+				resolved = explicit
 			} else {
 				require.Equal(t, apiclient.Ready, resolved.State)
 				require.Equal(t, processing.PDFTextProfileName, resolved.Profile.Name)
 			}
+			require.NotNil(t, resolved.Artifact)
+			params := url.Values{
+				"node_id": {strconv.FormatInt(node.ID, 10)}, "revision": {strconv.FormatInt(node.Revision, 10)},
+				"version_id": {node.CurrentVersionID}, "blob_hash": {node.BlobHash}, "size": {strconv.FormatInt(node.Size, 10)},
+				"profile_fingerprint": {resolved.Profile.Fingerprint}, "generation_id": {resolved.GenerationID},
+				"attachment_id": {resolved.AttachmentID}, "build_id": {resolved.BuildID}, "artifact_id": {resolved.Artifact.ID},
+			}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+runtime.Address+"/api/v1/renditions/text/content?"+params.Encode(), nil)
+			require.NoError(t, err)
+			req.Header.Set("X-Api-Key", runtime.Metadata["api_key"])
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+			require.Contains(t, string(body), "distinctivequartz")
 		})
 	}
 }

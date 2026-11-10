@@ -186,6 +186,26 @@ func TestPDFTextInitializePreservesRevokedConsent(t *testing.T) {
 	require.False(t, active)
 }
 
+func TestPDFTextDiscoversRestoredSourceInSameRun(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewPDFTextProfile()
+	require.NoError(t, err)
+	service := newPDFTextService(t, fixture, profile)
+	runner := &PDFTextRunner{Service: service}
+	require.NoError(t, runner.Initialize(t.Context()))
+	node := replacePDFSource(t, fixture, mediatest.PDFTextPages([]string{"searchable"}, false))
+	trashed, _, err := fixture.catalog.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	require.NoError(t, runner.process(t.Context(), store.DocumentSummary{NodeID: node.ID, ContentVersionID: node.CurrentVersionID}))
+	_, _, err = fixture.catalog.Restore(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	items, err := runner.targets(t.Context(), "", 50)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, node.CurrentVersionID, items[0].ContentVersionID)
+}
+
 func TestPDFTextDiscoverySkipsRefusedVersionsAcrossPages(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
