@@ -47,7 +47,7 @@ func (s *Store) ContentReferencesByHash(
 	where := "v.blob_hash = ?"
 	args := []any{hash}
 	if filter.LiveCurrent {
-		where += " AND n.kind = 'file' AND n.trashed_at IS NULL AND v.version_id = n.current_version_id"
+		where += " AND EXISTS (SELECT 1 FROM current_content_members m WHERE m.node_id = v.node_id AND m.version_id = v.version_id)"
 	}
 	if filter.Size != nil {
 		where += " AND v.size = ?"
@@ -59,7 +59,7 @@ func (s *Store) ContentReferencesByHash(
 	// trash-empty is observed entirely before or after the mutation. Select the
 	// page before loading full metadata, checksums, and live paths.
 	rows, err := s.db.QueryContext(ctx, `
-		WITH RECURSIVE matching AS (
+		WITH RECURSIVE `+CurrentContentMembershipCTE+`, matching AS (
 			SELECT v.version_id, v.node_id, v.node_revision,
 			       n.trashed_at IS NOT NULL AS trashed_sort,
 			       v.version_id != n.current_version_id AS historical_sort

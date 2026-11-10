@@ -435,6 +435,13 @@ an empty page. MCP agents can use `find_documents_by_hash` with `sha256` and
 optional `size` for the same lookup. Omit `live_current` to inspect all retained
 references, including earlier versions and trash.
 
+MCP pages can shorten to fit the response limit. Pass `next_offset` as the
+nonnegative `offset` to continue. An oversized single match has
+`metadata_truncated=true` and a bare media type; its media type or path can be
+empty to fit. Use HTTP `getNode` with the returned node ID for full current path
+metadata and `getContentVersion` with the version ID for the full immutable
+media type.
+
 ### Open an exact version in the browser
 
 Link to the authenticated web application's root origin with a node ID and

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -1086,12 +1087,13 @@ type findDocumentsByHashInput struct {
 }
 
 type documentByHashOutput struct {
-	NodeID           int64  `json:"node_id"`
-	ContentVersionID string `json:"content_version_id"`
-	Path             string `json:"path"`
-	Size             int64  `json:"size"`
-	MediaType        string `json:"media_type"`
-	BlobHash         string `json:"blob_hash"`
+	NodeID            int64  `json:"node_id"`
+	ContentVersionID  string `json:"content_version_id"`
+	Path              string `json:"path"`
+	Size              int64  `json:"size"`
+	MediaType         string `json:"media_type"`
+	BlobHash          string `json:"blob_hash"`
+	MetadataTruncated bool   `json:"metadata_truncated,omitzero"`
 }
 
 type findDocumentsByHashOutput struct {
@@ -1125,25 +1127,36 @@ func findDocumentsByHash(ctx context.Context, lease *daemonLease, raw []byte) (f
 		out.Items[i] = documentByHashOutput{NodeID: ref.Node.ID, ContentVersionID: ref.Version.ID,
 			Path: ref.Path, Size: ref.Version.Size, MediaType: ref.Version.MimeType, BlobHash: ref.Version.BlobHash}
 	}
-	// Paths and media types can make a row-count-bounded page exceed the
-	// complete MCP envelope, which contains two copies of the output.
-	const envelopeBudget = maxToolResponseBytes - 8<<10
-	for {
+	updateNext := func() {
 		out.NextOffset = nil
 		if next := out.Offset + len(out.Items); next < out.Total {
 			out.NextOffset = &next
 		}
-		envelope, err := toolEnvelopeBytes(out, nil)
-		if err != nil {
-			return findDocumentsByHashOutput{}, err
-		}
-		if envelope <= envelopeBudget {
-			return out, nil
-		}
-		if len(out.Items) <= 1 {
-			return findDocumentsByHashOutput{}, errToolResultTooLarge
-		}
-		end := max(1, min(len(out.Items)-1, len(out.Items)*envelopeBudget/envelope))
-		out.Items = out.Items[:end]
 	}
+	updateNext()
+	err = fitToolPage(&out, func() int { return len(out.Items) }, func(end int) {
+		out.Items = out.Items[:end]
+		updateNext()
+	})
+	if errors.Is(err, errToolResultTooLarge) && len(out.Items) == 1 {
+		item := &out.Items[0]
+		item.MetadataTruncated = true
+		item.MediaType = strings.TrimSpace(strings.SplitN(item.MediaType, ";", 2)[0])
+		err = fitToolPage(&out, func() int { return len(out.Items) }, func(int) {})
+		if errors.Is(err, errToolResultTooLarge) {
+			bareType := item.MediaType
+			item.MediaType = ""
+			err = fitToolPage(&out, func() int { return len(out.Items) }, func(int) {})
+			if errors.Is(err, errToolResultTooLarge) {
+				item.MediaType = bareType
+				item.Path = ""
+				err = fitToolPage(&out, func() int { return len(out.Items) }, func(int) {})
+				if errors.Is(err, errToolResultTooLarge) {
+					item.MediaType = ""
+					err = fitToolPage(&out, func() int { return len(out.Items) }, func(int) {})
+				}
+			}
+		}
+	}
+	return out, err
 }

@@ -438,6 +438,7 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 
 	find := tools["find_documents_by_hash"]
 	assertSchemaAccepts(t, find.InputSchema, map[string]any{"sha256": strings.Repeat("a", 64), "size": 0})
+	assertSchemaAccepts(t, find.InputSchema, map[string]any{"sha256": strings.Repeat("a", 64), "offset": 1_000_001})
 	for _, args := range []map[string]any{
 		{"sha256": "ABC"},
 		{"sha256": strings.Repeat("a", 64), "size": -1},

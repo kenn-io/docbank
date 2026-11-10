@@ -5,11 +5,125 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestMCPFindDocumentsByHashOversizedMetadata(t *testing.T) {
+	f := newNativeExportFixture(t)
+	content := "synthetic oversized metadata"
+	sum := sha256.Sum256([]byte(content))
+	hash := hex.EncodeToString(sum[:])
+	mediaType := "text/plain; title=" + strings.Repeat("a", 540000)
+	receipt, err := f.connection.Upload(t.Context(), f.catalog.RootID(), "large.txt", mediaType, hash, int64(len(content)), strings.NewReader(content))
+	require.NoError(t, err)
+	other := f.addFile(t, "other.txt", content)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
+	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+		"name": "find_documents_by_hash", "arguments": map[string]any{"sha256": hash},
+	})))
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(encoded), maxToolResponseBytes)
+	out := objectField(t, result, "structuredContent")
+	require.EqualValues(t, 2, out["total"])
+	items, ok := out["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, receipt.Node.ID, item["node_id"])
+	require.Equal(t, receipt.Node.CurrentVersionID, item["content_version_id"])
+	require.Equal(t, "/large.txt", item["path"])
+	require.Equal(t, "text/plain", item["media_type"])
+	require.Equal(t, true, item["metadata_truncated"])
+	require.Equal(t, hash, item["blob_hash"])
+	require.EqualValues(t, len(content), item["size"])
+	next := out["next_offset"]
+	require.EqualValues(t, 1, next)
+	second := exportCall(t, server, "find_documents_by_hash", map[string]any{"sha256": hash, "offset": next})
+	secondItems, ok := second["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, secondItems, 1)
+	secondItem, ok := secondItems[0].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, other.NodeID, secondItem["node_id"])
+	node, err := f.connection.API().GetNode(t.Context(), &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: receipt.Node.ID}})
+	require.NoError(t, err)
+	require.Equal(t, "large.txt", node.Name)
+	version, err := f.connection.API().GetContentVersion(t.Context(), &apiclient.GetContentVersionRequestOptions{PathParams: &apiclient.GetContentVersionPath{VersionID: receipt.Node.CurrentVersionID}})
+	require.NoError(t, err)
+	require.Equal(t, mediaType, version.MimeType)
+}
+
+func TestMCPFindDocumentsByHashOversizedBareMediaType(t *testing.T) {
+	f := newNativeExportFixture(t)
+	content := "synthetic large media subtype"
+	sum := sha256.Sum256([]byte(content))
+	hash := hex.EncodeToString(sum[:])
+	receipt, err := f.connection.Upload(t.Context(), f.catalog.RootID(), "large-type.txt", "application/"+strings.Repeat("a", 540000), hash, int64(len(content)), strings.NewReader(content))
+	require.NoError(t, err)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
+	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+		"name": "find_documents_by_hash", "arguments": map[string]any{"sha256": hash},
+	})))
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(encoded), maxToolResponseBytes)
+	items, ok := objectField(t, result, "structuredContent")["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, receipt.Node.ID, item["node_id"])
+	require.Equal(t, "/large-type.txt", item["path"])
+	require.Empty(t, item["media_type"])
+	require.Equal(t, true, item["metadata_truncated"])
+}
+
+func TestMCPFindDocumentsByHashLargeContinuation(t *testing.T) {
+	f := newNativeExportFixture(t)
+	file := f.addFile(t, "one.txt", "synthetic continuation")
+	page, err := f.connection.ContentReferences(t.Context(), file.SHA256, 1, 0, store.ContentReferenceOptions{LiveCurrent: true})
+	require.NoError(t, err)
+	var offsets []int
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/content-references", r.URL.Path)
+		assert.Equal(t, file.SHA256, r.URL.Query().Get("sha256"))
+		assert.Equal(t, "true", r.URL.Query().Get("live_current"))
+		assert.Equal(t, strconv.FormatInt(file.Size, 10), r.URL.Query().Get("size"))
+		assert.Equal(t, "1", r.URL.Query().Get("limit"))
+		offset, err := strconv.Atoi(r.URL.Query().Get("offset"))
+		if !assert.NoError(t, err) {
+			return
+		}
+		offsets = append(offsets, offset)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.ContentReferencePage{Items: page.Items, Total: 1000002, Limit: 1, Offset: offset}))
+	}))
+	t.Cleanup(daemon.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+	first := exportCall(t, server, "find_documents_by_hash", map[string]any{"sha256": file.SHA256, "size": file.Size, "offset": 1000000, "limit": 1})
+	require.EqualValues(t, 1000001, first["next_offset"])
+	last := exportCall(t, server, "find_documents_by_hash", map[string]any{"sha256": file.SHA256, "size": file.Size, "offset": first["next_offset"], "limit": 1})
+	items, ok := last["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, file.NodeID, item["node_id"])
+	require.NotContains(t, last, "next_offset")
+	require.Equal(t, []int{1000000, 1000001}, offsets)
+}
 
 func TestMCPFindDocumentsByHash(t *testing.T) {
 	f := newNativeExportFixture(t)
