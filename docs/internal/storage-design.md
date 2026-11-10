@@ -273,7 +273,9 @@ filter regular files only, so a directory remains traversable when a descendant
 may match. Preflight stops at filesystem metadata: it never opens a regular
 file, hydrates cloud content, creates a destination, records an ingest, or
 writes a blob. Watched inboxes combine literal `exclude` entries with
-`exclude_patterns` compiled and matched by the shared source-selection code. The
+`exclude_patterns` compiled and matched by the shared source-selection code. Watch
+status reports the effective `exclude_patterns` list, including the default
+patterns unless `default_excludes = false`. The
 report therefore predicts selection and size-policy outcomes, not future
 readability. Detailed findings and extension groups are bounded while their
 aggregate counts remain complete, preventing an adversarial tree from creating
