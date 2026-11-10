@@ -46,12 +46,12 @@ Prints a continuation command when more text remains.`,
 		options.version = uuid.Nil()
 		if version != "" || cmd.Flags().Changed("version") {
 			if !daemonconn.IsCanonicalUUIDv4(version) {
-				return usageError(errors.New("version must be a canonical lowercase UUIDv4"))
+				return usageError(errors.New(`version must be a canonical lowercase UUIDv4; omit --version to use the current version or get current_version_id from "docbank document stat <path-or-id> --json"`))
 			}
 		}
 		if options.profile != "" || cmd.Flags().Changed("profile") {
-			if len(options.profile) > 128 || !inspectionProfilePattern.MatchString(options.profile) {
-				return usageError(errors.New("--profile must match [a-z][a-z0-9_-]* (1–128 characters)"))
+			if err := validateInspectionProfile(options.profile); err != nil {
+				return err
 			}
 		}
 		if cmd.Flags().Changed("attachment") && options.profile == "" {
@@ -204,7 +204,7 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 		}
 	}
 	if len(names) == 0 {
-		return "", api.DocumentRenditionIdentity{}, fmt.Errorf("no readable rendition (text is empty or not retained): %w", store.ErrNotFound)
+		return "", api.DocumentRenditionIdentity{}, fmt.Errorf("no readable rendition is currently available for this version: %w", store.ErrNotFound)
 	}
 	if len(names) > 1 {
 		sort.Strings(names)

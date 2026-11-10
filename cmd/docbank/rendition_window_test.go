@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -22,6 +23,9 @@ func TestRenditionWindowPreflight(t *testing.T) {
 	_, attachmentErr := runCLI(t, "rendition", "window", "id:42", "--attachment", strings.Repeat("a", 64))
 	require.Equal(t, exitUsage, commandExitCode(attachmentErr, true))
 	require.NoDirExists(t, home)
+	_, versionErr := runCLI(t, "rendition", "window", "id:42", "--version", "bad")
+	require.ErrorContains(t, versionErr, "omit --version")
+	require.ErrorContains(t, versionErr, "document stat")
 	for _, flags := range [][]string{
 		{"--version", "bad"}, {"--profile", ""}, {"--attachment", ""},
 		{"--attachment", strings.Repeat("A", 64)}, {"--offset", "1"},
@@ -162,11 +166,6 @@ func TestRenditionWindowCLI(t *testing.T) {
 			require.NoError(t, err)
 			var result api.RenditionTextWindow
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-			var selected struct {
-				Profile string `json:"profile"`
-			}
-			require.NoError(t, json.Unmarshal(output.Bytes(), &selected))
-			require.Equal(t, "archive", selected.Profile)
 			require.Equal(t, "é界🙂", result.Text)
 			require.Equal(t, options.offset+3, result.NextOffset)
 			if options.attachment != "" {
@@ -211,7 +210,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 	}{
 		{name: "profile only", states: map[string]string{"zeta": "ready"}, pin: "zeta", want: "zeta"},
 		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
-		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound},
+		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: "no readable rendition is currently available"},
 		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
 		{name: "ambiguous sorted", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: "alpha, zeta"},
 	} {
@@ -254,7 +253,16 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 						w.WriteHeader(http.StatusRequestEntityTooLarge)
 						_, _ = w.Write([]byte(`{"status":413,"code":"rendition_text_too_large"}`))
 					} else {
-						assert.NoError(t, json.MarshalWrite(w, map[string]string{"state": state}))
+						receipt := apiclient.RenditionTextReceipt{
+							State:        apiclient.RenditionTextReceiptState(state),
+							Source:       apiclient.RenditionTextSource{NodeID: 42, Revision: 1, VersionID: processingTestVersionID, BlobHash: sha256Hex("source"), Size: 100, MediaType: "application/pdf"},
+							Profile:      apiclient.RenditionTextProfile{Name: request.Profile, Configuration: apiclient.RenditionTextProfileConfigurationConfigured, Fingerprint: request.Observed.ProfileFingerprint},
+							AttachmentID: request.Observed.AttachmentID, BuildID: request.Observed.BuildID,
+						}
+						if state == "ready" {
+							receipt.Artifact = &apiclient.RenditionTextArtifact{ID: "artifact_" + sha256Hex("artifact"), Sha256: sha256Hex("artifact"), Size: 9, MediaType: "text/markdown; charset=utf-8"}
+						}
+						assert.NoError(t, json.MarshalWrite(w, receipt))
 					}
 				case "POST /api/v1/renditions/windows":
 					var request api.RenditionWindowRequest

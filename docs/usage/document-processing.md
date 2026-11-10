@@ -753,7 +753,13 @@ version without starting processing:
 ```bash
 docbank document stat /inbox/notes.txt --json
 docbank processing coverage <version-uuid> --profile <name> --json
-docbank rendition window /inbox/notes.txt
+docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
+```
+
+For an indexed PDF with one readable profile, omit the version and profile:
+
+```bash
+docbank rendition window /inbox/report.pdf
 ```
 
 Coverage and explicit window selections require a profile listed by `docbank processing profiles --json`.
