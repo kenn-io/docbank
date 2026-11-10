@@ -1182,6 +1182,37 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 	}
 }
 
+func TestSearchStopWordsBesidePhrase(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, name := range []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "the of.pdf"} {
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "application/pdf")
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+		terms []string
+	}{
+		{`"the" and`, []string{"the and.pdf"}, []string{"and", `"the"`}},
+		{`"the" and absent`, nil, []string{"absent", `"the"`}},
+		{`"tax" and`, []string{"tax.pdf"}, []string{`"tax"`}},
+		{`"of to" and`, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
+		{`"the" "of"`, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
+		{`"the" "of" and`, nil, []string{"and", `"the"`, `"of"`}},
+		{`"the" "tax" and`, nil, []string{`"the"`, `"tax"`}},
+	} {
+		hits, _, err := s.SearchPage(t.Context(), tc.query, 20)
+		require.NoError(t, err)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.Equal(t, tc.want, names, tc.query)
+		require.Equal(t, tc.terms, SearchRequiredTerms(tc.query), tc.query)
+	}
+}
+
 func TestSearchSurvivesOperatorInput(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -200,4 +200,7 @@ func TestEmptySearchHintsPreparedTerms(t *testing.T) {
 	hints := emptySearchHints("the invoice absent", api.SearchTextCoverage{}, true, false, false)
 	require.Len(t, hints, 1)
 	require.Contains(t, hints[0].Message, "invoice, absent")
+	hints = emptySearchHints(`"the" and`, api.SearchTextCoverage{}, true, false, false)
+	require.Len(t, hints, 1)
+	require.Contains(t, hints[0].Message, `and, "the"`)
 }

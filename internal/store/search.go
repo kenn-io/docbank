@@ -2426,6 +2426,28 @@ func prepareSearch(query string) (string, []string, bool) {
 	if err != nil {
 		return fallback()
 	}
+	// A phrase of stop words alone does not make unquoted stop words optional.
+	if len(natural.Phrases) > 0 && len(natural.Words) == 0 {
+		onlyStopWords := true
+		for _, phrase := range natural.Phrases {
+			prepared, _ := analyzer.PrepareNatural(phrase)
+			for _, word := range prepared.Words {
+				if !lexical.IsStopWord(word.Text) {
+					onlyStopWords = false
+				}
+			}
+		}
+		if onlyStopWords {
+			var unquoted []string
+			for i, part := range strings.Split(quotes, `"`) {
+				if i%2 == 0 {
+					unquoted = append(unquoted, part)
+				}
+			}
+			prepared, _ := analyzer.PrepareNatural(strings.Join(unquoted, " "))
+			natural.Words = prepared.Words
+		}
+	}
 	var groups, terms []string
 	for _, word := range natural.Words {
 		var forms []string
