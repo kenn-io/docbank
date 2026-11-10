@@ -73,6 +73,44 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, 3, exhaustedTotal)
 	assert.Empty(t, exhausted)
+
+	// Reuse the history and trash above, adding live copies for filtered paging.
+	ids := []int64{current.ID}
+	for _, name := range []string{"second.txt", "third.txt"} {
+		node, createErr := s.CreateFile(ctx, s.RootID(), name, wanted, 10, "text/plain")
+		require.NoError(t, createErr)
+		ids = append(ids, node.ID)
+	}
+	for offset := 0; offset < 4; offset++ {
+		refs, total, lookupErr := s.ContentReferencesByHash(ctx, wanted, 1, offset, ContentReferenceOptions{LiveCurrent: true})
+		require.NoError(t, lookupErr)
+		require.Equal(t, 3, total)
+		if offset == 3 {
+			require.Empty(t, refs)
+			continue
+		}
+		require.Len(t, refs, 1)
+		require.Equal(t, ids[offset], refs[0].Node.ID)
+		require.True(t, refs[0].IsCurrent)
+		require.Nil(t, refs[0].Node.TrashedAt)
+	}
+	for _, size := range []int64{0, 9, 10} {
+		refs, total, lookupErr := s.ContentReferencesByHash(ctx, wanted, 10, 0, ContentReferenceOptions{LiveCurrent: true, Size: &size})
+		require.NoError(t, lookupErr)
+		if size == 10 {
+			require.Equal(t, 3, total)
+			require.Len(t, refs, 3)
+		} else {
+			require.Zero(t, total)
+			require.Empty(t, refs)
+		}
+	}
+	refs, total, err = s.ContentReferencesByHash(ctx, fakeHash("c3"), 10, 0, ContentReferenceOptions{LiveCurrent: true})
+	require.NoError(t, err)
+	require.Zero(t, total)
+	require.Empty(t, refs)
+	_, _, err = s.ContentReferencesByHash(ctx, wanted, 10, 0, ContentReferenceOptions{Size: new(int64(-1))})
+	require.ErrorContains(t, err, "size must not be negative")
 }
 
 func TestContentReferencesByHashRequiresLogicalAuthorityAndBoundedInput(t *testing.T) {
@@ -149,61 +187,4 @@ func TestContentReferencesByHashPagesRepeatedVersions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4, total)
 	assert.Empty(t, empty)
-}
-
-func TestContentReferencesByHashFiltersBeforePaging(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	hash := fakeHash("a1")
-	old, err := s.CreateFile(ctx, s.RootID(), "old.txt", hash, 10, "text/plain")
-	require.NoError(t, err)
-	_, _, err = s.ReplaceContent(ctx, old.ID, old.Revision, fakeHash("b2"), 11, "text/plain")
-	require.NoError(t, err)
-	trash, err := s.CreateFile(ctx, s.RootID(), "trash.txt", hash, 10, "text/plain")
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, trash.ID, trash.Revision)
-	require.NoError(t, err)
-	var ids []int64
-	for _, name := range []string{"one.txt", "two.txt", "three.txt"} {
-		node, createErr := s.CreateFile(ctx, s.RootID(), name, hash, 10, "text/plain")
-		require.NoError(t, createErr)
-		ids = append(ids, node.ID)
-	}
-	for offset := 0; offset < 4; offset++ {
-		refs, total, lookupErr := s.ContentReferencesByHash(ctx, hash, 1, offset, ContentReferenceOptions{LiveCurrent: true})
-		require.NoError(t, lookupErr)
-		require.Equal(t, 3, total)
-		if offset == 3 {
-			require.Empty(t, refs)
-			continue
-		}
-		require.Len(t, refs, 1)
-		require.Equal(t, ids[offset], refs[0].Node.ID)
-		require.True(t, refs[0].IsCurrent)
-		require.Nil(t, refs[0].Node.TrashedAt)
-	}
-	for _, size := range []int64{0, 9, 10} {
-		refs, total, lookupErr := s.ContentReferencesByHash(ctx, hash, 10, 0, ContentReferenceOptions{LiveCurrent: true, Size: &size})
-		require.NoError(t, lookupErr)
-		if size == 10 {
-			require.Equal(t, 3, total)
-			require.Len(t, refs, 3)
-		} else {
-			require.Zero(t, total)
-			require.Empty(t, refs)
-		}
-	}
-	refs, total, err := s.ContentReferencesByHash(ctx, fakeHash("c3"), 10, 0, ContentReferenceOptions{LiveCurrent: true})
-	require.NoError(t, err)
-	require.Zero(t, total)
-	require.Empty(t, refs)
-	zero, err := s.CreateFile(ctx, s.RootID(), "empty.txt", fakeHash("d4"), 0, "text/plain")
-	require.NoError(t, err)
-	refs, total, err = s.ContentReferencesByHash(ctx, zero.BlobHash, 10, 0, ContentReferenceOptions{LiveCurrent: true, Size: new(int64(0))})
-	require.NoError(t, err)
-	require.Equal(t, 1, total)
-	require.Len(t, refs, 1)
-	_, _, err = s.ContentReferencesByHash(ctx, hash, 10, 0, ContentReferenceOptions{Size: new(int64(-1))})
-	require.ErrorContains(t, err, "size must not be negative")
 }

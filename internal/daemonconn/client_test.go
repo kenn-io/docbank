@@ -983,7 +983,12 @@ func TestContentReferencesRejectsInconsistentResponses(t *testing.T) {
 				}
 			}))
 			t.Cleanup(ts.Close)
-			_, err := daemonconn.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0, store.ContentReferenceOptions{LiveCurrent: true, Size: new(int64(3))})
+			options := store.ContentReferenceOptions{}
+			switch name {
+			case "historical row", "trashed row", "size filter":
+				options = store.ContentReferenceOptions{LiveCurrent: true, Size: new(int64(3))}
+			}
+			_, err := daemonconn.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0, options)
 			require.ErrorContains(t, err, "content-reference response")
 		})
 	}
