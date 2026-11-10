@@ -84,6 +84,8 @@ For example, advanced search `brightness_min:0.4 color_blue_min:0.5` selects
 bright, blue-leaning photos, while `unevaluated:true` selects photos with
 missing measurements.
 
+A search with no matches reports `needs_ocr` when PDFs in scope have pages without a text layer. See [OCR](document-processing.md#ocr) for options.
+
 ## How do words match in lexical search?
 
 Each prepared word matches the start of a word, and its regular forms also match. For example, `insur` finds `insurance-renewal.pdf`, and `invoices` finds `invoice`. Common words are dropped when content words remain. Every remaining word and quoted phrase must match in the same name or text segment. Quoted phrases require adjacent words in order.

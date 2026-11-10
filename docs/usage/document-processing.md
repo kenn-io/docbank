@@ -589,6 +589,12 @@ memory use is lower. Opening, reading, staging or cleaning up files, cancellatio
 timeouts, engine failures and output failures exit 1. No success result is printed on validation failure.
 Check the exit status even when output was partially written.
 
+## OCR
+
+Pages without a text layer may be scans or blank pages. OCR can read scanned text. Configure a [Docling profile](../configuration.md#document-conversion-with-docling) or a [Mistral OCR profile](../configuration.md#document-ocr-with-mistral), then use `processing plan` and `processing build` with consent to run it. Neither runs automatically.
+
+Both profiles refuse PDFs containing DCT, JBIG2, or JPX streams during local inspection, including many scans.
+
 ## Convert documents with Docling
 
 Configure a [Docling document rendition profile](../configuration.md#document-conversion-with-docling)

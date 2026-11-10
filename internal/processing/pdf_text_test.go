@@ -22,6 +22,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 	}{
 		{"born", []string{"first page", "distinctivequartz second page"}, true},
 		{"image-only", []string{"", ""}, false},
+		{"mixed", []string{"distinctivequartz", ""}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -54,11 +55,26 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			pending, err = restarted.Pending(t.Context())
 			require.NoError(t, err)
 			require.False(t, pending)
-			if !test.text {
-				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFHasNoTextLayer)
+			if test.name != "born" {
+				pages, err := service.PDFPagesWithoutText(t.Context(), view.Rendition.Build.ID)
+				require.NoError(t, err)
+				if test.text {
+					require.Equal(t, []int{2}, pages)
+				} else {
+					require.Equal(t, []int{1, 2}, pages)
+				}
+				report, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
+				require.NoError(t, err)
+				require.Equal(t, []PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: pages}}, report.PagesWithoutText)
+				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
 				require.NoError(t, err)
 				require.Zero(t, coverage.Pending)
-				require.Equal(t, 1, coverage.NoText)
+				require.Equal(t, 1, coverage.PDFsWithoutText)
+				wantPages := 2
+				if test.text {
+					wantPages = 1
+				}
+				require.Equal(t, wantPages, coverage.PagesWithoutText)
 			}
 		})
 	}

@@ -39,8 +39,9 @@ type ProcessingClassCoverage struct {
 }
 
 type ProcessingCoverageSnapshot struct {
-	Renditions ProcessingClassCoverage
-	Embeddings []ProcessingClassCoverage
+	Renditions      ProcessingClassCoverage
+	Embeddings      []ProcessingClassCoverage
+	RenditionBuilds map[string]string
 }
 
 // ProcessingCoverage evaluates source visibility, retained heads and replacement
@@ -81,7 +82,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
+	rows, err := tx.QueryContext(ctx, `SELECT cv.version_id, COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
@@ -100,14 +101,14 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		buildID, profileFingerprint string
 	}
 	type renditionHead struct {
-		attachmentID string
-		rebuilding   bool
-		key          renditionValidationKey
+		versionID, attachmentID string
+		rebuilding              bool
+		key                     renditionValidationKey
 	}
 	heads := make([]renditionHead, 0, len(opts.ContentVersionIDs))
 	for rows.Next() {
 		var head renditionHead
-		if err := rows.Scan(&head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
+		if err := rows.Scan(&head.versionID, &head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
 		heads = append(heads, head)
@@ -119,6 +120,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	// Shared builds need full validation only once per attachment profile in
 	// this read snapshot. Keep counting each version's state independently.
 	validated := make(map[renditionValidationKey]bool)
+	result.RenditionBuilds = make(map[string]string)
 	for _, head := range heads {
 		complete := validated[head.key]
 		if !complete {
@@ -129,6 +131,9 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			if complete {
 				validated[head.key] = true
 			}
+		}
+		if complete {
+			result.RenditionBuilds[head.versionID] = head.key.buildID
 		}
 		countProcessingCoverage(&result.Renditions, complete, head.rebuilding)
 	}

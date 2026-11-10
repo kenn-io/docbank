@@ -231,12 +231,18 @@ type CoverageClass struct {
 	Total                     int    `json:"total" minimum:"0"`
 }
 
+type PageTextGap struct {
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Pages            []int  `json:"pages"`
+}
+
 type CoverageReport struct {
 	VaultUID           string          `json:"vault_uid" format:"uuid"`
 	ProfileFingerprint string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`
 	State              string          `json:"state"`
 	Renditions         CoverageClass   `json:"renditions"`
 	Embeddings         []CoverageClass `json:"embeddings"`
+	PagesWithoutText   []PageTextGap   `json:"pages_without_text,omitzero"`
 }
 
 type DocumentSearchScope struct {
@@ -931,9 +937,11 @@ type FuzzyReceipt struct {
 
 // SearchTextCoverage reports recoverable gaps in the current search scope.
 type SearchTextCoverage struct {
-	NoText   int      `json:"no_text" minimum:"0"`
-	Families []string `json:"families" enum:"pdf,office,other"`
-	Pending  int      `json:"pending" minimum:"0"`
+	NoText           int      `json:"no_text" minimum:"0"`
+	Families         []string `json:"families" enum:"pdf,office,other"`
+	Pending          int      `json:"pending" minimum:"0"`
+	PDFsWithoutText  int      `json:"pdfs_without_text" minimum:"0"`
+	PagesWithoutText int      `json:"pages_without_text" minimum:"0"`
 }
 
 // SearchReport is one bounded search result page.

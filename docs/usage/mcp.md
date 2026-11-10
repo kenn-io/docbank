@@ -460,6 +460,8 @@ winner.
 
 ### Answer questions
 
+`answer_question` reports `pages_without_text` for PDFs in the resolved scope, including documents absent from search results. Such gaps make coverage incomplete. See [OCR](document-processing.md#ocr) for options.
+
 `answer_question` returns evidence without writing an answer. Content passages require every prepared word and exact quoted phrase in one segment. Common words may be dropped and regular word forms match. Use key terms. `ANSWERED` means
 that a content excerpt matched; it does not verify that the excerpt answers the
 question. Open the source to verify any quotation: excerpts can include omission

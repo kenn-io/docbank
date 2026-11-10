@@ -13,12 +13,14 @@ import (
 // SearchTextCoverage counts files whose missing text can be recovered by
 // processing, and current native-text files still waiting for extraction.
 type SearchTextCoverage struct {
-	NoText   int
-	Families []string
-	Pending  int
+	NoText           int
+	Families         []string
+	Pending          int
+	PDFsWithoutText  int
+	PagesWithoutText int
 }
 
-func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfProfile string, noTextLayer func(context.Context, string) (bool, error)) (out SearchTextCoverage, err error) {
+func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfProfile string, noTextLayer func(context.Context, string) ([]int, error)) (out SearchTextCoverage, err error) {
 	opts, err = s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return out, err
@@ -48,7 +50,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
  JOIN rendition_builds b ON b.build_id=a.build_id
  JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id
  WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=?
- AND b.lexical_segment_count=0 LIMIT 1),'') pdf_evidence,
+ LIMIT 1),'') pdf_evidence,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
 		 EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=cv.blob_hash AND e.status='ok' AND length(trim(e.text))>0) extracted,
@@ -65,8 +67,9 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		}
 		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
 		type evidenceCheck struct {
-			buildID, family string
-			count           int
+			buildID, family  string
+			count            int
+			serving, waiting bool
 		}
 		var checks []evidenceCheck
 		for rows.Next() {
@@ -83,11 +86,12 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 			if err != nil {
 				continue
 			}
-			if mediaType == "application/pdf" && !serving {
-				if waiting {
+			if mediaType == "application/pdf" {
+				if waiting && !serving {
 					out.Pending += count
-				} else if family, ok := formats[mediaType]; ok && !native && pdfEvidence != "" && noTextLayer != nil {
-					checks = append(checks, evidenceCheck{pdfEvidence, family, count})
+				}
+				if family, ok := formats[mediaType]; ok && !native && pdfEvidence != "" && noTextLayer != nil {
+					checks = append(checks, evidenceCheck{pdfEvidence, family, count, serving, waiting})
 				}
 				continue
 			}
@@ -101,9 +105,13 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 			return err
 		}
 		for _, check := range checks {
-			if empty, err := noTextLayer(ctx, check.buildID); err == nil && empty {
-				out.NoText += check.count
-				families[check.family] = true
+			if pages, err := noTextLayer(ctx, check.buildID); err == nil && len(pages) > 0 {
+				out.PDFsWithoutText += check.count
+				out.PagesWithoutText += len(pages) * check.count
+				if !check.serving && !check.waiting {
+					out.NoText += check.count
+					families[check.family] = true
+				}
 			}
 		}
 		return nil

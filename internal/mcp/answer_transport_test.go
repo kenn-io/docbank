@@ -57,8 +57,10 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 	}))
 	profile := newSearchTestEmbeddingProfile(t, f, document.EmbeddingInputOriginalFile, true)
 	name := "local-text"
+	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
+	require.NoError(t, err)
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{name: profile}})
+		SpoolDirectory: t.TempDir(), Profiles: map[string]processing.ProfileConfig{name: profile, pdfName: pdfProfile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
@@ -111,8 +113,10 @@ func TestAnswerQuestionRerankRevokedConsent(t *testing.T) {
 	}
 	profile.RerankingDeadline = time.Second
 	profile.RerankingFailurePolicy = retrieval.ProviderFailureDegrade
+	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
+	require.NoError(t, err)
 	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: api.NewOperationGate(),
-		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile}})
+		SpoolDirectory: filepath.Join(t.TempDir(), "spool"), Profiles: map[string]processing.ProfileConfig{name: profile, pdfName: pdfProfile}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.Background())) })
 	selector := processing.Selector{NodeID: member.NodeID, ContentVersionID: member.VersionID, Profile: name}
@@ -172,6 +176,10 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: len(fence.ContentVersionIDs)})
+				case "/api/v1/coverage":
+					assert.Equal(t, processing.PDFTextProfileName, r.URL.Query().Get("profile"))
+					assert.Equal(t, []string{testVersionID}, r.URL.Query()["content_version_id"])
+					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: tc.name != "no reranking support"}}
 					if tc.local && tc.code == "processing_unavailable" {
@@ -285,6 +293,10 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
+				case "/api/v1/coverage":
+					assert.Equal(t, processing.PDFTextProfileName, r.URL.Query().Get("profile"))
+					assert.Equal(t, []string{testVersionID}, r.URL.Query()["content_version_id"])
+					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					writeDaemonJSON(t, w, profiles)
 				case "/api/v1/search":
