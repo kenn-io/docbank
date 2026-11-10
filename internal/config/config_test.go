@@ -843,40 +843,42 @@ func TestWatchDefaultExcludes(t *testing.T) {
 		name, setting string
 		patterns      []string
 		flag          *bool
+		want          []string
 	}{
-		{"unset", "", []string{"*.swp"}, nil},
-		{"enabled", "default_excludes = true\n", []string{"*.swp"}, new(true)},
-		{"disabled", "default_excludes = false\n", []string{"*.swp"}, new(false)},
-		{"old docs example", "", []string{".syncthing.*.tmp", "*.sync-conflict-*"}, nil},
+		{
+			name: "unset",
+			want: []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"},
+		},
+		{
+			name: "enabled", setting: "default_excludes = true\nexclude_patterns = ['*.swp']\n",
+			patterns: []string{"*.swp"}, flag: new(true),
+			want: []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload", "*.swp"},
+		},
+		{
+			name: "disabled", setting: "default_excludes = false\nexclude_patterns = ['*.swp']\n",
+			patterns: []string{"*.swp"}, flag: new(false),
+			want: []string{"*.swp"},
+		},
+		{
+			name: "old docs example", setting: "exclude_patterns = ['.syncthing.*.tmp', '*.sync-conflict-*']\n",
+			patterns: []string{".syncthing.*.tmp", "*.sync-conflict-*"},
+			want:     []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := privateTestConfigDir(t)
-			body := "[[watch]]\nname = 'inbox'\nsource = '" + filepath.ToSlash(t.TempDir()) + "'\ndestination = '/inbox'\n" + tc.setting + fmt.Sprintf("exclude_patterns = [%s]\n", "'"+strings.Join(tc.patterns, "', '")+"'")
+			body := "[[watch]]\nname = 'inbox'\nsource = '" + filepath.ToSlash(t.TempDir()) + "'\ndestination = '/inbox'\n" + tc.setting
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600))
 			cfg, err := Load(dir)
 			require.NoError(t, err)
 			require.Len(t, cfg.Watches, 1)
 			watch := cfg.Watches[0]
 			assert.Equal(t, tc.flag, watch.DefaultExcludes)
-			want := []string{"*.swp"}
-			if tc.flag == nil || *tc.flag {
-				want = append([]string{}, defaultWatchExcludePatterns[:]...)
-				if tc.name != "old docs example" {
-					want = append(want, tc.patterns...)
-				}
-			}
-			assert.Equal(t, want, watch.EffectiveExcludePatterns())
-			assert.Equal(t, tc.patterns, watch.ExcludePatterns)
 			patterns := watch.EffectiveExcludePatterns()
+			require.Equal(t, tc.want, patterns)
 			patterns[len(patterns)-1] = "changed"
-			assert.Equal(t, want, watch.EffectiveExcludePatterns())
+			assert.Equal(t, tc.want, watch.EffectiveExcludePatterns())
 			assert.Equal(t, tc.patterns, watch.ExcludePatterns)
-			watch.ExcludePatterns = nil
-			if tc.flag == nil || *tc.flag {
-				assert.Equal(t, defaultWatchExcludePatterns[:], watch.EffectiveExcludePatterns())
-			} else {
-				assert.Empty(t, watch.EffectiveExcludePatterns())
-			}
 		})
 	}
 }

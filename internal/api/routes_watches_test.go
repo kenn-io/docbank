@@ -3,7 +3,6 @@ package api_test
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -45,7 +44,7 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 			{
 				Name: "zeta", Source: filepath.Join(t.TempDir(), "later"),
 				Destination: "/later", SettleTime: config.Duration(time.Minute),
-				ScanInterval: config.Duration(time.Second),
+				ScanInterval: config.Duration(time.Second), DefaultExcludes: new(false),
 			},
 			{
 				Name: "archive", Source: source, Destination: "/records", Tags: []string{"receipts"},
@@ -75,7 +74,8 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	assert.Equal(t, "15s", got.Items[0].ScanInterval)
 	assert.Equal(t, []string{"cache/", ".DS_Store"}, got.Items[0].Exclude)
 	assert.Equal(t, []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload", "*.swp"}, got.Items[0].ExcludePatterns)
-	assert.Equal(t, []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"}, got.Items[1].ExcludePatterns)
+	assert.Empty(t, got.Items[1].ExcludePatterns)
+	assert.Contains(t, body, `"exclude_patterns":[]`)
 	require.NotNil(t, got.Items[0].Job)
 	assert.Equal(t, "watch:archive", got.Items[0].Job.Name)
 	assert.Equal(t, "running", got.Items[0].Job.Status)
@@ -92,28 +92,6 @@ func TestListWatchedInboxesReturnsEffectiveConfigAndRunnerState(t *testing.T) {
 	require.Len(t, got.Items, 2)
 	assert.Empty(t, got.Items[0].TagError)
 	close(release)
-}
-
-func TestListWatchedInboxesDefaultExcludesDisabled(t *testing.T) {
-	t.Parallel()
-	for _, patterns := range [][]string{nil, {"*.swp"}} {
-		t.Run(fmt.Sprint(patterns), func(t *testing.T) {
-			ts, _ := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.Watches = []config.WatchConfig{{
-					Name: "inbox", DefaultExcludes: new(false), ExcludePatterns: patterns,
-				}}
-			})
-			resp, body := get(t, ts, "/api/v1/watches", nil)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var got api.WatchedInboxList
-			require.NoError(t, json.Unmarshal([]byte(body), &got))
-			require.Len(t, got.Items, 1)
-			assert.Equal(t, append([]string{}, patterns...), got.Items[0].ExcludePatterns)
-			if len(patterns) == 0 {
-				assert.Contains(t, body, `"exclude_patterns":[]`)
-			}
-		})
-	}
 }
 
 func TestListWatchedInboxesReturnsEmptyObject(t *testing.T) {
