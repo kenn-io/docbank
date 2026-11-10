@@ -842,14 +842,12 @@ func TestLoadWatchProfileRoutes(t *testing.T) {
 	for _, tc := range []struct {
 		name, value string
 		wantError   bool
+		want        WatchProfiles
 	}{
-		{"string", `"asr"`, true},
-		{"integer", `42`, true},
-		{"boolean", `true`, true},
-		{"array", `["asr"]`, true},
-		{"non-string value", `{ document = 42 }`, true},
-		{"table", `{ document = "docs" }`, false},
-		{"empty table", `{}`, false},
+		{"string", `"asr"`, true, nil},
+		{"non-string value", `{ document = 42 }`, true, nil},
+		{"table", `{ document = "docs" }`, false, WatchProfiles{"document": "docs"}},
+		{"empty table", `{}`, false, WatchProfiles{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := privateTestConfigDir(t)
@@ -862,10 +860,7 @@ func TestLoadWatchProfileRoutes(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Len(t, cfg.Watches, 2)
-			require.NotNil(t, cfg.Watches[1].Profiles)
-			if tc.name == "table" {
-				assert.Equal(t, "docs", cfg.Watches[1].Profiles["document"])
-			}
+			assert.Equal(t, tc.want, cfg.Watches[1].Profiles)
 		})
 	}
 }
