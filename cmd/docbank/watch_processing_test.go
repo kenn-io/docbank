@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"uuid"
 
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
@@ -88,6 +89,7 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		{"memo.wav", "asr", mediatest.WAV()},
 	}
 	// Grant both profile consents using sources outside the watched inbox.
+	var vaultUID string
 	for _, source := range sources {
 		path := filepath.Join(t.TempDir(), source.name)
 		require.NoError(t, os.WriteFile(path, source.content, 0600))
@@ -98,6 +100,7 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: source.profile}
 		plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
 		require.NoError(t, err)
+		vaultUID = plan.VaultUID
 		_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
 		require.NoError(t, err)
 	}
@@ -108,10 +111,15 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 	for _, source := range sources {
 		node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/mixed/" + source.name}})
 		require.NoError(t, err)
-		summaries, err := daemon.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/mixed/" + source.name}}})
+		// The routed profile attempted this source and its provider rejected it, so
+		// the profile has no complete rendition. This does not depend on other
+		// profiles, such as built-in PDF text, that may also process the source.
+		coverage, err := daemon.API().GetDocumentProcessingCoverage(t.Context(), &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
+			Profile: source.profile, VaultUID: uuid.MustParse(vaultUID), ContentVersionID: []string{node.CurrentVersionID},
+		}})
 		require.NoError(t, err)
-		require.Len(t, summaries, 1)
-		require.Equal(t, "failed", summaries[0].LatestProcessingState, source.name)
+		require.Equal(t, 1, coverage.Renditions.Total, source.name)
+		require.Zero(t, coverage.Renditions.Complete, source.name)
 	}
 	mu.Lock()
 	defer mu.Unlock()
