@@ -336,8 +336,8 @@ pruned during both startup checks and scanning.
 `default_excludes` defaults to `true`. Every watch skips Syncthing partial
 files (`.syncthing.*.tmp` and `~syncthing~*.tmp`), Syncthing conflict copies
 (`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`). These
-patterns match like `exclude_patterns` and add to configured rules. They use
-the same skipped-path counters and directory pruning as configured exclusions.
+patterns add to configured rules and use the existing exclusion matcher and
+directory pruning, like `exclude_patterns`.
 Conflict copies (`*.sync-conflict-*`) are finished files that are not archived
 unless `default_excludes = false`. Set that option to use only configured
 exclusions when these names are intentional. Exclusions do not remove documents
@@ -474,7 +474,8 @@ destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
-and glob rules. Use `--json` when an agent needs the separate `exclude` and
+and glob rules, including the default patterns unless `default_excludes = false`.
+Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
 all-task view. A permanent source, destination, or read failure leaves the named
 job in the failed state and records the reason.
