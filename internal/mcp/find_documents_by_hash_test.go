@@ -115,7 +115,9 @@ func TestMCPFindDocumentsByHashPagesLongPaths(t *testing.T) {
 		for _, raw := range items {
 			item, ok := raw.(map[string]any)
 			require.True(t, ok)
-			id := int64(item["node_id"].(float64))
+			nodeID, ok := item["node_id"].(float64)
+			require.True(t, ok)
+			id := int64(nodeID)
 			require.True(t, expected[id])
 			require.False(t, seen[id], "continuation must not repeat rows")
 			seen[id] = true
