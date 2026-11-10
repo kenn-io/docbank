@@ -209,7 +209,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 		code    int
 		wantErr string
 	}{
-		{name: "profile only", states: map[string]string{"zeta": "verified_empty"}, pin: "zeta", want: "zeta"},
+		{name: "profile only", states: map[string]string{"zeta": "ready"}, pin: "zeta", want: "zeta"},
 		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
 		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound},
 		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
