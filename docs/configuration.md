@@ -823,6 +823,8 @@ and [ALAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/tes
 The adapter requests `from_formats=audio`, JSON output, and in-body results;
 it accepts only timed tracks in document schema 1.10.0. It does not select or
 claim a particular model. The M4A path inspects audio-only AAC/ALAC containers.
+M4A transcript artifacts omit `provider_version` because the response does not
+identify the deployment's installed version.
 
 For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
 and include `audio/mp4` in the descriptor alongside `audio/wav` and
@@ -859,6 +861,11 @@ before retrying it.
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
 deployment fingerprint. Recompute it when the endpoint or deployment changes.
 The daemon rejects a mismatched binding before it starts provider work.
+To find the descriptor fingerprint, set `descriptor_id` to `docling.serve-v1`
+and use 64 zeroes as a placeholder `descriptor_fingerprint`. Configure a
+selecting processing profile and start the daemon. Startup reports the expected
+fingerprint; copy it into the rendition profile before calculating the
+disclosure fingerprint below.
 For audio, Go applications can use `docling.ASRDisclosureFingerprint` for v1 or
 `docling.ASRM4ADisclosureFingerprint` for v2 from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
