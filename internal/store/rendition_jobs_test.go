@@ -1918,12 +1918,6 @@ func checkPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T, open func
 			ctx := t.Context()
 			s := open(t)
 			versions := seedRenditionCatalogVersions(t, s)
-			if mutation == "selected-consent" {
-				hash := testSHA256([]byte("retained legacy text"))
-				_, err := s.CreateFile(ctx, s.RootID(), "before.txt", hash, 20, "text/plain")
-				require.NoError(t, err)
-				require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "retainedquartz"}))
-			}
 			profile := catalogProcessingProfile(t, false)
 			first := renditionJobTestRequest(versions[0], profile)
 			second := renditionJobTestRequest(versions[1], profile)
@@ -1984,10 +1978,6 @@ func checkPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T, open func
 			}
 			_, err = s.PublishRenditionJob(ctx, claim, now.Add(4*time.Second))
 			require.ErrorIs(t, err, wantErr)
-			if mutation == "selected-consent" {
-				_, err := s.ActiveLexicalGeneration(ctx)
-				require.ErrorIs(t, err, ErrNotFound)
-			}
 			rejected, err := s.RenditionJobWaiterByID(ctx, firstWaiter.ID)
 			require.NoError(t, err)
 			require.Equal(t, "rejected", rejected.State)

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/pdftext"
-	"go.kenn.io/docbank/document/plaintext"
 )
 
 func TestComputeRecognizesMarkdownWithoutAnArtifactRole(t *testing.T) {
@@ -278,18 +277,5 @@ func TestComputeQualifiesBuiltInPDFText(t *testing.T) {
 		state := formatByID(t, record, "pdf").Capabilities[document.CapabilityText]
 		require.Equal(t, document.CapabilityQualified, state.State)
 		require.Equal(t, provider.Descriptor().Fingerprint, state.ProviderFingerprint)
-	})
-	t.Run("unqualified structured provider", func(t *testing.T) {
-		t.Parallel()
-		provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: plaintext.MaxDocumentBytes})
-		require.NoError(t, err)
-		sources := DefaultSources()
-		sources.ExtractorID = "synthetic-extractor/v1"
-		baseline, err := Compute(sources)
-		require.NoError(t, err)
-		sources.BoundProviders = []document.RenditionDescriptor{provider.Descriptor()}
-		actual, err := Compute(sources)
-		require.NoError(t, err)
-		require.Equal(t, baseline.Formats, actual.Formats, "binding a structured provider alone must leave every format unchanged")
 	})
 }

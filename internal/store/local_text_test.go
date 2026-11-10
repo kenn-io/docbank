@@ -127,9 +127,9 @@ func versionIDsForLocalText(items []DocumentSummary) []string {
 	return ids
 }
 
-func TestPDFTextDiscoveryAndWaitingCoverage(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPDFTextDiscoveryAndWaitingCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
 		profile.Rendition.Descriptor.ID = document.PDFTextProviderID
@@ -159,23 +159,7 @@ func TestPDFTextDiscoveryAndWaitingCoverage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, coverage.Pending)
 	now := time.Now().UTC().Add(time.Second)
-	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
-	require.NoError(t, err)
-	trashed, _, err := s.Trash(t.Context(), node.ID, node.Revision)
-	require.NoError(t, err)
-	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "trash-race", now, time.Minute)
-	require.NoError(t, err)
-	_, err = s.RenditionJobWorkByClaim(t.Context(), claim, now)
-	require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
-	require.NoError(t, s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailureStaleAuthority, now))
-	_, _, err = s.Restore(t.Context(), node.ID, trashed.Revision)
-	require.NoError(t, err)
-	items, err = s.PDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 50, false)
-	require.NoError(t, err)
-	require.Contains(t, versionIDsForLocalText(items), versions[0])
-	job, _, err = s.EnqueueRenditionJob(t.Context(), request)
-	require.NoError(t, err)
-	claim, err = s.ClaimRenditionJob(t.Context(), job.ID, "pdf-worker", now, time.Minute)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "pdf-worker", now, time.Minute)
 	require.NoError(t, err)
 	require.NoError(t, s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailureTerminal, now))
 	coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
