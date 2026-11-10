@@ -841,15 +841,17 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 func TestWatchDefaultExcludes(t *testing.T) {
 	for _, tc := range []struct {
 		name, setting string
+		patterns      []string
 		flag          *bool
 	}{
-		{"unset", "", nil},
-		{"enabled", "default_excludes = true\n", new(true)},
-		{"disabled", "default_excludes = false\n", new(false)},
+		{"unset", "", []string{"*.swp"}, nil},
+		{"enabled", "default_excludes = true\n", []string{"*.swp"}, new(true)},
+		{"disabled", "default_excludes = false\n", []string{"*.swp"}, new(false)},
+		{"old docs example", "", []string{".syncthing.*.tmp", "*.sync-conflict-*"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := privateTestConfigDir(t)
-			body := "[[watch]]\nname = 'inbox'\nsource = '" + filepath.ToSlash(t.TempDir()) + "'\ndestination = '/inbox'\n" + tc.setting + "exclude_patterns = ['*.swp']\n"
+			body := "[[watch]]\nname = 'inbox'\nsource = '" + filepath.ToSlash(t.TempDir()) + "'\ndestination = '/inbox'\n" + tc.setting + fmt.Sprintf("exclude_patterns = [%s]\n", "'"+strings.Join(tc.patterns, "', '")+"'")
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600))
 			cfg, err := Load(dir)
 			require.NoError(t, err)
@@ -858,13 +860,20 @@ func TestWatchDefaultExcludes(t *testing.T) {
 			assert.Equal(t, tc.flag, watch.DefaultExcludes)
 			want := []string{"*.swp"}
 			if tc.flag == nil || *tc.flag {
-				want = append(append([]string{}, DefaultWatchExcludePatterns...), want...)
+				want = append([]string{}, defaultWatchExcludePatterns[:]...)
+				if tc.name != "old docs example" {
+					want = append(want, tc.patterns...)
+				}
 			}
 			assert.Equal(t, want, watch.EffectiveExcludePatterns())
-			assert.Equal(t, []string{"*.swp"}, watch.ExcludePatterns)
+			assert.Equal(t, tc.patterns, watch.ExcludePatterns)
+			patterns := watch.EffectiveExcludePatterns()
+			patterns[len(patterns)-1] = "changed"
+			assert.Equal(t, want, watch.EffectiveExcludePatterns())
+			assert.Equal(t, tc.patterns, watch.ExcludePatterns)
 			watch.ExcludePatterns = nil
 			if tc.flag == nil || *tc.flag {
-				assert.Equal(t, DefaultWatchExcludePatterns, watch.EffectiveExcludePatterns())
+				assert.Equal(t, defaultWatchExcludePatterns[:], watch.EffectiveExcludePatterns())
 			} else {
 				assert.Empty(t, watch.EffectiveExcludePatterns())
 			}
