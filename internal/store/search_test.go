@@ -1191,6 +1191,8 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		{"the refunds", 0, []string{"memo.txt"}, []string{"refunds"}},
 		{`"refunds take"`, 0, []string{"memo.txt"}, []string{`"refunds take"`}},
 		{`"the" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the"`}},
+		{`"the +" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the +"`}},
+		{`"the report" and`, stops.ID, []string{"the report.pdf"}, []string{`"the report"`}},
 		{`"the" and absent`, stops.ID, nil, []string{"absent", `"the"`}},
 		{`"tax" and`, stops.ID, []string{"tax.pdf", "tax value.pdf"}, []string{`"tax"`}},
 		{`"of to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of to"`}},

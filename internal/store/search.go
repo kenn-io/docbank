@@ -2432,7 +2432,7 @@ func prepareSearch(query string) (string, []string, bool) {
 		onlyStopWords := true
 		for _, phrase := range natural.Phrases {
 			words := strings.FieldsFunc(strings.ToLower(phrase), func(r rune) bool {
-				return unicode.IsPunct(r) || unicode.IsSpace(r)
+				return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r)
 			})
 			for _, word := range words {
 				if !lexical.IsStopWord(word) {
