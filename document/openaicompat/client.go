@@ -163,6 +163,9 @@ type Client struct {
 	text       *embedclient.Client
 }
 
+// The shared local server processes one input at a time across clients.
+var managedRequests = make(chan struct{}, 1)
+
 type wireResponse struct {
 	Object string          `json:"object"`
 	Data   []wireEmbedding `json:"data"`
@@ -288,7 +291,7 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 		Deployment: embedconfig.Deployment{BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
 		Batch:      embedconfig.Batch{Items: client.profile.MaxBatchItems},
 		Transport:  embedconfig.Transport{MaxResponseBytes: int(client.profile.MaxResponseBytes)},
-		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects},
+		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects, Timeout: client.profile.RequestTimeout},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("openaicompat: configure text transport: %w", err)
@@ -324,6 +327,14 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	if err := ctx.Err(); err != nil {
 		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding canceled: %w", err)
 	}
+	if client.profile.ManagedService != "" {
+		select {
+		case managedRequests <- struct{}{}:
+			defer func() { <-managedRequests }()
+		case <-ctx.Done():
+			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding canceled: %w", ctx.Err())
+		}
+	}
 
 	rendered := make([]string, len(inputs))
 	var renderedBytes int64
@@ -341,17 +352,17 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		}
 		renderedBytes += int64(len(rendered[index]))
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, client.profile.RequestTimeout)
-	defer cancel()
 	// Formatting already applied the individual document/query role. This
-	// wire contract has no input_type, so send the original batch as one call.
-	// Kit performs no fitting, normalization, retry, or storage operation here.
-	vectors, err := client.text.EncodeFunc(embedconfig.RoleDocument)(requestCtx, rendered)
+	// wire contract has no input_type. Kit splits batches on request timeout.
+	vectors, err := client.text.EncodeFunc(embedconfig.RoleDocument)(ctx, rendered)
 	if err != nil {
 		if errors.Is(err, vector.ErrEmptyEmbeddingInput) {
 			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: empty prepared input: %w", ErrPermanentResponse)
 		}
 		if transport, ok := errors.AsType[*embedclient.TransportError](err); ok {
+			if transport.Timeout() {
+				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: %w", transport)
+			}
 			// The policy transport returns DocBank's existing classifications.
 			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding request: %w", transport.Err)
 		}
@@ -417,6 +428,9 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 	if err != nil {
 		if contextErr := request.Context().Err(); contextErr != nil {
 			return nil, fmt.Errorf("openaicompat: embedding request canceled: %w", contextErr)
+		}
+		if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
+			return nil, context.DeadlineExceeded
 		}
 		return nil, &ProviderError{Kind: ErrTransientResponse}
 	}
@@ -760,6 +774,9 @@ func readBounded(ctx context.Context, reader io.Reader, maximum int64) ([]byte, 
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, fmt.Errorf("openaicompat: response read canceled: %w", contextErr)
+		}
+		if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
+			return nil, context.DeadlineExceeded
 		}
 		return nil, fmt.Errorf("openaicompat: could not read provider response: %w", ErrTransientResponse)
 	}

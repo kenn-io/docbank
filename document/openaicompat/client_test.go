@@ -51,6 +51,36 @@ type capturedRequest struct {
 	EncodingFormat string   `json:"encoding_format"`
 }
 
+func TestEmbedSplitsTimedOutBatch(t *testing.T) {
+	contract := modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
+	profile := testProfile(t, contract)
+	var batches [][]string
+	client := newTestClient(t, profile, nil, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var body capturedRequest
+		require.NoError(t, json.UnmarshalRead(request.Body, &body))
+		batches = append(batches, body.Input)
+		if len(body.Input) > 1 {
+			return nil, context.DeadlineExceeded
+		}
+		return jsonResponse(request, http.StatusOK, []byte(`{"object":"list","model":"synthetic-model","data":[{"object":"embedding","index":0,"embedding":[1,0,0]}]}`)), nil
+	}))
+	result, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(profile.Descriptor))
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"search_document: passage", "search_query: question"}, {"search_document: passage"}, {"search_query: question"}}, batches)
+	require.Equal(t, "document-1", result.Vectors[0].Key)
+	require.Equal(t, "query-1", result.Vectors[1].Key)
+}
+
+func TestEmbedReportsTimeout(t *testing.T) {
+	contract := modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
+	profile := testProfile(t, contract)
+	client := newTestClient(t, profile, nil, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, context.DeadlineExceeded
+	}))
+	_, err := document.ExecuteEmbedding(t.Context(), client, testInputs()[:1], testAuthorization(profile.Descriptor))
+	require.ErrorContains(t, err, "embed request timed out")
+}
+
 func TestEmbedAppliesExplicitModelInputProfilesAndRestoresResponseIndices(t *testing.T) {
 	tests := []struct {
 		name     string

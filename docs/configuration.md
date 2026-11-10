@@ -1138,6 +1138,8 @@ Setup moves an indexed compatible Nomic profile to Kit's shared per-user server 
 
 The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
 
+The built-in local-text profile sends up to 8 inputs per request, waits up to 5 minutes per request, and sends one request at a time. When setup moves an existing compatible profile, its configured batch size and timeout remain in effect. Configured remote endpoints keep their own settings.
+
 #### Runtime settings
 
 An optional `[embedding_profiles.<name>.runtime]` section makes a binding

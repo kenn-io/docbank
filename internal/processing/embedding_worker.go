@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"slices"
 	"sync"
@@ -801,6 +802,9 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 					end = offset + batchSize
 					receipt.Retries++
 					continue
+				}
+				if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
+					return document.EmbeddingResult{}, prior, store.EmbeddingFailureProviderUnavailable, err
 				}
 				return document.EmbeddingResult{}, prior, store.EmbeddingFailureInputRejected, err
 			}
