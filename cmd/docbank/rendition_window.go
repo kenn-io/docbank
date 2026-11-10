@@ -44,12 +44,12 @@ Prints a continuation command when more text remains.`,
 	cmd.Flags().BoolVar(&options.asJSON, "json", false, "print JSON to stdout")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		options.version = uuid.Nil()
-		if version != "" || cmd.Flags().Changed("version") {
-			if !daemonconn.IsCanonicalUUIDv4(version) {
-				return usageError(errors.New(`version must be a canonical lowercase UUIDv4; omit --version to use the current version or get current_version_id from "docbank document stat <path-or-id> --json"`))
+		if cmd.Flags().Changed("version") {
+			if err := validateInspectionVersion(version); err != nil {
+				return err
 			}
 		}
-		if options.profile != "" || cmd.Flags().Changed("profile") {
+		if cmd.Flags().Changed("profile") {
 			if err := validateInspectionProfile(options.profile); err != nil {
 				return err
 			}
@@ -115,8 +115,7 @@ func runRenditionWindow(
 	var profile string
 	attachment, build := options.attachment, ""
 	if options.profile == "" && attachment == "" {
-		var selected api.DocumentRenditionIdentity
-		options.profile, selected, err = selectWindowProfile(cmd.Context(), c, node, options.version, *profiles)
+		selected, err := selectWindowProfile(cmd.Context(), c, node, options.version, *profiles)
 		if err != nil {
 			return err
 		}
@@ -157,6 +156,7 @@ func runRenditionWindow(
 	if options.asJSON {
 		return writeCLIJSON(cmd.OutOrStdout(), struct {
 			api.RenditionTextWindow
+
 			Profile string `json:"profile"`
 		}{RenditionTextWindow: window, Profile: options.profile})
 	}
@@ -183,13 +183,13 @@ func windowProfileName(profiles []api.ProcessingProfileSummary, fingerprint stri
 
 func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api.Node,
 	version uuid.UUID, profiles []api.ProcessingProfileSummary,
-) (string, api.DocumentRenditionIdentity, error) {
+) (api.DocumentRenditionIdentity, error) {
+	var selected api.DocumentRenditionIdentity
 	renditions, err := windowRenditions(ctx, c, node)
 	if err != nil {
-		return "", api.DocumentRenditionIdentity{}, err
+		return selected, err
 	}
 	var names, pins []string
-	var selected api.DocumentRenditionIdentity
 	exact := true
 	for _, rendition := range renditions {
 		fingerprint := rendition.ProfileFingerprint
@@ -200,10 +200,10 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 		}})
 		if err != nil {
 			if code, _ := daemonconn.ProblemCode(err); code != "rendition_text_too_large" {
-				return "", api.DocumentRenditionIdentity{}, err
+				return selected, err
 			}
 		} else if receipt == nil {
-			return "", api.DocumentRenditionIdentity{}, errors.New("daemon returned an invalid rendition text receipt")
+			return selected, errors.New("daemon returned an invalid rendition text receipt")
 		} else if receipt.State != apiclient.Ready {
 			continue
 		}
@@ -217,14 +217,14 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 		selected = rendition
 	}
 	if len(names) == 0 {
-		return "", api.DocumentRenditionIdentity{}, fmt.Errorf("no readable rendition is currently available for this version: %w", store.ErrNotFound)
+		return selected, fmt.Errorf("no readable rendition is currently available for this version: %w", store.ErrNotFound)
 	}
 	if len(names) > 1 {
 		sort.Strings(names)
 		sort.Strings(pins)
-		return "", api.DocumentRenditionIdentity{}, usageError(fmt.Errorf("multiple readable profiles: %s; choose %s", strings.Join(names, ", "), strings.Join(pins, "; ")))
+		return selected, usageError(fmt.Errorf("multiple readable profiles: %s; choose %s", strings.Join(names, ", "), strings.Join(pins, "; ")))
 	}
-	return names[0], selected, nil
+	return selected, nil
 }
 
 func discoverWindowRendition(ctx context.Context, c *daemonconn.Connection,
@@ -268,7 +268,7 @@ func windowRenditions(ctx context.Context, c *daemonconn.Connection, node api.No
 
 func checkWindowCatalogBounds(node api.Node) error {
 	if _, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{PathPrefix: node.Path}); err != nil {
-		return fmt.Errorf("rendition discovery exceeds catalog path limits (%d bytes, %d components): %w; use --attachment if the active attachment is already known", store.MaxWalkPathBytes, store.MaxWalkDepth, err)
+		return fmt.Errorf("rendition discovery exceeds document catalog path limits: %w", err)
 	}
 	if utf8.RuneCountInString(node.Name) > store.MaxDocumentCatalogNameCharacters {
 		return fmt.Errorf("rendition discovery exceeds the document catalog filename limit of %d "+

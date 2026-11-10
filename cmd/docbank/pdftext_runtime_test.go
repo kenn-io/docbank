@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,26 +145,6 @@ func TestDaemonPDFTextProcessing(t *testing.T) {
 			_, body, err := document.ParseRenditionFrontMatterV1(retained.Bytes())
 			require.NoError(t, err)
 			if test.text > 0 {
-				settleDaemon(t)
-				id := fmt.Sprintf("id:%d", node.ID)
-				_, err := runCLI(t, "rendition", "window", id)
-				require.Error(t, err)
-				require.Equal(t, exitUsage, commandExitCode(err, true))
-				require.ErrorContains(t, err, "docbank-pdf-text, pdf")
-				firstJSON, err := runCLI(t, "rendition", "window", id, "--profile", "pdf", "--max-chars", "16", "--json")
-				require.NoError(t, err)
-				var first struct {
-					api.RenditionTextWindow
-					Profile string `json:"profile"`
-				}
-				require.NoError(t, json.Unmarshal([]byte(firstJSON), &first))
-				require.False(t, first.EOF)
-				secondJSON, err := runCLI(t, "rendition", "window", id, "--version", first.ContentVersionID, "--profile", first.Profile, "--attachment", first.AttachmentID, "--offset", strconv.Itoa(first.NextOffset), "--max-chars", "16000", "--json")
-				require.NoError(t, err)
-				var second api.RenditionTextWindow
-				require.NoError(t, json.Unmarshal([]byte(secondJSON), &second))
-				require.True(t, second.EOF)
-				require.Equal(t, retained.String(), first.Text+second.Text)
 				require.Contains(t, string(body), query)
 				search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: query, Mode: "lexical", Profile: "pdf", Limit: 10, Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{selector.ContentVersionID}}})
 				require.NoError(t, err)

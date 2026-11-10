@@ -13,10 +13,17 @@ import (
 var inspectionProfilePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func validateInspectionSelection(version, profile string) error {
+	if err := validateInspectionVersion(version); err != nil {
+		return err
+	}
+	return validateInspectionProfile(profile)
+}
+
+func validateInspectionVersion(version string) error {
 	if !daemonconn.IsCanonicalUUIDv4(version) {
 		return usageError(errors.New("version must be a canonical lowercase UUIDv4; use current_version_id from \"docbank document stat <path-or-id> --json\""))
 	}
-	return validateInspectionProfile(profile)
+	return nil
 }
 
 func validateInspectionProfile(profile string) error {
