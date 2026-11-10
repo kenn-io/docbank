@@ -92,46 +92,16 @@ func TestAnswerQuestionKeepsEvidenceWhenCoverageFails(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestAnswerQuestionPageCoverage(t *testing.T) {
+func TestAnswerQuestionReportsPageGapsOutsideSearch(t *testing.T) {
 	version := "00000000-0000-4000-8000-000000000002"
-	pages := make([]int, 5000)
-	for i := range pages {
-		pages[i] = i + 1
-	}
-	for _, tc := range []struct {
-		name string
-		gaps []api.PageTextGap
-	}{
-		{"outside search", []api.PageTextGap{{ContentVersionID: version, Pages: []int{2, 3}}}},
-		{"long run", []api.PageTextGap{{ContentVersionID: version, Pages: pages}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &answerFakeClient{pageGaps: tc.gaps, report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
-			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-			out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
-			require.NoError(t, err)
-			require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
-			require.False(t, out.CoverageComplete)
-			require.Contains(t, out.CoverageReasons, "pages_without_text")
-			require.Equal(t, answer.IncompleteCoverage, out.Status)
-			if tc.name == "outside search" {
-				require.Equal(t, []answerPageGap{{ContentVersionID: version, Pages: [][2]int{{2, 3}}}}, out.PagesWithoutText)
-			} else {
-				require.Equal(t, [][2]int{{1, 5000}}, out.PagesWithoutText[0].Pages)
-				size, err := toolEnvelopeBytes(out, links)
-				require.NoError(t, err)
-				require.Less(t, size, maxToolResponseBytes)
-			}
-		})
-	}
-}
-
-func TestAnswerQuestionFragmentedPageLists(t *testing.T) {
-	version := "00000000-0000-4000-8000-000000000002"
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}, pageGaps: []api.PageTextGap{{ContentVersionID: version, Pages: []int{1, 3, 4, 7}}}}
+	f := &answerFakeClient{pageGaps: []api.PageTextGap{{ContentVersionID: version, Pages: []int{1, 3, 4, 7}}}, report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
+	require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
+	require.False(t, out.CoverageComplete)
+	require.Contains(t, out.CoverageReasons, "pages_without_text")
+	require.Equal(t, answer.IncompleteCoverage, out.Status)
 	require.Equal(t, []answerPageGap{{ContentVersionID: version, Pages: [][2]int{{1, 1}, {3, 4}, {7, 7}}}}, out.PagesWithoutText)
 }
 

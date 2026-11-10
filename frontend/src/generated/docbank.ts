@@ -1757,7 +1757,6 @@ export type CoverageReportPageCoverage = typeof CoverageReportPageCoverage[keyof
 
 export const CoverageReportPageCoverage = {
   partial: 'partial',
-  unavailable: 'unavailable',
 } as const;
 
 export interface PageTextGap {

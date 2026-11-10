@@ -783,9 +783,7 @@ current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
 
-For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. When `page_coverage` is `partial`, narrow the source fence to inspect more pages. `page_coverage_unavailable` also reports evidence that could not be read, including when coverage is partial. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile.
-
-`page_coverage: "unavailable"` means some page evidence could not be read. The remaining coverage or text receipt stays available.
+For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. When `page_coverage` is `partial`, narrow the source fence to inspect more pages. `page_coverage_unavailable` reports evidence that could not be read. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile, or `page_coverage: "unavailable"` when its evidence could not be read.
 
 `POST /search` uses JSON, separately from ordinary lexical `GET /search`:
 

@@ -24,7 +24,6 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 	cache := make(map[string]result)
 	var gaps []PageTextGap
 	remaining := 8192
-	state := ""
 	unavailable := false
 	for i, id := range ids {
 		if err := ctx.Err(); err != nil {
@@ -46,7 +45,6 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 			return nil, "", false, err
 		}
 		if r.err != nil {
-			state = "unavailable"
 			unavailable = true
 			continue
 		}
@@ -64,10 +62,10 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 					return gaps, statusPartial, unavailable, nil
 				}
 			}
-			return gaps, state, unavailable, nil
+			return gaps, "", unavailable, nil
 		}
 	}
-	return gaps, state, unavailable, nil
+	return gaps, "", unavailable, nil
 }
 
 // NewPDFTextProfile constructs the daemon's local PDF text profile.
