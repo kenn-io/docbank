@@ -918,10 +918,13 @@ func validVersionPruneVersion(version api.ContentVersion) bool {
 	}
 }
 
+// ContentReferenceOptions narrows references before totals and paging.
+type ContentReferenceOptions = store.ContentReferenceOptions
+
 // ContentReferences returns one bounded page of logical version references to
 // canonical SHA-256 content. It never infers authority from physical files.
 func (c *Connection) ContentReferences(
-	ctx context.Context, hash string, limit, offset int,
+	ctx context.Context, hash string, limit, offset int, options ...ContentReferenceOptions,
 ) (api.ContentReferencePage, error) {
 	var page api.ContentReferencePage
 	if !validSHA256Hex(hash) {
@@ -933,18 +936,28 @@ func (c *Connection) ContentReferences(
 	if offset < 0 {
 		return page, errors.New("content-reference offset must not be negative")
 	}
-	apiResponse, err := c.API().LookupContentReferences(ctx, &apiclient.LookupContentReferencesRequestOptions{Query: &apiclient.LookupContentReferencesQuery{Sha256: hash, Limit: new(int64(limit)), Offset: new(int64(offset))}})
+	var filter ContentReferenceOptions
+	if len(options) > 1 {
+		return page, errors.New("expected at most one content-reference filter")
+	}
+	if len(options) == 1 {
+		filter = options[0]
+	}
+	if filter.Size != nil && *filter.Size < 0 {
+		return page, errors.New("content-reference size must not be negative")
+	}
+	apiResponse, err := c.API().LookupContentReferences(ctx, &apiclient.LookupContentReferencesRequestOptions{Query: &apiclient.LookupContentReferencesQuery{Sha256: hash, Limit: new(int64(limit)), Offset: new(int64(offset)), LiveCurrent: new(filter.LiveCurrent), Size: filter.Size}})
 	if err != nil {
 		return page, err
 	}
 	page = *apiResponse
-	if err := validateContentReferencePage(page, hash, limit, offset); err != nil {
+	if err := validateContentReferencePage(page, hash, limit, offset, filter); err != nil {
 		return api.ContentReferencePage{}, err
 	}
 	return page, nil
 }
 
-func validateContentReferencePage(page api.ContentReferencePage, hash string, limit, offset int) error {
+func validateContentReferencePage(page api.ContentReferencePage, hash string, limit, offset int, filter ContentReferenceOptions) error {
 	if page.Limit != limit || page.Offset != offset || page.Total < 0 ||
 		len(page.Items) > limit ||
 		(len(page.Items) == 0 && offset < page.Total) ||
@@ -964,6 +977,10 @@ func validateContentReferencePage(page api.ContentReferencePage, hash string, li
 			return fmt.Errorf("content-reference response repeats version %s", ref.Version.ID)
 		}
 		seen[ref.Version.ID] = struct{}{}
+		if (filter.LiveCurrent && (!ref.IsCurrent || ref.Node.TrashedAt != "")) ||
+			(filter.Size != nil && ref.Version.Size != *filter.Size) {
+			return fmt.Errorf("content-reference response item %d escaped its filter", i)
+		}
 		current := ref.Version.ID == ref.Node.CurrentVersionID
 		if ref.IsCurrent != current {
 			return fmt.Errorf("content-reference response item %d has inconsistent current state", i)

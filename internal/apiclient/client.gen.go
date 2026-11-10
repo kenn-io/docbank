@@ -2669,9 +2669,11 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
-		"offset": {Style: "form", Explode: &[]bool{false}[0]},
-		"sha256": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":        {Style: "form", Explode: &[]bool{false}[0]},
+		"live_current": {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":       {Style: "form", Explode: &[]bool{false}[0]},
+		"sha256":       {Style: "form", Explode: &[]bool{false}[0]},
+		"size":         {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/content-references",
@@ -28392,9 +28394,11 @@ type GetCollectionQualityQuery struct {
 }
 
 type LookupContentReferencesQuery struct {
-	Sha256 string `json:"sha256"`
-	Limit  *int64 `json:"limit,omitempty"`
-	Offset *int64 `json:"offset,omitempty"`
+	Sha256      string `json:"sha256"`
+	LiveCurrent *bool  `json:"live_current,omitempty"`
+	Size        *int64 `json:"size,omitempty"`
+	Limit       *int64 `json:"limit,omitempty"`
+	Offset      *int64 `json:"offset,omitempty"`
 }
 
 type GetDocumentProcessingCoverageQuery struct {

@@ -289,6 +289,9 @@ all retained references for one hash, use `GET /api/v1/content-references` with
 `sha256`, `limit`, and `offset`. That lookup distinguishes current versions,
 live history, and trash. Duplicate discovery is a separate HTTP read. It does
 not change text-search results or automatically collapse them.
+`GET /api/v1/duplicates/by-hash` finds groups; to find any live current file
+by hash, including a single copy, use `GET /api/v1/content-references` with
+`sha256` and `live_current=true`, or the MCP tool `find_documents_by_hash`.
 
 ## Export search counts
 

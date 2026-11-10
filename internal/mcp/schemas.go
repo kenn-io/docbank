@@ -1059,3 +1059,21 @@ func promotePhotoNodeSchemas() (schema, schema) {
 func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
 }
+
+func findDocumentsByHashSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"sha256": sha256Schema(), "size": integerSchema(0, 0),
+		schemaLimitField:  schema{"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+		schemaOffsetField: integerSchema(0, 1_000_000),
+	}, "sha256")
+	item := objectSchema(schema{
+		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
+		"path": stringSchema(0), "size": integerSchema(0, 0),
+		"media_type": stringSchema(255), "blob_hash": sha256Schema(),
+	}, "node_id", "content_version_id", "path", "size", "media_type", "blob_hash")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(item, 100), "total": integerSchema(0, 0),
+		schemaLimitField: integerSchema(1, 100), schemaOffsetField: integerSchema(0, 1_000_000),
+	}), cacheRequired("items", "total", schemaLimitField, schemaOffsetField)...)
+	return input, output
+}

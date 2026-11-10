@@ -942,6 +942,18 @@ func TestContentReferencesRejectsInconsistentResponses(t *testing.T) {
 		Total: 1, Limit: 10, Offset: 0,
 	}
 	tests := map[string]func(*api.ContentReferencePage){
+		"historical row": func(page *api.ContentReferencePage) {
+			page.Items[0].Node.CurrentVersionID = "33333333-3333-4333-8333-333333333333"
+			page.Items[0].IsCurrent = false
+		},
+		"trashed row": func(page *api.ContentReferencePage) {
+			page.Items[0].Node.TrashedAt = "2026-07-15T12:00:00.000000000Z"
+			page.Items[0].Path = ""
+		},
+		"size filter": func(page *api.ContentReferencePage) {
+			page.Items[0].Version.Size = 4
+			page.Items[0].Node.Size = 4
+		},
 		"requested hash": func(page *api.ContentReferencePage) {
 			page.Items[0].Version.BlobHash = strings.Repeat("b", 64)
 		},
@@ -971,7 +983,7 @@ func TestContentReferencesRejectsInconsistentResponses(t *testing.T) {
 				}
 			}))
 			t.Cleanup(ts.Close)
-			_, err := daemonconn.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0)
+			_, err := daemonconn.New(ts.URL, "").ContentReferences(t.Context(), hash, 10, 0, daemonconn.ContentReferenceOptions{LiveCurrent: true, Size: new(int64(3))})
 			require.ErrorContains(t, err, "content-reference response")
 		})
 	}

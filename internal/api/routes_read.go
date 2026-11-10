@@ -22,6 +22,25 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+// optionalContentSize preserves the difference between omission and zero.
+// Huma query parameters use wrappers because pointer parameters are unsupported.
+type optionalContentSize struct {
+	Value int64
+	IsSet bool
+}
+
+func (optionalContentSize) Schema(_ huma.Registry) *huma.Schema {
+	return &huma.Schema{Type: "integer", Format: "int64"}
+}
+
+func (size *optionalContentSize) Receiver() reflect.Value {
+	return reflect.ValueOf(&size.Value).Elem()
+}
+
+func (size *optionalContentSize) OnParamSet(isSet bool, _ any) {
+	size.IsSet = isSet
+}
+
 type nodeOutput struct {
 	ETag string `header:"ETag"`
 	Body Node
@@ -248,14 +267,21 @@ func registerReadRoutes(api huma.API, d Deps) {
 		Path:    "/api/v1/content-references",
 		Summary: "Find stable document versions that retain a SHA-256 identity",
 		Description: "Results are logical content-version references, not physical loose or pack entries. " +
-			"Live current references sort first, followed by live history and trashed references.",
+			"Live current references sort first, followed by live history and trashed references. " +
+			"Set live_current=true to return only live current documents; size optionally matches exact bytes.",
 	}, func(ctx context.Context, in *struct {
-		SHA256 string `query:"sha256" required:"true" pattern:"^[0-9a-f]{64}$"`
-		Limit  int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
-		Offset int    `query:"offset" default:"0" minimum:"0"`
+		SHA256      string              `query:"sha256" required:"true" pattern:"^[0-9a-f]{64}$"`
+		LiveCurrent bool                `query:"live_current" default:"false"`
+		Size        optionalContentSize `query:"size" minimum:"0"`
+		Limit       int                 `query:"limit" default:"100" minimum:"1" maximum:"1000"`
+		Offset      int                 `query:"offset" default:"0" minimum:"0"`
 	}) (*contentReferencesOutput, error) {
+		filter := store.ContentReferenceOptions{LiveCurrent: in.LiveCurrent}
+		if in.Size.IsSet {
+			filter.Size = &in.Size.Value
+		}
 		references, total, err := d.Store.ContentReferencesByHash(
-			ctx, in.SHA256, in.Limit, in.Offset,
+			ctx, in.SHA256, in.Limit, in.Offset, filter,
 		)
 		if err != nil {
 			return nil, FromStoreError(err)

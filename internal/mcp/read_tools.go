@@ -72,6 +72,8 @@ func executeReadTool(
 		output, links, err = findConflicts(ctx, lease, raw)
 	case "get_document":
 		output, links, err = getDocument(ctx, lease, raw)
+	case "find_documents_by_hash":
+		output, err = findDocumentsByHash(ctx, lease, raw)
 	case "list_document_versions":
 		output, err = listDocumentVersions(ctx, lease, raw)
 	case "read_rendition_text":
@@ -1074,4 +1076,52 @@ func availableProfilesError(profiles []api.ProcessingProfileSummary) *searchProf
 		problem.message = message
 	}
 	return problem
+}
+
+type findDocumentsByHashInput struct {
+	SHA256 string `json:"sha256"`
+	Size   *int64 `json:"size"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
+type documentByHashOutput struct {
+	NodeID           int64  `json:"node_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Path             string `json:"path"`
+	Size             int64  `json:"size"`
+	MediaType        string `json:"media_type"`
+	BlobHash         string `json:"blob_hash"`
+}
+
+type findDocumentsByHashOutput struct {
+	privateCache
+	Items  []documentByHashOutput `json:"items"`
+	Total  int                    `json:"total"`
+	Limit  int                    `json:"limit"`
+	Offset int                    `json:"offset"`
+}
+
+func findDocumentsByHash(ctx context.Context, lease *daemonLease, raw []byte) (findDocumentsByHashOutput, error) {
+	var input findDocumentsByHashInput
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return findDocumentsByHashOutput{}, err
+	}
+	if input.Limit == 0 {
+		input.Limit = 50
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.ContentReferencePage, error) {
+		return c.ContentReferences(ctx, input.SHA256, input.Limit, input.Offset,
+			daemonconn.ContentReferenceOptions{LiveCurrent: true, Size: input.Size})
+	})
+	if err != nil {
+		return findDocumentsByHashOutput{}, err
+	}
+	out := findDocumentsByHashOutput{privateCache: newPrivateCache(),
+		Items: make([]documentByHashOutput, len(page.Items)), Total: page.Total, Limit: page.Limit, Offset: page.Offset}
+	for i, ref := range page.Items {
+		out.Items[i] = documentByHashOutput{NodeID: ref.Node.ID, ContentVersionID: ref.Version.ID,
+			Path: ref.Path, Size: ref.Version.Size, MediaType: ref.Version.MimeType, BlobHash: ref.Version.BlobHash}
+	}
+	return out, nil
 }

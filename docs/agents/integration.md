@@ -415,21 +415,24 @@ does not drain an abandoned response to complete verification.
 
 ### Find references to known content
 
-Find the nodes and versions that reference a known SHA-256 hash:
+Find live current documents that reference a known SHA-256 hash:
 
 ```bash
 curl --fail-with-body --get \
   -H "X-Api-Key: $DOCBANK_API_KEY" \
   --data-urlencode "sha256=$SHA256" \
+  --data 'live_current=true' \
   --data 'limit=100' \
   --data 'offset=0' \
   "$DOCBANK_URL/api/v1/content-references"
 ```
 
-The response is one page, ordered with live current references first, then
-live prior versions, then trash. A result's path is present only for a live
-node. No result means no content version currently references the hash, even
-if GC has not yet swept the unreferenced bytes.
+The response contains only live current documents, with totals and paging
+counted after filtering. Pass optional `size` to match the exact byte count,
+including `size=0` for empty files. Unknown hashes and size mismatches return
+an empty page. MCP agents can use `find_documents_by_hash` with `sha256` and
+optional `size` for the same lookup. Omit `live_current` to inspect all retained
+references, including earlier versions and trash.
 
 ### Open an exact version in the browser
 

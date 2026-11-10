@@ -854,3 +854,20 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
 	require.NotContains(t, edit.Required, "content_version_id")
 }
+
+func TestOpenAPIContentReferenceFilters(t *testing.T) {
+	t.Parallel()
+	op := api.NewOfflineServer().API().OpenAPI().Paths["/api/v1/content-references"].Get
+	parameters := map[string]*huma.Param{}
+	for _, parameter := range op.Parameters {
+		parameters[parameter.Name] = parameter
+	}
+	require.Contains(t, parameters, "live_current")
+	assert.Equal(t, "boolean", parameters["live_current"].Schema.Type)
+	assert.False(t, parameters["live_current"].Required)
+	require.Contains(t, parameters, "size")
+	assert.Equal(t, "integer", parameters["size"].Schema.Type)
+	require.NotNil(t, parameters["size"].Schema.Minimum)
+	assert.Zero(t, *parameters["size"].Schema.Minimum)
+	assert.False(t, parameters["size"].Required)
+}

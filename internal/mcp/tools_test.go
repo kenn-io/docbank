@@ -135,7 +135,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"get_report_summary", "get_report_dates",
 		"get_export_status",
 		"get_vault_info", "list_changes", "list_documents", "answer_question", "search_documents", "find_conflicts", "get_document",
-		"list_document_versions", "read_rendition_text", "get_processing_plan",
+		"list_document_versions", "find_documents_by_hash", "read_rendition_text", "get_processing_plan",
 		"get_processing_status", "get_processing_coverage", "get_package_import",
 		"get_package_preflight", "list_package_preflight_diagnostics",
 		"list_package_custodians", "find_people", "get_person",
@@ -436,6 +436,17 @@ func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
 	delete(missingDisclosure, "backup_consequence")
 	assertSchemaRejects(t, plan.OutputSchema, missingDisclosure)
 
+	find := tools["find_documents_by_hash"]
+	assertSchemaAccepts(t, find.InputSchema, map[string]any{"sha256": strings.Repeat("a", 64), "size": 0})
+	for _, args := range []map[string]any{
+		{"sha256": "ABC"},
+		{"sha256": strings.Repeat("a", 64), "size": -1},
+		{"sha256": strings.Repeat("a", 64), "limit": 101},
+		{"sha256": strings.Repeat("a", 64), "offset": -1},
+	} {
+		assertSchemaRejects(t, find.InputSchema, args)
+	}
+
 	for name, tool := range tools {
 		assertOutputIdentityProperties(t, name, tool.OutputSchema)
 	}
@@ -599,6 +610,7 @@ func assertOutputIdentityProperties(t *testing.T, name string, raw any) {
 		"search_documents":        {"fence_fingerprint", "content_version_ids", "node_id"},
 		"get_document":            {"node_id", "content_version_id", "attachment_id"},
 		"list_document_versions":  {"node_id", "content_version_id"},
+		"find_documents_by_hash":  {"node_id", "content_version_id", "blob_hash"},
 		"read_rendition_text":     {"node_id", "content_version_id", "attachment_id", "build_id"},
 		"get_processing_plan":     {"content_version_id", "fingerprint"},
 		"get_processing_status":   {"job_id"},

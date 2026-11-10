@@ -125,7 +125,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to that version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
-| `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
+| `GET /content-references?sha256=&live_current=&size=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
@@ -1878,7 +1878,10 @@ It never infers a match from a loose file or pack entry alone. Each item
 contains the complete immutable version, its current node projection, whether
 that version is the node's current head, and a path only while the node is
 live. Results are bounded and deterministic: live current references, live
-history, then trashed references.
+history, then trashed references. Set `live_current=true` to return only live
+current documents. Optional `size` matches the exact nonnegative byte size;
+omitting it differs from `size=0`. Totals and paging apply after filtering.
+An unknown hash or size mismatch returns HTTP 200 with empty `items`.
 
 `GET /duplicates` discovers hashes shared by at least two live current file
 nodes. Its `items`, `total`, and `total_references` describe that population.

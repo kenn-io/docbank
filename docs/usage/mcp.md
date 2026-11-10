@@ -261,6 +261,7 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
+| `find_documents_by_hash` | Finds live current documents by canonical lowercase `sha256`, with optional exact byte `size`. Returns node and version IDs, path, size, media type and hash. Limit defaults to 50 and is capped at 100; offset is capped at 1,000,000. Unknown hashes return an empty page. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
 | `check_answer` | Checks [answer figures](#check-figures-in-an-answer) against saved citations. |
 | `get_kata_context` | Reads an issue's [Docbank evidence and current source states](kata-evidence.md). |
