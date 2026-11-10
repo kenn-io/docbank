@@ -334,3 +334,69 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonWindowRetainedPDFProfiles(t *testing.T) {
+	if !isolatedPDFTextRuntime(t) {
+		return
+	}
+	fixture := newReportRenditionFixture(t)
+	home := t.TempDir()
+	layout := vaulthome.Layout{Root: home}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
+	require.NoError(t, err)
+	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+	require.NoError(t, err)
+	nodes := make(map[string]store.Node)
+	attachments := make(map[string]store.RenditionAttachmentRecord)
+	for _, input := range []struct{ name, text string }{{"text.pdf", "native distinctive text"}, {"scan.pdf", ""}} {
+		data := mediatest.PDFTextPages([]string{input.text}, false)
+		written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+		require.NoError(t, err)
+		encoding, err := written.EncodingName()
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), input.name, written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+		require.NoError(t, err)
+		nodes[input.name] = node
+		attachments[input.name] = fixture.publish(t, catalog, blobs, node, document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage, Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: "retained distinctive text", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}}}})
+	}
+	require.NoError(t, blobs.Close())
+	require.NoError(t, catalog.Close())
+	writeConfig := func() {
+		var data bytes.Buffer
+		require.NoError(t, toml.NewEncoder(&data).Encode(map[string]any{"rendition_profiles": fixture.config.RenditionProfiles, "retrieval_profiles": fixture.config.RetrievalProfiles, "processing_profiles": fixture.config.ProcessingProfiles}))
+		require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), data.Bytes(), 0600))
+	}
+	writeConfig()
+	t.Setenv("DOCBANK_HOME", home)
+	stop := startServe(t)
+	waitForDaemon(t, home)
+	settleDaemon(t)
+	id := fmt.Sprintf("id:%d", nodes["text.pdf"].ID)
+	_, err = runCLI(t, "rendition", "window", id)
+	require.Equal(t, exitUsage, commandExitCode(err, true))
+	require.ErrorContains(t, err, "archive, docbank-pdf-text")
+	output, err := runCLI(t, "rendition", "window", id, "--profile", "archive")
+	require.NoError(t, err)
+	require.Contains(t, output, "retained distinctive text")
+	scanID := fmt.Sprintf("id:%d", nodes["scan.pdf"].ID)
+	empty, err := runCLI(t, "rendition", "window", scanID, "--profile", "docbank-pdf-text")
+	require.NoError(t, err)
+	require.Contains(t, empty, "unit_count: 0")
+	output, err = runCLI(t, "rendition", "window", scanID)
+	require.NoError(t, err)
+	require.Contains(t, output, "retained distinctive text")
+	stop()
+	delete(fixture.config.ProcessingProfiles, "archive")
+	writeConfig()
+	stop = startServe(t)
+	defer stop()
+	waitForDaemon(t, home)
+	_, err = runCLI(t, "rendition", "window", id)
+	require.Equal(t, exitUsage, commandExitCode(err, true))
+	require.ErrorContains(t, err, fixture.profile)
+	require.ErrorContains(t, err, "--attachment "+attachments["text.pdf"].ID)
+	output, err = runCLI(t, "rendition", "window", id, "--attachment", attachments["text.pdf"].ID)
+	require.NoError(t, err)
+	require.Contains(t, output, "retained distinctive text")
+}

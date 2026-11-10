@@ -20,9 +20,6 @@ import (
 func TestRenditionWindowPreflight(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "absent")
 	t.Setenv("DOCBANK_HOME", home)
-	_, attachmentErr := runCLI(t, "rendition", "window", "id:42", "--attachment", strings.Repeat("a", 64))
-	require.Equal(t, exitUsage, commandExitCode(attachmentErr, true))
-	require.NoDirExists(t, home)
 	_, versionErr := runCLI(t, "rendition", "window", "id:42", "--version", "bad")
 	require.ErrorContains(t, versionErr, "omit --version")
 	require.ErrorContains(t, versionErr, "document stat")
@@ -158,7 +155,7 @@ func TestRenditionWindowCLI(t *testing.T) {
 					require.Zero(t, windowCalls)
 				}
 				if scenario == "missing profile" {
-					require.ErrorContains(t, err, "executable")
+					require.ErrorContains(t, err, "configured or executable")
 					require.Zero(t, summaryCalls)
 				}
 				return
@@ -244,11 +241,17 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 						} `json:"observed"`
 					}
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-					state, ok := tc.states[request.Profile]
+					name := ""
+					for candidate := range tc.states {
+						if sha256Hex(candidate) == request.Observed.ProfileFingerprint {
+							name = candidate
+						}
+					}
+					state, ok := tc.states[name]
 					assert.True(t, ok)
-					assert.Equal(t, sha256Hex(request.Profile+"attachment"), request.Observed.AttachmentID)
-					assert.Equal(t, sha256Hex(request.Profile+"build"), request.Observed.BuildID)
-					assert.Equal(t, sha256Hex(request.Profile), request.Observed.ProfileFingerprint)
+					assert.Empty(t, request.Profile)
+					assert.Equal(t, sha256Hex(name+"attachment"), request.Observed.AttachmentID)
+					assert.Equal(t, sha256Hex(name+"build"), request.Observed.BuildID)
 					if state == "rendition_text_too_large" {
 						w.WriteHeader(http.StatusRequestEntityTooLarge)
 						_, _ = w.Write([]byte(`{"status":413,"code":"rendition_text_too_large"}`))
@@ -256,7 +259,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 						receipt := apiclient.RenditionTextReceipt{
 							State:        apiclient.RenditionTextReceiptState(state),
 							Source:       apiclient.RenditionTextSource{NodeID: 42, Revision: 1, VersionID: processingTestVersionID, BlobHash: sha256Hex("source"), Size: 100, MediaType: "application/pdf"},
-							Profile:      apiclient.RenditionTextProfile{Name: request.Profile, Configuration: apiclient.RenditionTextProfileConfigurationConfigured, Fingerprint: request.Observed.ProfileFingerprint},
+							Profile:      apiclient.RenditionTextProfile{Name: name, Configuration: apiclient.RenditionTextProfileConfigurationConfigured, Fingerprint: request.Observed.ProfileFingerprint},
 							AttachmentID: request.Observed.AttachmentID, BuildID: request.Observed.BuildID,
 						}
 						if state == "ready" {

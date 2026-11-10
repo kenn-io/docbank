@@ -129,9 +129,15 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	if err != nil {
 		return renditionTextReceipt{}, err
 	}
-	selection, err := selectCollectionProfile(d, request.Profile, true, true)
-	if err != nil {
-		return renditionTextReceipt{}, err
+	var selection collectionProfileSelection
+	if request.Profile == "" && request.Observed != nil && request.Observed.Configuration == "configured" &&
+		request.Observed.ProfileFingerprint != "" && request.Observed.AttachmentID != "" && request.Observed.BuildID != "" {
+		selection.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: request.Observed.ProfileFingerprint}
+	} else {
+		selection, err = selectCollectionProfile(d, request.Profile, true, true)
+		if err != nil {
+			return renditionTextReceipt{}, err
+		}
 	}
 	profile, binding, coverage, err := renditionTextState(request, selection)
 	if err != nil {

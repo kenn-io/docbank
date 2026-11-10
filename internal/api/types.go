@@ -44,7 +44,8 @@ type ProcessingSelector struct {
 	Profile          string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 }
 
-// ProcessingProfileSummary is one locally executable deployment profile.
+// ProcessingProfileSummary identifies a processing profile. The inventory includes
+// configured profiles without runtimes when explicitly requested.
 type ProcessingProfileSummary struct {
 	Name                   string   `json:"name"`
 	Fingerprint            string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`

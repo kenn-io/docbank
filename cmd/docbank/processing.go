@@ -121,7 +121,7 @@ var processingStatusCmd = &cobra.Command{
 }
 
 func runProcessingProfiles(cmd *cobra.Command, c *daemonconn.Connection, jsonOutput bool) error {
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 
 	if err != nil {
 		return err

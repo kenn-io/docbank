@@ -762,10 +762,9 @@ For an indexed PDF with one readable profile, omit the version and profile:
 docbank rendition window /inbox/report.pdf
 ```
 
-Coverage and explicit window selections require a profile listed by `docbank processing profiles --json`.
-A configured profile whose runtime is unavailable is not enough, even if its
-renditions are retained. Reports can still use retained evidence under such a
-configured profile. A profile error here does not mean that evidence is missing.
+Coverage requires a profile listed by `docbank processing profiles --json`.
+Window reads can also use a configured profile whose runtime is unavailable.
+Reports can use retained evidence under such a profile.
 
 Coverage reports rendition and embedding counters for the one requested
 version. JSON contains `content_version_id` and the complete `coverage` object.
@@ -781,9 +780,11 @@ succeed.
 
 ### Read and continue a text window
 
-`rendition window` reads the current version and selects the one executable
-profile with readable text. If several profiles have text, it lists their names
-and exits with a usage error; pass `--profile` to choose one. `--version` pins
+`rendition window` reads the current version and selects the one active
+rendition with readable text. If several have text, it lists their names and
+exits with a usage error; pass `--profile` to choose one. When a profile was
+removed or edited, its retained rendition is identified by fingerprint; pass
+the listed `--attachment` to choose it. `--version` pins
 the current version, and the selected version must remain current and live.
 It returns at most
 8,000 characters by default. Use `--max-chars` for 1–16,000 characters and
@@ -801,7 +802,7 @@ docbank rendition window id:<node-id> --version <version-uuid> --profile <name> 
 
 Offsets count Unicode scalar values, not bytes or visible grapheme clusters.
 Offsets range from 0 to 2,147,483,647. A nonzero offset requires an attachment
-ID and `--profile`, and a pinned first window can also use `--attachment` at offset zero. The
+ID, and a pinned first window can also use `--attachment` at offset zero. The
 command refuses a replaced rendition instead of continuing into its
 replacement. An offset exactly at EOF succeeds with empty text. An offset past
 EOF fails. No command automatically fetches the remaining windows.
@@ -811,7 +812,7 @@ components, with a path longer than 16 KiB in UTF-8 bytes, or with a filename
 longer than 255 Unicode scalar values. The filename cap does not apply to
 ancestor directories. The CLI names the exceeded limit. Refreshing the
 selection does not solve it. If you know the active attachment, pass
-`--attachment` to skip discovery. The version and profile checks still apply.
+`--attachment` to skip discovery. The version and any supplied profile are still checked.
 
 Each unpinned discovery scans the traversable live vault tree. Pinned calls
 skip that scan. The text reader still reads from the beginning to reach the

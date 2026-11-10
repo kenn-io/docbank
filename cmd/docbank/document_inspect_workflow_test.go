@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -106,8 +109,6 @@ func TestDocumentInspectionLimitsAndStaleSelection(t *testing.T) {
 	require.Contains(t, output, "aé界🙂z")
 	for _, command := range [][]string{
 		{"processing", "coverage", f.nodes["portable.txt"].CurrentVersionID, "--profile", "portable"},
-		{"rendition", "window", "/portable.txt", "--version", f.nodes["portable.txt"].CurrentVersionID,
-			"--profile", "portable"},
 	} {
 		output, err = runCLI(t, command...)
 		require.ErrorContains(t, err, "executable profile list")
@@ -197,4 +198,39 @@ func TestDocumentInspectionRenditionReplacement(t *testing.T) {
 	require.NoError(t, connection.Close())
 	stop()
 	f.assertNoProcessingJobs(t)
+}
+
+func TestRenditionWindowRetainedProfile(t *testing.T) {
+	f := newDocumentInspectionFixture(t)
+	t.Setenv("DOCBANK_HOME", f.root)
+	stop := startServe(t)
+	waitForDaemon(t, f.root)
+	output, err := runCLI(t, "rendition", "window", "/portable.txt", "--profile", "portable")
+	require.NoError(t, err)
+	require.Contains(t, output, "aé界🙂z")
+	stop()
+	delete(f.config.ProcessingProfiles, "portable")
+	var encoded bytes.Buffer
+	require.NoError(t, toml.NewEncoder(&encoded).Encode(map[string]any{"rendition_profiles": f.config.RenditionProfiles, "retrieval_profiles": f.config.RetrievalProfiles, "processing_profiles": f.config.ProcessingProfiles}))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "config.toml"), encoded.Bytes(), 0600))
+	stop = startServe(t)
+	defer stop()
+	waitForDaemon(t, f.root)
+	output, err = runCLI(t, "rendition", "window", "/portable.txt")
+	require.NoError(t, err)
+	require.Contains(t, output, f.attachments["portable.txt"].Profile.Fingerprint)
+	output, err = runCLI(t, "rendition", "window", "/portable.txt", "--attachment", f.attachments["portable.txt"].ID, "--max-chars", "3")
+	require.NoError(t, err)
+	_, continuation, ok := strings.Cut(output, "Next window: docbank ")
+	require.True(t, ok)
+	require.NotContains(t, continuation, "--profile")
+	output, err = runCLI(t, append(strings.Fields(continuation), "--json")...)
+	require.NoError(t, err)
+	var window struct {
+		api.RenditionTextWindow
+		Profile string `json:"profile"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &window))
+	require.Equal(t, f.attachments["portable.txt"].Profile.Fingerprint, window.Profile)
+	require.Equal(t, 3, window.ActualStart)
 }

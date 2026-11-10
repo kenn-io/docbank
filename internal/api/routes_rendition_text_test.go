@@ -185,6 +185,16 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	require.Equal(t, fixture.attachment, receipt.AttachmentID)
 	require.Equal(t, fixture.build, receipt.BuildID)
 
+	delete(body, "profile")
+	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"state":"ready"`)
+	observed := body["observed"].(map[string]any)
+	observed["attachment_id"] = testHash("stale-attachment")
+	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusConflict, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"code":"rendition_selection_stale"`)
+
 	params := url.Values{
 		"node_id": {strconv.FormatInt(fixture.node.ID, 10)}, "revision": {strconv.FormatInt(fixture.node.Revision, 10)},
 		"version_id": {fixture.node.CurrentVersionID}, "blob_hash": {fixture.node.BlobHash},

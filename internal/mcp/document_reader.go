@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -26,7 +27,7 @@ type documentClient interface {
 type daemonDocumentClient struct{ *daemonconn.Connection }
 
 func (c daemonDocumentClient) ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error) {
-	profiles, err := c.API().ListDocumentProcessingProfiles(ctx)
+	profiles, err := c.API().ListDocumentProcessingProfiles(ctx, &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 	if err != nil {
 		return nil, err
 	}

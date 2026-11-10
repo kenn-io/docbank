@@ -12247,12 +12247,18 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 	return responseParser(ctx, resp)
 }
 
-// ListDocumentProcessingProfiles List locally executable document-processing profiles
-func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error) {
+// ListDocumentProcessingProfiles List document-processing profiles
+func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, options *ListDocumentProcessingProfilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_configured": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
-		Method:     "GET",
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -24313,6 +24319,37 @@ func (o *PlanDocumentProcessingRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// ListDocumentProcessingProfilesRequestOptions is the options needed to make a request to ListDocumentProcessingProfiles.
+type ListDocumentProcessingProfilesRequestOptions struct {
+	Query *ListDocumentProcessingProfilesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolveDocumentSourceFenceRequestOptions is the options needed to make a request to ResolveDocumentSourceFence.
 type ResolveDocumentSourceFenceRequestOptions struct {
 	Body *ResolveDocumentSourceFenceBody
@@ -28591,6 +28628,11 @@ type UndoPhotoFaceDecisionQuery struct {
 
 type ListPersonFacePreviewsQuery struct {
 	Hidden *bool `json:"hidden,omitempty"`
+}
+
+type ListDocumentProcessingProfilesQuery struct {
+	// IncludeConfigured Include configured profiles without an executable runtime
+	IncludeConfigured *bool `json:"include_configured,omitempty"`
 }
 
 type ListPushSourcesQuery struct {

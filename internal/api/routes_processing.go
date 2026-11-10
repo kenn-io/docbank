@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
@@ -49,12 +51,35 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	type profilesOutput struct{ Body []ProcessingProfileSummary }
 	huma.Register(api, huma.Operation{
 		OperationID: "listDocumentProcessingProfiles", Method: http.MethodGet,
-		Path: "/api/v1/processing/profiles", Summary: "List locally executable document-processing profiles",
-	}, func(_ context.Context, _ *struct{}) (*profilesOutput, error) {
+		Path: "/api/v1/processing/profiles", Summary: "List document-processing profiles",
+	}, func(_ context.Context, in *struct {
+		IncludeConfigured bool `query:"include_configured" doc:"Include configured profiles without an executable runtime"`
+	}) (*profilesOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
 		result := processingProfileSummaries(d.Processing)
+		if in.IncludeConfigured {
+			seen := make(map[string]bool, len(result))
+			for _, profile := range result {
+				seen[profile.Name] = true
+			}
+			for name := range d.Cfg.ProcessingProfiles {
+				if seen[name] {
+					continue
+				}
+				resolved, err := d.Cfg.ProcessingProfile(name)
+				if err != nil {
+					return nil, NewError(http.StatusInternalServerError, "processing_configuration", "The selected processing profile is invalid.")
+				}
+				_, fingerprints, err := document.CanonicalProfile(resolved.Document)
+				if err != nil {
+					return nil, NewError(http.StatusInternalServerError, "processing_configuration", "Cannot identify the selected processing profile.")
+				}
+				result = append(result, ProcessingProfileSummary{Name: name, Fingerprint: fingerprints.Profile})
+			}
+			sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		}
 		return &profilesOutput{Body: result}, nil
 	})
 

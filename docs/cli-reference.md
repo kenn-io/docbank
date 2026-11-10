@@ -1409,8 +1409,9 @@ oversized, incomplete, or invalid renditions return a nonzero exit code.
 The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
 
 `window` reads bounded Markdown from the current version. It selects the one
-executable profile with readable text, or asks you to choose when several have
-text. `--version` and `--profile` pin the selection. It prints a pinned
+active rendition with readable text, or asks you to choose when several have
+text. `--version`, `--profile`, and `--attachment` pin the selection. A
+rendition whose profile is no longer configured is identified by fingerprint. It prints a pinned
 continuation command. It does not verify the complete artifact. See
 [Read and continue a text window](usage/document-processing.md#read-and-continue-a-text-window)
 for offsets, limits, JSON fields, and discovery costs.
