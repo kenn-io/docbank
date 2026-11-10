@@ -6,8 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"fmt"
 	"image/png"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -17,6 +17,8 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -103,29 +105,70 @@ func TestMCPServerIconHTTP(t *testing.T) {
 	}
 }
 
-func TestMCPServerIconFitsPrivateResultHeadroom(t *testing.T) {
-	// answer_question reserves 4 KiB for metadata, the smallest paged-tool
-	// reserve. Exercise a result at that boundary with the real embedded icon.
-	const budget = maxToolResponseBytes - 4<<10
-	output := map[string]any{"text": ""}
-	empty, err := toolEnvelopeBytes(output, nil)
-	require.NoError(t, err)
-	output["text"] = strings.Repeat("x", (budget-empty)/2)
+func TestMCPServerIconPreservesNearLimitDocumentPage(t *testing.T) {
+	// Catalog pages have no pagination-specific metadata reserve. These legal
+	// paths produce a result that fits with main's identity but not the icon.
+	page := api.DocumentPage{PathPrefix: "/", Sort: "path", Direction: "asc", PageSize: 128}
+	prefix := "/" + strings.Repeat(strings.Repeat("a", 190)+"/", 20)
+	for i := range page.PageSize {
+		name := fmt.Sprintf("synthetic-%03d.md", i)
+		page.Items = append(page.Items, api.DocumentSummary{
+			NodeID: int64(i + 1), ContentVersionID: fmt.Sprintf("22222222-2222-4222-8222-%012d", i+1),
+			Path: prefix + name, Name: name, MediaType: "text/markdown", Size: 12,
+			ModifiedAt: "2026-08-28T00:00:00Z", ActiveRenditions: []api.DocumentRenditionIdentity{},
+		})
+	}
+	output := listDocumentsOutput{DocumentPage: page, privateCache: newPrivateCache()}
 	envelope, err := toolEnvelopeBytes(output, nil)
 	require.NoError(t, err)
-	require.LessOrEqual(t, envelope, budget)
-	require.GreaterOrEqual(t, envelope, budget-1)
-	encoded, err := jsonv2.Marshal(output)
-	require.NoError(t, err)
-	result := toolResult(encoded, output, nil)
-	next := func(context.Context, string, sdkmcp.Request) (sdkmcp.Result, error) {
-		return result, nil
+	const target = maxToolResponseBytes - 1500
+	require.Less(t, envelope, target)
+	// Each added ASCII byte occurs in both the structured and text copies.
+	extra := (target - envelope) / 2
+	padding := strings.Repeat(strings.Repeat("b", 190)+"/", extra/191) + strings.Repeat("b", extra%191)
+	last := &page.Items[len(page.Items)-1]
+	last.Path = "/" + padding + strings.TrimPrefix(last.Path, "/")
+	require.Less(t, len(last.Path), maxPathCharacters)
+
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/info":
+			writeDaemonJSON(t, w, api.VaultInfo{VaultID: testVaultID})
+		case "/api/v1/documents":
+			writeDaemonJSON(t, w, page)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	for _, test := range []struct {
+		name           string
+		implementation *sdkmcp.Implementation
+	}{
+		{name: "main-sized identity", implementation: testImplementation()},
+		{name: "icon identity", implementation: defaultImplementation()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, "synthetic-key"), nil
+			}, func(*daemonconn.Connection) error { return nil })
+			server := newServerWithOptionsAndDaemon(test.implementation, ServerOptions{}, lease)
+			raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+				"name": "list_documents", "arguments": map[string]any{"page_size": page.PageSize},
+			}))
+			var wire struct {
+				Result json.RawMessage `json:"result"`
+				Error  json.RawMessage `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &wire))
+			require.Empty(t, wire.Error, string(raw))
+			require.LessOrEqual(t, len(wire.Result), maxToolResponseBytes)
+			var result struct {
+				StructuredContent listDocumentsOutput `json:"structuredContent"`
+			}
+			require.NoError(t, jsonv2.Unmarshal(wire.Result, &result))
+			assert.Equal(t, page.Items, result.StructuredContent.Items)
+			t.Logf("complete result: %d bytes", len(wire.Result))
+		})
 	}
-	handler := enforcePrivateResultCap(defaultImplementation(), slog.New(slog.DiscardHandler))(next)
-	got, err := handler(t.Context(), "tools/call", nil)
-	require.NoError(t, err, "the embedded identity must fit paged tools' metadata reserve")
-	wire, err := jsonv2.Marshal(got)
-	require.NoError(t, err)
-	assert.LessOrEqual(t, len(wire), maxToolResponseBytes-64)
-	t.Logf("identity metadata adds %d bytes within the 4096-byte reserve", len(wire)-envelope)
 }

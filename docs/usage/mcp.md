@@ -22,6 +22,8 @@ Stdio and HTTP clients receive Docbank's website and icon in `server/discover`
 metadata. The MCP icon depicts a document with a vault dial and is separate
 from the website favicon. It is an embedded 256×256 PNG data URI, so clients
 can load it without an external request. Whether it appears depends on the client.
+Tool and resource results repeat a compact server identity without embedding
+the image again.
 
 Standalone and daemon-hosted MCP HTTP listeners also serve that PNG at
 `/icon.png` and `/favicon.ico`. These public image routes accept GET and HEAD
