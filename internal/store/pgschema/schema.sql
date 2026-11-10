@@ -2468,6 +2468,8 @@ CREATE INDEX document_people_person ON {{schema}}.document_people(person_id, con
 CREATE INDEX person_candidate_state
     ON {{schema}}.person_match_candidates(state, created_at, candidate_id);
 
+CREATE INDEX persons_name_folded ON {{schema}}.persons(display_name_folded, person_id);
+
 CREATE INDEX person_document_assertions_person ON {{schema}}.person_document_assertions(person_id, role, action, recorded_at);
 
 CREATE INDEX person_external_alias_target

@@ -25,7 +25,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  blob_pack_summary_mapping_update blob_pack_summary_blob_delete blob_pack_summary_blob_insert`},
 	{"content promotion", "document_maintenance.go: promoteContentBlobTx", "documents contracts", `
  content_versions_promote_rendition_staging content_versions_revoke_derivative_purge`},
-	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events contracts; people publication remains unqualified", `
+	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events/document-people contracts", `
  document_event_heads_deleted content_versions_invalidate_person_bindings`},
 	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/photo-import/photo-checkout/sources/retention contracts; SQLite pending table is a trigger intermediate", `
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change

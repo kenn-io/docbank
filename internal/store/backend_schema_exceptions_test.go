@@ -31,7 +31,6 @@ var deferredBackendIndexes = map[string]string{
 	"package_labels_lookup":                       "package_labels",
 	"package_preflights_expiry":                   "package_preflights",
 	"packages_history":                            "packages",
-	"persons_name_folded":                         "persons",
 	"rendition_attachments_build":                 "rendition_attachments",
 	"term_report_history_recent":                  "term_report_history",
 	// This is a write invariant, not a deferred access optimization. The
