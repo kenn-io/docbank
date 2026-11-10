@@ -7,7 +7,7 @@ description: Ranked, prefix-matching search over document names and verified tex
 # Searching
 
 Find live files and folders by name, current text, tags, or modification time.
-Query words are joined, so `search tax 2026` and `search "tax 2026"` agree.
+Quote a phrase inside the query to require adjacent words, as in `search '"tax 2026"'`.
 Without processing options, search automatically uses hybrid retrieval when a
 query-capable embedding profile is available; otherwise it uses ordinary lexical
 search. A failed hybrid attempt falls back with an explicit degradation reason.
@@ -86,12 +86,7 @@ missing measurements.
 
 ## How do words match in lexical search?
 
-Each whitespace-separated term matches the start of a word. For example,
-`insur` finds `insurance-renewal.pdf`. Every term must match.
-
-Docbank searches query text literally. It escapes `AND`, `OR`, quotes, and
-parentheses before passing the query to SQLite's FTS5 search index. You do not
-need to escape them yourself.
+Each prepared word matches the start of a word, including regular word forms. For example, `insur` finds `insurance-renewal.pdf`, and `invoices` finds `invoice`. Common words are dropped when content words remain. Every remaining word and quoted phrase must match in the same name or text segment. Quoted phrases require adjacent words in order.
 
 Name matches appear before content-only matches. Within each group, Docbank
 uses BM25, a text-relevance score, then name and ID to break ties consistently.
@@ -502,7 +497,7 @@ prefix matching, parentheses, and uppercase `AND`, `OR`, and `NOT`. Whitespace
 between operands means `AND`. Precedence is `NOT`, then `NEAR`, then `AND`,
 then `OR`. A backslash escapes the next character: `note\:draft` is literal
 text, and `\AND` is not an operator. Simple syntax treats these operators as
-literal prefix terms, as the CLI does.
+literal prefix terms.
 
 `alpha NEAR/5 beta` requires the two terms or phrases to occur within five
 tokens in the same indexed source. Bare `NEAR` uses ten. Distances range from

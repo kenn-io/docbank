@@ -158,7 +158,7 @@ func TestEmptySearchHints(t *testing.T) {
 				if tc.everyWord {
 					require.Equal(t, searchHint{
 						Code:    "every_word_required",
-						Message: "no name or text segment matches all words; try fewer words if some match",
+						Message: "no name or text segment matches all required terms (lease, renewal); try fewer terms if some match",
 					}, report.Hints[2])
 				}
 				require.Empty(t, stderr.String())
@@ -174,11 +174,11 @@ func TestEmptySearchHints(t *testing.T) {
 					require.NotContains(t, stderr.String(), "still being indexed")
 				}
 				if tc.hybrid || query == "lease" || slices.Contains(tc.flags, "--fuzzy") {
-					require.NotContains(t, stderr.String(), "matches all words")
+					require.NotContains(t, stderr.String(), "matches all required terms")
 				} else if tc.filtered {
-					require.Contains(t, stderr.String(), "no name or text segment in this search scope matches all words; try fewer words if some match")
+					require.Contains(t, stderr.String(), "no name or text segment in this search scope matches all required terms (lease, renewal); try fewer terms if some match")
 				} else {
-					require.Contains(t, stderr.String(), "no name or text segment matches all words; try fewer words if some match")
+					require.Contains(t, stderr.String(), "no name or text segment matches all required terms (lease, renewal); try fewer terms if some match")
 				}
 				if slices.Contains(tc.flags, "--agent") {
 					mode := "lexical"
@@ -194,4 +194,10 @@ func TestEmptySearchHints(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEmptySearchHintsPreparedTerms(t *testing.T) {
+	hints := emptySearchHints("the invoice absent", api.SearchTextCoverage{}, true, false, false)
+	require.Len(t, hints, 1)
+	require.Contains(t, hints[0].Message, "invoice, absent")
 }

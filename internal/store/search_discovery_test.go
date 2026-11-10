@@ -57,6 +57,29 @@ func TestSearchDiscoveryPrecedence(t *testing.T) {
 	}
 }
 
+func TestSearchDiscoveryQuotedPhrase(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	target := discoveryFile(t, s, s.RootID(), "invoice.pdf")
+	for _, tc := range []struct {
+		query, status string
+		found         bool
+	}{
+		{`"invocie"`, "not_run", false},
+		{`"invocie`, "complete", true},
+	} {
+		hits, _, receipt, err := discoverUnbudgeted(t, s, tc.query, 20, SearchOptions{})
+		require.NoError(t, err)
+		require.Equal(t, tc.status, receipt.Status)
+		if tc.found {
+			require.Len(t, hits, 1)
+			require.Equal(t, target.ID, hits[0].Node.ID)
+		} else {
+			require.Empty(t, hits)
+		}
+	}
+}
+
 func TestSearchDiscoverySupplementalAndPaths(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -1154,6 +1154,37 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	assert.Len(t, hits, 1)
 }
 
+func TestSearchPreparedWordsAndPhrases(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, name := range []string{"invoice.pdf", "insurance.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf"} {
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(name), 1, "application/pdf")
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"the invoices", []string{"invoice.pdf"}},
+		{"insur", []string{"insurance.pdf"}},
+		{`"tax 2026"`, []string{"tax 2026.pdf"}},
+		{`"tax 2026" absent`, nil},
+	} {
+		hits, _, err := s.SearchPage(t.Context(), tc.query, 20)
+		require.NoError(t, err, tc.query)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.Equal(t, tc.want, names, tc.query)
+	}
+	for _, query := range []string{"", "!!!", `""`, `"unbalanced`} {
+		got, _, phrase := prepareSearch(query)
+		require.Equal(t, ftsQuery(query), got)
+		require.False(t, phrase)
+	}
+}
+
 func TestSearchSurvivesOperatorInput(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

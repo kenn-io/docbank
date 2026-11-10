@@ -73,7 +73,7 @@ func TestAnswerQuestionQueryProviderOutageKeepsLexicalEvidence(t *testing.T) {
 	httpServer := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(httpServer.Close)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
-	output := exportCall(t, server, "answer_question", map[string]any{"question": "observatory"})
+	output := exportCall(t, server, "answer_question", map[string]any{"question": "the observatories"})
 	require.Equal(t, "ANSWERED", output["status"])
 	passages, ok := output["passages"].([]any)
 	require.True(t, ok)

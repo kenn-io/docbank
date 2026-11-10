@@ -119,7 +119,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		return hits, page.Total > int64(limit), nil
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if fq == "" {
 		return nil, false, nil
 	}
@@ -2409,6 +2409,53 @@ func ftsQuery(input string) string {
 	return strings.Join(terms, " ")
 }
 
+// SearchRequiredTerms returns the terms required by ordinary lexical search.
+func SearchRequiredTerms(query string) []string {
+	_, terms, _ := prepareSearch(query)
+	return terms
+}
+
+func prepareSearch(query string) (string, []string, bool) {
+	quotes := strings.NewReplacer("“", `"`, "”", `"`, "„", `"`).Replace(query)
+	fallback := func() (string, []string, bool) { return ftsQuery(query), strings.Fields(query), false }
+	if strings.Count(quotes, `"`)%2 != 0 {
+		return fallback()
+	}
+	analyzer := lexical.Literal()
+	natural, err := analyzer.PrepareNatural(query)
+	if err != nil {
+		return fallback()
+	}
+	var groups, terms []string
+	for _, word := range natural.Words {
+		var forms []string
+		for _, form := range word.Forms {
+			covered := false
+			for _, other := range word.Forms {
+				if len(other) < len(form) && strings.HasPrefix(form, other) {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				literal, _ := analyzer.PreparePhrase(form)
+				forms = append(forms, literal.Match+"*")
+			}
+		}
+		groups = append(groups, "("+strings.Join(forms, " OR ")+")")
+		terms = append(terms, word.Text)
+	}
+	for _, phrase := range natural.Phrases {
+		literal, err := analyzer.PreparePhrase(phrase)
+		if err != nil {
+			return fallback()
+		}
+		groups = append(groups, literal.Match)
+		terms = append(terms, `"`+phrase+`"`)
+	}
+	return strings.Join(groups, " AND "), terms, len(natural.Phrases) > 0
+}
+
 // nameSearchCandidates leaves filtering and name-based ties to the outer
 // query. A candidate cutoff here would discard eligible equal-score names.
 func nameSearchCandidates(match string) (sqlquery.Query, error) {
@@ -2457,7 +2504,7 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if SearchNeedsQuery(query, opts) {
 		return nil, false, ErrSearchQueryRequired
 	}
