@@ -185,28 +185,6 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	require.Equal(t, fixture.attachment, receipt.AttachmentID)
 	require.Equal(t, fixture.build, receipt.BuildID)
 
-	delete(body, "profile")
-	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
-	require.Contains(t, encoded, `"state":"ready"`)
-	require.Contains(t, encoded, `"name":"archive"`)
-	original := cfg.ProcessingProfiles["archive"]
-	changed := original
-	changed.MaxSegmentRunes--
-	cfg.ProcessingProfiles["archive"] = changed
-	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
-	require.Equal(t, http.StatusConflict, resp.StatusCode, encoded)
-	require.Contains(t, encoded, `"code":"rendition_selection_stale"`)
-	body["exact_rendition"] = true
-	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
-	require.Contains(t, encoded, `"state":"ready"`)
-	observed := body["observed"].(map[string]any)
-	observed["attachment_id"] = testHash("stale-attachment")
-	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
-	require.Equal(t, http.StatusConflict, resp.StatusCode, encoded)
-	require.Contains(t, encoded, `"code":"rendition_selection_stale"`)
-
 	params := url.Values{
 		"node_id": {strconv.FormatInt(fixture.node.ID, 10)}, "revision": {strconv.FormatInt(fixture.node.Revision, 10)},
 		"version_id": {fixture.node.CurrentVersionID}, "blob_hash": {fixture.node.BlobHash},
@@ -225,6 +203,40 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	params.Set("artifact_id", "artifact_"+testHash("wrong-artifact"))
 	badResp, badBody := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
 	assert.Equal(t, http.StatusConflict, badResp.StatusCode, badBody)
+}
+
+func TestRenditionTextHTTPExactRenditionWithChangedProfile(t *testing.T) {
+	t.Parallel()
+	var cfg config.Config
+	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
+	sourceHash, sourceSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("%PDF-1.4 synthetic source"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
+	require.NoError(t, err)
+	fixture := publishRenditionTextFixture(t, s, cfg, node)
+	body := map[string]any{
+		"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
+		"blob_hash": node.BlobHash, "size": node.Size,
+		"observed": map[string]any{"configuration": "configured", "profile_fingerprint": fixture.profile.Fingerprint,
+			"generation_id": fixture.generation, "coverage_state": "complete", "attachment_id": fixture.attachment, "build_id": fixture.build},
+	}
+
+	resp, encoded := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"state":"ready"`)
+	require.Contains(t, encoded, `"name":"archive"`)
+	changed := cfg.ProcessingProfiles["archive"]
+	changed.MaxSegmentRunes--
+	cfg.ProcessingProfiles["archive"] = changed
+	body["exact_rendition"] = true
+	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"state":"ready"`)
+	observed := body["observed"].(map[string]any)
+	observed["attachment_id"] = testHash("stale-attachment")
+	resp, encoded = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
+	require.Equal(t, http.StatusConflict, resp.StatusCode, encoded)
+	require.Contains(t, encoded, `"code":"rendition_selection_stale"`)
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {

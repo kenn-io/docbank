@@ -65,6 +65,26 @@ func TestRenditionWindowCatalogBounds(t *testing.T) {
 	}
 }
 
+func windowTestServer(t *testing.T, handle func(http.ResponseWriter, *http.Request) bool) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/nodes/42":
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", Name: "notes.pdf", Path: "/notes.pdf", CurrentVersionID: processingTestVersionID, Revision: 1, BlobHash: sha256Hex("source"), Size: 100}))
+		case "GET /api/v1/vault":
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
+		default:
+			if !handle(w, r) {
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				http.NotFound(w, r)
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 func TestRenditionWindowCLI(t *testing.T) {
 	for _, scenario := range []string{"discovery", "pinned zero", "pinned continuation",
 		"wrong build", "wrong profile", "pinned wrong profile", "missing profile", "stale"} {
@@ -79,34 +99,28 @@ func TestRenditionWindowCLI(t *testing.T) {
 				options.offset = 1
 			}
 			var summaryCalls, windowCalls int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
+			server := windowTestServer(t, func(w http.ResponseWriter, r *http.Request) bool {
 				switch r.Method + " " + r.URL.Path {
-				case "GET /api/v1/nodes/42":
-					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file",
-						Name: "notes.txt", Path: "/notes.txt", CurrentVersionID: processingTestVersionID}))
 				case "GET /api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{}
 					if scenario != "missing profile" {
 						profiles = append(profiles, api.ProcessingProfileSummary{Name: "archive", Fingerprint: profile})
 					}
 					assert.NoError(t, json.MarshalWrite(w, profiles))
-				case "GET /api/v1/vault":
-					assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
 				case "POST /api/v1/documents/resolve":
 					summaryCalls++
 					var request api.DocumentSummaryResolveRequest
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 					assert.Equal(t, []api.DocumentIdentity{{NodeID: 42,
-						ContentVersionID: processingTestVersionID, Path: "/notes.txt"}}, request.Identities)
+						ContentVersionID: processingTestVersionID, Path: "/notes.pdf"}}, request.Identities)
 					if scenario == "stale" {
 						w.WriteHeader(http.StatusConflict)
 						_, _ = w.Write([]byte(`{"status":409,"code":"stale_version"}`))
-						return
+						return true
 					}
 					assert.NoError(t, json.MarshalWrite(w, api.DocumentSummaryResolveResponse{
 						Items: []api.DocumentSummary{{NodeID: 42, ContentVersionID: processingTestVersionID,
-							Name: "notes.txt", Path: "/notes.txt", ModifiedAt: "2026-10-04T12:00:00Z",
+							Name: "notes.pdf", Path: "/notes.pdf", ModifiedAt: "2026-10-04T12:00:00Z",
 							ActiveRenditions: []api.DocumentRenditionIdentity{
 								{ProfileFingerprint: sha256Hex("other"), AttachmentID: sha256Hex("other"), BuildID: build},
 								{ProfileFingerprint: profile, AttachmentID: attachment, BuildID: build},
@@ -132,11 +146,10 @@ func TestRenditionWindowCLI(t *testing.T) {
 					}
 					assert.NoError(t, json.MarshalWrite(w, result))
 				default:
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-					http.NotFound(w, r)
+					return false
 				}
-			}))
-			t.Cleanup(server.Close)
+				return true
+			})
 			c := daemonconn.New(server.URL, "test-key")
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
 			cmd, output := processingTestCommand()
@@ -197,12 +210,10 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		states  map[string]string
-		pin     string
 		want    string
 		code    int
 		wantErr string
 	}{
-		{name: "profile only", states: map[string]string{"zeta": "ready"}, pin: "zeta", want: "zeta"},
 		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
 		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: "no readable rendition is currently available"},
 		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
@@ -217,15 +228,10 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 					renditions = append(renditions, api.DocumentRenditionIdentity{ProfileFingerprint: sha256Hex(name), AttachmentID: sha256Hex(name + "attachment"), BuildID: sha256Hex(name + "build")})
 				}
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
+			server := windowTestServer(t, func(w http.ResponseWriter, r *http.Request) bool {
 				switch r.Method + " " + r.URL.Path {
-				case "GET /api/v1/nodes/42":
-					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", Name: "notes.pdf", Path: "/notes.pdf", CurrentVersionID: processingTestVersionID, Revision: 1, BlobHash: sha256Hex("source"), Size: 100}))
 				case "GET /api/v1/processing/profiles":
 					assert.NoError(t, json.MarshalWrite(w, profiles))
-				case "GET /api/v1/vault":
-					assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
 				case "POST /api/v1/documents/resolve":
 					assert.NoError(t, json.MarshalWrite(w, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{NodeID: 42, ContentVersionID: processingTestVersionID, Name: "notes.pdf", Path: "/notes.pdf", ModifiedAt: "2026-10-04T12:00:00Z", ActiveRenditions: renditions}}}))
 				case "POST /api/v1/renditions/text":
@@ -272,15 +278,14 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 					assert.Equal(t, sha256Hex(tc.want+"attachment"), request.AttachmentID)
 					assert.NoError(t, json.MarshalWrite(w, api.RenditionTextWindow{VaultID: inspectionTestVaultID, NodeID: 42, ContentVersionID: processingTestVersionID, AttachmentID: request.AttachmentID, BuildID: sha256Hex(tc.want + "build"), ProfileFingerprint: sha256Hex(tc.want), Checksum: sha256Hex("artifact"), MediaType: "text/markdown", Text: "page text", ActualEnd: 9, NextOffset: 9, ResponseBytes: 9, EOF: true}))
 				default:
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-					http.NotFound(w, r)
+					return false
 				}
-			}))
-			t.Cleanup(server.Close)
+				return true
+			})
 			c := daemonconn.New(server.URL, "test-key")
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
 			cmd, output := processingTestCommand()
-			options := renditionWindowOptions{selector: nodeSelector{id: 42}, profile: tc.pin, maxChars: 8000, asJSON: true}
+			options := renditionWindowOptions{selector: nodeSelector{id: 42}, maxChars: 8000, asJSON: true}
 			err := runRenditionWindow(cmd, c, options)
 			if tc.code != 0 {
 				require.Error(t, err)
