@@ -248,9 +248,12 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	request["profile"] = "archive"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	var archiveReceipt struct {
+		Pages []int `json:"pages_without_text"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &archiveReceipt))
 	require.Contains(t, body, `"state":"unprocessed"`)
-	require.Equal(t, []int{2}, receipt.Pages)
+	require.Equal(t, []int{2}, archiveReceipt.Pages)
 	build, err := s.RenditionBuild(t.Context(), buildID)
 	require.NoError(t, err)
 	for _, artifact := range build.Artifacts {
