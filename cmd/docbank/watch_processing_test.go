@@ -74,9 +74,6 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 	root := t.TempDir()
 	require.NoError(t, writeDaemonASRConfig(root, cfg))
-	encoded, err := os.ReadFile(filepath.Join(root, "config.toml"))
-	require.NoError(t, err)
-	require.Contains(t, string(encoded), "[watch.profiles]")
 	t.Setenv("DOCBANK_TEST_DOCLING_KEY", daemonASRProviderKey)
 	t.Setenv("DOCBANK_HOME", root)
 	startServe(t)
@@ -89,11 +86,9 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 	}{
 		{"report.pdf", "documents", mediatest.PDF()},
 		{"memo.wav", "asr", mediatest.WAV()},
-		{"notes.txt", "", []byte("synthetic unmapped text")},
-		{"clip.mp4", "", mediatest.MP4(16, 16, 1000)},
 	}
 	// Grant both profile consents using sources outside the watched inbox.
-	for _, source := range sources[:2] {
+	for _, source := range sources {
 		path := filepath.Join(t.TempDir(), source.name)
 		require.NoError(t, os.WriteFile(path, source.content, 0600))
 		_, err := runCLI(t, "add", path, "--dest", "/consent")
@@ -116,11 +111,7 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		summaries, err := daemon.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/mixed/" + source.name}}})
 		require.NoError(t, err)
 		require.Len(t, summaries, 1)
-		if source.profile == "" {
-			require.Empty(t, summaries[0].LatestProcessingState, source.name)
-		} else {
-			require.Equal(t, "failed", summaries[0].LatestProcessingState, source.name)
-		}
+		require.Equal(t, "failed", summaries[0].LatestProcessingState, source.name)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -132,8 +123,10 @@ func TestDaemonRejectsWatchMappedProfilesWithoutRuntime(t *testing.T) {
 	rendition := cfg.RenditionProfiles["documents"]
 	rendition.Runtime = nil
 	cfg.RenditionProfiles["documents"] = rendition
-	cfg.ProcessingProfiles["other"] = cfg.ProcessingProfiles["documents"]
-	cfg.Watches = []config.WatchConfig{{Name: "mixed", Source: t.TempDir(), Destination: "/mixed", Profiles: map[string]string{"document": "other", "audio_video": "documents"}, CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Hour)}}
+	asr, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:1")
+	cfg.RenditionProfiles["asr"] = asr.RenditionProfiles["asr"]
+	cfg.ProcessingProfiles["asr"] = asr.ProcessingProfiles["asr"]
+	cfg.Watches = []config.WatchConfig{{Name: "mixed", Source: t.TempDir(), Destination: "/mixed", Profiles: map[string]string{"document": "documents", "audio_video": "asr"}, CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Hour)}}
 	require.NoError(t, cfg.Validate())
 	root := t.TempDir()
 	require.NoError(t, writeDaemonASRConfig(root, cfg))

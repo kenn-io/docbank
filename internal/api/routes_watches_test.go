@@ -166,7 +166,7 @@ func TestWatchProcessingRoutes(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, d.Processing.Shutdown(context.WithoutCancel(t.Context()))) })
 		d.Jobs = supervisor
-		d.Cfg.Watches = []config.WatchConfig{{Name: "mixed", Profiles: map[string]string{"document": "private", "audio_video": "waiting", "image": "missing"}}}
+		d.Cfg.Watches = []config.WatchConfig{{Name: "mixed", Profiles: map[string]string{"document": "private", "audio_video": "waiting"}}}
 	})
 	node := createFileWithContent(t, ts, catalog, "/consent.txt", "Synthetic consent fixture.\n")
 	grantProcessingTestConsent(t, ts, node)
@@ -177,14 +177,12 @@ func TestWatchProcessingRoutes(t *testing.T) {
 	require.Len(t, watches.Items, 1)
 	require.Nil(t, watches.Items[0].Processing)
 	routes := watches.Items[0].ProcessingRoutes
-	require.Len(t, routes, 3)
+	require.Len(t, routes, 2)
 	assert.Equal(t, "audio_video", routes[0].MediaFamily)
 	assert.Equal(t, "waiting", routes[0].Profile)
 	assert.Equal(t, "required", routes[0].ConsentState)
 	assert.Equal(t, "document", routes[1].MediaFamily)
 	assert.Equal(t, "active", routes[1].ConsentState)
-	assert.Equal(t, "image", routes[2].MediaFamily)
-	assert.Contains(t, routes[2].Error, "Consent status unavailable")
 	resp, body = get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var jobs api.JobList

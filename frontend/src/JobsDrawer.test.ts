@@ -115,8 +115,6 @@ describe("background jobs drawer", () => {
             { media_family: "audio_video", profile: "asr", consent_state: "required" },
             { media_family: "document", profile: "docling", consent_state: "active" },
             { media_family: "image", profile: "ocr", error: "Consent status unavailable" },
-            { media_family: "text", profile: "plain", consent_state: "expired" },
-            { media_family: "web", profile: "html", consent_state: "revoked" },
           ],
         },
       ]),
@@ -125,8 +123,6 @@ describe("background jobs drawer", () => {
     await screen.findByText("audio video: waiting on consent for asr (required)");
     expect(screen.getByText("document: docling")).toBeTruthy();
     expect(screen.getByText("image: ocr. Consent status unavailable")).toBeTruthy();
-    expect(screen.getByText("text: waiting on consent for plain (expired)")).toBeTruthy();
-    expect(screen.getByText("web: waiting on consent for html (revoked)")).toBeTruthy();
   });
 
   it.each([

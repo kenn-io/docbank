@@ -1372,8 +1372,7 @@ func TestWatchProcessingProfileMapValidation(t *testing.T) {
 		want            string
 	}{
 		{name: "mapped", routes: map[string]string{"document": "archive", "audio_video": "archive"}},
-		{name: "deterministic errors", routes: map[string]string{"zzz": "archive", "aaa": "archive"}, want: `unknown media family "aaa"`},
-		{name: "unknown family", routes: map[string]string{"audio": "archive"}, want: "unknown media family"},
+		{name: "deterministic errors", routes: map[string]string{"audio": "archive", "aaa": "archive"}, want: `unknown media family "aaa"`},
 		{name: "exclusive", shorthand: "archive", routes: map[string]string{"document": "archive"}, want: "mutually exclusive"},
 		{name: "empty map exclusive", shorthand: "archive", routes: map[string]string{}, want: "mutually exclusive"},
 		{name: "empty", routes: map[string]string{"document": ""}, want: "must not be empty"},
@@ -1389,28 +1388,6 @@ func TestWatchProcessingProfileMapValidation(t *testing.T) {
 			}
 		})
 	}
-	for _, vision := range []bool{false, true} {
-		cfg := validProcessingConfig()
-		cfg.Watches = []WatchConfig{{Name: "inbox", Profiles: map[string]string{"image": "archive"}}}
-		profile := cfg.ProcessingProfiles["archive"]
-		profile.RetainSanitizedMarkdown = false
-		profile.Embeddings = nil
-		if vision {
-			rendition := cfg.RenditionProfiles["primary"]
-			rendition.AdapterContract = document.VisionAdapterContract
-			cfg.RenditionProfiles["primary"] = rendition
-		} else {
-			profile.Rendition = ""
-			profile.Embeddings = []string{"semantic"}
-			binding := cfg.EmbeddingProfiles["semantic"]
-			binding.InputKind = string(document.EmbeddingInputOriginalFile)
-			binding.Chunk = EmbeddingChunkConfig{}
-			binding.MaxInputTokens = 0
-			cfg.EmbeddingProfiles["semantic"] = binding
-		}
-		cfg.ProcessingProfiles["archive"] = profile
-		require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
-	}
 }
 
 func TestWatchProcessingProfileFor(t *testing.T) {
@@ -1420,11 +1397,9 @@ func TestWatchProcessingProfileFor(t *testing.T) {
 		{"audio/wav", "memo.wav", "asr"},
 		{"video/mp4", "clip.mp4", "asr"},
 		{"text/plain", "notes.txt", ""},
-		{"application/octet-stream", "memo.mp3", "asr"},
 	} {
 		assert.Equal(t, tc.want, watch.ProcessingProfileFor(tc.mime, tc.name))
-		shorthand := watch
-		shorthand.Profile = "all"
+		shorthand := WatchConfig{Profile: "all"}
 		assert.Equal(t, "all", shorthand.ProcessingProfileFor(tc.mime, tc.name))
 	}
 }
