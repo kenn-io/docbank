@@ -177,8 +177,8 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: len(fence.ContentVersionIDs)})
-				case "/api/v1/coverage":
-					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
+				case "/api/v1/processing/pdf-page-gaps":
+					writeDaemonJSON(t, w, api.PDFPageGaps{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: tc.name != "no reranking support"}}
 					if tc.local && tc.code == "processing_unavailable" {
@@ -292,8 +292,8 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
-				case "/api/v1/coverage":
-					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
+				case "/api/v1/processing/pdf-page-gaps":
+					writeDaemonJSON(t, w, api.PDFPageGaps{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					writeDaemonJSON(t, w, profiles)
 				case "/api/v1/search":
@@ -425,6 +425,28 @@ func TestAnswerQuestionRealDaemonEvidence(t *testing.T) {
 	}
 }
 
+func TestAnswerPageCoverageUsesBoundedOperation(t *testing.T) {
+	fence := api.DocumentSourceFence{VaultUID: testVaultID, ContentVersionIDs: []string{testVersionID}}
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/processing/pdf-page-gaps" {
+			http.Error(w, "expected bounded page-gap operation", http.StatusBadRequest)
+			return
+		}
+		var got api.DocumentSourceFence
+		assert.NoError(t, json.UnmarshalRead(r.Body, &got))
+		assert.Equal(t, fence, got)
+		writeDaemonJSON(t, w, api.PDFPageGaps{VaultUID: testVaultID, PagesWithoutText: []api.PageTextGap{{ContentVersionID: testVersionID, Pages: []int{2}}}})
+	}))
+	t.Cleanup(daemon.Close)
+	err := daemonAnswerSession(exportTestLease(t, daemon.URL))(t.Context(), func(ctx context.Context, client answerClient) error {
+		got, err := client.GetPDFPageCoverage(ctx, fence)
+		require.NoError(t, err)
+		require.Equal(t, []api.PageTextGap{{ContentVersionID: testVersionID, Pages: []int{2}}}, got.PagesWithoutText)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
 	f := newNativeExportFixture(t)
 	pdf, err := os.ReadFile("../../document/testdata/scanassessment/mixed-below-ratio.pdf")
@@ -435,13 +457,31 @@ func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
 	require.NoError(t, err)
 	server, service, _ := newProcessingDocumentServer(t, f)
 	require.NoError(t, (&processing.PDFTextRunner{Service: service}).Initialize(t.Context()))
+	fullTextPDF, err := os.ReadFile("../../document/testdata/scanassessment/born-digital.pdf")
+	require.NoError(t, err)
+	for i := range 17 {
+		data := append(bytes.Clone(fullTextPDF), []byte(fmt.Sprintf("\n%% document %d\n", i))...)
+		hash, size, err := f.blobs.WriteContext(t.Context(), bytes.NewReader(data))
+		require.NoError(t, err)
+		fullNode, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("full-%d.pdf", i), hash, size, "application/pdf")
+		require.NoError(t, err)
+		selector := processing.Selector{NodeID: fullNode.ID, ContentVersionID: fullNode.CurrentVersionID, Profile: processing.PDFTextProfileName}
+		plan, err := service.Plan(t.Context(), selector)
+		require.NoError(t, err)
+		_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+		require.NoError(t, err)
+	}
 	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
 	plan, err := service.Plan(t.Context(), selector)
 	require.NoError(t, err)
 	_, err = service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
 	require.NoError(t, err)
+	_, _, unavailable, err := service.PDFPageGaps(t.Context(), processing.SourceFence{VaultUID: "00000000-0000-4000-8000-000000000001", ContentVersionIDs: []string{node.CurrentVersionID}})
+	require.ErrorIs(t, err, processing.ErrForeignVault)
+	require.False(t, unavailable)
 	output := exportCall(t, server, "answer_question", map[string]any{"question": "absentword", "profile": processing.PDFTextProfileName})
 	require.Equal(t, false, output["coverage_complete"])
+	require.NotContains(t, output["coverage_reasons"], "page_coverage_incomplete")
 	gaps, ok := output["pages_without_text"].([]any)
 	require.True(t, ok)
 	require.Len(t, gaps, 1)

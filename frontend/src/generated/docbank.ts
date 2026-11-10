@@ -2331,6 +2331,8 @@ export const DocumentSearchRequestMode = {
 } as const;
 
 export interface DocumentSourceFence {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   /**
      * @minItems 1
      * @maxItems 4096
@@ -4623,6 +4625,15 @@ export interface OutputProblems {
   next: number;
   plan_id: string;
   total: number;
+}
+
+export interface PDFPageGaps {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  page_coverage?: string;
+  page_coverage_unavailable?: boolean;
+  pages_without_text?: PageTextGap[];
+  vault_uid: string;
 }
 
 export interface PDFRedactionRedactionRegion {
@@ -19302,6 +19313,44 @@ export const getLocalTextStatus = async ( options?: Parameters<typeof sessionJSO
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getGetPDFPageGapsUrl = () => {
+
+
+
+
+  return `/api/v1/processing/pdf-page-gaps`
+}
+
+/**
+ * @summary Report bounded PDF page gaps for exact document versions
+ */
+export const getPDFPageGaps = async (documentSourceFence: NonReadonly<DocumentSourceFence>, options?: Parameters<typeof sessionJSON>[1]): Promise<PDFPageGaps> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PDFPageGaps>(getGetPDFPageGapsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(documentSourceFence)
   }
 );}
 
