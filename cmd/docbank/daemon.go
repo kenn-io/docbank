@@ -363,6 +363,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			}
 		}
 	}
+	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
+	if err != nil {
+		return fmt.Errorf("configuring PDF text profile: %w", err)
+	}
+	if _, exists := processingProfiles[pdfName]; exists {
+		return fmt.Errorf("configured processing profile %q conflicts with the built-in PDF text profile", pdfName)
+	}
+	processingProfiles[pdfName] = pdfProfile
 	suppliedName, suppliedProfile, err := processing.NewSuppliedMediaProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied media profile: %w", err)
@@ -420,6 +428,13 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
 			return err
 		}
+	}
+	pdfText := &processing.PDFTextRunner{Service: processingService}
+	if err := pdfText.Initialize(sigCtx); err != nil {
+		return fmt.Errorf("initializing automatic PDF text: %w", err)
+	}
+	if err := jobSupervisor.StartWorker("text:pdf", func(ctx context.Context) error { return pdfText.Backfill(ctx, logger) }); err != nil {
+		return err
 	}
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
@@ -754,7 +769,13 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	if idleTimeout > 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
-			idleWatch(ctx, tracker, idleTimeout, logger, localText.Pending, stop)
+			idleWatch(ctx, tracker, idleTimeout, logger, func(ctx context.Context) (bool, error) {
+				pending, err := localText.Pending(ctx)
+				if pending || err != nil {
+					return pending, err
+				}
+				return pdfText.Pending(ctx)
+			}, stop)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("starting idle-timeout job: %w", err)

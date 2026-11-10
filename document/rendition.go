@@ -8,6 +8,9 @@ import (
 // RenditionContractV1 identifies the durable, sanitized rendition contract.
 const RenditionContractV1 = "rendition/v1"
 
+// PDFTextProviderID identifies the local PDF text extractor for safe crash recovery.
+const PDFTextProviderID = "pdftext.in-process-v1"
+
 // Sanitizer bounds fixed for rendition/v1. They are part of the policy
 // identity so a future change splits shared builds instead of reusing them.
 const (

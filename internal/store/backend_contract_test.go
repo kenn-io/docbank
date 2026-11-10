@@ -906,6 +906,7 @@ var backendSuites = []backendSuite{
 		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
 	}},
 	{name: "text-extraction", postgres: "native operations", scope: "Plain-text queue discovery, retries, results and rendition authority publication; excludes ranked search and recovery.", scenarios: []backendScenario{
+		{"PDFTextDiscovery", func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newPostgresQueryStore) }},
 		{"TextPublication", nil, checkTextPublicationPostgres},
 		{"TextChangedResult", nil, checkTextChangedResultPostgres},
 		{"TextPublicationRollback", nil, checkTextPublicationRollbackPostgres},
@@ -1401,12 +1402,12 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobWorkChoosesAnAuthorizedWaiter(t, newPostgresQueryStore)
 		}},
-		{"RenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle", func(t *testing.T) {
+		{"RenditionJobsRecoverAmbiguousProviderWork", func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newTestStore)
+			checkRenditionJobsRecoverAmbiguousProviderWork(t, newTestStore)
 		}, func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newPostgresQueryStore)
+			checkRenditionJobsRecoverAmbiguousProviderWork(t, newPostgresQueryStore)
 		}},
 		{"RenditionJobNoHandleRetryKeepsAdmissionAuthority", func(t *testing.T) { t.Helper(); checkRenditionJobNoHandleRetryKeepsAdmissionAuthority(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
@@ -1423,6 +1424,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobStagingIsIdempotentWithinOneClaim(t, newPostgresQueryStore)
 		}},
+		{"RenditionPublicationPreservesLegacyText", func(t *testing.T) { t.Helper(); checkRenditionPublicationPreservesLegacyText(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionPublicationPreservesLegacyText(t, newPostgresQueryStore) }},
 		{"PublishRenditionJobAtomicallyActivatesAuthorizedWaiters", func(t *testing.T) {
 			t.Helper()
 			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newTestStore)

@@ -579,12 +579,13 @@ work and running while it processes an item.
 
 ## Which text is not searched?
 
-The daemon does not automatically extract PDF text layers, office-document
-text, unpublished email attachments, or text from images through optical
-character recognition (OCR). You can still find these files by name and read
-their stored bytes. The
-[document processing libraries](../document-understanding.md) provide additional
-processing options for applications. Adding a file does not start them.
+The daemon indexes PDF text layers locally when files are added and after
+restart for existing files. The built-in `docbank-pdf-text` profile accepts PDFs
+up to 500 MiB and 5,000 pages. With no configured profile, the Text tab selects
+the built-in profile and shows its retained page text. A configured profile
+keeps its own text and processing state.
+
+Office-document text, unpublished email attachments, and text from images through optical character recognition (OCR) need explicit processing. You can still find these files by name and read their stored bytes. See [document processing](document-processing.md).
 
 Ordinary search in the CLI, HTTP API, web app, and TUI matches words in
 names and indexed text. Processing search uses the separate workflow below.

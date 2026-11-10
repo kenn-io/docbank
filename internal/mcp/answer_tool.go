@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 // answerContentExcerpt admits only an excerpt from the lexical content lane.
@@ -99,6 +100,12 @@ var answerErrorMessages = map[string]string{
 }
 
 func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {
+	if input.Profile == "" && len(profiles) > 1 {
+		configured := slices.DeleteFunc(slices.Clone(profiles), func(p api.ProcessingProfileSummary) bool { return p.Name == processing.PDFTextProfileName })
+		if len(configured) > 0 {
+			profiles = configured
+		}
+	}
 	if len(profiles) == 0 {
 		return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "processing_unavailable", "no processing profiles available")
 	}
