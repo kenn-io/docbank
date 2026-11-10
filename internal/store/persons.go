@@ -7,6 +7,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -258,32 +260,33 @@ func personDerivedExactIdentitySQL(alias string) string {
 }
 
 // personVisibleSQL is the browser's person visibility rule for a page of
-// people. It binds visibleOnly, then hideLocked twice. Its correlated
+// people. It binds visibleOnly, then hideLocked. Its correlated
 // subqueries use the person index. visiblePersonByIDSQL applies the same rule
 // to one person.
-func personVisibleSQL(person string) string {
-	return `(?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
+func personVisibleSQL(person string, first int) string {
+	visible, locked := fmt.Sprintf("$%d", first), fmt.Sprintf("$%d", first+1)
+	return `(` + visible + `=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
 			AND ` + personDerivedExactIdentitySQL("i") + `)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a
-		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", "?") + `) OR EXISTS(
+		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", locked) + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
-		AND ` + personVisibleActorSQL("p", "?") + `))`
+		AND ` + personVisibleActorSQL("p", locked) + `))`
 }
 
 // Materialize the bounded matches before reading their visible identity labels.
 var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
  SELECT persons.* FROM persons WHERE %s state<>'retired'
 	AND (%s)
-	ORDER BY display_name_folded,person_id LIMIT ?)
+	ORDER BY display_name_folded,person_id LIMIT $%[3]d)
 SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,'',
 	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
 		FROM person_identities i WHERE i.person_id=persons.person_id
 		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
-		AND (?=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
+		AND ($%[4]d=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
-			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
+			AND dp.sensitive=0 AND ($%[5]d=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
  FROM matches persons ORDER BY display_name_folded,person_id`
 
@@ -316,23 +319,27 @@ type PeopleSearchOptions struct {
 // peopleCandidatesSQL narrows the matches to a typed name prefix and, for the
 // Photos page, to people with a visible depicted photo: Library photos, and
 // Hidden photos too while unlocked.
-func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
+func (s *Store) peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
 	clause, args := "", []any{}
 	if prefix != "" {
-		clause, args = `instr(persons.display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, ?) AND `, []any{prefix, prefix}
+		clause, args = `instr(persons.display_name_folded, $1) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, $2) AND `, []any{prefix, prefix}
+		if s.postgresSchema != "" {
+			clause = `strpos(persons.display_name_folded, $1)>0 AND persons.display_name_folded COLLATE "C" ~ $2 AND `
+			args[1] = personWordStartPostgres + regexp.QuoteMeta(prefix)
+		}
 	}
 	if photosOnly {
-		clause += personHasPhotoSQL(unlocked, "") + " AND "
+		clause += s.personHasPhotoSQL(unlocked, "") + " AND "
 	}
 	return clause, args
 }
 
 // personHasPhotoSQL builds the eligible person list once. The recent walk has
 // already checked its person's photo, so only namesakes need the list.
-func personHasPhotoSQL(unlocked bool, walkerAlias string) string {
-	joins, where := personPhotoSource(unlocked)
+func (s *Store) personHasPhotoSQL(unlocked bool, walkerAlias string) string {
+	joins, where := s.personPhotoSource(unlocked)
 	clause := `persons.person_id IN (SELECT assertion.person_id FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.action='assert' AND assertion.role='depicted')`
 	if walkerAlias != "" {
 		clause = "(persons.person_id=" + walkerAlias + ".person_id OR " + clause + ")"
@@ -369,25 +376,29 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 				return err
 			}
 		}
-		candidates, args := peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
+		candidates, args := s.peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
 		if photosOnly && !usePhotoSet {
-			joins, where := personPhotoSource(!hideLocked)
+			joins, where := s.personPhotoSource(!hideLocked)
 			// Unary + keeps SQLite on the name index so it can stop after the page fills.
-			candidates += `+persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
+			indexHint := ""
+			if s.postgresSchema == "" {
+				indexHint = "+"
+			}
+			candidates += indexHint + `persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
  AND EXISTS (SELECT 1 FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted') AND `
 		}
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
-			candidates += personVisibleSQL("persons.person_id") + " AND "
-			args = append(args, true, hideLocked, hideLocked)
+			candidates += personVisibleSQL("persons.person_id", len(args)+1) + " AND "
+			args = append(args, 1, boolInt(hideLocked))
 		}
 		if options.RecentFirst {
-			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
+			people, err = s.peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
 		} else {
-			people, err = peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
+			people, err = s.peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
 		}
 		if err != nil {
 			return err
@@ -400,11 +411,16 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 	return people, scope, err
 }
 
+func peopleNamePageSQL(candidates string, first int) string {
+	cursor := fmt.Sprintf(`$%[1]d='' OR display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[2]d)`, first, first+1)
+	return fmt.Sprintf(peopleByDisplayNameSQL, candidates, cursor, first+2, first+3, first+4)
+}
+
 // peopleByDisplayNameTx bounds the name matches before reading identity labels.
-func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID string, limit int, visibleOnly, hideLocked bool) ([]PersonSearchResult, error) {
-	cursor := `?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?)`
-	args = append(slices.Clone(args), afterName, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, candidates, cursor), args...)
+func (s *Store) peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID string, limit int, visibleOnly, hideLocked bool) ([]PersonSearchResult, error) {
+	query := peopleNamePageSQL(candidates, len(args)+1)
+	args = append(slices.Clone(args), afterName, afterID, limit, boolInt(visibleOnly), boolInt(hideLocked))
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -423,33 +439,38 @@ func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, a
 
 // peopleRecentTx probes each matching person's newest eligible evidence for
 // typed prefixes. Empty queries walk assertions and finish timestamp ties.
-func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool, prefix string) ([]PersonSearchResult, error) {
-	joins, where := personPhotoSource(!hideLocked)
-	walkCandidates, walkArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
+func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool, prefix string) ([]PersonSearchResult, error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	joins, where := s.personPhotoSource(!hideLocked)
+	walkCandidates, walkArgs := s.peopleCandidatesSQL(prefix, false, !hideLocked)
 	if visibleOnly && !photosOnly {
-		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id") + ") AND "
-		walkArgs = append(walkArgs, true, hideLocked, hideLocked)
+		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id", len(walkArgs)+1) + ") AND "
+		walkArgs = append(walkArgs, 1, boolInt(hideLocked))
 	}
 	if photosOnly {
-		walkCandidates += personHasPhotoSQL(!hideLocked, "person") + " AND "
+		walkCandidates += s.personHasPhotoSQL(!hideLocked, "person") + " AND "
 	}
 	// Empty queries read all assertions. A sequential table scan avoids
 	// fetching each evidence row through the person index.
+	indexHint := ""
+	if s.postgresSchema == "" {
+		indexHint = " NOT INDEXED"
+	}
 	query := `SELECT persons.person_id,persons.display_name_folded,assertion.recorded_at
- FROM person_document_assertions assertion NOT INDEXED
- CROSS JOIN persons person ON person.person_id=assertion.person_id
- CROSS JOIN persons ON persons.display_name_folded=person.display_name_folded
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ FROM person_document_assertions assertion` + indexHint + `
+ ` + s.peopleJoin() + ` persons person ON person.person_id=assertion.person_id
+ ` + s.peopleJoin() + ` persons ON persons.display_name_folded=person.display_name_folded
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.role='depicted' AND assertion.action='assert' AND person.state<>'retired'
  AND ` + walkCandidates + ` persons.state<>'retired'
  ORDER BY assertion.recorded_at DESC`
 	var rankedSQL string
 	var rankedArgs []any
 	if prefix != "" {
-		matches, matchArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
+		matches, matchArgs := s.peopleCandidatesSQL(prefix, false, !hideLocked)
 		rankedSQL = `WITH own AS MATERIALIZED (
  SELECT persons.*, (SELECT assertion.recorded_at FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.person_id=persons.person_id AND assertion.role='depicted' AND assertion.action='assert'
  ORDER BY assertion.recorded_at DESC LIMIT 1) own
  FROM persons WHERE ` + matches + ` state<>'retired'),
@@ -460,13 +481,14 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if photosOnly {
 			eligible += "own IS NOT NULL AND "
 		} else if visibleOnly {
-			eligible += personVisibleSQL("persons.person_id") + " AND "
-			matchArgs = append(slices.Clone(matchArgs), true, hideLocked, hideLocked)
+			eligible += personVisibleSQL("persons.person_id", len(matchArgs)+1) + " AND "
+			matchArgs = append(slices.Clone(matchArgs), 1, boolInt(hideLocked))
 		}
-		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + `
- (?='' OR rank<? OR (rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?))))
- ORDER BY rank DESC,display_name_folded,person_id LIMIT ?`
-		matchArgs = append(matchArgs, afterName, afterRecent, afterRecent, afterName, afterName, afterID, limit)
+		first := len(matchArgs) + 1
+		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + fmt.Sprintf(`
+ ($%[1]d='' OR rank<$%[2]d OR (rank=$%[2]d AND (display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[3]d))))
+ ORDER BY rank DESC,display_name_folded,person_id LIMIT $%[4]d`, first, first+1, first+2, first+3)
+		matchArgs = append(matchArgs, afterName, afterRecent, afterID, limit)
 		walkArgs = matchArgs
 	}
 	rows, err := tx.QueryContext(ctx, query, walkArgs...)
@@ -518,7 +540,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if err != nil {
 			return nil, err
 		}
-		people, err = peopleByDisplayNameTx(ctx, tx, "person_id IN (SELECT value FROM json_each(?)) AND ", []any{string(encoded)}, "", "", limit, visibleOnly, hideLocked)
+		people, err = s.peopleByDisplayNameTx(ctx, tx, "person_id IN (SELECT value FROM "+d.arrayValues("$1")+") AND ", []any{string(encoded)}, "", "", limit, visibleOnly, hideLocked)
 		if err != nil {
 			return nil, err
 		}
@@ -560,7 +582,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if afterRecent != "" {
 			afterName, afterID = "", ""
 		}
-		unranked, err := peopleByDisplayNameTx(ctx, tx, "display_name_folded NOT IN (SELECT value FROM json_each(?)) AND "+candidates, append([]any{string(encoded)}, args...), afterName, afterID, limit-len(people), visibleOnly, hideLocked)
+		unranked, err := s.peopleByDisplayNameTx(ctx, tx, candidates+"display_name_folded NOT IN (SELECT value FROM "+d.arrayValues(fmt.Sprintf("$%d", len(args)+1))+") AND ", append(slices.Clone(args), string(encoded)), afterName, afterID, limit-len(people), visibleOnly, hideLocked)
 		if err != nil {
 			return nil, err
 		}
@@ -795,4 +817,31 @@ func advancePersonBindingEpochForVersionTx(ctx context.Context, tx *sql.Tx, vers
 		return nil
 	}
 	return advancePersonBindingEpochTx(ctx, tx)
+}
+
+// PostgreSQL's locale-defined word classes differ from Go's Unicode letters,
+// numbers and marks. Render those same ranges once, using literal code points.
+var personWordStartPostgres = func() string {
+	class, err := syntax.Parse(`[\pL\pN\pM]`, syntax.Perl)
+	if err != nil {
+		panic(err)
+	}
+	var pattern strings.Builder
+	pattern.WriteString("(^|[^")
+	for i := 0; i < len(class.Rune); i += 2 {
+		pattern.WriteRune(class.Rune[i])
+		if class.Rune[i] != class.Rune[i+1] {
+			pattern.WriteRune('-')
+			pattern.WriteRune(class.Rune[i+1])
+		}
+	}
+	pattern.WriteString("])")
+	return pattern.String()
+}()
+
+func (s *Store) peopleJoin() string {
+	if s.postgresSchema != "" {
+		return "JOIN"
+	}
+	return "CROSS JOIN"
 }

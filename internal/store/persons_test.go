@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"testing"
@@ -251,9 +252,10 @@ func checkRetirePersonCutsOffInboundMergeAliases(t *testing.T, newStore func(*te
 	require.Equal(t, "deleted", reason)
 }
 
-func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
+func checkPeopleRecentFirstFollowsVisibleEvidence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	people := map[string]Person{}
 	for _, name := range []string{"Ada", "Bob", "Cy", "Zoe", "zoe"} {
@@ -265,13 +267,10 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	for name, recorded := range map[string]string{"Ada": "2026-01-01T00:00:00.000000000Z", "Bob": "2026-01-01T00:00:00.000000001Z", "Cy": "2026-01-15T00:00:00.000000000Z", "Zoe": "2026-03-01T00:00:00.000000000Z"} {
 		node := browsePhotoNode(t, s, name+".jpg", fakeHash("recent-"+name), "image/jpeg")
 		nodes[name] = node
-		_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, people[name].PersonID, "")
-		require.NoError(t, err)
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, recorded, people[name].PersonID)
-		require.NoError(t, err)
+		seedPeopleEvidenceAt(t, s, node.CurrentVersionID, people[name].PersonID, recorded)
 	}
 	// A suppressed assertion is not depicted evidence.
-	_, err := s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-09-01T00:00:00.000000000Z',action='suppress' WHERE person_id=$1`, people["Cy"].PersonID)
+	_, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: nodes["Cy"].CurrentVersionID, PersonID: people["Cy"].PersonID, Role: "depicted", Action: "suppress", Revision: 1})
 	require.NoError(t, err)
 	page := func(ctx context.Context, query string, options PeopleSearchOptions, limit int) []string {
 		var ids []string
@@ -314,8 +313,8 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, zoes, page(WithPhotoHiddenToken(ctx, token), "", recent, 1)[:2])
 	// Equal timestamps use folded name and ID, including across a page boundary.
-	_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2026-01-01T00:00:00.000000001Z' WHERE person_id=$1`, people["Zoe"].PersonID)
-	require.NoError(t, err)
+	tie := browsePhotoNode(t, s, "tie.jpg", fakeHash("tie"), "image/jpeg")
+	seedPeopleEvidenceAt(t, s, tie.CurrentVersionID, people["Bob"].PersonID, "2026-03-01T00:00:00.000000000Z")
 	for _, limit := range []int{1, 2, 3, 100} {
 		require.Equal(t, append([]string{people["Bob"].PersonID}, append(slices.Clone(zoes), people["Ada"].PersonID, people["Cy"].PersonID)...), page(WithPhotoHiddenToken(ctx, token), "", recent, limit))
 	}
@@ -336,11 +335,12 @@ func TestPeopleRecentFirstFollowsVisibleEvidence(t *testing.T) {
 	require.Empty(t, remaining[0].RecentRank)
 }
 
-func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
+func checkPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, condition := range []string{"excluded", "trashed", "stale"} {
 		t.Run(condition, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			ada, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
@@ -350,10 +350,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.NoError(t, err)
 			for index, person := range []Person{ada, bob, lapsed} {
 				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
-				_, err := s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, fmt.Sprintf("2026-0%d-01T00:00:00.000000000Z", index+1), person.PersonID)
-				require.NoError(t, err)
+				seedPeopleEvidenceAt(t, s, node.CurrentVersionID, person.PersonID, fmt.Sprintf("2026-0%d-01T00:00:00.000000000Z", index+1))
 				if index > 0 {
 					switch condition {
 					case "excluded":
@@ -373,10 +370,7 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 			require.Equal(t, ada.PersonID, rows[0].PersonID)
 			// Older readable evidence ranks Bob when his newest photo is unavailable.
 			older := browsePhotoNode(t, s, "Bob-older.jpg", fakeHash("Bob-older"), "image/jpeg")
-			_, err = s.MarkPersonInPhoto(ctx, older.CurrentVersionID, bob.PersonID, "")
-			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at='2025-12-01T00:00:00.000000000Z' WHERE content_version_id=$1`, older.CurrentVersionID)
-			require.NoError(t, err)
+			seedPeopleEvidenceAt(t, s, older.CurrentVersionID, bob.PersonID, "2025-12-01T00:00:00.000000000Z")
 			rows, _, err = s.PeopleByDisplayName(ctx, "Bo", "", "", 10, true, PeopleSearchOptions{RecentFirst: true})
 			require.NoError(t, err)
 			require.Equal(t, bob.PersonID, rows[0].PersonID)
@@ -393,12 +387,13 @@ func TestPeopleRecentIgnoresUnavailablePhotoEvidence(t *testing.T) {
 	}
 }
 
-func TestPeopleRecentFirstAfterNaming(t *testing.T) {
+func checkPeopleRecentFirstAfterNaming(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, action := range []string{"name face", "create face", "whole-photo mark", "candidate"} {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			ada, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
@@ -406,10 +401,7 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 			require.NoError(t, err)
 			for i, person := range []Person{ada, grace} {
 				node := browsePhotoNode(t, s, person.DisplayName+".jpg", fakeHash(person.DisplayName), "image/jpeg")
-				_, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, fmt.Sprintf("200%d-01-01T00:00:00.000000000Z", i+1), person.PersonID)
-				require.NoError(t, err)
+				seedPeopleEvidenceAt(t, s, node.CurrentVersionID, person.PersonID, fmt.Sprintf("200%d-01-01T00:00:00.000000000Z", i+1))
 			}
 			recent := PeopleSearchOptions{RecentFirst: true}
 			rows, _, err := s.PeopleByDisplayName(ctx, "", "", "", 10, true, recent)
@@ -447,9 +439,10 @@ func TestPeopleRecentFirstAfterNaming(t *testing.T) {
 	}
 }
 
-func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
+func checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	var people []Person
 	for i, name := range []string{"Ada", "Bob", "bob", "Cy"} {
@@ -460,10 +453,7 @@ func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
 			continue // Namesakes share Bob's evidence rank.
 		}
 		node := browsePhotoNode(t, s, name+".jpg", fakeHash("paging-"+name), "image/jpeg")
-		_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID, "")
-		require.NoError(t, err)
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET recorded_at=$1 WHERE person_id=$2`, fmt.Sprintf("2026-01-%02dT00:00:00.000000000Z", 10-i), person.PersonID)
-		require.NoError(t, err)
+		seedPeopleEvidenceAt(t, s, node.CurrentVersionID, person.PersonID, fmt.Sprintf("2026-01-%02dT00:00:00.000000000Z", 10-i))
 	}
 	options := PeopleSearchOptions{RecentFirst: true}
 	first, _, err := s.PeopleByDisplayName(ctx, "", "", "", 1, true, options)
@@ -487,4 +477,16 @@ func TestPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t *testing.T) {
 	bobIDs := []string{people[1].PersonID, people[2].PersonID}
 	slices.Sort(bobIDs)
 	require.Equal(t, []string{restarted[0].PersonID, restarted[1].PersonID}, bobIDs)
+}
+
+// Seed historical assertions with controlled ordering without changing their
+// immutable recorded time after insertion.
+func seedPeopleEvidenceAt(t *testing.T, s *Store, version, person, recorded string) {
+	t.Helper()
+	id, err := newUUIDv4()
+	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark) VALUES($1,$2,$3,'depicted','assert','',$4,1,1)`, id, version, person, recorded)
+		return err
+	}))
 }

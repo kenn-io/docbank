@@ -371,7 +371,13 @@ transfer, backup recovery, multi-store placement and their storage-operation job
 remain unqualified.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
-and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
+and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
+both setup and runtime validation check `server_encoding` and reject any other
+value before accessing the vault schema. This keeps Unicode name matching
+consistent with SQLite. A different client encoding does not satisfy this
+requirement: provision a UTF-8 database before installing the schema.
+
+Setup creates a dedicated schema, canonical
 DDL, a UUIDv4 vault identity, a fresh processing-consent incarnation, the primary
 blob-store identity and ownership epoch, initial people-state epochs, and the
 root directory in one transaction, under a schema-specific PostgreSQL advisory
@@ -1328,11 +1334,10 @@ candidate projection, and commit edits between statements in a read. Package
 custody writes run against a validated retained package fixture; this does not
 qualify package creation or import.
 
-General people discovery (including autocomplete, recent-first listing and photo
-summaries), query-selected photo browsing, portable recovery, and public
-PostgreSQL vault opening remain
-unqualified. Their retained catalogs and the curation operations above do not
-establish support for those producers or user entry points.
+People discovery is covered below. Query-selected photo browsing, portable
+recovery and public PostgreSQL vault opening remain unqualified. Their retained
+catalogs and the curation operations above do not establish support for those
+producers or user entry points.
 
 #### Document-person resolution
 
@@ -1361,8 +1366,32 @@ The `document-people` contracts run the existing input, publication, freshness a
 rebuild scenarios on both engines. PostgreSQL cases also commit changes between
 read statements and interrupt provisioning, publication and rebuild creation
 through the restricted runtime role. The Store port adds no schema or runtime SQL
-translation. General People discovery, query execution, recovery and public
-PostgreSQL vault opening remain separate qualification boundaries.
+translation. People discovery is covered below; query execution, recovery and
+public PostgreSQL vault opening remain separate qualification boundaries.
+
+#### People browsing
+
+`PeopleByDisplayName` supports autocomplete, name-order and recent-first pages,
+visible identity labels and photo cards on both backends. Namesakes share their
+newest eligible evidence rank and remain adjacent across cursor pages. Retired,
+sensitive, stale, excluded, trashed and locked Hidden evidence keeps its existing
+visibility rules. Photo cards count distinct assets and choose a readable key
+face or the existing fallback portrait; Hidden counts appear only while unlocked.
+
+One repeatable-read transaction covers eligibility, the page, labels, counts and
+portraits. SQLite keeps its forced join order, name-index hint and word-prefix
+function. PostgreSQL uses ordinary joins, JSON array expansion and a literal
+regular expression with the same Go Unicode letter, number and combining-mark
+ranges. The ranges are rendered once; typed text is escaped and bound as data.
+Neither backend filters a limited page after reading it or translates SQL at
+runtime. PostgreSQL has the same folded-name/page-cursor index as SQLite;
+the existing runtime grants suffice.
+
+The `people-browsing` contracts share the existing browse and summary scenarios,
+including one-item cursor pages, hidden-photo access and shared/paired photos.
+Unicode cases cover literal punctuation, non-Latin names, combining marks and
+numbers at word boundaries. A PostgreSQL scenario commits a retirement during
+a page read and verifies that the next request alone sees the change.
 
 #### Photo albums
 
@@ -1589,7 +1618,7 @@ recomputation, and advances the publication epochs for removed projections.
 SQLite retains its released trigger ownership, including the event epoch's
 per-head increment. Canonical event tables support this invalidation and its
 cascades; [event publication](#source-metadata-and-document-events) uses the
-shared Store. People publication remains unqualified.
+shared Store, as does [document-person publication](#document-person-resolution).
 
 Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.

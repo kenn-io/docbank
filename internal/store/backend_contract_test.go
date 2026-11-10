@@ -160,7 +160,49 @@ var backendSuites = []backendSuite{
 			checkPeopleRebuildStopsRetryingTerminalFailure(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; query-driven discovery remains separate; document-people covers resolver production.", scenarios: []backendScenario{
+	{name: "people-browsing", postgres: "native operations", scope: "Name and recent pages, Unicode prefixes, evidence visibility, identity labels and photo summaries.", scenarios: []backendScenario{
+		{"UnicodePrefixes", func(t *testing.T) { t.Helper(); checkPeopleBrowseUnicode(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleBrowseUnicode(t, newPostgresQueryStore) }},
+		{"Snapshot", nil, checkPeopleBrowseSnapshotPostgres},
+		{"NameIndex", nil, checkPeopleBrowseNameIndexPostgres},
+		{"PeopleRecentFirstFollowsVisibleEvidence", func(t *testing.T) { t.Helper(); checkPeopleRecentFirstFollowsVisibleEvidence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRecentFirstFollowsVisibleEvidence(t, newPostgresQueryStore) }},
+		{"PeopleRecentIgnoresUnavailablePhotoEvidence", func(t *testing.T) { t.Helper(); checkPeopleRecentIgnoresUnavailablePhotoEvidence(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentIgnoresUnavailablePhotoEvidence(t, newPostgresQueryStore)
+		}},
+		{"PeopleRecentFirstAfterNaming", func(t *testing.T) { t.Helper(); checkPeopleRecentFirstAfterNaming(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRecentFirstAfterNaming(t, newPostgresQueryStore) }},
+		{"PeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newPostgresQueryStore)
+		}},
+		{"PeopleByDisplayNameEvidenceVisibility", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newPostgresQueryStore) }},
+		{"PeopleByDisplayNameOperatorCandidateAcceptance", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newPostgresQueryStore)
+		}},
+		{"PeopleByDisplayNameMatchesWordPrefixes", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameMatchesWordPrefixes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameMatchesWordPrefixes(t, newPostgresQueryStore) }},
+		{"PeopleSearchIdentityLabelsRespectEvidenceVisibility", func(t *testing.T) {
+			t.Helper()
+			checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t, newPostgresQueryStore)
+		}},
+		{"PeoplePhotoSummary", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummary(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummary(t, newPostgresQueryStore) }},
+		{"PeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder", func(t *testing.T) {
+			t.Helper()
+			checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t, newPostgresQueryStore)
+		}},
+		{"PeoplePhotoSummaryPairedSources", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummaryPairedSources(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummaryPairedSources(t, newPostgresQueryStore) }},
+		{"PeoplePhotoSummarySharedPhotos", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummarySharedPhotos(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummarySharedPhotos(t, newPostgresQueryStore) }},
+		{"PersonNameSearchFollowsAuthority", func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newPostgresQueryStore) }},
+	}},
+	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; people-browsing covers discovery; document-people covers resolver production.", scenarios: []backendScenario{
 		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkPeopleRollbackPostgres},
 		{"RetainedPackageCustody", nil, checkPeopleRetainedPackageCustodyPostgres},
