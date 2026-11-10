@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -73,13 +74,25 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 			tags += " (" + item.TagError + ")"
 		}
 		processing := "-"
-		if status := item.Processing; status != nil {
-			processing = status.Profile
-			if status.Error != "" {
-				processing += " (" + status.Error + ")"
-			} else if status.ConsentState != "active" {
-				processing += " (waiting on consent: " + status.ConsentState + ")"
+		routes := item.ProcessingRoutes
+		if item.Processing != nil {
+			routes = append([]api.WatchProcessingStatus{*item.Processing}, routes...)
+		}
+		parts := make([]string, 0, len(routes))
+		for _, route := range routes {
+			part := route.Profile
+			if route.MediaFamily != "" {
+				part = route.MediaFamily + "=" + part
 			}
+			if route.Error != "" {
+				part += " (" + route.Error + ")"
+			} else if route.ConsentState != "active" {
+				part += " (waiting on consent: " + route.ConsentState + ")"
+			}
+			parts = append(parts, part)
+		}
+		if len(parts) > 0 {
+			processing = strings.Join(parts, ", ")
 		}
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			item.Name, status, capture, strconv.QuoteToASCII(item.Source),

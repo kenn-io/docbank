@@ -58,3 +58,14 @@ func TestWriteWatchedInboxesDisplaysActivity(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteWatchedInboxesProcessingRoutes(t *testing.T) {
+	var out bytes.Buffer
+	err := writeWatchedInboxes(&out, []api.WatchedInbox{{Name: "mixed", ProcessingRoutes: []api.WatchProcessingStatus{
+		{MediaFamily: "audio_video", Profile: "asr", ConsentState: "required"},
+		{MediaFamily: "document", Profile: "docling", ConsentState: "active"},
+		{MediaFamily: "image", Profile: "ocr", Error: "Consent status unavailable"},
+	}}})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "audio_video=asr (waiting on consent: required), document=docling, image=ocr (Consent status unavailable)")
+}

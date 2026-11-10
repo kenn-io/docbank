@@ -8227,6 +8227,10 @@ components:
           type: integer
         processing:
           $ref: "#/components/schemas/WatchProcessingStatus"
+        processing_routes:
+          items:
+            $ref: "#/components/schemas/WatchProcessingStatus"
+          type: array
         started_at:
           type: string
         status:
@@ -21917,6 +21921,8 @@ components:
           type: string
         error:
           type: string
+        media_family:
+          type: string
         profile:
           type: string
       required:
@@ -21949,6 +21955,10 @@ components:
           type: string
         processing:
           $ref: "#/components/schemas/WatchProcessingStatus"
+        processing_routes:
+          items:
+            $ref: "#/components/schemas/WatchProcessingStatus"
+          type: array
         scan_interval:
           type: string
         settle_time:

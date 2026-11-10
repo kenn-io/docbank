@@ -1457,7 +1457,8 @@ with API-key clients.
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
 `watch:<name>` job record.
-Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
+Watches with a single processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
+Mapped watches instead include `processing_routes`, sorted by `media_family`, with one entry per family containing `media_family`, `profile`, and its consent state or lookup `error`. The corresponding watch jobs include the same routes.
 If consent lookup fails, `error` describes the status failure instead.
 `GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.
 Scanner failures remain in the job's own `error` field.

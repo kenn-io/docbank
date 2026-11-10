@@ -12,9 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/sqlite"
 )
 
@@ -138,4 +140,57 @@ func TestWatchProcessingStatusLookupFailure(t *testing.T) {
 	require.Len(t, jobs.Items, 1)
 	assert.Equal(t, watches.Items[0].Processing, jobs.Items[0].Processing)
 	assert.Empty(t, jobs.Items[0].Error, "consent lookup failures leave the scanner healthy")
+}
+
+func TestWatchProcessingRoutes(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.WithoutCancel(t.Context()))) })
+	require.NoError(t, supervisor.Start("watch:mixed", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }))
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
+		provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+		require.NoError(t, err)
+		active := processingTestProfile(provider.Descriptor())
+		waiting := processingTestProfile(provider.Descriptor())
+		waiting.Rendition.DisclosureFingerprint = processingTestHash("second-disclosure")
+		gate := api.NewOperationGate()
+		d.Gate = gate
+		d.Processing, err = processing.NewService(t.Context(), processing.ServiceConfig{
+			Catalog: d.Store, Blobs: d.Blobs, Gate: gate,
+			SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
+			Profiles: map[string]processing.ProfileConfig{
+				"private": {Profile: active, RenditionProvider: provider},
+				"waiting": {Profile: waiting, RenditionProvider: provider},
+			},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, d.Processing.Shutdown(context.WithoutCancel(t.Context()))) })
+		d.Jobs = supervisor
+		d.Cfg.Watches = []config.WatchConfig{{Name: "mixed", Profiles: map[string]string{"document": "private", "audio_video": "waiting", "image": "missing"}}}
+	})
+	node := createFileWithContent(t, ts, catalog, "/consent.txt", "Synthetic consent fixture.\n")
+	grantProcessingTestConsent(t, ts, node)
+	resp, body := get(t, ts, "/api/v1/watches", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var watches api.WatchedInboxList
+	require.NoError(t, json.Unmarshal([]byte(body), &watches))
+	require.Len(t, watches.Items, 1)
+	require.Nil(t, watches.Items[0].Processing)
+	routes := watches.Items[0].ProcessingRoutes
+	require.Len(t, routes, 3)
+	assert.Equal(t, "audio_video", routes[0].MediaFamily)
+	assert.Equal(t, "waiting", routes[0].Profile)
+	assert.Equal(t, "required", routes[0].ConsentState)
+	assert.Equal(t, "document", routes[1].MediaFamily)
+	assert.Equal(t, "active", routes[1].ConsentState)
+	assert.Equal(t, "image", routes[2].MediaFamily)
+	assert.Contains(t, routes[2].Error, "Consent status unavailable")
+	resp, body = get(t, ts, "/api/v1/jobs", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var jobs api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
+	require.Len(t, jobs.Items, 1)
+	assert.Nil(t, jobs.Items[0].Processing)
+	assert.Equal(t, routes, jobs.Items[0].ProcessingRoutes)
+	assert.Empty(t, jobs.Items[0].Error)
 }

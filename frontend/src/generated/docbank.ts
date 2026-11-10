@@ -3718,6 +3718,7 @@ export const WatchProcessingStatusConsentState = {
 export interface WatchProcessingStatus {
   consent_state?: WatchProcessingStatusConsentState;
   error?: string;
+  media_family?: string;
   profile: string;
 }
 
@@ -3741,6 +3742,7 @@ export interface Job {
   paused: boolean;
   processed_bytes?: number;
   processing?: WatchProcessingStatus;
+  processing_routes?: WatchProcessingStatus[];
   started_at: string;
   status: JobStatus;
   /** Why configured watch tags are unavailable. */
@@ -9113,6 +9115,7 @@ export interface WatchedInbox {
   minimum_age: string;
   name: string;
   processing?: WatchProcessingStatus;
+  processing_routes?: WatchProcessingStatus[];
   scan_interval: string;
   settle_time: string;
   source: string;

@@ -1364,3 +1364,66 @@ func TestWatchProcessingProfileValidation(t *testing.T) {
 	cfg.RenditionProfiles["primary"] = rendition
 	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
 }
+
+func TestWatchProcessingProfileMapValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, shorthand string
+		routes          map[string]string
+		want            string
+	}{
+		{name: "mapped", routes: map[string]string{"document": "archive", "audio_video": "archive"}},
+		{name: "unknown family", routes: map[string]string{"audio": "archive"}, want: "unknown media family"},
+		{name: "exclusive", shorthand: "archive", routes: map[string]string{"document": "archive"}, want: "mutually exclusive"},
+		{name: "empty map exclusive", shorthand: "archive", routes: map[string]string{}, want: "mutually exclusive"},
+		{name: "empty", routes: map[string]string{"document": ""}, want: "must not be empty"},
+		{name: "undefined", routes: map[string]string{"document": "missing"}, want: "not defined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validProcessingConfig()
+			cfg.Watches = []WatchConfig{{Name: "inbox", Source: t.TempDir(), Destination: "/inbox", SettleTime: Duration(time.Second), ScanInterval: Duration(time.Second), Profile: tc.shorthand, Profiles: tc.routes}}
+			if tc.want == "" {
+				require.NoError(t, cfg.Validate())
+			} else {
+				require.ErrorContains(t, cfg.Validate(), tc.want)
+			}
+		})
+	}
+	for _, vision := range []bool{false, true} {
+		cfg := validProcessingConfig()
+		cfg.Watches = []WatchConfig{{Name: "inbox", Profiles: map[string]string{"image": "archive"}}}
+		profile := cfg.ProcessingProfiles["archive"]
+		profile.RetainSanitizedMarkdown = false
+		profile.Embeddings = nil
+		if vision {
+			rendition := cfg.RenditionProfiles["primary"]
+			rendition.AdapterContract = document.VisionAdapterContract
+			cfg.RenditionProfiles["primary"] = rendition
+		} else {
+			profile.Rendition = ""
+			profile.Embeddings = []string{"semantic"}
+			binding := cfg.EmbeddingProfiles["semantic"]
+			binding.InputKind = string(document.EmbeddingInputOriginalFile)
+			binding.Chunk = EmbeddingChunkConfig{}
+			binding.MaxInputTokens = 0
+			cfg.EmbeddingProfiles["semantic"] = binding
+		}
+		cfg.ProcessingProfiles["archive"] = profile
+		require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
+	}
+}
+
+func TestWatchProcessingProfileFor(t *testing.T) {
+	watch := WatchConfig{Profiles: map[string]string{"document": "docling", "audio_video": "asr"}}
+	for _, tc := range []struct{ mime, name, want string }{
+		{"application/pdf", "report.pdf", "docling"},
+		{"audio/wav", "memo.wav", "asr"},
+		{"video/mp4", "clip.mp4", "asr"},
+		{"text/plain", "notes.txt", ""},
+		{"application/octet-stream", "memo.mp3", "asr"},
+	} {
+		assert.Equal(t, tc.want, watch.ProcessingProfileFor(tc.mime, tc.name))
+		shorthand := watch
+		shorthand.Profile = "all"
+		assert.Equal(t, "all", shorthand.ProcessingProfileFor(tc.mime, tc.name))
+	}
+}

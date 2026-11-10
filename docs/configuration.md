@@ -437,14 +437,24 @@ change at the watched source appends another version.
 Set `profile = "mistral-ocr"` in a `[[watch]]` entry to queue its configured
 processing profile's OCR or text-extraction stage after each added or updated
 version. The profile must include a rendition that accepts original documents;
-photo vision and embedding-only profiles aren't supported here. Omit `profile`
-to use only baseline plain-text extraction.
+photo vision and embedding-only profiles aren't supported here. Omit both routing
+forms to use only baseline plain-text extraction.
+
+For a mixed folder, use `profiles = { document = "docling", audio_video = "asr" }`
+instead of `profile`. The forms are mutually exclusive. Keys use search
+`media_family` values: `email`, `document`, `spreadsheet`, `presentation`, `image`,
+`audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, `unknown`.
+Each value names a profile with an original-file rendition. Only the matching
+family's rendition is queued; unmapped families get baseline extraction only.
+An MP4 routed to an ASR profile that cannot read video is skipped as ineligible.
+No current automatic transcription adapter extracts MP4 audio. Photo descriptions
+and image embeddings continue to use vault-wide consent, independently of watches.
 
 The rendition stage needs current consent for that profile configuration.
 Without it, files still import with baseline plain-text extraction, but the
 configured rendition stays unprocessed. [Grant consent with `docbank processing build --consent`](usage/document-processing.md)
 for the configured profile to process subsequent imports. `docbank watch list` and
-the web app's All workers table show the profile and whether consent is required,
+the web app's All workers table show each family's profile and whether consent is required,
 expired, or revoked. Scanner errors remain separate. Unsupported files are skipped.
 An unexpected admission failure is logged once. The document stays imported
 and available for manual processing with `docbank processing build`.

@@ -309,6 +309,9 @@
           <tbody>
             {#each lanes as lane (lane.key)}
               {@const processing = lane.members.find((item) => item.processing)?.processing}
+              {@const routes =
+                lane.members.find((item) => item.processing_routes?.length)?.processing_routes ??
+                []}
               {@const watch = lane.members.find((item) => item.tags?.length)}
               <tr>
                 <th scope="row"
@@ -324,6 +327,18 @@
                       {/if}
                     </p>
                   {/if}
+                  {#each routes as route (route.media_family)}
+                    <p class="operation processing">
+                      {route.media_family?.replaceAll("_", " ")}:
+                      {#if route.error}
+                        {route.profile}. {route.error}
+                      {:else if route.consent_state === "active"}
+                        {route.profile}
+                      {:else}
+                        waiting on consent for {route.profile} ({route.consent_state})
+                      {/if}
+                    </p>
+                  {/each}
                   {#if watch}
                     <p class="operation processing">
                       Tags: {watch.tags?.join(", ")}
