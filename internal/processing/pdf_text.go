@@ -37,7 +37,7 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 		r, ok := cache[build]
 		if !ok {
 			if len(cache) == 16 {
-				return gaps, "partial", unavailable, nil
+				return gaps, statusPartial, unavailable, nil
 			}
 			r.pages, r.err = read(ctx, build)
 			cache[build] = r
@@ -57,11 +57,11 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 		}
 		if remaining == 0 {
 			if end < len(r.pages) {
-				return gaps, "partial", unavailable, nil
+				return gaps, statusPartial, unavailable, nil
 			}
 			for _, later := range ids[i+1:] {
 				if builds[later] != "" {
-					return gaps, "partial", unavailable, nil
+					return gaps, statusPartial, unavailable, nil
 				}
 			}
 			return gaps, state, unavailable, nil
