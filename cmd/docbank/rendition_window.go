@@ -267,6 +267,9 @@ func windowRenditions(ctx context.Context, c *daemonconn.Connection, node api.No
 }
 
 func checkWindowCatalogBounds(node api.Node) error {
+	if _, err := store.NormalizeDocumentCatalogQuery(store.DocumentCatalogQuery{PathPrefix: node.Path}); err != nil {
+		return fmt.Errorf("rendition discovery exceeds catalog path limits (%d bytes, %d components): %w; use --attachment if the active attachment is already known", store.MaxWalkPathBytes, store.MaxWalkDepth, err)
+	}
 	if utf8.RuneCountInString(node.Name) > store.MaxDocumentCatalogNameCharacters {
 		return fmt.Errorf("rendition discovery exceeds the document catalog filename limit of %d "+
 			"characters; use --attachment if the active attachment is already known",

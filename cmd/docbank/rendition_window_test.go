@@ -66,7 +66,8 @@ func TestRenditionWindowCatalogBounds(t *testing.T) {
 
 func TestRenditionWindowCLI(t *testing.T) {
 	for _, scenario := range []string{"discovery", "pinned zero", "pinned continuation",
-		"wrong build", "wrong profile", "pinned wrong profile", "missing profile", "stale"} {
+		"wrong build", "wrong profile", "pinned wrong profile", "missing profile", "stale",
+		"path length", "path depth", "pinned path length", "pinned path depth"} {
 		t.Run(scenario, func(t *testing.T) {
 			profile, attachment, build := sha256Hex("profile"), sha256Hex("attachment"), sha256Hex("build")
 			options := renditionWindowOptions{selector: nodeSelector{id: 42},
@@ -77,13 +78,19 @@ func TestRenditionWindowCLI(t *testing.T) {
 			if scenario == "pinned continuation" {
 				options.offset = 1
 			}
+			path := "/notes.txt"
+			if strings.Contains(scenario, "path length") {
+				path = "/" + strings.Repeat("d", 16375) + "/notes.txt"
+			} else if strings.Contains(scenario, "path depth") {
+				path = "/" + strings.Repeat("d/", 256) + "notes.txt"
+			}
 			var summaryCalls, windowCalls int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.Method + " " + r.URL.Path {
 				case "GET /api/v1/nodes/42":
 					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file",
-						Name: "notes.txt", Path: "/notes.txt", CurrentVersionID: processingTestVersionID}))
+						Name: "notes.txt", Path: path, CurrentVersionID: processingTestVersionID}))
 				case "GET /api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{}
 					if scenario != "missing profile" {
@@ -97,7 +104,12 @@ func TestRenditionWindowCLI(t *testing.T) {
 					var request api.DocumentSummaryResolveRequest
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 					assert.Equal(t, []api.DocumentIdentity{{NodeID: 42,
-						ContentVersionID: processingTestVersionID, Path: "/notes.txt"}}, request.Identities)
+						ContentVersionID: processingTestVersionID, Path: path}}, request.Identities)
+					if scenario == "path depth" {
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"status":409,"code":"stale_version"}`))
+						return
+					}
 					if scenario == "stale" {
 						w.WriteHeader(http.StatusConflict)
 						_, _ = w.Write([]byte(`{"status":409,"code":"stale_version"}`))
@@ -140,6 +152,16 @@ func TestRenditionWindowCLI(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
 			cmd, output := processingTestCommand()
 			err := runRenditionWindow(cmd, c, options)
+			if strings.HasPrefix(scenario, "path ") {
+				if scenario == "path length" {
+					require.ErrorContains(t, err, "16384 bytes")
+				} else {
+					require.ErrorContains(t, err, "256 components")
+				}
+				require.ErrorContains(t, err, "--attachment")
+				require.Empty(t, output.String())
+				return
+			}
 			if strings.Contains(scenario, "wrong") || scenario == "stale" || scenario == "missing profile" {
 				require.Error(t, err)
 				require.Empty(t, output.String())
