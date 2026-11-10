@@ -105,6 +105,39 @@ func TestMCPServerIconHTTP(t *testing.T) {
 	}
 }
 
+func TestMCPServerIconRoutesPreserveGuardedTransportPaths(t *testing.T) {
+	handler, err := NewServer().HTTPTransportHandler(HTTPOptions{BearerToken: testMCPBearer})
+	require.NoError(t, err)
+	for _, path := range []string{"/mcp", "//mcp", "/mcp/../mcp", "/./icon.png"} {
+		for _, bearer := range []string{"", testMCPBearer} {
+			t.Run(path+"/"+strconv.FormatBool(bearer != ""), func(t *testing.T) {
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1"+path,
+					bytes.NewReader(fixture(t, "discover.json")))
+				request.Header = protocolHeaders("server/discover", "")
+				if bearer != "" {
+					request.Header.Set("Authorization", "Bearer "+bearer)
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				assert.Empty(t, response.Header().Get("Location"), "preserve transport handling without a redirect")
+				assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				if bearer == "" {
+					require.Equal(t, http.StatusUnauthorized, response.Code)
+					return
+				}
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				var wire struct {
+					Result struct {
+						Meta map[string]json.RawMessage `json:"_meta"`
+					} `json:"result"`
+				}
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &wire))
+				assertMCPServerInfo(t, wire.Result.Meta[sdkmcp.MetaKeyServerInfo])
+			})
+		}
+	}
+}
+
 func TestMCPServerIconPreservesNearLimitDocumentPage(t *testing.T) {
 	// Catalog pages have no pagination-specific metadata reserve. These legal
 	// paths produce a result that fits with main's identity but not the icon.
@@ -134,6 +167,8 @@ func TestMCPServerIconPreservesNearLimitDocumentPage(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/info":
 			writeDaemonJSON(t, w, api.VaultInfo{VaultID: testVaultID})
+		case "/api/v1/vault":
+			writeDaemonJSON(t, w, map[string]string{"vault_id": testVaultID})
 		case "/api/v1/documents":
 			writeDaemonJSON(t, w, page)
 		default:

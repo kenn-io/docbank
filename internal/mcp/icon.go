@@ -19,18 +19,14 @@ var serverIconPNG []byte
 // A data URI works over both transports without a deployment-specific URL.
 var serverIconSource = "data:image/png;base64," + base64.StdEncoding.EncodeToString(serverIconPNG)
 
-func registerIconRoutes(mux *http.ServeMux) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		http.ServeContent(w, r, "icon.png", time.Time{}, bytes.NewReader(serverIconPNG))
-	})
-	for _, path := range []string{"/icon.png", "/favicon.ico"} {
-		mux.Handle("GET "+path, handler)
-		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		})
+func serveIcon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeContent(w, r, "icon.png", time.Time{}, bytes.NewReader(serverIconPNG))
 }

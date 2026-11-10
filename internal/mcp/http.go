@@ -98,10 +98,14 @@ func (server *Server) HTTPTransportHandler(options HTTPOptions) (http.Handler, e
 	if err != nil {
 		return nil, err
 	}
-	mux := http.NewServeMux()
-	registerIconRoutes(mux)
-	mux.Handle("/", protected)
-	return mux, nil
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/icon.png", "/favicon.ico":
+			serveIcon(w, r)
+		default:
+			protected.ServeHTTP(w, r)
+		}
+	}), nil
 }
 
 // prepareHTTP binds one opaque credential-exclusion policy to the daemon lease
