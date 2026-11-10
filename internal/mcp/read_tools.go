@@ -930,8 +930,8 @@ func getProcessingCoverage(
 		return processingCoverageOutput{}, fmt.Errorf("parsing coverage vault ID: %w", err)
 	}
 	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
-		query := &apiclient.GetDocumentProcessingCoverageQuery{Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}
-		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: query})
+		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
+			Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}})
 	})
 	if err != nil {
 		return processingCoverageOutput{}, err

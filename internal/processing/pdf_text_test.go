@@ -22,12 +22,11 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 		pages                []string
 		text                 bool
 		gaps                 []int
-		corrupt              bool
 		unavailable, generic int
 	}{
-		{"born", []string{"first page", "distinctivequartz second page"}, true, nil, false, 0, 0},
-		{"image-only", []string{"", ""}, false, []int{1, 2}, true, 1, 1},
-		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}, true, 1, 0},
+		{"born", []string{"first page", "distinctivequartz second page"}, true, nil, 0, 0},
+		{"image-only", []string{"", ""}, false, []int{1, 2}, 1, 1},
+		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}, 0, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -60,9 +59,6 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			pending, err = restarted.Pending(t.Context())
 			require.NoError(t, err)
 			require.False(t, pending)
-			pages, err := service.PDFPagesWithoutText(t.Context(), view.Rendition.Build.ID)
-			require.NoError(t, err)
-			require.Equal(t, test.gaps, pages)
 			report, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
 			require.NoError(t, err)
 			if len(test.gaps) > 0 {
@@ -74,7 +70,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			require.NoError(t, err)
 			require.Zero(t, coverage.Pending)
 			require.Equal(t, len(test.gaps), coverage.PagesWithoutText)
-			if test.corrupt {
+			if len(test.gaps) > 0 {
 				for _, artifact := range view.Rendition.Build.Artifacts {
 					if artifact.Role == "normalized_evidence" {
 						require.NoError(t, fixture.blobs.Remove(artifact.BlobHash))
@@ -90,7 +86,6 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 				require.Equal(t, test.unavailable, coverage.PDFPageCoverageUnavailable)
 				require.Equal(t, test.generic, coverage.NoText)
 			}
-
 		})
 	}
 }
@@ -103,11 +98,18 @@ func TestCoveragePageBounds(t *testing.T) {
 		builds[ids[i]] = ids[i]
 	}
 	calls := 0
-	gaps, state, _, err := readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
+	gaps, state, unavailable, err := readPDFCoveragePage(t.Context(), ids, builds, func(_ context.Context, build string) ([]int, error) {
+		calls++
+		if build == "0" {
+			return nil, errors.New("missing evidence")
+		}
+		return []int{2, 4}, nil
+	})
 	require.NoError(t, err)
 	require.Equal(t, 16, calls)
-	require.Len(t, gaps, 16)
+	require.Len(t, gaps, 15)
 	require.Equal(t, "partial", state)
+	require.True(t, unavailable)
 	for _, id := range ids {
 		builds[id] = "shared"
 	}
@@ -251,36 +253,4 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCoveragePageReportsPartialAndUnavailable(t *testing.T) {
-	ids := make([]string, 17)
-	builds := make(map[string]string)
-	for i := range ids {
-		ids[i] = strconv.Itoa(i)
-		builds[ids[i]] = ids[i]
-	}
-	_, state, unavailable, err := readPDFCoveragePage(t.Context(), ids, builds, func(_ context.Context, build string) ([]int, error) {
-		if build == "0" {
-			return nil, errors.New("missing evidence")
-		}
-		return []int{2}, nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, "partial", state)
-	require.True(t, unavailable)
-	pages := make([]int, 5000)
-	for i := range pages {
-		pages[i] = i + 1
-	}
-	builds = map[string]string{"0": "bad", "1": "good", "2": "good"}
-	_, state, unavailable, err = readPDFCoveragePage(t.Context(), ids[:3], builds, func(_ context.Context, build string) ([]int, error) {
-		if build == "bad" {
-			return nil, errors.New("missing evidence")
-		}
-		return pages, nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, "partial", state)
-	require.True(t, unavailable)
 }

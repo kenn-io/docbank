@@ -391,13 +391,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		fence := processing.SourceFence{VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs}
-		report, err := d.Processing.Coverage(ctx, input.Profile, fence)
+		report, err := d.Processing.Coverage(ctx, input.Profile, processing.SourceFence{
+			VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs})
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
-		body := fromProcessingCoverage(report)
-		return &coverageOutput{Body: body}, nil
+		return &coverageOutput{Body: fromProcessingCoverage(report)}, nil
 	})
 
 	type searchInput struct{ Body DocumentSearchRequest }

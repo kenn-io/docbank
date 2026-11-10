@@ -92,7 +92,6 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=$1
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-		 AND a.content_version_id=h.content_version_id AND a.profile_fingerprint=h.profile_fingerprint
 		LEFT JOIN rendition_builds b ON b.build_id=a.build_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$2")+`)`,
 		scope.ProcessingProfileFingerprint, string(versionsJSON))
@@ -136,10 +135,8 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 				validated[head.key] = true
 			}
 		}
-		if head.key.buildID != "" {
-			if head.pdfCandidate {
-				result.RenditionBuilds[head.versionID] = head.key.buildID
-			}
+		if head.pdfCandidate {
+			result.RenditionBuilds[head.versionID] = head.key.buildID
 		}
 		countProcessingCoverage(&result.Renditions, complete, head.rebuilding)
 	}

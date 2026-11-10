@@ -78,7 +78,7 @@ func writeProcessingCoverage(w io.Writer, version, profile string, coverage api.
 	var text strings.Builder
 	fmt.Fprintf(&text, "version: %s\nvault: %s\nprofile: %q\nfingerprint: %s\nstate: %q\n",
 		version, coverage.VaultUID, profile, coverage.ProfileFingerprint, coverage.State)
-	if coverage.PageCoverage == "unavailable" {
+	if coverage.PageCoverageUnavailable {
 		fmt.Fprintln(&text, "page coverage: unavailable")
 	}
 	for _, gap := range coverage.PagesWithoutText {

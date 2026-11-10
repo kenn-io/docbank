@@ -46,20 +46,18 @@ func TestAnswerContentExcerpt(t *testing.T) {
 type answerFakeClient struct {
 	documentClient
 
-	results             []api.DocumentSearchResult
-	report              api.DocumentSearchReport
-	requests            []api.DocumentSearchRequest
-	profiles            []api.ProcessingProfileSummary
-	documents           []api.DocumentSummary
-	fenceVersions       []string
-	pageGaps            []api.PageTextGap
-	pageChunks          []api.CoverageReport
-	coverageFence       api.DocumentSourceFence
-	empty               bool
-	validations         int
-	coverageCalls       int
-	coverageErr         error
-	coverageAfterSearch bool
+	results       []api.DocumentSearchResult
+	report        api.DocumentSearchReport
+	requests      []api.DocumentSearchRequest
+	profiles      []api.ProcessingProfileSummary
+	documents     []api.DocumentSummary
+	fenceVersions []string
+	pageGaps      []api.PageTextGap
+	pageChunks    []api.CoverageReport
+	coverageFence api.DocumentSourceFence
+	empty         bool
+	validations   int
+	coverageErr   error
 }
 
 func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]api.ProcessingProfileSummary, error) {
@@ -70,8 +68,6 @@ func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]ap
 }
 func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
 	f.coverageFence = fence
-	f.coverageCalls++
-	f.coverageAfterSearch = len(f.requests) > 0
 	if f.coverageErr != nil {
 		return api.CoverageReport{}, f.coverageErr
 	}
@@ -102,28 +98,19 @@ func TestAnswerQuestionPageCoverage(t *testing.T) {
 		pages[i] = i + 1
 	}
 	for _, tc := range []struct {
-		name        string
-		gaps        []api.PageTextGap
-		unavailable bool
+		name string
+		gaps []api.PageTextGap
 	}{
-		{"outside search", []api.PageTextGap{{ContentVersionID: version, Pages: []int{2, 3}}}, false},
-		{"long run", []api.PageTextGap{{ContentVersionID: version, Pages: pages}}, false},
-		{"unavailable", nil, true},
+		{"outside search", []api.PageTextGap{{ContentVersionID: version, Pages: []int{2, 3}}}},
+		{"long run", []api.PageTextGap{{ContentVersionID: version, Pages: pages}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &answerFakeClient{pageGaps: tc.gaps, report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
-			if tc.unavailable {
-				f.pageChunks = []api.CoverageReport{{PageCoverage: "unavailable"}}
-			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 			out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 			require.NoError(t, err)
 			require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
 			require.False(t, out.CoverageComplete)
-			if tc.unavailable {
-				require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
-				return
-			}
 			require.Contains(t, out.CoverageReasons, "pages_without_text")
 			require.Equal(t, answer.IncompleteCoverage, out.Status)
 			if tc.name == "outside search" {
@@ -431,23 +418,15 @@ func TestAnswerQuestionLargePartialCoverageKeepsPassage(t *testing.T) {
 	}
 	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: f.fenceVersions[0], Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
 	// The last build has another gap beyond the 8,192 returned pages.
-	f.pageChunks = []api.CoverageReport{{PagesWithoutText: f.pageGaps, PageCoverage: "partial"}}
+	f.pageChunks = []api.CoverageReport{{PagesWithoutText: f.pageGaps, PageCoverage: "partial", PageCoverageUnavailable: true}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
 	require.Len(t, out.Passages, 1)
 	require.Len(t, out.Receipt.CitedVersions, 1)
 	require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
+	require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
 	size, err := toolEnvelopeBytes(out, links)
 	require.NoError(t, err)
 	require.LessOrEqual(t, size, maxToolResponseBytes)
-}
-
-func TestAnswerQuestionReportsPartialAndUnavailable(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}, pageChunks: []api.CoverageReport{{PageCoverage: "partial", PageCoverageUnavailable: true}}}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
-	require.NoError(t, err)
-	require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
-	require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
 }

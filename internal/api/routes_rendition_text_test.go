@@ -308,6 +308,9 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.Contains(t, body, `"state":"ready"`)
 	require.NotContains(t, body, `"pages_without_text"`)
 	require.Contains(t, body, `"page_coverage":"unavailable"`)
+	resp, body = get(t, ts, coverageURL, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"page_coverage_unavailable":true`)
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {
