@@ -1076,7 +1076,7 @@ stderr and prints ordinary lexical results. See
 [Automatic and processing search](usage/search.md).
 
 Ordinary lexical search uses SQLite FTS5, its full-text search engine, over
-live node names and verified extracted text. Each whitespace-separated term matches as a prefix.
+live node names and verified extracted text. Prepared words match as prefixes, including regular forms; quoted phrases match adjacent words.
 Docbank escapes FTS operator syntax instead of interpreting it. Name matches
 use BM25 relevance ranking and appear before separately ranked content-only
 matches.
