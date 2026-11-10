@@ -32,7 +32,7 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			service := newPDFTextService(t, fixture, profile)
 			require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles[name], nil))
 			data := mediatest.PDFTextPages(test.pages, false)
-			node, _ := replacePDFSource(t, fixture, data)
+			node := replacePDFSource(t, fixture, data)
 
 			setup := &PDFTextRunner{Service: service}
 			items, err := setup.targets(t.Context(), "", 50)
@@ -76,15 +76,15 @@ func newPDFTextService(t *testing.T, fixture publicationFixture, profile Profile
 	return service
 }
 
-func replacePDFSource(t *testing.T, fixture publicationFixture, data []byte) (store.Node, store.ContentVersion) {
+func replacePDFSource(t *testing.T, fixture publicationFixture, data []byte) store.Node {
 	t.Helper()
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)
 	node, err := fixture.catalog.NodeByPath(t.Context(), "/source.pdf")
 	require.NoError(t, err)
-	node, version, err := fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
+	node, _, err = fixture.catalog.ReplaceContent(t.Context(), node.ID, node.Revision, written.Hash, written.Size, "application/pdf", processingBlobPhysical(t, written))
 	require.NoError(t, err)
-	return node, version
+	return node
 }
 
 func runPDFTextWorker(t *testing.T, service *Service) {
@@ -97,6 +97,7 @@ func runPDFTextWorker(t *testing.T, service *Service) {
 
 type retryPDFProvider struct {
 	document.RenditionProvider
+
 	fail bool
 }
 
@@ -193,7 +194,7 @@ func TestPDFTextDiscoverySkipsRefusedVersionsAcrossPages(t *testing.T) {
 	service := newPDFTextService(t, fixture, profile)
 	runner := &PDFTextRunner{Service: service}
 	require.NoError(t, runner.Initialize(t.Context()))
-	first, _ := replacePDFSource(t, fixture, []byte("invalid PDF"))
+	first := replacePDFSource(t, fixture, []byte("invalid PDF"))
 	data := mediatest.PDFTextPages([]string{"searchable"}, false)
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)

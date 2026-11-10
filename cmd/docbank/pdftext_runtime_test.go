@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -295,15 +294,10 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 				_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
 				require.NoError(t, err)
 			}
-			if configured || test.existing {
-				settleDaemon(t)
-			}
-			var out string
-			require.Eventually(t, func() bool {
-				var err error
-				out, err = runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
-				return err == nil && strings.Contains(out, "/pdfs/source.pdf")
-			}, 10*time.Second, 100*time.Millisecond)
+			settleDaemon(t)
+			out, err := runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
+			require.NoError(t, err)
+			require.Contains(t, out, "/pdfs/source.pdf")
 			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/source.pdf"}})
 			require.NoError(t, err)
 			coverage, err := runCLI(t, "processing", "coverage", node.CurrentVersionID, "--profile", processing.PDFTextProfileName, "--json")
