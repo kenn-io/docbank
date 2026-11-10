@@ -18,7 +18,6 @@ type SearchTextCoverage struct {
 	Pending                    int
 	PDFsWithoutText            int
 	PagesWithoutText           int
-	OtherWithoutText           int
 	PDFPageCoverageUnavailable int
 }
 
@@ -96,12 +95,14 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 				}
 				if family, ok := formats[mediaType]; ok && !native && pdfEvidence != "" && noTextLayer != nil {
 					checks = append(checks, evidenceCheck{pdfEvidence, family, count, serving, waiting})
+				} else if !serving && !waiting {
+					out.NoText += count
+					families["pdf"] = true
 				}
 				continue
 			}
 			if family, ok := formats[mediaType]; ok && !native && !serving {
 				out.NoText += count
-				out.OtherWithoutText += count
 				families[family] = true
 			}
 		}
@@ -124,16 +125,15 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 				}
 				read[check.buildID] = pages
 			}
-			if unavailable[check.buildID] {
+			if unavailable[check.buildID] && !check.serving && !check.waiting {
 				out.PDFPageCoverageUnavailable += check.count
 			}
 			if len(pages) > 0 {
 				out.PDFsWithoutText += check.count
 				out.PagesWithoutText += len(pages) * check.count
-				if !check.serving && !check.waiting {
-					out.NoText += check.count
-					families[check.family] = true
-				}
+			} else if !check.serving && !check.waiting {
+				out.NoText += check.count
+				families[check.family] = true
 			}
 		}
 		return nil

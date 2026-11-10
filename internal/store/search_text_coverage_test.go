@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestSearchTextCoverage(t *testing.T) {
 	require.NoError(t, s.DeferTextExtraction(t.Context(), text.BlobHash, time.Now().Add(time.Hour)))
 	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, "", nil)
 	require.NoError(t, err)
-	require.Equal(t, SearchTextCoverage{Families: []string{}, Pending: 1}, got)
+	require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}, Pending: 1}, got)
 	emptyDir, err := s.Mkdir(t.Context(), s.RootID(), "empty")
 	require.NoError(t, err)
 	outside, err := s.SearchTextCoverage(t.Context(), SearchOptions{UnderNodeID: emptyDir.ID}, "", nil)
@@ -49,7 +50,7 @@ func TestSearchTextCoverage(t *testing.T) {
 	require.NoError(t, err)
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "application/pdf"}, "", nil)
 	require.NoError(t, err)
-	require.Equal(t, SearchTextCoverage{Families: []string{}}, got)
+	require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "slides.pptx", testSHA256([]byte("slides")), 6, "application/vnd.openxmlformats-officedocument.presentationml.presentation")
 	require.NoError(t, err)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "photo.png", testSHA256([]byte("photo")), 5, "image/png")
@@ -59,14 +60,14 @@ func TestSearchTextCoverage(t *testing.T) {
 	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: failed.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionFailed, Error: "invalid UTF-8"}))
 	got, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, "", nil)
 	require.NoError(t, err)
-	require.Equal(t, SearchTextCoverage{NoText: 1, OtherWithoutText: 1, Families: []string{"office"}}, got)
+	require.Equal(t, SearchTextCoverage{NoText: 2, Families: []string{"pdf", "office"}}, got)
 	t.Run("blank_segments", func(t *testing.T) {
 		t.Parallel()
 		s, _, pdfs, profile := collectionCoverageFixture(t, 1)
 		collectionCoveragePublish(t, s, pdfs[0], profile, "blank_segments")
-		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) { return nil, nil })
+		got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) { return []int{1}, nil })
 		require.NoError(t, err)
-		require.Equal(t, SearchTextCoverage{Families: []string{}}, got)
+		require.Equal(t, SearchTextCoverage{NoText: 1, Families: []string{"pdf"}}, got)
 	})
 	t.Run("pdf waiting and terminal", func(t *testing.T) {
 		t.Parallel()
@@ -78,7 +79,7 @@ func TestSearchTextCoverage(t *testing.T) {
 		coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 		require.NoError(t, err)
 		require.Zero(t, coverage.Pending)
-		require.Zero(t, coverage.NoText)
+		require.Equal(t, 2, coverage.NoText)
 		request := renditionJobTestRequest(versions[0], profile)
 		request.ExecutionIdentity.Authorization.ProviderID = document.PDFTextProviderID
 		grantRenditionJobConsent(t, s, request)
@@ -87,6 +88,7 @@ func TestSearchTextCoverage(t *testing.T) {
 		coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, coverage.Pending)
+		require.Equal(t, 1, coverage.NoText)
 		now := time.Now().UTC().Add(time.Second)
 		claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "pdf-worker", now, time.Minute)
 		require.NoError(t, err)
@@ -94,7 +96,7 @@ func TestSearchTextCoverage(t *testing.T) {
 		coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
 		require.NoError(t, err)
 		require.Zero(t, coverage.Pending)
-		require.Zero(t, coverage.NoText)
+		require.Equal(t, 2, coverage.NoText)
 	})
 	for _, tc := range []struct {
 		name    string
@@ -119,6 +121,43 @@ func TestSearchTextCoverage(t *testing.T) {
 			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "text/plain"}, "", nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.pending, got.Pending)
+		})
+	}
+}
+
+func TestSearchTextCoverageUnprocessedPDFGetsGuidance(t *testing.T) {
+	s, _, _, profile := collectionCoverageFixture(t, 1)
+	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{MIMEType: "application/pdf"}, profile.Fingerprint, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, got.NoText)
+	require.Equal(t, []string{"pdf"}, got.Families)
+}
+
+func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, state                     string
+		pages                           []int
+		readError                       bool
+		generic, unavailable, pageCount int
+	}{
+		{"no readable text", "candidate_empty", nil, false, 1, 0, 0},
+		{"missing evidence", "candidate_empty", nil, true, 1, 1, 0},
+		{"searchable with missing evidence", "candidate_serving", nil, true, 0, 0, 0},
+		{"known scan", "candidate_empty", []int{2, 4}, false, 0, 0, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
+			collectionCoveragePublish(t, s, pdfs[0], profile, tc.state)
+			got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(context.Context, string) ([]int, error) {
+				if tc.readError {
+					return nil, errors.New("evidence unavailable")
+				}
+				return tc.pages, nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.generic, got.NoText)
+			require.Equal(t, tc.unavailable, got.PDFPageCoverageUnavailable)
+			require.Equal(t, tc.pageCount, got.PagesWithoutText)
 		})
 	}
 }

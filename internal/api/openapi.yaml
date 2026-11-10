@@ -19643,10 +19643,6 @@ components:
           format: int64
           minimum: 0
           type: integer
-        other_without_text:
-          format: int64
-          minimum: 0
-          type: integer
         pages_without_text:
           format: int64
           minimum: 0
@@ -19669,7 +19665,6 @@ components:
         - pending
         - pdfs_without_text
         - pages_without_text
-        - other_without_text
         - pdf_page_coverage_unavailable
       type: object
       x-go-type: api.SearchTextCoverage

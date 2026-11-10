@@ -30,6 +30,9 @@ type coverageCursor struct {
 }
 
 func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, scope, manifest, cursor string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", false, err
+	}
 	pos := coverageCursor{Version: 1, Scope: scope, Manifest: manifest}
 	if cursor != "" {
 		data, err := base64.RawURLEncoding.DecodeString(cursor)
@@ -45,6 +48,21 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 	cache := make(map[string]result)
 	var gaps []PageTextGap
 	remaining := 8192
+	candidates := 0
+	nextCandidate := func(index int) int {
+		for index < len(ids) && builds[ids[index]] == "" {
+			index++
+		}
+		return index
+	}
+	encode := func(index, offset int) (string, error) {
+		pos.Index, pos.Offset = index, offset
+		data, err := json.Marshal(pos)
+		if err != nil {
+			return "", err
+		}
+		return base64.RawURLEncoding.EncodeToString(data), nil
+	}
 	for i := pos.Index; i < len(ids); i++ {
 		build := builds[ids[i]]
 		if build == "" {
@@ -53,6 +71,11 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 			}
 			continue
 		}
+		if candidates == 16 {
+			next, err := encode(i, 0)
+			return gaps, next, pos.Unavailable, err
+		}
+		candidates++
 		r, ok := cache[build]
 		if !ok {
 			r.pages, r.err = read(ctx, build)
@@ -78,17 +101,13 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 			remaining -= end - start
 		}
 		if remaining == 0 {
-			if end < len(r.pages) {
-				pos.Index, pos.Offset = i, end
-			} else {
-				pos.Index, pos.Offset = i+1, 0
+			index, offset := i, end
+			if end == len(r.pages) {
+				index, offset = nextCandidate(i+1), 0
 			}
-			if pos.Index < len(ids) {
-				data, err := json.Marshal(pos)
-				if err != nil {
-					return nil, "", false, err
-				}
-				return gaps, base64.RawURLEncoding.EncodeToString(data), pos.Unavailable, nil
+			if index < len(ids) {
+				next, err := encode(index, offset)
+				return gaps, next, pos.Unavailable, err
 			}
 			break
 		}
@@ -144,16 +163,6 @@ func (service *Service) PDFPagesWithoutText(ctx context.Context, buildID string)
 	build, err := service.catalog.RenditionBuild(ctx, buildID)
 	if err != nil {
 		return nil, err
-	}
-	found := false
-	for _, artifact := range build.Artifacts {
-		if artifact.Role == "normalized_evidence" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil, errors.New("normalized PDF evidence is unavailable")
 	}
 	evidence, _, err := service.renditionEvidence(ctx, build)
 	if err != nil {

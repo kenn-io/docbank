@@ -40,12 +40,10 @@ func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, sc
 		labels := map[string]string{"pdf": "PDF", "office": "Office", "other": "other formats"}
 		families := make([]string, 0, len(coverage.Families))
 		for _, family := range coverage.Families {
-			if family != "pdf" {
-				families = append(families, labels[family])
-			}
+			families = append(families, labels[family])
 		}
 		if len(families) > 0 {
-			count := coverage.OtherWithoutText
+			count := coverage.NoText
 			noun, verb, names := "files", "have", "their names"
 			if count == 1 {
 				noun, verb, names = fileNoun, "has", "its name"

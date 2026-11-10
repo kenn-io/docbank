@@ -784,7 +784,7 @@ current source visibility and serving evidence. Missing required coverage keeps
 the aggregate state `partial` even if another class is rebuilding. This read
 does not grant consent or start provider work.
 
-For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. A response contains at most 8,192 page numbers. Send `next_cursor` as `cursor` with the same profile and source fence to continue; changed builds or scope reject the cursor. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile.
+For `docbank-pdf-text`, `pages_without_text` lists source version IDs and one-based PDF page numbers without a text layer. Each response inspects at most 16 candidate builds and contains at most 8,192 page numbers. Send `next_cursor` as `cursor` with the same profile and source fence to continue; changed builds or scope reject the cursor. Text rendition receipts also expose `pages_without_text` for the source PDF independently of the selected profile.
 
 `page_coverage: "unavailable"` means some page evidence could not be read. The remaining coverage or text receipt stays available.
 
