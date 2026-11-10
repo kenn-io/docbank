@@ -1166,7 +1166,7 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		names  []string
 	}{
 		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf"}},
-		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "the of.pdf"}},
+		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "thế.pdf", "the of.pdf"}},
 	} {
 		for _, name := range group.names {
 			_, err := s.CreateFile(t.Context(), group.parent, name, fakeHash(name), 1, "application/pdf")
@@ -1192,8 +1192,14 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		{`"refunds take"`, 0, []string{"memo.txt"}, []string{`"refunds take"`}},
 		{`"the" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the"`}},
 		{`"the" and absent`, stops.ID, nil, []string{"absent", `"the"`}},
-		{`"tax" and`, stops.ID, []string{"tax.pdf"}, []string{`"tax"`}},
+		{`"tax" and`, stops.ID, []string{"tax.pdf", "tax value.pdf"}, []string{`"tax"`}},
 		{`"of to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
+		{`"of-to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of-to"`}},
+		{`"ofाto" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"ofाto"`}},
+		{"\"of\u034fto\" and", stops.ID, []string{"of to and.pdf"}, []string{"and", "\"of\u034fto\""}},
+		{`"thé" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"thé"`}},
+		{`"thế" and`, stops.ID, []string{"thế.pdf"}, []string{`"thế"`}},
+		{`"tax-value" and`, stops.ID, []string{"tax value.pdf"}, []string{`"tax-value"`}},
 		{`"the" "of"`, stops.ID, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
 		{`"the" "of" and`, stops.ID, nil, []string{"and", `"the"`, `"of"`}},
 		{`"the" "tax" and`, stops.ID, nil, []string{`"the"`, `"tax"`}},

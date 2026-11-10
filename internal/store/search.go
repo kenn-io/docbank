@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
@@ -28,6 +30,7 @@ import (
 	"go.kenn.io/kit/search/lexical"
 	"go.kenn.io/kit/search/sqlitefts"
 	"go.kenn.io/kit/search/sqlquery"
+	"golang.org/x/text/unicode/norm"
 )
 
 // MaxSearchSourceFenceIDs is the shared hard bound for exact search authority.
@@ -2430,9 +2433,31 @@ func prepareSearch(query string) (string, []string, bool) {
 	if len(natural.Phrases) > 0 && len(natural.Words) == 0 {
 		onlyStopWords := true
 		for _, phrase := range natural.Phrases {
-			prepared, _ := analyzer.PrepareNatural(phrase)
-			for _, word := range prepared.Words {
-				if !lexical.IsStopWord(word.Text) {
+			var folded strings.Builder
+			for _, r := range strings.ToLower(phrase) {
+				if r < utf8.RuneSelf {
+					folded.WriteRune(r)
+					continue
+				}
+				decomposed := norm.NFD.String(string(r))
+				// unicode61 retains precomposed letters with multiple diacritics.
+				if utf8.RuneCountInString(decomposed) > 2 {
+					folded.WriteRune(r)
+				} else {
+					folded.WriteString(decomposed)
+				}
+			}
+			words := strings.FieldsFunc(folded.String(), func(r rune) bool {
+				return !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.Is(unicode.Co, r) && !unicode61Diacritic(r)
+			})
+			for _, word := range words {
+				word = strings.Map(func(r rune) rune {
+					if unicode61Diacritic(r) {
+						return -1
+					}
+					return r
+				}, word)
+				if word != "" && !lexical.IsStopWord(word) {
 					onlyStopWords = false
 				}
 			}
@@ -2473,6 +2498,17 @@ func prepareSearch(query string) (string, []string, bool) {
 		terms = append(terms, `"`+phrase+`"`)
 	}
 	return strings.Join(groups, " AND "), terms, len(natural.Phrases) > 0
+}
+
+// unicode61 treats these combining marks as part of a token and removes them.
+func unicode61Diacritic(r rune) bool {
+	if r < 0x0300 || r > 0x0331 {
+		return false
+	}
+	if r < 0x0320 {
+		return 0x08029fdf&(1<<(r-0x0300)) != 0
+	}
+	return 0x000361f8&(1<<(r-0x0320)) != 0
 }
 
 // nameSearchCandidates leaves filtering and name-based ties to the outer
