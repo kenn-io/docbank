@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
-	"fmt"
 	"image/png"
 	"io"
 	"net"
@@ -68,17 +67,28 @@ func assertDaemonMCPCleanedUp(t *testing.T, root string, addresses ...string) {
 	require.NoError(t, heldRoot.Close())
 }
 
-func postMCPVaultInfo(t *testing.T, url, host, bearer string) (int, string) {
+func postDaemonMCP(t *testing.T, url, host, bearer, method string) (int, string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":%q,"io.modelcontextprotocol/clientCapabilities":{}},"name":"get_vault_info","arguments":{}}}`, docmcp.ProtocolVersion)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(body))
+	params := map[string]any{"_meta": map[string]any{
+		"io.modelcontextprotocol/protocolVersion":    docmcp.ProtocolVersion,
+		"io.modelcontextprotocol/clientCapabilities": map[string]any{},
+	}}
+	if method == "tools/call" {
+		params["name"] = "get_vault_info"
+		params["arguments"] = map[string]any{}
+	}
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	require.NoError(t, err)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, bytes.NewReader(body))
 	require.NoError(t, err)
 	request.Host = host
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
 	request.Header.Set("Mcp-Protocol-Version", docmcp.ProtocolVersion)
-	request.Header.Set("Mcp-Method", "tools/call")
-	request.Header.Set("Mcp-Name", "get_vault_info")
+	request.Header.Set("Mcp-Method", method)
+	if method == "tools/call" {
+		request.Header.Set("Mcp-Name", "get_vault_info")
+	}
 	request.Header.Set("Authorization", "Bearer "+bearer)
 	response, err := http.DefaultClient.Do(request)
 	require.NoError(t, err)
@@ -117,7 +127,21 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 			if test.separate {
 				mcpAddress = separate
 			}
-			var declaredIcon []byte
+			status, data := postDaemonMCP(t, "http://"+mcpAddress+"/mcp", "docbank:7341", "synthetic-mcp-bearer", "server/discover")
+			require.Equal(t, http.StatusOK, status, data)
+			var discovery struct {
+				Result struct {
+					Meta map[string]sdkmcp.Implementation `json:"_meta"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(data), &discovery))
+			declared := discovery.Result.Meta[sdkmcp.MetaKeyServerInfo]
+			assert.Equal(t, "https://docbank.ai", declared.WebsiteURL)
+			require.Len(t, declared.Icons, 1)
+			const prefix = "data:image/png;base64,"
+			require.True(t, strings.HasPrefix(declared.Icons[0].Source, prefix))
+			declaredIcon, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(declared.Icons[0].Source, prefix))
+			require.NoError(t, err)
 			for _, call := range []struct {
 				name, bearer, host string
 				status             int
@@ -127,7 +151,7 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 				{"API key", record.Metadata["api_key"], "docbank:7341", http.StatusUnauthorized},
 				{"unlisted Host", "synthetic-mcp-bearer", "unlisted.example", http.StatusForbidden},
 			} {
-				status, data := postMCPVaultInfo(t, "http://"+mcpAddress+"/mcp", call.host, call.bearer)
+				status, data := postDaemonMCP(t, "http://"+mcpAddress+"/mcp", call.host, call.bearer, "tools/call")
 				require.Equal(t, call.status, status, "%s: %s", call.name, data)
 				if call.status == http.StatusOK {
 					var wire struct {
@@ -143,12 +167,11 @@ func TestDaemonMCPHTTPReadsSameVaultAndShutsDown(t *testing.T) {
 					assert.False(t, wire.Result.IsError, data)
 					assert.Equal(t, info.VaultID, wire.Result.Content.VaultID, data)
 					identity := wire.Result.Meta[sdkmcp.MetaKeyServerInfo]
-					assert.Equal(t, "https://docbank.ai", identity.WebsiteURL)
-					require.Len(t, identity.Icons, 1)
-					const prefix = "data:image/png;base64,"
-					require.True(t, strings.HasPrefix(identity.Icons[0].Source, prefix))
-					declaredIcon, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(identity.Icons[0].Source, prefix))
-					require.NoError(t, err)
+					assert.Equal(t, "docbank", identity.Name)
+					assert.Equal(t, "Docbank", identity.Title)
+					assert.Equal(t, declared.Version, identity.Version)
+					assert.Empty(t, identity.WebsiteURL)
+					assert.Empty(t, identity.Icons)
 				}
 			}
 			image, err := png.Decode(bytes.NewReader(declaredIcon))
@@ -227,7 +250,7 @@ func TestDaemonMCPHTTPNotHostedWithoutUsableCredentialOrWhenDisabled(t *testing.
 			}
 			stop := startServe(t)
 			record := waitForDaemon(t, root)
-			status, data := postMCPVaultInfo(t, "http://"+record.Address+"/mcp", record.Address, "synthetic-mcp-bearer")
+			status, data := postDaemonMCP(t, "http://"+record.Address+"/mcp", record.Address, "synthetic-mcp-bearer", "tools/call")
 			assert.Equal(t, http.StatusUnauthorized, status, data)
 			stop()
 			assertDaemonMCPCleanedUp(t, root, record.Address)
@@ -243,7 +266,7 @@ func TestDaemonMCPHTTPUsesEnvironmentOverriddenPort(t *testing.T) {
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "synthetic-mcp-bearer")
 	stop := startServe(t)
 	record := waitForDaemon(t, root)
-	status, data := postMCPVaultInfo(t, "http://"+record.Address+"/mcp", record.Address, "synthetic-mcp-bearer")
+	status, data := postDaemonMCP(t, "http://"+record.Address+"/mcp", record.Address, "synthetic-mcp-bearer", "tools/call")
 	assert.Equal(t, http.StatusOK, status, data)
 	stop()
 	assertDaemonMCPCleanedUp(t, root, record.Address)
