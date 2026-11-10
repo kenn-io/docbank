@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -42,7 +43,7 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 				http.Error(w, "invalid multipart source", http.StatusBadRequest)
 				return
 			}
-			defer r.MultipartForm.RemoveAll()
+			defer func() { assert.NoError(t, r.MultipartForm.RemoveAll()) }()
 			files := r.MultipartForm.File["files"]
 			if len(files) != 1 {
 				http.Error(w, "expected one source", http.StatusBadRequest)
@@ -86,7 +87,7 @@ func TestDaemonWatchMediaProfilesAdmitImports(t *testing.T) {
 		name, profile string
 		content       []byte
 	}{
-		{"report.pdf", "documents", mediatest.PDFObjects("watch routing", []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 16 16] >>"})},
+		{"report.pdf", "documents", mediatest.PDF()},
 		{"memo.wav", "asr", mediatest.WAV()},
 		{"notes.txt", "", []byte("synthetic unmapped text")},
 		{"clip.mp4", "", mediatest.MP4(16, 16, 1000)},

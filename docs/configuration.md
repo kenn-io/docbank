@@ -442,7 +442,7 @@ forms to use only baseline plain-text extraction.
 
 For a mixed folder, use `profiles = { document = "docling", presentation = "docling", spreadsheet = "docling", image = "docling", audio_video = "asr" }`
 instead of `profile`. The forms are mutually exclusive. The `document` family
-covers only PDF and word-processing files. Keys use search
+covers PDF, word-processing files (DOCX, DOC, ODT, RTF), and EPUB ebooks. Keys use search
 `media_family` values: `email`, `document`, `spreadsheet`, `presentation`, `image`,
 `audio_video`, `text`, `source_code`, `web`, `calendar`, `archive`, `cad`, `unknown`.
 Each value names a profile with an original-file rendition. Only the matching
