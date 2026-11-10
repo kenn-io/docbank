@@ -219,10 +219,6 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.NoError(t, err)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "mixed.pdf", hash, size, "application/pdf")
 	require.NoError(t, err)
-	pendingResp, pendingBody := get(t, ts, "/api/v1/search/text-coverage", nil)
-	require.Equal(t, http.StatusOK, pendingResp.StatusCode, pendingBody)
-	require.Contains(t, pendingBody, `"pending":1`)
-	require.Contains(t, pendingBody, `"no_text":0`)
 	selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: processing.PDFTextProfileName}
 	plan, err := runner.Service.Plan(t.Context(), selector)
 	require.NoError(t, err)

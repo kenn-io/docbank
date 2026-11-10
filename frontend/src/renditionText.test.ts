@@ -129,58 +129,55 @@ it("accepts the worker's bounded digest-form artifact identity", async () => {
   });
 });
 
+it("validates page fields", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  for (const [fields, expected] of [
+    [{ pages_without_text: [2, 3] }, { pagesWithoutText: [2, 3] }],
+    [{ page_coverage: "unavailable" }, { pageCoverage: "unavailable" }],
+    [
+      { state: "unprocessed", artifact: undefined, pages_without_text: [2] },
+      { state: "unprocessed", pagesWithoutText: [2] },
+    ],
+    [
+      { state: "unprocessed", artifact: undefined, page_coverage: "unavailable" },
+      { state: "unprocessed", pageCoverage: "unavailable" },
+    ],
+  ]) {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(receipt(fields))));
+    await expect(
+      resolveRenditionText(
+        "session",
+        source,
+        9,
+        "archive",
+        observation,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject(expected);
+  }
+  for (const fields of [{ pages_without_text: [0] }, { page_coverage: "invalid" }]) {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(receipt(fields))));
+    await expect(
+      resolveRenditionText(
+        "session",
+        source,
+        9,
+        "archive",
+        observation,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/Malformed rendition text receipt/);
+  }
+});
+
 it.each([
   ["source", receipt({ source: { ...(receipt().source as object), blob_hash: "1".repeat(64) } })],
   ["generation", receipt({ generation_id: "1".repeat(64) })],
   ["artifact fields", receipt({ artifact: { ...artifact, extra: true } })],
   ["unknown receipt field", receipt({ extra: true })],
   ["invalid schema link", receipt({ $schema: "" })],
-  ["page fields", null],
   ["unbounded artifact identity", receipt({ artifact: { ...artifact, id: "x".repeat(129) } })],
-])("validates the %s receipt", async (name, value) => {
-  if (name === "page fields") {
-    for (const [fields, expected] of [
-      [{ pages_without_text: [2, 3] }, { pagesWithoutText: [2, 3] }],
-      [{ page_coverage: "unavailable" }, { pageCoverage: "unavailable" }],
-    ]) {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify(receipt(fields))),
-      );
-      await expect(
-        resolveRenditionText(
-          "session",
-          source,
-          9,
-          "archive",
-          observation,
-          new AbortController().signal,
-        ),
-      ).resolves.toMatchObject(expected);
-      vi.restoreAllMocks();
-    }
-    for (const fields of [
-      { pages_without_text: [0] },
-      { page_coverage: "invalid" },
-      { state: "unprocessed", pages_without_text: [2] },
-      { state: "unprocessed", page_coverage: "unavailable" },
-    ]) {
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify(receipt(fields))),
-      );
-      await expect(
-        resolveRenditionText(
-          "session",
-          source,
-          9,
-          "archive",
-          observation,
-          new AbortController().signal,
-        ),
-      ).rejects.toThrow(/Malformed rendition text receipt/);
-      vi.restoreAllMocks();
-    }
-    return;
-  }
+])("validates the %s receipt", async (_name, value) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify(value), {
       headers: { "Content-Type": "application/json" },
