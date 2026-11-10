@@ -157,15 +157,16 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
 	require.NoError(t, err)
 	fixture := publishRenditionTextFixture(t, s, cfg, node)
+	observed := map[string]any{
+		"configuration": "configured", "profile_fingerprint": fixture.profile.Fingerprint,
+		"generation_id": fixture.generation, "coverage_state": "complete",
+		"attachment_id": fixture.attachment, "build_id": fixture.build,
+	}
 	body := map[string]any{
 		"node_id": fixture.node.ID, "revision": fixture.node.Revision,
 		"version_id": fixture.node.CurrentVersionID, "blob_hash": fixture.node.BlobHash,
 		"size": fixture.node.Size, "profile": "archive",
-		"observed": map[string]any{
-			"configuration": "configured", "profile_fingerprint": fixture.profile.Fingerprint,
-			"generation_id": fixture.generation, "coverage_state": "complete",
-			"attachment_id": fixture.attachment, "build_id": fixture.build,
-		},
+		"observed": observed,
 	}
 	resp, encoded := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
 	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
@@ -203,29 +204,7 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	params.Set("artifact_id", "artifact_"+testHash("wrong-artifact"))
 	badResp, badBody := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
 	assert.Equal(t, http.StatusConflict, badResp.StatusCode, badBody)
-}
-
-func TestRenditionTextHTTPExactRenditionWithChangedProfile(t *testing.T) {
-	t.Parallel()
-	var cfg config.Config
-	ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
-	sourceHash, sourceSize, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("%PDF-1.4 synthetic source"))
-	require.NoError(t, err)
-	node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", sourceHash, sourceSize, "application/pdf")
-	require.NoError(t, err)
-	fixture := publishRenditionTextFixture(t, s, cfg, node)
-	observed := map[string]any{"configuration": "configured", "profile_fingerprint": fixture.profile.Fingerprint,
-		"generation_id": fixture.generation, "coverage_state": "complete", "attachment_id": fixture.attachment, "build_id": fixture.build}
-	body := map[string]any{
-		"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
-		"blob_hash": node.BlobHash, "size": node.Size,
-		"observed": observed,
-	}
-
-	resp, encoded := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, encoded)
-	require.Contains(t, encoded, `"state":"ready"`)
-	require.Contains(t, encoded, `"name":"archive"`)
+	delete(body, "profile")
 	changed := cfg.ProcessingProfiles["archive"]
 	changed.MaxSegmentRunes--
 	cfg.ProcessingProfiles["archive"] = changed

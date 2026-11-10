@@ -210,21 +210,25 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		states  map[string]string
+		unnamed string
 		want    string
 		code    int
-		wantErr string
+		wantErr []string
 	}{
 		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
-		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: "no readable rendition is currently available"},
+		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: []string{"no readable rendition is currently available"}},
 		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
-		{name: "ambiguous", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: "multiple readable profiles"},
+		{name: "ambiguous", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: []string{"multiple readable profiles", "alpha: --profile alpha", "zeta: --profile zeta"}},
+		{name: "ambiguous unnamed profile", states: map[string]string{"zeta": "ready", "alpha": "ready"}, unnamed: "alpha", code: exitUsage, wantErr: []string{"multiple readable profiles", "zeta: --profile zeta", "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8: --attachment 9332f63c73e34a574a9a905a7f5ae18b17b5d7d3ba1589df7d9ba5ae1be0804b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var profiles []api.ProcessingProfileSummary
 			var renditions []api.DocumentRenditionIdentity
 			for _, name := range []string{"zeta", "alpha"} {
 				if _, ok := tc.states[name]; ok {
-					profiles = append(profiles, api.ProcessingProfileSummary{Name: name, Fingerprint: sha256Hex(name)})
+					if name != tc.unnamed {
+						profiles = append(profiles, api.ProcessingProfileSummary{Name: name, Fingerprint: sha256Hex(name)})
+					}
 					renditions = append(renditions, api.DocumentRenditionIdentity{ProfileFingerprint: sha256Hex(name), AttachmentID: sha256Hex(name + "attachment"), BuildID: sha256Hex(name + "build")})
 				}
 			}
@@ -290,12 +294,8 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 			if tc.code != 0 {
 				require.Error(t, err)
 				require.Equal(t, tc.code, commandExitCode(err, true))
-				if tc.wantErr != "" {
-					require.Contains(t, err.Error(), tc.wantErr)
-				}
-				if tc.name == "ambiguous" {
-					require.Contains(t, err.Error(), "alpha: --profile alpha")
-					require.Contains(t, err.Error(), "zeta: --profile zeta")
+				for _, want := range tc.wantErr {
+					require.Contains(t, err.Error(), want)
 				}
 				return
 			}
