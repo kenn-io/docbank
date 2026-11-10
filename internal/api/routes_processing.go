@@ -367,13 +367,12 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		Profile           string   `query:"profile" required:"true" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 		VaultUID          string   `query:"vault_uid" required:"true" format:"uuid"`
 		ContentVersionIDs []string `query:"content_version_id,explode" required:"true" minItems:"1" maxItems:"4096"`
-		Cursor            string   `query:"cursor" maxLength:"2048"`
 	}) (*coverageOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
 		fence := processing.SourceFence{VaultUID: input.VaultUID, ContentVersionIDs: input.ContentVersionIDs}
-		report, err := d.Processing.CoverageWithCursor(ctx, input.Profile, fence, input.Cursor)
+		report, err := d.Processing.Coverage(ctx, input.Profile, fence)
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -626,7 +625,7 @@ func parseByteRange(value string, size int64) (int64, int64, error) {
 }
 
 func fromProcessingCoverage(report processing.Coverage) CoverageReport {
-	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint, PageCoverage: report.PageCoverage, NextCursor: report.NextCursor,
+	result := CoverageReport{VaultUID: report.VaultUID, ProfileFingerprint: report.ProfileFingerprint, PageCoverage: report.PageCoverage,
 		State: report.State, Renditions: fromProcessingCoverageClass(report.Renditions),
 		Embeddings: make([]CoverageClass, len(report.Embeddings))}
 	for _, gap := range report.PagesWithoutText {
@@ -820,7 +819,6 @@ func fromProcessingError(err error) error {
 		{retrieval.ErrRerankingFailed, http.StatusBadGateway, "reranking_failed", "document reranking failed"},
 		{store.ErrVectorIndexSourceStale, http.StatusConflict, "stale_index", "vector index source changed"},
 		{store.ErrVectorIndexUnavailable, http.StatusConflict, "index_unavailable", "The search index needs building."},
-		{processing.ErrInvalidCoverageCursor, http.StatusUnprocessableEntity, "invalid_cursor", "coverage cursor is invalid or stale"},
 		{store.ErrInvalidProcessingSourceFence, http.StatusUnprocessableEntity, "validation", "source fence request is invalid"},
 		{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version", "content version is not current and live"},
 		{store.ErrProcessingConsentRequired, http.StatusPreconditionRequired, "processing_consent_required", "processing consent is required"},

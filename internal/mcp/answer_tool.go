@@ -77,9 +77,8 @@ type answerPageGap struct {
 }
 
 type answerOutput struct {
-	PagesWithoutText []answerPageGap `json:"pages_without_text,omitempty"`
-	PagesCursor      string          `json:"pages_without_text_cursor,omitempty"`
-	PagesFence       []string        `json:"pages_without_text_content_version_ids,omitempty"`
+	PagesWithoutText        []answerPageGap `json:"pages_without_text,omitempty"`
+	OmittedPageGapDocuments int             `json:"omitted_page_gap_documents"`
 	privateCache
 
 	Status           answer.Status    `json:"status"`
@@ -97,7 +96,7 @@ type answerOutput struct {
 
 type answerClient interface {
 	documentClient
-	GetPDFPageCoverage(context.Context, api.DocumentSourceFence, string) (api.CoverageReport, error)
+	GetPDFPageCoverage(context.Context, api.DocumentSourceFence) (api.CoverageReport, error)
 }
 
 type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
@@ -106,15 +105,12 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
 }
 
-func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence, cursor string) (api.CoverageReport, error) {
+func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
 	vaultID, err := uuid.Parse(fence.VaultUID)
 	if err != nil {
 		return api.CoverageReport{}, err
 	}
 	query := &apiclient.GetDocumentProcessingCoverageQuery{Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}
-	if cursor != "" {
-		query.Cursor = &cursor
-	}
 	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: query})
 	if err != nil {
 		return api.CoverageReport{}, err
@@ -245,7 +241,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		var pageCoverage api.CoverageReport
 		if len(fence.Fence.ContentVersionIDs) > 0 {
-			pageCoverage, err = c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}, "")
+			pageCoverage, err = c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs})
 			if err != nil {
 				if ctx.Err() != nil {
 					return response{}, ctx.Err()
@@ -277,10 +273,6 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 			}
 		}
 		out.PagesWithoutText = append(out.PagesWithoutText, item)
-	}
-	if result.pageCoverage.NextCursor != "" {
-		out.PagesCursor = result.pageCoverage.NextCursor
-		out.PagesFence = result.fence.Fence.ContentVersionIDs
 	}
 	out.Receipt.ObservedScopeCount = result.fence.ObservedScopeCount
 	out.Receipt.VaultID = result.fence.Fence.VaultUID
@@ -324,7 +316,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "page_coverage_unavailable")
 	}
-	if out.PagesCursor != "" {
+	if result.pageCoverage.PageCoverage == "partial" {
 		out.CoverageComplete = false
 		out.CoverageReasons = append(out.CoverageReasons, "page_coverage_incomplete")
 	}
@@ -416,6 +408,15 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		if envelope <= maxToolResponseBytes-(4<<10) {
 			return out, links, nil
+		}
+		if len(out.PagesWithoutText) > 0 {
+			out.PagesWithoutText = out.PagesWithoutText[:len(out.PagesWithoutText)-1]
+			out.OmittedPageGapDocuments++
+			out.CoverageComplete = false
+			if !slices.Contains(out.CoverageReasons, "page_coverage_incomplete") {
+				out.CoverageReasons = append(out.CoverageReasons, "page_coverage_incomplete")
+			}
+			continue
 		}
 		if len(links) > 0 {
 			linkLimit = len(links) / 2

@@ -380,8 +380,6 @@ type Coverage struct {
 	Embeddings                          []CoverageClass
 	PagesWithoutText                    []PageTextGap
 	PageCoverage                        string
-	NextCursor                          string
-	BuildManifest                       string
 }
 
 type SearchRequest struct {
@@ -1520,10 +1518,6 @@ func (service *Service) renditionFromView(ctx context.Context, node store.Node, 
 }
 
 func (service *Service) Coverage(ctx context.Context, profileName string, fence SourceFence) (Coverage, error) {
-	return service.CoverageWithCursor(ctx, profileName, fence, "")
-}
-
-func (service *Service) CoverageWithCursor(ctx context.Context, profileName string, fence SourceFence, cursor string) (Coverage, error) {
 	profile, ids, err := service.profileFence(profileName, fence)
 	if err != nil {
 		return Coverage{}, err
@@ -1547,26 +1541,12 @@ func (service *Service) CoverageWithCursor(ctx context.Context, profileName stri
 	}
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
-	manifestParts := []string{profile.record.Fingerprint}
-	for _, id := range ids {
-		manifestParts = append(manifestParts, id, snapshot.BuildManifest[id])
-	}
-	report.BuildManifest = store.LengthPrefixedSHA256(manifestParts...)
 	if profileName == PDFTextProfileName {
-		scope, err := SourceFenceFingerprint(fence)
+		pages, state, err := readPDFCoveragePage(ctx, ids, snapshot.RenditionBuilds, service.PDFPagesWithoutText)
 		if err != nil {
 			return Coverage{}, err
 		}
-		pages, next, unavailable, err := readPDFCoveragePage(ctx, ids, snapshot.RenditionBuilds, scope, report.BuildManifest, cursor, service.PDFPagesWithoutText)
-		if err != nil {
-			return Coverage{}, err
-		}
-		report.PagesWithoutText, report.NextCursor = pages, next
-		if unavailable {
-			report.PageCoverage = "unavailable"
-		}
-	} else if cursor != "" {
-		return Coverage{}, ErrInvalidCoverageCursor
+		report.PagesWithoutText, report.PageCoverage = pages, state
 	}
 
 	// A description profile attaches no rendition, so there is none to cover.

@@ -908,7 +908,6 @@ type processingCoverageOutput struct {
 	State              string                `json:"state"`
 	Coverage           []coverageClassOutput `json:"coverage"`
 	PagesWithoutText   []api.PageTextGap     `json:"pages_without_text,omitempty"`
-	NextCursor         string                `json:"next_cursor,omitempty"`
 	PageCoverage       string                `json:"page_coverage,omitempty"`
 }
 
@@ -919,7 +918,6 @@ func getProcessingCoverage(
 		Profile           string   `json:"profile"`
 		VaultID           string   `json:"vault_id"`
 		ContentVersionIDs []string `json:"content_version_ids"`
-		Cursor            string   `json:"cursor"`
 	}
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return processingCoverageOutput{}, err
@@ -930,9 +928,6 @@ func getProcessingCoverage(
 	}
 	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
 		query := &apiclient.GetDocumentProcessingCoverageQuery{Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}
-		if input.Cursor != "" {
-			query.Cursor = &input.Cursor
-		}
 		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: query})
 	})
 	if err != nil {
@@ -946,7 +941,6 @@ func getProcessingCoverage(
 		ContentVersionIDs:  slices.Clone(input.ContentVersionIDs),
 		ProfileFingerprint: report.ProfileFingerprint, State: report.State,
 		PagesWithoutText: report.PagesWithoutText,
-		NextCursor:       report.NextCursor,
 		PageCoverage:     report.PageCoverage,
 		Coverage:         make([]coverageClassOutput, len(classes)), privateCache: newPrivateCache()}
 	for index, item := range classes {

@@ -459,7 +459,7 @@ winner.
 
 ### Answer questions
 
-`answer_question` reports one bounded page of `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. The remaining page total is unknown until coverage is continued. Such gaps make coverage incomplete. See [OCR](document-processing.md#ocr) for options. If the response includes `pages_without_text_cursor`, call `get_processing_coverage` with that cursor, profile `docbank-pdf-text`, the receipt's vault ID, and `pages_without_text_content_version_ids`. Continue with each `next_cursor` until it is absent. The cursor expires if the source fence or builds change.
+`answer_question` reports bounded `pages_without_text` as inclusive ranges for PDFs in the resolved scope, including documents absent from search results. Gaps and partial page coverage make coverage incomplete. Narrow the scope or call `get_processing_coverage` with specific content version IDs to inspect more pages. See [OCR](document-processing.md#ocr) for options.
 
 The `page_coverage_unavailable` coverage reason means some PDF page evidence could not be read. The answer may still contain passages.
 
