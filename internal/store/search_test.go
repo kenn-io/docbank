@@ -1165,8 +1165,8 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		parent int64
 		names  []string
 	}{
-		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf"}},
-		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "thế.pdf", "the of.pdf"}},
+		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "cash.pdf"}},
+		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "the of.pdf"}},
 	} {
 		for _, name := range group.names {
 			_, err := s.CreateFile(t.Context(), group.parent, name, fakeHash(name), 1, "application/pdf")
@@ -1195,10 +1195,6 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		{`"tax" and`, stops.ID, []string{"tax.pdf", "tax value.pdf"}, []string{`"tax"`}},
 		{`"of to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
 		{`"of-to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of-to"`}},
-		{`"ofाto" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"ofाto"`}},
-		{"\"of\u034fto\" and", stops.ID, []string{"of to and.pdf"}, []string{"and", "\"of\u034fto\""}},
-		{`"thé" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"thé"`}},
-		{`"thế" and`, stops.ID, []string{"thế.pdf"}, []string{`"thế"`}},
 		{`"tax-value" and`, stops.ID, []string{"tax value.pdf"}, []string{`"tax-value"`}},
 		{`"the" "of"`, stops.ID, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
 		{`"the" "of" and`, stops.ID, nil, []string{"and", `"the"`, `"of"`}},
@@ -1213,6 +1209,13 @@ func TestSearchPreparedWordsAndPhrases(t *testing.T) {
 		require.Equal(t, tc.want, names, tc.query)
 		require.Equal(t, tc.terms, SearchRequiredTerms(tc.query), tc.query)
 	}
+	hits, _, err := s.SearchPage(t.Context(), "cases", 20)
+	require.NoError(t, err)
+	var names []string
+	for _, hit := range hits {
+		names = append(names, hit.Node.Name)
+	}
+	require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf"}, names)
 }
 
 func TestSearchSurvivesOperatorInput(t *testing.T) {

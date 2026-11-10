@@ -86,7 +86,10 @@ missing measurements.
 
 ## How do words match in lexical search?
 
-Each prepared word matches the start of a word, including regular word forms. For example, `insur` finds `insurance-renewal.pdf`, and `invoices` finds `invoice`. Common words are dropped when content words remain. Every remaining word and quoted phrase must match in the same name or text segment. Quoted phrases require adjacent words in order.
+Each prepared word matches the start of a word, and its regular forms also match. For example, `insur` finds `insurance-renewal.pdf`, and `invoices` finds `invoice`. Common words are dropped when content words remain. Every remaining word and quoted phrase must match in the same name or text segment. Quoted phrases require adjacent words in order.
+
+Docbank does not interpret unquoted `AND`, `OR`, `NOT`, or parentheses as
+Boolean operators. Balanced quotes delimit phrases.
 
 Name matches appear before content-only matches. Within each group, Docbank
 uses BM25, a text-relevance score, then name and ID to break ties consistently.
