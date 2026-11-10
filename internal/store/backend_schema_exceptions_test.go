@@ -23,8 +23,6 @@ var deferredBackendIndexes = map[string]string{
 	"mailbox_transfer_versions":         "mailbox_transfer_receipts",
 	"nodes_photo_import":                "nodes",
 	"nodes_photo_name":                  "nodes",
-	"package_import_jobs_pending":       "package_import_jobs",
-	"package_labels_lookup":             "package_labels",
 	"rendition_attachments_build":       "rendition_attachments",
 	"term_report_history_recent":        "term_report_history",
 	// This is a write invariant, not a deferred access optimization. The

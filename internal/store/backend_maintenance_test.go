@@ -93,7 +93,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  bates_namespaces_immutable_update bates_namespace_cursors_monotone
  bates_allocations_transition_guard bates_page_labels_immutable_update
  package_volumes_immutable_update`},
-	{"received package transitions", "unported: package import and completion", "sealed-delivery qualifies initial package identity only; received record, label and receipt producers remain unqualified", `
+	{"received package transitions", "package_import*.go; INSERT-only record, label and receipt grants; column-specific package/job updates", "received-packages contracts; lease fencing, atomic completion and cancellation cleanup preserve immutable source authority", `
  packages_transition_guard package_records_immutable_update
  package_labels_immutable_update package_import_receipts_immutable_update`},
 	{"batch tag receipts", "batch_tag.go; runtime INSERT-only grants", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},

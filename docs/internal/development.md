@@ -459,6 +459,11 @@ GRANT INSERT ON documents.collection_snapshots,
 GRANT UPDATE(next_sequence) ON documents.bates_namespace_cursors TO docbank_runtime;
 GRANT UPDATE(state, committed_at) ON documents.bates_allocations TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.package_preflights TO docbank_runtime;
+GRANT INSERT ON documents.package_records, documents.package_labels,
+    documents.package_import_receipts, documents.package_import_jobs TO docbank_runtime;
+GRANT UPDATE(state, snapshot_id, completed_at) ON documents.packages TO docbank_runtime;
+GRANT UPDATE(state, epoch, token, claim_owner, lease_expires_at, updated_at)
+    ON documents.package_import_jobs TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
@@ -724,9 +729,9 @@ on large vaults; those paths need representative query-plan and workload checks.
 The native Store seals inline and streaming collection snapshots, records package
 identity and volumes, retains preflight results, reserves Bates page numbers,
 and publishes verified numbered PDF artifacts on both backends. These operations
-start with explicit, already-selected versions. Query-driven selection,
-received-package record imports, filesystem delivery workers, transfer/recovery
-and public PostgreSQL vault opening remain separate.
+start with explicit, already-selected versions. Received-package intake is
+qualified below. Query-driven selection, filesystem delivery workers,
+transfer/recovery and public PostgreSQL vault opening remain separate.
 
 A sealed snapshot keeps its exact versions, source collections, page selections,
 representations and canonical bytes. Replaying the same request returns the
@@ -760,6 +765,47 @@ reservation and publication, concurrent connections sharing one namespace, and
 custodian changes committed between statements in a read. Access indexes cover
 artifact history and labels, namespace ranges, package predecessors, preflight
 expiry and retained representation versions.
+
+#### Received-package intake
+
+The native Store admits received packages and their source collections, stages
+files under worker leases, publishes immutable source rows and scoped labels,
+and completes or cancels imports on both backends. Filesystem parsing, import
+workers, export jobs, portable metadata recovery and public PostgreSQL opening
+remain separate qualification boundaries.
+
+Admission commits the source collection, package identity, volume mappings and
+queued job together. An exact owner/operation retry returns the original job,
+including when the caller allocated new internal IDs. A worker claim, renewal,
+release or reclaim uses the existing writer transaction. Replacement advances
+the epoch; an expired, cancelled or superseded worker cannot stage files,
+publish receipts or finalize the package.
+
+Record publication binds the retained version to that package's source collection.
+The original row bytes, sensitivity flag, received labels and receipt commit
+together. Exact replay preserves the original receipt; changed rows or received
+labels conflict. Assigned labels have their own immutable identity and do not
+alter received evidence. Label lookup preserves ambiguity across packages;
+label, record and timeline pages retain their existing ordering and cursors.
+Timeline pages and progress counts with their bounded gap list share one read
+snapshot.
+
+Completion seals the member stream and advances the package and job together.
+Only members matching committed record receipts may enter the final snapshot.
+Cancellation, terminal failure and owner revocation remove unreceipted staging,
+while preserving primary versions, supplied representations retained by receipts,
+and checkout-held versions. Cleanup updates tag counts, photo membership and
+export work, version-dependent epochs and the vault change stream in the same
+transaction. Released SQLite triggers keep their existing effects; PostgreSQL
+uses the shared maintenance helpers.
+
+The `received-packages` contracts exercise native intake, lease replacement,
+record replay, gap reporting, completion, label browsing and cleanup on both
+engines. PostgreSQL cases fail the final admission, receipt or job write to
+verify rollback, and commit new receipts during reads to verify snapshot
+isolation. Runtime access permits inserts into records, labels and receipts;
+only job lifecycle columns and package state, snapshot and completion columns
+may be updated. Package identity and source evidence cannot be rewritten.
 
 #### PostgreSQL reference implementations
 
