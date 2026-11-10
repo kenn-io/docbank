@@ -63,7 +63,11 @@ func (s *Store) sealCollectionSnapshotStreamTx(ctx context.Context, tx *sql.Tx, 
 	}
 	// Children can be inserted before the immutable header only inside this
 	// transaction. The deferred foreign keys are checked at commit.
-	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+	deferReferences := "PRAGMA defer_foreign_keys = ON"
+	if s.postgresSchema != "" {
+		deferReferences = "SET CONSTRAINTS ALL DEFERRED"
+	}
+	if _, err := tx.ExecContext(ctx, deferReferences); err != nil {
 		return result, err
 	}
 	existing, loadErr := loadCollectionSnapshotTx(ctx, tx, header.SnapshotID)
@@ -282,10 +286,18 @@ func matchSnapshotSourcesBatch(ctx context.Context, q metadataQuerier, sourceIDs
 		for _, id := range sourceIDs {
 			args = append(args, id)
 		}
+		memberRows := make([]string, len(chunk))
+		for i := range chunk {
+			memberRows[i] = fmt.Sprintf("(CAST($%d AS BIGINT),$%d)", 2*i+1, 2*i+2)
+		}
+		sourceRows := strings.Split(numberedPlaceholders(len(sourceIDs), 2*len(chunk)), ",")
+		for i := range sourceRows {
+			sourceRows[i] = "(" + sourceRows[i] + ")"
+		}
 		query := `WITH requested_members(node_id,version_id) AS (VALUES ` +
-			strings.TrimSuffix(strings.Repeat("(?,?),", len(chunk)), ",") +
+			strings.Join(memberRows, ",") +
 			`), requested_sources(ingest_id) AS (VALUES ` +
-			strings.TrimSuffix(strings.Repeat("(?),", len(sourceIDs)), ",") +
+			strings.Join(sourceRows, ",") +
 			`), ` + CollectionMembershipCTE + `
 			SELECT DISTINCT rm.node_id, cm.ingest_id FROM requested_members rm
 			JOIN nodes n ON n.id=rm.node_id AND n.current_version_id=rm.version_id

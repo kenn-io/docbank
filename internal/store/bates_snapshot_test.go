@@ -96,9 +96,10 @@ func TestBatesSnapshotReservationConcurrent(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-func TestBatesSnapshotReservationRechecksLiveSource(t *testing.T) {
+func checkBatesSnapshotReservationRechecksLiveSource(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	snapshot, request := numberedSnapshotFixture(t, s)
 	_, _, err := s.Trash(t.Context(), snapshot.Members[0].NodeID, UnconditionalRev)
 	require.NoError(t, err)
