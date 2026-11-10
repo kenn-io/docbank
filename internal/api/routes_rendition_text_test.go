@@ -284,9 +284,6 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	resp, body = get(t, ts, coverageURL, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.Contains(t, body, `"pages_without_text"`)
-	invalidCursor := base64.RawURLEncoding.EncodeToString([]byte(`{"offset":1}`))
-	resp, body = get(t, ts, coverageURL+"&cursor="+invalidCursor, nil)
-	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	request["profile"] = "archive"
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

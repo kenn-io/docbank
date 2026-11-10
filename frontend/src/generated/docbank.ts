@@ -1756,6 +1756,7 @@ export type CoverageReportPageCoverage = typeof CoverageReportPageCoverage[keyof
 
 
 export const CoverageReportPageCoverage = {
+  partial: 'partial',
   unavailable: 'unavailable',
 } as const;
 
@@ -1768,7 +1769,6 @@ export interface CoverageReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   embeddings: CoverageClass[];
-  next_cursor?: string;
   page_coverage?: CoverageReportPageCoverage;
   pages_without_text?: PageTextGap[];
   /** @pattern ^[0-9a-f]{64}$ */
@@ -9530,10 +9530,6 @@ vault_uid: string;
  * @maxItems 4096
  */
 content_version_id: string[];
-/**
- * @maxLength 2048
- */
-cursor?: string;
 };
 
 export type ListDocumentsParams = {

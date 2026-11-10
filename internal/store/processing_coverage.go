@@ -42,7 +42,6 @@ type ProcessingCoverageSnapshot struct {
 	Renditions      ProcessingClassCoverage
 	Embeddings      []ProcessingClassCoverage
 	RenditionBuilds map[string]string
-	BuildManifest   map[string]string
 }
 
 // ProcessingCoverage evaluates source visibility, retained heads and replacement
@@ -126,7 +125,6 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	// this read snapshot. Keep counting each version's state independently.
 	validated := make(map[renditionValidationKey]bool)
 	result.RenditionBuilds = make(map[string]string)
-	result.BuildManifest = make(map[string]string)
 	for _, head := range heads {
 		complete := validated[head.key]
 		if !complete {
@@ -139,7 +137,6 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 			}
 		}
 		if head.key.buildID != "" {
-			result.BuildManifest[head.versionID] = head.key.buildID
 			if head.pdfCandidate {
 				result.RenditionBuilds[head.versionID] = head.key.buildID
 			}

@@ -3,7 +3,6 @@ package processing
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"strconv"
 	"testing"
@@ -96,130 +95,43 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 	}
 }
 
-func TestCoveragePageContinuesAndRejectsChangedManifest(t *testing.T) {
-	t.Run("page bound and cursor", func(t *testing.T) {
-		pages := make([]int, 9000)
-		for i := range pages {
-			pages[i] = i + 1
-		}
-		ids := []string{"version", "later"}
-		builds := map[string]string{"version": "build", "later": "later-build"}
-		reads := []string{}
-		read := func(_ context.Context, build string) ([]int, error) {
-			reads = append(reads, build)
-			if build == "build" {
-				return pages, nil
-			}
-			return []int{1}, nil
-		}
-		first, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
-		require.NoError(t, err)
-		require.Len(t, first[0].Pages, 8192)
-		require.Equal(t, []string{"build"}, reads)
-		require.NotEmpty(t, cursor)
-		reads = nil
-		last, next, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
-		require.NoError(t, err)
-		require.Equal(t, pages[8192:], last[0].Pages)
-		require.Equal(t, []string{"build", "later-build"}, reads)
-		require.Empty(t, next)
-		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "changed", cursor, read)
-		require.Error(t, err)
-		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "changed", "manifest", cursor, read)
-		require.Error(t, err)
-		for _, payload := range []string{`{"version":1,"scope":"scope","manifest":"manifest","index":0,"offset":1,"extra":true}`} {
-			_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", base64.RawURLEncoding.EncodeToString([]byte(payload)), read)
-			require.Error(t, err)
-		}
-	})
-	t.Run("resume reads", func(t *testing.T) {
-		ids := []string{"one", "two", "three"}
-		builds := map[string]string{"one": "first", "two": "second", "three": "third"}
-		pages := make([]int, 5000)
-		for i := range pages {
-			pages[i] = i + 1
-		}
-		var reads []string
-		read := func(_ context.Context, build string) ([]int, error) {
-			reads = append(reads, build)
-			return pages, nil
-		}
-		_, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
-		require.NoError(t, err)
-		require.Equal(t, []string{"first", "second"}, reads)
-		reads = nil
-		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
-		require.NoError(t, err)
-		require.Equal(t, []string{"second", "third"}, reads)
-	})
-}
-
-func TestCoveragePageLimitsCandidateReads(t *testing.T) {
-	var ids []string
-	builds := map[string]string{}
-	for i := 0; i < 17; i++ {
-		id := strconv.Itoa(i)
-		ids = append(ids, id)
-		builds[id] = id
+func TestCoveragePageBounds(t *testing.T) {
+	ids := make([]string, 17)
+	builds := make(map[string]string)
+	for i := range ids {
+		ids[i] = strconv.Itoa(i)
+		builds[ids[i]] = ids[i]
 	}
-	var calls int
-	read := func(_ context.Context, _ string) ([]int, error) { calls++; return nil, nil }
-	_, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
+	calls := 0
+	gaps, state, err := readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
 	require.NoError(t, err)
 	require.Equal(t, 16, calls)
-	require.NotEmpty(t, cursor)
-	_, cursor, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
-	require.NoError(t, err)
-	require.Equal(t, 17, calls)
-	require.Empty(t, cursor)
-	readLaterFailure := func(_ context.Context, build string) ([]int, error) {
-		if build == ids[16] {
-			return nil, errors.New("missing evidence")
-		}
-		return nil, nil
-	}
-	_, cursor, unavailable, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", readLaterFailure)
-	require.NoError(t, err)
-	require.False(t, unavailable)
-	_, cursor, unavailable, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, readLaterFailure)
-	require.NoError(t, err)
-	require.Empty(t, cursor)
-	require.True(t, unavailable)
-	builds[ids[16]] = ""
-	calls = 0
-	_, cursor, unavailable, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", func(_ context.Context, _ string) ([]int, error) {
-		calls++
-		if calls == 1 {
-			return nil, errors.New("missing evidence")
-		}
-		return nil, nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, 16, calls)
-	require.Empty(t, cursor)
-	require.True(t, unavailable)
+	require.Len(t, gaps, 16)
+	require.Equal(t, "partial", state)
 	for _, id := range ids {
 		builds[id] = "shared"
 	}
 	calls = 0
-	gaps, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", func(_ context.Context, _ string) ([]int, error) { calls++; return []int{1}, nil })
+	gaps, state, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { calls++; return []int{2, 4}, nil })
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
 	require.Len(t, gaps, 17)
-	require.Empty(t, cursor)
-	for _, id := range ids {
-		builds[id] = id
+	require.Empty(t, state)
+	pages := make([]int, 5000)
+	for i := range pages {
+		pages[i] = i + 1
 	}
-	builds[ids[16]] = ids[0]
-	calls = 0
-	gaps, cursor, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", func(_ context.Context, _ string) ([]int, error) { calls++; return []int{1}, nil })
+	gaps, state, err = readPDFCoveragePage(t.Context(), ids, builds, func(context.Context, string) ([]int, error) { return pages, nil })
 	require.NoError(t, err)
-	require.Equal(t, 16, calls)
-	require.Len(t, gaps, 17)
-	require.Empty(t, cursor)
+	require.Len(t, gaps, 2)
+	require.Len(t, gaps[1].Pages, 3192)
+	require.Equal(t, "partial", state)
+	_, state, err = readPDFCoveragePage(t.Context(), ids[:1], builds, func(context.Context, string) ([]int, error) { return nil, errors.New("missing") })
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", state)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, _, err = readPDFCoveragePage(ctx, ids, builds, "scope", "manifest", "", read)
+	_, _, err = readPDFCoveragePage(ctx, ids, builds, func(context.Context, string) ([]int, error) { return nil, nil })
 	require.ErrorIs(t, err, context.Canceled)
 }
 

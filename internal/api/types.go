@@ -243,8 +243,7 @@ type CoverageReport struct {
 	Renditions         CoverageClass   `json:"renditions"`
 	Embeddings         []CoverageClass `json:"embeddings"`
 	PagesWithoutText   []PageTextGap   `json:"pages_without_text,omitzero"`
-	NextCursor         string          `json:"next_cursor,omitempty"`
-	PageCoverage       string          `json:"page_coverage,omitempty" enum:"unavailable"`
+	PageCoverage       string          `json:"page_coverage,omitempty" enum:"partial,unavailable"`
 }
 
 type DocumentSearchScope struct {

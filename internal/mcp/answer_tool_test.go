@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -69,7 +68,7 @@ func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]ap
 	}
 	return []api.ProcessingProfileSummary{{Name: "default", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}}, nil
 }
-func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence, cursor string) (api.CoverageReport, error) {
+func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
 	f.coverageFence = fence
 	f.coverageCalls++
 	f.coverageAfterSearch = len(f.requests) > 0
@@ -77,31 +76,9 @@ func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.Docum
 		return api.CoverageReport{}, f.coverageErr
 	}
 	if len(f.pageChunks) > 0 {
-		index := 0
-		if cursor != "" {
-			index, _ = strconv.Atoi(cursor)
-		}
-		return f.pageChunks[index], nil
+		return f.pageChunks[0], nil
 	}
 	return api.CoverageReport{PagesWithoutText: f.pageGaps}, nil
-}
-
-func TestAnswerQuestionReturnsBeforeReadingLaterCoverage(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}, pageChunks: []api.CoverageReport{{NextCursor: "1"}, {}}}
-	for i := range 4096 {
-		f.fenceVersions = append(f.fenceVersions, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1))
-	}
-	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: f.fenceVersions[0], Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
-	require.NoError(t, err)
-	require.Equal(t, 1, f.coverageCalls)
-	require.True(t, f.coverageAfterSearch)
-	require.Equal(t, "1", out.PagesCursor)
-	require.Equal(t, f.fenceVersions, out.PagesFence)
-	require.False(t, out.CoverageComplete)
-	require.Len(t, out.Passages, 1)
-	require.Len(t, out.Receipt.CitedVersions, 1)
 }
 
 func TestAnswerQuestionKeepsEvidenceWhenCoverageFails(t *testing.T) {
@@ -161,7 +138,7 @@ func TestAnswerQuestionPageCoverage(t *testing.T) {
 	}
 }
 
-func TestAnswerQuestionContinuesFragmentedPageLists(t *testing.T) {
+func TestAnswerQuestionFragmentedPageLists(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
 	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000001", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
 	for i := 0; i < 100; i++ {
@@ -172,11 +149,10 @@ func TestAnswerQuestionContinuesFragmentedPageLists(t *testing.T) {
 	for i := range pages {
 		pages[i] = i*2 + 1
 	}
-	f.pageChunks = []api.CoverageReport{{PagesWithoutText: []api.PageTextGap{{ContentVersionID: f.fenceVersions[0], Pages: pages}}, NextCursor: "1"}, {}}
+	f.pageChunks = []api.CoverageReport{{PagesWithoutText: []api.PageTextGap{{ContentVersionID: f.fenceVersions[0], Pages: pages}}, PageCoverage: "partial"}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
-	require.NotEmpty(t, out.PagesCursor)
 	require.Len(t, out.Passages, 1)
 	require.Equal(t, "answer text", out.Passages[0].Text)
 	require.Len(t, out.Receipt.CitedVersions, 1)
@@ -185,8 +161,6 @@ func TestAnswerQuestionContinuesFragmentedPageLists(t *testing.T) {
 	require.LessOrEqual(t, size, maxToolResponseBytes)
 	require.Len(t, out.PagesWithoutText, 1)
 	require.Len(t, out.PagesWithoutText[0].Pages, 2500)
-	require.Equal(t, "1", out.PagesCursor)
-	require.Equal(t, f.fenceVersions, out.PagesFence)
 }
 
 func (f *answerFakeClient) ResolveDocumentSourceFence(context.Context, api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error) {
@@ -442,4 +416,29 @@ func TestSelectAnswerSearchKeepsConfiguredDefaultWithPDFText(t *testing.T) {
 	selected, _, err = selectAnswerSearch(profiles, answerInput{Profile: "docbank-pdf-text"})
 	require.NoError(t, err)
 	require.Equal(t, "docbank-pdf-text", selected.Name)
+}
+
+func TestAnswerQuestionLargePartialCoverageKeepsPassage(t *testing.T) {
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
+	for i := range 4096 {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+		f.fenceVersions = append(f.fenceVersions, id)
+		pages := []int{4997, 4999}
+		if i == 4095 {
+			pages = []int{4995, 4997}
+		}
+		f.pageGaps = append(f.pageGaps, api.PageTextGap{ContentVersionID: id, Pages: pages})
+	}
+	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: f.fenceVersions[0], Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
+	// The last build has another gap beyond the 8,192 returned pages.
+	f.pageChunks = []api.CoverageReport{{PagesWithoutText: f.pageGaps, PageCoverage: "partial"}}
+	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+	require.NoError(t, err)
+	require.Len(t, out.Passages, 1)
+	require.Len(t, out.Receipt.CitedVersions, 1)
+	require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
+	size, err := toolEnvelopeBytes(out, links)
+	require.NoError(t, err)
+	require.LessOrEqual(t, size, maxToolResponseBytes)
 }

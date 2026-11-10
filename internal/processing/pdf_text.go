@@ -2,8 +2,6 @@ package processing
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"slices"
@@ -18,29 +16,8 @@ import (
 const PDFTextProfileName = "docbank-pdf-text"
 const PDFTextMaxDocumentBytes = 500 << 20
 
-var ErrInvalidCoverageCursor = errors.New("invalid or stale coverage cursor")
-
-type coverageCursor struct {
-	Version     int    `json:"version"`
-	Scope       string `json:"scope"`
-	Manifest    string `json:"manifest"`
-	Index       int    `json:"index"`
-	Offset      int    `json:"offset"`
-	Unavailable bool   `json:"unavailable,omitempty"`
-}
-
-func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, scope, manifest, cursor string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, "", false, err
-	}
-	pos := coverageCursor{Version: 1, Scope: scope, Manifest: manifest}
-	if cursor != "" {
-		data, err := base64.RawURLEncoding.DecodeString(cursor)
-		pos = coverageCursor{}
-		if err != nil || json.Unmarshal(data, &pos, json.RejectUnknownMembers(true)) != nil || pos.Version != 1 || pos.Scope != scope || pos.Manifest != manifest || pos.Index < 0 || pos.Index >= len(ids) || pos.Offset < 0 {
-			return nil, "", false, ErrInvalidCoverageCursor
-		}
-	}
+// readPDFCoveragePage bounds both evidence reads and returned page numbers.
+func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]string, read func(context.Context, string) ([]int, error)) ([]PageTextGap, string, error) {
 	type result struct {
 		pages []int
 		err   error
@@ -48,71 +25,48 @@ func readPDFCoveragePage(ctx context.Context, ids []string, builds map[string]st
 	cache := make(map[string]result)
 	var gaps []PageTextGap
 	remaining := 8192
-	candidates := 0
-	nextCandidate := func(index int) int {
-		for index < len(ids) && builds[ids[index]] == "" {
-			index++
+	state := ""
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
 		}
-		return index
-	}
-	encode := func(index, offset int) (string, error) {
-		pos.Index, pos.Offset = index, offset
-		data, err := json.Marshal(pos)
-		if err != nil {
-			return "", err
-		}
-		return base64.RawURLEncoding.EncodeToString(data), nil
-	}
-	for i := pos.Index; i < len(ids); i++ {
-		build := builds[ids[i]]
+		build := builds[id]
 		if build == "" {
-			if i == pos.Index && pos.Offset != 0 {
-				return nil, "", false, ErrInvalidCoverageCursor
-			}
 			continue
 		}
 		r, ok := cache[build]
 		if !ok {
-			if candidates == 16 {
-				next, err := encode(i, 0)
-				return gaps, next, pos.Unavailable, err
+			if len(cache) == 16 {
+				return gaps, "partial", nil
 			}
-			candidates++
 			r.pages, r.err = read(ctx, build)
 			cache[build] = r
 		}
-		if ctx.Err() != nil {
-			return nil, "", false, ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
 		}
 		if r.err != nil {
-			pos.Unavailable = true
+			state = "unavailable"
 			continue
 		}
-		start := 0
-		if i == pos.Index {
-			start = pos.Offset
-		}
-		if start > len(r.pages) {
-			return nil, "", false, ErrInvalidCoverageCursor
-		}
-		end := min(len(r.pages), start+remaining)
-		if end > start {
-			gaps = append(gaps, PageTextGap{ContentVersionID: ids[i], Pages: r.pages[start:end]})
-			remaining -= end - start
+		end := min(len(r.pages), remaining)
+		if end > 0 {
+			gaps = append(gaps, PageTextGap{ContentVersionID: id, Pages: r.pages[:end]})
+			remaining -= end
 		}
 		if remaining == 0 {
-			index, offset := i, end
-			if end == len(r.pages) {
-				index, offset = nextCandidate(i+1), 0
+			if end < len(r.pages) {
+				return gaps, "partial", nil
 			}
-			if index < len(ids) {
-				next, err := encode(index, offset)
-				return gaps, next, pos.Unavailable, err
+			for _, later := range ids[i+1:] {
+				if builds[later] != "" {
+					return gaps, "partial", nil
+				}
 			}
-			break
+			return gaps, state, nil
 		}
 	}
-	return gaps, "", pos.Unavailable, nil
+	return gaps, state, nil
 }
 
 // NewPDFTextProfile constructs the daemon's local PDF text profile.
