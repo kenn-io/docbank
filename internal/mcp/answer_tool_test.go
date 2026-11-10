@@ -126,28 +126,12 @@ func TestAnswerQuestionPageCoverage(t *testing.T) {
 }
 
 func TestAnswerQuestionFragmentedPageLists(t *testing.T) {
-	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}}
-	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: "00000000-0000-4000-8000-000000000001", Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
-	for i := 0; i < 100; i++ {
-		version := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
-		f.fenceVersions = append(f.fenceVersions, version)
-	}
-	pages := make([]int, 2500)
-	for i := range pages {
-		pages[i] = i*2 + 1
-	}
-	f.pageChunks = []api.CoverageReport{{PagesWithoutText: []api.PageTextGap{{ContentVersionID: f.fenceVersions[0], Pages: pages}}, PageCoverage: "partial"}}
+	version := "00000000-0000-4000-8000-000000000002"
+	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete"}}, pageGaps: []api.PageTextGap{{ContentVersionID: version, Pages: []int{1, 3, 4, 7}}}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
-	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
+	out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
-	require.Len(t, out.Passages, 1)
-	require.Equal(t, "answer text", out.Passages[0].Text)
-	require.Len(t, out.Receipt.CitedVersions, 1)
-	size, err := toolEnvelopeBytes(out, links)
-	require.NoError(t, err)
-	require.LessOrEqual(t, size, maxToolResponseBytes)
-	require.Len(t, out.PagesWithoutText, 1)
-	require.Len(t, out.PagesWithoutText[0].Pages, 2500)
+	require.Equal(t, []answerPageGap{{ContentVersionID: version, Pages: [][2]int{{1, 1}, {3, 4}, {7, 7}}}}, out.PagesWithoutText)
 }
 
 func (f *answerFakeClient) ResolveDocumentSourceFence(context.Context, api.DocumentSourceFenceResolveRequest) (api.DocumentSourceFenceResolution, error) {
@@ -416,12 +400,21 @@ func TestAnswerQuestionLargePartialCoverageKeepsPassage(t *testing.T) {
 		}
 		f.pageGaps = append(f.pageGaps, api.PageTextGap{ContentVersionID: id, Pages: pages})
 	}
-	f.results = []api.DocumentSearchResult{{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: 1, ContentVersionID: f.fenceVersions[0], Path: "/example", Rank: 1, LexicalRank: 1, Excerpt: "answer text", Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}}}
+	pathPrefix := "/" + strings.Repeat(strings.Repeat("p", 254)+"/", 63)
+	for i := range 9 {
+		result := api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i + 1), ContentVersionID: f.fenceVersions[i], Path: pathPrefix + fmt.Sprintf("document-%d", i), Rank: i + 1, LexicalRank: i + 1, Evidence: []api.DocumentEvidenceReference{{Kind: "node_name"}}}
+		if i == 0 {
+			result.Excerpt = "answer text"
+			result.Evidence = []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}
+		}
+		f.results = append(f.results, result)
+	}
 	// The last build has another gap beyond the 8,192 returned pages.
 	f.pageChunks = []api.CoverageReport{{PagesWithoutText: f.pageGaps, PageCoverage: "partial", PageCoverageUnavailable: true}}
 	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
 	require.NoError(t, err)
+	require.Positive(t, out.OmittedPageGapDocuments)
 	require.Len(t, out.Passages, 1)
 	require.Len(t, out.Receipt.CitedVersions, 1)
 	require.Contains(t, out.CoverageReasons, "page_coverage_incomplete")
