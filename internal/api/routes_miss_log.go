@@ -5,10 +5,12 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/misslog"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const missLogCacheControlNoStore = "no-store"
@@ -26,6 +28,18 @@ func missLogFailure() error {
 
 func registerMissLogRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{OperationID: "recordMiss", Method: http.MethodPost, Path: "/api/v1/miss-log", Summary: "Record a submitted empty search", DefaultStatus: http.StatusNoContent, MaxBodyBytes: 64 << 10}, func(ctx context.Context, in *struct{ Body misslog.Request }) (*struct{}, error) {
+		_, hasTextCoverage := in.Body.Coverage["text"]
+		if d.Cfg.MissLog.Enabled && in.Body.ActualMode == "lexical" && strings.TrimSpace(in.Body.Query) != "" && !hasTextCoverage {
+			tagID, _ := in.Body.Filters["tag_id"].(string)
+			// Web and TUI submissions lack the CLI's text coverage lookup.
+			// Keep enrichment best-effort, like receipt persistence itself.
+			if coverage, err := d.Store.SearchTextCoverage(ctx, store.SearchOptions{TagID: tagID}); err == nil {
+				if in.Body.Coverage == nil {
+					in.Body.Coverage = make(map[string]any)
+				}
+				in.Body.Coverage["text"] = SearchTextCoverage(coverage)
+			}
+		}
 		d.MissLog.Record(ctx, in.Body)
 		return &struct{}{}, nil
 	})

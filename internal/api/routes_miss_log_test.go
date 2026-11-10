@@ -78,6 +78,51 @@ func TestMissLogRecordingAndManagement(t *testing.T) {
 	require.Empty(t, rows)
 }
 
+func TestMissLogSubmittedLexicalTextCoverage(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
+	pdf, err := s.CreateFile(t.Context(), s.RootID(), "contract.pdf", testHash("pdf"), 3, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "notes.txt", testHash("notes"), 5, "text/plain")
+	require.NoError(t, err)
+	tag, err := s.CreateTag(t.Context(), "selected")
+	require.NoError(t, err)
+	_, err = s.AssignTag(t.Context(), tag.ID, pdf.ID, pdf.Revision)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name     string
+		query    string
+		mode     string
+		filters  map[string]any
+		coverage map[string]any
+		wantText any
+	}{
+		{name: "web and TUI", query: "lease renewal", mode: "lexical", wantText: map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}},
+		{name: "selected tag", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": tag.ID}, wantText: map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(0)}},
+		{name: "preserve client coverage", query: "lease renewal", mode: "lexical", coverage: map[string]any{"text": map[string]any{"pending": float64(9)}, "fuzzy": "not_run"}, wantText: map[string]any{"pending": float64(9)}},
+		{name: "preserve other coverage", query: "lease renewal", mode: "lexical", coverage: map[string]any{"state": "incomplete"}, wantText: map[string]any{"no_text": float64(1), "families": []any{"pdf"}, "pending": float64(1)}},
+		{name: "nonlexical", query: "lease renewal", mode: "semantic"},
+		{name: "filter only", query: " \t ", mode: "lexical", filters: map[string]any{"tag_id": tag.ID}},
+		{name: "unavailable scope", query: "lease renewal", mode: "lexical", filters: map[string]any{"tag_id": "not-a-tag"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/miss-log", nil, misslog.Request{
+				Query: tc.query, RequestedMode: tc.mode, ActualMode: tc.mode, Filters: tc.filters, Coverage: tc.coverage,
+			})
+			require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+			rows, err := listMisses(t, ts)
+			require.NoError(t, err)
+			require.NotEmpty(t, rows)
+			require.Equal(t, tc.query, rows[0].Query)
+			require.Equal(t, tc.wantText, rows[0].Coverage["text"])
+			for key, value := range tc.coverage {
+				require.Equal(t, value, rows[0].Coverage[key])
+			}
+		})
+	}
+}
+
 func TestMissLogBrowserMayRecordButCannotManage(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.MissLog.Enabled = true })
