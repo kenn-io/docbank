@@ -213,7 +213,13 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
         reserved = await response.json();
         await reserveAt(5);
         await route.abort("failed");
-      } else await route.fulfill({ response });
+      } else {
+        if (reserveCalls === 3) {
+          await run("rm", "/two-pages.pdf");
+          await run("trash", "empty", "--run");
+        }
+        await route.fulfill({ response });
+      }
     });
     let publications = 0,
       committed: BatesExport | undefined;
@@ -250,21 +256,29 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await page.getByRole("button", { name: "Download ZIP", exact: true }).click();
     await (await zipEvent).saveAs(path.join(scratch, "plain.zip"));
     await run("redaction", "verify", ...privateFiles, path.join(scratch, "plain.zip"), "--json");
-    await run("rm", "/two-pages.pdf");
-    await run("trash", "empty", "--run");
     await drawer.getByRole("button", { name: "Retry publication", exact: true }).click();
     await expect(
       drawer.getByRole("button", { name: "Retry publication", exact: true }),
     ).toBeEnabled({ timeout: 60000 });
     expect(committed?.pages.map((p) => p.label)).toEqual(["QUAL000003", "QUAL000004"]);
     // A server-expiry response must not discard the independent reservation.
-    await page.route("**/api/v1/redaction/previews/*/text", (route) =>
-      route.fulfill({
+    await page.route("**/api/v1/redaction/previews/*/text", async (route) => {
+      const removed = await page.request.delete(
+        route
+          .request()
+          .url()
+          .replace(/\/text$/, ""),
+        {
+          headers: route.request().headers(),
+        },
+      );
+      expect(removed.status()).toBe(204);
+      await route.fulfill({
         status: 410,
         contentType: "application/problem+json",
         body: JSON.stringify({ code: "redaction_preview_expired", detail: "Preview expired" }),
-      }),
-    );
+      });
+    });
     await drawer.getByRole("button", { name: "Redacted", exact: true }).click();
     await drawer.getByRole("button", { name: "Text", exact: true }).click();
     await expect(
@@ -318,7 +332,62 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await downloadNumbered.click();
     await (await repeatDownload).saveAs(path.join(scratch, "after-mask-edit.pdf"));
     expect(await readFile(path.join(scratch, "after-mask-edit.pdf"))).toEqual(bytes);
-    await drawer.getByRole("button", { name: "Open Productions", exact: true }).click();
+    await page.unroute("**/api/v1/redaction/previews/*/text");
+    await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
+    await expect(
+      drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }),
+    ).toBeEnabled({ timeout: 60000 });
+    // A changed review needs a new form without replacing the first delivery.
+    await drawer.getByRole("button", { name: "Number and keep PDF", exact: true }).click();
+    const secondFiles: string[] = [];
+    for (const kind of ["preparation", "masks", "review"]) {
+      const event = page.waitForEvent("download");
+      await drawer.getByRole("button", { name: `Save ${kind}`, exact: true }).click();
+      const file = path.join(scratch, `second-${kind}.json`);
+      await (await event).saveAs(file);
+      secondFiles.push(file);
+    }
+    await picker.click();
+    await page.getByRole("option", { name: "QUAL · 6 digits", exact: true }).click();
+    await expect(first).toHaveValue("7");
+    await drawer
+      .getByRole("checkbox", { name: "Keep the unredacted original indefinitely" })
+      .check();
+    await reviewNumbering.click();
+    await expect(confirmation).toContainText("QUAL000007–QUAL000008");
+    await page.getByRole("button", { name: "Reserve and keep PDF", exact: true }).click();
+    await expect(downloadNumbered).toHaveCount(2, { timeout: 60000 });
+    expect(starts).toEqual([3, 3, 7]);
+    const secondDownload = page.waitForEvent("download");
+    await downloadNumbered.nth(1).click();
+    const secondPDF = path.join(scratch, "second-numbered.pdf");
+    await (await secondDownload).saveAs(secondPDF);
+    const secondBytes = await readFile(secondPDF);
+    expect(createHash("sha256").update(secondBytes).digest("hex")).toBe(committed!.blob_sha256);
+    expect(committed!.pages.map((p) => p.label)).toEqual(["QUAL000007", "QUAL000008"]);
+    const secondChecked = JSON.parse(
+      await run(
+        "bates",
+        "export",
+        "download",
+        committed!.allocation_id,
+        path.join(scratch, "second-checked.pdf"),
+        "--preparation",
+        secondFiles[0]!,
+        "--masks",
+        secondFiles[1]!,
+        "--review",
+        secondFiles[2]!,
+        "--json",
+      ),
+    );
+    expect(secondChecked.verification).toBe("masks_text_and_numbers");
+    const firstAgain = page.waitForEvent("download");
+    await downloadNumbered.nth(0).click();
+    await (await firstAgain).saveAs(path.join(scratch, "first-after-second.pdf"));
+    expect(await readFile(path.join(scratch, "first-after-second.pdf"))).toEqual(bytes);
+    await page.screenshot({ path: path.join(captures!, "numbered-second-review.png") });
+    await drawer.getByRole("button", { name: "Open Productions", exact: true }).first().click();
     await expect(page.getByRole("main", { name: "Productions", exact: true })).toBeVisible();
     await stop();
     await writeFile(path.join(scratch, "vault", "config.toml"), "");
