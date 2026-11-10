@@ -228,7 +228,7 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "setup must replace daemons that create a separate local index")
 	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
-	rec.Metadata[metaProtocolVersion] = "123" // Before supersession declaration routes.
+	rec.Metadata[metaProtocolVersion] = "123" // Earlier incompatible daemon protocol.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without supersession routes must be replaced")
 	rec.Metadata[metaProtocolVersion] = "124" // Main before supersession declaration routes.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "main daemons without supersession routes must be replaced")

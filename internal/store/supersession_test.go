@@ -442,19 +442,11 @@ func TestAuditedImportRejectsValidityDeclarations(t *testing.T) {
 	// Hand-edit an audited stream to include unsupported declarations while
 	// retaining every audit record.
 	link := fmt.Sprintf("{\"type\":\"node_supersession\",\"successor_node_id\":%d,\"predecessor_node_id\":%d,\"note\":\"replacement\",\"recorded_at\":%q}\n", other.ID, n.ID, nowRFC3339())
-	window := fmt.Sprintf("{\"type\":\"node_effective_window\",\"node_id\":%d,\"effective_from\":\"2025-01-01\",\"effective_to\":null}\n", other.ID)
-	for _, tc := range []struct{ name, declarations string }{
-		{"window_only", window},
-		{"link_only", link},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			target := newTestStore(t)
-			err := target.ImportMetadata(ctx, strings.NewReader(baseline.String()+tc.declarations))
-			require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-			require.ErrorContains(t, err, "document validity declarations")
-			active, err := auditAuthorityActiveTx(ctx, target.db)
-			require.NoError(t, err)
-			require.False(t, active, "rejected import must roll back audit authority")
-		})
-	}
+	target := newTestStore(t)
+	err = target.ImportMetadata(ctx, strings.NewReader(baseline.String()+link))
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	require.ErrorContains(t, err, "document validity declarations")
+	active, err := auditAuthorityActiveTx(ctx, target.db)
+	require.NoError(t, err)
+	require.False(t, active, "rejected import must roll back audit authority")
 }

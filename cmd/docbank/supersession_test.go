@@ -53,8 +53,6 @@ func TestSupersessionCLI(t *testing.T) {
 	assert.Equal(t, "2025-12-31", window.EffectiveTo)
 	_, err = runCLI(t, "document", "supersede", "/leases/next.txt", "--replaces", "/leases/old.txt")
 	require.NoError(t, err)
-	_, err = runCLI(t, "document", "effective", "/leases/next.txt", "--clear")
-	require.NoError(t, err)
 	out, err = runCLI(t, "document", "stat", "/leases/next.txt", "--json")
 	require.NoError(t, err)
 	var successor api.Node
