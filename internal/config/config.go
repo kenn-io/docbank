@@ -60,7 +60,7 @@ type ServerConfig struct {
 	BindAddr     string   `toml:"bind_addr"`     // default "127.0.0.1"
 	APIPort      int      `toml:"api_port"`      // default 0 (ephemeral)
 	APIKey       string   `toml:"api_key"`       // default "" (ephemeral per-run key on loopback)
-	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; background daemons only
+	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; automatically started daemons only
 }
 
 // WebConfig controls the built-in web UI.

@@ -810,12 +810,12 @@ func TestMP4InspectionContractSelection(t *testing.T) {
 			version := store.ContentVersion{Size: int64(len(data)), MimeType: "video/mp4", BlobHash: processingSHA256(data)}
 			policy := inspectionPolicy("phone.mp4", version, profile)
 			require.Equal(t, contract == docling.ASRVideoAdapterContract, policy.VideoAudioTrack)
-			record, err := media.InspectCapability(bytes.NewReader(data), policy)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			if contract != docling.ASRVideoAdapterContract {
 				legacy := policy
 				legacy.VideoAudioTrack = false
-				previous, err := media.InspectCapability(bytes.NewReader(data), legacy)
+				previous, err := media.InspectCapability(t.Context(), bytes.NewReader(data), legacy)
 				require.NoError(t, err)
 				require.Equal(t, previous, record, "supplied captions and existing contracts retain sealed identities")
 				require.Equal(t, previous.Checksum, record.Checksum)
@@ -837,11 +837,11 @@ func TestSuppliedCaptionsMP4InspectionIdentity(t *testing.T) {
 	version := store.ContentVersion{Size: int64(len(data)), MimeType: "video/mp4", BlobHash: processingSHA256(data)}
 	policy := inspectionPolicy("phone.mp4", version, service.profiles[name])
 	require.False(t, policy.VideoAudioTrack)
-	record, err := media.InspectCapability(bytes.NewReader(data), policy)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	legacy := policy
 	legacy.VideoAudioTrack = false
-	previous, err := media.InspectCapability(bytes.NewReader(data), legacy)
+	previous, err := media.InspectCapability(t.Context(), bytes.NewReader(data), legacy)
 	require.NoError(t, err)
 	require.Equal(t, previous, record)
 	require.Equal(t, previous.Checksum, record.Checksum)

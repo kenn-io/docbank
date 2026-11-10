@@ -631,12 +631,12 @@ func (s *Store) ClaimRenditionJob(
 				return ErrRenditionJobLeaseHeld
 			}
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
-				// A photo description has no side effects, so it runs again instead of waiting for an operator.
-				var description bool
-				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&description); err != nil {
+				// Photo descriptions and local PDFium text extraction can safely run again.
+				var repeatable bool
+				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "authorization.provider_id")+`='`+document.PDFTextProviderID+`' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
 					return fmt.Errorf("reading rendition job input kind: %w", err)
 				}
-				if description {
+				if repeatable {
 					if _, err := tx.ExecContext(ctx, `
 						UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,
 						lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,
@@ -1485,15 +1485,6 @@ func (s *Store) publishRenditionJob(
 			if job.Phase != RenditionPhaseBuildStaged && job.Phase != RenditionPhaseGenerationStaged {
 				return errors.New("rendition job is not ready for publication")
 			}
-			// Capture the final manifest under the publication writer lock so
-			// another publisher cannot make it stale before the head flip.
-			generation, err := stageLexicalGenerationExcludingTx(ctx, tx, nil)
-			if err != nil {
-				return err
-			}
-			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at); err != nil {
-				return err
-			}
 		} else if job.Phase != RenditionPhaseProvider {
 			return errors.New("rendition job is not ready for publication")
 		}
@@ -1643,6 +1634,28 @@ func (s *Store) publishRenditionJob(
 				}
 			}
 		} else {
+			published, err := hasPublishedLexicalHeadTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if !published {
+				if _, err := s.migrateLegacyPlainTextTx(ctx, tx, ""); err != nil {
+					return err
+				}
+			}
+			// Capture the final manifest under the publication writer lock so
+			// another publisher cannot make it stale before the head flip.
+			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID})
+			if errors.Is(err, ErrNotFound) {
+				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil)
+			}
+			if err != nil {
+				return err
+			}
+			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at); err != nil {
+				return err
+			}
+			generationID = generation.ID
 			pairs := make([]renditionPublicationPair, 0, len(authorized))
 			for _, authority := range authorized {
 				attachment := RenditionAttachmentRecord{

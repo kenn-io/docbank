@@ -11,16 +11,17 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestBrowserMergeHiddenCustodian(t *testing.T) {
+func checkBrowserMergeHiddenCustodian(t *testing.T, newStore func(*testing.T) *Store, scopeKinds []string) {
+	t.Helper()
 	t.Parallel()
-	for _, scopeKind := range []string{"document", "collection", "package", "package-snapshot", "package-record"} {
+	for _, scopeKind := range scopeKinds {
 		for _, ownerRole := range []string{"absorbed", "survivor", "unrelated hidden"} {
 			if ownerRole == "unrelated hidden" && (scopeKind == "package-snapshot" || scopeKind == "package-record") {
 				continue
 			}
 			t.Run(scopeKind+"/"+ownerRole, func(t *testing.T) {
 				t.Parallel()
-				s := newTestStore(t)
+				s := newStore(t)
 				ctx := t.Context()
 				survivor, err := s.CreatePerson(ctx, "Ada", "operator")
 				require.NoError(t, err)
@@ -110,7 +111,8 @@ func TestBrowserMergeHiddenCustodian(t *testing.T) {
 	}
 }
 
-func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
+func checkBrowserMergeRequiresHiddenUnlock(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	t.Run("assertion", func(t *testing.T) {
 		t.Parallel()
@@ -118,7 +120,7 @@ func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 			t.Run(strconv.FormatBool(hiddenSurvivor), func(t *testing.T) {
 				for _, client := range []string{"browser", "unlocked browser", "api key"} {
 					t.Run(client, func(t *testing.T) {
-						s := newTestStore(t)
+						s := newStore(t)
 						ctx := t.Context()
 						left, err := s.CreatePerson(ctx, "Ada", "operator")
 						require.NoError(t, err)
@@ -176,7 +178,7 @@ func TestBrowserMergeRequiresHiddenUnlock(t *testing.T) {
 		t.Parallel()
 		for _, rejectSurvivor := range []bool{false, true} {
 			t.Run(strconv.FormatBool(rejectSurvivor), func(t *testing.T) {
-				s := newTestStore(t)
+				s := newStore(t)
 				ctx := t.Context()
 				left, err := s.CreatePerson(ctx, "Ada", "operator")
 				require.NoError(t, err)
@@ -344,17 +346,17 @@ func TestBrowserWriteFenceMatchesBrowserList(t *testing.T) {
 		people[person.PersonID] = test
 		e := test.evidence
 		if e.assertion != "" {
-			_, err = s.db.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) VALUES(?,?,?,?,'assert','',?)`,
+			_, err = s.db.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at) VALUES($1,$2,$3,$4,'assert','',$5)`,
 				uuid.NewString(), test.version.CurrentVersionID, person.PersonID, e.assertion, nowRFC3339())
 			require.NoError(t, err)
 		}
 		if e.people != "" {
-			_, err = s.db.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,sensitive) VALUES(?,?,?,'g','author','actor','header','e','exact','header',?,1,?)`,
+			_, err = s.db.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,sensitive) VALUES($1,$2,$3,'g','author','actor','header','e','exact','header',$4,1,$5)`,
 				test.version.CurrentVersionID, test.version.ID, person.PersonID, test.name, e.people)
 			require.NoError(t, err)
 		}
 		if e.identity != "" {
-			_, err = s.db.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES(?,?,'email',?,?,'','','email_v1','derived','header','e',?,?)`,
+			_, err = s.db.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES($1,$2,'email',$3,$4,'','','email_v1','derived','header','e',$5,$6)`,
 				uuid.NewString(), person.PersonID, person.PersonID+"@example.test", person.PersonID+"@example.test", e.identity, nowRFC3339())
 			require.NoError(t, err)
 		}

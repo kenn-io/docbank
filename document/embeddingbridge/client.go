@@ -99,6 +99,10 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 
 	bodyReader, bodyWriter := io.Pipe()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.origin+client.protocol.path, bodyReader)
+	if err != nil {
+		return document.EmbeddingResult{}, classified(ErrorPermanent, 0)
+	}
 	writerDone := make(chan error, 1)
 	go func() {
 		multipartWriter := multipart.NewWriter(bodyWriter)
@@ -115,12 +119,6 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		_ = bodyWriter.CloseWithError(writeErr)
 		writerDone <- writeErr
 	}()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.origin+client.protocol.path, bodyReader)
-	if err != nil {
-		_ = bodyReader.Close()
-		<-writerDone
-		return document.EmbeddingResult{}, classified(ErrorPermanent, 0)
-	}
 	request.ContentLength = contentLength
 	request.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
 	request.Header.Set("Accept", client.protocol.responseType)

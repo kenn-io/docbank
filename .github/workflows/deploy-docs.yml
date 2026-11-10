@@ -25,9 +25,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "26.12.1"
+          node-version: "26.13.0"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install pinned Vercel CLI
         run: kit-retry 3 5 npm install --global vercel@65.8.0

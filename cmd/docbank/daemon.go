@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -362,6 +363,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			}
 		}
 	}
+	pdfName, pdfProfile, err := processing.NewPDFTextProfile()
+	if err != nil {
+		return fmt.Errorf("configuring PDF text profile: %w", err)
+	}
+	if _, exists := processingProfiles[pdfName]; exists {
+		return fmt.Errorf("configured processing profile %q conflicts with the built-in PDF text profile", pdfName)
+	}
+	processingProfiles[pdfName] = pdfProfile
 	suppliedName, suppliedProfile, err := processing.NewSuppliedMediaProfile(s, blobs, "daemon:operator")
 	if err != nil {
 		return fmt.Errorf("configuring supplied media profile: %w", err)
@@ -399,12 +408,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
+	var restartPending atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
-		Save: func(name, mode string) error {
-			return saveLocalText(layout.Root, config.LocalTextConfig{Profile: name, Server: mode})
-		},
+		Save:    localTextSave(layout.Root, &restartPending, saveLocalText),
 	}
 	localText.Candidate = func(mode, name string) (*processing.Service, error) {
 		profiles, _, err := candidateProfiles(mode, name)
@@ -420,6 +428,13 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
 			return err
 		}
+	}
+	pdfText := &processing.PDFTextRunner{Service: processingService}
+	if err := pdfText.Initialize(sigCtx); err != nil {
+		return fmt.Errorf("initializing automatic PDF text: %w", err)
+	}
+	if err := jobSupervisor.StartWorker("text:pdf", func(ctx context.Context) error { return pdfText.Backfill(ctx, logger) }); err != nil {
+		return err
 	}
 	embeddingRuntimeRegistry := processingService.EmbeddingRuntimes()
 	runtimeRegistry.Seal()
@@ -595,12 +610,21 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 
+	persistent := os.Getenv(daemonconn.EnvPersistentDaemon) == "true"
+	var idleTimeout time.Duration
+	if background && !persistent && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 && cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+		idleTimeout = cfg.Server.IdleTimeout.Std()
+	}
 	rtStore := daemonconn.RuntimeStore(layout.Root)
 	webAddress := ""
 	if webListener != nil {
 		webAddress = webListener.Addr().String()
 	}
 	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
+	if background {
+		record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
+	}
+	record.Metadata[daemonconn.MetaExplicitStart] = strconv.FormatBool(persistent)
 	if localListener != nil {
 		record.Metadata["network_address"] = listener.Addr().String()
 	}
@@ -707,7 +731,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, EnsureEmail: processing.EnsureEmailTarget,
+		Processing: processingService, LocalText: localText,
+		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
+		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
@@ -740,10 +767,15 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		servers = append(servers, servingHTTP{name: "MCP HTTP", server: mcpHTTP, listener: mcpListener, drainedFirst: true})
 	}
 
-	if background && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 &&
-		cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
+	if idleTimeout > 0 {
 		if err := jobSupervisor.Start("daemon.idle-timeout", func(ctx context.Context) error {
-			idleWatch(ctx, tracker, cfg.Server.IdleTimeout.Std(), logger, localText.Pending, stop)
+			idleWatch(ctx, tracker, idleTimeout, logger, func(ctx context.Context) (bool, error) {
+				pending, err := localText.Pending(ctx)
+				if pending || err != nil {
+					return pending, err
+				}
+				return pdfText.Pending(ctx)
+			}, stop)
 			return nil
 		}); err != nil {
 			return fmt.Errorf("starting idle-timeout job: %w", err)

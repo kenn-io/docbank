@@ -11,35 +11,37 @@ import (
 
 // personEvidence scans depicted assertions once per query and keeps those for
 // the requested people. It binds the requested person IDs as JSON.
-const personEvidence = ` FROM person_document_assertions assertion
- CROSS JOIN persons person ON person.person_id=assertion.person_id AND assertion.action='assert' AND assertion.role='depicted'
- AND assertion.person_id IN (SELECT value FROM json_each(?1))`
+func (s *Store) personEvidenceSQL() string {
+	return ` FROM person_document_assertions assertion
+ ` + s.peopleJoin() + ` persons person ON person.person_id=assertion.person_id AND assertion.action='assert' AND assertion.role='depicted'
+ AND assertion.person_id IN (SELECT value FROM ` + (metadataJSONDialect{postgres: s.postgresSchema != ""}).arrayValues("$1") + `)`
+}
 
 // personPhotoSource reaches the live photo of version cv with the same
 // current-source predicate as face previews. Library photos qualify, and
 // Hidden photos too while unlocked.
-func personPhotoSource(unlocked bool) (joins, where string) {
+func (s *Store) personPhotoSource(unlocked bool) (joins, where string) {
 	visible := photoVisibilityPredicate(false)
 	if unlocked {
-		visible = "1"
+		visible = "TRUE"
 	}
-	return ` CROSS JOIN nodes source_node ON source_node.id=cv.node_id
- CROSS JOIN photo_files member ON member.node_id=source_node.id
- CROSS JOIN photo_assets a ON a.asset_id=member.asset_id
- CROSS JOIN photo_files f ON f.file_id=a.display_file_id
- CROSS JOIN nodes n ON n.id=f.node_id`, ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + visible + `
+	return ` ` + s.peopleJoin() + ` nodes source_node ON source_node.id=cv.node_id
+ ` + s.peopleJoin() + ` photo_files member ON member.node_id=source_node.id
+ ` + s.peopleJoin() + ` photo_assets a ON a.asset_id=member.asset_id
+ ` + s.peopleJoin() + ` photo_files f ON f.file_id=a.display_file_id
+ ` + s.peopleJoin() + ` nodes n ON n.id=f.node_id`, ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + visible + `
  AND ` + currentPhotoSourcePredicate("member", "source_node", "cv.version_id")
 }
 
 // personPhotoCountsSQL checks each evidence version once, even when many
 // requested people share it, and counts distinct assets, so a RAW+JPEG pair
 // or a person named on both files counts once.
-func personPhotoCountsSQL(unlocked bool) string {
-	joins, where := personPhotoSource(unlocked)
-	return `WITH evidence AS MATERIALIZED (SELECT assertion.person_id,assertion.content_version_id version_id` + personEvidence + `),
+func (s *Store) personPhotoCountsSQL(unlocked bool) string {
+	joins, where := s.personPhotoSource(unlocked)
+	return `WITH evidence AS MATERIALIZED (SELECT assertion.person_id,assertion.content_version_id version_id` + s.personEvidenceSQL() + `),
  photos AS MATERIALIZED (SELECT cv.version_id,a.asset_id,a.hidden_at IS NOT NULL hidden
  FROM (SELECT DISTINCT version_id FROM evidence) requested_version
- CROSS JOIN content_versions cv ON cv.version_id=requested_version.version_id` + joins + where + `)
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=requested_version.version_id` + joins + where + `)
  SELECT evidence.person_id,COUNT(DISTINCT CASE WHEN NOT photos.hidden THEN photos.asset_id END),
  COUNT(DISTINCT CASE WHEN photos.hidden THEN photos.asset_id END)
  FROM evidence JOIN photos ON photos.version_id=evidence.version_id GROUP BY evidence.person_id`
@@ -47,18 +49,18 @@ func personPhotoCountsSQL(unlocked bool) string {
 
 // personPortraitSQL ranks boxed faces for the whole page. A readable key face
 // wins across both scopes; fallback portraits prefer Library photos.
-func personPortraitSQL(unlocked bool) string {
-	joins, where := personPhotoSource(unlocked)
+func (s *Store) personPortraitSQL(unlocked bool) string {
+	joins, where := s.personPhotoSource(unlocked)
 	return `WITH portraits AS (
  SELECT person.person_id,a.asset_id,cv.version_id,member.rotation,face.x,face.y,face.width,face.height,
  CASE WHEN g.state='ready' AND g.output_blob_hash IS NOT NULL THEN g.generation_id ELSE '' END generation_id,
  a.hidden_at IS NOT NULL hidden,
  ROW_NUMBER() OVER (PARTITION BY person.person_id ORDER BY face.face_id=person.key_face_id DESC,
  a.hidden_at IS NULL DESC,
- ` + personFaceCropOrder + `) rank` + personEvidence + `
- CROSS JOIN photo_faces face ON face.assertion_id=assertion.assertion_id AND face.content_version_id=assertion.content_version_id
- CROSS JOIN content_versions cv ON cv.version_id=face.content_version_id` + joins + `
- LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=?2` + where + `)
+ ` + personFaceCropOrder + `) rank` + s.personEvidenceSQL() + `
+ ` + s.peopleJoin() + ` photo_faces face ON face.assertion_id=assertion.assertion_id AND face.content_version_id=assertion.content_version_id
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=face.content_version_id` + joins + `
+ LEFT JOIN visual_preview_generations g ON g.content_version_id=cv.version_id AND g.recipe_fingerprint=$2` + where + `)
  SELECT person_id,asset_id,version_id,rotation,x,y,width,height,generation_id,hidden FROM portraits WHERE rank=1`
 }
 
@@ -79,7 +81,7 @@ func (s *Store) personPhotoSummaries(ctx context.Context, tx *sql.Tx, people []P
 	if err != nil {
 		return err
 	}
-	counts, err := tx.QueryContext(ctx, personPhotoCountsSQL(unlocked), string(requested))
+	counts, err := tx.QueryContext(ctx, s.personPhotoCountsSQL(unlocked), string(requested))
 	if err != nil {
 		return err
 	}
@@ -98,7 +100,7 @@ func (s *Store) personPhotoSummaries(ctx context.Context, tx *sql.Tx, people []P
 	if err := errors.Join(counts.Err(), counts.Close()); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, personPortraitSQL(unlocked), string(requested), recipe)
+	rows, err := tx.QueryContext(ctx, s.personPortraitSQL(unlocked), string(requested), recipe)
 	if err != nil {
 		return err
 	}

@@ -1076,7 +1076,7 @@ stderr and prints ordinary lexical results. See
 [Automatic and processing search](usage/search.md).
 
 Ordinary lexical search uses SQLite FTS5, its full-text search engine, over
-live node names and verified extracted text. Each whitespace-separated term matches as a prefix.
+live node names and verified extracted text. Prepared words match as prefixes, including regular forms; quoted phrases match adjacent words.
 Docbank escapes FTS operator syntax instead of interpreting it. Name matches
 use BM25 relevance ranking and appear before separately ranked content-only
 matches.
@@ -1131,8 +1131,9 @@ For ordinary lexical search, the typed report contains `hits`, the applied
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
-after a complete verified read. It does not automatically run PDF, Office,
-or OCR extraction. Ordinary search uses words in names and indexed text.
+after a complete verified read. It also indexes PDF text locally in the
+background. Office extraction and OCR require configured profiles. Ordinary
+search uses words in names and indexed text.
 Explicit processing search uses the form below. Saved queries and highlight sets
 use a separate
 [HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no CLI
@@ -1776,13 +1777,17 @@ docbank daemon stop
 | Command | Behavior |
 |---------|----------|
 | `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
-| `daemon start` | Start detached in the background; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon start` | Reuse a compatible daemon unchanged, or start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
 | `daemon status` | Report pid, address, version, and uptime without starting a daemon |
 | `daemon restart` | Stop a running daemon, then start it; also works when none is running |
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Restart prints `restarted: ...` or
+"started_at"}`. Running daemons also report `explicit_start` as a boolean
+when launch intent is recorded, and `idle_timeout` as the effective duration
+string when recorded. Older records omit unavailable fields. Foreground
+daemons report `explicit_start: false` without `idle_timeout`.
+Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
@@ -1833,7 +1838,7 @@ cannot be read, `jobs` still lists every task and prints a warning to stderr;
 To recover malformed settings, repair or remove `lane-controls.json` in the
 vault directory. Removing it restores unpaused lanes with concurrency 1.
 Cancellation remains available while settings are unreadable.
-Every daemon registers `extract:plain-text`, `extract:source-metadata`,
+Every daemon registers `text:pdf` for automatic local PDF text, `extract:plain-text`, `extract:source-metadata`,
 `extract:photo-sidecars`, `derive:photo-quality`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
 rendition provider is bound, `telemetry:heartbeat` appears while anonymous

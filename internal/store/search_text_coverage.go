@@ -18,7 +18,7 @@ type SearchTextCoverage struct {
 	Pending  int
 }
 
-func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out SearchTextCoverage, err error) {
+func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfProfile string, noTextLayer func(context.Context, string) (bool, error)) (out SearchTextCoverage, err error) {
 	opts, err = s.NormalizeSearchOptions(ctx, opts)
 	if err != nil {
 		return out, err
@@ -40,9 +40,15 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out
 	families := make(map[string]bool)
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) (retErr error) {
 		scope, args := liveSearchScopeSQL(searchFilterSQL(opts))
-		args = append([]any{generation.ID}, args...)
+		args = append([]any{pdfProfile, pdfProfile, generation.ID, generation.ID}, args...)
 		rows, err := q.QueryContext(ctx, `WITH coverage AS (
 		 SELECT COALESCE(cv.mime_type, '') AS mime_type,
+ `+pdfWaitingSQL("cv.version_id", "?")+` pdf_waiting,
+ COALESCE((SELECT b.build_id FROM rendition_heads h JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+ JOIN rendition_builds b ON b.build_id=a.build_id
+ JOIN rendition_lexical_generation_builds gb ON gb.build_id=b.build_id
+ WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=?
+ AND b.lexical_segment_count=0 LIMIT 1),'') pdf_evidence,
 		 EXISTS(SELECT 1 FROM text_searchable_versions sv WHERE sv.version_id=cv.version_id) native,
 		 EXISTS(SELECT 1 FROM text_extraction_queue tq WHERE tq.blob_hash=cv.blob_hash) pending,
 		 EXISTS(SELECT 1 FROM extracted_text e WHERE e.blob_hash=cv.blob_hash AND e.status='ok' AND length(trim(e.text))>0) extracted,
@@ -52,17 +58,22 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out
 		 JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
 		 WHERE h.content_version_id=cv.version_id AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id")+`) serving
 		 `+scope+`)
-		 SELECT mime_type,native,pending,extracted,serving,COUNT(*) FROM coverage
-		 GROUP BY mime_type,native,pending,extracted,serving`, args...)
+		 SELECT mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,COUNT(*) FROM coverage
+		 GROUP BY mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting`, args...)
 		if err != nil {
 			return fmt.Errorf("counting search text coverage: %w", err)
 		}
 		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
+		type evidenceCheck struct {
+			buildID, family string
+			count           int
+		}
+		var checks []evidenceCheck
 		for rows.Next() {
-			var mediaType string
-			var native, pending, extracted, serving bool
+			var mediaType, pdfEvidence string
+			var native, pending, extracted, serving, waiting bool
 			var count int
-			if err := rows.Scan(&mediaType, &native, &pending, &extracted, &serving, &count); err != nil {
+			if err := rows.Scan(&mediaType, &native, &pending, &extracted, &serving, &pdfEvidence, &waiting, &count); err != nil {
 				return err
 			}
 			if native && pending && !serving && (generation.ID != "" || !extracted) {
@@ -72,12 +83,30 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions) (out
 			if err != nil {
 				continue
 			}
+			if mediaType == "application/pdf" && !serving {
+				if waiting {
+					out.Pending += count
+				} else if family, ok := formats[mediaType]; ok && !native && pdfEvidence != "" && noTextLayer != nil {
+					checks = append(checks, evidenceCheck{pdfEvidence, family, count})
+				}
+				continue
+			}
 			if family, ok := formats[mediaType]; ok && !native && !serving {
 				out.NoText += count
 				families[family] = true
 			}
 		}
-		return rows.Err()
+		// Evidence reads use their own queries, so they wait for these rows to close.
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, check := range checks {
+			if empty, err := noTextLayer(ctx, check.buildID); err == nil && empty {
+				out.NoText += check.count
+				families[check.family] = true
+			}
+		}
+		return nil
 	})
 	out.Families = slices.DeleteFunc([]string{"pdf", "office", "other"}, func(family string) bool { return !families[family] })
 	return out, err

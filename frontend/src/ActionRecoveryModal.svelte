@@ -13,7 +13,7 @@
   import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
   import DownloadIcon from "@lucide/svelte/icons/download";
-  import { Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
   import { encodeRecovery } from "./actionRecovery.js";
@@ -230,8 +230,7 @@
     {#if notice}<p class="note" role="status">{notice}</p>{/if}
     {#if failure && action.state !== "uncertain"}<p class="alert" role="alert">{failure}</p>{/if}
 
-    <details>
-      <summary>Review documents</summary>
+    <Disclosure variant="plain" title="Review documents">
       {#if action.checkpoint_verified}
         <p class="note">
           Recovery files can come from anyone. Apply only if these are the documents you expect.
@@ -302,7 +301,7 @@
           >
         </nav>
       {/if}
-    </details>
+    </Disclosure>
 
     {#if abandonWarning}
       <div class="confirm" role="alert">
@@ -392,17 +391,6 @@
   }
   .footer-start {
     margin-inline-end: auto;
-  }
-  details {
-    font-size: var(--font-size-sm);
-  }
-  details > * + * {
-    margin-block-start: var(--space-3);
-  }
-  summary {
-    cursor: pointer;
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
   }
   dl {
     display: grid;

@@ -42,8 +42,13 @@ func (s *Store) PackageMembers(ctx context.Context, packageID string, afterOrdin
 	if validateUUIDv4(packageID) != nil || afterOrdinal < 0 || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var snapshotID sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT snapshot_id FROM packages WHERE package_id=?`, packageID).Scan(&snapshotID)
+	err = tx.QueryRowContext(ctx, `SELECT snapshot_id FROM packages WHERE package_id=$1`, packageID).Scan(&snapshotID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -53,7 +58,11 @@ func (s *Store) PackageMembers(ctx context.Context, packageID string, afterOrdin
 	if !snapshotID.Valid || snapshotID.String == "" {
 		return nil, nil
 	}
-	return s.SnapshotMembers(ctx, snapshotID.String, afterOrdinal, limit)
+	members, err := loadSnapshotMembersTx(ctx, tx, snapshotID.String, afterOrdinal, limit)
+	if err != nil {
+		return nil, err
+	}
+	return members, tx.Commit()
 }
 
 // PackageRecordRowIDs maps each occurrence on one member page to its retained

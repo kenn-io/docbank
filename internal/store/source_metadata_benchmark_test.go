@@ -23,9 +23,9 @@ func BenchmarkMissingSourceMetadataTargets(b *testing.B) {
 			ctx := b.Context()
 			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 				for blob := range corpus.blobs {
-					for copy := range corpus.copies {
+					for replica := range corpus.copies {
 						_, _, err := s.createFileTx(ctx, tx, s.RootID(),
-							fmt.Sprintf("source-%04d-copy-%03d.pdf", blob, copy),
+							fmt.Sprintf("source-%04d-copy-%03d.pdf", blob, replica),
 							fmt.Sprintf("%064x", blob+1), int64(blob+1), "application/pdf")
 						if err != nil {
 							return err

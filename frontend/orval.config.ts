@@ -45,8 +45,8 @@ export default defineConfig({
           }
           if (operation.operationName === "uploadFile" && operation.body.formData) {
             operation.body.formData = operation.body.formData.replace(
-              "uploadFileBody.file);",
-              "uploadFileBody.file, params.name);",
+              /(formData\.append\(`file`, .*)\);/,
+              "$1, params.name);",
             );
           }
           return operation;

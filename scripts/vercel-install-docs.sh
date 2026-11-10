@@ -28,10 +28,15 @@ esac
 
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT HUP INT TERM
-archive="$scratch/uv.tar.gz"
+archive="$tools_root/downloads/uv-$uv_version-$target.tar.gz"
 url="https://github.com/astral-sh/uv/releases/download/$uv_version/uv-$target.tar.gz"
 
-curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1 --speed-time 60 "$url" --output "$archive"
+if [ ! -f "$archive" ]; then
+  curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1 --speed-time 60 "$url" --output "$scratch/uv.tar.gz"
+  printf '%s  %s\n' "$expected_sha" "$scratch/uv.tar.gz" | sha256sum -c -
+  mkdir -p "$tools_root/downloads"
+  mv "$scratch/uv.tar.gz" "$archive"
+fi
 printf '%s  %s\n' "$expected_sha" "$archive" | sha256sum -c -
 tar -xzf "$archive" -C "$scratch"
 

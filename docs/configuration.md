@@ -137,7 +137,7 @@ api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
 api_key = ""          # empty = ephemeral per-run key (loopback only)
 allowed_hosts = []   # additional Host names, optionally with a port
-idle_timeout = "30m"  # background daemons only; "0" = never
+idle_timeout = "30m"  # automatically started daemons only; "0" = never
 
 [web]
 enabled = true
@@ -198,10 +198,12 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   a key at startup and publish it to same-user clients in the runtime record.
   Set a fixed key when a client cannot read that record, such as a client
   using an SSH tunnel from another machine.
-- **`idle_timeout`**: how long a background daemon waits without
+- **`idle_timeout`**: how long an automatically started daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out. A daemon
-  hosting MCP HTTP also never idles out.
+  A fresh `daemon start`, `daemon restart`, or foreground `daemon run` ignores
+  this and never idles out. `daemon start` reuses a compatible automatic daemon
+  with its existing idle policy; use `daemon restart` to keep it running.
+  A daemon hosting MCP HTTP also never idles out.
 - **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
@@ -641,12 +643,30 @@ deployment, or descriptor mismatch prevents startup. Profiles sharing a
 descriptor must agree on all effective runtime and credential settings.
 A runtime without a selecting processing profile stays staged.
 
-PDF results can preserve exact page evidence, including blank pages. Other
-formats use bounded Markdown with explicitly degraded provenance. The existing
-upload authorization, sanitization, publication, and lexical indexing checks
-still apply. Original bytes remain unchanged. After changing the descriptor,
-queued work fails with `stale_authority`; plan and consent to the changed profile
-before retrying.
+PDF results can preserve exact page evidence, including blank pages. Each page
+unit holds the page's text items and tables. A table becomes a Markdown table
+on the one page its provenance names. Pages with mapped tables follow Docling's
+reading order through the body, then the furniture. Other pages keep text array
+order. Cell text is escaped so every character is kept, except that line breaks
+and repeated spaces in a cell read as one space. Text inside a picture, such as
+a letterhead or a scanned page, and captions are ordinary text items, so they
+stay on their pages too.
+Docbank never assigns content to a guessed page. The page evidence is partial,
+with a field omission for each unmapped kind, when:
+
+- a table spans several pages, has no provenance, names a page outside the
+  result, has a missing or ragged grid, or has a cell that holds other items;
+- a table or picture carries a Docling description or classification;
+- the result contains key-value, form, or field items.
+
+A described or classified table keeps its cells on the page when its grid and
+provenance can be mapped. Its description or classification stays an omission.
+
+Other formats use bounded Markdown with explicitly degraded provenance. The
+existing upload authorization, sanitization, publication, and lexical indexing
+checks still apply. Original bytes remain unchanged. After changing the
+descriptor, queued work fails with `stale_authority`; plan and consent to the
+changed profile before retrying.
 
 ### Document OCR with Mistral
 

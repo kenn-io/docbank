@@ -78,7 +78,7 @@ func densityPNG(ppm uint32) []byte {
 
 func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [-20 -30 220 330]"}, "/MediaBox [-10 -20 210 320] /CropBox [10.125 20.25 170.625 250.75] /Rotate 90")
-	inspection, err := InspectSource(data, testSource(data), "application/pdf")
+	inspection, err := InspectSource(t.Context(), data, testSource(data), "application/pdf")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Len(t, frames, 1)
@@ -86,14 +86,14 @@ func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing
 	require.Equal(t, 90, frames[0].Rotation)
 	for _, extra := range []string{"/UserUnit 2", "/Rotate 45", "/CropBox [-1 0 1000 1000]"} {
 		data = syntheticPDF([]string{extra}, "/MediaBox [0 0 612 792]")
-		_, err = InspectSource(data, testSource(data), "application/pdf")
+		_, err = InspectSource(t.Context(), data, testSource(data), "application/pdf")
 		require.Error(t, err)
 	}
 }
 
 func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [220 330 -20 -30]"}, "/CropBox [170.625 20.25 10.125 250.75]")
-	inspection, err := InspectSource(data, testSource(data), "application/pdf")
+	inspection, err := InspectSource(t.Context(), data, testSource(data), "application/pdf")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Equal(t, [4]int64{-200000, -300000, 2200000, 3300000}, frames[0].MediaBox)
@@ -102,17 +102,17 @@ func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
 
 func TestPNGInspectionRequiresPhysicalDensityAndRejectsOrientation(t *testing.T) {
 	data := densityPNG(10000)
-	inspection, err := InspectSource(data, testSource(data), "image/png")
+	inspection, err := InspectSource(t.Context(), data, testSource(data), "image/png")
 	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Equal(t, int64(10000), frames[0].Width)
 	plain := mediatest.PNG(2, 2, color.White)
-	_, err = InspectSource(plain, testSource(plain), "image/png")
+	_, err = InspectSource(t.Context(), plain, testSource(plain), "image/png")
 	require.Error(t, err)
 	oriented := append([]byte{}, data[:33]...)
 	oriented = append(oriented, pngChunk("eXIf", []byte("synthetic"))...)
 	oriented = append(oriented, data[33:]...)
-	_, err = InspectSource(oriented, testSource(oriented), "image/png")
+	_, err = InspectSource(t.Context(), oriented, testSource(oriented), "image/png")
 	require.Error(t, err)
 }
 

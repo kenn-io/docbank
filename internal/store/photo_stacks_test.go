@@ -204,7 +204,8 @@ func TestPhotoStackDescendingTimestampTies(t *testing.T) {
 	})
 }
 
-func TestPhotoStackTimeRules(t *testing.T) {
+func checkPhotoStackTimeRules(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	var fixtures []struct {
 		Name string `json:"name"`
@@ -224,7 +225,7 @@ func TestPhotoStackTimeRules(t *testing.T) {
 	for _, fixture := range fixtures {
 		t.Run(fixture.Name, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			run, err := s.BeginIngest(t.Context(), "cli", "synthetic bursts")
 			require.NoError(t, err)
 			ids := make([]string, len(fixture.Rows))
@@ -240,6 +241,10 @@ func TestPhotoStackTimeRules(t *testing.T) {
 			_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{BurstGapSeconds: new(fixture.Gap)})
 			require.NoError(t, err)
 			require.Equal(t, fixture.Stacks, stackIndexes(t, s, ids))
+			// Query-driven paging remains a separate PostgreSQL port.
+			if s.postgresSchema != "" {
+				return
+			}
 			// Library pages probe neighbors in SQL; they must find the same stacks.
 			_, stacks := stackPages(t, s, captureRequest(t, "asc"))
 			paged := [][]int{}
@@ -257,7 +262,8 @@ func TestPhotoStackTimeRules(t *testing.T) {
 	}
 }
 
-func TestPhotoStackCameraSerialMatching(t *testing.T) {
+func checkPhotoStackCameraSerialMatching(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, tc := range []struct {
 		name, first, second string
@@ -270,7 +276,7 @@ func TestPhotoStackCameraSerialMatching(t *testing.T) {
 		{"case sensitive", "Body-001", "BODY-001", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			run, err := s.BeginIngest(t.Context(), "cli", "synthetic serial matching")
 			require.NoError(t, err)
 			var ids []string
@@ -809,9 +815,10 @@ func TestPhotoStackReturnOwnership(t *testing.T) {
 	})
 }
 
-func TestPhotoStackDecisionAfterSidecarPublication(t *testing.T) {
+func checkPhotoStackDecisionAfterSidecarPublication(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	ids := burstPhotos(t, s, 2)
 	_, err := s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: ids[:1]}), Patch: PhotoAuthoredPatch{Rating: new(3)}})
@@ -887,9 +894,10 @@ func TestPhotoStackDecisionsAndUndo(t *testing.T) {
 	}
 }
 
-func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
+func checkPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ids := burstPhotos(t, s, 3)
 	targets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
 	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids[:2], Targets: targets, Decision: "current", CurrentID: ids[0]}
@@ -960,12 +968,13 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
+func checkPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, decision := range []string{"current", "selected"} {
 		t.Run(decision, func(t *testing.T) {
 			t.Parallel()
-			s := newTestStore(t)
+			s := newStore(t)
 			ids := burstPhotos(t, s, 2)
 			first, err := s.PhotoAssetByID(t.Context(), ids[0])
 			require.NoError(t, err)
@@ -1317,9 +1326,10 @@ func TestPhotoRepresentativeImportRejectsInconsistentBackup(t *testing.T) {
 	}
 }
 
-func TestPhotoRepresentativeDecisionKeepsDefaultSettings(t *testing.T) {
+func checkPhotoRepresentativeDecisionKeepsDefaultSettings(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ids := burstPhotos(t, s, 2)
 	var count int
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
@@ -1422,9 +1432,10 @@ func TestPhotoStackAfterExtractorUpgrade(t *testing.T) {
 
 // Until backfill reads the serials, frames from two bodies of one model look
 // like one stack, so a flag change would pick or reject the other body's frames.
-func TestPhotoStackDecisionsRefuseStaleMetadata(t *testing.T) {
+func checkPhotoStackDecisionsRefuseStaleMetadata(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, err := s.BeginIngest(t.Context(), "cli", "synthetic mixed bodies")
 	require.NoError(t, err)
 	var ids []string

@@ -453,7 +453,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 	if mediaType == "video/mp4" {
 		durationLimit = (24 * time.Hour).Milliseconds()
 	}
-	record, err := media.InspectCapability(bytes.NewReader(source), media.InspectionPolicy{
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType,
 		ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: descriptor.Fingerprint,
@@ -664,7 +664,7 @@ func TestDoclingASRVideoPreservesTrackSegments(t *testing.T) {
 
 func TestDoclingASRVideoRejectsVisualOnlyCapability(t *testing.T) {
 	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
-	record, err := media.InspectCapability(bytes.NewReader(fixture.source), media.InspectionPolicy{
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(fixture.source), media.InspectionPolicy{
 		Filename: fixture.metadata.Filename, DeclaredMediaType: fixture.metadata.MediaType,
 		ExpectedBytes: fixture.metadata.ByteLength, ExpectedSHA256: fixture.metadata.SHA256,
 		DescriptorFingerprint: fixture.descriptor.Fingerprint, ProfileFingerprint: strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),

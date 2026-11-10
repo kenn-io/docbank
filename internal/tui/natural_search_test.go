@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 func naturalSearchReport(nodeID int64, versionID, excerpt string) api.DocumentSearchReport {
@@ -237,6 +238,16 @@ func TestNaturalSearchUsesQueryCapableBindings(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, naturalAuto, mode)
 	assert.Empty(t, binding)
+}
+
+func TestNaturalSearchPDFProfileFallback(t *testing.T) {
+	t.Parallel()
+	pdf := api.ProcessingProfileSummary{Name: processing.PDFTextProfileName}
+	configured := api.ProcessingProfileSummary{Name: "private", RerankingAvailable: true}
+	model := Model{naturalProfiles: []api.ProcessingProfileSummary{pdf, configured}}
+	require.Equal(t, "private", model.selectedNaturalProfile().Name)
+	model.naturalProfiles = []api.ProcessingProfileSummary{pdf}
+	require.Equal(t, "docbank-pdf-text", model.selectedNaturalProfile().Name)
 }
 
 func TestNaturalSearchWhyStripsTerminalControls(t *testing.T) {
