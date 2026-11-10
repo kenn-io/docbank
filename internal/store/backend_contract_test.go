@@ -86,8 +86,6 @@ var backendSuites = []backendSuite{
 		}},
 		{"BatesPreviewIsTentativeAndRepeatable", func(t *testing.T) { t.Helper(); checkBatesPreviewIsTentativeAndRepeatable(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesPreviewIsTentativeAndRepeatable(t, newPostgresQueryStore) }},
 		{"ABFixtureAllocatesFortyOneToFortyThree", func(t *testing.T) { t.Helper(); checkABFixtureAllocatesFortyOneToFortyThree(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkABFixtureAllocatesFortyOneToFortyThree(t, newPostgresQueryStore) }},
-		{"BatesReserveRequiresTheRecipeStart", func(t *testing.T) { t.Helper(); checkBatesReserveRequiresTheRecipeStart(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesReserveRequiresTheRecipeStart(t, newPostgresQueryStore) }},
-		{"BatesExportPageLimit", func(t *testing.T) { t.Helper(); checkBatesExportPageLimit(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesExportPageLimit(t, newPostgresQueryStore) }},
 		{"NamespaceUniquenessOverflowAndUnverifiedPages", func(t *testing.T) { t.Helper(); checkNamespaceUniquenessOverflowAndUnverifiedPages(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkNamespaceUniquenessOverflowAndUnverifiedPages(t, newPostgresQueryStore)

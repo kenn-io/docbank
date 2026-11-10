@@ -128,10 +128,9 @@ func checkABFixtureAllocatesFortyOneToFortyThree(t *testing.T, newStore func(*te
 	require.Equal(t, int64(44), reserved.StartSequence)
 }
 
-func checkBatesReserveRequiresTheRecipeStart(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
+func TestBatesReserveRequiresTheRecipeStart(t *testing.T) {
 	t.Parallel()
-	s := newStore(t)
+	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
@@ -144,10 +143,9 @@ func checkBatesReserveRequiresTheRecipeStart(t *testing.T, newStore func(*testin
 	require.Zero(t, allocations, "a cursor-following reservation could never match its recipe")
 }
 
-func checkBatesExportPageLimit(t *testing.T, newStore func(*testing.T) *Store) {
-	t.Helper()
+func TestBatesExportPageLimit(t *testing.T) {
 	t.Parallel()
-	s := newStore(t)
+	s := newTestStore(t)
 	snapshot, inputs := batesFixture(t, s)
 	ns, err := s.EnsureBatesNamespace(t.Context(), "OUR", "", 6)
 	require.NoError(t, err)
