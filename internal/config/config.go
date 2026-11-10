@@ -221,17 +221,20 @@ type WatchConfig struct {
 	DefaultExcludes *bool `toml:"default_excludes"`
 }
 
+// DefaultWatchExcludePatterns lists the built-in watch exclusion glob rules.
+var DefaultWatchExcludePatterns = []string{
+	".syncthing.*.tmp",
+	"~syncthing~*.tmp",
+	"*.sync-conflict-*",
+	"*.crdownload",
+}
+
 // EffectiveExcludePatterns combines watch defaults with configured glob rules.
 func (w WatchConfig) EffectiveExcludePatterns() []string {
 	if w.DefaultExcludes != nil && !*w.DefaultExcludes {
 		return w.ExcludePatterns
 	}
-	return append([]string{
-		".syncthing.*.tmp",
-		"~syncthing~*.tmp",
-		"*.sync-conflict-*",
-		"*.crdownload",
-	}, w.ExcludePatterns...)
+	return append(append([]string{}, DefaultWatchExcludePatterns...), w.ExcludePatterns...)
 }
 
 // RenditionProfileConfig names a deployment binding for one pinned rendition

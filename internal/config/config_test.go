@@ -839,7 +839,6 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 }
 
 func TestWatchDefaultExcludes(t *testing.T) {
-	defaults := []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"}
 	for _, tc := range []struct {
 		name, setting string
 		flag          *bool
@@ -859,13 +858,13 @@ func TestWatchDefaultExcludes(t *testing.T) {
 			assert.Equal(t, tc.flag, watch.DefaultExcludes)
 			want := []string{"*.swp"}
 			if tc.flag == nil || *tc.flag {
-				want = append(append([]string{}, defaults...), want...)
+				want = append(append([]string{}, DefaultWatchExcludePatterns...), want...)
 			}
 			assert.Equal(t, want, watch.EffectiveExcludePatterns())
 			assert.Equal(t, []string{"*.swp"}, watch.ExcludePatterns)
 			watch.ExcludePatterns = nil
 			if tc.flag == nil || *tc.flag {
-				assert.Equal(t, defaults, watch.EffectiveExcludePatterns())
+				assert.Equal(t, DefaultWatchExcludePatterns, watch.EffectiveExcludePatterns())
 			} else {
 				assert.Empty(t, watch.EffectiveExcludePatterns())
 			}

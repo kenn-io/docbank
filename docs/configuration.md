@@ -338,8 +338,10 @@ files (`.syncthing.*.tmp` and `~syncthing~*.tmp`), Syncthing conflict copies
 (`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`). These
 patterns match like `exclude_patterns` and add to configured rules. They use
 the same skipped-path counters and directory pruning as configured exclusions.
-Set `default_excludes = false` to use only configured exclusions when these
-names are intentional. Exclusions do not remove documents already archived.
+Conflict copies (`*.sync-conflict-*`) are finished files that are not archived
+unless `default_excludes = false`. Set that option to use only configured
+exclusions when these names are intentional. Exclusions do not remove documents
+already archived.
 
 For a Syncthing inbox, for example:
 
