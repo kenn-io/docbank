@@ -7,11 +7,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,6 +53,20 @@ type capturedRequest struct {
 	EncodingFormat string   `json:"encoding_format"`
 }
 
+type waitForCanceledRead struct {
+	io.ReadCloser
+
+	ctx context.Context
+}
+
+func (body waitForCanceledRead) Read(p []byte) (int, error) {
+	n, err := body.ReadCloser.Read(p)
+	if err != nil && err != io.EOF {
+		<-body.ctx.Done()
+	}
+	return n, err
+}
+
 func TestEmbedSplitsTimedOutBatch(t *testing.T) {
 	contract := modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic})
 	profile := testProfile(t, contract)
@@ -69,6 +85,100 @@ func TestEmbedSplitsTimedOutBatch(t *testing.T) {
 	require.Equal(t, [][]string{{"search_document: passage", "search_query: question"}, {"search_document: passage"}, {"search_query: question"}}, batches)
 	require.Equal(t, "document-1", result.Vectors[0].Key)
 	require.Equal(t, "query-1", result.Vectors[1].Key)
+}
+
+func TestEmbedSplitsHTTPClientTimeout(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"headers", "body"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			var mu sync.Mutex
+			var sizes []int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body capturedRequest
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+					return
+				}
+				mu.Lock()
+				sizes = append(sizes, len(body.Input))
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if len(body.Input) > 1 {
+					if phase == "body" {
+						w.WriteHeader(http.StatusOK)
+						if !assert.NoError(t, http.NewResponseController(w).Flush()) {
+							return
+						}
+					}
+					<-r.Context().Done()
+					return
+				}
+				_, _ = w.Write([]byte(`{"object":"list","model":"synthetic-model","data":[{"object":"embedding","index":0,"embedding":[1,0,0]}]}`))
+			}))
+			defer server.Close()
+			profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+			profile.Origin, profile.RequestTimeout = server.URL, time.Second
+			profile.Descriptor = descriptorFor(t, profile)
+			transport := server.Client().Transport
+			client, err := New(profile, nil, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				response, err := transport.RoundTrip(r)
+				if err != nil {
+					<-r.Context().Done()
+				} else {
+					response.Body = waitForCanceledRead{ReadCloser: response.Body, ctx: r.Context()}
+				}
+				return response, err
+			})})
+			require.NoError(t, err)
+			result, err := document.ExecuteEmbedding(t.Context(), client, testInputs(), testAuthorization(profile.Descriptor))
+			require.NoError(t, err)
+			require.Len(t, result.Vectors, 2)
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, []int{2, 1, 1}, sizes)
+		})
+	}
+}
+
+func TestResponsePolicyPreservesContextDeadlineTimeout(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"headers", "body"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if phase == "body" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					if !assert.NoError(t, http.NewResponseController(w).Flush()) {
+						return
+					}
+				}
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileNomic}))
+			profile.Origin = server.URL
+			profile.Descriptor = descriptorFor(t, profile)
+			client, err := New(profile, nil, server.Client())
+			require.NoError(t, err)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, nil)
+			require.NoError(t, err)
+			var policyErr error
+			httpClient := &http.Client{Timeout: time.Second, Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				response, err := (responsePolicy{client: client}).RoundTrip(r)
+				policyErr = err
+				return response, err
+			})}
+			response, err := httpClient.Do(request)
+			if response != nil {
+				defer func() { _ = response.Body.Close() }()
+			}
+			require.Error(t, err)
+			timeout, ok := errors.AsType[net.Error](policyErr)
+			require.True(t, ok)
+			assert.True(t, timeout.Timeout())
+		})
+	}
 }
 
 func TestEmbedReportsTimeout(t *testing.T) {

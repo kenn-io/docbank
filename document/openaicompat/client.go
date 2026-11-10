@@ -424,10 +424,10 @@ func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, e
 		}
 		request.Header.Set("Authorization", "Bearer "+secret)
 	}
-	response, err := client.http.Do(request) //nolint:gosec // Kit pins this request to the immutable profile origin; New installs the sealed egress transport.
+	response, err := client.http.Do(request)
 	if err != nil {
 		if contextErr := request.Context().Err(); contextErr != nil {
-			return nil, fmt.Errorf("openaicompat: embedding request canceled: %w", contextErr)
+			return nil, contextErr
 		}
 		if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
 			return nil, context.DeadlineExceeded
@@ -773,7 +773,7 @@ func readBounded(ctx context.Context, reader io.Reader, maximum int64) ([]byte, 
 	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, fmt.Errorf("openaicompat: response read canceled: %w", contextErr)
+			return nil, contextErr
 		}
 		if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
 			return nil, context.DeadlineExceeded

@@ -797,14 +797,14 @@ func (worker *EmbeddingWorker) executeBatches(ctx context.Context, claim Embeddi
 				return document.EmbeddingResult{}, prior, store.EmbeddingFailureInvalidResponse, err
 			}
 			if classification == EmbeddingProviderCapacity {
+				if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
+					return document.EmbeddingResult{}, prior, store.EmbeddingFailureProviderUnavailable, err
+				}
 				if len(batch) > 1 {
 					batchSize = max(1, len(batch)/2)
 					end = offset + batchSize
 					receipt.Retries++
 					continue
-				}
-				if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
-					return document.EmbeddingResult{}, prior, store.EmbeddingFailureProviderUnavailable, err
 				}
 				return document.EmbeddingResult{}, prior, store.EmbeddingFailureInputRejected, err
 			}
