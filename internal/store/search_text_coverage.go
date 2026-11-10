@@ -70,7 +70,8 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 		 WHERE h.content_version_id=cv.version_id AND h.profile_fingerprint=? AND gb.generation_id=? AND `+renditionHasSearchableTextSQL("a.build_id")+`) pdf_serving
 		 `+scope+`)
 		 SELECT mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_serving,COUNT(*) FROM coverage
-		 GROUP BY mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_serving`, args...)
+		 GROUP BY mime_type,native,pending,extracted,serving,pdf_evidence,pdf_waiting,pdf_serving
+		 ORDER BY pdf_evidence`, args...)
 		if err != nil {
 			return fmt.Errorf("counting search text coverage: %w", err)
 		}
