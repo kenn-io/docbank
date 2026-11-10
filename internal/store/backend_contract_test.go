@@ -22,6 +22,117 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
+	{name: "received-packages", postgres: "native operations", scope: "Received-package admission, leased staging, immutable records and labels, completion, cancellation and retained browsing; excludes filesystem workers and portable recovery.", scenarios: []backendScenario{
+		{"ReceivedPackageStagingAndRetention", func(t *testing.T) { t.Helper(); checkReceivedPackageStagingAndRetention(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkReceivedPackageStagingAndRetention(t, newPostgresQueryStore) }},
+		{"ReceivedPackageAdmissionRollback", nil, checkReceivedPackageAdmissionRollbackPostgres},
+		{"ReceivedPackagePublicationRollback", nil, checkReceivedPackagePublicationRollbackPostgres},
+		{"ReceivedPackageReadSnapshots", nil, checkReceivedPackageReadSnapshotsPostgres},
+
+		{"CommitPackageRecordWithLeaseReplaysExactPayload", func(t *testing.T) { t.Helper(); checkCommitPackageRecordWithLeaseReplaysExactPayload(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkCommitPackageRecordWithLeaseReplaysExactPayload(t, newPostgresQueryStore)
+		}},
+		{"PackageImportJobAdmissionReplaysExactOperation", func(t *testing.T) { t.Helper(); checkPackageImportJobAdmissionReplaysExactOperation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobAdmissionReplaysExactOperation(t, newPostgresQueryStore)
+		}},
+		{"PackageImportJobAdmissionRejectsSecondOperationForPackage", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobAdmissionRejectsSecondOperationForPackage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobAdmissionRejectsSecondOperationForPackage(t, newPostgresQueryStore)
+		}},
+		{"AdmitPackageImportPublishesIngestPackageAndJobAtomically", func(t *testing.T) {
+			t.Helper()
+			checkAdmitPackageImportPublishesIngestPackageAndJobAtomically(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAdmitPackageImportPublishesIngestPackageAndJobAtomically(t, newPostgresQueryStore)
+		}},
+		{"PackageImportJobCancelFencesStaleFinalization", func(t *testing.T) { t.Helper(); checkPackageImportJobCancelFencesStaleFinalization(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobCancelFencesStaleFinalization(t, newPostgresQueryStore)
+		}},
+		{"PackageImportLeaseReclaimInvalidatesEarlierToken", func(t *testing.T) { t.Helper(); checkPackageImportLeaseReclaimInvalidatesEarlierToken(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportLeaseReclaimInvalidatesEarlierToken(t, newPostgresQueryStore)
+		}},
+		{"PackageImportGapReceiptIsFencedAndIdempotent", func(t *testing.T) { t.Helper(); checkPackageImportGapReceiptIsFencedAndIdempotent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportGapReceiptIsFencedAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"PackageImportProgressIncludesGapsOnCommittedRecords", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressIncludesGapsOnCommittedRecords(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressIncludesGapsOnCommittedRecords(t, newPostgresQueryStore)
+		}},
+		{"PackageImportProgressNamesRejectedRecordWithEmptyGapArray", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t, newPostgresQueryStore)
+		}},
+		{"PackageImportLeaseMayBeReleasedForImmediateRetry", func(t *testing.T) { t.Helper(); checkPackageImportLeaseMayBeReleasedForImmediateRetry(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportLeaseMayBeReleasedForImmediateRetry(t, newPostgresQueryStore)
+		}},
+		{"StalePackageWorkerCannotCommitARecordAfterCancel", func(t *testing.T) { t.Helper(); checkStalePackageWorkerCannotCommitARecordAfterCancel(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkStalePackageWorkerCannotCommitARecordAfterCancel(t, newPostgresQueryStore)
+		}},
+		{"PackageImportFinishRejectsUnrelatedSnapshot", func(t *testing.T) { t.Helper(); checkPackageImportFinishRejectsUnrelatedSnapshot(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportFinishRejectsUnrelatedSnapshot(t, newPostgresQueryStore)
+		}},
+		{"PackageImportFinishPublishesOnlyMatchingReceiptSnapshot", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t, newPostgresQueryStore)
+		}},
+		{"RevokePackageImportOwnerCancelsQueuedWork", func(t *testing.T) { t.Helper(); checkRevokePackageImportOwnerCancelsQueuedWork(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRevokePackageImportOwnerCancelsQueuedWork(t, newPostgresQueryStore)
+		}},
+		{"PackageImportDiscardRepairsOrRetainsPhotoAssets", func(t *testing.T) { t.Helper(); checkPackageImportDiscardRepairsOrRetainsPhotoAssets(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportDiscardRepairsOrRetainsPhotoAssets(t, newPostgresQueryStore)
+		}},
+		{"ReceivedLabelLookupRequiresScopeWhenSenderReusesIt", func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t, newPostgresQueryStore)
+		}},
+		{"ReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence", func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t, newPostgresQueryStore)
+		}},
+		{"PackageRecordRejectsVersionOutsideItsIngest", func(t *testing.T) { t.Helper(); checkPackageRecordRejectsVersionOutsideItsIngest(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageRecordRejectsVersionOutsideItsIngest(t, newPostgresQueryStore)
+		}},
+		{"PackageTimelineInputsPreserveRawDateAndDeclaredZone", func(t *testing.T) {
+			t.Helper()
+			checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t, newPostgresQueryStore)
+		}},
+		{"PackageLabelCandidatesPageAmbiguousSenderLabels", func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newPostgresQueryStore)
+		}},
+	}},
 	{name: "sealed-delivery", postgres: "native operations", scope: "Inline and streaming sealed snapshots, package identity and preflights, Bates reservations and verified artifacts with history and custodian evidence; excludes query selection, received-package imports and filesystem delivery.", scenarios: []backendScenario{
 		{"SealedDeliveryReservationRollback", nil, checkSealedDeliveryReservationRollbackPostgres},
 		{"SealedDeliveryArtifactRollback", nil, checkSealedDeliveryArtifactRollbackPostgres},
@@ -1945,7 +2056,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums, export jobs and received-package imports remain unqualified; sealed-delivery covers snapshots, package identity and Bates; people-curation covers custodians."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums and export jobs remain unqualified; sealed-delivery covers snapshots, package identity and Bates; received-packages covers native intake and completion; people-curation covers custodians."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }
