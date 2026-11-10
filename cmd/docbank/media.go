@@ -43,11 +43,12 @@ network access.
 Typical flow: submit --processing-profile P -> status -> transcript (without a
 profile, submit only retains the bytes); acquisition-plan -> consent grant
 before acquiring a remote reference.`,
-	GroupID: groupSources,
-	Use:     "media",
-	Short:   "Retain and inspect recordings",
-	Args:    cobra.NoArgs,
-	RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	GroupID:     groupSources,
+	Use:         "media",
+	Short:       "Retain and inspect recordings",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 
 var mediaSubmitCmd = &cobra.Command{
 	Example: `  docbank media submit --file ./recording.mp4 --operation-id <uuidv4> --occurrence-ref acme-meeting --revision 1`,
@@ -221,10 +222,11 @@ var mediaOccurrencesCmd = &cobra.Command{
 	Long: `Occurrences bind a caller reference/revision to one recording source.
 list returns occurrence IDs; declare adds a revision; revoke withdraws one.
 Output: JSON.`,
-	Use:   "occurrences",
-	Short: "Inspect or revoke recording occurrences",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	Use:         "occurrences",
+	Short:       "Inspect or revoke recording occurrences",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 
 var mediaOccurrencesListCmd = &cobra.Command{
 	Example: `  docbank media occurrences list --source-id <source-id>`,
@@ -331,10 +333,11 @@ var mediaConsentCmd = &cobra.Command{
 	Long: `Grant or revoke consent for a registered acquisition origin. Review the JSON
 from acquisition-plan before grant --plan-file. revoke uses the origin ID
 from that plan or origins. Output: JSON.`,
-	Use:   "consent",
-	Short: "Grant or revoke acquisition consent",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	Use:         "consent",
+	Short:       "Grant or revoke acquisition consent",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 
 var mediaConsentGrantCmd = &cobra.Command{
 	Example: `  docbank media consent grant --plan-file ./plan.json --operation-id <uuidv4>`,

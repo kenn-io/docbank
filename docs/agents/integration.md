@@ -59,7 +59,8 @@ docbank watch list --json
 
 Each item reports the local source, virtual destination, settle window,
 minimum source age, scan interval, the literal `exclude` and glob
-`exclude_patterns` lists, and current job record. A configured profile adds optional
+`exclude_patterns` lists, and current job record. The glob list is effective: it
+includes the default patterns unless `default_excludes = false`. A configured profile adds optional
 `processing` status; see the [watch API](../architecture/http-api.md#background-job-status) for its fields.
 Human output appends a `PROCESSING` column. See [watch processing](../configuration.md#watched-inboxes) for consent behavior.
 The settle window is the time a file must remain unchanged. A nonzero minimum
@@ -111,7 +112,8 @@ curl --fail-with-body --get \
   "$DOCBANK_URL/api/v1/media/sources/<source-id>/versions/<source-version-id>/transcript"
 ```
 
-Check `evidence_state` before using `transcript`. Only `ready` includes text.
+Accept only `contract_version: "media-transcript-read/v1"`. Check
+`evidence_state` before using `transcript`. Only `ready` includes text.
 `pending`, `unavailable`, and `stale` contain no transcript. The response keeps
 `coverage_state` and `operation_state` separate. A timed unit carries
 `time_span` with `start_ms` and `end_ms`. An untimed unit omits it. The
@@ -124,9 +126,20 @@ docbank media transcript SOURCE_ID \
 ```
 
 Before attributing a search excerpt, compare `transcript.build_id` with the
-search evidence's `build_id`. For supplied text, also compare
+search evidence's `build_id`. When a supplied input is bound, also compare
 `transcript.supplied_input_id` with your original import receipt's
-`supplied_input_id`.
+`supplied_input_id`. Bind the response's vault and media IDs, `node_id`,
+`source_sha256`, `profile_fingerprint`, and `evidence_checksum` to the
+recording. Require `artifact_sha256` when the application needs the retained
+transcript's exact identity; it is absent when the profile did not retain a
+typed artifact. Use `speech_state` to assess speech readiness. Supplied
+transcript artifacts report `partial`, including timed captions even without a
+bound input.
+
+Replace cached text when the build or a bound hash changes. Invalidate text and
+its derived search data when the recording is replaced or trashed, its source is
+revoked, or the tuple becomes unreadable. Re-read the current transcript before
+publishing cached evidence; a failed retry can leave the earlier build ready.
 
 ## Recover a lost recording-link reply
 

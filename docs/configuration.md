@@ -173,7 +173,8 @@ minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
 capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
+default_excludes = true # skip known partial files and sync conflicts
+exclude_patterns = ["*.swp"]
 ```
 
 - **`bind_addr`** — the interface the API listens on. Defaults to loopback.
@@ -332,6 +333,16 @@ Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
 recursive. A match in either list skips the entry. Matching directories are
 pruned during both startup checks and scanning.
 
+`default_excludes` defaults to `true`. Every watch skips Syncthing partial
+files (`.syncthing.*.tmp` and `~syncthing~*.tmp`), Syncthing conflict copies
+(`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`). These
+patterns add to configured rules and use the existing exclusion matcher and
+directory pruning, like `exclude_patterns`.
+Conflict copies (`*.sync-conflict-*`) are finished files that are not archived
+unless `default_excludes = false`. Set that option to use only configured
+exclusions when these names are intentional. Exclusions do not remove documents
+already archived.
+
 For a Syncthing inbox, for example:
 
 ```toml
@@ -340,7 +351,6 @@ name = "synced-notes"
 source = "~/synced-notes"
 destination = "/notes"
 exclude = [".stversions", ".git"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
 First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
@@ -464,7 +474,8 @@ destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
-and glob rules. Use `--json` when an agent needs the separate `exclude` and
+and glob rules, including the default patterns unless `default_excludes = false`.
+Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
 all-task view. A permanent source, destination, or read failure leaves the named
 job in the failed state and records the reason.
@@ -803,16 +814,19 @@ identity. Switching to v2 requires a new descriptor and disclosure fingerprint,
 a reviewed processing plan, and fresh consent. Existing grants never gain
 permission to upload another format implicitly.
 
-The deployment needs Docling Serve 1.32.0, Docling 2.124.0 with its ASR
-requirements, Docling Core 2.105.0, and an audio decoder such as FFmpeg.
-The earlier WAV/MP3 qualification used Core 2.93.0, which rejects M4A MIME
-metadata; do not use that deployment for v2. Merely
-running a document conversion endpoint does not provide speech recognition.
+The earlier WAV/MP3 qualification used Docling Serve 1.32.0, Docling 2.124.0,
+and Docling Core 2.93.0. That Core version rejects M4A MIME metadata. A v2
+M4A deployment requires an audio decoder such as FFmpeg and must be qualified
+with synthetic speech before it receives real recordings. A local Docling Serve
+1.32.0 deployment using Docling Core 2.105.0 returned one timed segment each for
+synthetic [AAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-qualification.json)
+and [ALAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-alac-qualification.json) speech.
+
 The adapter requests `from_formats=audio`, JSON output, and in-body results;
 it accepts only timed tracks in document schema 1.10.0. It does not select or
-claim a particular model. Qualify the configured deployment with synthetic
-speech before authorizing real recordings. The M4A path inspects audio-only
-AAC/ALAC containers; the ASR qualification targets AAC.
+claim a particular model. The M4A path inspects audio-only AAC/ALAC containers.
+M4A transcript artifacts omit `provider_version` because the response does not
+identify the deployment's installed version.
 
 Use `adapter_contract = "docbank-docling-asr/v3"` to add original MP4 video
 with an AAC or ALAC sound track. This contract also accepts every v2 audio
@@ -823,10 +837,12 @@ MP4s without qualified sound, fragmented containers, MOV, MKV, and WebM are
 not admitted. Non-visual metadata and timecode tracks are allowed.
 
 The v3 deployment requires Docling Serve 1.32.0, `docling-slim` 2.124.0,
-`docling-core` 2.105.0, `docling-jobkit` 3.5.0, and ASR dependencies
-(the synthetic lane uses `openai-whisper` 20250625). FFmpeg must be on the
+`docling-core` 2.105.0, `docling-jobkit` 3.5.0, and ASR dependencies such as
+`openai-whisper` 20250625. FFmpeg must be on the
 provider host's `PATH`; Docbank hosts need no FFmpeg. The adapter sends
-`from_formats=video` for MP4 and maps only timed transcript text.
+`from_formats=video` for MP4 and maps only timed transcript text. The v3
+artifact omits `provider_version` because the response does not identify the
+deployment's installed version.
 
 The pinned provider embeds one PNG frame per ten seconds of video. No request
 option disables those frames. Size `max_response_bytes` for approximately
@@ -837,12 +853,13 @@ response beyond the bound fails without retaining a partial transcript.
 Set `max_document_bytes` for the largest MP4 (default 64 MiB, at most 1 GiB);
 the client buffers uploads in memory. Set `total_timeout` and
 `max_poll_attempts × poll_interval` for the full transcription. Recognition
-accuracy is not qualified by the synthetic lane.
+accuracy depends on the deployment. Qualify it with synthetic speech before
+authorizing real recordings.
 
 For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
 and include `audio/mp4` in the descriptor alongside `audio/wav` and
 `audio/mpeg`, each with `original_file` input. Use
-`docling.ASRDisclosureFingerprint` with that descriptor and the exact endpoint
+`docling.ASRM4ADisclosureFingerprint` with that descriptor and the exact endpoint
 and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
 A v1 descriptor cannot authorize that upload. For v3, use
 `docling.ASRVideoPolicyFingerprint`, add `{video, video/mp4, original_file}`
@@ -878,7 +895,13 @@ before retrying it.
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
 deployment fingerprint. Recompute it when the endpoint or deployment changes.
 The daemon rejects a mismatched binding before it starts provider work.
-For audio, Go applications can use `docling.ASRDisclosureFingerprint` from
+To find the descriptor fingerprint, set `descriptor_id` to `docling.serve-v1`
+and use 64 zeroes as a placeholder `descriptor_fingerprint`. Configure a
+selecting processing profile and start the daemon. Startup reports the expected
+fingerprint; copy it into the rendition profile before calculating the
+disclosure fingerprint below.
+Go applications can use `docling.ASRDisclosureFingerprint` for v1 and v3 or
+`docling.ASRM4ADisclosureFingerprint` for v2 from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
 from their config with Python 3.11 or later. Replace the path and profile name
 in this command, then copy the output into that profile's
@@ -892,17 +915,18 @@ import tomllib
 
 with open(sys.argv[1], "rb") as source:
     profile = tomllib.load(source)["rendition_profiles"][sys.argv[2]]
-values = [profile["adapter_contract"], profile["descriptor_id"],
-          profile["descriptor_fingerprint"], profile["runtime"]["endpoint"],
-          profile["deployment_fingerprint"]]
+contract = profile["adapter_contract"]
+if contract == "docbank-docling-asr/v3":
+    contract = "docbank-docling-asr/v1"
+values = [contract, profile["descriptor_id"], profile["descriptor_fingerprint"],
+          profile["runtime"]["endpoint"], profile["deployment_fingerprint"]]
 print(hashlib.sha256("\0".join(values).encode()).hexdigest())
 PY
 ```
 
-For a `docbank-docling-asr/v2` or `docbank-docling-asr/v3` profile, replace `profile["adapter_contract"]`
-in that list with the literal `"docbank-docling-asr/v1"`.
-`docling.ASRDisclosureFingerprint` always hashes the v1 contract name, and the
-daemon expects that value for every ASR contract.
+The v2 disclosure fingerprint uses the v2 contract name. The v3 fingerprint
+uses the v1 contract name with the v3 descriptor fingerprint, which binds the
+MP4 policy and formats.
 
 The daemon registers one provider per descriptor fingerprint. Profiles with
 the same descriptor must use identical endpoint, credentials, and runtime

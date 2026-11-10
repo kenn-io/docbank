@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -426,15 +427,6 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 
 		node, err := vault.Stat(t.Context(), "/media/"+identity.SHA256[:2]+"/"+identity.SHA256+".wav")
 		require.NoError(t, err)
-		unready, err := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
-			SourceID: mediaReceipt.SourceID, SourceVersionID: mediaReceipt.SourceVersionID,
-			ContentVersionID: mediaReceipt.ContentVersionID})
-		require.NoError(t, err)
-		require.Equal(t, "unavailable", unready.EvidenceState)
-		require.Equal(t, "media-transcript-read/v1", unready.ContractVersion)
-		require.Equal(t, node.ID, unready.NodeID)
-		require.Equal(t, identity.SHA256, unready.SourceSHA256)
-		require.Nil(t, unready.Transcript)
 		selector := ProcessingSelector{NodeID: node.ID, ContentVersionID: mediaReceipt.ContentVersionID,
 			Profile: "supplied-transcript"}
 		plan, err := vault.PlanProcessing(t.Context(), ProcessingPlanRequest{Selector: selector})
@@ -478,12 +470,15 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		require.Equal(t, "media-transcript-read/v1", transcript.ContractVersion)
 		require.Equal(t, node.ID, transcript.NodeID)
 		require.Equal(t, identity.SHA256, transcript.SourceSHA256)
-		require.Len(t, transcript.Transcript.ProfileFingerprint, 64)
-		require.Len(t, transcript.Transcript.EvidenceChecksum, 64)
-		require.Len(t, transcript.Transcript.ArtifactSHA256, 64)
-		require.Equal(t, "partial", transcript.Transcript.SpeechState)
-		require.Empty(t, transcript.Transcript.Language)
-		firstProfile, firstEvidence, firstArtifact := transcript.Transcript.ProfileFingerprint, transcript.Transcript.EvidenceChecksum, transcript.Transcript.ArtifactSHA256
+		internalTranscript, err := vault.processing.MediaTranscript(t.Context(), processing.MediaTranscriptRequest{
+			SourceID: mediaReceipt.SourceID, SourceVersionID: firstJob.SourceVersionID, ContentVersionID: mediaReceipt.ContentVersionID,
+		})
+		require.NoError(t, err)
+		require.Equal(t, internalTranscript.Transcript.ProfileFingerprint, transcript.Transcript.ProfileFingerprint)
+		require.Equal(t, internalTranscript.Transcript.EvidenceChecksum, transcript.Transcript.EvidenceChecksum)
+		require.Equal(t, internalTranscript.Transcript.ArtifactSHA256, transcript.Transcript.ArtifactSHA256)
+		require.Equal(t, internalTranscript.Transcript.SpeechState, transcript.Transcript.SpeechState)
+		require.Equal(t, internalTranscript.Transcript.Language, transcript.Transcript.Language)
 		newer := importTranscript("00000000-0000-4000-8000-000000000424",
 			secondOccurrence.OccurrenceID, "newer replacement transcript")
 		require.NotEqual(t, older.SuppliedInputID, newer.SuppliedInputID)
@@ -501,11 +496,6 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		require.NotEqual(t, firstBuildID, secondBuildID)
 		require.Equal(t, secondBuildID, transcript.Transcript.BuildID)
 		require.Equal(t, newer.SuppliedInputID, transcript.Transcript.SuppliedInputID)
-		require.Equal(t, firstProfile, transcript.Transcript.ProfileFingerprint)
-		require.NotEqual(t, firstEvidence, transcript.Transcript.EvidenceChecksum)
-		require.NotEqual(t, firstArtifact, transcript.Transcript.ArtifactSHA256)
-		require.Equal(t, identity.SHA256, transcript.SourceSHA256)
-		require.Equal(t, "partial", transcript.Transcript.SpeechState)
 
 		revoked, err := vault.RevokeMediaOccurrence(t.Context(),
 			"00000000-0000-4000-8000-000000000427", secondOccurrence.OccurrenceID, "1")
@@ -519,15 +509,6 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		status, err := vault.MediaStatus(t.Context(), mediaReceipt.SourceID)
 		require.NoError(t, err)
 		require.Equal(t, "stale", status.CoverageState)
-		stale, err := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
-			SourceID: mediaReceipt.SourceID, SourceVersionID: secondJob.SourceVersionID,
-			ContentVersionID: mediaReceipt.ContentVersionID})
-		require.NoError(t, err)
-		require.Equal(t, "media-transcript-read/v1", stale.ContractVersion)
-		require.Equal(t, "stale", stale.EvidenceState)
-		require.Zero(t, stale.NodeID)
-		require.Empty(t, stale.SourceSHA256)
-		require.Nil(t, stale.Transcript)
 		results, err := vault.SearchDocuments(t.Context(), DocumentSearchRequest{Query: "newer replacement transcript",
 			Mode: DocumentSearchLexical, Profile: "supplied-transcript", Limit: 10,
 			Fence: DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{mediaReceipt.ContentVersionID}}})

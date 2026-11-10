@@ -4,27 +4,6 @@ export default defineConfig({
   docbank: {
     input: {
       target: "../internal/api/openapi.yaml",
-      override: {
-        transformer: (spec) => {
-          // These parts carry bytes. A wildcard encoding makes Orval accept
-          // strings and drops the upload filename override during regeneration.
-          const uploads = new Set([
-            "submitMediaSource",
-            "importMediaArtifact",
-            "uploadFile",
-            "uploadPushFile",
-          ]);
-          for (const path of Object.values(spec.paths ?? {})) {
-            const operation = path?.post;
-            if (!operation || !uploads.has(operation.operationId ?? "")) continue;
-            const body = operation.requestBody;
-            if (!body || "$ref" in body) continue;
-            const file = body.content?.["multipart/form-data"]?.encoding?.file;
-            if (file?.contentType === "*/*") file.contentType = "application/octet-stream";
-          }
-          return spec;
-        },
-      },
       filters: { mode: "exclude", tags: ["Photo events"], includeUnreferencedSchemas: true },
     },
     output: {

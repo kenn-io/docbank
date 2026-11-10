@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -217,6 +218,30 @@ type WatchConfig struct {
 	Exclude         []string `toml:"exclude"`
 	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
 	ExcludePatterns []string `toml:"exclude_patterns"`
+	// DefaultExcludes enables built-in partial-file and conflict exclusions unless false.
+	DefaultExcludes *bool `toml:"default_excludes"`
+}
+
+// defaultWatchExcludePatterns lists the built-in watch exclusion glob rules.
+var defaultWatchExcludePatterns = [...]string{
+	".syncthing.*.tmp",
+	"~syncthing~*.tmp",
+	"*.sync-conflict-*",
+	"*.crdownload",
+}
+
+// EffectiveExcludePatterns combines watch defaults with configured glob rules.
+func (w WatchConfig) EffectiveExcludePatterns() []string {
+	if w.DefaultExcludes != nil && !*w.DefaultExcludes {
+		return append([]string{}, w.ExcludePatterns...)
+	}
+	patterns := append([]string{}, defaultWatchExcludePatterns[:]...)
+	for _, pattern := range w.ExcludePatterns {
+		if !slices.Contains(defaultWatchExcludePatterns[:], pattern) {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns
 }
 
 // RenditionProfileConfig names a deployment binding for one pinned rendition

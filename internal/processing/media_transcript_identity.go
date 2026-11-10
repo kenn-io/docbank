@@ -4,13 +4,22 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/mediatranscript"
 	"go.kenn.io/docbank/internal/store"
 )
+
+var errUnknownTranscriptContract = errors.New("saved transcript contract is unsupported")
+
+func mediaTranscriptArtifactFailure(result MediaTranscript, err error) (MediaTranscript, error) {
+	if errors.Is(err, errUnknownTranscriptContract) {
+		result.EvidenceState = mediaTranscriptEvidenceUnavailable
+		return result, nil
+	}
+	return result, err
+}
 
 // Speech completeness excludes only the explicitly documented non-speech field.
 // It does not upgrade the evidence's completeness or erase its omissions.
@@ -44,39 +53,42 @@ func (service *Service) mediaTranscriptArtifactIdentity(ctx context.Context, bui
 		if artifact.Role != string(document.EvidenceArtifactTranscript) {
 			continue
 		}
-		if artifact.State != store.RenditionArtifactVerified || artifact.BlobHash != artifact.Checksum || artifact.Size < 1 || artifact.Size > mediatranscript.MaxArtifactBytes {
+		if artifact.BlobHash != artifact.Checksum || artifact.Size < 1 {
 			return errors.New("retained transcript artifact authority is invalid")
 		}
 		transcript.ArtifactSHA256 = artifact.Checksum
-		stream, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+		raw, err := service.readRenditionArtifact(ctx, artifact, "retained transcript artifact could not be read exactly")
 		if err != nil {
 			return err
 		}
-		raw, readErr := io.ReadAll(io.LimitReader(stream, artifact.Size+1))
-		verifyErr := stream.Verify()
-		closeErr := stream.Close()
-		if size != artifact.Size || int64(len(raw)) != artifact.Size || readErr != nil || verifyErr != nil || closeErr != nil {
-			return errors.Join(errors.New("retained transcript artifact could not be read exactly"), readErr, verifyErr, closeErr)
+		var identity struct {
+			ContractVersion string `json:"contract_version"`
 		}
-		if transcript.Origin != "generated" {
-			var identity struct {
-				ContractVersion string `json:"contract_version"`
-			}
-			if err := json.Unmarshal(raw, &identity); err != nil {
+		if err := json.Unmarshal(raw, &identity); err != nil {
+			return errors.New("saved transcript is invalid")
+		}
+		switch identity.ContractVersion {
+		case "supplied-transcript/v1":
+			if err := document.ValidateSuppliedTranscriptArtifactV1(raw); err != nil {
 				return err
 			}
-			if identity.ContractVersion != "media-transcript/v1" {
-				return nil
+			transcript.SpeechState = statusPartial
+		case "media-transcript/v1":
+			timed, err := mediatranscript.Unmarshal(raw)
+			if err != nil {
+				return err
 			}
+			transcript.Language = timed.Language
+			if timed.Origin != "generated" || transcript.Origin != "generated" {
+				transcript.SpeechState = statusPartial
+			}
+		default:
+			return errUnknownTranscriptContract
 		}
-		timed, err := mediatranscript.Unmarshal(raw)
-		if err != nil {
-			return err
-		}
-		transcript.Language = timed.Language
 		return nil
 	}
 	// Older profiles can retain normalized evidence without the typed artifact.
 	// Such evidence remains readable but is insufficient for the consumer's new contract.
+	transcript.SpeechState = statusPartial
 	return nil
 }

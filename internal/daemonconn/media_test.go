@@ -102,7 +102,7 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 			t.Errorf("unexpected transcript request: %s %s", r.Method, r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"build_id":"build","origin":"supplied","supplied_input_id":"input","units":[{"text":"cue","time_span":{"start_ms":0,"end_ms":1000}}]}}`))
+		_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","source_sha256":"source-hash","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"build_id":"build","origin":"supplied","supplied_input_id":"input","profile_fingerprint":"profile","evidence_checksum":"evidence","artifact_sha256":"artifact","speech_state":"partial","language":"en","units":[{"text":"cue","time_span":{"start_ms":0,"end_ms":1000}}]}}`))
 	}))
 	t.Cleanup(server.Close)
 	result, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
@@ -112,6 +112,12 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 	require.Equal(t, &api.MediaTimeSpan{StartMS: 0, EndMS: 1000}, result.Transcript.Units[0].TimeSpan)
 	require.Equal(t, "build", result.Transcript.BuildID)
 	require.Equal(t, "input", result.Transcript.SuppliedInputID)
+	require.Equal(t, "source-hash", result.SourceSHA256)
+	require.Equal(t, "profile", result.Transcript.ProfileFingerprint)
+	require.Equal(t, "evidence", result.Transcript.EvidenceChecksum)
+	require.Equal(t, "artifact", result.Transcript.ArtifactSHA256)
+	require.Equal(t, "partial", result.Transcript.SpeechState)
+	require.Equal(t, "en", result.Transcript.Language)
 }
 
 func TestMediaTranscriptClientRejectsInconsistentBuildIdentity(t *testing.T) {
@@ -123,11 +129,25 @@ func TestMediaTranscriptClientRejectsInconsistentBuildIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":` + evidence + `}`))
+				_, _ = w.Write([]byte(`{"contract_version":"media-transcript-read/v1","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":` + evidence + `}`))
 			}))
 			t.Cleanup(server.Close)
 			_, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
 			require.ErrorContains(t, err, "invalid ready media transcript")
+		})
+	}
+}
+
+func TestMediaTranscriptClientRejectsUnsupportedContract(t *testing.T) {
+	for _, version := range []string{"", "media-transcript-read/v2"} {
+		t.Run(version, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"contract_version":"` + version + `","vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"pending","coverage_state":"pending","operation_state":"queued"}`))
+			}))
+			t.Cleanup(server.Close)
+			_, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
+			require.ErrorContains(t, err, "unsupported media transcript contract")
 		})
 	}
 }

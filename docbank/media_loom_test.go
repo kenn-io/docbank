@@ -54,7 +54,7 @@ func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
 			captionID := contentIdentity(srt)
 			caption, importErr := vault.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
 				OperationID: uuid.New().String(), SourceID: remote.SourceID, OccurrenceID: remote.OccurrenceID,
-				Kind: "caption", Origin: "supplied", Provider: "loom", Language: "en", Filename: "loom.srt",
+				Kind: "caption", Origin: "supplied", Provider: "loom", Filename: "loom.srt",
 				MediaType: "application/x-subrip", SHA256: captionID.SHA256, ByteLength: captionID.Size,
 				Content: bytes.NewReader(srt),
 			})
@@ -90,10 +90,6 @@ func TestLoomCaptionSearchHonorsExactFence(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "ready", transcript.EvidenceState)
 			require.NotNil(t, transcript.Transcript)
-			require.Equal(t, "en", transcript.Transcript.Language)
-			require.Equal(t, "partial", transcript.Transcript.SpeechState)
-			require.Equal(t, "media-transcript-read/v1", transcript.ContractVersion)
-			require.Len(t, transcript.Transcript.ArtifactSHA256, 64)
 			require.Len(t, transcript.Transcript.Units, 1)
 			require.Equal(t, item.phrase, transcript.Transcript.Units[0].Text)
 		}

@@ -87,7 +87,12 @@ func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint,
 	return providerutil.RenditionDisclosureFingerprint(ASRAdapterContract, descriptor, endpoint, deployment)
 }
 
-// NewASR constructs the qualified audio provider or an opt-in M4A/MP4 provider.
+// ASRM4ADisclosureFingerprint binds a v2 profile to its endpoint and deployment.
+func ASRM4ADisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
+	return providerutil.RenditionDisclosureFingerprint(ASRM4AAdapterContract, descriptor, endpoint, deployment)
+}
+
+// NewASR constructs the WAV/MP3 provider or an opt-in M4A or MP4 provider.
 func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client) (*ASRClient, error) {
 	client, err := newTransportClient(profile.Profile, secrets, httpClient)
 	if err != nil {
@@ -145,7 +150,6 @@ func (client *ASRClient) Render(
 		return document.RenditionResult{}, err
 	}
 	defer run.operation.Cancel()
-	defer clear(run.source)
 	if run.metadata.Filename == "" {
 		run.metadata.Filename = map[string]string{"audio/mpeg": "document.mp3", "audio/wav": "document.wav", "audio/mp4": "document.m4a", "video/mp4": "document.mp4"}[run.metadata.MediaType]
 	}
@@ -280,6 +284,14 @@ func asrDocumentVersion(raw []byte) (string, error) {
 	return identity.Version, nil
 }
 
+// The M4A contract has no qualified provider version.
+func asrArtifactProviderVersion(allowM4A bool) string {
+	if allowM4A {
+		return ""
+	}
+	return qualifiedASRProviderVersion
+}
+
 func (client *ASRClient) buildResult(
 	run *rendering, task taskResponse, result doclingResult, durationMS int64,
 ) (document.RenditionResult, error) {
@@ -299,7 +311,7 @@ func (client *ASRClient) buildResult(
 	}
 	evidence, artifact, err := mediatranscript.Build(mediatranscript.ArtifactV1{
 		ContractVersion: "media-transcript/v1", Origin: "generated",
-		Provider: providerID, ProviderVersion: qualifiedASRProviderVersion,
+		Provider: providerID, ProviderVersion: asrArtifactProviderVersion(client.allowM4A),
 		Segments: segments,
 	}, run.authorization.MediaFamily, client.evidencePolicy)
 	if err != nil {

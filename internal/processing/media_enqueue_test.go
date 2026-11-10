@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/mediatranscript"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -375,7 +376,11 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	})
 }
 
-type mediaWorkerProvider struct{ *workerProvider }
+type mediaWorkerProvider struct {
+	*workerProvider
+
+	timedWithoutArtifact bool
+}
 
 func (provider *mediaWorkerProvider) Render(
 	ctx context.Context,
@@ -383,6 +388,17 @@ func (provider *mediaWorkerProvider) Render(
 	authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
 	result, err := provider.workerProvider.Render(ctx, upload, authorization)
+	if err == nil && provider.timedWithoutArtifact {
+		policy, policyErr := document.NewEvidencePolicy(1 << 20)
+		if policyErr != nil {
+			return document.RenditionResult{}, policyErr
+		}
+		result.Evidence, _, err = mediatranscript.Build(mediatranscript.ArtifactV1{
+			ContractVersion: "media-transcript/v1", Origin: "generated", Provider: "synthetic",
+			Segments: []mediatranscript.Segment{{Text: "generated speech", EndMS: 1000}},
+		}, "audio", policy)
+		result.Evidence.Artifacts = nil
+	}
 	result.Evidence.Family = "audio"
 	return result, err
 }

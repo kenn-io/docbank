@@ -453,26 +453,31 @@ the normalized evidence of the active rendition for that content version and
 processing profile, the same build `/api/v1/renditions/select` serves. Each
 unit keeps its text, an optional `speaker`, and an optional `time_span` with
 `start_ms` and `end_ms`, the same shape search evidence uses. Untimed units
-omit `time_span`. `origin` is `supplied` when the build came from a supplied
-transcript or caption, and `generated` otherwise.
+omit `time_span`. `origin` is `supplied` when the build has a bound supplied
+input, and `generated` otherwise.
 
-`transcript.build_id` identifies that exact active build. Supplied evidence also
-includes `transcript.supplied_input_id`, the input bound to that build. A failed
+`transcript.build_id` identifies that exact active build. When a supplied input
+is bound to the build, `transcript.supplied_input_id` identifies it. A failed
 retry keeps the identities of the earlier covering build. Generated evidence
 omits `supplied_input_id`. Responses without ready evidence omit `transcript`.
 
 The `media-transcript-read/v1` envelope includes `contract_version` and, after
 validating the source binding, `node_id` and original `source_sha256`. Ready
 transcripts include `profile_fingerprint` and `evidence_checksum`.
+The evidence checksum identifies the returned normalized text; a provider may
+transform that text while retaining the original transcript artifact.
 `artifact_sha256` identifies the exact bytes of any verified retained transcript
 artifact, including untimed `supplied-transcript/v1` artifacts. Optional
-`language` comes only from a canonical `media-transcript/v1` artifact.
+`language` comes only from a canonical `media-transcript/v1` artifact. An unknown
+saved transcript contract returns `evidence_state: "unavailable"` without text.
+Readers reject unsupported response versions.
 Generated timed speech can report `speech_state: "complete"` while
 overall evidence remains partial because it omits non-speech sounds.
 Supplied-origin transcripts always report `speech_state: "partial"`, including
 timed captions; this preserves provenance and does not assert missing speech.
 Provider-reported partial success also yields partial speech, even when the
 retained segments otherwise look complete.
+Evidence without a retained transcript artifact also reports partial speech.
 Empty ASR output fails. See [exact transcript attribution](../agents/integration.md#read-an-exact-media-transcript)
 for consumer readiness and lifecycle rules.
 
@@ -1471,7 +1476,8 @@ with API-key clients.
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
-`watch:<name>` job record.
+`watch:<name>` job record. The `exclude_patterns` list is effective: it includes
+the default patterns unless `default_excludes = false`.
 Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
 If consent lookup fails, `error` describes the status failure instead.
 `GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.

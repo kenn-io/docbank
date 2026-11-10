@@ -13,7 +13,12 @@ import (
 // Cobra's Deprecated field prints to stdout, which would corrupt JSON and cat
 // output. Keep replacement metadata here and print the notice on stderr from
 // the process boundary before Cobra parses arguments instead.
-const legacyCommandReplacement = "docbank.legacy-replacement"
+const (
+	legacyCommandReplacement = "docbank.legacy-replacement"
+	// Help-only handlers are runnable to Cobra, but are not search results.
+	helpOnlyAnnotation = "docbank.help-only"
+	helpOnlyMarker     = "true"
+)
 
 // Recovery always teaches the public path, including on compatibility commands.
 func canonicalCommandPath(cmd *cobra.Command) string {
@@ -44,8 +49,9 @@ var documentCmd = &cobra.Command{
 Start with add, browse with list or tree, inspect with stat, and download with
 get. Content changes retain immutable versions. remove moves nodes to trash;
 restore brings them back. Select nodes by absolute virtual path or id:N.`,
-	GroupID: groupDocuments,
-	RunE:    commandGroupHelp,
+	GroupID:     groupDocuments,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        commandGroupHelp,
 }
 
 var vaultCmd = &cobra.Command{
@@ -56,8 +62,9 @@ var vaultCmd = &cobra.Command{
 	Long: `info identifies the vault selected by DOCBANK_HOME (default ~/.docbank).
 verify checks metadata and stored bytes; gc previews unreachable blobs and
 requires --run to reclaim them. Data commands start the daemon if needed.`,
-	GroupID: groupOperations,
-	RunE:    commandGroupHelp,
+	GroupID:     groupOperations,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        commandGroupHelp,
 }
 
 var emailCmd = &cobra.Command{
@@ -68,8 +75,9 @@ var emailCmd = &cobra.Command{
 	Long: `mailbox imports explicitly selected MBOX, Takeout ZIP, or EML sources.
 documents inspects attachment relationships and publication receipts.
 pdf renders one exact retained EML content version as a verified local PDF.`,
-	GroupID: groupSources,
-	RunE:    commandGroupHelp,
+	GroupID:     groupSources,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        commandGroupHelp,
 }
 
 func init() {

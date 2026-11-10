@@ -239,8 +239,12 @@ func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolved
 		if err != nil {
 			return resolvedRenditionAdapter{}, err
 		}
+		disclosure := docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint)
+		if configured.AdapterContract == config.DoclingASRM4AAdapterContract {
+			disclosure = docling.ASRM4ADisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint)
+		}
 		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
-			disclosureFingerprint: docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			disclosureFingerprint: disclosure,
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return docling.NewASR(profile, secrets, client)
 			}}, nil
@@ -280,13 +284,13 @@ func configuredDoclingTransportProfile(configured config.RenditionProfileConfig,
 func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docling.ASRProfile, error) {
 	allowMP4 := configured.AdapterContract == config.DoclingASRVideoAdapterContract
 	allowM4A := configured.AdapterContract == config.DoclingASRM4AAdapterContract || allowMP4
-	policyFingerprint, err := docling.ASRPolicyFingerprint(configured.MaxTranscriptChars)
-	if allowM4A {
-		policyFingerprint, err = docling.ASRM4APolicyFingerprint(configured.MaxTranscriptChars)
-	}
+	fingerprint := docling.ASRPolicyFingerprint
 	if allowMP4 {
-		policyFingerprint, err = docling.ASRVideoPolicyFingerprint(configured.MaxTranscriptChars)
+		fingerprint = docling.ASRVideoPolicyFingerprint
+	} else if allowM4A {
+		fingerprint = docling.ASRM4APolicyFingerprint
 	}
+	policyFingerprint, err := fingerprint(configured.MaxTranscriptChars)
 	if err != nil {
 		return docling.ASRProfile{}, err
 	}
