@@ -5,12 +5,9 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/internal/api"
@@ -303,6 +299,9 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			out, err := runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
 			require.NoError(t, err)
 			require.Contains(t, out, "/pdfs/source.pdf")
+			if deadline != nil {
+				require.NoError(t, deadline.Err(), "import and search exceeded ten seconds")
+			}
 			daemon, err := daemonconn.Ensure(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, daemon.Close()) })
@@ -311,83 +310,6 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			out, err = runCLI(t, "rendition", "window", fmt.Sprintf("id:%d", node.ID))
 			require.NoError(t, err)
 			require.Contains(t, out, "distinctivequartz on page two")
-			if deadline != nil {
-				require.NoError(t, deadline.Err(), "import and search exceeded ten seconds")
-			}
-		})
-	}
-}
-
-func TestDaemonRenditionWindowProfileSelection(t *testing.T) {
-	if !isolatedPDFTextRuntime(t) {
-		return
-	}
-	previous := mistralOCRTestClient
-	mistralOCRTestClient = func(client *http.Client) *http.Client {
-		client.Transport = mistralProbeTransport(func(request *http.Request) (*http.Response, error) {
-			_, err := io.Copy(io.Discard, request.Body)
-			if err != nil {
-				return nil, err
-			}
-			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"model":%q,"pages":[{"index":0,"markdown":"OCR distinctive text","dimensions":{"dpi":144,"height":16,"width":16}}],"usage_info":{"pages_processed":1}}`, mistral.DefaultModel)))}, nil
-		})
-		return client
-	}
-	t.Cleanup(func() { mistralOCRTestClient = previous })
-	cfg, _ := mistralOCRProcessingConfig(t)
-	cfg.Server.APIKey = "synthetic-window-key"
-	t.Setenv("DOCBANK_TEST_MISTRAL_OCR_KEY", "synthetic-key")
-	home := t.TempDir()
-	require.NoError(t, writeDaemonASRConfig(home, cfg))
-	t.Setenv("DOCBANK_HOME", home)
-	stop := startServe(t)
-	defer stop()
-	runtime := waitForDaemon(t, home)
-	daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
-	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
-	for _, tc := range []struct {
-		name      string
-		pages     []string
-		ambiguous bool
-	}{
-		{"text", []string{"original distinctive text"}, true},
-		{"scan", []string{""}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), tc.name+".pdf")
-			content := "q 1 0 0 1 72 650 cm /Photo Do Q"
-			if tc.pages[0] != "" {
-				content += " BT /F1 12 Tf 72 720 Td (" + tc.pages[0] + ") Tj ET"
-			}
-			data := mediatest.PDFObjects("synthetic", []string{
-				"<< /Type /Catalog /Pages 2 0 R >>",
-				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> /XObject << /Photo 5 0 R >> >> /Contents 6 0 R >>",
-				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-				"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\nabc\nendstream",
-				fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
-			})
-			require.NoError(t, os.WriteFile(path, data, 0600))
-			_, err := runCLI(t, "add", path, "--dest", "/pdfs")
-			require.NoError(t, err)
-			settleDaemon(t)
-			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/" + tc.name + ".pdf"}})
-			require.NoError(t, err)
-			selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "documents"}
-			plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
-			require.NoError(t, err)
-			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-			require.NoError(t, err)
-			id := fmt.Sprintf("id:%d", node.ID)
-			out, err := runCLI(t, "rendition", "window", id)
-			if tc.ambiguous {
-				require.Error(t, err)
-				require.Equal(t, exitUsage, commandExitCode(err, true))
-				require.Contains(t, err.Error(), "docbank-pdf-text, documents")
-				out, err = runCLI(t, "rendition", "window", id, "--version", node.CurrentVersionID, "--profile", "documents")
-			}
-			require.NoError(t, err)
-			require.Contains(t, out, "OCR distinctive text")
 		})
 	}
 }

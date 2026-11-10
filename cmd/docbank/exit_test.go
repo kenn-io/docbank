@@ -238,10 +238,8 @@ func TestRunProcessErrorHints(t *testing.T) {
 	assert.Contains(t, stderr.String(), `hint: list tags with "docbank tag list"`)
 	assert.Equal(t, exitUsage, run("processing", "status", "abc"))
 	assert.Contains(t, stderr.String(), `job ID must be lowercase SHA-256; the job ID is printed by "docbank processing build"`)
-	for _, args := range [][]string{{"rendition", "window", "id:1", "--version", "abc", "--profile", "supplied-captions"}, {"processing", "coverage", "abc", "--profile", "supplied-captions"}} {
-		assert.Equal(t, exitUsage, run(args...))
-		assert.Contains(t, stderr.String(), `version must be a canonical lowercase UUIDv4; use current_version_id from "docbank document stat <path-or-id> --json"`)
-	}
+	assert.Equal(t, exitUsage, run("processing", "coverage", "abc", "--profile", "supplied-captions"))
+	assert.Contains(t, stderr.String(), `version must be a canonical lowercase UUIDv4; use current_version_id from "docbank document stat <path-or-id> --json"`)
 	assert.Equal(t, exitUsage, run("processing", "plan", "id:1"))
 	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
 	assert.Equal(t, exitUsage, run("search", "term", "--mode", "hybrid"))

@@ -76,7 +76,7 @@ func workspaceQueryCoverage(d Deps, photos bool, profile string) (store.Coverage
 	if photos && profile == "" {
 		return store.CoverageSelection{Configuration: "unconfigured"}, nil
 	}
-	selection, err := selectCollectionProfile(d, profile, true)
+	selection, err := selectCollectionProfile(d, profile, true, false)
 	return selection.Coverage, err
 }
 

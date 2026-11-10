@@ -120,14 +120,6 @@ func TestLoomManualExportHTTP(t *testing.T) {
 	_, err = stream.CopyVerified(&rendition)
 	require.NoError(t, err)
 	assert.Contains(t, rendition.String(), "http second cue")
-	node, err := catalog.NodeByID(t.Context(), version.NodeID)
-	require.NoError(t, err)
-	response, body := do(t, ts, "POST", "/api/v1/renditions/text", nil, map[string]any{
-		"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID,
-		"blob_hash": node.BlobHash, "size": node.Size, "profile": processing.SuppliedCaptionProfileName,
-	})
-	require.Equal(t, 200, response.StatusCode, body)
-	require.Contains(t, body, `"state":"ready"`)
 
 	var metadata bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &metadata))

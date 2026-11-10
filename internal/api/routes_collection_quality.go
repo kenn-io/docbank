@@ -19,7 +19,7 @@ type collectionProfileSelection struct {
 	Coverage store.CoverageSelection
 }
 
-func selectCollectionProfile(d Deps, name string, builtin bool) (collectionProfileSelection, error) {
+func selectCollectionProfile(d Deps, name string, builtin, executable bool) (collectionProfileSelection, error) {
 	cfg := d.Cfg
 	selected := collectionProfileSelection{Names: []string{}, Coverage: store.CoverageSelection{Configuration: "unconfigured"}}
 	if len(cfg.ProcessingProfiles) > 64 {
@@ -31,7 +31,7 @@ func selectCollectionProfile(d Deps, name string, builtin bool) (collectionProfi
 	sort.Strings(selected.Names)
 	if d.Processing != nil && (name != "" || builtin && len(selected.Names) == 0) {
 		for _, profile := range d.Processing.Profiles() {
-			if profile.Name == processing.PDFTextProfileName && (profile.Name == name || name == "") {
+			if (profile.Name == processing.PDFTextProfileName && (profile.Name == name || name == "")) || (executable && name != "" && profile.Name == name) {
 				selected.Name = profile.Name
 				selected.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
 				if len(selected.Names) == 0 {
@@ -87,7 +87,7 @@ func registerCollectionQualityRoutes(api huma.API, d Deps) {
 		Profile string `query:"profile" maxLength:"128"`
 		Fields  string `query:"fields" maxLength:"256"`
 	}) (*struct{ Body CollectionQuality }, error) {
-		selection, err := selectCollectionProfile(d, in.Profile, false)
+		selection, err := selectCollectionProfile(d, in.Profile, false, false)
 		if err != nil {
 			return nil, err
 		}

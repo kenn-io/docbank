@@ -129,23 +129,9 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	if err != nil {
 		return renditionTextReceipt{}, err
 	}
-	var selection collectionProfileSelection
-	var found bool
-	if request.Profile != "" && d.Processing != nil {
-		for _, profile := range d.Processing.Profiles() {
-			if profile.Name == request.Profile {
-				selection = collectionProfileSelection{Name: profile.Name, Coverage: store.CoverageSelection{
-					Configuration: "configured", ProfileFingerprint: profile.Fingerprint}}
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		selection, err = selectCollectionProfile(d, request.Profile, true)
-		if err != nil {
-			return renditionTextReceipt{}, err
-		}
+	selection, err := selectCollectionProfile(d, request.Profile, true, true)
+	if err != nil {
+		return renditionTextReceipt{}, err
 	}
 	profile, binding, coverage, err := renditionTextState(request, selection)
 	if err != nil {

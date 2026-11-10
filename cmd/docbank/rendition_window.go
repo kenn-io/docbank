@@ -118,7 +118,7 @@ func runRenditionWindow(
 	attachment, build := options.attachment, ""
 	if options.profile == "" {
 		var selected api.DocumentRenditionIdentity
-		options.profile, selected, err = selectWindowProfile(cmd.Context(), c, node, *profiles)
+		options.profile, selected, err = selectWindowProfile(cmd.Context(), c, node, options.version, *profiles)
 		if err != nil {
 			return err
 		}
@@ -154,7 +154,10 @@ func runRenditionWindow(
 		return fmt.Errorf("attachment does not belong to profile %q: %w", options.profile, store.ErrNotFound)
 	}
 	if options.asJSON {
-		return writeCLIJSON(cmd.OutOrStdout(), window)
+		return writeCLIJSON(cmd.OutOrStdout(), struct {
+			api.RenditionTextWindow
+			Profile string `json:"profile"`
+		}{RenditionTextWindow: window, Profile: options.profile})
 	}
 	return writeRenditionWindow(cmd.OutOrStdout(), options, window)
 }
@@ -169,7 +172,7 @@ func windowProfileFingerprint(profiles []api.ProcessingProfileSummary, name stri
 }
 
 func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api.Node,
-	profiles []api.ProcessingProfileSummary,
+	version uuid.UUID, profiles []api.ProcessingProfileSummary,
 ) (string, api.DocumentRenditionIdentity, error) {
 	renditions, err := windowRenditions(ctx, c, node)
 	if err != nil {
@@ -181,10 +184,6 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 		for _, rendition := range renditions {
 			if rendition.ProfileFingerprint != profile.Fingerprint {
 				continue
-			}
-			version, err := uuid.Parse(node.CurrentVersionID)
-			if err != nil {
-				return "", api.DocumentRenditionIdentity{}, err
 			}
 			receipt, err := c.API().ResolveRenditionText(ctx, &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.RenditionTextRequest{
 				NodeID: node.ID, Revision: node.Revision, VersionID: version, BlobHash: node.BlobHash, Size: node.Size,
@@ -205,7 +204,7 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 		}
 	}
 	if len(names) == 0 {
-		return "", api.DocumentRenditionIdentity{}, fmt.Errorf("no readable rendition; pass --profile to select one: %w", store.ErrNotFound)
+		return "", api.DocumentRenditionIdentity{}, fmt.Errorf("no readable rendition (text is empty or not retained): %w", store.ErrNotFound)
 	}
 	if len(names) > 1 {
 		sort.Strings(names)
