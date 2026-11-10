@@ -30,7 +30,7 @@ func registerPackageCustodianOpenAPI(api huma.API) {
 	assignmentID := &huma.Param{Name: "assignment_id", In: openAPIPathLocation, Required: true,
 		Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
 	limit := &huma.Param{Name: packageLimitParameter, In: openAPIQueryLocation,
-		Schema: &huma.Schema{Type: "integer", Default: 100, Minimum: new(float64(1)), Maximum: new(float64(250))}}
+		Schema: &huma.Schema{Type: mailboxIntegerType, Default: 100, Minimum: new(float64(1)), Maximum: new(float64(250))}}
 	cursor := &huma.Param{Name: "cursor", In: openAPIQueryLocation, Schema: &huma.Schema{Type: openAPIStringType}}
 	operations := []*huma.Operation{
 		{OperationID: "listPeople", Method: http.MethodGet, Path: "/api/v1/people", Summary: "Find active canonical people",

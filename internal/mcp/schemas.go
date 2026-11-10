@@ -17,6 +17,7 @@ const (
 	packageIDField            = "package_id"
 	versionField              = "content_version_id"
 	personIDField             = "person_id"
+	sizeField                 = "size"
 	schemaStateField          = "state"
 	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
@@ -119,10 +120,10 @@ func packageImportOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"operation_id": uuidSchema(), schemaJobIDField: uuidSchema(), packageIDField: uuidSchema(),
 		"preflight_id": uuidSchema(), schemaStateField: enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
-		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
+		"committed": integerSchema(0, 100_000), schemaTotalField: integerSchema(1, 100_000),
 		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(stringSchema(4096), 100),
 		schemaCreatedAtField: dateTimeSchema(), "updated_at": dateTimeSchema(),
-	}), cacheRequired("operation_id", schemaJobIDField, packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", schemaCreatedAtField, "updated_at")...)
+	}), cacheRequired("operation_id", schemaJobIDField, packageIDField, "preflight_id", schemaStateField, "committed", schemaTotalField, "gap_count", schemaCreatedAtField, "updated_at")...)
 }
 
 func getPackageImportSchemas() (schema, schema) {
@@ -442,7 +443,7 @@ func batesExportProperties() schema {
 	return schema{
 		"recipe": schema{"type": "object"}, "allocation": allocation, "namespace": batesNamespaceSchema(),
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "blob_sha256": sha256Schema(),
-		"size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
+		sizeField: integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, maxBatesLabels), "recipe_sha256": sha256Schema(),
 		"manifest_sha256": sha256Schema(), schemaStateField: schema{"type": "string", jsonSchemaConst: "verified"},
 		schemaCreatedAtField: dateTimeSchema(), "pages": arraySchema(batesExportPageReceiptSchema(), maxBatesLabels),
@@ -511,7 +512,7 @@ func findBatesExportsSchemas() (schema, schema) {
 	}, "kind", "occurrence_id")
 	candidate := objectSchema(schema{
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "snapshot_id": uuidSchema(),
-		"blob_sha256": sha256Schema(), "size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
+		"blob_sha256": sha256Schema(), sizeField: integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, 1_000_000), "manifest_sha256": sha256Schema(), schemaStateField: enumSchema("verified"),
 		schemaCreatedAtField: dateTimeSchema(), "evidence": arraySchema(evidence, maxBatesCandidateEvidence),
 		"evidence_truncated": booleanSchema(), "evidence_cursor": stringSchema(maxCursorCharacters),

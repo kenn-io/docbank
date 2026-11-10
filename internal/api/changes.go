@@ -39,7 +39,7 @@ func registerChanges(shutdown context.Context, mux *http.ServeMux, api huma.API,
 	problem := &huma.Response{Description: "Invalid or expired cursor", Content: map[string]*huma.MediaType{new(Error).ContentType("application/json"): {Schema: api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Error](), true, "")}}}
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "vaultChanges", Method: http.MethodGet, Path: changesPath, Summary: "Read resumable vault changes", Tags: []string{"Changes"},
-		Parameters: []*huma.Param{{Name: "after", In: "query", Schema: &huma.Schema{Type: openAPIStringType}}, {Name: "follow", In: "query", Schema: &huma.Schema{Type: "boolean"}}, {Name: packageLimitParameter, In: "query", Description: "Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.", Schema: &huma.Schema{Type: mailboxIntegerType, Format: "int64", Minimum: new(float64(0)), Maximum: new(float64(500))}}},
+		Parameters: []*huma.Param{{Name: "after", In: "query", Schema: &huma.Schema{Type: openAPIStringType}}, {Name: "follow", In: "query", Schema: &huma.Schema{Type: "boolean"}}, {Name: packageLimitParameter, In: "query", Description: "Finite event limit, 0 through 500. Zero returns only the checkpoint. Cannot combine with follow=true; omit to drain retained history.", Schema: &huma.Schema{Type: mailboxIntegerType, Format: mailboxInt64Format, Minimum: new(float64(0)), Maximum: new(float64(500))}}},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "NDJSON change records followed by a terminal result or error", Content: map[string]*huma.MediaType{mailboxNDJSONMediaType: {Schema: &huma.Schema{Type: openAPIStringType}}}},
 			"400": problem, "410": problem,

@@ -1096,6 +1096,7 @@ type documentByHashOutput struct {
 
 type findDocumentsByHashOutput struct {
 	privateCache
+
 	Items  []documentByHashOutput `json:"items"`
 	Total  int                    `json:"total"`
 	Limit  int                    `json:"limit"`

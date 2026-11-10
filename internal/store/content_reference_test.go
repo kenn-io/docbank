@@ -81,7 +81,7 @@ func TestContentReferencesByHashIncludesCurrentHistoricalAndTrash(t *testing.T) 
 		require.NoError(t, createErr)
 		ids = append(ids, node.ID)
 	}
-	for offset := 0; offset < 4; offset++ {
+	for offset := range 4 {
 		refs, total, lookupErr := s.ContentReferencesByHash(ctx, wanted, 1, offset, ContentReferenceOptions{LiveCurrent: true})
 		require.NoError(t, lookupErr)
 		require.Equal(t, 3, total)

@@ -29,8 +29,8 @@ type optionalContentSize struct {
 	IsSet bool
 }
 
-func (optionalContentSize) Schema(_ huma.Registry) *huma.Schema {
-	return &huma.Schema{Type: "integer", Format: "int64"}
+func (*optionalContentSize) Schema(_ huma.Registry) *huma.Schema {
+	return &huma.Schema{Type: "integer", Format: mailboxInt64Format}
 }
 
 func (size *optionalContentSize) Receiver() reflect.Value {
