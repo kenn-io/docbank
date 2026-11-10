@@ -162,7 +162,7 @@ it("returns the search receipt with query filters and coverage", async () => {
   const query = parseQuery(JSON.stringify({ text: "report", filters: { size_min: 20 } }));
   vi.mocked(fetch).mockImplementation(async (input) =>
     String(input) === "/api/v1/workspace/queries"
-      ? Response.json(await snapshotEnvelope(query, []))
+      ? Response.json(await snapshotEnvelope(query, [], { page_size: 100 }))
       : Response.json({ vault_id: vaultID }),
   );
 
