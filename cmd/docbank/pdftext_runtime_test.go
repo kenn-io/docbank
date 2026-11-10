@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func pdfTextRuntimeConfig(t *testing.T) config.Config {
@@ -303,4 +306,51 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDaemonFailedPDFSearchHint(t *testing.T) {
+	if !isolatedPDFTextRuntime(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("DOCBANK_HOME", home)
+	stop := startServe(t)
+	defer stop()
+	waitForDaemon(t, home)
+	settleDaemon(t)
+	path := filepath.Join(t.TempDir(), "failed.pdf")
+	require.NoError(t, os.WriteFile(path, mediatest.PDFTextPages([]string{"readable"}, false), 0600))
+	_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
+	require.NoError(t, err)
+	settleDaemon(t)
+	stop()
+	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(home, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Immediate})
+	require.NoError(t, err)
+	result, err := db.ExecContext(t.Context(), `UPDATE rendition_jobs SET state='failed', failure_code='terminal'`)
+	require.NoError(t, err)
+	count, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM rendition_heads`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	catalog, err := store.Open(t.Context(), filepath.Join(home, "docbank.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, catalog.Close()) }()
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(home, "blobs"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, blobs.Close()) }()
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-key"
+	daemon := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: home, Cfg: cfg, ShutdownToken: "synthetic-proof"})
+	defer daemon.Close()
+	server := httptest.NewServer(daemon.Handler())
+	defer server.Close()
+	record := daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), cfg.Server.APIKey, "synthetic-proof", "")
+	_, err = daemonconn.RuntimeStore(home).Write(record)
+	require.NoError(t, err)
+	out, err := runCLI(t, "search", "absentword", "--mode", "lexical")
+	require.NoError(t, err)
+	require.Contains(t, out, "1 file (PDF) has no searchable text")
+	require.NotContains(t, out, "still being indexed")
 }

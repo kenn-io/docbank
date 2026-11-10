@@ -944,7 +944,6 @@ type SearchTextCoverage struct {
 	Pending                    int      `json:"pending" minimum:"0"`
 	PDFsWithoutText            int      `json:"pdfs_without_text" minimum:"0"`
 	PagesWithoutText           int      `json:"pages_without_text" minimum:"0"`
-	OtherWithoutText           int      `json:"other_without_text" minimum:"0"`
 	PDFPageCoverageUnavailable int      `json:"pdf_page_coverage_unavailable" minimum:"0"`
 }
 

@@ -8372,8 +8372,6 @@ export interface SearchTextCoverage {
   /** @minimum 0 */
   no_text: number;
   /** @minimum 0 */
-  other_without_text: number;
-  /** @minimum 0 */
   pages_without_text: number;
   /** @minimum 0 */
   pdf_page_coverage_unavailable: number;

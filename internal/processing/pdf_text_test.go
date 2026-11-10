@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -18,13 +19,16 @@ import (
 //nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestPDFTextBackfillRetainsPages(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		pages []string
-		text  bool
+		name        string
+		pages       []string
+		text        bool
+		gaps        []int
+		corrupt     bool
+		unavailable int
 	}{
-		{"born", []string{"first page", "distinctivequartz second page"}, true},
-		{"image-only", []string{"", ""}, false},
-		{"mixed", []string{"distinctivequartz", ""}, true},
+		{"born", []string{"first page", "distinctivequartz second page"}, true, nil, false, 0},
+		{"image-only", []string{"", ""}, false, []int{1, 2}, true, 1},
+		{"mixed", []string{"distinctivequartz", ""}, true, []int{2}, true, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
@@ -57,106 +61,147 @@ func TestPDFTextBackfillRetainsPages(t *testing.T) {
 			pending, err = restarted.Pending(t.Context())
 			require.NoError(t, err)
 			require.False(t, pending)
-			if test.name == "born" {
-				reads := 0
-				_, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, func(context.Context, string) ([]int, error) {
-					reads++
-					return nil, nil
-				})
-				require.NoError(t, err)
-				require.Zero(t, reads)
+			pages, err := service.PDFPagesWithoutText(t.Context(), view.Rendition.Build.ID)
+			require.NoError(t, err)
+			require.Equal(t, test.gaps, pages)
+			report, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
+			require.NoError(t, err)
+			if len(test.gaps) > 0 {
+				require.Equal(t, []PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: test.gaps}}, report.PagesWithoutText)
+			} else {
+				require.Empty(t, report.PagesWithoutText)
 			}
-			if test.name != "born" {
-				pages, err := service.PDFPagesWithoutText(t.Context(), view.Rendition.Build.ID)
-				require.NoError(t, err)
-				if test.text {
-					require.Equal(t, []int{2}, pages)
-				} else {
-					require.Equal(t, []int{1, 2}, pages)
-				}
-				report, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
-				require.NoError(t, err)
-				require.Equal(t, []PageTextGap{{ContentVersionID: node.CurrentVersionID, Pages: pages}}, report.PagesWithoutText)
-				coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
-				require.NoError(t, err)
-				require.Zero(t, coverage.Pending)
-				require.Equal(t, 1, coverage.PDFsWithoutText)
-				wantPages := 2
-				if test.text {
-					wantPages = 1
-				}
-				require.Equal(t, wantPages, coverage.PagesWithoutText)
-				if test.name == "mixed" {
-					for _, artifact := range view.Rendition.Build.Artifacts {
-						if artifact.Role == "normalized_evidence" {
-							require.NoError(t, fixture.blobs.Remove(artifact.BlobHash))
-						}
+			coverage, err := fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
+			require.NoError(t, err)
+			require.Zero(t, coverage.Pending)
+			require.Equal(t, len(test.gaps), coverage.PagesWithoutText)
+			if test.corrupt {
+				for _, artifact := range view.Rendition.Build.Artifacts {
+					if artifact.Role == "normalized_evidence" {
+						require.NoError(t, fixture.blobs.Remove(artifact.BlobHash))
 					}
-					corruptReport, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
-					require.NoError(t, err)
-					require.Equal(t, report.Renditions, corruptReport.Renditions)
-					require.Empty(t, corruptReport.PagesWithoutText)
 				}
+				corruptReport, err := service.Coverage(t.Context(), name, SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}})
+				require.NoError(t, err)
+				require.Equal(t, report.Renditions, corruptReport.Renditions)
+				require.Empty(t, corruptReport.PagesWithoutText)
+				require.Equal(t, "unavailable", corruptReport.PageCoverage)
+				coverage, err = fixture.catalog.SearchTextCoverage(t.Context(), store.SearchOptions{}, active.record.Fingerprint, service.PDFPagesWithoutText)
+				require.NoError(t, err)
+				require.Equal(t, test.unavailable, coverage.PDFPageCoverageUnavailable)
+				require.Equal(t, test.unavailable, coverage.NoText)
 			}
+
 		})
 	}
 }
 
 func TestCoveragePageContinuesAndRejectsChangedManifest(t *testing.T) {
-	pages := make([]int, 9000)
-	for i := range pages {
-		pages[i] = i + 1
-	}
-	ids := []string{"version", "later"}
-	builds := map[string]string{"version": "build", "later": "later-build"}
-	reads := []string{}
-	read := func(_ context.Context, build string) ([]int, error) {
-		reads = append(reads, build)
-		if build == "build" {
+	t.Run("page bound and cursor", func(t *testing.T) {
+		pages := make([]int, 9000)
+		for i := range pages {
+			pages[i] = i + 1
+		}
+		ids := []string{"version", "later"}
+		builds := map[string]string{"version": "build", "later": "later-build"}
+		reads := []string{}
+		read := func(_ context.Context, build string) ([]int, error) {
+			reads = append(reads, build)
+			if build == "build" {
+				return pages, nil
+			}
+			return []int{1}, nil
+		}
+		first, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
+		require.NoError(t, err)
+		require.Len(t, first[0].Pages, 8192)
+		require.Equal(t, []string{"build"}, reads)
+		require.NotEmpty(t, cursor)
+		reads = nil
+		last, next, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
+		require.NoError(t, err)
+		require.Equal(t, pages[8192:], last[0].Pages)
+		require.Equal(t, []string{"build", "later-build"}, reads)
+		require.Empty(t, next)
+		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "changed", cursor, read)
+		require.Error(t, err)
+		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "changed", "manifest", cursor, read)
+		require.Error(t, err)
+		for _, payload := range []string{`{"version":1,"scope":"scope","manifest":"manifest","index":0,"offset":1,"extra":true}`} {
+			_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", base64.RawURLEncoding.EncodeToString([]byte(payload)), read)
+			require.Error(t, err)
+		}
+	})
+	t.Run("resume reads", func(t *testing.T) {
+		ids := []string{"one", "two", "three"}
+		builds := map[string]string{"one": "first", "two": "second", "three": "third"}
+		pages := make([]int, 5000)
+		for i := range pages {
+			pages[i] = i + 1
+		}
+		var reads []string
+		read := func(_ context.Context, build string) ([]int, error) {
+			reads = append(reads, build)
 			return pages, nil
 		}
-		return []int{1}, nil
-	}
-	first, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
-	require.NoError(t, err)
-	require.Len(t, first[0].Pages, 8192)
-	require.Equal(t, []string{"build"}, reads)
-	require.NotEmpty(t, cursor)
-	reads = nil
-	last, next, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
-	require.NoError(t, err)
-	require.Equal(t, pages[8192:], last[0].Pages)
-	require.Equal(t, []string{"build", "later-build"}, reads)
-	require.Empty(t, next)
-	_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "changed", cursor, read)
-	require.Error(t, err)
-	_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "changed", "manifest", cursor, read)
-	require.Error(t, err)
-	for _, payload := range []string{`{"Offset":8192}`, `{"version":1,"scope":"scope","manifest":"manifest","index":0,"offset":1,"extra":true}`} {
-		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", base64.RawURLEncoding.EncodeToString([]byte(payload)), read)
-		require.Error(t, err)
-	}
+		_, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
+		require.NoError(t, err)
+		require.Equal(t, []string{"first", "second"}, reads)
+		reads = nil
+		_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
+		require.NoError(t, err)
+		require.Equal(t, []string{"second", "third"}, reads)
+	})
 }
 
-func TestCoverageContinuationDoesNotReadEarlierBuilds(t *testing.T) {
-	ids := []string{"one", "two", "three"}
-	builds := map[string]string{"one": "first", "two": "second", "three": "third"}
-	pages := make([]int, 5000)
-	for i := range pages {
-		pages[i] = i + 1
+func TestCoveragePageLimitsCandidateReads(t *testing.T) {
+	var ids []string
+	builds := map[string]string{}
+	for i := 0; i < 17; i++ {
+		id := strconv.Itoa(i)
+		ids = append(ids, id)
+		builds[id] = id
 	}
-	var reads []string
-	read := func(_ context.Context, build string) ([]int, error) {
-		reads = append(reads, build)
-		return pages, nil
-	}
+	var calls int
+	read := func(_ context.Context, _ string) ([]int, error) { calls++; return nil, nil }
 	_, cursor, _, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", read)
 	require.NoError(t, err)
-	require.Equal(t, []string{"first", "second"}, reads)
-	reads = nil
-	_, _, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
+	require.Equal(t, 16, calls)
+	require.NotEmpty(t, cursor)
+	_, cursor, _, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, read)
 	require.NoError(t, err)
-	require.Equal(t, []string{"second", "third"}, reads)
+	require.Equal(t, 17, calls)
+	require.Empty(t, cursor)
+	readLaterFailure := func(_ context.Context, build string) ([]int, error) {
+		if build == ids[16] {
+			return nil, errors.New("missing evidence")
+		}
+		return nil, nil
+	}
+	_, cursor, unavailable, err := readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", readLaterFailure)
+	require.NoError(t, err)
+	require.False(t, unavailable)
+	_, cursor, unavailable, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", cursor, readLaterFailure)
+	require.NoError(t, err)
+	require.Empty(t, cursor)
+	require.True(t, unavailable)
+	builds[ids[16]] = ""
+	calls = 0
+	_, cursor, unavailable, err = readPDFCoveragePage(t.Context(), ids, builds, "scope", "manifest", "", func(_ context.Context, _ string) ([]int, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("missing evidence")
+		}
+		return nil, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 16, calls)
+	require.Empty(t, cursor)
+	require.True(t, unavailable)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, _, err = readPDFCoveragePage(ctx, ids, builds, "scope", "manifest", "", read)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func newPDFTextService(t *testing.T, fixture publicationFixture, profile ProfileConfig) *Service {

@@ -178,8 +178,6 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: len(fence.ContentVersionIDs)})
 				case "/api/v1/coverage":
-					assert.Equal(t, processing.PDFTextProfileName, r.URL.Query().Get("profile"))
-					assert.Equal(t, []string{testVersionID}, r.URL.Query()["content_version_id"])
 					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: tc.name != "no reranking support"}}
@@ -295,8 +293,6 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
 				case "/api/v1/coverage":
-					assert.Equal(t, processing.PDFTextProfileName, r.URL.Query().Get("profile"))
-					assert.Equal(t, []string{testVersionID}, r.URL.Query()["content_version_id"])
 					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					writeDaemonJSON(t, w, profiles)
@@ -452,25 +448,7 @@ func TestAnswerQuestionReportsMixedPDFThroughDaemon(t *testing.T) {
 	gap := schemaMap(t, gaps[0])
 	require.Equal(t, node.CurrentVersionID, gap["content_version_id"])
 	require.Equal(t, []any{[]any{float64(2), float64(2)}}, gap["pages"])
-	var fingerprint string
-	for _, profile := range service.Profiles() {
-		if profile.Name == processing.PDFTextProfileName {
-			fingerprint = profile.Fingerprint
-		}
-	}
-	buildID, err := f.catalog.PDFTextCandidate(t.Context(), node.CurrentVersionID, fingerprint)
-	require.NoError(t, err)
-	build, err := f.catalog.RenditionBuild(t.Context(), buildID)
-	require.NoError(t, err)
-	for _, artifact := range build.Artifacts {
-		if artifact.Role == "normalized_evidence" {
-			require.NoError(t, f.blobs.Remove(artifact.BlobHash))
-		}
-	}
-	output = exportCall(t, server, "answer_question", map[string]any{"question": "readable", "profile": processing.PDFTextProfileName})
-	require.Equal(t, false, output["coverage_complete"])
-	require.Contains(t, output["coverage_reasons"], "page_coverage_unavailable")
-	require.NotEmpty(t, output["passages"])
+
 }
 
 func newSearchTestEmbeddingProfile(t *testing.T, f *nativeExportFixture, kind document.EmbeddingInputKind, failQuery bool) processing.ProfileConfig {

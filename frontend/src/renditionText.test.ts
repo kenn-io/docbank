@@ -106,9 +106,12 @@ it("resolves an exact snapshot rendition and submits every observed authority", 
 it("accepts page gaps and rejects invalid page numbers", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   fetchMock.mockResolvedValueOnce(
-    new Response(JSON.stringify(receipt({ pages_without_text: [2, 3] })), {
-      headers: { "Content-Type": "application/json" },
-    }),
+    new Response(
+      JSON.stringify(receipt({ pages_without_text: [2, 3], page_coverage: "unavailable" })),
+      {
+        headers: { "Content-Type": "application/json" },
+      },
+    ),
   );
   const resolved = await resolveRenditionText(
     "session",
@@ -119,6 +122,7 @@ it("accepts page gaps and rejects invalid page numbers", async () => {
     new AbortController().signal,
   );
   expect(resolved.pagesWithoutText).toEqual([2, 3]);
+  expect(resolved.pageCoverage).toBe("unavailable");
   fetchMock.mockResolvedValueOnce(
     new Response(JSON.stringify(receipt({ pages_without_text: [0] })), {
       headers: { "Content-Type": "application/json" },
@@ -134,23 +138,6 @@ it("accepts page gaps and rejects invalid page numbers", async () => {
       new AbortController().signal,
     ),
   ).rejects.toThrow("pages_without_text is invalid");
-});
-
-it("retains unavailable PDF page coverage", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify(receipt({ page_coverage: "unavailable" })), {
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
-  const resolved = await resolveRenditionText(
-    "session",
-    source,
-    9,
-    "archive",
-    observation,
-    new AbortController().signal,
-  );
-  expect(resolved.pageCoverage).toBe("unavailable");
 });
 
 it("accepts the worker's bounded digest-form artifact identity", async () => {
