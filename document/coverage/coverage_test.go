@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/pdftext"
+	"go.kenn.io/docbank/document/plaintext"
 )
 
 func TestComputeRecognizesMarkdownWithoutAnArtifactRole(t *testing.T) {
@@ -262,4 +264,31 @@ func formatByID(t *testing.T, record document.FormatCoverageV1, id string) docum
 	}
 	require.FailNow(t, "format absent from coverage", id)
 	return document.FormatCapabilityV1{}
+}
+
+func TestComputeQualifiesBuiltInPDFText(t *testing.T) {
+	provider, err := pdftext.New(pdftext.Profile{MaxDocumentBytes: 500 << 20, MaxPages: 5_000})
+	require.NoError(t, err)
+	sources := DefaultSources()
+	sources.ExtractorID = "synthetic-extractor/v1"
+	sources.BoundProviders = []document.RenditionDescriptor{provider.Descriptor()}
+	record, err := Compute(sources)
+	require.NoError(t, err)
+	state := formatByID(t, record, "pdf").Capabilities[document.CapabilityText]
+	require.Equal(t, document.CapabilityQualified, state.State)
+	require.Equal(t, provider.Descriptor().Fingerprint, state.ProviderFingerprint)
+}
+
+func TestComputeDoesNotInferTextFromUnqualifiedStructuredProviders(t *testing.T) {
+	t.Parallel()
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: plaintext.MaxDocumentBytes})
+	require.NoError(t, err)
+	sources := DefaultSources()
+	sources.ExtractorID = "synthetic-extractor/v1"
+	baseline, err := Compute(sources)
+	require.NoError(t, err)
+	sources.BoundProviders = []document.RenditionDescriptor{provider.Descriptor()}
+	actual, err := Compute(sources)
+	require.NoError(t, err)
+	require.Equal(t, baseline.Formats, actual.Formats, "binding a structured provider alone must leave every format unchanged")
 }

@@ -1361,10 +1361,10 @@ var backendSuites = []backendSuite{
 		}},
 		{"RenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle", func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newTestStore)
+			checkRenditionJobsRecoverAmbiguousProviderWork(t, newTestStore)
 		}, func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newPostgresQueryStore)
+			checkRenditionJobsRecoverAmbiguousProviderWork(t, newPostgresQueryStore)
 		}},
 		{"RenditionJobNoHandleRetryKeepsAdmissionAuthority", func(t *testing.T) { t.Helper(); checkRenditionJobNoHandleRetryKeepsAdmissionAuthority(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
@@ -1381,6 +1381,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobStagingIsIdempotentWithinOneClaim(t, newPostgresQueryStore)
 		}},
+		{"RenditionPublicationPreservesLegacyText", func(t *testing.T) { t.Helper(); checkRenditionPublicationPreservesLegacyText(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionPublicationPreservesLegacyText(t, newPostgresQueryStore) }},
 		{"PublishRenditionJobAtomicallyActivatesAuthorizedWaiters", func(t *testing.T) {
 			t.Helper()
 			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newTestStore)

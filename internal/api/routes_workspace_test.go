@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -467,4 +468,17 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 	require.NoError(t, json.Unmarshal([]byte(body), &refreshedLast))
 	require.Len(t, refreshedLast.Rows, 1)
 	assert.Equal(t, last.CurrentVersionID, refreshedLast.Rows[0].ContentVersionID)
+}
+
+func TestWorkspaceQuerySelectsAutomaticPDFProfile(t *testing.T) {
+	t.Parallel()
+	var runner *processing.PDFTextRunner
+	ts, _ := newTestServer(t, func(d *api.Deps) { runner = configureAutomaticPDFText(t, d) })
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/workspace/queries", nil, map[string]any{"query": map[string]any{}})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var snapshot api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
+	require.Equal(t, "configured", snapshot.Coverage.Configuration)
+	require.Equal(t, runner.Service.Profiles()[0].Fingerprint, snapshot.Coverage.ProfileFingerprint)
 }

@@ -23,7 +23,7 @@ func TestSearchTextCoverage(t *testing.T) {
 		query          string
 		status, noText int
 	}{
-		{"", http.StatusOK, 1},
+		{"", http.StatusOK, 0},
 		{"?mime_type=invalid/type;bad", http.StatusUnprocessableEntity, 0},
 		{"?modified_since=invalid", http.StatusUnprocessableEntity, 0},
 	} {

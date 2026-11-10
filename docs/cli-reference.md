@@ -1131,8 +1131,9 @@ For ordinary lexical search, the typed report contains `hits`, the applied
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
-after a complete verified read. It does not automatically run PDF, Office,
-or OCR extraction. Ordinary search uses words in names and indexed text.
+after a complete verified read. It also indexes PDF text locally in the
+background. Office extraction and OCR require configured profiles. Ordinary
+search uses words in names and indexed text.
 Explicit processing search uses the form below. Saved queries and highlight sets
 use a separate
 [HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no CLI
@@ -1837,7 +1838,7 @@ cannot be read, `jobs` still lists every task and prints a warning to stderr;
 To recover malformed settings, repair or remove `lane-controls.json` in the
 vault directory. Removing it restores unpaused lanes with concurrency 1.
 Cancellation remains available while settings are unreadable.
-Every daemon registers `extract:plain-text`, `extract:source-metadata`,
+Every daemon registers `text:pdf` for automatic local PDF text, `extract:plain-text`, `extract:source-metadata`,
 `extract:photo-sidecars`, `derive:photo-quality`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
 rendition provider is bound, `telemetry:heartbeat` appears while anonymous

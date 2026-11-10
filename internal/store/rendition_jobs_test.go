@@ -532,14 +532,15 @@ func checkEnqueueRenditionJobRejectsNewWaiterForTerminalBuild(t *testing.T, open
 
 			request.Authorization.Principal = "operator:late-waiter"
 			grantRenditionJobConsent(t, s, request)
-			_, _, err = s.EnqueueRenditionJob(t.Context(), request)
+			_, rejected, err := s.EnqueueRenditionJob(t.Context(), request)
 			require.ErrorIs(t, err, test.wantErr)
+			require.Empty(t, rejected.ID)
 
 			current, err := s.RenditionJobByID(t.Context(), job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, test.wantState, current.State)
 			assert.Equal(t, 1, current.WaiterCount,
-				"a rejected join must not leave an unreachable waiting waiter")
+				"a terminal non-PDF job does not record a new waiter")
 		})
 	}
 }
@@ -617,15 +618,28 @@ func TestRenditionJobWorkRejectsNonOriginalWaiterAuthority(t *testing.T) {
 	require.ErrorIs(t, err, ErrRenditionJobStaleAuthority)
 }
 
-func checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t *testing.T, open func(*testing.T) *Store) {
+func checkRenditionJobsRecoverAmbiguousProviderWork(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	t.Parallel()
-	for _, checkpoint := range []bool{false, true} {
-		t.Run(map[bool]string{false: "missing handle", true: "durable handle"}[checkpoint], func(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		checkpoint bool
+		provider   string
+	}{
+		{"missing handle", false, ""}, {"durable handle", true, ""}, {"local PDF", false, document.PDFTextProviderID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			s := open(t)
 			versions := seedRenditionCatalogVersions(t, s)
-			profile := catalogProcessingProfile(t, false)
+			profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+				if test.provider != "" {
+					profile.Rendition.Descriptor.ID = test.provider
+				}
+			})
 			request := renditionJobTestRequest(versions[0], profile)
+			if test.provider != "" {
+				request.ExecutionIdentity.Authorization.ProviderID = test.provider
+			}
 			grantRenditionJobConsent(t, s, request)
 			job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
 			require.NoError(t, err)
@@ -635,17 +649,31 @@ func checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t *testin
 			_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
 				now.Add(time.Second), renditionJobTestSnapshot(request))
 			require.NoError(t, err)
-			if checkpoint {
+			if test.checkpoint {
 				require.NoError(t, s.CheckpointRenditionProvider(
 					t.Context(), claim, "provider-issued-handle", now.Add(2*time.Second)))
 			}
 
 			reclaimed, err := s.ClaimRenditionJob(
 				t.Context(), job.ID, "worker-b", now.Add(2*time.Minute), time.Minute)
-			if checkpoint {
+			if test.checkpoint {
 				require.NoError(t, err)
 				assert.Equal(t, "provider-issued-handle", reclaimed.ResumeHandle)
 				assert.Equal(t, int64(2), reclaimed.Epoch)
+				return
+			}
+			if test.provider == document.PDFTextProviderID {
+				require.NoError(t, err)
+				require.Equal(t, RenditionPhaseQueued, reclaimed.Phase)
+				require.Empty(t, reclaimed.ResumeHandle)
+				work, err := s.RenditionJobWorkByClaim(t.Context(), reclaimed, now.Add(2*time.Minute))
+				require.NoError(t, err)
+				require.Nil(t, work.ExecutionSnapshot, "a repeated local call needs fresh authorization")
+				_, err = s.BeginRenditionProvider(t.Context(), reclaimed, waiter.ID, now.Add(2*time.Minute), renditionJobTestSnapshot(request))
+				require.NoError(t, err)
+				current, err := s.RenditionJobByID(t.Context(), job.ID)
+				require.NoError(t, err)
+				require.Equal(t, 2, current.ProviderAttempts)
 				return
 			}
 			require.ErrorIs(t, err, ErrRenditionJobOperatorRequired)
@@ -1891,6 +1919,12 @@ func checkPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T, open func
 			ctx := t.Context()
 			s := open(t)
 			versions := seedRenditionCatalogVersions(t, s)
+			if mutation == "selected-consent" {
+				hash := testSHA256([]byte("retained legacy text"))
+				_, err := s.CreateFile(ctx, s.RootID(), "before.txt", hash, 20, "text/plain")
+				require.NoError(t, err)
+				require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: hash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "retainedquartz"}))
+			}
 			profile := catalogProcessingProfile(t, false)
 			first := renditionJobTestRequest(versions[0], profile)
 			second := renditionJobTestRequest(versions[1], profile)
@@ -1951,6 +1985,10 @@ func checkPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T, open func
 			}
 			_, err = s.PublishRenditionJob(ctx, claim, now.Add(4*time.Second))
 			require.ErrorIs(t, err, wantErr)
+			if mutation == "selected-consent" {
+				_, err := s.ActiveLexicalGeneration(ctx)
+				require.ErrorIs(t, err, ErrNotFound)
+			}
 			rejected, err := s.RenditionJobWaiterByID(ctx, firstWaiter.ID)
 			require.NoError(t, err)
 			require.Equal(t, "rejected", rejected.State)
@@ -1970,4 +2008,55 @@ func checkPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T, open func
 			}
 		})
 	}
+}
+
+func checkRenditionPublicationPreservesLegacyText(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := open(t)
+	ctx := t.Context()
+	versions := seedRenditionCatalogVersions(t, s)
+	legacyHash := testSHA256([]byte("before PDF"))
+	legacy, err := s.CreateFile(ctx, s.RootID(), "before.txt", legacyHash, 10, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: legacyHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "beforequartz"}))
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(ctx, request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(ctx, job.ID, "worker:legacy-cutover", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(ctx, claim, waiter.ID, now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.NoError(t, err)
+	build := catalogRenditionBuild(s, profile)
+	build.ID = job.ID
+	require.NoError(t, s.StageRenditionJobBuild(ctx, claim, build, now.Add(2*time.Second)))
+	_, err = s.PublishRenditionJob(ctx, claim, now.Add(3*time.Second))
+	require.NoError(t, err)
+
+	assertIndexed := func(version, term string) {
+		t.Helper()
+		var found bool
+		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rendition_heads h
+ JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
+ JOIN rendition_lexical_generation_builds gb ON gb.build_id=a.build_id
+ JOIN rendition_lexical_heads lh ON lh.generation_id=gb.generation_id
+ JOIN rendition_lexical_segments seg ON seg.build_id=a.build_id
+ WHERE h.content_version_id=$1 AND seg.text=$2)`, version, term).Scan(&found)
+		require.NoError(t, err)
+		require.True(t, found)
+		if s.postgresSchema == "" {
+			hits, _, err := s.SearchPage(ctx, term, 10)
+			require.NoError(t, err)
+			require.Len(t, hits, 1)
+		}
+	}
+	assertIndexed(legacy.CurrentVersionID, "beforequartz")
+	laterHash := testSHA256([]byte("after PDF"))
+	later, err := s.CreateFile(ctx, s.RootID(), "after.txt", laterHash, 9, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: laterHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "afterquartz"}))
+	assertIndexed(later.CurrentVersionID, "afterquartz")
 }

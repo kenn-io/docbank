@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
@@ -18,8 +20,10 @@ import (
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
+	vaulthome "go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
@@ -54,6 +58,23 @@ func pdfTextRuntimePages(pages, textPages int) []string {
 	return text
 }
 
+func isolatedPDFTextRuntime(t *testing.T) bool {
+	t.Helper()
+	const worker = "DOCBANK_TEST_PDFTEXT_RUNTIME_WORKER"
+	if os.Getenv(worker) == t.Name() {
+		return true
+	}
+	// PDFium qualifies whole-process RSS; earlier daemon heaps aren't its workload.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v") //nolint:gosec // Runs this test binary with the current test's name.
+	command.Env = append(os.Environ(), worker+"="+t.Name())
+	output, err := command.CombinedOutput()
+	t.Log(string(output))
+	require.NoError(t, err)
+	return false
+}
+
 func TestPDFTextRuntimeDescriptorAndLimits(t *testing.T) {
 	for _, field := range []string{"bytes", "pages"} {
 		t.Run(field, func(t *testing.T) {
@@ -76,6 +97,9 @@ func TestPDFTextRuntimeDescriptorAndLimits(t *testing.T) {
 }
 
 func TestDaemonPDFTextProcessing(t *testing.T) {
+	if !isolatedPDFTextRuntime(t) {
+		return
+	}
 	cfg := pdfTextRuntimeConfig(t)
 	cfg.Server.APIKey = "synthetic-pdftext-key"
 	home := t.TempDir()
@@ -136,18 +160,11 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 	if !pagerender.SupportedPlatform() {
 		t.Skip("page runtime requires Linux amd64")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
-	defer cancel()
-	// Qualify process RSS without retaining earlier in-process daemon heaps.
-	const worker = "DOCBANK_TEST_PDFTEXT_CONCURRENCY_WORKER"
-	if os.Getenv(worker) != "1" {
-		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonPDFTextSharesEngineWithRedaction$", "-test.v") //nolint:gosec // Runs this test binary with fixed arguments.
-		command.Env = append(os.Environ(), worker+"=1")
-		output, err := command.CombinedOutput()
-		t.Log(string(output))
-		require.NoError(t, err)
+	if !isolatedPDFTextRuntime(t) {
 		return
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
 	cfg := pdfTextRuntimeConfig(t)
 	cfg.PageRuntime = new(redactiontest.PageProfile(t))
 	cfg.Server.APIKey = "synthetic-pdftext-concurrency-key"
@@ -223,4 +240,111 @@ func TestDaemonPDFTextSharesEngineWithRedaction(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
 	t.Logf("500-page PDF processing with concurrent redaction: %s", time.Since(started))
+}
+
+func TestDaemonAutomaticPDFText(t *testing.T) {
+	if !isolatedPDFTextRuntime(t) {
+		return
+	}
+	for _, test := range []struct {
+		name                 string
+		configured, existing bool
+	}{
+		{name: "import"}, {name: "configured", configured: true}, {name: "existing vault", existing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configured := test.configured
+			home := t.TempDir()
+			if configured {
+				cfg := pdfTextRuntimeConfig(t)
+				delete(cfg.ProcessingProfiles, "private-text")
+				cfg.ProcessingProfiles["configured-pdf"] = cfg.ProcessingProfiles["pdf"]
+				delete(cfg.ProcessingProfiles, "pdf")
+				cfg.Server.APIKey = "synthetic-automatic-pdf-key"
+				require.NoError(t, writeDaemonASRConfig(home, cfg))
+			}
+			path := filepath.Join(t.TempDir(), "source.pdf")
+			data := mediatest.PDFTextPages([]string{"first page", "distinctivequartz on page two"}, false)
+			if test.existing {
+				layout := vaulthome.Layout{Root: home}
+				require.NoError(t, layout.Ensure())
+				catalog, err := store.Open(t.Context(), layout.DBPath())
+				require.NoError(t, err)
+				blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+				require.NoError(t, err)
+				written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+				require.NoError(t, err)
+				encoding, err := written.EncodingName()
+				require.NoError(t, err)
+				directory, err := catalog.Mkdir(t.Context(), catalog.RootID(), "pdfs")
+				require.NoError(t, err)
+				_, err = catalog.CreateFile(t.Context(), directory.ID, "source.pdf", written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+				require.NoError(t, err)
+				require.NoError(t, blobs.Close())
+				require.NoError(t, catalog.Close())
+			}
+			t.Setenv("DOCBANK_HOME", home)
+			stop := startServe(t)
+			defer stop()
+			runtime := waitForDaemon(t, home)
+			daemon := daemonconn.New("http://"+runtime.Address, runtime.Metadata["api_key"])
+			defer func() { require.NoError(t, daemon.Close()) }()
+			require.NoError(t, os.WriteFile(path, data, 0600))
+			if !test.existing {
+				settleDaemon(t)
+				if !configured {
+					textPath := filepath.Join(t.TempDir(), "before.txt")
+					require.NoError(t, os.WriteFile(textPath, []byte("legacyquartz"), 0600))
+					_, err := runCLI(t, "document", "add", textPath, "--dest", "/pdfs")
+					require.NoError(t, err)
+					require.Eventually(t, func() bool {
+						out, err := runCLI(t, "search", "legacyquartz", "--mode", "lexical")
+						return err == nil && strings.Contains(out, "/pdfs/before.txt")
+					}, 10*time.Second, 100*time.Millisecond)
+				}
+				_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
+				require.NoError(t, err)
+			}
+			if configured || test.existing {
+				settleDaemon(t)
+			}
+			var out string
+			require.Eventually(t, func() bool {
+				var err error
+				out, err = runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
+				return err == nil && strings.Contains(out, "/pdfs/source.pdf")
+			}, 10*time.Second, 100*time.Millisecond)
+			if !configured && !test.existing {
+				textResults, err := runCLI(t, "search", "legacyquartz", "--mode", "lexical")
+				require.NoError(t, err)
+				require.Contains(t, textResults, "/pdfs/before.txt")
+				formatsJSON, err := runCLI(t, "formats", "--format", "pdf", "--json")
+				require.NoError(t, err)
+				var formats api.FormatCoverageResponse
+				require.NoError(t, json.Unmarshal([]byte(formatsJSON), &formats))
+				require.Len(t, formats.Formats, 1)
+				require.Equal(t, document.CapabilityQualified, formats.Formats[0].Capabilities[document.CapabilityText].State)
+			}
+			node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/pdfs/source.pdf"}})
+			require.NoError(t, err)
+			coverage, err := runCLI(t, "processing", "coverage", node.CurrentVersionID, "--profile", processing.PDFTextProfileName, "--json")
+			require.NoError(t, err)
+			var coverageReport processingCoverageOutput
+			require.NoError(t, json.Unmarshal([]byte(coverage), &coverageReport))
+			require.Equal(t, "complete", coverageReport.Coverage.State)
+			resolved, err := daemon.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.ResolveRenditionTextBody{NodeID: node.ID, Revision: node.Revision, VersionID: uuid.MustParse(node.CurrentVersionID), BlobHash: node.BlobHash, Size: node.Size}})
+			require.NoError(t, err)
+			if configured {
+				require.Equal(t, apiclient.RenditionTextReceiptStateUnprocessed, resolved.State)
+				require.Equal(t, "configured-pdf", resolved.Profile.Name)
+				explicit, err := daemon.API().ResolveRenditionText(t.Context(), &apiclient.ResolveRenditionTextRequestOptions{Body: &apiclient.ResolveRenditionTextBody{NodeID: node.ID, Revision: node.Revision, VersionID: uuid.MustParse(node.CurrentVersionID), BlobHash: node.BlobHash, Size: node.Size, Profile: new(processing.PDFTextProfileName)}})
+				require.NoError(t, err)
+				require.Equal(t, apiclient.Ready, explicit.State)
+				require.Equal(t, processing.PDFTextProfileName, explicit.Profile.Name)
+			} else {
+				require.Equal(t, apiclient.Ready, resolved.State)
+				require.Equal(t, processing.PDFTextProfileName, resolved.Profile.Name)
+			}
+		})
+	}
 }

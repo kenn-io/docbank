@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -124,4 +125,42 @@ func versionIDsForLocalText(items []DocumentSummary) []string {
 		ids[i] = item.ContentVersionID
 	}
 	return ids
+}
+
+func TestPDFTextDiscoveryAndWaitingCoverage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	versions := seedRenditionCatalogVersions(t, s)
+	profile := catalogProcessingProfileWith(t, false, func(profile *document.ProcessingProfileV1) {
+		profile.Rendition.Descriptor.ID = document.PDFTextProviderID
+	})
+	page, err := s.MissingPDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	next, err := s.MissingPDFTextTargetsAfter(t.Context(), profile.Fingerprint, page[0].ContentVersionID, 500<<20, 1)
+	require.NoError(t, err)
+	require.Len(t, next, 1)
+	coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
+	require.NoError(t, err)
+	require.Zero(t, coverage.Pending)
+	require.Zero(t, coverage.NoText)
+	request := renditionJobTestRequest(versions[0], profile)
+	request.ExecutionIdentity.Authorization.ProviderID = document.PDFTextProviderID
+	grantRenditionJobConsent(t, s, request)
+	job, _, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	items, err := s.MissingPDFTextTargetsAfter(t.Context(), profile.Fingerprint, "", 500<<20, 50)
+	require.NoError(t, err)
+	require.NotContains(t, versionIDsForLocalText(items), versions[0])
+	coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, coverage.Pending)
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "pdf-worker", now, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, s.MarkRenditionJobFailed(t.Context(), claim, RenditionFailureTerminal, now))
+	coverage, err = s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil)
+	require.NoError(t, err)
+	require.Zero(t, coverage.Pending)
+	require.Zero(t, coverage.NoText)
 }

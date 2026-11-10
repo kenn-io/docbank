@@ -578,8 +578,8 @@ func (s *Store) RenditionJobWaiterByID(ctx context.Context, id string) (Renditio
 }
 
 // ClaimRenditionJob claims or reclaims one exact job. An expired provider
-// phase without a durable provider handle is atomically quarantined for
-// operator resolution instead of being resubmitted.
+// phase without a durable provider handle is atomically quarantined unless
+// the provider can safely repeat its side-effect-free work.
 func (s *Store) ClaimRenditionJob(
 	ctx context.Context, jobID, owner string, at time.Time, lease time.Duration,
 ) (RenditionJobClaim, error) {
@@ -631,19 +631,20 @@ func (s *Store) ClaimRenditionJob(
 				return ErrRenditionJobLeaseHeld
 			}
 			if renditionJobProviderBoundaryAmbiguous(phase, providerStarted, resume.Valid) {
-				// A photo description has no side effects, so it runs again instead of waiting for an operator.
-				var description bool
-				if err := tx.QueryRowContext(ctx, `SELECT `+metadataJSONDialect{s.postgresSchema != ""}.text("execution_identity_json", "upload.input_kind")+`='derived_upload' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&description); err != nil {
-					return fmt.Errorf("reading rendition job input kind: %w", err)
+				// Photo descriptions and local PDFium text extraction can safely run again.
+				var repeatable bool
+				dialect := metadataJSONDialect{s.postgresSchema != ""}
+				if err := tx.QueryRowContext(ctx, `SELECT `+dialect.text("execution_identity_json", "upload.input_kind")+`='derived_upload' OR `+dialect.text("execution_identity_json", "authorization.provider_id")+`='`+document.PDFTextProviderID+`' FROM rendition_jobs WHERE job_id=$1`, jobID).Scan(&repeatable); err != nil {
+					return fmt.Errorf("reading rendition job retry safety: %w", err)
 				}
-				if description {
+				if repeatable {
 					if _, err := tx.ExecContext(ctx, `
 						UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,
 						lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,
 						selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,
 						authorization_revocation_fence=NULL,failure_code=NULL,updated_at=$1 WHERE job_id=$2`,
 						at.Format(timestampLayout), jobID); err != nil {
-						return fmt.Errorf("requeueing expired photo description: %w", err)
+						return fmt.Errorf("requeueing expired repeatable rendition: %w", err)
 					}
 					state, phase, providerStarted = RenditionJobQueued, RenditionPhaseQueued, false
 				}
@@ -1485,15 +1486,6 @@ func (s *Store) publishRenditionJob(
 			if job.Phase != RenditionPhaseBuildStaged && job.Phase != RenditionPhaseGenerationStaged {
 				return errors.New("rendition job is not ready for publication")
 			}
-			// Capture the final manifest under the publication writer lock so
-			// another publisher cannot make it stale before the head flip.
-			generation, err := stageLexicalGenerationExcludingTx(ctx, tx, nil)
-			if err != nil {
-				return err
-			}
-			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at); err != nil {
-				return err
-			}
 		} else if job.Phase != RenditionPhaseProvider {
 			return errors.New("rendition job is not ready for publication")
 		}
@@ -1643,6 +1635,28 @@ func (s *Store) publishRenditionJob(
 				}
 			}
 		} else {
+			published, err := hasPublishedLexicalHeadTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if !published {
+				if _, err := s.migrateLegacyPlainTextTx(ctx, tx, ""); err != nil {
+					return err
+				}
+			}
+			// Capture the final manifest under the publication writer lock so
+			// another publisher cannot make it stale before the head flip.
+			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID})
+			if errors.Is(err, ErrNotFound) {
+				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil)
+			}
+			if err != nil {
+				return err
+			}
+			if err := rootRenditionJobGenerationTx(ctx, tx, job, claim, generation, at); err != nil {
+				return err
+			}
+			generationID = generation.ID
 			pairs := make([]renditionPublicationPair, 0, len(authorized))
 			for _, authority := range authorized {
 				attachment := RenditionAttachmentRecord{
