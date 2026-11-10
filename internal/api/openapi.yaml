@@ -4883,6 +4883,13 @@ components:
     DocumentSourceFence:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/DocumentSourceFence.json
+          format: uri
+          readOnly: true
+          type: string
         content_version_ids:
           items:
             type: string
@@ -10538,6 +10545,34 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PDFPageGaps:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PDFPageGaps.json
+          format: uri
+          readOnly: true
+          type: string
+        page_coverage:
+          type: string
+        page_coverage_unavailable:
+          type: boolean
+        pages_without_text:
+          items:
+            $ref: "#/components/schemas/PageTextGap"
+          type: array
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+      type: object
+      x-go-type: api.PDFPageGaps
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PDFRedactionAtom:
       additionalProperties: false
       properties:
@@ -30509,6 +30544,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read search by meaning setup status
+  /api/v1/processing/pdf-page-gaps:
+    post:
+      operationId: getPDFPageGaps
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentSourceFence"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PDFPageGaps"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Report bounded PDF page gaps for exact document versions
   /api/v1/processing/plans:
     post:
       operationId: planDocumentProcessing

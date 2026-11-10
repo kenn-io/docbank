@@ -138,11 +138,25 @@ func (service *Service) PDFSourcePagesWithoutText(ctx context.Context, versionID
 	if !ok {
 		return nil, nil
 	}
-	buildID, err := service.catalog.PDFTextCandidate(ctx, versionID, profile.record.Fingerprint)
+	builds, err := service.catalog.PDFTextCandidates(ctx, []string{versionID}, profile.record.Fingerprint)
+	buildID := builds[versionID]
 	if err != nil || buildID == "" {
 		return nil, err
 	}
 	return service.PDFPagesWithoutText(ctx, buildID)
+}
+
+// PDFPageGaps reads bounded page omissions for the exact source fence.
+func (service *Service) PDFPageGaps(ctx context.Context, fence SourceFence) ([]PageTextGap, string, bool, error) {
+	profile, ids, err := service.profileFence(PDFTextProfileName, fence)
+	if err != nil {
+		return nil, "", false, err
+	}
+	builds, err := service.catalog.PDFTextCandidates(ctx, ids, profile.record.Fingerprint)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return readPDFCoveragePage(ctx, ids, builds, service.PDFPagesWithoutText)
 }
 
 // PDFTextRunner admits automatic PDFs through the shared rendition lifecycle.

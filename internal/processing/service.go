@@ -1543,7 +1543,7 @@ func (service *Service) Coverage(ctx context.Context, profileName string, fence 
 	report := Coverage{VaultUID: service.catalog.VaultID(), ProfileFingerprint: profile.record.Fingerprint,
 		State: "complete", Renditions: CoverageClass{Name: "rendition", State: "not_required", Total: len(ids)}}
 	if profileName == PDFTextProfileName {
-		pages, state, unavailable, err := readPDFCoveragePage(ctx, ids, snapshot.RenditionBuilds, service.PDFPagesWithoutText)
+		pages, state, unavailable, err := service.PDFPageGaps(ctx, fence)
 		if err != nil {
 			return Coverage{}, err
 		}
