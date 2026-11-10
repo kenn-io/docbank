@@ -980,7 +980,7 @@ func parseCTTS(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 	track.compositionSamples = samples
 	// Sound-track inspection takes its bounds from the movie and sound, and a
 	// video track's composition offsets cannot lengthen either.
-	if !(info.soundTrackVideo && track.handlerType == "vide") {
+	if !info.soundTrackVideo || track.handlerType != "vide" {
 		info.unknownDuration = true
 	}
 	return true
