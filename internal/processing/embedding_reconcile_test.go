@@ -554,25 +554,37 @@ func (f *watchedMP4Fixture) jobs(t *testing.T, selector Selector) []store.Embedd
 
 func TestWatchedMP4ManualThenAutomaticSendsOnce(t *testing.T) {
 	t.Parallel()
-	f := newWatchedMP4Fixture(t)
-	for index, name := range []string{"published.mp4", "queued.mp4"} {
-		data := []func() []byte{mediatest.H265MP4, mediatest.VP9MP4}[index]()
-		selector := f.add(t, name, data)
-		require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
-		manual := f.enqueue(t, selector, false)
-		before := f.provider.runtime.calls()
-		if name == "published.mp4" {
-			processed, err := f.worker.RunJob(t.Context(), manual)
+	// Each case gets its own worker: discovery waits a minute after a sweep,
+	// so a shared worker would skip discovery in the second case.
+	for _, tc := range []struct {
+		name    string
+		data    func() []byte
+		publish bool
+	}{
+		{name: "published", data: mediatest.H265MP4, publish: true},
+		{name: "queued", data: mediatest.VP9MP4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchedMP4Fixture(t)
+			selector := f.add(t, tc.name+".mp4", tc.data())
+			require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+			manual := f.enqueue(t, selector, false)
+			if tc.publish {
+				processed, err := f.worker.RunJob(t.Context(), manual)
+				require.NoError(t, err)
+				require.True(t, processed)
+			}
+			// Discovery runs before any claim, so in the queued case it sees
+			// the manual job still waiting and must not add an automatic peer.
+			_, err := f.worker.ScanOnce(t.Context())
 			require.NoError(t, err)
-			require.True(t, processed)
-		}
-		_, err := f.worker.ScanOnce(t.Context())
-		require.NoError(t, err)
-		require.Equal(t, before+1, f.provider.runtime.calls())
-		jobs := f.jobs(t, selector)
-		require.Len(t, jobs, 1)
-		require.Equal(t, manual, jobs[0].ID)
-		require.Equal(t, "completed", jobs[0].State)
+			require.Equal(t, 1, f.provider.runtime.calls())
+			jobs := f.jobs(t, selector)
+			require.Len(t, jobs, 1)
+			require.Equal(t, manual, jobs[0].ID)
+			require.Equal(t, "completed", jobs[0].State)
+		})
 	}
 }
 
