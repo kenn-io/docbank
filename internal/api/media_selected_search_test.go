@@ -275,4 +275,25 @@ func TestSelectedMediaSearchFencesDistractorsBeforeLaneLimit(t *testing.T) {
 			require.Equal(t, target.SourceID, evidence.MediaSources[0].SourceID)
 		}
 	}
+	t.Run("hybrid retains distinct lane matches", func(t *testing.T) {
+		monday, grocery := f.manifest.Records[1], f.manifest.Records[3]
+		request := f.request(monday.Profile, "lexical", monday, grocery)
+		request.Query = "Monday"
+		request.Limit = 2
+		lexical, err := client.SearchDocuments(t.Context(), request)
+		require.NoError(t, err)
+		require.Len(t, lexical.Results, 1)
+		require.Equal(t, monday.ContentVersionID, lexical.Results[0].ContentVersionID)
+		request.Mode = "semantic"
+		semantic, err := client.SearchDocuments(t.Context(), request)
+		require.NoError(t, err)
+		require.Len(t, semantic.Results, 1)
+		require.Equal(t, grocery.ContentVersionID, semantic.Results[0].ContentVersionID)
+		request.Mode = "hybrid"
+		hybrid, err := client.SearchDocuments(t.Context(), request)
+		require.NoError(t, err)
+		require.Len(t, hybrid.Results, 2)
+		require.ElementsMatch(t, []string{monday.ContentVersionID, grocery.ContentVersionID},
+			[]string{hybrid.Results[0].ContentVersionID, hybrid.Results[1].ContentVersionID})
+	})
 }

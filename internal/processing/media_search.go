@@ -73,7 +73,7 @@ func (service *Service) searchMediaSources(
 		if err != nil {
 			return retrieval.Report{}, err
 		}
-		query := retrieval.Query{Text: request.Query, Mode: mode, Limit: max(profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit),
+		query := retrieval.Query{Text: request.Query, Mode: mode, Limit: max(prepared.limit, profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit),
 			LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
 			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID, Authorization: prepared.authorization}
 		func() {
