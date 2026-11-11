@@ -488,7 +488,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.press("Enter");
   const frozen = page.getByRole("region", { name: "Frozen query results" });
   await expect(
-    frozen.getByText("Across the current vault, 2 PDFs have 4 pages without a text layer."),
+    frozen.getByText("Across the current vault: 4 pages lack a text layer in 2 PDFs."),
   ).toBeVisible();
   await expect(frozen.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({

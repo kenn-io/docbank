@@ -2143,31 +2143,40 @@ it.each([
   }
 });
 
-it("shows current vault PDF gaps for an empty frozen query", async () => {
-  const { fetchMock } = renderEmptySearch(async () =>
-    json(textCoverage({ pdfs_without_text: 2, pages_without_text: 3 })),
-  );
-  await screen.findAllByText("report.txt");
-  await fireEvent.click(
-    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-  );
-  await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
-  await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
-  await submitSearch("missing");
-  const results = await screen.findByRole("region", { name: "Frozen query results" });
-  expect(
-    await within(results).findByText(
-      "Across the current vault, 2 PDFs have 3 pages without a text layer.",
-    ),
-  ).toBeTruthy();
-  expect(within(results).getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
-  const request = fetchMock.mock.calls
-    .map(([url]) => String(url))
-    .filter((url) => url.startsWith("/api/v1/search/text-coverage"))
-    .at(-1);
-  expect(new URL(request!, "https://example.com").search).toBe("");
-});
+it.each([
+  [2, 3, false, "Across the current vault: 3 pages lack a text layer in 2 PDFs."],
+  [1, 1, false, "Across the current vault: 1 page lacks a text layer in 1 PDF."],
+  [2, 3, true, "Across the current vault: at least 3 pages lack a text layer in at least 2 PDFs."],
+])(
+  "shows current vault PDF gaps for an empty frozen query",
+  async (pdfs, pages, partial, message) => {
+    const { fetchMock } = renderEmptySearch(async () =>
+      json(
+        textCoverage({
+          pdfs_without_text: pdfs,
+          pages_without_text: pages,
+          pdf_page_coverage_partial: partial,
+        }),
+      ),
+    );
+    await screen.findAllByText("report.txt");
+    await fireEvent.click(
+      screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+    );
+    await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
+    await submitSearch("missing");
+    const results = await screen.findByRole("region", { name: "Frozen query results" });
+    expect(await within(results).findByText(message)).toBeTruthy();
+    expect(within(results).getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
+    const request = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.startsWith("/api/v1/search/text-coverage"))
+      .at(-1);
+    expect(new URL(request!, "https://example.com").search).toBe("");
+  },
+);
 
 it("keeps the empty search quiet when coverage fails", async () => {
   const coverage = vi.fn(async () => new Response("failure", { status: 500 }));

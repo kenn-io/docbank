@@ -1246,7 +1246,9 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const pdfCoverageDescription = $derived(
     pdfCoverage?.pdfs_without_text
-      ? `${snapshotActive ? "Across the current vault, " : ""}${pdfCoverageIncomplete ? (snapshotActive ? "at least " : "At least ") : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
+      ? snapshotActive
+        ? `Across the current vault: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? " lacks" : "s lack"} a text layer in ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? "" : "s"}.`
+        : `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
       : pdfCoverageIncomplete
         ? `${snapshotActive ? "Across the current vault, PDF" : "PDF"} text coverage is incomplete; some pages may not be searchable.`
         : undefined,
