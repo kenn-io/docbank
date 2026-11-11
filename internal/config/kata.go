@@ -87,7 +87,7 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		u.Opaque != "" || u.RawPath != "" || u.Path != "" && u.Path != "/" ||
 		u.Scheme != "https" && u.Scheme != "http" {
-		return KataConnection{}, errors.New("integrations.kata: invalid endpoint; use HTTPS or loopback HTTP")
+		return KataConnection{}, errors.New("integrations.kata: invalid endpoint; omit credentials, query, fragment, and path beyond /; use HTTPS, loopback HTTP, or trusted private HTTP with trust_private_network = true")
 	}
 	if u.Scheme == "http" {
 		if _, err := embedconfig.CanonicalEndpoint(u.String(), k.TrustPrivateNetwork); err != nil {

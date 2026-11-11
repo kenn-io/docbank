@@ -95,7 +95,7 @@ func TestKataEndpointRestrictionsAndNormalization(t *testing.T) {
 		"http://kata:7777/#synthetic-secret", "http://kata:7777/prefix", "http://kata:7777/%2f", "ftp://kata:7777", "http:opaque",
 	} {
 		_, err := kataEndpointConfig(t, endpoint, true).Resolve("")
-		require.ErrorContains(t, err, "invalid endpoint")
+		require.ErrorContains(t, err, "omit credentials, query, fragment, and path")
 		require.NotContains(t, err.Error(), "synthetic-secret")
 	}
 	for _, tc := range []struct{ raw, want string }{
