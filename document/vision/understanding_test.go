@@ -136,7 +136,7 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":""} trailing`,
 		`{"visible_text":"` + strings.Repeat("x", 16385) + `","literal_description":"","possible_meaning":"","uncertainty":""}`,
 	} {
-		_, err := parseUnderstanding([]byte(raw))
+		_, _, err := parseUnderstanding([]byte(raw))
 		assert.Error(t, err, "reply %q", raw[:min(len(raw), 100)])
 	}
 }

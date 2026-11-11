@@ -1,7 +1,9 @@
 package vision
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"strings"
@@ -31,17 +33,37 @@ type understanding struct {
 	Uncertainty        *string `json:"uncertainty"`
 }
 
-func parseUnderstanding(raw []byte) (understanding, error) {
-	var value understanding
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return value, err
+// firstObject decodes the JSON object of a reply into target and returns its
+// bytes, so a preface or code fence around it is neither parsed nor stored.
+// Anything else after the object is rejected.
+func firstObject(raw []byte, target *understanding) ([]byte, error) {
+	start := bytes.IndexByte(raw, '{')
+	if start < 0 {
+		return nil, errors.New("image understanding reply has no JSON object")
+	}
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw[start:]))
+	object, err := decoder.ReadValue()
+	if err != nil {
+		return nil, err
+	}
+	if rest := bytes.TrimSpace(raw[start+int(decoder.InputOffset()):]); len(rest) != 0 && string(rest) != "```" {
+		return nil, errors.New("image understanding reply has text after the JSON object")
+	}
+	object = object.Clone()
+	return object, json.Unmarshal(object, target)
+}
+
+// parseUnderstanding returns the value and the JSON object it came from.
+func parseUnderstanding(raw []byte) (value understanding, object []byte, err error) {
+	if object, err = firstObject(raw, &value); err != nil {
+		return value, nil, err
 	}
 	for _, field := range []*string{value.VisibleText, value.LiteralDescription, value.PossibleMeaning, value.Uncertainty} {
 		if field == nil || len(*field) > document.MaxPhotoTextBytes || strings.ContainsRune(*field, 0) {
-			return understanding{}, errors.New("image understanding requires four bounded text fields")
+			return understanding{}, nil, errors.New("image understanding requires four bounded text fields")
 		}
 	}
-	return value, nil
+	return value, object, nil
 }
 
 type understandingSection struct {
@@ -95,7 +117,7 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	value, err := parseUnderstanding(raw)
+	value, raw, err := parseUnderstanding(raw)
 	if err != nil {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "invalid image understanding result", err)
 	}

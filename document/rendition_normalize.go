@@ -9,6 +9,9 @@ import (
 	"unicode/utf8"
 )
 
+// renditionUnitSeparator joins readable units in the rendition body.
+const renditionUnitSeparator = "\n\n---\n\n"
+
 // BuildRenditionV1 derives sanitized Markdown, normalized units, and lexical
 // spans from exactly one validated normalized-evidence/v1 authority.
 func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (RenditionV1, error) {
@@ -35,10 +38,10 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	truncated := false
 	for _, evidenceUnit := range evidence.Units {
 		presentation := renditionPresentation(evidenceUnit, len(markdownUnits) == 0)
-		overhead := utf8.RuneCountInString(presentation + strings.Repeat("\n\n---\n\n", min(len(markdownUnits), 1)))
+		overhead := utf8.RuneCountInString(presentation + strings.Repeat(renditionUnitSeparator, min(len(markdownUnits), 1)))
 		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
-		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionMarkdown(
-			renditionSourceText(evidenceUnit), policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
+		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionUnit(
+			evidenceUnit, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)
@@ -61,7 +64,7 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		return RenditionV1{}, invalidRenditionError("evidence produced no readable text")
 	}
 	if len(markdownUnits) > 0 {
-		result.Markdown = []byte(strings.Join(markdownUnits, "\n\n---\n\n") + "\n")
+		result.Markdown = []byte(strings.Join(markdownUnits, renditionUnitSeparator) + "\n")
 	}
 	result.MarkdownChecksum = checksumBytes(result.Markdown)
 	result.Checksum = renditionChecksum(result)
