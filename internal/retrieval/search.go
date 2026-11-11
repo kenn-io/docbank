@@ -186,6 +186,16 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if rerankingDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, rerankingDegradation)
 	}
+	for i := range report.Results {
+		count := 0
+		for offset := range report.Results[i].Excerpt {
+			if count == 512 {
+				report.Results[i].Excerpt = report.Results[i].Excerpt[:offset]
+				break
+			}
+			count++
+		}
+	}
 	return report, nil
 }
 

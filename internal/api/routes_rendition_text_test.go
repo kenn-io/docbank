@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -56,11 +57,11 @@ type renditionTextFixture struct {
 
 func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config, node store.Node) renditionTextFixture {
 	t.Helper()
-	return publishRenditionTextSourceFixture(t, s, cfg, node, "Verified alpha <script>alert('blocked')</script>")
+	return publishRenditionTextSourceFixture(t, s, cfg, node, "Verified alpha <script>alert('blocked')</script>", `{"provider":"synthetic","request_id":"db17"}`)
 }
 
 func publishRenditionTextSourceFixture(
-	t *testing.T, s *testStore, cfg config.Config, node store.Node, source string,
+	t *testing.T, s *testStore, cfg config.Config, node store.Node, source, providerReceipt string,
 ) renditionTextFixture {
 	t.Helper()
 	resolved, err := cfg.ProcessingProfile("archive")
@@ -114,7 +115,7 @@ func publishRenditionTextSourceFixture(
 		EvidenceLexicalFingerprint:        profile.EvidenceLexicalFingerprint,
 		CapturedArtifactPolicyFingerprint: testHash(string(policy)), CapturedArtifactPolicy: policy,
 		AuthorizationChecksum: testHash("publication-authorization"), ProviderOperationID: "synthetic-pdf-operation",
-		ProviderReceipt:  jsontext.Value(`{"provider":"synthetic","request_id":"db17"}`),
+		ProviderReceipt:  jsontext.Value(providerReceipt),
 		EvidenceChecksum: evidenceHash, RenditionChecksum: rendition.Checksum,
 		MarkdownChecksum: rendition.MarkdownChecksum, Completeness: document.EvidenceComplete,
 		CompletedAt: "2026-09-11T12:00:00.000000000Z", DeclaredArtifactCount: 2,
@@ -203,6 +204,35 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	params.Set("artifact_id", "artifact_"+testHash("wrong-artifact"))
 	badResp, badBody := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
 	assert.Equal(t, http.StatusConflict, badResp.StatusCode, badBody)
+}
+
+func TestRenditionTextHTTPReportsSelectedBuildProvider(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, receipt, provider string }{
+		{"image", `{"provider_id":"compatible-vision.understand-v1"}`, "compatible-vision.understand-v1"},
+		{"other", `{"provider_id":"supplied-text"}`, "supplied-text"},
+		{"local", `{"provider":"synthetic"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg config.Config
+			ts, s := newTestServer(t, func(d *api.Deps) { renditionTextConfig(d); cfg = d.Cfg })
+			hash, size, err := s.Blobs.WriteContext(t.Context(), strings.NewReader("synthetic source"))
+			require.NoError(t, err)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.pdf", hash, size, "application/pdf")
+			require.NoError(t, err)
+			fixture := publishRenditionTextSourceFixture(t, s, cfg, node, "# Machine-generated image understanding\n\nA literal \\ slash.", tc.receipt)
+			params := url.Values{"node_id": {strconv.FormatInt(node.ID, 10)}, "revision": {strconv.FormatInt(node.Revision, 10)},
+				"version_id": {node.CurrentVersionID}, "blob_hash": {node.BlobHash}, "size": {strconv.FormatInt(node.Size, 10)},
+				"profile_fingerprint": {fixture.profile.Fingerprint}, "generation_id": {fixture.generation},
+				"attachment_id": {fixture.attachment}, "build_id": {fixture.build}, "artifact_id": {fixture.artifact}}
+			response, content := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
+			require.Equal(t, http.StatusOK, response.StatusCode, content)
+			assert.Equal(t, tc.provider, response.Header.Get("X-Docbank-Rendition-Provider-Id"))
+			assert.Equal(t, fixture.markdown, []byte(content))
+			digest := sha256.Sum256(fixture.markdown)
+			assert.Equal(t, base64.StdEncoding.EncodeToString(digest[:]), strings.TrimSuffix(strings.TrimPrefix(response.Header.Get("Content-Digest"), "sha-256=:"), ":"))
+		})
+	}
 }
 
 func TestRenditionTextHTTPKeepsUnavailableStatesDistinct(t *testing.T) {

@@ -464,6 +464,22 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 			assert.Equal(t, cmp.Or(test.lexical, test.semantic), ranked.Results[0].Excerpt)
 		})
 	}
+	t.Run("long semantic excerpt", func(t *testing.T) {
+		searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+		full := strings.Repeat("é", 600)
+		backend.semantic[0].Excerpt = full
+		reranker := &stageReranker{}
+		searcher.reranking = RerankingConfig{Enabled: true,
+			Profile: RerankingProfile{ID: "reranking", MaxCandidates: 1}, Provider: reranker,
+			Authorizer: &stageAuthorizer{}, Deadline: time.Second, FailurePolicy: ProviderFailureDegrade}
+		report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic, Limit: 1,
+			ProcessingProfileFingerprint: "profile", BindingID: "required", Authorization: retrievalAuthorization(descriptor)})
+		require.NoError(t, err)
+		require.Len(t, reranker.candidates, 1)
+		assert.Equal(t, full, reranker.candidates[0].Excerpt)
+		require.Len(t, report.Results, 1)
+		assert.Equal(t, strings.Repeat("é", 512), report.Results[0].Excerpt)
+	})
 }
 
 func TestSearcherSemanticRerankingFailsClosedWithoutExcerpt(t *testing.T) {

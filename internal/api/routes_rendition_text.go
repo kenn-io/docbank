@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -230,6 +232,10 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				return nil, NewError(http.StatusRequestEntityTooLarge, "rendition_text_too_large",
 					"The verified text rendition exceeds the browser text limit.")
 			}
+			var receipt document.RenditionReceipt
+			if err := json.Unmarshal(view.Rendition.Build.ProviderReceipt, &receipt); err != nil {
+				return nil, NewError(http.StatusInternalServerError, "rendition_text_corrupt", "The verified text rendition provider receipt is invalid.")
+			}
 			stream, size, err := d.Blobs.OpenStreamContext(ctx, view.Artifact.BlobHash)
 			if err != nil {
 				return nil, NewError(http.StatusServiceUnavailable, "rendition_text_unavailable",
@@ -262,6 +268,7 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				hctx.SetHeader("X-Docbank-Rendition-Attachment", in.AttachmentID)
 				hctx.SetHeader("X-Docbank-Rendition-Build", in.BuildID)
 				hctx.SetHeader("X-Docbank-Rendition-Artifact", in.ArtifactID)
+				hctx.SetHeader("X-Docbank-Rendition-Provider-ID", receipt.ProviderID)
 				hctx.SetHeader("Content-Digest", contentDigest(digest[:]))
 				_, _ = hctx.BodyWriter().Write(body)
 			}}, nil
