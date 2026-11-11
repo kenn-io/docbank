@@ -120,9 +120,10 @@ anything. Generated and supplied profiles retain separate authority; a mixed
 scope can therefore have incomplete embedding coverage even when every
 transcript is ready.
 
-`media_selections` names each selected `build_id`, its origin and supplied
-input. Semantic evidence keeps `kind: "embedding"` and its input, generation,
-set and vector-space identities. It has no lexical `segment_id`. Its excerpt
+`media_selections` names each selected source, its origin and supplied
+input. Search evidence carries the `build_id`. Semantic evidence keeps
+`kind: "embedding"` and its input, generation, set and vector-space identities.
+It has no lexical `segment_id`. Its excerpt
 and optional timing come from the authenticated embedding input. Hybrid
 results may combine lexical and embedding references from the same build;
 the lexical excerpt takes precedence when both contribute. Use that

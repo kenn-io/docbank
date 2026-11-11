@@ -856,7 +856,7 @@ before ranking and limits, including while a retry is pending.
 
 These reports include `media_source_selection: true`, even without matches.
 `media_selections` lists each final-stable eligible source tuple with its actual
-`build_id`, `origin`, `supplied_input_id` when supplied, and `completeness`, independent of
+`origin`, `supplied_input_id` when supplied, and `completeness`, independent of
 query matches. Unready or input-excluded sources are omitted; an empty selection
 summary is `[]`. Ordinary search omits the summary.
 Each selected content/build pair has its own result. Its evidence carries
