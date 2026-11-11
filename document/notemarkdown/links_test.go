@@ -87,6 +87,22 @@ func TestLinksSyntaxDecodeOnly(t *testing.T) {
 	require.Equal(t, []string{"n(x).md?x=&", "a%2Fb.md", "&amp;%2F"}, linkTargets(n.Links))
 }
 
+func TestBareDestinationsRejectASCIIControls(t *testing.T) {
+	control := string([]byte{1})
+	for _, src := range []string{
+		"[a](x" + control + "y)",
+		"[a][r]\n\n[r]: x" + control + "y\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		require.Empty(t, n.Links)
+	}
+	// The existing angle-destination contract remains unchanged.
+	n, err := Parse(t.Context(), []byte("[a](<x"+control+"y>)"), Limits{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"x" + control + "y"}, linkTargets(n.Links))
+}
+
 func TestLinksRepeatedReferenceBudget(t *testing.T) {
 	src := []byte(strings.Repeat("[x][r] ", 5000) + "\n\n[r]: " + strings.Repeat("a", 4096) + "\n")
 	n, err := Parse(t.Context(), src, Limits{})

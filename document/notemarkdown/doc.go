@@ -34,6 +34,8 @@
 // Forms are markdown (including autolinks), reference, image, wikilink and embed.
 // Parenthesized link titles reject unescaped opening parentheses in inline and
 // reference forms; backslash-escaped punctuation remains literal.
+// Bare link destinations reject ASCII control bytes; angle destinations retain
+// their existing contract.
 // Raw spans the whole occurrence. Targets decode Markdown syntax where allowed,
 // split at the first structural #, then percent-decode each component once.
 // Autolinks retain literal entity/backslash spelling. Invalid escapes, decoded
