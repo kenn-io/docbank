@@ -28,6 +28,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 			return
 		}
 		assert.Contains(t, body.Messages[0].Content[0].Text, "Do not infer")
+		assert.Contains(t, body.Messages[0].Content[0].Text, "Each field must be at most 16384 UTF-8 bytes.")
 		assert.Equal(t, "data:image/png;base64,"+base64.StdEncoding.EncodeToString([]byte("synthetic-image")), body.Messages[0].Content[1].ImageURL.URL)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(visiontest.Completion(raw))
