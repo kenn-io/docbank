@@ -342,9 +342,9 @@ func TestInspectMP4RejectsSecondSoundTrack(t *testing.T) {
 	second := bytes.Clone(data[track:])
 	binary.BigEndian.PutUint32(second[bytes.Index(second, []byte("tkhd"))+16:], 2)
 	stco := bytes.Index(second, []byte("stco")) + 12
-	binary.BigEndian.PutUint32(second[stco:stco+4], uint32(mdat+12)) //nolint:gosec // tiny fixture
+	binary.BigEndian.PutUint32(second[stco:stco+4], uint32(mdat+12))
 	data = append(data, second...)
-	binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie)) //nolint:gosec // tiny fixture
+	binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie))
 
 	audio := inspectionPolicy(data, "call.m4a", "audio/mp4")
 	audio.MaxDurationMS = 1000
