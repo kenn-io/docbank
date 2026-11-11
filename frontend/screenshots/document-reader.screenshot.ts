@@ -463,11 +463,6 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     const dialog = page.getByRole("dialog", { name: "Extract text" });
     const extract = dialog.getByRole("button", { name: "Extract text", exact: true });
     await expect(extract).toBeEnabled();
-    if (file.startsWith("mixed"))
-      await page.screenshot({
-        path: path.join(output!, "pdf-extraction.png"),
-        clip: { x: 0, y: 0, width: 1440, height: 610 },
-      });
     await extract.click();
     await expect(dialog.getByText("Text extracted.")).toBeVisible({ timeout: 30000 });
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
