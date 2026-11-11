@@ -241,11 +241,14 @@ func (track *mp4TrackInfo) proveQuickTimeSoundPackets() bool {
 	for offset := 0; offset+8 <= len(timing); offset += 8 {
 		count := uint64(binary.BigEndian.Uint32(timing[offset : offset+4]))
 		delta := uint64(binary.BigEndian.Uint32(timing[offset+4 : offset+8]))
-		if runs > 0 && deltas[runs-1] == delta {
-			counts[runs-1] += count
+		switch {
+		case runs == 1 && deltas[0] == delta:
+			counts[0] += count
 			continue
-		}
-		if runs == len(counts) {
+		case runs == 2 && deltas[1] == delta:
+			counts[1] += count
+			continue
+		case runs == 2:
 			return false
 		}
 		counts[runs], deltas[runs] = count, delta

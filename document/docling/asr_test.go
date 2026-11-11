@@ -725,7 +725,7 @@ func TestDoclingASRQuickTimeUploadAndTiming(t *testing.T) {
 			return
 		}
 		result := asrResultResponse(t, sent.Filename, fixture.metadata.SHA256, "1.10.0", 0.625)
-		asrJSONContent(t, result)["origin"].(map[string]any)["mimetype"] = sent.MediaType
+		asrAssertType[map[string]any](t, asrJSONContent(t, result)["origin"])["mimetype"] = sent.MediaType
 		writeJSON(t, w, result)
 	}))
 	t.Cleanup(server.Close)

@@ -403,8 +403,8 @@ func TestInspectQuickTimeAudioTrack(t *testing.T) {
 			return b
 		}, false},
 		{"bad descriptor", "phone.mov", "video/quicktime", func(b []byte) []byte { b[bytes.Index(b, []byte("esds"))+8] = 0; return b }, false},
-		{"duplicate descriptor", "phone.mov", "video/quicktime", func(b []byte) []byte { copy(b[bytes.Index(b, []byte("chan")):], "esds"); return b }, false},
-		{"ambiguous wave", "phone.mov", "video/quicktime", func(b []byte) []byte { copy(b[bytes.Index(b, []byte("frma")):], "esds"); return b }, false},
+		{"duplicate descriptor", "phone.mov", "video/quicktime", func(b []byte) []byte { copy(b[fixtureIndex(b, "chan"):], "esds"); return b }, false},
+		{"ambiguous wave", "phone.mov", "video/quicktime", func(b []byte) []byte { copy(b[fixtureIndex(b, "frma"):], "esds"); return b }, false},
 		{"external reference", "phone.mov", "video/quicktime", func(b []byte) []byte { b[bytes.LastIndex(b, []byte("url "))+7] = 0; return b }, false},
 		{"empty sound edit", "phone.mov", "video/quicktime", func(b []byte) []byte {
 			binary.BigEndian.PutUint32(b[bytes.LastIndex(b, []byte("elst"))+16:], 0xffffffff)
@@ -571,4 +571,13 @@ func TestInspectQuickTimeEquivalentTimingRuns(t *testing.T) {
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)
+}
+
+// fixtureIndex returns the first offset of name in a fixture that must hold it.
+func fixtureIndex(b []byte, name string) int {
+	i := bytes.Index(b, []byte(name))
+	if i < 0 {
+		panic("fixture lacks " + name)
+	}
+	return i
 }
