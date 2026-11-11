@@ -9,17 +9,3 @@ if (typeof window !== "undefined") {
       removeListener() {},
     }) as MediaQueryList;
 }
-
-// jsdom has no Web Animations API. Svelte transitions finish immediately in tests.
-if (typeof Element !== "undefined" && !Element.prototype.animate) {
-  Element.prototype.animate = function () {
-    const animation = {
-      currentTime: 0,
-      playState: "finished",
-      onfinish: null as (() => void) | null,
-      cancel() {},
-    };
-    queueMicrotask(() => animation.onfinish?.());
-    return animation as unknown as Animation;
-  };
-}

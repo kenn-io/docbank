@@ -1,7 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { hmac } from "@noble/hashes/hmac.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { daemonProof } from "./upload-test-fixtures.js";
 import { UploadReconnect, type UploadConnectionState } from "./uploadReconnect.js";
 
 const sockets: Socket[] = [];
@@ -19,15 +17,7 @@ class Socket extends EventTarget {
   send(data: string): void {
     const message = JSON.parse(data) as { type: string; nonce: string };
     if (message.type !== "authenticate") throw new Error("Unexpected upload frame");
-    const bytes = hmac(
-      sha256,
-      new Uint8Array(32).fill(1),
-      utf8ToBytes(`docbank-web-upload-v1\u0000session\u0000${message.nonce}`),
-    );
-    const proof = btoa(String.fromCharCode(...bytes))
-      .replaceAll("+", "-")
-      .replaceAll("/", "_")
-      .replace(/=+$/, "");
+    const proof = daemonProof("session", message.nonce);
     queueMicrotask(() =>
       this.dispatchEvent(
         new MessageEvent("message", {
@@ -68,24 +58,41 @@ it("reconnects a dropped channel without sending upload frames", async () => {
   connection.close();
 });
 
-it("offers a manual retry after failed attempts and stops for a rejected session", async () => {
+it.each([401, 403])(
+  "offers a manual retry and stops for a rejected session: %s",
+  async (status) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", Socket);
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const states: UploadConnectionState[] = [];
+    const connection = new UploadReconnect(session, (state) => states.push(state));
+    connection.start();
+    await vi.waitFor(() => expect(states).toEqual(["connected"]));
+    rejectConnections = true;
+    sockets[0].disconnect();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(states.at(-1)).toBe("failed");
+    fetcher.mockResolvedValue(new Response("{}", { status }));
+    connection.retry();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(states.slice(-2)).toEqual(["manual", "fatal"]);
+    connection.close();
+  },
+);
+
+it("disposes a pending retry without opening another connection", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("WebSocket", Socket);
-  const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
-  vi.stubGlobal("fetch", fetcher);
   const states: UploadConnectionState[] = [];
   const connection = new UploadReconnect(session, (state) => states.push(state));
   connection.start();
   await vi.waitFor(() => expect(states).toEqual(["connected"]));
-  rejectConnections = true;
   sockets[0].disconnect();
-  await vi.advanceTimersByTimeAsync(4000);
-  expect(states.at(-1)).toBe("failed");
-  fetcher.mockResolvedValue(new Response("{}", { status: 401 }));
-  connection.retry();
-  await vi.advanceTimersByTimeAsync(250);
-  expect(states.slice(-2)).toEqual(["manual", "fatal"]);
   connection.close();
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(sockets).toHaveLength(1);
+  expect(states).toEqual(["connected", "reconnecting"]);
 });
 
 it("stops when the new daemon proof is wrong", async () => {

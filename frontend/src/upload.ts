@@ -190,6 +190,7 @@ interface UploadMessage {
   mime_type?: string;
   expected_hash?: string;
   expected_size?: number;
+  check_existing?: boolean;
   receipt?: UploadReceipt;
   status?: number;
   code?: string;
@@ -203,6 +204,7 @@ export interface UploadTransport {
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    checkExisting?: boolean,
   ): Promise<UploadReceipt>;
 }
 
@@ -291,6 +293,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     expectedHash: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    checkExisting = false,
   ): Promise<UploadReceipt> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
@@ -310,10 +313,20 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         mime_type: file.type || "application/octet-stream",
         expected_hash: expectedHash,
         expected_size: file.size,
+        check_existing: checkExisting,
       });
       const ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
       this.requireMessage(ready, requestID);
       this.throwProblem(ready);
+      if (checkExisting && ready.type === "receipt" && ready.receipt?.status === "skipped") {
+        try {
+          validateUploadReceipt(ready.receipt, parentID, name, expectedHash, file.size);
+        } catch (cause) {
+          this.fail();
+          throw new UploadChannelError(cause instanceof Error ? cause.message : String(cause));
+        }
+        return ready.receipt;
+      }
       if (ready.type !== "ready") throw this.protocolError();
       readyForBytes = true;
       const terminal = await this.transmit(requestID, file, signal, onprogress);

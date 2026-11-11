@@ -114,22 +114,6 @@
   let importID = $state("");
   let sourceID = "";
   let plannedChannel: PhotoImportTransport | undefined;
-  let reconnectPlanNeeded = $state(false);
-  $effect(() => {
-    const current = channel;
-    if (
-      current !== plannedChannel &&
-      selectedFiles.length &&
-      !disabledReason &&
-      !running &&
-      !planning &&
-      checkpointReady
-    ) {
-      plannedChannel = current;
-      reconnectPlanNeeded = true;
-      void plan(false, Boolean(sourceID));
-    }
-  });
   let plannedDestination = $state("");
   let running = $state(false);
   let planning = $state(false);
@@ -192,8 +176,6 @@
     }
     pickerKind = kind;
     sourceID = "";
-    plannedChannel = channel;
-    reconnectPlanNeeded = false;
     selectedFiles = files;
     await plan(true);
   }
@@ -210,9 +192,6 @@
     }
     const files = selectedFiles;
     const previousItems = reconnect ? items : [];
-    const previousByFile = new Map(
-      previousItems.flatMap((item) => item.files.map((file) => [file, item] as const)),
-    );
     const planChannel = channel;
     const target = destination;
     const currentStorage = storage;
@@ -220,7 +199,6 @@
     const active = new AbortController();
     controller = active;
     planning = true;
-    plannedDestination = "";
     if (!reconnect) {
       items = [];
       for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
@@ -258,48 +236,50 @@
         },
       );
       hashProgress = undefined;
-      if (!sessionOnly) {
+      if (
+        reconnect &&
+        (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
+      )
+        return;
+      if (
+        reconnect &&
+        (plan.groups.length !== previousItems.length ||
+          plan.groups.some(
+            (group, index) =>
+              group.length !== previousItems[index].files.length ||
+              group.some(
+                (fileIndex, member) => files[fileIndex] !== previousItems[index].files[member],
+              ),
+          ))
+      )
+        throw new Error("The selected photo groups changed. Select the files again.");
+      if (!reconnect && !sessionOnly) {
         try {
           await currentStorage.replace(plan.groups.length ? next : undefined, expected);
         } catch (cause) {
           if (!useSessionOnly(cause)) throw cause;
         }
       }
-      if (active.signal.aborted || destroyed) return;
-      checkpoint = plan.groups.length ? next : undefined;
+      if (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
+        return;
+      if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       if (!plan.groups.length) resuming = false;
       plannedDestination = target;
       sourceID = next.sourceID;
       plannedChannel = planChannel;
-      reconnectPlanNeeded = false;
       items = plan.groups.map((group, index) => {
         const groupFiles = group.map((index) => files[index]);
-        const overlapping = [
-          ...new Set(
-            groupFiles
-              .map((file) => previousByFile.get(file))
-              .filter((item): item is Item => Boolean(item)),
-          ),
-        ];
-        const fileSet = new Set(groupFiles);
-        const exact =
-          overlapping.length === 1 &&
-          overlapping[0].files.length === groupFiles.length &&
-          overlapping[0].files.every((file) => fileSet.has(file))
-            ? overlapping[0]
-            : undefined;
-        const uncertain = overlapping.some((item) => !["ready", "failed"].includes(item.state));
+        const previous = previousItems[index];
         return {
           group: index,
           files: groupFiles,
-          hashes: group.map((index) => plan.hashes?.get(files[index]) ?? ""),
-          state: exact?.state ?? (uncertain ? "unconfirmed" : "ready"),
-          error:
-            exact?.error ??
-            (uncertain
-              ? "Import outcome is unconfirmed. Inspect the destination before retrying."
-              : undefined),
-          progress: exact?.progress ?? {
+          hashes: group.map(
+            (fileIndex, member) =>
+              previous?.hashes[member] || plan.hashes?.get(files[fileIndex]) || "",
+          ),
+          state: previous?.state ?? "ready",
+          error: previous?.error,
+          progress: previous?.progress ?? {
             processed: 0,
             total: groupFiles.reduce((sum, file) => sum + file.size, 0),
           },
@@ -334,8 +314,11 @@
   }
 
   async function start(): Promise<void> {
-    if (running || planning || disabledReason || !checkpointReady || reconnectPlanNeeded) return;
-    if (plannedDestination !== destination) await plan();
+    if (running || planning || disabledReason || !checkpointReady || !pending) return;
+    const runChannel = channel;
+    if (plannedDestination !== destination || plannedChannel !== runChannel) {
+      await plan(false, plannedDestination === destination && Boolean(sourceID));
+    }
     if (
       destroyed ||
       running ||
@@ -343,9 +326,12 @@
       !checkpointReady ||
       !pending ||
       disabledReason ||
-      plannedDestination !== destination
+      plannedDestination !== destination ||
+      plannedChannel !== runChannel ||
+      channel !== runChannel
     )
       return;
+    const runImportID = importID;
     running = true;
     stopping = false;
     controller = new AbortController();
@@ -372,8 +358,8 @@
         setState(item, item.hashes.includes("") ? "hashing" : "uploading");
         let transmissionStarted = false;
         try {
-          const receipt = await channel.uploadPhotoGroup(
-            importID,
+          const receipt = await runChannel.uploadPhotoGroup(
+            runImportID,
             item.group,
             item.files,
             controller.signal,
@@ -540,12 +526,7 @@
       </ul>
       <div class="controls">
         <Button
-          disabled={!checkpointReady ||
-            running ||
-            planning ||
-            !pending ||
-            !!disabledReason ||
-            reconnectPlanNeeded}
+          disabled={!checkpointReady || running || planning || !pending || !!disabledReason}
           onclick={() => void start()}>Add {pending} group{pending === 1 ? "" : "s"}</Button
         >
         {#if running}<Button disabled={stopping} onclick={() => (stopping = true)}

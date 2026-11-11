@@ -96,6 +96,7 @@ describe("upload documents drawer", () => {
         hash,
         expect.any(AbortSignal),
         expect.any(Function),
+        false,
       );
     },
   );
@@ -287,6 +288,14 @@ describe("upload documents drawer", () => {
     expect(screen.getByText(/Retry this file to check whether it was added/)).toBeTruthy();
     expect(channel.uploadFile).toHaveBeenCalledOnce();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    vi.mocked(channel.uploadFile).mockRejectedValue(new upload.UploadChannelError("Lookup failed"));
+    await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
+    await waitFor(() => expect(channel.uploadFile).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Unconfirmed")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
+    await waitFor(() => expect(channel.uploadFile).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(channel.uploadFile).mock.calls[1][5]).toBe(true);
+    expect(vi.mocked(channel.uploadFile).mock.calls[2][5]).toBe(true);
   });
 });
 

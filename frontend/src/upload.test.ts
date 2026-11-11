@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { hmac } from "@noble/hashes/hmac.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { daemonProof } from "./upload-test-fixtures.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UploadReceipt } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
@@ -24,17 +23,6 @@ function oversizedPhotoFiles(): File[] {
     Object.defineProperty(file, "webkitRelativePath", { value: `${folder}/${file.name}` });
     return file;
   });
-}
-
-function daemonProof(nonce: string): string {
-  const proofBytes = hmac(
-    sha256,
-    new Uint8Array(32).fill(1),
-    utf8ToBytes(`docbank-web-upload-v1\u0000${testToken}\u0000${nonce}`),
-  );
-  let proof = "";
-  for (const byte of proofBytes) proof += String.fromCharCode(byte);
-  return btoa(proof).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
 class DaemonSocket extends EventTarget {
@@ -78,7 +66,7 @@ class DaemonSocket extends EventTarget {
       files?: { expected_hash: string }[];
     };
     if (message.type === "authenticate" && this.authenticate) {
-      this.emit({ type: "authenticated", proof: daemonProof(message.nonce ?? "") });
+      this.emit({ type: "authenticated", proof: daemonProof(testToken, message.nonce ?? "") });
     } else if (message.type === "plan_photo_import") {
       if (this.needHashes.length && !message.files?.[this.needHashes[0]!]?.expected_hash) {
         this.emit({
@@ -172,6 +160,39 @@ afterEach(() => {
 });
 
 describe("verified browser upload", () => {
+  it("accepts a stored receipt before sending retry bytes", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    socket.onbegin = () =>
+      socket.emit({
+        type: "receipt",
+        request_id: socket.requestID,
+        receipt: {
+          status: "skipped",
+          computed_hash: hash,
+          computed_size: 3,
+          node: { parent_id: 2, name: "renamed.txt", blob_hash: hash, size: 3 },
+        },
+      });
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    const receipt = await channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      hash,
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    expect(receipt.status).toBe("skipped");
+    expect(socket.frames.some((frame) => typeof frame !== "string")).toBe(false);
+    expect(JSON.parse(socket.frames[1] as string).check_existing).toBe(true);
+  });
+
   it("streams package bytes through the daemon-owned socket", async () => {
     const socket = new DaemonSocket();
     const channel = new VerifiedUploadChannel(

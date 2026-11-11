@@ -134,6 +134,31 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	assert.Equal(t, content, stored)
+
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type": "begin", "request_id": "retry", "parent_id": destination.ID,
+		"name": "quarterly.txt", "mime_type": "text/plain",
+		"expected_hash": hex.EncodeToString(digest[:]), "expected_size": len(content),
+		"check_existing": true,
+	}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "receipt", message.Type)
+	require.Equal(t, "skipped", message.Receipt.Status)
+	require.Equal(t, hex.EncodeToString(digest[:]), message.Receipt.ComputedHash)
+
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type": "begin", "request_id": "absent", "parent_id": destination.ID,
+		"name": "different.txt", "mime_type": "text/plain",
+		"expected_hash": hex.EncodeToString(digest[:]), "expected_size": len(content),
+		"check_existing": true,
+	}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "ready", message.Type)
+	require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, content))
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "end", "request_id": "absent"}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "receipt", message.Type)
+	require.Equal(t, "added", message.Receipt.Status)
 }
 
 func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {

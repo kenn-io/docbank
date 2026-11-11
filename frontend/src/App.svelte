@@ -1106,10 +1106,9 @@
   let uploadReconnect: UploadReconnect | undefined;
   let reconnectFocus: Element | null = null;
   let reconnectFocusPending = false;
-  let stopReconnectFocus: (() => void) | undefined;
   const reconnectUpload = (): void => {
     reconnectFocus = document.activeElement?.closest('[role="dialog"]') ?? null;
-    reconnectFocusPending = true;
+    reconnectFocusPending = !!document.activeElement?.matches(".notice button");
     uploadReconnect?.retry();
   };
   let directory = $state<Node | null>(null);
@@ -1630,35 +1629,17 @@
           reconnectFocusPending = false;
           void tick().then(() => {
             if (!mounted || webSession !== session.token) return;
-            stopReconnectFocus?.();
             if (!target) {
+              if (document.querySelector('[role="dialog"]')) return;
               document.querySelector<HTMLElement>(".document-add-trigger")?.focus();
               return;
             }
-            const focusPicker = (): boolean => {
-              const picker = target.querySelector<HTMLElement>(
+            if (!target.isConnected) return;
+            target
+              .querySelector<HTMLElement>(
                 ".chooser button:not(:disabled), .controls button:not(:disabled), .tool-body button:not(:disabled)",
-              );
-              if (!picker) return false;
-              picker.focus();
-              return true;
-            };
-            if (focusPicker()) return;
-            const observer = new MutationObserver(() => {
-              if (!target.isConnected || focusPicker()) stopReconnectFocus?.();
-            });
-            const timeout = window.setTimeout(() => stopReconnectFocus?.(), 30_000);
-            stopReconnectFocus = () => {
-              observer.disconnect();
-              window.clearTimeout(timeout);
-              stopReconnectFocus = undefined;
-            };
-            observer.observe(target, {
-              subtree: true,
-              childList: true,
-              attributes: true,
-              attributeFilter: ["disabled"],
-            });
+              )
+              ?.focus();
           });
         }
       } else if (state === "fatal") {
@@ -1677,7 +1658,6 @@
       reporter.stop();
       telemetryReporting = undefined;
       reconnect.close();
-      stopReconnectFocus?.();
       if (uploadReconnect === reconnect) uploadReconnect = undefined;
     };
   }

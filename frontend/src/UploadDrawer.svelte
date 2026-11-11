@@ -153,6 +153,7 @@
             refreshNeeded = true;
             progressFor(queued.id, progress);
           },
+          queued.state === "unconfirmed",
         );
         refreshNeeded = true;
         added ||= receipt.status === "added";
@@ -162,7 +163,7 @@
         });
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") {
-          if (transmissionStarted) {
+          if (transmissionStarted || queued.state === "unconfirmed") {
             updateItem(queued.id, {
               state: "unconfirmed",
               error:
@@ -177,12 +178,18 @@
           break;
         }
         if (cause instanceof APIError && cause.status === 401) {
-          updateItem(queued.id, { state: "failed", error: cause.message });
+          updateItem(queued.id, {
+            state: queued.state === "unconfirmed" ? "unconfirmed" : "failed",
+            error: cause.message,
+          });
           authFailed = true;
           onauthfailure(cause);
           break;
         }
-        if (transmissionStarted && !(cause instanceof APIError)) {
+        if (
+          queued.state === "unconfirmed" ||
+          (transmissionStarted && !(cause instanceof APIError))
+        ) {
           updateItem(queued.id, {
             state: "unconfirmed",
             error: "Upload could not be confirmed. Retry this file to check whether it was added.",

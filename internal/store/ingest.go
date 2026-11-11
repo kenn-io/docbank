@@ -256,28 +256,18 @@ func resolveIngestCandidatesQueryTx(ctx context.Context, tx *sql.Tx, blobHash st
 	}
 }
 
-// resolveIngestNameTx applies the import idempotency rule: a live suffix
-// candidate of name under parentID that carries blobHash AND was originally
-// imported under this same basename means the file is already imported
-// (skip). Content alone is not enough: a real source file named like an
-// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
-// is a distinct file, not a re-import. Otherwise returns the smallest free
-// candidate name.
-func resolveIngestNameTx(
-	ctx context.Context,
-	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
-) (string, int64, bool, error) {
+func findIngestMatchTx(ctx context.Context, tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string) (int64, error) {
 	base, ext := splitSuffix(name)
 	candidateQuery, err := resolveIngestCandidatesQueryTx(ctx, tx, blobHash, parentID)
 	if err != nil {
-		return "", 0, false, err
+		return 0, err
 	}
 	if candidateQuery != "" {
 		// Join active origins only after selecting matching content in this folder.
 		// The left join preserves the name fallback for unknown origins.
 		rows, err := tx.QueryContext(ctx, candidateQuery, blobHash, parentID)
 		if err != nil {
-			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+			return 0, fmt.Errorf("listing siblings for %q: %w", name, err)
 		}
 		defer func() { _ = rows.Close() }()
 
@@ -286,7 +276,7 @@ func resolveIngestNameTx(
 			var sibName string
 			var storedSourceKind, originalPath sql.NullString
 			if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
-				return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
+				return 0, fmt.Errorf("scanning sibling: %w", err)
 			}
 			match := false
 			if sourceKind == "url" {
@@ -302,12 +292,31 @@ func resolveIngestNameTx(
 				match = err == nil && originName == name
 			}
 			if match {
-				return "", sibID, true, nil // already imported (possibly renamed)
+				return sibID, nil // already imported (possibly renamed)
 			}
 		}
 		if err := rows.Err(); err != nil {
-			return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
+			return 0, fmt.Errorf("listing siblings for %q: %w", name, err)
 		}
+	}
+	return 0, nil
+}
+
+// resolveIngestNameTx applies the import idempotency rule: a live suffix
+// candidate of name under parentID that carries blobHash AND was originally
+// imported under this same basename means the file is already imported
+// (skip). Content alone is not enough: a real source file named like an
+// auto-suffixed copy ("report (2).pdf" next to an identical "report.pdf")
+// is a distinct file, not a re-import. Otherwise returns the smallest free
+// candidate name.
+func resolveIngestNameTx(
+	ctx context.Context,
+	tx *sql.Tx, parentID int64, name, blobHash, sourceKind, sourceRef string,
+) (string, int64, bool, error) {
+	base, ext := splitSuffix(name)
+	existingID, err := findIngestMatchTx(ctx, tx, parentID, name, blobHash, sourceKind, sourceRef)
+	if err != nil || existingID != 0 {
+		return "", existingID, existingID != 0, err
 	}
 	// Two disjoint index ranges cover the original name and every possible
 	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary
@@ -344,6 +353,34 @@ func resolveIngestNameTx(
 			return suffixedName(base, ext, n), 0, false, nil
 		}
 	}
+}
+
+// FindUploadedFile finds an existing upload without changing vault authority.
+func (s *Store) FindUploadedFile(ctx context.Context, parentID int64, name, hash string, size int64) (Node, bool, error) {
+	name, err := NormalizeName(name)
+	if err != nil {
+		return Node{}, false, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Node{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := liveDirTx(ctx, tx, parentID); err != nil {
+		return Node{}, false, err
+	}
+	id, err := findIngestMatchTx(ctx, tx, parentID, name, hash, "upload", "")
+	if err != nil || id == 0 {
+		return Node{}, false, err
+	}
+	node, err := nodeByIDTx(ctx, tx, id)
+	if err != nil {
+		return Node{}, false, err
+	}
+	if node.Size != size {
+		return Node{}, false, nil
+	}
+	return node, true, nil
 }
 
 // IngestFile imports one already-durable blob as a node under parentID,

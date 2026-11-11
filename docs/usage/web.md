@@ -594,8 +594,10 @@ bytes never use an ordinary reconnectable browser HTTP request.
 The channel is bound to one browser session and one daemon lifetime. If it
 breaks, Docbank retries the connection and verifies a fresh proof before
 enabling uploads. Choose **Reconnect** if automatic retries fail. An upload
-whose result is unconfirmed is never resent automatically. The daemon independently computes the hash and size
-and grants node/blob authority only when both match. The browser compares that
+whose result is unconfirmed is never resent automatically. When you retry one,
+the daemon checks for the stored result before receiving file bytes. The daemon
+independently computes the hash and size and grants node/blob authority only
+when both match. The browser compares that
 receipt again before reporting **Added** or **Already present**, then refreshes
 the destination by ID.
 
@@ -1231,12 +1233,12 @@ accepts that credential for the following operations:
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)
 or **Advanced** to [validate and run a complete query](#edit-a-complete-query).
 
-Upload uses a separate WebSocket. The browser verifies a fresh proof whenever
-the connection is replaced. The browser must prove it holds the upload secret before sending any
-file bytes. Upload can create only file nodes beneath the live
-directory selected in the browser. Folder uploads also create the subfolders they
-need through `POST /api/v1/nodes`, which makes directories only. The daemon independently checks the
-caller-declared hash and size, as it does for other remote writers.
+Upload uses a separate WebSocket. The daemon proves its identity to the browser
+before file bytes are sent, including after a connection is replaced. Upload
+can create only file nodes beneath the live directory selected in the browser.
+Folder uploads also create the subfolders they need through `POST /api/v1/nodes`,
+which makes directories only. The daemon independently checks the caller-declared
+hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than
 the revision-checked tag workflows above, audit enrollment, backup creation,
@@ -1294,6 +1296,6 @@ or larger sources offer verified download without a page preview. Other
 document, image, audio, video, and archive formats use verified download.
 
 If a page reports that its browser session expired or was rejected, run
-`docbank web` again, or sign in again if you use a key. Neither credential nor the upload
-channel survives daemon restart, and the previous random `.localhost` origin
-is not reused.
+`docbank web` again, or sign in again if you use a key. Neither credential nor
+the upload channel survives daemon restart, and the previous random `.localhost`
+origin is not reused.

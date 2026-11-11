@@ -1474,9 +1474,12 @@ it.each(["cancel", "confirm", "stale"])(
 
 it("replans on a replacement channel and retains an unconfirmed group", async () => {
   const original: PhotoImportTransport = {
-    planPhotoImport: vi
-      .fn()
-      .mockResolvedValue({ import_id: "first", groups: [[0], [1]], unsupported: [] }),
+    planPhotoImport: vi.fn(async (files: File[]) => ({
+      import_id: "first",
+      groups: [[0], [1]],
+      unsupported: [],
+      hashes: new Map([[files[1], "cached-hash"]]),
+    })),
     uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress) => {
       progress("uploading", { processed: 1, total: 1 });
       throw new UploadChannelError("Disconnected");
@@ -1485,6 +1488,8 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
   const replacement: PhotoImportTransport = {
     planPhotoImport: vi
       .fn()
+      .mockRejectedValueOnce(new Error("Planning failed"))
+      .mockResolvedValueOnce({ import_id: "changed", groups: [[1], [0]], unsupported: [] })
       .mockResolvedValue({ import_id: "second", groups: [[0], [1]], unsupported: [] }),
     uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "photo" }),
   };
@@ -1505,10 +1510,16 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
   await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
   await screen.findByText("Unconfirmed: 1");
   await view.rerender({ channel: replacement });
-  await waitFor(() => expect(replacement.planPhotoImport).toHaveBeenCalledOnce());
+  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
   await screen.findByText("Unconfirmed: 1");
   expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await screen.findByText("Planning failed");
+  expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
+  await screen.findByText("The selected photo groups changed. Select the files again.");
+  expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
   expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
     "second",
@@ -1516,6 +1527,6 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
     expect.anything(),
     expect.anything(),
     expect.anything(),
-    expect.anything(),
+    ["cached-hash"],
   );
 });

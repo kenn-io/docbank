@@ -79,44 +79,46 @@ type webPhotoReceipt struct {
 }
 
 type webUploadMessage struct {
-	SourceID     *uuid.UUID          `json:"source_id,omitzero"`
-	ImportID     string              `json:"import_id,omitzero"`
-	Files        []webPhotoFile      `json:"files,omitzero"`
-	Groups       [][]int             `json:"groups,omitzero"`
-	Unsupported  []int               `json:"unsupported,omitzero"`
-	SkipReasons  map[int]string      `json:"skip_reasons,omitzero"`
-	Destination  string              `json:"destination,omitzero"`
-	Group        int                 `json:"group,omitzero"`
-	Hashes       []string            `json:"hashes,omitzero"`
-	Indexes      []int               `json:"indexes,omitzero"`
-	PhotoReceipt *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
-	ContainerID  string              `json:"container_id,omitzero"`
-	ChunkIndex   int                 `json:"chunk_index,omitzero"`
-	ChunkReceipt *store.MailboxChunk `json:"chunk_receipt,omitempty"`
-	Type         string              `json:"type"`
-	Token        string              `json:"token,omitzero"`
-	Nonce        string              `json:"nonce,omitzero"`
-	Proof        string              `json:"proof,omitzero"`
-	RequestID    string              `json:"request_id,omitzero"`
-	ParentID     int64               `json:"parent_id,omitzero"`
-	Name         string              `json:"name,omitzero"`
-	MIMEType     string              `json:"mime_type,omitzero"`
-	ExpectedHash string              `json:"expected_hash,omitzero"`
-	ExpectedSize int64               `json:"expected_size,omitzero"`
-	Receipt      *UploadReceipt      `json:"receipt,omitempty"`
-	Status       int                 `json:"status,omitzero"`
-	Code         string              `json:"code,omitzero"`
-	Detail       string              `json:"detail,omitzero"`
+	SourceID      *uuid.UUID          `json:"source_id,omitzero"`
+	ImportID      string              `json:"import_id,omitzero"`
+	Files         []webPhotoFile      `json:"files,omitzero"`
+	Groups        [][]int             `json:"groups,omitzero"`
+	Unsupported   []int               `json:"unsupported,omitzero"`
+	SkipReasons   map[int]string      `json:"skip_reasons,omitzero"`
+	Destination   string              `json:"destination,omitzero"`
+	Group         int                 `json:"group,omitzero"`
+	Hashes        []string            `json:"hashes,omitzero"`
+	Indexes       []int               `json:"indexes,omitzero"`
+	PhotoReceipt  *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
+	ContainerID   string              `json:"container_id,omitzero"`
+	ChunkIndex    int                 `json:"chunk_index,omitzero"`
+	ChunkReceipt  *store.MailboxChunk `json:"chunk_receipt,omitempty"`
+	Type          string              `json:"type"`
+	Token         string              `json:"token,omitzero"`
+	Nonce         string              `json:"nonce,omitzero"`
+	Proof         string              `json:"proof,omitzero"`
+	RequestID     string              `json:"request_id,omitzero"`
+	ParentID      int64               `json:"parent_id,omitzero"`
+	Name          string              `json:"name,omitzero"`
+	MIMEType      string              `json:"mime_type,omitzero"`
+	ExpectedHash  string              `json:"expected_hash,omitzero"`
+	ExpectedSize  int64               `json:"expected_size,omitzero"`
+	CheckExisting bool                `json:"check_existing,omitzero"`
+	Receipt       *UploadReceipt      `json:"receipt,omitempty"`
+	Status        int                 `json:"status,omitzero"`
+	Code          string              `json:"code,omitzero"`
+	Detail        string              `json:"detail,omitzero"`
 }
 
 type webUploadRequest struct {
-	requestID    string
-	containerID  string
-	parentID     int64
-	name         string
-	mimeType     string
-	expectedHash string
-	expectedSize int64
+	requestID     string
+	containerID   string
+	parentID      int64
+	name          string
+	mimeType      string
+	expectedHash  string
+	expectedSize  int64
+	checkExisting bool
 }
 
 func registerWebUpload(
@@ -308,6 +310,16 @@ func handleWebUploadConnection(
 			if problem := validateWebUploadDestination(ctx, d, request.parentID); problem != nil {
 				return problem
 			}
+			if request.checkExisting {
+				node, found, err := d.Store.FindUploadedFile(ctx, request.parentID, request.name, request.expectedHash, request.expectedSize)
+				if err != nil {
+					return err
+				}
+				if found {
+					result = ingest.UploadResult{Node: node, ComputedHash: node.BlobHash, ComputedSize: node.Size}
+					return nil
+				}
+			}
 			if err := wsjson.Write(ctx, conn, webUploadMessage{
 				Type: "ready", RequestID: request.requestID,
 			}); err != nil {
@@ -367,7 +379,7 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 			"expected_hash must be canonical lowercase SHA-256")
 	}
 	if begin.ContainerID != "" {
-		if len(begin.ContainerID) > 128 || begin.ExpectedSize < 1 || begin.ExpectedSize > store.MailboxContainerBytes || begin.ParentID != 0 || begin.Name != "" || begin.MIMEType != "" {
+		if len(begin.ContainerID) > 128 || begin.ExpectedSize < 1 || begin.ExpectedSize > store.MailboxContainerBytes || begin.ParentID != 0 || begin.Name != "" || begin.MIMEType != "" || begin.CheckExisting {
 			return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation", "invalid package container upload declaration")
 		}
 		return webUploadRequest{requestID: begin.RequestID, containerID: begin.ContainerID,
@@ -388,6 +400,7 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 	return webUploadRequest{
 		requestID: begin.RequestID, parentID: begin.ParentID, name: name,
 		mimeType: mimeType, expectedHash: begin.ExpectedHash, expectedSize: begin.ExpectedSize,
+		checkExisting: begin.CheckExisting,
 	}, nil
 }
 
