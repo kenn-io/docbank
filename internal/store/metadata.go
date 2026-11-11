@@ -34,12 +34,13 @@ const (
 	metadataUpdatedAtField        = "updated_at"
 )
 
-// MetadataSnapshot owns a dedicated deferred read transaction. Store's normal
-// connections use BEGIN IMMEDIATE for mutations; using that pool here would
-// hold the writer lock for the full backup instead of only pinning a WAL view.
+// MetadataSnapshot owns a pinned read transaction. SQLite uses a dedicated
+// deferred pool to avoid taking the writer lock; PostgreSQL borrows its runtime
+// pool and holds a read-only repeatable-read transaction.
 type MetadataSnapshot struct {
-	db *sql.DB
-	tx *sql.Tx
+	db     *sql.DB // Owned only for SQLite's dedicated deferred pool.
+	tx     *sql.Tx
+	layout metadataSourceLayout
 }
 
 func (s *MetadataSnapshot) QueryContext(
@@ -59,25 +60,44 @@ func (s *MetadataSnapshot) Close() error {
 	if errors.Is(rollbackErr, sql.ErrTxDone) {
 		rollbackErr = nil
 	}
-	return errors.Join(rollbackErr, s.db.Close())
+	if s.db != nil {
+		return errors.Join(rollbackErr, s.db.Close())
+	}
+	return rollbackErr
 }
 
 // Export writes the deterministic logical metadata held by this snapshot.
 func (s *MetadataSnapshot) Export(ctx context.Context, w io.Writer) error {
-	return exportMetadataSnapshot(ctx, s, w)
+	return exportMetadataSnapshotWithVaultIdentity(ctx, s.tx, w, s.layout)
 }
 
 // ExportBackup writes the deterministic logical authority carried by a backup
 // snapshot. It omits blob and extraction-cache rows outside retained document
 // or rendition authority, including uncommitted provider staging.
 func (s *MetadataSnapshot) ExportBackup(ctx context.Context, w io.Writer) error {
-	return exportBackupMetadataSnapshot(ctx, s, w)
+	layout := s.layout
+	layout.backupScoped = true
+	return exportMetadataSnapshotWithVaultIdentity(ctx, s.tx, w, layout)
 }
 
 // BeginMetadataSnapshot establishes a pinned read transaction for logical
 // backup capture. The initial read is required: BeginTx alone is lazy in
 // SQLite and would not pin a snapshot before Kit releases the mutation gate.
 func (s *Store) BeginMetadataSnapshot(ctx context.Context) (*MetadataSnapshot, error) {
+	if s.postgresSchema != "" {
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+		if err != nil {
+			return nil, fmt.Errorf("beginning metadata snapshot: %w", err)
+		}
+		// Establish the snapshot before returning to the capture owner. BEGIN
+		// alone does not pin PostgreSQL's view either.
+		if _, err := readVaultIdentity(ctx, tx, false); err != nil {
+			return nil, errors.Join(fmt.Errorf("pinning metadata snapshot: %w", err), tx.Rollback())
+		}
+		layout := currentMetadataLayout()
+		layout.postgres = true
+		return &MetadataSnapshot{tx: tx, layout: layout}, nil
+	}
 	db, err := s.driver.Open(s.path, docsqlite.OpenOptions{
 		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
 	})
@@ -95,7 +115,7 @@ func (s *Store) BeginMetadataSnapshot(ctx context.Context) (*MetadataSnapshot, e
 		_ = db.Close()
 		return nil, fmt.Errorf("pinning metadata snapshot: %w", err)
 	}
-	return &MetadataSnapshot{db: db, tx: tx}, nil
+	return &MetadataSnapshot{db: db, tx: tx, layout: currentMetadataLayout()}, nil
 }
 
 type metadataHeader struct {
@@ -487,7 +507,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return fmt.Errorf("reading vault identity: %w", err)
 	}
 	var nodeSequence int64
-	if err := tx.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`).Scan(&nodeSequence); err != nil {
+	sequenceQuery := `SELECT seq FROM sqlite_sequence WHERE name = 'nodes'`
+	if layout.postgres {
+		sequenceQuery = `SELECT high_water FROM node_allocation WHERE singleton=1`
+	}
+	if err := tx.QueryRowContext(ctx, sequenceQuery).Scan(&nodeSequence); err != nil {
 		return fmt.Errorf("reading node ID high-water mark: %w", err)
 	}
 	if err := validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, layout); err != nil {
@@ -623,7 +647,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if !layout.hasPostV3Metadata() {
 		return nil
 	}
-	if err := exportMetadataTables(ctx, tx, write, processingMetadataTables); err != nil {
+	processingTables := processingMetadataTables
+	if layout.postgres {
+		processingTables = postgresProcessingMetadataTables
+	}
+	if err := exportMetadataTables(ctx, tx, write, processingTables); err != nil {
 		return err
 	}
 	if err := exportMetadataTables(ctx, tx, write, embeddingMetadataTables); err != nil {
