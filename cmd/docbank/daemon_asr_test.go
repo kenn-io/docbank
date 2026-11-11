@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -50,9 +51,11 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 	}{
 		{name: "WAV", filename: "recording.wav", mediaType: "audio/wav", extension: ".wav", content: mediatest.WAV()},
 		{name: "MP3", filename: "recording.mp3", mediaType: "audio/mpeg", extension: ".mp3", content: mediatest.MP3()},
+		{name: "M4A AAC", filename: "recording.m4a", mediaType: "audio/mp4", extension: ".m4a", content: mediatest.AACM4A()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := newDaemonDoclingServer(t)
+			provider.allowM4A = test.mediaType == "audio/mp4"
 			provider.resultGate = make(chan struct{})
 			_, daemon, _ := startDaemonASRTest(t, provider, "synthetic-provider-secret", false)
 
@@ -74,7 +77,11 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, plan.Flow, 1)
 			assert.Equal(t, provider.URL(), plan.Flow[0].RuntimeDisclosure.Endpoint)
-			assert.Equal(t, "docbank-docling-asr/v1", plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+			wantAdapter := docling.ASRAdapterContract
+			if provider.allowM4A {
+				wantAdapter = docling.ASRM4AAdapterContract
+			}
+			assert.Equal(t, wantAdapter, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
 			assert.Equal(t, "docling.serve-v1", plan.Flow[0].RuntimeDisclosure.UltimateProcessor)
 			_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{
 				Selector: selector, PlanFingerprint: plan.Fingerprint,
@@ -103,6 +110,13 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.Equal(t, "succeeded", completed.OperationState, "%+v", completed)
 			require.Equal(t, "transcribed", completed.CoverageState)
 			require.Equal(t, receipt.ContentVersionID, completed.ContentVersionID)
+			if provider.allowM4A {
+				transcript, err := daemon.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
+				require.NoError(t, err)
+				require.Equal(t, "ready", transcript.EvidenceState)
+				require.Equal(t, "complete", transcript.Transcript.SpeechState)
+			}
+
 			require.Equal(t, int64(1), provider.submissions.Load())
 			require.Equal(t, test.content, provider.submissionSource())
 			assert.Zero(t, provider.authFailures.Load())
@@ -126,6 +140,116 @@ func TestDaemonDoclingASRMedia(t *testing.T) {
 			require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
 		})
 	}
+}
+
+// An MP4 is not supplied media, which accepts audio only. It is imported as an
+// ordinary file and transcribed through the v3 profile's plan and consent.
+func TestDaemonDoclingASRMP4Import(t *testing.T) {
+	provider := newDaemonDoclingServer(t)
+	provider.allowVideo = true
+	_, daemon, _ := startDaemonASRTest(t, provider, daemonASRProviderKey, false)
+
+	content := mediatest.H264AACMP4()
+	source := filepath.Join(t.TempDir(), "recording.mp4")
+	require.NoError(t, os.WriteFile(source, content, 0o600))
+	_, err := runCLI(t, "add", source, "--dest", "/video")
+	require.NoError(t, err)
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/video/recording.mp4"}})
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "asr"}
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	require.Len(t, plan.Flow, 1)
+	assert.Equal(t, provider.URL(), plan.Flow[0].RuntimeDisclosure.Endpoint)
+	assert.Equal(t, docling.ASRVideoAdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+
+	job, err := daemon.StartProcessing(t.Context(), api.StartProcessingRequest{
+		Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true,
+	}, plan.ProfileFingerprint)
+	require.NoError(t, err)
+	status := settledProcessingStatus(t, daemon, job.ID)
+	require.Equal(t, "completed", status.State, "%+v", status)
+	require.Equal(t, int64(1), provider.submissions.Load())
+	require.Equal(t, content, provider.submissionSource())
+	assert.Zero(t, provider.authFailures.Load())
+
+	stream, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
+	require.NoError(t, err)
+	var rendition bytes.Buffer
+	_, err = stream.CopyVerified(&rendition)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	require.Contains(t, rendition.String(), "Telescope delivery arrives Friday at 3")
+	require.Contains(t, rendition.String(), "media_type: \"video/mp4\"")
+	require.Contains(t, rendition.String(), "format: \"mp4\"")
+
+	search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
+		Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
+		Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{node.CurrentVersionID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+	require.NotEmpty(t, search.Results[0].Evidence)
+	require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
+}
+
+func TestDaemonDoclingASRQuickTimeWatch(t *testing.T) {
+	provider := newDaemonDoclingServer(t)
+	provider.allowVideo = true
+	cfg, _ := doclingASRProcessingConfig(t, provider.URL())
+	profile := cfg.RenditionProfiles["asr"]
+	profile.AdapterContract = config.DoclingASRQuickTimeAdapterContract
+	profile.DiscloseFilename = false
+	resolved, err := configuredDoclingASRProfile(profile)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
+	profile.DisclosureFingerprint = docling.ASRQuickTimeDisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = profile
+
+	inbox, root := t.TempDir(), t.TempDir()
+	cfg.Watches = []config.WatchConfig{{Name: "movies", Source: inbox, Destination: "/movies",
+		Profile: "asr", CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Hour)}}
+	cfg.Server.APIKey = daemonASRAPIKey
+	require.NoError(t, cfg.Validate())
+	require.NoError(t, writeDaemonASRConfig(root, cfg))
+	t.Setenv("DOCBANK_TEST_DOCLING_KEY", daemonASRProviderKey)
+	t.Setenv("DOCBANK_HOME", root)
+	startServe(t)
+	runtime := waitForDaemon(t, root)
+	daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
+	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
+
+	content := mediatest.H264AACMOV()
+	source := filepath.Join(t.TempDir(), "consent.mov")
+	require.NoError(t, os.WriteFile(source, content, 0o600))
+	_, err = runCLI(t, "add", source, "--dest", "/consent")
+	require.NoError(t, err)
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/consent/consent.mov"}})
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "asr"}
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	require.Empty(t, plan.RenditionIneligibleReason)
+	require.Len(t, plan.Flow, 1)
+	require.Equal(t, docling.ASRQuickTimeAdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+	_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(inbox, "watched.mov"), content, 0o600))
+	settleDaemon(t)
+	watched, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/movies/watched.mov"}})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), provider.submissions.Load())
+	require.Equal(t, content, provider.submissionSource())
+	search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
+		Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
+		Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{watched.CurrentVersionID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+	require.Equal(t, watched.CurrentVersionID, search.Results[0].ContentVersionID)
+	require.NotEmpty(t, search.Results[0].Evidence)
+	require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
 }
 
 func TestDaemonDoclingASRFailures(t *testing.T) {
@@ -764,7 +888,9 @@ type daemonDoclingTask struct {
 }
 
 type daemonDoclingServer struct {
-	server *httptest.Server
+	server     *httptest.Server
+	allowM4A   bool
+	allowVideo bool
 
 	mu                  sync.Mutex
 	tasks               map[string]daemonDoclingTask
@@ -845,7 +971,11 @@ func (provider *daemonDoclingServer) handleSubmit(response http.ResponseWriter, 
 		}
 		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
-	if !equalDaemonASRFields(fields) {
+	fromFormat := "audio"
+	if provider.allowVideo {
+		fromFormat = "video"
+	}
+	if !equalDaemonASRFields(fields, fromFormat) {
 		http.Error(response, "unexpected fields", http.StatusBadRequest)
 		return
 	}
@@ -896,7 +1026,7 @@ func (provider *daemonDoclingServer) handleResult(response http.ResponseWriter, 
 		http.NotFound(response, request)
 		return
 	}
-	writeDaemonJSON(response, daemonASRResult(task.filename, provider.resultSchemaVersion))
+	writeDaemonJSON(response, daemonASRResult(task.filename, task.source, provider.resultSchemaVersion))
 }
 
 func (provider *daemonDoclingServer) submissionSource() []byte {
@@ -908,8 +1038,8 @@ func (provider *daemonDoclingServer) submissionSource() []byte {
 	return nil
 }
 
-func equalDaemonASRFields(fields map[string][]string) bool {
-	want := map[string][]string{"from_formats": {"audio"}, "to_formats": {"json"}, "target_type": {"inbody"}}
+func equalDaemonASRFields(fields map[string][]string, fromFormat string) bool {
+	want := map[string][]string{"from_formats": {fromFormat}, "to_formats": {"json"}, "target_type": {"inbody"}}
 	if len(fields) != len(want) {
 		return false
 	}
@@ -933,14 +1063,18 @@ func slicesEqual(left, right []string) bool {
 	return true
 }
 
-func daemonASRResult(filename, schemaVersion string) map[string]any {
+// daemonASRResult records the upload's origin hash as Docling's VideoPipeline
+// does: the low 64 bits of its SHA-256.
+func daemonASRResult(filename string, source []byte, schemaVersion string) map[string]any {
+	digest := sha256.Sum256(source)
 	return map[string]any{
 		"status": "success", "errors": []string{},
 		"document": map[string]any{
 			"filename": filename, "md_content": nil,
 			"json_content": map[string]any{
 				"schema_name": "DoclingDocument", "version": schemaVersion,
-				"origin": map[string]any{"filename": filename}, "pages": map[string]any{},
+				"origin": map[string]any{"filename": filename, "binary_hash": binary.BigEndian.Uint64(digest[24:])},
+				"pages":  map[string]any{},
 				"texts": []any{map[string]any{
 					"text":   "Telescope delivery arrives Friday at 3.",
 					"source": []any{map[string]any{"kind": "track", "start_time": 0.0, "end_time": 0.005}},
@@ -967,6 +1101,12 @@ func startDaemonASRTest(t *testing.T, provider *daemonDoclingServer, secret stri
 		root = existingRoot[0]
 	}
 	cfg, _ := doclingASRProcessingConfig(t, provider.URL())
+	if provider.allowM4A {
+		enableDaemonASRM4A(t, &cfg)
+	}
+	if provider.allowVideo {
+		enableDaemonASRVideo(t, &cfg)
+	}
 	cfg.Server.APIKey = daemonASRAPIKey
 	asrProfile := cfg.RenditionProfiles["asr"]
 	asrProfile.DiscloseFilename = true
@@ -1107,4 +1247,26 @@ func closeProviderResultGate(provider *daemonDoclingServer) {
 			close(provider.resultGate)
 		}
 	}
+}
+
+func enableDaemonASRM4A(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	profile := cfg.RenditionProfiles["asr"]
+	profile.AdapterContract = config.DoclingASRM4AAdapterContract
+	resolved, err := configuredDoclingASRProfile(profile)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
+	profile.DisclosureFingerprint = docling.ASRM4ADisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = profile
+}
+
+func enableDaemonASRVideo(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	profile := cfg.RenditionProfiles["asr"]
+	profile.AdapterContract = config.DoclingASRVideoAdapterContract
+	resolved, err := configuredDoclingASRProfile(profile)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
+	profile.DisclosureFingerprint = docling.ASRDisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = profile
 }

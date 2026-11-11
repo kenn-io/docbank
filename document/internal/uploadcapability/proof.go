@@ -12,6 +12,7 @@ type Facts struct {
 	DescriptorFingerprint, ProfileFingerprint, DisclosureFingerprint string
 	Pixels, Frames, DurationMS, Pages                                int64
 	MaxSourceBytes, MaxPixels, MaxFrames, MaxDurationMS, MaxPages    int64
+	VideoAudioTrack, QuickTimeAudioTrack                             bool
 }
 
 // Proof is an immutable, process-local inspection result. Its zero value has

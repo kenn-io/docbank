@@ -90,3 +90,50 @@ func TestAudioFourGiBPolicyKeepsDocumentBounds(t *testing.T) {
 	_, err = media.InspectCapability(t.Context(), bytes.NewReader(raw), policy)
 	require.ErrorContains(t, err, "source byte bounds")
 }
+
+func TestInspectMP4AudioTrackBoundedMemory(t *testing.T) {
+	const size int64 = 64 << 20
+	hash := sha256.New()
+	_, err := io.Copy(hash, mediatest.SizedMP4Video(size))
+	require.NoError(t, err)
+	policy := inspectionPolicy(mediatest.WAV(), "phone.mp4", "video/mp4")
+	policy.ExpectedBytes, policy.MaxSourceBytes = size, size
+	policy.ExpectedSHA256 = hex.EncodeToString(hash.Sum(nil))
+	policy.MaxDurationMS, policy.VideoAudioTrack = 300000, true
+	previous := debug.SetMemoryLimit(64 << 20)
+	defer debug.SetMemoryLimit(previous)
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	record, err := media.InspectCapability(t.Context(), mediatest.SizedMP4Video(size), policy)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	require.Equal(t, "video", record.MediaFamily)
+	require.Equal(t, size, record.SourceBytes)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
+	policy.VideoAudioTrack = false
+	record, err = media.InspectCapability(t.Context(), mediatest.SizedMP4Video(size), policy)
+	require.NoError(t, err)
+	require.False(t, record.Eligible, "visual inspection retains its own bounds")
+}
+
+func TestInspectQuickTimeAudioTrackBoundedMemory(t *testing.T) {
+	const size int64 = 48 << 20
+	hash := sha256.New()
+	_, err := io.Copy(hash, mediatest.SizedMOV(size))
+	require.NoError(t, err)
+	policy := inspectionPolicy(mediatest.H264AACMOV(), "phone.mov", "video/quicktime")
+	policy.ExpectedBytes, policy.MaxSourceBytes = size, size
+	policy.ExpectedSHA256 = hex.EncodeToString(hash.Sum(nil))
+	policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	record, err := media.InspectCapability(t.Context(), mediatest.SizedMOV(size), policy)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	require.Equal(t, size, record.SourceBytes)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
+}

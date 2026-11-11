@@ -67,7 +67,7 @@ func TestLoomManualExportHTTP(t *testing.T) {
 	captionHash := processingTestHash(string(srt))
 	caption, err := client.ImportMediaArtifact(t.Context(), remote.SourceID, api.MediaArtifactMetadata{
 		OperationID: "00000000-0000-4000-8000-000000000553", OccurrenceID: remote.OccurrenceID,
-		Kind: "caption", Origin: "supplied", Provider: "loom", Filename: "loom.srt",
+		Kind: "caption", Origin: "supplied", Provider: "loom", Language: "en", Filename: "loom.srt",
 		MediaType: "application/x-subrip", SHA256: captionHash, ByteLength: int64(len(srt)),
 	}, bytes.NewReader(srt))
 	require.NoError(t, err)
@@ -105,6 +105,9 @@ func TestLoomManualExportHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"succeeded", "transcribed"}, []string{status.OperationState, status.CoverageState})
 	require.Equal(t, original.ContentVersionID, status.ContentVersionID)
+	read, err := client.MediaTranscript(t.Context(), remote.SourceID, queued.SourceVersionID, original.ContentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "en", read.Transcript.Language)
 	results, err := client.SearchDocuments(t.Context(), api.DocumentSearchRequest{
 		Query: "http second cue", Mode: "lexical", Profile: processing.SuppliedCaptionProfileName, Limit: 10,
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{original.ContentVersionID}},

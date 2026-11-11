@@ -22,13 +22,20 @@ const maxM4AChunks = 1 << 20
 // produces samplesPerFrame PCM samples per stored sample, independent of the
 // header durations, so it bounds how much audio the file really holds.
 type m4aAudioFormat struct {
-	qualified                   bool
+	qualified, primed           bool // primed: the encoder may prepend delay samples
 	samplesPerFrame, sampleRate uint32
 }
 
-func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+func inspectM4A(reader *bufio.Reader, policy InspectionPolicy, allowVideo, quickTime bool) (CapabilityRecord, error) {
 	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/mp4", Format: "m4a", Reason: CapabilityReasonMalformed}
-	info := mp4Info{audioInspection: true, localDataReferences: true, maxBoxes: policy.MaxEntries}
+	if allowVideo {
+		record.MediaFamily, record.MediaType, record.Format = "video", "video/mp4", "mp4"
+	}
+	if quickTime {
+		record.MediaType, record.Format = "video/quicktime", "mov"
+	}
+	info := mp4Info{audioInspection: true, soundTrackVideo: allowVideo, quickTimeSound: quickTime,
+		localDataReferences: true, maxBoxes: policy.MaxEntries}
 	var movie []byte
 	var offset int64
 	ftypCount := 0
@@ -76,7 +83,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 			}
 			if kind == "ftyp" {
 				ftypCount++
-				if offset != 0 || ftypCount != 1 || len(payload) < 8 || len(payload)%4 != 0 || !m4aBrand(string(payload[:4])) {
+				if offset != 0 || ftypCount != 1 || len(payload) < 8 || len(payload)%4 != 0 || !soundMovieBrand(string(payload[:4]), quickTime) {
 					return record, nil
 				}
 			} else {
@@ -107,7 +114,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 	if ftypCount != 1 || info.moovCount != 1 || info.mdatCount == 0 {
 		return record, nil
 	}
-	if reason := qualifyM4AMovie(movie, &info); reason != CapabilityReasonEligible {
+	if reason := qualifyM4AMovie(movie, &info, allowVideo); reason != CapabilityReasonEligible {
 		record.Reason = reason
 		return record, nil
 	}
@@ -124,28 +131,36 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 	return record, nil
 }
 
-// qualifyM4AMovie scans the movie box and proves that every track is
-// qualified sound whose samples occupy disjoint local media-data bytes. It
-// returns CapabilityReasonEligible when the movie qualifies.
-func qualifyM4AMovie(movie []byte, info *mp4Info) CapabilityReason {
+// qualifyM4AMovie proves qualified sound samples occupy disjoint local data.
+// Video mode also admits picture and known non-visual tracks without proving
+// their sample payloads; it requires exactly one sound track.
+func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityReason {
 	if !scanMP4Boxes(movie, info, nil, "moov", 1) {
 		if info.boxCount > info.maxBoxes {
 			return CapabilityReasonEntryCount
 		}
 		return CapabilityReasonMalformed
 	}
-	if info.mvhdCount != 1 || len(info.tracks) == 0 || !info.localDataReferences || info.pictureTracks != 0 {
+	if info.mvhdCount != 1 || len(info.tracks) == 0 || !info.localDataReferences || !allowVideo && info.pictureTracks != 0 ||
+		info.quickTimeSound && info.pictureTracks == 0 {
 		return CapabilityReasonMalformed
 	}
 	chunks := 0
 	for _, track := range info.tracks {
-		chunks += len(track.chunkOffsets)
+		if track.handlerType == "soun" {
+			chunks += len(track.chunkOffsets)
+		}
 	}
 	if chunks > maxM4AChunks {
 		return CapabilityReasonEntryCount
 	}
 	info.sampleRanges = make([]mp4SampleRange, 0, chunks)
+	soundTracks := 0
 	for _, track := range info.tracks {
+		if allowVideo && (track.handlerType == "vide" || track.handlerType != "soun" && isNonVisualHandler(track.handlerType)) {
+			continue
+		}
+		soundTracks++
 		if track.handlerType != "soun" || track.stsdCount != 1 || len(track.audioFormats) == 0 {
 			return CapabilityReasonMalformed
 		}
@@ -154,17 +169,103 @@ func qualifyM4AMovie(movie []byte, info *mp4Info) CapabilityReason {
 				return CapabilityReasonMalformed
 			}
 		}
-		if !track.proveAudioRanges(info) {
+		if !track.proveAudioRanges(info) || allowVideo && !track.soundStartsAtPresentationZero() ||
+			info.quickTimeSound && !track.proveQuickTimeSoundPackets() {
 			return CapabilityReasonMalformed
 		}
 	}
-	if !mp4SampleRangesDoNotOverlap(info.sampleRanges) {
+	if soundTracks == 0 || !mp4SampleRangesDoNotOverlap(info.sampleRanges) {
+		return CapabilityReasonMalformed
+	}
+	// The provider extracts and transcribes one sound stream, so a second
+	// track could leave the proven duration describing a different stream.
+	if allowVideo && soundTracks > 1 {
 		return CapabilityReasonMalformed
 	}
 	return CapabilityReasonEligible
 }
 
-func m4aBrand(brand string) bool {
+// maxAACPrimingFrames bounds the encoder delay a sound edit may skip. Common
+// AAC encoders prime 1024 or 2112 samples, which is under three frames.
+const maxAACPrimingFrames = 3
+
+// soundStartsAtPresentationZero reports whether transcript times measured
+// from the start of the extracted sound match the movie timeline. The
+// provider's FFmpeg extraction writes audio from zero, so an empty edit, a
+// later media start, or several edits would shift every transcript time.
+// One edit that skips only AAC encoder priming keeps the timeline.
+func (track *mp4TrackInfo) soundStartsAtPresentationZero() bool {
+	if track.elstCount == 0 {
+		return true
+	}
+	if track.editCount != 1 || track.emptyEdit {
+		return false
+	}
+	if track.firstEditMediaTime == 0 {
+		return true
+	}
+	if track.mediaTimescale == 0 {
+		return false
+	}
+	for _, format := range track.audioFormats {
+		// mediaTime / mediaTimescale <= frames × samplesPerFrame / sampleRate.
+		skippedHigh, skippedLow := bits.Mul64(track.firstEditMediaTime, uint64(format.sampleRate))
+		primingHigh, primingLow := bits.Mul64(maxAACPrimingFrames*uint64(format.samplesPerFrame), track.mediaTimescale)
+		if !format.primed || skippedHigh > primingHigh || skippedHigh == primingHigh && skippedLow > primingLow {
+			return false
+		}
+	}
+	return true
+}
+
+// proveQuickTimeSoundPackets limits MOV sound to the packet timing FFmpeg
+// reads the same way the local range proof does. Edit-list timing is owned by
+// soundStartsAtPresentationZero, which applies to every video sound track.
+func (track *mp4TrackInfo) proveQuickTimeSoundPackets() bool {
+	frame := track.audioFormats[0].samplesPerFrame
+	for _, format := range track.audioFormats {
+		if uint64(format.sampleRate) != track.mediaTimescale || format.samplesPerFrame != frame {
+			return false
+		}
+	}
+	// FFmpeg can use QuickTime frame geometry for packet sizing instead
+	// of stsz when the table contains one unit-delta run.
+	if track.sampleDuration == track.sampleCount {
+		return false
+	}
+	// A muxer may split one run into adjacent runs with the same delta
+	// without changing any packet's timing, so prove the merged runs.
+	var counts, deltas [2]uint64
+	runs := 0
+	timing := track.quickTimeSampleTiming
+	for offset := 0; offset+8 <= len(timing); offset += 8 {
+		count := uint64(binary.BigEndian.Uint32(timing[offset : offset+4]))
+		delta := uint64(binary.BigEndian.Uint32(timing[offset+4 : offset+8]))
+		switch {
+		case runs == 1 && deltas[0] == delta:
+			counts[0] += count
+			continue
+		case runs == 2 && deltas[1] == delta:
+			counts[1] += count
+			continue
+		case runs == 2:
+			return false
+		}
+		counts[runs], deltas[runs] = count, delta
+		runs++
+	}
+	if runs == 1 && counts[0] == 1 {
+		return deltas[0] <= uint64(frame)
+	}
+	// The muxer may trim the duration of the last AAC packet.
+	return runs != 0 && deltas[0] == uint64(frame) &&
+		(runs == 1 || counts[1] == 1 && deltas[1] <= uint64(frame))
+}
+
+func soundMovieBrand(brand string, quickTime bool) bool {
+	if quickTime {
+		return brand == "qt  "
+	}
 	switch brand {
 	case "M4A ", "isom", "iso2", "mp41", "mp42":
 		return true
@@ -289,6 +390,65 @@ func validM4ASampleEntry(kind string, entry []byte) m4aAudioFormat {
 		return m4aAudioFormat{}
 	}
 	return format
+}
+
+// validQuickTimeAACEntry handles the native AAC SoundDescriptionV1 layout
+// from the qualified muxer and the ISO-style version-zero AAC description.
+func validQuickTimeAACEntry(kind string, entry []byte) m4aAudioFormat {
+	if kind != "mp4a" || len(entry) < 28 {
+		return m4aAudioFormat{}
+	}
+	version := binary.BigEndian.Uint16(entry[8:10])
+	if version == 0 {
+		// Apple capture follows the single esds with a channel layout.
+		last := -1
+		for offset := 28; offset < len(entry); {
+			_, size, ok := mp4BoxHeader(entry, offset)
+			if !ok {
+				return m4aAudioFormat{}
+			}
+			last, offset = offset, offset+size
+		}
+		if last > 28 && quickTimeChannelLayout(entry[last:]) {
+			entry = entry[:last]
+		}
+		return validM4ASampleEntry(kind, entry)
+	}
+	// Version 1 adds four packet/frame fields to the 28-byte base entry.
+	const waveOffset = 44
+	if version != 1 || len(entry) < waveOffset+8 ||
+		binary.BigEndian.Uint16(entry[16:18]) == 0 ||
+		binary.BigEndian.Uint16(entry[18:20]) == 0 ||
+		binary.BigEndian.Uint32(entry[24:28]) == 0 {
+		return m4aAudioFormat{}
+	}
+	waveHeader, waveSize, ok := mp4BoxHeader(entry, waveOffset)
+	if !ok || waveHeader != 8 || string(entry[waveOffset+4:waveOffset+8]) != "wave" {
+		return m4aAudioFormat{}
+	}
+	if tail := entry[waveOffset+waveSize:]; len(tail) != 0 && !quickTimeChannelLayout(tail) {
+		return m4aAudioFormat{}
+	}
+
+	wave := entry[waveOffset+waveHeader : waveOffset+waveSize]
+	const prefix = "\x00\x00\x00\x0cfrmamp4a\x00\x00\x00\x0cmp4a\x00\x00\x00\x00"
+	const terminator = "\x00\x00\x00\x08\x00\x00\x00\x00"
+	if len(wave) < len(prefix)+8+len(terminator) || string(wave[:len(prefix)]) != prefix ||
+		string(wave[len(wave)-len(terminator):]) != terminator {
+		return m4aAudioFormat{}
+	}
+	esds := wave[len(prefix) : len(wave)-len(terminator)]
+	if uint64(binary.BigEndian.Uint32(esds[:4])) != uint64(len(esds)) || string(esds[4:8]) != "esds" {
+		return m4aAudioFormat{}
+	}
+	return validAACDescriptor(esds[8:])
+}
+
+// quickTimeChannelLayout accepts one 24-byte chan box with version and flags
+// zero and no channel descriptions, as written after a QuickTime esds.
+func quickTimeChannelLayout(box []byte) bool {
+	return len(box) == 24 && binary.BigEndian.Uint32(box[:4]) == 24 && string(box[4:8]) == "chan" &&
+		binary.BigEndian.Uint32(box[8:12]) == 0 && binary.BigEndian.Uint32(box[20:24]) == 0
 }
 
 // m4aDescriptor extracts one MPEG-4 expandable-length descriptor without trusting
@@ -434,7 +594,7 @@ func validAACAudioSpecificConfig(config []byte) m4aAudioFormat {
 	if padding, ok := reader.readBits(remaining); !ok || padding != 0 {
 		return m4aAudioFormat{}
 	}
-	return m4aAudioFormat{qualified: true, samplesPerFrame: aacSamplesPerFrame(objectType, shortFrames == 1), sampleRate: sampleRate}
+	return m4aAudioFormat{qualified: true, primed: true, samplesPerFrame: aacSamplesPerFrame(objectType, shortFrames == 1), sampleRate: sampleRate}
 }
 
 // aacSamplesPerFrame follows ISO/IEC 14496-3: AAC LD codes 512 or 480 samples

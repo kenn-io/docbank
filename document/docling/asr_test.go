@@ -14,7 +14,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mediatranscript"
 )
 
@@ -262,13 +265,17 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 		{name: "WAV withheld filename", withholdFilename: true, mediaType: "audio/wav", filename: "asr-spoken.wav", taskID: "asr-wav", source: asrSpokenWAV, providerEnd: 3.06, wantEnd: 3060},
 		{name: "MP3 withheld filename", withholdFilename: true, mediaType: "audio/mpeg", filename: "asr-spoken.mp3", taskID: "asr-mp3", source: asrSpokenMP3, providerEnd: 3.08, wantEnd: 3080},
 		{name: "MP3", mediaType: "audio/mpeg", filename: "asr-spoken.mp3", taskID: "asr-mp3", source: asrSpokenMP3, providerEnd: 3.08, wantEnd: 3080},
+		{name: "MP4 video", mediaType: "video/mp4", filename: "synthetic.mp4", taskID: "asr-video", source: mediatest.H264AACMP4(), providerEnd: 2.42, wantEnd: 2420},
+		{name: "MP4 withheld filename", mediaType: "video/mp4", filename: "synthetic.mp4", taskID: "asr-video", source: mediatest.H264AACMP4(), providerEnd: 2.42, wantEnd: 2420, withholdFilename: true},
+		{name: "M4A AAC", mediaType: "audio/mp4", filename: "synthetic.m4a", taskID: "asr-m4a", source: mediatest.AACM4A(), providerEnd: 0.03, wantEnd: 30},
+		{name: "M4A withheld filename", mediaType: "audio/mp4", filename: "synthetic.m4a", taskID: "asr-m4a", source: mediatest.AACM4A(), providerEnd: 0.03, wantEnd: 30, withholdFilename: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newASRFixture(t, testCase.mediaType, testCase.filename, testCase.source)
 			fixture.authorization.DiscloseFilename = !testCase.withholdFilename
 			submittedMetadata := fixture.metadata
 			if testCase.withholdFilename {
-				submittedMetadata.Filename = map[string]string{"audio/wav": "document.wav", "audio/mpeg": "document.mp3"}[testCase.mediaType]
+				submittedMetadata.Filename = map[string]string{"audio/wav": "document.wav", "audio/mpeg": "document.mp3", "audio/mp4": "document.m4a", "video/mp4": "document.mp4"}[testCase.mediaType]
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
@@ -276,7 +283,7 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 					assertDoclingASRSubmission(t, request, submittedMetadata, fixture.source)
 					writeJSON(t, response, doclingTask(testCase.taskID, "success"))
 				case resultPath + testCase.taskID:
-					writeJSON(t, response, asrResultResponse(submittedMetadata.Filename, "1.10.0", testCase.providerEnd))
+					writeJSON(t, response, asrResultResponse(t, submittedMetadata.Filename, fixture.metadata.SHA256, "1.10.0", testCase.providerEnd))
 				default:
 					http.NotFound(response, request)
 				}
@@ -287,6 +294,7 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 			require.NoError(t, err)
 			require.Len(t, result.Evidence.Units, 1)
+			assert.Equal(t, submittedMetadata.MediaFamily, result.Evidence.Family)
 			assert.Equal(t, document.EvidenceUnitSegment, result.Evidence.UnitKind)
 			assert.Equal(t, int64(0), result.Evidence.Units[0].Locator.Start)
 			assert.Equal(t, testCase.wantEnd, result.Evidence.Units[0].Locator.End)
@@ -297,7 +305,11 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			require.NoError(t, err)
 			assert.Equal(t, "generated", artifact.Origin)
 			assert.Equal(t, "docling.serve-v1", artifact.Provider)
-			assert.Equal(t, "1.32.0", artifact.ProviderVersion)
+			if testCase.mediaType == "audio/mp4" || testCase.mediaType == "video/mp4" {
+				assert.Empty(t, artifact.ProviderVersion)
+			} else {
+				assert.Equal(t, "1.32.0", artifact.ProviderVersion)
+			}
 			assert.Empty(t, artifact.Model)
 		})
 	}
@@ -338,7 +350,7 @@ func TestDoclingASRClientRejectsUnpinnedResponseSchema(t *testing.T) {
 		case convertPath:
 			writeJSON(t, response, doclingTask("asr-mp3", "success"))
 		case resultPath + "asr-mp3":
-			writeJSON(t, response, asrResultResponse(fixture.metadata.Filename, "1.11.0", 3.08))
+			writeJSON(t, response, asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.11.0", 3.08))
 		default:
 			http.NotFound(response, request)
 		}
@@ -370,7 +382,7 @@ func TestDoclingASRRejectsUnqualifiedAudioBeforeSubmission(t *testing.T) {
 				case convertPath:
 					writeJSON(t, response, doclingTask("unqualified", "success"))
 				case resultPath + "unqualified":
-					writeJSON(t, response, asrResultResponse(fixture.metadata.Filename, "1.10.0", 1))
+					writeJSON(t, response, asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 1))
 				default:
 					http.NotFound(response, request)
 				}
@@ -406,37 +418,65 @@ func (fixture asrFixture) upload() document.AuthorizedUpload {
 func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrFixture {
 	t.Helper()
 	policyFingerprint, err := ASRPolicyFingerprint(100_000)
+	switch mediaType {
+	case "video/mp4":
+		policyFingerprint, err = ASRVideoPolicyFingerprint(100_000)
+	case "video/quicktime":
+		policyFingerprint, err = ASRQuickTimePolicyFingerprint(100_000)
+	case "audio/mp4":
+		policyFingerprint, err = ASRM4APolicyFingerprint(100_000)
+	}
 	require.NoError(t, err)
+	formats := []document.RenditionFormatCapability{
+		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+	}
+	if mediaType == "audio/mp4" || strings.HasPrefix(mediaType, "video/") {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
+	}
+	if strings.HasPrefix(mediaType, "video/") {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile})
+	}
+	if mediaType == "video/quicktime" {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
+	}
+	family := "audio"
+	if strings.HasPrefix(mediaType, "video/") {
+		family = "video"
+	}
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: policyFingerprint,
 		TrustBoundary:     document.RenditionTrustOperatorNetwork,
-		SupportedFormats: []document.RenditionFormatCapability{
-			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
-			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
-		},
+		SupportedFormats:  formats,
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 	})
 	require.NoError(t, err)
 	digest := sha256.Sum256(source)
 	metadata := document.AuthorizedUploadMetadata{
-		Filename: filename, MediaFamily: "audio", MediaType: mediaType,
+		Filename: filename, MediaFamily: family, MediaType: mediaType,
 		ByteLength: int64(len(source)), SHA256: hex.EncodeToString(digest[:]),
 		CapabilityRecordChecksum: "2222222222222222222222222222222222222222222222222222222222222222",
 		ProviderMetadataChecksum: "3333333333333333333333333333333333333333333333333333333333333333",
 		InputKind:                document.RenditionInputOriginalFile,
+	}
+	durationLimit := int64(10_000)
+	if strings.HasPrefix(mediaType, "video/") {
+		durationLimit = (24 * time.Hour).Milliseconds()
 	}
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
 		Filename: filename, DeclaredMediaType: mediaType,
 		ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: descriptor.Fingerprint,
 		ProfileFingerprint:    strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
-		InputKind:      document.RenditionInputOriginalFile,
-		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1, MaxEntries: 1,
+		InputKind:           document.RenditionInputOriginalFile,
+		VideoAudioTrack:     family == "video",
+		QuickTimeAudioTrack: mediaType == "video/quicktime",
+		MaxSourceBytes:      max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
-		MaxDurationMS: 10_000,
+		MaxDurationMS: durationLimit,
 	})
 	require.NoError(t, err)
 	metadata.CapabilityRecordChecksum = record.Checksum
@@ -448,7 +488,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		SourceSHA256:                metadata.SHA256, SourceBytes: metadata.ByteLength,
 		CapabilityRecordChecksum: metadata.CapabilityRecordChecksum,
 		ProviderMetadataChecksum: metadata.ProviderMetadataChecksum,
-		MediaFamily:              "audio", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile,
+		MediaFamily:              family, MediaType: mediaType, InputKind: document.RenditionInputOriginalFile,
 		DiscloseFilename:     true,
 		AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 		MaxArtifactBytes:     mediatranscript.MaxArtifactBytes, MaxArtifacts: 1,
@@ -465,7 +505,7 @@ func newASRClient(t *testing.T, origin string, descriptor document.RenditionDesc
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
 		MaxPollAttempts:  4,
 		MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
-		MaxTranscriptChars: 100_000,
+		MaxTranscriptChars: 100_000, AllowM4A: len(descriptor.SupportedFormats) == 3, AllowMP4: len(descriptor.SupportedFormats) == 4, AllowMOV: len(descriptor.SupportedFormats) == 5,
 	}, nil, http.DefaultClient)
 	require.NoError(t, err)
 	return client
@@ -483,6 +523,7 @@ func assertDoclingASRSubmission(
 	require.NoError(t, err)
 	assert.Equal(t, "files", file.FormName())
 	assert.Equal(t, metadata.Filename, file.FileName())
+	assert.Equal(t, metadata.MediaType, file.Header.Get("Content-Type"))
 	gotSource, err := io.ReadAll(file)
 	require.NoError(t, err)
 	assert.Equal(t, source, gotSource)
@@ -497,21 +538,29 @@ func assertDoclingASRSubmission(
 		require.NoError(t, readErr)
 		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
+	fromFormat := "audio"
+	if metadata.MediaFamily == "video" {
+		fromFormat = "video"
+	}
 	assert.Equal(t, map[string][]string{
-		"from_formats": {"audio"}, "to_formats": {"json"}, "target_type": {"inbody"},
+		"from_formats": {fromFormat}, "to_formats": {"json"}, "target_type": {"inbody"},
 	}, fields)
 	assert.NotContains(t, fields, "pipeline")
 	assert.NotContains(t, fields, "asr_model")
 }
 
-func asrResultResponse(filename, schemaVersion string, end float64) map[string]any {
+// asrResultResponse records the upload's origin hash as Docling's VideoPipeline does.
+func asrResultResponse(tb testing.TB, filename, sourceSHA256, schemaVersion string, end float64) map[string]any {
+	tb.Helper()
+	binaryHash, err := strconv.ParseUint(sourceSHA256[48:], 16, 64)
+	require.NoError(tb, err)
 	return map[string]any{
 		"status": "success", "errors": []string{},
 		"document": map[string]any{
 			"filename": filename, "md_content": nil,
 			"json_content": map[string]any{
 				"schema_name": "DoclingDocument", "version": schemaVersion,
-				"origin": map[string]any{"filename": filename},
+				"origin": map[string]any{"filename": filename, "binary_hash": binaryHash},
 				"pages":  map[string]any{},
 				"texts": []any{map[string]any{
 					"text": "Telescope delivery arrives Friday at 3.",
@@ -522,5 +571,256 @@ func asrResultResponse(filename, schemaVersion string, end float64) map[string]a
 				}},
 			},
 		},
+	}
+}
+
+func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
+	old, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	current, err := ASRM4APolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.NotEqual(t, old, current, "M4A authority must not reuse WAV/MP3 consent")
+	fixture := newASRFixture(t, "audio/mp4", "synthetic.m4a", mediatest.AACM4A())
+	descriptor := fixture.descriptor
+	descriptor.PolicyFingerprint = old
+	descriptor.Fingerprint = ""
+	descriptor, err = document.NewRenditionDescriptor(descriptor)
+	require.NoError(t, err)
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
+	require.Error(t, err, "v1 policy must not authorize M4A")
+}
+
+// asrAssertType is a checked type assertion for synthetic provider responses.
+func asrAssertType[T any](tb testing.TB, value any) T {
+	tb.Helper()
+	typed, ok := value.(T)
+	require.True(tb, ok)
+	return typed
+}
+
+// asrJSONContent returns the mutable Docling document body of a synthetic result.
+func asrJSONContent(tb testing.TB, result map[string]any) map[string]any {
+	tb.Helper()
+	return asrAssertType[map[string]any](tb, asrAssertType[map[string]any](tb, result["document"])["json_content"])
+}
+
+func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
+	v1, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	v2, err := ASRM4APolicyFingerprint(100_000)
+	require.NoError(t, err)
+	v3, err := ASRVideoPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.NotEqual(t, v1, v3)
+	require.NotEqual(t, v2, v3)
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: fixture.descriptor,
+		MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
+	require.Error(t, err, "v2 must not authorize video")
+	for _, frameBytes := range []int{128 << 10, 2 << 20} {
+		t.Run(strconv.Itoa(frameBytes), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == convertPath {
+					writeJSON(t, w, doclingTask("video", "success"))
+					return
+				}
+				result := asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 2.42)
+				body := asrJSONContent(t, result)
+				body["pictures"] = []any{map[string]any{"image": strings.Repeat("A", frameBytes)}}
+				w.Header().Set("Content-Type", "application/json")
+				// The client abandons an oversized body, so the write may fail.
+				_ = json.NewEncoder(w).Encode(result)
+			}))
+			t.Cleanup(server.Close)
+			client := newASRClient(t, server.URL, fixture.descriptor)
+			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			if frameBytes > 1<<20 {
+				require.Error(t, err)
+				require.Empty(t, result.Artifacts)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, result.Evidence.Units, 1, "only texts become transcript segments")
+			}
+		})
+	}
+}
+
+func TestDoclingASRExistingPolicyIdentity(t *testing.T) {
+	v1, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.Equal(t, "4ba382a79b92197618690ece585479aba1b499cacfc4028a65c4a7b2c830f7d6", v1)
+	v2, err := ASRM4APolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.Equal(t, "c83aebb1a1fb7617db0aca97216df3234d8ce3e9676dcb6f46179456b283adde", v2)
+}
+
+func TestDoclingASRVideoPreservesTrackSegments(t *testing.T) {
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == convertPath {
+			writeJSON(t, w, doclingTask("video", "success"))
+			return
+		}
+		result := asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 1.0001)
+		body := asrJSONContent(t, result)
+		body["texts"] = append(asrAssertType[[]any](t, body["texts"]), map[string]any{
+			"text": "second cue", "source": []any{map[string]any{"kind": "track", "start_time": 0.75, "end_time": 2.0}}})
+		writeJSON(t, w, result)
+	}))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, fixture.descriptor)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	require.Equal(t, "video", result.Evidence.Family)
+	artifact, err := mediatranscript.Unmarshal(result.Artifacts[0].Payload)
+	require.NoError(t, err)
+	require.Len(t, artifact.Segments, 2)
+	require.EqualValues(t, 1001, artifact.Segments[0].EndMS)
+	require.EqualValues(t, 750, artifact.Segments[1].StartMS)
+	require.EqualValues(t, 2000, artifact.Segments[1].EndMS)
+}
+
+func TestDoclingASRVideoRejectsVisualOnlyCapability(t *testing.T) {
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(fixture.source), media.InspectionPolicy{
+		Filename: fixture.metadata.Filename, DeclaredMediaType: fixture.metadata.MediaType,
+		ExpectedBytes: fixture.metadata.ByteLength, ExpectedSHA256: fixture.metadata.SHA256,
+		DescriptorFingerprint: fixture.descriptor.Fingerprint, ProfileFingerprint: strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
+		InputKind: document.RenditionInputOriginalFile, MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20,
+		MaxEntries: 100000, MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
+		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
+		MaxPixels: 1 << 20, MaxFrames: 1000, MaxDurationMS: 10000,
+	})
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	fixture.capability = record.UploadCapability()
+	fixture.metadata.CapabilityRecordChecksum, fixture.authorization.CapabilityRecordChecksum = record.Checksum, record.Checksum
+	var submissions int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { submissions++ }))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, fixture.descriptor)
+	_, err = document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.Error(t, err)
+	require.Zero(t, submissions, "a video capability without sound proof must never be uploaded")
+	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+	require.True(t, ok)
+	require.ErrorContains(t, providerErr.Unwrap(), "Docling ASR video sound-track capability does not match the upload")
+}
+
+func TestDoclingASRQuickTimeUploadAndTiming(t *testing.T) {
+	fixture := newASRFixture(t, "video/quicktime", "synthetic.mov", mediatest.H264AACMOV())
+	v3 := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	require.NotEqual(t, v3.descriptor.PolicyFingerprint, fixture.descriptor.PolicyFingerprint)
+	_, err := NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: fixture.descriptor,
+		MaxTranscriptChars: 100_000, AllowMP4: true}, nil, http.DefaultClient)
+	require.ErrorContains(t, err, "does not match the qualified deployment")
+
+	fixture.authorization.DiscloseFilename = false
+	sent := fixture.metadata
+	sent.Filename = "document.mov"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == convertPath {
+			assertDoclingASRSubmission(t, r, sent, fixture.source)
+			writeJSON(t, w, doclingTask("quicktime", "success"))
+			return
+		}
+		result := asrResultResponse(t, sent.Filename, fixture.metadata.SHA256, "1.10.0", 0.625)
+		asrAssertType[map[string]any](t, asrJSONContent(t, result)["origin"])["mimetype"] = sent.MediaType
+		writeJSON(t, w, result)
+	}))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, fixture.descriptor)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	require.Equal(t, "video", result.Evidence.Family)
+	require.Len(t, result.Artifacts, 1)
+	artifact, err := mediatranscript.Unmarshal(result.Artifacts[0].Payload)
+	require.NoError(t, err)
+	require.Empty(t, artifact.ProviderVersion)
+	require.Len(t, artifact.Segments, 1)
+	require.EqualValues(t, 625, artifact.Segments[0].EndMS)
+}
+
+func TestDoclingASRRejectsDelayedMP4SoundBeforeUpload(t *testing.T) {
+	for name, edits := range map[string][]mediatest.SoundEdit{
+		"empty edit":     {{Duration: 1979, MediaTime: -1}, {Duration: 1000, MediaTime: 1024}},
+		"delayed media":  {{Duration: 1000, MediaTime: 94976}},
+		"multiple edits": {{Duration: 500, MediaTime: 1024}, {Duration: 500, MediaTime: 24000}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.M4AWithSoundEdits("mp4a", edits...))
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				http.NotFound(response, nil)
+			}))
+			t.Cleanup(server.Close)
+			client := newASRClient(t, server.URL, fixture.descriptor)
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			require.Zero(t, calls.Load())
+		})
+	}
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.M4AWithSoundEdits("mp4a", mediatest.SoundEdit{Duration: 1000, MediaTime: 2112}))
+	facts, local := fixture.capability.Facts()
+	require.True(t, local && facts.VideoAudioTrack, "ordinary AAC priming stays eligible")
+}
+
+// A video result must name the exact upload: filenames repeat, so only
+// Docling's origin hash binds the transcript to the authorized bytes.
+func TestDoclingASRVideoRequiresUploadOriginHash(t *testing.T) {
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	matching, err := strconv.ParseUint(fixture.metadata.SHA256[48:], 16, 64)
+	require.NoError(t, err)
+	for name, testCase := range map[string]struct {
+		edit   func(origin map[string]any)
+		accept bool
+	}{
+		"matching":  {edit: func(map[string]any) {}, accept: true},
+		"different": {edit: func(origin map[string]any) { origin["binary_hash"] = matching ^ 1 }},
+		"absent":    {edit: func(origin map[string]any) { delete(origin, "binary_hash") }},
+		"null":      {edit: func(origin map[string]any) { origin["binary_hash"] = nil }},
+		"string":    {edit: func(origin map[string]any) { origin["binary_hash"] = strconv.FormatUint(matching, 10) }},
+		"negative":  {edit: func(origin map[string]any) { origin["binary_hash"] = -1 }},
+		"fraction":  {edit: func(origin map[string]any) { origin["binary_hash"] = 1.5 }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == convertPath {
+					writeJSON(t, w, doclingTask("video", "success"))
+					return
+				}
+				result := asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 2.42)
+				testCase.edit(asrAssertType[map[string]any](t, asrJSONContent(t, result)["origin"]))
+				writeJSON(t, w, result)
+			}))
+			t.Cleanup(server.Close)
+			client := newASRClient(t, server.URL, fixture.descriptor)
+			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			if testCase.accept {
+				require.NoError(t, err)
+				require.Len(t, result.Artifacts, 1)
+				return
+			}
+			require.Error(t, err)
+			require.Empty(t, result.Artifacts)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorPolicyRejected, providerErr.Code())
+		})
+	}
+}
+
+func TestDoclingASROriginHashUsesUnsignedLowBits(t *testing.T) {
+	sha := strings.Repeat("0", 48) + "ffffffffffffff01"
+	require.NoError(t, requireOriginBinaryHash([]byte(`{"origin":{"binary_hash":18446744073709551361}}`), sha))
+	for _, raw := range []string{
+		`{"origin":{"binary_hash":-255}}`,
+		`{"origin":{"binary_hash":18446744073709551617}}`,
+		`{"origin":{"binary_hash":1.8446744073709552e19}}`,
+		`{"origin":null}`,
+		`{}`,
+	} {
+		require.Error(t, requireOriginBinaryHash([]byte(raw), sha), raw)
 	}
 }

@@ -4258,10 +4258,15 @@ export interface MediaTranscriptUnit {
 }
 
 export interface MediaTranscriptEvidence {
+  artifact_sha256?: string;
   build_id: string;
   completeness: string;
+  evidence_checksum: string;
   has_omissions: boolean;
+  language?: string;
   origin: string;
+  profile_fingerprint: string;
+  speech_state: string;
   supplied_input_id?: string;
   truncated: boolean;
   units: MediaTranscriptUnit[];
@@ -4271,10 +4276,13 @@ export interface MediaTranscript {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   content_version_id: string;
+  contract_version: string;
   coverage_state: string;
   evidence_state: string;
+  node_id?: number;
   operation_state: string;
   source_id: string;
+  source_sha256?: string;
   source_version_id: string;
   transcript?: MediaTranscriptEvidence;
   vault_uid: string;

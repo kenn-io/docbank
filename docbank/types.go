@@ -191,16 +191,24 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	BuildID         string
-	SuppliedInputID string
-	Origin          string
-	Completeness    string
-	Truncated       bool
-	HasOmissions    bool
-	Units           []MediaTranscriptUnit
+	ProfileFingerprint string
+	EvidenceChecksum   string
+	ArtifactSHA256     string
+	SpeechState        string
+	Language           string
+	BuildID            string
+	SuppliedInputID    string
+	Origin             string
+	Completeness       string
+	Truncated          bool
+	HasOmissions       bool
+	Units              []MediaTranscriptUnit
 }
 
 type MediaTranscript struct {
+	ContractVersion  string
+	NodeID           int64
+	SourceSHA256     string
 	VaultUID         string
 	SourceID         string
 	SourceVersionID  string

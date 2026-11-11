@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -18,7 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/mediatranscript"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -373,7 +377,11 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	})
 }
 
-type mediaWorkerProvider struct{ *workerProvider }
+type mediaWorkerProvider struct {
+	*workerProvider
+
+	timedWithoutArtifact bool
+}
 
 func (provider *mediaWorkerProvider) Render(
 	ctx context.Context,
@@ -381,6 +389,17 @@ func (provider *mediaWorkerProvider) Render(
 	authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
 	result, err := provider.workerProvider.Render(ctx, upload, authorization)
+	if err == nil && provider.timedWithoutArtifact {
+		policy, policyErr := document.NewEvidencePolicy(1 << 20)
+		if policyErr != nil {
+			return document.RenditionResult{}, policyErr
+		}
+		result.Evidence, _, err = mediatranscript.Build(mediatranscript.ArtifactV1{
+			ContractVersion: "media-transcript/v1", Origin: "generated", Provider: "synthetic",
+			Segments: []mediatranscript.Segment{{Text: "generated speech", EndMS: 1000}},
+		}, "audio", policy)
+		result.Evidence.Artifacts = nil
+	}
 	result.Evidence.Family = "audio"
 	return result, err
 }
@@ -406,7 +425,7 @@ func newMediaStateFixture(tb testing.TB) mediaStateFixture {
 	return f
 }
 
-func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
+func newMediaStateFixtureWithoutConsent(tb testing.TB, contracts ...string) mediaStateFixture {
 	tb.Helper()
 	fixture := newPublicationFixture(tb)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
@@ -420,10 +439,26 @@ func newMediaStateFixtureWithoutConsent(tb testing.TB) mediaStateFixture {
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 	})
 	require.NoError(tb, err)
+	if len(contracts) > 0 {
+		descriptor.SupportedFormats = []document.RenditionFormatCapability{{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile}}
+		if contracts[0] == docling.ASRQuickTimeAdapterContract {
+			descriptor.SupportedFormats = append(descriptor.SupportedFormats, document.RenditionFormatCapability{
+				MediaFamily: "video", MediaType: "video/quicktime", InputKind: document.RenditionInputOriginalFile,
+			})
+		}
+		descriptor.ArtifactRoles = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
+		descriptor.Fingerprint = ""
+		descriptor, err = document.NewRenditionDescriptor(descriptor)
+		require.NoError(tb, err)
+	}
 	provider := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
 	record := workerProcessingProfile(tb, provider.Descriptor())
 	var portable document.ProcessingProfileV1
 	require.NoError(tb, json.Unmarshal(record.CanonicalProfile, &portable))
+	if len(contracts) > 0 {
+		portable.Rendition.AdapterContract = contracts[0]
+		portable.Rendition.RequestedArtifacts = descriptor.ArtifactRoles
+	}
 	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
 	service, err := NewService(tb.Context(), ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
@@ -754,6 +789,188 @@ func TestWatchImportAdmission(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, node.CurrentVersionID, work.Waiter.ContentVersionID)
 			}
+		})
+	}
+}
+
+func TestWatchMP4ImportAdmission(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"missing", "active", "revoked"} {
+		t.Run(state, func(t *testing.T) {
+			f := newMediaStateFixtureWithoutConsent(t, docling.ASRVideoAdapterContract)
+			raw := mediatest.H264AACMP4()
+			written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+			require.NoError(t, err)
+			node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "phone.mp4", written.Hash, written.Size, "video/mp4", processingBlobPhysical(t, written))
+			require.NoError(t, err)
+			selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "speech"}
+			plan, err := f.service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			if state != "missing" {
+				_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+				require.NoError(t, err)
+			}
+			if state == "revoked" {
+				_, err = f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+			}
+			require.NoError(t, f.service.AdmitImportedRendition(t.Context(), node, "speech"))
+			_, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, state == "active", queued)
+		})
+	}
+}
+
+func TestMP4InspectionContractSelection(t *testing.T) {
+	t.Parallel()
+	data := mediatest.H264AACMP4()
+	for _, contract := range []string{docling.ASRVideoAdapterContract, docling.ASRM4AAdapterContract, "rendition-adapter/v1"} {
+		t.Run(contract, func(t *testing.T) {
+			f := newMediaStateFixtureWithoutConsent(t, contract)
+			profile := f.service.profiles["speech"]
+			version := store.ContentVersion{Size: int64(len(data)), MimeType: "video/mp4", BlobHash: processingSHA256(data)}
+			policy := inspectionPolicy("phone.mp4", version, profile)
+			require.Equal(t, contract == docling.ASRVideoAdapterContract, policy.VideoAudioTrack)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			if contract != docling.ASRVideoAdapterContract {
+				legacy := policy
+				legacy.VideoAudioTrack = false
+				previous, err := media.InspectCapability(t.Context(), bytes.NewReader(data), legacy)
+				require.NoError(t, err)
+				require.Equal(t, previous, record, "supplied captions and existing contracts retain sealed identities")
+				require.Equal(t, previous.Checksum, record.Checksum)
+			}
+		})
+	}
+}
+
+func TestSuppliedCaptionsMP4InspectionIdentity(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	name, supplied, err := NewSuppliedCaptionProfile(f.catalog, f.blobs, "operator:synthetic")
+	require.NoError(t, err)
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: f.catalog, Blobs: f.blobs,
+		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:synthetic",
+		Profiles: map[string]ProfileConfig{name: supplied}})
+	require.NoError(t, err)
+	data := mediatest.H264AACMP4()
+	version := store.ContentVersion{Size: int64(len(data)), MimeType: "video/mp4", BlobHash: processingSHA256(data)}
+	policy := inspectionPolicy("phone.mp4", version, service.profiles[name])
+	require.False(t, policy.VideoAudioTrack)
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	legacy := policy
+	legacy.VideoAudioTrack = false
+	previous, err := media.InspectCapability(t.Context(), bytes.NewReader(data), legacy)
+	require.NoError(t, err)
+	require.Equal(t, previous, record)
+	require.Equal(t, previous.Checksum, record.Checksum)
+	encoded, err := json.Marshal(policy)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "video_audio_track", "legacy policy bytes must omit the new flag")
+}
+
+func TestWatchQuickTimeImportAdmission(t *testing.T) {
+	t.Parallel()
+	for _, disclose := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disclose=%t", disclose), func(t *testing.T) {
+			f := newMediaStateFixtureWithoutConsent(t, docling.ASRQuickTimeAdapterContract)
+			legacy := newMediaStateFixtureWithoutConsent(t, docling.ASRVideoAdapterContract)
+			v4 := f.service.profiles["speech"].portable
+			v4.Rendition.DiscloseFilename = disclose
+			v3 := legacy.service.profiles["speech"].portable
+			service, err := NewService(t.Context(), ServiceConfig{
+				Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+				Principal: "operator:synthetic", Scope: "document-processing",
+				Profiles: map[string]ProfileConfig{
+					"v3": {Profile: v3, RenditionProvider: legacy.provider},
+					"v4": {Profile: v4, RenditionProvider: f.provider},
+				},
+			})
+			require.NoError(t, err)
+			importFile := func(name, mime string, data []byte) store.Node {
+				written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+				require.NoError(t, err)
+				node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name, written.Hash, written.Size, mime, processingBlobPhysical(t, written))
+				require.NoError(t, err)
+				return node
+			}
+			grant := func(node store.Node, profile string) {
+				selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: profile}
+				plan, err := service.Plan(t.Context(), selector)
+				require.NoError(t, err)
+				require.Empty(t, plan.RenditionIneligibleReason)
+				_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+				require.NoError(t, err)
+			}
+
+			mp4 := importFile("phone.mp4", "video/mp4", mediatest.H264AACMP4())
+			grant(mp4, "v3")
+			mov := importFile("phone.mov", "video/quicktime", mediatest.H264AACMOV())
+			require.NoError(t, service.AdmitImportedRendition(t.Context(), mov, "v3"))
+			require.NoError(t, service.AdmitImportedRendition(t.Context(), mov, "v4"))
+			_, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			require.NoError(t, err)
+			require.False(t, queued, "the v3 grant cannot authorize MOV under either contract")
+
+			grant(mov, "v4")
+			// A trailing free box keeps these bytes, and so the job, distinct from phone.mov.
+			wrong := importFile("wrong.mp4", "video/quicktime", append(mediatest.H264AACMOV(), 0, 0, 0, 8, 'f', 'r', 'e', 'e'))
+			plan, err := service.Plan(t.Context(), Selector{NodeID: wrong.ID, ContentVersionID: wrong.CurrentVersionID, Profile: "v4"})
+			require.NoError(t, err)
+			if disclose {
+				// The provider would see the .mp4 name, so the suffix check refuses it as MP4's does.
+				require.Equal(t, string(media.CapabilityReasonMalformed), plan.RenditionIneligibleReason)
+			} else {
+				// The provider sees only document.mov and the QuickTime bytes.
+				require.Empty(t, plan.RenditionIneligibleReason)
+			}
+			require.NoError(t, service.AdmitImportedRendition(t.Context(), wrong, "v4"))
+			claim, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, !disclose, queued, "the v4 grant covers the profile, so only the suffix check refuses")
+			if queued {
+				work, err := f.catalog.RenditionJobWorkByClaim(t.Context(), claim, time.Now())
+				require.NoError(t, err)
+				require.Equal(t, wrong.CurrentVersionID, work.Waiter.ContentVersionID)
+			}
+
+			require.NoError(t, service.AdmitImportedRendition(t.Context(), mov, "v4"))
+			claim, queued, err = f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			require.NoError(t, err)
+			require.True(t, queued)
+			work, err := f.catalog.RenditionJobWorkByClaim(t.Context(), claim, time.Now())
+			require.NoError(t, err)
+			require.Equal(t, mov.CurrentVersionID, work.Waiter.ContentVersionID)
+		})
+	}
+}
+
+func TestV3InspectionPolicyFingerprints(t *testing.T) {
+	t.Parallel()
+	data := []byte("synthetic policy identity source")
+	profile := configuredProfile{
+		portable: document.ProcessingProfileV1{Rendition: &document.RenditionBindingV1{
+			AdapterContract: docling.ASRVideoAdapterContract, DisclosureFingerprint: strings.Repeat("3", 64),
+			MaxDocumentBytes: 1 << 20, MaxUnits: 100,
+		}},
+		record:   store.ProcessingProfileRecord{Fingerprint: strings.Repeat("2", 64)},
+		provider: &workerProvider{descriptor: document.RenditionDescriptor{Fingerprint: strings.Repeat("1", 64)}},
+	}
+	for _, tc := range []struct{ name, mime, fingerprint string }{
+		{"phone.wav", "audio/wav", "09fe4b44b4a0d47b1246b5c328b3423ddceb9ca1ba2f5ff09b60bc35f9483219"},
+		{"phone.mp3", "audio/mpeg", "8e174c16775e142ed798526e60765c1c682edb5f652e9653b13a6dc1bc402693"},
+		{"phone.m4a", "audio/mp4", "97b6cb5f29f3fad7caf1b930a8f8437a0116eec339550ac6154f85edd899e9a3"},
+		{"phone.mp4", "video/mp4", "910e30e4a37650af43d0bd6c0385fe6f1385ba2979f235e2af73b3c38e01645e"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			version := store.ContentVersion{MimeType: tc.mime, BlobHash: processingSHA256(data), Size: int64(len(data))}
+			policy := inspectionPolicy(tc.name, version, profile)
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.Equal(t, tc.fingerprint, record.PolicyFingerprint)
 		})
 	}
 }
