@@ -52,6 +52,8 @@ func TestSelectedMediaPublicSuppliedEmbeddingComposition(t *testing.T) {
 		}, time.Minute, time.Millisecond)
 		report, err := vault.SearchDocuments(t.Context(), docbank.DocumentSearchRequest{Query: "telescope", Mode: docbank.DocumentSearchSemantic, Profile: "supplied-transcript", Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: []string{receipt.ContentVersionID}}, MediaSources: []docbank.DocumentMediaSourceSelector{{SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID, SuppliedInputIDs: []string{artifact.SuppliedInputID}}}})
 		require.NoError(t, err)
+		require.Equal(t, docbank.DocumentSearchSemantic, report.ActualMode)
+		require.NotContains(t, report.Degradations, "semantic_unavailable")
 		require.Len(t, report.Results, 1)
 		require.Equal(t, "supplied", report.MediaSelections[0].Origin)
 		require.Equal(t, artifact.SuppliedInputID, report.MediaSelections[0].SuppliedInputID)

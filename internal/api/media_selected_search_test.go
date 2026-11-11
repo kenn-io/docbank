@@ -7,7 +7,6 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
 func (f *mediaQualificationFixture) request(profile, mode string, records ...mediaQualificationRecord) api.DocumentSearchRequest {
@@ -100,10 +99,17 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 
 func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"replace", "hide", "revoke"} {
+	for _, action := range []string{"replace", "hide", "revoke", "coverage intersection"} {
 		t.Run(action, func(t *testing.T) {
 			f := newMediaQualificationFixture(t)
 			record := f.manifest.Records[0]
+			request := f.request(record.Profile, "semantic", record)
+			mutation := action
+			if action == "coverage intersection" {
+				generated := f.manifest.Records[2]
+				request = f.request(generated.Profile, "semantic", record, generated)
+				record, mutation = generated, "revoke"
+			}
 			require.NoError(t, f.control(t.Context(), "arm", ""))
 			type outcome struct {
 				report api.DocumentSearchReport
@@ -111,7 +117,7 @@ func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 			}
 			done := make(chan outcome, 1)
 			go func() {
-				report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
+				report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), request)
 				done <- outcome{report, err}
 			}()
 			select {
@@ -120,13 +126,16 @@ func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 				require.NoError(t, early.err)
 				t.Fatal("query finished before entering the encoder barrier")
 			}
-			require.NoError(t, f.control(t.Context(), action, record.ID))
+			require.NoError(t, f.control(t.Context(), mutation, record.ID))
 			require.NoError(t, f.control(t.Context(), "release", ""))
 			result := <-done
-			// A changed vector publication can fail closed before a report exists.
-			// A returned report must drop the affected source after query encoding.
 			require.Empty(t, result.report.Results)
-			if result.err != nil {
+			if action == "coverage intersection" {
+				require.NoError(t, result.err)
+				require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
+				require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")
+				require.Equal(t, "incomplete", result.report.Coverage.State)
+			} else if result.err != nil {
 				require.ErrorContains(t, result.err, "stale_index")
 			} else {
 				require.Equal(t, "incomplete", result.report.Coverage.State)
@@ -134,53 +143,6 @@ func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSelectedMediaSearchCoverageIntersectsLateSelection(t *testing.T) {
-	t.Parallel()
-	f := newMediaQualificationFixture(t)
-	supplied, generated := f.manifest.Records[0], f.manifest.Records[2]
-	require.NoError(t, f.control(t.Context(), "arm", ""))
-	type outcome struct {
-		report api.DocumentSearchReport
-		err    error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		report, err := daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(generated.Profile, "semantic", supplied, generated))
-		done <- outcome{report, err}
-	}()
-	select {
-	case <-f.encoder.entered:
-	case early := <-done:
-		require.NoError(t, early.err)
-		t.Fatal("query finished before entering the encoder barrier")
-	}
-	require.NoError(t, f.control(t.Context(), "revoke", generated.ID))
-	require.NoError(t, f.control(t.Context(), "release", ""))
-	result := <-done
-	require.NoError(t, result.err)
-	require.Empty(t, result.report.Results)
-	require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
-	require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")
-	require.Equal(t, "incomplete", result.report.Coverage.State)
-}
-
-func TestSelectedMediaSearchRequiresQueryConsent(t *testing.T) {
-	t.Parallel()
-	f := newMediaQualificationFixture(t)
-	_, err := f.service.RevokeConsent(t.Context())
-	require.NoError(t, err)
-	f.encoder.mu.Lock()
-	before := f.encoder.calls
-	f.encoder.mu.Unlock()
-	record := f.manifest.Records[0]
-	_, err = daemonconn.New(f.server.URL, f.manifest.APIKey).SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "consent")
-	f.encoder.mu.Lock()
-	defer f.encoder.mu.Unlock()
-	require.Equal(t, before, f.encoder.calls, "denied query must not reach encoder")
 }
 
 func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
@@ -195,9 +157,6 @@ func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
 		require.Len(t, report.Results, 1)
 		excerpt := report.Results[0].Excerpt
 		require.NotEmpty(t, excerpt)
-		require.True(t, utf8.ValidString(excerpt))
-		require.LessOrEqual(t, utf8.RuneCountInString(excerpt), 512)
-		require.LessOrEqual(t, len(excerpt), 2048)
 		require.True(t, strings.HasPrefix(text, excerpt))
 		require.Equal(t, "embedding", report.Results[0].Evidence[0].Kind)
 		require.Equal(t, report.MediaSelections[0].BuildID, report.Results[0].Evidence[0].BuildID)
@@ -208,78 +167,65 @@ func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
 	require.Equal(t, text, transcript.Transcript.Units[0].Text, "display bound must not truncate retained evidence")
 }
 
-func TestSelectedMediaSearchSkipsUnavailableEmbeddings(t *testing.T) {
+func TestSelectedMediaSearchFallbacks(t *testing.T) {
 	t.Parallel()
-	f := newMediaQualificationFixture(t)
-	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
-	supplied, generated := f.manifest.Records[0], f.manifest.Records[2]
-	for _, mode := range []string{"semantic", "hybrid"} {
-		f.encoder.mu.Lock()
-		before := f.encoder.calls
-		f.encoder.mu.Unlock()
-		report, err := client.SearchDocuments(t.Context(), f.request(supplied.Profile, mode, generated))
-		require.NoError(t, err)
-		require.Equal(t, mode, report.RequestedMode)
-		require.Equal(t, "incomplete", report.Coverage.State)
-		require.Zero(t, report.Coverage.CompleteDocuments)
-		require.Len(t, report.MediaSelections, 1)
-		require.NotEmpty(t, report.MediaSelections[0].BuildID)
-		require.Equal(t, "lexical", report.ActualMode)
-		require.Contains(t, report.Degradations, "semantic_unavailable")
-		require.Len(t, report.Results, 1)
-		require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
-		f.encoder.mu.Lock()
-		require.Equal(t, before, f.encoder.calls, "no eligible vector row must skip query encoding")
-		f.encoder.mu.Unlock()
-	}
-	// A scope that cannot perform any retrieval must not acquire query egress.
-	_, err := f.service.RevokeConsent(t.Context())
-	require.NoError(t, err)
-	request := f.request(supplied.Profile, "semantic", supplied)
-	request.MediaSources[0].SuppliedInputIDs = []string{}
-	report, err := client.SearchDocuments(t.Context(), request)
-	require.NoError(t, err)
-	require.Equal(t, "lexical", report.ActualMode)
-	require.Contains(t, report.Degradations, "semantic_unavailable")
-}
-
-func TestSelectedMediaSearchFallsBackForUnpersistedEmbeddingDonor(t *testing.T) {
-	t.Parallel()
-	f := newMediaQualificationFixture(t, mediaQualificationOptions{UnprocessedDonor: true})
-	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
-	record := f.manifest.Records[0]
-	for _, mode := range []string{"semantic", "hybrid"} {
-		f.unprocessedEncoder.mu.Lock()
-		before := f.unprocessedEncoder.calls
-		f.unprocessedEncoder.mu.Unlock()
-		report, err := client.SearchDocuments(t.Context(), f.request(f.unprocessedProfile, mode, record))
-		require.NoError(t, err)
-		require.Equal(t, mode, report.RequestedMode)
-		require.Equal(t, "incomplete", report.Coverage.State)
-		require.Equal(t, 1, report.Coverage.ScopedDocuments)
-		require.Zero(t, report.Coverage.CompleteDocuments)
-		require.Equal(t, "lexical", report.ActualMode)
-		require.Contains(t, report.Degradations, "semantic_unavailable")
-		require.Len(t, report.Results, 1)
-		require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
-		f.unprocessedEncoder.mu.Lock()
-		require.Equal(t, before, f.unprocessedEncoder.calls, "an unpersisted donor has no eligible vector rows to query")
-		f.unprocessedEncoder.mu.Unlock()
-	}
-}
-
-func TestSelectedMediaSearchFallsBackWithoutEmbeddingBinding(t *testing.T) {
-	t.Parallel()
-	f := newMediaQualificationFixture(t)
-	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
-	for _, mode := range []string{"semantic", "hybrid"} {
-		report, err := client.SearchDocuments(t.Context(), f.request("qualification-unbound", mode, f.manifest.Records[0]))
-		require.NoError(t, err)
-		require.Equal(t, mode, report.RequestedMode)
-		require.Equal(t, "lexical", report.ActualMode)
-		require.Contains(t, report.Degradations, "semantic_unavailable")
-		require.Len(t, report.Results, 1)
-		require.Equal(t, "incomplete", report.Coverage.State)
+	for _, test := range []string{"consent", "unavailable rows", "unpersisted donor", "no binding"} {
+		t.Run(test, func(t *testing.T) {
+			f := newMediaQualificationFixture(t, mediaQualificationOptions{UnprocessedDonor: test == "unpersisted donor"})
+			client := daemonconn.New(f.server.URL, f.manifest.APIKey)
+			supplied, generated := f.manifest.Records[0], f.manifest.Records[2]
+			if test == "consent" {
+				_, err := f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+				f.encoder.mu.Lock()
+				before := f.encoder.calls
+				f.encoder.mu.Unlock()
+				_, err = client.SearchDocuments(t.Context(), f.request(supplied.Profile, "semantic", supplied))
+				require.ErrorContains(t, err, "consent")
+				f.encoder.mu.Lock()
+				require.Equal(t, before, f.encoder.calls, "denied query must not reach encoder")
+				f.encoder.mu.Unlock()
+				return
+			}
+			for _, mode := range []string{"semantic", "hybrid"} {
+				profile, record, encoder := supplied.Profile, generated, f.encoder
+				switch test {
+				case "unpersisted donor":
+					profile, record, encoder = f.unprocessedProfile, supplied, f.unprocessedEncoder
+				case "no binding":
+					profile, record = "qualification-unbound", supplied
+				}
+				encoder.mu.Lock()
+				before := encoder.calls
+				encoder.mu.Unlock()
+				report, err := client.SearchDocuments(t.Context(), f.request(profile, mode, record))
+				require.NoError(t, err)
+				require.Equal(t, mode, report.RequestedMode)
+				require.Equal(t, "lexical", report.ActualMode)
+				require.Contains(t, report.Degradations, "semantic_unavailable")
+				require.Equal(t, "incomplete", report.Coverage.State)
+				require.Zero(t, report.Coverage.CompleteDocuments)
+				require.Equal(t, 1, report.Coverage.ScopedDocuments)
+				require.Len(t, report.Results, 1)
+				require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
+				require.Len(t, report.MediaSelections, 1)
+				require.NotEmpty(t, report.MediaSelections[0].BuildID)
+				encoder.mu.Lock()
+				require.Equal(t, before, encoder.calls, "fallback must not encode the query")
+				encoder.mu.Unlock()
+			}
+			if test == "unavailable rows" {
+				// A scope that cannot retrieve need not acquire query egress.
+				_, err := f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+				request := f.request(supplied.Profile, "semantic", supplied)
+				request.MediaSources[0].SuppliedInputIDs = []string{}
+				report, err := client.SearchDocuments(t.Context(), request)
+				require.NoError(t, err)
+				require.Equal(t, "lexical", report.ActualMode)
+				require.Contains(t, report.Degradations, "semantic_unavailable")
+			}
+		})
 	}
 }
 

@@ -277,39 +277,34 @@ describe("search result authority", () => {
   });
 });
 
-it.each(["semantic"] as const)(
-  "accepts a lexical fallback for selected %s search",
-  (mode) => {
-    const request: DocumentSearchRequest = {
-      query: "fixture",
-      mode,
-      profile: "supplied-transcript",
-      fence: { vault_uid: vault, content_version_ids: [versions[0]] },
-      media_sources: [
-        { source_id: "source", source_version_id: "version", content_version_id: versions[0] },
-      ],
-    };
-    const report = {
-      requested_mode: mode,
-      actual_mode: "lexical",
-      media_source_selection: true,
-      media_selections: [],
-      coverage: {
-        binding_required: true,
-        state: "incomplete",
-        scoped_documents: 1,
-        complete_documents: 0,
-      },
-      results: [],
-      degradations: ["semantic_unavailable"],
-      truncated: false,
-      trace: [],
-    };
-    expect(validateDocumentSearchReport(report, request).actual_mode).toBe("lexical");
-    if (mode === "semantic") {
-      expect(() => validateDocumentSearchReport({ ...report, degradations: [] }, request)).toThrow();
-      const { media_sources: _, ...ordinary } = request;
-      expect(() => validateDocumentSearchReport(report, ordinary)).toThrow();
-    }
-  },
-);
+it("accepts a lexical fallback for selected semantic search", () => {
+  const request: DocumentSearchRequest = {
+    query: "fixture",
+    mode: "semantic",
+    profile: "supplied-transcript",
+    fence: { vault_uid: vault, content_version_ids: [versions[0]] },
+    media_sources: [
+      { source_id: "source", source_version_id: "version", content_version_id: versions[0] },
+    ],
+  };
+  const report = {
+    requested_mode: "semantic",
+    actual_mode: "lexical",
+    media_source_selection: true,
+    media_selections: [],
+    coverage: {
+      binding_required: true,
+      state: "incomplete",
+      scoped_documents: 1,
+      complete_documents: 0,
+    },
+    results: [],
+    degradations: ["semantic_unavailable"],
+    truncated: false,
+    trace: [],
+  };
+  expect(validateDocumentSearchReport(report, request).actual_mode).toBe("lexical");
+  expect(() => validateDocumentSearchReport({ ...report, degradations: [] }, request)).toThrow();
+  const { media_sources: _, ...ordinary } = request;
+  expect(() => validateDocumentSearchReport(report, ordinary)).toThrow();
+});

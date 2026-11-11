@@ -59,19 +59,26 @@ func TestSelectedMediaEmbeddingBuildFence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, current.Coverage.ScopedDocuments)
 	require.Zero(t, current.Coverage.CompleteDocuments)
-	opts = SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: version, BuildID: build}}, ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174001"}}
-	available, err := s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, record.BindingID, opts)
-	require.NoError(t, err)
-	require.False(t, available, "selected builds must still respect a separate version fence")
 }
 
-func TestSelectedSemanticRowsAvailableForUnpersistedProfile(t *testing.T) {
+func TestSelectedSemanticRowsAvailable(t *testing.T) {
 	t.Parallel()
 	s, version, profile, attachment := newEmbeddingCatalogFixture(t)
+	record := embeddingSetFixture(t.Context(), s, version, profile.Fingerprint, document.EmbeddingInputRenditionChunk, "chunk", attachment)
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
+	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{Key: EmbeddingHeadKey{ContentVersionID: version, BindingID: record.BindingID, InputKind: record.InputKind}, SetID: record.ID, VectorSpaceID: record.VectorSpace.ID, ProcessingProfileFingerprint: profile.Fingerprint, PublishedAt: embeddingCatalogTime, FencingToken: 1}))
 	var buildID string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachment).Scan(&buildID))
 	opts := SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: version, BuildID: buildID}}}
-	available, err := s.SelectedSemanticRowsAvailable(t.Context(), testSHA256([]byte("unpersisted-profile")), "chunk", opts)
+	available, err := s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, "chunk", opts)
+	require.NoError(t, err)
+	require.True(t, available)
+	opts.ContentVersionIDs = []string{"123e4567-e89b-42d3-a456-426614174001"}
+	available, err = s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, "chunk", opts)
+	require.NoError(t, err)
+	require.False(t, available, "selected builds must still respect a separate version fence")
+	opts.ContentVersionIDs = nil
+	available, err = s.SelectedSemanticRowsAvailable(t.Context(), testSHA256([]byte("unpersisted-profile")), "chunk", opts)
 	require.NoError(t, err)
 	require.False(t, available)
 	_, err = s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, "missing-binding", opts)
