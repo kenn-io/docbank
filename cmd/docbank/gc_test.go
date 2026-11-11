@@ -17,7 +17,9 @@ func TestGCPackedRepackGuidance(t *testing.T) {
 		var request struct {
 			Run bool `json:"run"`
 		}
-		require.NoError(t, json.UnmarshalRead(r.Body, &request))
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
+			return
+		}
 		run = request.Run
 		w.Header().Set("Content-Type", "application/json")
 		report := api.GCReport{CandidateBlobs: 1, PendingPackedBlobs: 1, PendingPackedBytes: 100}
