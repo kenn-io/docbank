@@ -161,6 +161,49 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("refuses an unattempted file with a different modified time", async () => {
+  const saved = {
+    import_id: "saved-import",
+    label: "Trip",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "left.JPG", size: 1, modified_time: 1000 }],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved-import" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "left.JPG", { lastModified: 2000 })] },
+  });
+  await screen.findByText("Files changed");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+});
+
 it("requires an explicit choice after a lost registration reply", async () => {
   const channel: PhotoImportTransport = {
     planPhotoImport: vi
@@ -343,7 +386,6 @@ it.each(["open", "closed", "competing"] as const)(
     await fireEvent.change(screen.getByLabelText("Choose photo files"), {
       target: { files: [files()[3]] },
     });
-    await fireEvent.click(await screen.findByRole("button", { name: "Replace import" }));
     await waitFor(() => expect(finishPlan).toBeDefined());
 
     if (state !== "open") await view.unmount();

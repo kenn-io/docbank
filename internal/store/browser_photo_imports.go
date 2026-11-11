@@ -111,11 +111,11 @@ func (s *Store) ListBrowserPhotoImports(ctx context.Context, offset, limit int) 
 		}
 		item.ID, err = uuid.Parse(id)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse saved browser photo import ID: %w", err)
 		}
 		item.SourceID, err = uuid.Parse(source)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse saved browser photo source ID: %w", err)
 		}
 		imports = append(imports, item)
 	}
@@ -147,7 +147,7 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 		item.ID = id
 		item.SourceID, err = uuid.Parse(source)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse saved browser photo source ID: %w", err)
 		}
 		item.Directory.anchorID = anchor
 		if err := json.Unmarshal([]byte(suffix), &item.Directory.segments); err != nil {

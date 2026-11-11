@@ -301,6 +301,12 @@
         for (const [i, file] of matched.entries()) {
           if (!file) continue;
           if (file.size !== group.files[i].size) changed = true;
+          if (
+            !group.hashes?.[i] &&
+            group.files[i].modified_time !== undefined &&
+            file.lastModified !== group.files[i].modified_time
+          )
+            changed = true;
           if (group.hashes?.[i] && (await hashFile(file, signal, () => {})) !== group.hashes[i])
             changed = true;
         }

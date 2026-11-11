@@ -253,6 +253,7 @@ type photoSocketResponse struct {
 }
 
 func TestBrowserPhotoImportReceiptAfterReconnect(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	ctx := t.Context()
 	conn := browserUploadSocket(t, ts)
@@ -287,6 +288,7 @@ func TestBrowserPhotoImportReceiptAfterReconnect(t *testing.T) {
 }
 
 func TestBrowserPhotoInspectionWhileUploading(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	ctx := t.Context()
 	writer := browserUploadSocket(t, ts)
