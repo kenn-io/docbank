@@ -47,6 +47,7 @@ func parseUnderstanding(raw []byte) (understanding, error) {
 		if field == nil || len(*field) > document.MaxPhotoTextBytes || strings.ContainsRune(*field, 0) {
 			return understanding{}, errors.New("image understanding requires four bounded text fields")
 		}
+		*field = document.StripUnsafeControlCharacters(*field)
 	}
 	return value, nil
 }

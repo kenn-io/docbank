@@ -98,6 +98,25 @@ func TestUnderstandingParsesBoundedReplies(t *testing.T) {
 	}
 }
 
+func TestUnderstandingRemovesControlsFromPublishedResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion(`{"visible_text":"  A\tB\u00a0C\r\nD\u001b[2J\u0007","literal_description":"\u001b\u0007","possible_meaning":"meaning","uncertainty":"unknown"}`))
+	}))
+	defer server.Close()
+	p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	require.NoError(t, err)
+	data := []byte("synthetic-image")
+	meta := understandingMetadata(data)
+	result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
+	require.NoError(t, err)
+	require.Len(t, result.Evidence.Units, 3)
+	assert.Equal(t, "  A\tB\u00a0C\nD[2J", result.Evidence.Units[0].Text)
+	assert.Contains(t, result.Evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionField, Field: "literal_description", Reason: "no supported content provided"})
+	require.Len(t, result.Artifacts, 1)
+	assert.JSONEq(t, `{"visible_text":"  A\tB\u00a0C\nD[2J","literal_description":"","possible_meaning":"meaning","uncertainty":"unknown"}`, string(result.Artifacts[0].Payload))
+}
+
 func understandingMetadata(data []byte) document.AuthorizedUploadMetadata {
 	return document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/png", InputKind: document.RenditionInputOriginalFile, ByteLength: int64(len(data)), SHA256: providerutil.SHA256Hex(data), CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
 }
