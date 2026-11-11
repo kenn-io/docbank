@@ -278,8 +278,6 @@ func (searcher *Searcher) searchBase(ctx context.Context, query Query) (Report, 
 		return laneReport(requested, ModeSemantic, coverage, semantic, truncated), nil
 	case ModeHybrid:
 		return searcher.hybrid(ctx, query, requested)
-	case ModeUnavailable:
-		return Report{}, errors.New("unavailable is a response-only retrieval mode")
 	}
 	return Report{}, errors.New("unreachable retrieval mode")
 }

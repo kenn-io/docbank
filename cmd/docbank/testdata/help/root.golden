@@ -1,3 +1,5 @@
+Agents: find the right command with: docbank cli search "<task>"
+
 Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
 over immutable, hash-verified content versions. A daemon owns the vault;
 data commands start it ("docbank daemon stop" ends it).
@@ -77,6 +79,7 @@ Exports and productions:
 Vault operations:
   audit  Protect permanent document history and inspect its evidence
   backup  Create, restore, and clean up vault snapshots
+  cli  Discover commands for a task
   completion  Generate the autocompletion script for the specified shell
   daemon  Manage the docbank daemon
   help  Help about any command

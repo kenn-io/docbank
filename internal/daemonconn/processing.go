@@ -532,10 +532,10 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	if requestedMode == "" {
 		requestedMode = "auto"
 	}
-	unavailableMedia := report.ActualMode == "unavailable" && (requestedMode == "semantic" || requestedMode == "hybrid") &&
-		len(request.MediaSources) > 0 && report.MediaSourceSelection && !request.Rerank && len(report.Results) == 0 &&
-		report.Coverage.State == "incomplete" && report.Coverage.CompleteDocuments == 0
-	if report.RequestedMode != requestedMode || (!unavailableMedia && !validDocumentSearchActualMode(requestedMode, report.ActualMode)) {
+	semanticFallback := requestedMode == "semantic" && report.ActualMode == "lexical" &&
+		len(request.MediaSources) > 0 && report.MediaSourceSelection && !request.Rerank &&
+		slices.Contains(report.Degradations, "semantic_unavailable")
+	if report.RequestedMode != requestedMode || (!semanticFallback && !validDocumentSearchActualMode(requestedMode, report.ActualMode)) {
 		return errors.New("retrieval mode authority is inconsistent")
 	}
 	limit := request.Limit
@@ -600,8 +600,13 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	seenDocuments := make(map[resultIdentity]struct{}, len(report.Results))
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
+	// A scoped request names no vault, so every result must share the first result's vault.
+	vaultUID := request.Fence.VaultUID
 	for index, result := range report.Results {
-		if (request.Scope == nil && result.VaultUID != request.Fence.VaultUID) || !validUUIDv4(result.VaultUID) {
+		if request.Scope != nil && index == 0 {
+			vaultUID = result.VaultUID
+		}
+		if result.VaultUID != vaultUID || !validUUIDv4(result.VaultUID) {
 			return fmt.Errorf("result %d escaped the vault fence", index)
 		}
 		if _, allowed := versions[result.ContentVersionID]; (!allowed && request.Scope == nil) || !validUUIDv4(result.ContentVersionID) {

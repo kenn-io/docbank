@@ -87,7 +87,7 @@ func (s *Store) RegisterBlobStore(ctx context.Context, candidate BlobStore) erro
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var count int
 		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM blob_stores WHERE store_id = ? OR name = ?`,
+			SELECT COUNT(*) FROM blob_stores WHERE store_id = $1 OR name = $2`,
 			candidate.ID, candidate.Name,
 		).Scan(&count); err != nil {
 			return fmt.Errorf("checking blob-store identity: %w", err)
@@ -99,7 +99,7 @@ func (s *Store) RegisterBlobStore(ctx context.Context, candidate BlobStore) erro
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO blob_stores(
 				store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
-			) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+			) VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
 			candidate.ID, candidate.Name, candidate.Kind, candidate.Role,
 			candidate.Lifecycle, candidate.Binding, candidate.OwnershipEpoch,
 			candidate.CreatedAt.UTC().Format(timestampLayout),
@@ -143,6 +143,11 @@ func (s *Store) BlobStoreInventory(
 	// Reuse the sole-owner set for both object and document counts. Count
 	// documents from current nodes once, rather than walking version history
 	// separately for each store. CROSS JOIN keeps that traversal node-first.
+	join, groupBy := "CROSS JOIN", "s.store_id"
+	if s.postgresSchema != "" {
+		join, groupBy = "JOIN", "s.store_id,c.objects,a.documents"
+	}
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH sole_blobs AS MATERIALIZED (
 		    SELECT blob_hash, MIN(store_id) AS store_id
@@ -154,9 +159,9 @@ func (s *Store) BlobStoreInventory(
 		), affected AS (
 		    SELECT sole.store_id, COUNT(*) AS documents
 		    FROM nodes n
-		    CROSS JOIN content_versions v
+		    `+join+` content_versions v
 		      ON v.node_id = n.id AND v.version_id = n.current_version_id
-		    CROSS JOIN sole_blobs sole ON sole.blob_hash = v.blob_hash
+		    `+join+` sole_blobs sole ON sole.blob_hash = v.blob_hash
 		    WHERE n.trashed_at IS NULL
 		    GROUP BY sole.store_id
 		)
@@ -168,7 +173,7 @@ func (s *Store) BlobStoreInventory(
 		           WHEN l.kind = 'packed' THEN e.stored_len
 		           ELSE 0 END), 0),
 		       (SELECT COUNT(*) FROM blob_packs p WHERE p.store_id = s.store_id),
-		       COALESCE((SELECT SUM(MAX(p.stored_bytes - p.live_stored_bytes, 0))
+		       COALESCE((SELECT SUM(`+d.maximum()+`(p.stored_bytes - p.live_stored_bytes, 0))
 		                 FROM blob_packs p WHERE p.store_id = s.store_id), 0),
 		       COALESCE(c.objects, 0),
 		       COALESCE(a.documents, 0)
@@ -179,7 +184,7 @@ func (s *Store) BlobStoreInventory(
 		LEFT JOIN blobs b ON b.hash = l.blob_hash
 		LEFT JOIN blob_pack_entries e
 		  ON e.blob_hash = l.blob_hash AND e.store_id = l.store_id
-		GROUP BY s.store_id
+		GROUP BY `+groupBy+`
 		ORDER BY s.store_id`)
 	if err != nil {
 		return nil, fmt.Errorf("reading blob-store inventory: %w", err)
@@ -277,7 +282,7 @@ func (s *Store) BlobStoreBySelector(ctx context.Context, selector string) (BlobS
 	}
 	store, err := scanBlobStore(s.db.QueryRowContext(ctx, `
 		SELECT store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
-		FROM blob_stores WHERE `+column+` = ?`, selector))
+		FROM blob_stores WHERE `+column+` = $1`, selector))
 	if errors.Is(err, sql.ErrNoRows) {
 		return BlobStore{}, fmt.Errorf("blob store %q: %w", selector, ErrNotFound)
 	}
@@ -321,7 +326,7 @@ func (s *Store) BeginBlobStoreEvacuation(ctx context.Context, selector string) e
 			)
 		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+			`UPDATE blob_stores SET lifecycle=$1 WHERE store_id=$2`,
 			blobStoreLifecycleDraining, store.ID,
 		)
 		if err != nil {
@@ -348,7 +353,7 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT kind,COALESCE(source_store_id,''),state,cancel_requested,cursor
 			FROM storage_operations
-			WHERE operation_id=?`,
+			WHERE operation_id=$1`,
 			operationID,
 		).Scan(
 			&operationKind, &operationSource, &operationState,
@@ -422,8 +427,8 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 			FROM blob_locations source
 			LEFT JOIN blob_locations destination
 			  ON destination.blob_hash=source.blob_hash
-			 AND destination.store_id=?
-			WHERE source.store_id=? AND destination.blob_hash IS NULL`,
+			 AND destination.store_id=$1
+			WHERE source.store_id=$2 AND destination.blob_hash IS NULL`,
 			destination.ID, source.ID,
 		).Scan(&uncovered); err != nil {
 			return fmt.Errorf("checking evacuation coverage for %s: %w", source.ID, err)
@@ -452,36 +457,36 @@ func (s *Store) FinalizeBlobStoreEvacuation(
 			return err
 		}
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM blob_locations WHERE store_id=?`, source.ID,
+			`SELECT COUNT(*) FROM blob_locations WHERE store_id=$1`, source.ID,
 		).Scan(&result.RevokedLocations); err != nil {
 			return fmt.Errorf("counting evacuated locations for %s: %w", source.ID, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM blob_pack_entries WHERE store_id=?`, source.ID,
+			`DELETE FROM blob_pack_entries WHERE store_id=$1`, source.ID,
 		); err != nil {
 			return fmt.Errorf("revoking evacuated pack entries for %s: %w", source.ID, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM blob_packs WHERE store_id=?`, source.ID,
+			`DELETE FROM blob_packs WHERE store_id=$1`, source.ID,
 		); err != nil {
 			return fmt.Errorf("revoking evacuated packs for %s: %w", source.ID, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM blob_locations WHERE store_id=?`, source.ID,
+			`DELETE FROM blob_locations WHERE store_id=$1`, source.ID,
 		); err != nil {
 			return fmt.Errorf("revoking evacuated locations for %s: %w", source.ID, err)
 		}
 		var pendingCleanup int64
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM storage_operation_cleanup
-			WHERE store_id=?`,
+			WHERE store_id=$1`,
 			source.ID,
 		).Scan(&pendingCleanup); err != nil {
 			return fmt.Errorf("checking evacuated cleanup for %s: %w", source.ID, err)
 		}
 		if pendingCleanup == 0 {
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+				`UPDATE blob_stores SET lifecycle=$1 WHERE store_id=$2`,
 				blobStoreLifecycleDetached, source.ID,
 			); err != nil {
 				return fmt.Errorf("detaching evacuated blob store %s: %w", source.ID, err)
@@ -501,33 +506,33 @@ func adoptBlobStoreCleanupTx(
 	ctx context.Context, tx *sql.Tx, operationID, storeID string,
 ) error {
 	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO storage_operation_cleanup(
+		INSERT INTO storage_operation_cleanup(
 			operation_id,store_id,loose_hash,loose_encoding,pack_id
 		)
-		SELECT ?,store_id,blob_hash,loose_encoding,''
-		FROM gc_loose_retirements WHERE store_id=?`, operationID, storeID,
+		SELECT $1,store_id,blob_hash,loose_encoding,''
+		FROM gc_loose_retirements WHERE store_id=$2 ON CONFLICT(operation_id,store_id,loose_hash,loose_encoding,pack_id) DO NOTHING`, operationID, storeID,
 	); err != nil {
 		return fmt.Errorf("adopting GC cleanup for %s: %w", storeID, err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM gc_loose_retirements WHERE store_id=?`, storeID,
+		`DELETE FROM gc_loose_retirements WHERE store_id=$1`, storeID,
 	); err != nil {
 		return fmt.Errorf("transferring GC cleanup for %s: %w", storeID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO storage_operation_cleanup(
+		INSERT INTO storage_operation_cleanup(
 			operation_id,store_id,loose_hash,loose_encoding,pack_id
 		)
-		SELECT ?,store_id,loose_hash,loose_encoding,pack_id
+		SELECT $1,store_id,loose_hash,loose_encoding,pack_id
 		FROM storage_operation_cleanup
-		WHERE store_id=? AND operation_id<>?`,
+		WHERE store_id=$2 AND operation_id<>$3 ON CONFLICT(operation_id,store_id,loose_hash,loose_encoding,pack_id) DO NOTHING`,
 		operationID, storeID, operationID,
 	); err != nil {
 		return fmt.Errorf("adopting blob store cleanup for %s: %w", storeID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM storage_operation_cleanup
-		WHERE store_id=? AND operation_id<>?`,
+		WHERE store_id=$1 AND operation_id<>$2`,
 		storeID, operationID,
 	); err != nil {
 		return fmt.Errorf("transferring blob store cleanup for %s: %w", storeID, err)
@@ -555,7 +560,7 @@ func blobStoreObjectRefsTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT l.blob_hash,l.kind,l.encoding
 		FROM blob_locations l
-		WHERE l.store_id=?
+		WHERE l.store_id=$1
 		ORDER BY CASE l.kind WHEN 'loose' THEN 0 ELSE 1 END,l.blob_hash`,
 		storeID,
 	)
@@ -596,7 +601,7 @@ func blobStoreObjectRefsTx(
 	}
 	packRows, err := tx.QueryContext(ctx, `
 		SELECT pack_id FROM blob_packs
-		WHERE store_id=?
+		WHERE store_id=$1
 		ORDER BY pack_id`,
 		storeID,
 	)
@@ -646,10 +651,10 @@ func (s *Store) DetachBlobStore(ctx context.Context, selector string) error {
 		var locations, packs, cleanups int
 		if err := tx.QueryRowContext(ctx, `
 			SELECT
-				(SELECT COUNT(*) FROM blob_locations WHERE store_id = ?),
-				(SELECT COUNT(*) FROM blob_packs WHERE store_id = ?),
-				(SELECT COUNT(*) FROM storage_operation_cleanup WHERE store_id = ?)
-				  + (SELECT COUNT(*) FROM gc_loose_retirements WHERE store_id = ?)`,
+				(SELECT COUNT(*) FROM blob_locations WHERE store_id = $1),
+				(SELECT COUNT(*) FROM blob_packs WHERE store_id = $2),
+				(SELECT COUNT(*) FROM storage_operation_cleanup WHERE store_id = $3)
+				  + (SELECT COUNT(*) FROM gc_loose_retirements WHERE store_id = $4)`,
 			store.ID, store.ID, store.ID, store.ID,
 		).Scan(&locations, &packs, &cleanups); err != nil {
 			return fmt.Errorf("checking blob store %s contents: %w", store.ID, err)
@@ -661,7 +666,7 @@ func (s *Store) DetachBlobStore(ctx context.Context, selector string) error {
 			)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE blob_stores SET lifecycle = ? WHERE store_id = ?`,
+			`UPDATE blob_stores SET lifecycle = $1 WHERE store_id = $2`,
 			blobStoreLifecycleDetached, store.ID); err != nil {
 			return fmt.Errorf("detaching blob store %s: %w", store.ID, err)
 		}
@@ -695,7 +700,7 @@ func (s *Store) UnregisterBlobStore(ctx context.Context, selector string) error 
 				store.ID, activeOperations, ErrBlobStoreState,
 			)
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM blob_stores WHERE store_id = ?`, store.ID)
+		result, err := tx.ExecContext(ctx, `DELETE FROM blob_stores WHERE store_id = $1`, store.ID)
 		if err != nil {
 			return fmt.Errorf("unregistering blob store %s: %w", store.ID, err)
 		}
@@ -719,7 +724,7 @@ func blobStoreBySelectorTx(
 	}
 	store, err := scanBlobStore(tx.QueryRowContext(ctx, `
 		SELECT store_id, name, kind, role, lifecycle, binding, ownership_epoch, created_at
-		FROM blob_stores WHERE `+column+` = ?`, selector))
+		FROM blob_stores WHERE `+column+` = $1`, selector))
 	if errors.Is(err, sql.ErrNoRows) {
 		return BlobStore{}, fmt.Errorf("blob store %q: %w", selector, ErrNotFound)
 	}

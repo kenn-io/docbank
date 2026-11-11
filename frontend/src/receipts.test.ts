@@ -278,7 +278,7 @@ describe("search result authority", () => {
 });
 
 it.each(["semantic", "hybrid"] as const)(
-  "accepts an unavailable %s receipt only for empty incomplete selected media",
+  "accepts a lexical fallback for selected %s search",
   (mode) => {
     const request: DocumentSearchRequest = {
       query: "fixture",
@@ -291,7 +291,7 @@ it.each(["semantic", "hybrid"] as const)(
     };
     const report = {
       requested_mode: mode,
-      actual_mode: "unavailable",
+      actual_mode: "lexical",
       media_source_selection: true,
       media_selections: [],
       coverage: {
@@ -301,28 +301,15 @@ it.each(["semantic", "hybrid"] as const)(
         complete_documents: 0,
       },
       results: [],
-      degradations: [],
+      degradations: ["semantic_unavailable"],
       truncated: false,
       trace: [],
     };
-    expect(validateDocumentSearchReport(report, request).actual_mode).toBe("unavailable");
-    expect(() =>
-      validateDocumentSearchReport({ ...report, media_source_selection: false }, request),
-    ).toThrow();
-    expect(() =>
-      validateDocumentSearchReport(
-        { ...report, coverage: { ...report.coverage, state: "complete" } },
-        request,
-      ),
-    ).toThrow();
-    expect(() =>
-      validateDocumentSearchReport(
-        { ...report, coverage: { ...report.coverage, complete_documents: 1 } },
-        request,
-      ),
-    ).toThrow();
-    expect(() => validateDocumentSearchReport({ ...report, results: [{}] }, request)).toThrow();
-    const { media_sources: _, ...ordinary } = request;
-    expect(() => validateDocumentSearchReport(report, ordinary)).toThrow();
+    expect(validateDocumentSearchReport(report, request).actual_mode).toBe("lexical");
+    if (mode === "semantic") {
+      expect(() => validateDocumentSearchReport({ ...report, degradations: [] }, request)).toThrow();
+      const { media_sources: _, ...ordinary } = request;
+      expect(() => validateDocumentSearchReport(report, ordinary)).toThrow();
+    }
   },
 );

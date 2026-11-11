@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-11-01
 title: HTTP API
-description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+description: The agent-first HTTP API, with filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
 
 # HTTP API
@@ -831,7 +831,7 @@ several are configured. The explicit CLI processing form requires that choice. `
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
-Semantic search requires a binding whose provider supports text queries; otherwise
+Ordinary semantic search requires a binding whose provider supports text queries; otherwise
 it returns `422 semantic_unavailable` after validating the source and binding.
 Hybrid search on a profile without embeddings returns that same error. An index
 without an active generation returns `409 index_unavailable`, so clients can try
@@ -880,13 +880,11 @@ Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
 
-For selected semantic and hybrid requests with no ready transcript build,
-`actual_mode` is `unavailable`, results are empty and coverage is incomplete
-with zero complete documents. A ready selected build without eligible embedding
-rows has that same semantic result, retaining its selection summary. Hybrid
-serves any selected lexical evidence with `actual_mode: "lexical"` and the
-`semantic_unavailable` degradation. Its embedding coverage remains incomplete
-with zero complete documents. These cases do not send query text to an encoder.
+Selected semantic and hybrid requests fall back to word search when no embedding
+binding or eligible embedding rows are available. They return `actual_mode: "lexical"`
+and the `semantic_unavailable` degradation. Coverage remains incomplete, and
+ready selected transcripts can contribute word matches. These cases do not send
+query text to an encoder.
 `requested_mode` remains the caller's mode, and retrieval schedules no processing.
 
 A vector-index authority change during a semantic or hybrid request returns
@@ -1483,7 +1481,8 @@ with API-key clients.
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
-`watch:<name>` job record.
+`watch:<name>` job record. The `exclude_patterns` list is effective: it includes
+the default patterns unless `default_excludes = false`.
 Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
 If consent lookup fails, `error` describes the status failure instead.
 `GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.

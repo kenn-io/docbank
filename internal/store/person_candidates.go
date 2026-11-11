@@ -150,7 +150,7 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 	if candidate.SuggestedPersonID != "" {
 		if terminal {
 			var exists bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?)`, candidate.SuggestedPersonID).Scan(&exists); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=$1)`, candidate.SuggestedPersonID).Scan(&exists); err != nil {
 				return PersonMatchCandidate{}, false, err
 			}
 			if !exists {
@@ -186,22 +186,37 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 		}
 	}
 	candidate.CreatedAt = nowRFC3339()
-	_, err = tx.ExecContext(ctx, `INSERT INTO person_match_candidates(
+	conflict := `(actor_key,reason,evidence_sha256) WHERE suggested_person_id IS NULL`
+	if candidate.SuggestedPersonID != "" {
+		conflict = `(actor_key,suggested_person_id,reason,evidence_sha256) WHERE suggested_person_id IS NOT NULL`
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO person_match_candidates(
 		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
 		occurrence_count,revision,state,decided_person_id,created_at,decided_at
-	) VALUES(?,?,?,?,?,?,?,?,1,'open',NULL,?,NULL)`,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,'open',NULL,$9,NULL) ON CONFLICT `+conflict+` DO NOTHING`,
 		candidate.CandidateID, candidate.ActorKey, candidate.DisplayName,
 		nullableString(candidate.SuggestedPersonID), candidate.Reason, candidate.Evidence,
 		candidate.EvidenceSHA256, candidate.OccurrenceCount, candidate.CreatedAt)
-	if s.driver.IsUniqueViolation(err) {
-		existing, lookupErr := personCandidateByIdentityTx(ctx, tx, candidate)
-		if lookupErr == nil {
-			return existing, true, nil
-		}
-		return PersonMatchCandidate{}, false, errors.Join(err, lookupErr)
-	}
 	if err != nil {
 		return PersonMatchCandidate{}, false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return PersonMatchCandidate{}, false, err
+	}
+	if inserted == 0 {
+		existing, err := personCandidateByIdentityTx(ctx, tx, candidate)
+		return existing, err == nil, err
+	}
+	if s.postgresSchema != "" && candidate.Reason == personCandidateReasonFaceMatch {
+		// SQLite owns this projection through its released insert trigger.
+		_, err := tx.ExecContext(ctx, `INSERT INTO person_candidate_faces(candidate_id,face_id,content_version_id)
+			SELECT $1,e.value->>'evidence_id',e.value->>'content_version_id'
+			FROM jsonb_array_elements(CAST($2 AS jsonb)) e(value)
+			WHERE e.value->>'evidence_kind'='face' ON CONFLICT DO NOTHING`, candidate.CandidateID, string(candidate.Evidence))
+		if err != nil {
+			return PersonMatchCandidate{}, false, fmt.Errorf("recording candidate face membership: %w", err)
+		}
 	}
 	return candidate, true, nil
 }
@@ -216,7 +231,7 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 	if !slices.Contains([]string{personCandidateStateOpen, "linked", personCandidateStateRejected, "superseded"}, state) || limit < 1 || limit > 250 || offset < 0 {
 		return nil, 0, ErrInvalidPerson
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, 0, fmt.Errorf("starting person candidate page snapshot: %w", err)
 	}
@@ -226,13 +241,13 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 		return nil, 0, err
 	}
 	var total int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state=? AND `+visible, state).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state=$1 AND `+visible, state).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT candidate_id,actor_key,display_name,
 		COALESCE(suggested_person_id,''),reason,evidence_json,evidence_sha256,revision,occurrence_count,
 		state,COALESCE(decided_person_id,''),created_at,COALESCE(decided_at,'')
-		FROM person_match_candidates WHERE state=? AND `+visible+` ORDER BY created_at,candidate_id LIMIT ? OFFSET ?`, state, limit, offset)
+		FROM person_match_candidates WHERE state=$1 AND `+visible+` ORDER BY created_at,candidate_id LIMIT $2 OFFSET $3`, state, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -321,14 +336,14 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				}
 				if decision.Action == "reject" && candidate.SuggestedPersonID != "" {
 					var assigned bool
-					if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE f.face_id=? AND f.content_version_id=? AND a.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?))`, o.EvidenceID, o.ContentVersionID, candidate.SuggestedPersonID, candidate.SuggestedPersonID).Scan(&assigned); err != nil {
+					if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE f.face_id=$1 AND f.content_version_id=$2 AND a.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$3),$4))`, o.EvidenceID, o.ContentVersionID, candidate.SuggestedPersonID, candidate.SuggestedPersonID).Scan(&assigned); err != nil {
 						return err
 					}
 					if assigned {
 						return ErrPersonIdentityConflict
 					}
 				}
-				if _, e := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=? AND content_version_id=?`, o.EvidenceID, o.ContentVersionID); e != nil {
+				if _, e := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=$1 AND content_version_id=$2`, o.EvidenceID, o.ContentVersionID); e != nil {
 					return e
 				}
 			}
@@ -354,7 +369,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			state = "linked"
 		}
 		now := nowRFC3339()
-		result, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=?,decided_person_id=?,decided_at=?,revision=revision+1 WHERE candidate_id=? AND revision=? AND state='open'`,
+		result, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=$1,decided_person_id=$2,decided_at=$3,revision=revision+1 WHERE candidate_id=$4 AND revision=$5 AND state='open'`,
 			state, nullableString(personID), now, candidate.CandidateID, candidate.Revision)
 		if err != nil {
 			return err
@@ -425,8 +440,8 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			if assertion.Revision != existing.Revision {
 				return ErrStaleRevision
 			}
-			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,note=?,photo_mark=?,revision=revision+1 WHERE assertion_id=? AND revision=?`,
-				assertion.Action, assertion.Note, assertion.Role == personAssertionRoleDepicted && assertion.Action == personAssertionActionAssert, existing.AssertionID, existing.Revision)
+			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=$1,note=$2,photo_mark=$3,revision=revision+1 WHERE assertion_id=$4 AND revision=$5`,
+				assertion.Action, assertion.Note, boolInt(assertion.PhotoMark), existing.AssertionID, existing.Revision)
 			if err != nil {
 				return err
 			}
@@ -452,7 +467,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 				}
 			}
 			assertion.RecordedAt = nowRFC3339()
-			_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,?,?,?,1)`,
+			_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES($1,$2,$3,$4,$5,$6,$7,1)`,
 				assertion.AssertionID, assertion.ContentVersionID, assertion.PersonID, assertion.Role,
 				assertion.Action, assertion.Note, assertion.RecordedAt)
 			if err != nil {
@@ -462,14 +477,14 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			return err
 		}
 		if assertion.Role == personAssertionRoleDepicted {
-			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=? WHERE assertion_id=?`, assertion.Action == personAssertionActionAssert, assertion.AssertionID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=$1 WHERE assertion_id=$2`, boolInt(assertion.PhotoMark), assertion.AssertionID); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=$1`, assertion.AssertionID); err != nil {
 				return err
 			}
 			if assertion.Action != personAssertionActionAssert {
-				if _, err = tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=? WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=?)`, nowRFC3339(), assertion.AssertionID); err != nil {
+				if _, err = tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=$1 WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=$2)`, nowRFC3339(), assertion.AssertionID); err != nil {
 					return err
 				}
 			}
@@ -487,7 +502,7 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 	if validateUUIDv4(contentVersionID) != nil {
 		return nil, ErrInvalidPerson
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? ORDER BY role,person_id,assertion_id`, contentVersionID)
+	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -525,7 +540,7 @@ func resolveActiveCandidatePersonTx(ctx context.Context, tx *sql.Tx, personID st
 		return "", err
 	}
 	var state string
-	if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=?`, resolved).Scan(&state); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=$1`, resolved).Scan(&state); err != nil {
 		return "", err
 	}
 	if state == personStateRetired {
@@ -561,7 +576,7 @@ func materializeCandidateAssertionsTx(
 
 func requireCandidateVersionTx(ctx context.Context, tx *sql.Tx, versionID string) error {
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=?)`, versionID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions WHERE version_id=$1)`, versionID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
@@ -585,13 +600,13 @@ func personCandidateByIdentityTx(ctx context.Context, tx *sql.Tx, candidate Pers
 	query := `SELECT candidate_id,actor_key,display_name,COALESCE(suggested_person_id,''),reason,
 		evidence_json,evidence_sha256,revision,occurrence_count,state,COALESCE(decided_person_id,''),
 		created_at,COALESCE(decided_at,'') FROM person_match_candidates
-		WHERE actor_key=? AND suggested_person_id IS NULL AND reason=? AND evidence_sha256=?`
+		WHERE actor_key=$1 AND suggested_person_id IS NULL AND reason=$2 AND evidence_sha256=$3`
 	args := []any{candidate.ActorKey, candidate.Reason, candidate.EvidenceSHA256}
 	if candidate.SuggestedPersonID != "" {
 		query = `SELECT candidate_id,actor_key,display_name,COALESCE(suggested_person_id,''),reason,
 			evidence_json,evidence_sha256,revision,occurrence_count,state,COALESCE(decided_person_id,''),
 			created_at,COALESCE(decided_at,'') FROM person_match_candidates
-			WHERE actor_key=? AND suggested_person_id=? AND reason=? AND evidence_sha256=?`
+			WHERE actor_key=$1 AND suggested_person_id=$2 AND reason=$3 AND evidence_sha256=$4`
 		args = []any{candidate.ActorKey, candidate.SuggestedPersonID, candidate.Reason, candidate.EvidenceSHA256}
 	}
 	return scanPersonCandidate(tx.QueryRowContext(ctx, query, args...))
@@ -601,7 +616,7 @@ func personCandidateByIDTx(ctx context.Context, tx *sql.Tx, candidateID string) 
 	candidate, err := scanPersonCandidate(tx.QueryRowContext(ctx, `SELECT candidate_id,actor_key,display_name,
 		COALESCE(suggested_person_id,''),reason,evidence_json,evidence_sha256,revision,occurrence_count,
 		state,COALESCE(decided_person_id,''),created_at,COALESCE(decided_at,'')
-		FROM person_match_candidates WHERE candidate_id=?`, candidateID))
+		FROM person_match_candidates WHERE candidate_id=$1`, candidateID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PersonMatchCandidate{}, ErrNotFound
 	}
@@ -617,11 +632,11 @@ func scanPersonCandidate(row scanner) (PersonMatchCandidate, error) {
 }
 
 func personAssertionByIdentityTx(ctx context.Context, tx *sql.Tx, versionID, personID, role string) (PersonDocumentAssertion, error) {
-	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND person_id=? AND role=?`, versionID, personID, role))
+	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 AND person_id=$2 AND role=$3`, versionID, personID, role))
 }
 
 func personAssertionByIDTx(ctx context.Context, tx *sql.Tx, assertionID string) (PersonDocumentAssertion, error) {
-	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE assertion_id=?`, assertionID))
+	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE assertion_id=$1`, assertionID))
 }
 
 // Projection rebuilds also read released schemas without photo ownership metadata.
@@ -645,10 +660,10 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=$1`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=$1`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
 			existing.Action = personAssertionActionAssert
@@ -670,7 +685,7 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 		return PersonDocumentAssertion{}, false, err
 	}
 	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: personAssertionActionAssert, Revision: 1, RecordedAt: nowRFC3339()}
-	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`, id, versionID, personID, role, assertion.RecordedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES($1,$2,$3,$4,'assert','',$5,1)`, id, versionID, personID, role, assertion.RecordedAt)
 	return assertion, true, err
 }
 
@@ -688,7 +703,7 @@ func requireFaceOccurrenceTx(ctx context.Context, tx *sql.Tx, occurrence PersonC
 		return ErrInvalidPerson
 	}
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=? AND content_version_id=?)`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=$1 AND content_version_id=$2)`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
@@ -702,7 +717,7 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 		return nil
 	}
 	var existing string
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(assertion_id,'') FROM photo_faces WHERE face_id=? AND content_version_id=?`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&existing); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(assertion_id,'') FROM photo_faces WHERE face_id=$1 AND content_version_id=$2`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&existing); err != nil {
 		return err
 	}
 	if existing != "" && existing != assertionID {
@@ -711,7 +726,7 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 	if existing == assertionID {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, assertionID, occurrence.EvidenceID, occurrence.ContentVersionID)
+	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=$1,revision=revision+1 WHERE face_id=$2 AND content_version_id=$3`, assertionID, occurrence.EvidenceID, occurrence.ContentVersionID)
 	return err
 }
 

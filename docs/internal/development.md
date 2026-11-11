@@ -367,11 +367,18 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer, backup recovery, multi-store placement and their storage-operation jobs
-remain unqualified.
+transfer and backup recovery remain unqualified. Native multi-store catalog
+operations are qualified below; deployment adapters and filesystem workers
+remain separate from public PostgreSQL vault opening.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
-and uses the explicit `Schema` setting. It creates a dedicated schema, canonical
+and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
+both setup and runtime validation check `server_encoding` and reject any other
+value before accessing the vault schema. This keeps Unicode name matching
+consistent with SQLite. A different client encoding does not satisfy this
+requirement: provision a UTF-8 database before installing the schema.
+
+Setup creates a dedicated schema, canonical
 DDL, a UUIDv4 vault identity, a fresh processing-consent incarnation, the primary
 blob-store identity and ownership epoch, initial people-state epochs, and the
 root directory in one transaction, under a schema-specific PostgreSQL advisory
@@ -429,6 +436,9 @@ grant the following privileges after setup. This example uses schema
 ```sql
 GRANT USAGE ON SCHEMA documents TO docbank_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA documents TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(lifecycle) ON documents.blob_stores TO docbank_runtime;
+GRANT INSERT ON documents.storage_operation_stores TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.storage_operation_cleanup TO docbank_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON documents.nodes, documents.blobs, documents.content_versions
     TO docbank_runtime;
@@ -444,6 +454,28 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
+GRANT INSERT ON documents.collection_snapshots,
+    documents.collection_snapshot_members, documents.collection_snapshot_representations,
+    documents.packages, documents.package_volumes, documents.bates_namespaces,
+    documents.bates_namespace_cursors, documents.bates_allocations,
+    documents.bates_page_labels, documents.bates_artifacts, documents.bates_artifact_pages
+    TO docbank_runtime;
+GRANT UPDATE(next_sequence) ON documents.bates_namespace_cursors TO docbank_runtime;
+GRANT UPDATE(state, committed_at) ON documents.bates_allocations TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.package_preflights TO docbank_runtime;
+GRANT INSERT ON documents.package_records, documents.package_labels,
+    documents.package_import_receipts, documents.package_import_jobs TO docbank_runtime;
+GRANT UPDATE(state, snapshot_id, completed_at) ON documents.packages TO docbank_runtime;
+GRANT UPDATE(state, epoch, token, claim_owner, lease_expires_at, updated_at)
+    ON documents.package_import_jobs TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at)
+    ON documents.export_sources TO docbank_runtime;
+GRANT INSERT ON documents.export_chunks, documents.export_members,
+    documents.export_documents, documents.export_role_roots TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, expires_at)
+    ON documents.export_plans TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at, epoch, token, archive_name)
+    ON documents.export_jobs TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
@@ -459,7 +491,7 @@ GRANT INSERT ON documents.text_searchable_versions TO docbank_runtime;
 GRANT INSERT, UPDATE(extractor_version, status, error, attempts, text, extracted_at)
     ON documents.extracted_text TO docbank_runtime;
 GRANT INSERT, UPDATE(hidden_at, excluded_at, display_file_id,
-    display_override_file_id, revision, updated_at)
+    display_override_file_id, representative_rank, revision, updated_at)
     ON documents.photo_assets TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.photo_change_receipts TO docbank_runtime;
 GRANT INSERT, UPDATE(asset_id, role, sidecar_of_file_id, source_provenance_identity,
@@ -504,6 +536,24 @@ GRANT INSERT ON documents.batch_tag_receipts TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, updated_at)
     ON documents.saved_queries TO docbank_runtime;
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
+    updated_at, key_face_id) ON documents.persons TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
+GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
+    display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;
+GRANT INSERT, UPDATE(surviving_uid, observed_at)
+    ON documents.person_external_uid_aliases TO docbank_runtime;
+GRANT INSERT, UPDATE(surviving_person_id, reason, retired_at)
+    ON documents.person_aliases TO docbank_runtime;
+GRANT INSERT ON documents.person_merges, documents.person_splits TO docbank_runtime;
+GRANT INSERT, UPDATE(person_id, raw_label, raw_label_folded, basis, source_ref,
+    revision, recorded_at, retired_at) ON documents.custodian_assignments TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(person_id, action, note, revision, photo_mark)
+    ON documents.person_document_assertions TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(suggested_person_id, state, decided_person_id, decided_at, revision)
+    ON documents.person_match_candidates TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.person_candidate_faces TO docbank_runtime;
+GRANT UPDATE(assertion_id) ON documents.photo_faces TO docbank_runtime;
 GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
     documents.document_events, documents.document_event_actors, documents.document_event_primaries
     TO docbank_runtime;
@@ -520,6 +570,14 @@ GRANT INSERT, UPDATE(input_epoch, input_revision, inputs_sha256, state, diagnost
     ON documents.document_event_attempts TO docbank_runtime;
 GRANT INSERT, UPDATE(state, scanned, published, failed, unavailable, updated_at, finished_at)
     ON documents.document_event_builds TO docbank_runtime;
+GRANT INSERT ON documents.document_people_generations, documents.document_people TO docbank_runtime;
+GRANT INSERT, UPDATE(event_generation_id, inputs_sha256, generation_id, unresolved_actors,
+    suppressed_actors, candidate_overflow, resolver_fingerprint, binding_epoch, node_revision,
+    edge_count, state, failure_reason, published_at)
+    ON documents.document_people_heads TO docbank_runtime;
+GRANT UPDATE(resolver_fingerprint) ON documents.document_people_state TO docbank_runtime;
+GRANT INSERT, UPDATE(state, scanned, published, failed, updated_at, finished_at)
+    ON documents.document_people_builds TO docbank_runtime;
 GRANT INSERT ON documents.processing_consent_grants, documents.processing_consent_revocations,
     documents.processing_profiles, documents.rendition_builds, documents.rendition_artifacts,
     documents.rendition_units, documents.rendition_lexical_segments,
@@ -561,7 +619,8 @@ GRANT INSERT, DELETE ON documents.photo_hidden_failures TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(locked_until)
     ON documents.photo_hidden_lockout TO docbank_runtime;
 GRANT INSERT, UPDATE(preference, revision, updated_at, burst_gap_seconds,
-    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds)
+    backup_interval_seconds, backup_keep_last, hidden_unlock_lifetime_seconds,
+    representative_sequence)
     ON documents.photo_library_settings TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(state, focus, blur, brightness, color_red,
     color_green, color_blue, framing, aesthetics, face_reports_json, face_inputs)
@@ -625,12 +684,17 @@ authority to alter objects or grant those privileges again.
 PostgreSQL schemas are disposable until the first deployment whose data must
 survive upgrades. An ordinary Docbank release does not establish that boundary:
 the public vault lifecycle still opens only SQLite. Edit
-`internal/store/pgschema/schema.sql` directly and increment `pgschema.SchemaVersion`
-whenever it changes, including indexes and column defaults. No migrations are
-needed during this period. `Setup` records the version in `vault_metadata` in the
-installation transaction. Both `Setup` and runtime `Validate` reject a missing or
-different version with a "recreate this schema" error; neither repairs it. Recreate
+`internal/store/pgschema/schema.sql` directly; no manual version bump or migration
+is needed during this period. The build hashes the exact embedded SQL template
+with SHA-256 once at package initialization, before substituting the vault schema
+name. `Setup` records this fingerprint in `vault_metadata` in the installation
+transaction. Both `Setup` and runtime `Validate` reject a missing or different
+fingerprint with a "recreate this schema" error; neither repairs it. Any SQL-file
+change, including comments or formatting, changes the fingerprint. Existing
+development schemas with the older integer version are also refused. Recreate
 only disposable development schemas with the current build, never retained data.
+Go-written seed rows in `Setup` are outside the fingerprint; an incompatible seed
+change must also change the SQL template so existing development schemas are refused.
 
 Before the first retained deployment, establish the current schema as migration
 1 (`000001_initial_schema.up.sql`) and add a CI check that installs the numbered
@@ -661,9 +725,9 @@ record per genesis kind, matching SQLite; it does not reject other kinds.
 Go still owns which record kinds are valid. Conditional unique indexes also
 preserve alias, current external identity and active custodian relationships.
 These predicates enforce uniqueness; they do not reject unknown kind or state
-values. Go validators own those values. Multi-store operations are read-only
-inputs to validation here; their active-evacuation uniqueness rule remains part
-of the future write port rather than a closed state list in the new schema.
+values. Go validators own those values. Multi-store operations have native
+contracts below; their active-evacuation uniqueness rule is enforced by the shared Go admission
+check under writer serialization, without a closed state list in PostgreSQL.
 
 Secondary access indexes on the added read-only catalogs are intentionally
 deferred. Port them with the operations that need them, including indexes on
@@ -671,6 +735,137 @@ foreign-key columns used by cascading deletes; PostgreSQL does not add those
 automatically. Keep structural uniqueness in the canonical schema. Enrollment
 qualification establishes correctness, not validation or cascade performance
 on large vaults; those paths need representative query-plan and workload checks.
+
+#### Sealed delivery catalogs
+
+The native Store seals inline and streaming collection snapshots, records package
+identity and volumes, retains preflight results, reserves Bates page numbers,
+and publishes verified numbered PDF artifacts on both backends. These operations
+start with explicit, already-selected versions. Received-package intake is
+qualified below. Query-driven selection, filesystem delivery workers,
+transfer/recovery and public PostgreSQL vault opening remain separate.
+
+A sealed snapshot keeps its exact versions, source collections, page selections,
+representations and canonical bytes. Replaying the same request returns the
+original header; a different request cannot overwrite it. Streaming writes bounded
+member batches and writes the immutable header last. SQLite uses its existing
+foreign-key deferral pragma. PostgreSQL makes the member-to-header reference
+`DEFERRABLE INITIALLY IMMEDIATE` and defers it for the streaming transaction.
+Failure leaves neither a partial header nor member rows. The canonical JSON stays
+byte storage so hashing and readback preserve the exact bytes; PostgreSQL decodes
+UTF-8 only where a query reads frozen source-collection evidence.
+
+Bates previews allocate nothing. Reservations serialize under the existing writer
+lock, preserve namespace cursors and globally unique labels, and commit the sealed
+snapshot and range together. Semantic replay can reuse the original reservation
+after its live source changes. Publication commits the output blob, immutable
+artifact and page receipts, and allocation transition together. The first verified
+publisher wins an exact retry, including when a later render has different PDF
+container bytes. Runtime roles can insert identities, advance `next_sequence`,
+and change only `state` and `committed_at` on allocations; they cannot rewrite
+snapshot, namespace, label, artifact or volume identities. Store methods enforce
+cursor monotonicity and one-way allocation publication under writer admission.
+The PostgreSQL column grants do not enforce those transitions against direct SQL.
+
+Package and artifact pages, member representations, publication plans and custodian
+evidence use repeatable-read transactions. A concurrent custodian change affects
+the next request, including its binding epoch. Custodian evidence follows the
+snapshot's frozen source membership after the source leaves the live library.
+Preflight reads enforce their deadline even before the expiry sweep removes rows.
+
+The `sealed-delivery` contracts run existing snapshot, streaming, package and Bates
+scenarios on both backends. PostgreSQL cases exercise late-write rollback during
+reservation and publication, concurrent connections sharing one namespace, and
+custodian changes committed between statements in a read. Access indexes cover
+artifact history and labels, namespace ranges, package predecessors, preflight
+expiry and retained representation versions.
+
+#### Received-package intake
+
+The native Store admits received packages and their source collections, stages
+files under worker leases, publishes immutable source rows and scoped labels,
+and completes or cancels imports on both backends. Filesystem parsing, import
+workers, portable metadata recovery and public PostgreSQL opening
+remain separate qualification boundaries.
+
+Admission commits the source collection, package identity, volume mappings and
+queued job together. An exact owner/operation retry returns the original job,
+including when the caller allocated new internal IDs. A worker claim, renewal,
+release or reclaim uses the existing writer transaction. Replacement advances
+the epoch; an expired, cancelled or superseded worker cannot stage files,
+publish receipts or finalize the package.
+
+Record publication binds the retained version to that package's source collection.
+The original row bytes, sensitivity flag, received labels and receipt commit
+together. Exact replay preserves the original receipt; changed rows or received
+labels conflict. Assigned labels have their own immutable identity and do not
+alter received evidence. Label lookup preserves ambiguity across packages;
+label, record and timeline pages retain their existing ordering and cursors.
+Timeline pages and progress counts with their bounded gap list share one read
+snapshot.
+
+Completion seals the member stream and advances the package and job together.
+Only members matching committed record receipts may enter the final snapshot.
+Cancellation, terminal failure and owner revocation remove unreceipted staging,
+while preserving primary versions, supplied representations retained by receipts,
+and checkout-held versions. Cleanup updates tag counts, photo membership and
+export work, version-dependent epochs and the vault change stream in the same
+transaction. Released SQLite triggers keep their existing effects; PostgreSQL
+uses the shared maintenance helpers.
+
+The `received-packages` contracts exercise native intake, lease replacement,
+record replay, gap reporting, completion, label browsing and cleanup on both
+engines. PostgreSQL cases fail the final admission, receipt or job write to
+verify rollback, and commit new receipts during reads to verify snapshot
+isolation. The PostgreSQL runtime grants are insert-only for records, labels
+and receipts. Updates are limited to job lifecycle columns and package state,
+snapshot and completion columns. Store methods enforce one-time snapshot and
+completion values under writer admission; the PostgreSQL grants do not prevent
+direct SQL from rewriting those columns. SQLite's released receipt trigger
+prevents updates but does not prevent deletion. These database-level differences
+do not change the qualified Store operations.
+
+#### Document export plans and jobs
+
+The native Store supports explicit members, current node IDs and chunked uploads
+as export sources on both backends. It seals exact retained versions, plans
+originals and available retained text, page images, email PDFs and attachment
+outputs, and provides frozen previews and output-problem pages. Explicit photo
+members can capture authored metadata and publish an already-prepared render.
+Query-driven and mailbox source discovery, rendering and filesystem workers,
+portable recovery and public PostgreSQL opening remain separate boundaries.
+
+Source admission reserves the owner and operation before invoking a resolver.
+A failed or cancelled resolution keeps that reservation, so retry cannot silently
+select newer documents. Chunk retries must match the original bytes; sealing
+requires every chunk and the promised member digest. Plans pin exact output
+receipts, paths, optional-role failures, volume choices and retention roots.
+A failed plan commits no quota reservation, document rows or roots.
+
+Job claims and progress use the existing writer admission. Restart and cancellation
+advance the claim epoch and clear its token; old attempts cannot publish. A
+successful finish stores the terminal receipt and archive name together and
+extends source and plan retention. Cancellation and failure reduce the extension.
+Expired authority keeps its versions and blobs until cleanup removes its rows.
+Archive release checks the owner and terminal state before calling the existing
+removal callback; a callback failure keeps the job. Archive removal must tolerate
+retries because SQL rollback cannot restore a removed file.
+
+Plans, frozen previews, problem pages, photo inputs and live output/attachment
+discovery use read snapshots where multiple rows must agree. Archive document
+walks release each page before callbacks so blob reads and claim checks can
+re-enter the Store. Cleanup during a read affects the next request. PostgreSQL decodes stored
+JSON bytes only for concrete JSON predicates and uses `GREATEST` for scalar
+retention comparisons; SQLite keeps its existing expressions. Both retain the
+same canonical bytes and fingerprints.
+
+The `exports` contracts cover native source sealing, chunk replay, pinned roles,
+plan rollback, job completion and release, restart/revocation, cleanup and output
+inspection. PostgreSQL-specific cases revoke a final write to verify rollback,
+remove expired plans between read statements, and recheck explicit photo inputs
+before publication. Runtime grants permit only inserts into members, chunks,
+planned documents and roots; source, plan and job updates are limited to their
+existing mutable columns. These grants do not replace Store lifecycle checks.
 
 #### PostgreSQL reference implementations
 
@@ -686,7 +881,7 @@ their `internal` packages are not importable shared libraries.
 | AgentsView [catalog adapter][av-pg-catalog] and [query dialect][av-dialect] | Shared filtering, pagination and result assembly; explicit backend SQL and typed scanning | Docbank is an authoritative vault, not a disposable mirror. Keep its existing `Store` and mutation helpers; no replica registry or second implementation of audit and publication |
 | AgentsView [pool opening][av-connect] and [hosted validation][av-hosted] | Configure every pooled connection, validate effective schema at opening, and account for connection reuse | Its tenant/RLS schema is a separate design, not Docbank's permission model. Do not copy its CHECK constraints, tenant tables or triggers |
 | [msgvault embedded archive][mv-archive] | pgx through `database/sql`; separate setup and validation-only opening; `current_schema()` check | Docbank serializes setup itself and requires a dedicated schema; it does not copy ambient-schema defaults or msgvault's migration ledger |
-| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; development versions reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
+| [Kata PostgreSQL operations][kata-operations] | `Schema`/`SchemaOwner` naming, owner/runtime role separation, transaction advisory lock | This internal API accepts a pool and has separate setup/validate calls; schema fingerprints reject stale disposable schemas; numbered migrations start before retained deployments, and a public vault is not exposed yet |
 | [Kata numbered migrations][kata-migrations] and [sequence export][kata-sequences] | Canonical fresh DDL, immutable forward SQL, atomic version stamps, and preservation of allocated IDs through transfer | Version history belongs to Docbank; its audit format requires a transactional node counter rather than a native identity sequence |
 | AgentsView [behavior parity][av-parity] and [pool tests][av-pool-tests]; msgvault and Kata PostgreSQL lanes | Exercise real backends and their public operations, including errors, filtering and reused connections | Keep Docbank's canonical setup fixture, separate runtime role, PostgreSQL 16/18 lanes and both SQLite builds; no new fixture schema or per-test container |
 
@@ -802,9 +997,10 @@ the original versions, jobs, receipts, epochs and node revisions.
 `make backend-coverage` reports the recorded SQLite catalog effects,
 their PostgreSQL owners and their remaining boundaries. Audit enrollment already
 queues affected photos through `queueAuditPhotosTx`. Deleting authority or
-memberships during import/restore still needs that effect. Source-head recovery,
-people candidates and search still have unported effects; their
-retained tables do not establish write support.
+memberships during import/restore still needs that effect. Candidate insertion writes the candidate-to-face projection in its transaction.
+No native writer replaces candidate evidence in place; a future metadata restore
+must also rebuild that projection. Source-head recovery and search still have
+unported effects; their retained tables do not establish write support.
 
 For each remaining port, capture affected identities before cascades remove the
 rows that identify them. Validate values and immutable-record rules in the Go
@@ -1114,12 +1310,14 @@ changes, inside the same transaction. SQLite retains its released triggers. A
 failed receipt write rolls back the documents, memberships, derived rows and node
 allocation together. Photo import's progress, cancellation and finalization use
 the shared operation records under writer admission. Expired receipts stay until
-pending physical cleanup is gone; this does not qualify multi-store operations.
+pending physical cleanup is gone. Multi-store operations have their own contracts
+below.
 
 The `photo-import` suite covers these native Store workflows. Retained XMP
 receipts used by import are produced by SQLite's publisher. Native XMP publication
-and authored editing are covered by the `photo-edit` suite below; people/review
-workflows and public PostgreSQL vault opening remain unqualified.
+and authored editing are covered by `photo-edit`; `photo-review` and
+`people-curation` cover their own operations below. Public PostgreSQL vault
+opening remains unavailable.
 
 #### Photo metadata edits and XMP synchronization
 
@@ -1182,11 +1380,11 @@ ordered index seek. The PostgreSQL check disables sequential scans to prove the
 ready-preview index is usable; planner choice on a populated library remains
 unverified. Retained SQLite fixtures cover
 candidate/undo protection and regeneration after restore; they do not qualify
-PostgreSQL people curation or restore. The two worker tables (explicit waiters
+their producers or restore. Native people curation has its own contract below.
+The two worker tables (explicit waiters
 and completed scans) are disposable. Suggestion IDs use a PostgreSQL identity
 sequence; a future metadata importer must advance it past imported IDs.
-Provider network execution, people curation and public PostgreSQL vault opening
-remain unqualified. Quality scoring and hidden sessions use the contracts below.
+Provider network execution and public PostgreSQL vault opening remain unqualified. Quality scoring and hidden sessions use the contracts below.
 
 #### Photo quality and hidden sessions
 
@@ -1208,7 +1406,9 @@ people decisions, not producing them on PostgreSQL.
 
 Hidden-photo operations configure and change passcodes, unlock and lock local
 sessions, record failed attempts and lockouts, and reset or disable the feature.
-Tokens remain in the owning Store's memory and disappear on restart. Expiry,
+Tokens remain in the owning Store's memory and disappear on restart. Use one
+process per PostgreSQL vault schema: passcode changes and locks revoke sessions
+in that process only. Expiry,
 explicit lock, passcode change and reset end access. A wrong passcode commits
 its failure record even though the operation returns an error. Disable unhides
 every asset, writes its receipt, refreshes XMP export work and removes the
@@ -1231,9 +1431,125 @@ refresh affected displays and export work inside the write.
 
 The `photo-quality-hidden` contracts cover native publication, terminal and stale
 results, retained dismissal, lockout, expiry, revocation, settings, rollback and
-read snapshots. General photo browsing and quality filters, people curation,
-best-shot choices, portable restore and public PostgreSQL vault opening remain
-separate qualification boundaries.
+read snapshots. General photo browsing and quality filters,
+portable restore and public PostgreSQL vault opening remain separate
+qualification boundaries. Explicit-selection review uses the contract below.
+
+#### Photo review
+
+The shared Store groups an explicit selection by capture time, folder and camera
+identity, chooses keepers or representatives, accepts or dismisses best-shot
+suggestions, and undoes those choices on both backends. The selection defines
+membership; a new neighboring import is not added to an existing decision.
+Decisions recheck source metadata, every original file and the current settings
+inside writer admission. Independent companion-file flags stay intact.
+Hidden groups and their undo require a live session in the owning Store.
+
+Representative choices advance a transactional counter without changing file
+flags. Undo restores the prior choice only at the receipt's asset revision and
+never reuses an issued rank. Asset revisions refresh export work in the same
+transaction. Failed receipt writes roll back flags, ranks, the counter, export
+work and receipts, and send no change notification.
+
+Grouping and best-shot reads keep one snapshot. SQLite retains its forced join
+order; PostgreSQL uses ordinary joins. Review can read retained image index
+generations and hydrate only the indexed, still-eligible inputs. Damaged
+disposable index bytes fall back to capture-time grouping. The two index tables
+have read-only runtime access; this does not qualify PostgreSQL index building,
+publication, reader leases or collection.
+
+The `photo-review` suite covers native explicit selections and retained-index
+reads. Search-driven browsing and query/frozen-run selection,
+portable restore and public PostgreSQL vault opening remain separate.
+
+#### People and face curation
+
+The shared Store supports person creation, revision-fenced edits and retirement,
+contact identities, external UID aliases, custodians, candidate decisions, face
+naming and rejection, key faces, merges, explicit splits, and face-decision undo
+on both backends. Exact-person details, candidate pages and face previews use
+these same operations. Browser writes retain the existing hidden-photo checks;
+unlocking remains local to the owning Store.
+
+All mutations use writer admission. Identity moves, aliases, face links,
+candidate state, binding epochs and replay receipts commit together. PostgreSQL
+writes candidate-to-face membership when it inserts a face candidate; SQLite
+keeps its released trigger. Candidate evidence is immutable through these
+operations. The runtime role can change only the listed mutable columns and can
+insert, but not rewrite, merge and split receipts. Conflict handling does not
+continue a PostgreSQL transaction after a uniqueness error.
+
+Person details, candidate and custodian pages, external UID resolution and actor
+keys use repeatable-read transactions. Counts, identities and the returned rows
+therefore describe one snapshot. Queries close their result sets before issuing
+related lookups. SQLite keeps its forced preview join order and exact receipt
+index expressions; PostgreSQL uses ordinary joins and matching catalog indexes.
+Queries do not rewrite placeholders or add another database facade.
+
+The `people-curation` contracts reuse the existing lifecycle scenarios on both
+engines. PostgreSQL-specific cases interrupt writes at the final receipt or
+candidate projection, and commit edits between statements in a read. Package
+custody writes run against a validated retained package fixture; this does not
+qualify package creation or import.
+
+People discovery is covered below. Query-selected photo browsing, portable
+recovery and public PostgreSQL vault opening remain unqualified. Their retained
+catalogs and the curation operations above do not establish support for those
+producers or user entry points.
+
+#### Document-person resolution
+
+The shared Store prepares document-person inputs, publishes attribution, records
+failures and tracks rebuilds on both backends. Exact email and international phone
+identities can provision a person once; name-only claims remain review candidates.
+Retired identities and explicit external-identity unlinking retain their existing
+suppression rules. Inputs include current custodians and operator assertions.
+Preparing inputs in an audited vault does not create unaudited person authority.
+
+Preparation and publication use writer admission. Publication checks the person
+binding epoch, event generation and node revision before writing. Retained
+generations are insert-only; edges, the current head, publication epoch and change
+events commit together. An identical replay keeps the existing publication, and
+input-only changes do not emit a processed event when the result is unchanged.
+Provisioning an unbound identity does not invalidate unrelated attribution.
+
+Version readback and coverage use repeatable-read transactions, so one response
+cannot mix a retained head with later authority or counts. Stale attribution is
+withheld until republished. Rebuild creation advances the binding epoch and
+records its replay receipt atomically. Retryable failures keep a rebuild running;
+terminal unavailable results let it finish with failed coverage. Progress is
+recounted under writer admission before it commits.
+
+The `document-people` contracts run the existing input, publication, freshness and
+rebuild scenarios on both engines. PostgreSQL cases also commit changes between
+read statements and interrupt provisioning, publication and rebuild creation
+through the restricted runtime role. The Store port adds no schema or runtime SQL
+translation. People discovery is covered below; query execution, recovery and
+public PostgreSQL vault opening remain separate qualification boundaries.
+
+#### People browsing
+
+`PeopleByDisplayName` supports autocomplete, name-order and recent-first pages,
+visible identity labels and photo cards on both backends. Namesakes share their
+newest eligible evidence rank and remain adjacent across cursor pages. Retired,
+sensitive, stale, excluded, trashed and locked Hidden evidence keeps its existing
+visibility rules. Photo cards count distinct assets and choose a readable key
+face or the existing fallback portrait; Hidden counts appear only while unlocked.
+
+One repeatable-read transaction covers eligibility, the page, labels, counts and
+portraits. SQLite keeps its forced join order, name-index hint and word-prefix
+function. PostgreSQL uses ordinary joins, JSON array expansion and a literal
+regular expression with the same Go Unicode letter, number and combining-mark
+ranges. The ranges are rendered once; typed text is escaped and bound as data.
+Neither backend filters a limited page after reading it or translates SQL at
+runtime. PostgreSQL has the same folded-name/page-cursor index as SQLite;
+the existing runtime grants suffice.
+
+The `people-browsing` contracts share the existing browse and summary scenarios,
+including one-item cursor pages, hidden-photo access and shared/paired photos.
+Unicode cases cover literal punctuation, non-Latin names, combining marks and
+numbers at word boundaries. A PostgreSQL scenario commits a retirement during
+a page read and verifies that the next request alone sees the change.
 
 #### Photo albums
 
@@ -1399,7 +1715,8 @@ transaction retains the original authority and mappings.
 
 PostgreSQL mutation helpers refresh affected pack summaries once per pack inside
 the writer transaction. This includes adoption, replacement, index removal,
-loose repair, logical collection and re-ingest. SQLite keeps its released
+loose repair, placement retirement, storage repair, logical collection and
+re-ingest. SQLite keeps its released
 summary triggers. Counts, totals and maxima describe only live members; dead
 mappings remain until physical retirement. A pack's scan key stays stable after
 publication, even when its lowest member disappears. Bounded GC and repack scans
@@ -1420,7 +1737,50 @@ a separate runtime role. A real-file lifecycle packs documents, revokes collecte
 members, repacks the survivor and reads its original bytes. Additional cases
 cover bounded scans, summary changes, rollback and cleanup replay after content
 is reauthorized. This qualifies the primary catalog and cleanup protocol, not
-public PostgreSQL vault opening, multi-store placement, storage jobs or recovery.
+public PostgreSQL vault opening, deployment workers or metadata recovery.
+
+#### Secondary stores, placement and evacuation
+
+The native Store registers secondary filesystem or S3 identities, reports their
+inventory and availability impact, plans placements and evacuations, and commits
+verified destination receipts on both backends. Store plans contain stable
+identities and physical receipts; deployment paths and credentials stay with the
+caller. Public PostgreSQL opening and deployment-specific workers are separate.
+
+Placement previews and repair plans use one read snapshot. Previews account for retained
+versions and all references, report shared or audit-pinned content,
+and account for container reads, verification and scratch space. PostgreSQL uses
+plain joins and scalar `GREATEST`; SQLite keeps its forced inventory join order.
+
+The caller copies and verifies bytes before entering the short writer transaction.
+Commit rechecks the destination receipt and reference closure, authorizes the
+verified destination and retires only the exact reviewed source generation.
+Reference drift, audit pins or changed source authority keep the source. Packed
+source retirement and repair refresh pack summaries inside the same transaction.
+Failed catalog publication leaves the prior authority, mappings and summaries.
+
+Evacuation admits one active operation per source under writer serialization.
+Active source or destination references prevent detachment and unregistering.
+Finalization requires complete destination coverage, records exact physical
+cleanup, and leaves the source draining until that cleanup finishes. Cancellation
+cannot interrupt already-finalizing publication. Recovery records retain the
+reviewed source candidates and prior destination generation; repair or salvage
+cannot overwrite a destination changed after review.
+
+Cleanup receipts survive process interruption and block expired-operation pruning.
+Before removing an object, the caller rechecks the receipt: a reauthorized object
+consumes its stale receipt without authorizing deletion. Successful physical
+removal consumes only that exact receipt under writer admission. The SQL writer
+lock does not replace exclusive ownership of physical storage during publication.
+
+The `multi-store` contracts run the existing registry, placement, cleanup and
+operation-lifecycle scenarios on both backends. PostgreSQL cases move real bytes
+from a primary pack to a secondary and back, test late-write rollback during
+placement and repair, and commit location changes between preview statements.
+The runtime role may insert store identities, change their lifecycle and remove
+detached identities; it may insert operation-store references and insert/delete
+cleanup receipts. Other lifecycle rules are enforced by Store methods, rather
+than by PostgreSQL grants or a closed state index.
 
 #### Imports and source history
 
@@ -1460,7 +1820,7 @@ recomputation, and advances the publication epochs for removed projections.
 SQLite retains its released trigger ownership, including the event epoch's
 per-head increment. Canonical event tables support this invalidation and its
 cascades; [event publication](#source-metadata-and-document-events) uses the
-shared Store. People publication remains unqualified.
+shared Store, as does [document-person publication](#document-person-resolution).
 
 Operation tests use canonical setup and the runtime role, validate complete
 metadata and audit replay, and compare derived effects with real SQLite writes.
@@ -1663,11 +2023,10 @@ enrollment without leaving audit authority or queue changes. Changed previews
 are rejected for both initial and additional enrollment. A fresh PostgreSQL
 schema can enroll its root without a copied fixture.
 
-The supporting catalogs grant runtime read access only. Their presence does not
-qualify their write paths: validation, immutability and same-transaction catalog
-maintenance still belong to each operation's port. Public PostgreSQL opening,
-`ValidateMetadata` snapshot export, backup/restore, document and photo mutations,
-and search remain unavailable.
+Copying supporting catalogs qualifies their validation, not their producers.
+The [operation inventory](#backend-support-and-drift-checks) identifies native
+writes and their catalog-maintenance coverage. Public PostgreSQL opening,
+metadata import/export, backup/restore and search remain unqualified.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 
@@ -1700,6 +2059,8 @@ node and content-history query tests. `make test-pg` requires the DSN, bypasses
 cached test results, and runs these groups under the race detector. It limits
 parallel tests to four: each schema installation locks hundreds of catalog
 objects, so CPU-count concurrency can exhaust the default server lock table.
+The Store suite has an eight-minute timeout for the full contract inventory
+at that concurrency; the schema lifecycle suite has a separate three-minute limit.
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 
@@ -1880,6 +2241,20 @@ by group: Linux CGO, Linux pure-Go, lint (with the golangci-lint analysis
 cache), and each Windows architecture. Only `main` pushes save, once per group
 per day, from the job that builds the most of that group; pull requests restore
 without saving so they cannot evict `main`'s caches from the repository quota.
+Before each daily save, the owning job retains the build and analysis action
+records it used and their referenced outputs, including executable directories.
+Trimming reads Go's v1 action records and rejects unknown record formats.
+The job rebuilds the module cache from restored downloads through a local file
+proxy, dropping stale versions while retaining the current `go.mod` graph,
+modules and tools requested by the job, checksum-database records, and the configured proxy fallback.
+An exact daily cache hit skips this preparation and trimming. Trimming first appears at the next new daily key.
+
+Owner saves keep the `GOMODCACHE` archive path and remove expanded module
+sources with `go clean -modcache`, preserving the `cache` subtree.
+Every restore ends with `go mod download` to expand module sources before
+the first build or test step. Existing archives keep restoring under the same
+cache version. Older workflows reading new archives expand modules in their
+first Go step.
 
 Windows jobs put `GOCACHE` and `GOMODCACHE` under `D:\a\_temp`. If D: is
 missing on ARM64, setup initializes only a raw `Microsoft NVMe Direct Disk v2`

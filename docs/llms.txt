@@ -57,7 +57,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [CLI reference](https://docbank.ai/docs/cli-reference.md): Every docbank command, with its flags, output formats, and error behavior.
 - [Configuration](https://docbank.ai/docs/configuration.md): Vault location, data layout, config.toml, and environment variables.
 - [Document processing configuration](https://docbank.ai/docs/usage/configuration.md): Configure processing profiles the daemon can run, with credentials kept outside the portable policy.
-- [HTTP API](https://docbank.ai/docs/architecture/http-api.md): The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+- [HTTP API](https://docbank.ai/docs/architecture/http-api.md): The agent-first HTTP API, with filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 
 ## How it works
 - [How Docbank works](https://docbank.ai/docs/architecture/overview.md): A guided model of vaults, document identity, immutable content, storage, deletion, and recovery.

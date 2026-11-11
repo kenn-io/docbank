@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
@@ -123,7 +124,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		return hits, page.Total > int64(limit), nil
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if fq == "" {
 		return nil, false, nil
 	}
@@ -2545,6 +2546,69 @@ func ftsQuery(input string) string {
 	return strings.Join(terms, " ")
 }
 
+// SearchRequiredTerms returns the terms required by ordinary lexical search.
+func SearchRequiredTerms(query string) []string {
+	_, terms, _ := prepareSearch(query)
+	return terms
+}
+
+func prepareSearch(query string) (string, []string, bool) {
+	quotes := strings.NewReplacer("“", `"`, "”", `"`, "„", `"`).Replace(query)
+	fallback := func() (string, []string, bool) { return ftsQuery(query), strings.Fields(query), false }
+	if strings.Count(quotes, `"`)%2 != 0 {
+		return fallback()
+	}
+	analyzer := lexical.Literal()
+	natural, err := analyzer.PrepareNatural(query)
+	if err != nil {
+		return fallback()
+	}
+	wordless := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r) }
+	// A phrase of stop words alone does not make unquoted stop words optional.
+	if len(natural.Phrases) > 0 && len(natural.Words) == 0 {
+		onlyStopWords := true
+		for _, phrase := range natural.Phrases {
+			words := strings.FieldsFunc(strings.ToLower(phrase), wordless)
+			for _, word := range words {
+				if !lexical.IsStopWord(word) {
+					onlyStopWords = false
+				}
+			}
+		}
+		if onlyStopWords {
+			var unquoted []string
+			for i, part := range strings.Split(quotes, `"`) {
+				if i%2 == 0 {
+					unquoted = append(unquoted, part)
+				}
+			}
+			prepared, _ := analyzer.PrepareNatural(strings.Join(unquoted, " "))
+			natural.Words = prepared.Words
+		}
+	}
+	var groups, terms []string
+	typed := strings.Fields(strings.ReplaceAll(strings.ToLower(quotes), `"`, " "))
+	for _, word := range natural.Words {
+		var forms []string
+		for _, form := range word.Forms {
+			literal, _ := analyzer.PreparePhrase(form)
+			match := literal.Match
+			if slices.ContainsFunc(typed, func(t string) bool { return strings.TrimFunc(t, wordless) == form }) {
+				match += "*"
+			}
+			forms = append(forms, match)
+		}
+		groups = append(groups, "("+strings.Join(forms, " OR ")+")")
+		terms = append(terms, word.Text)
+	}
+	for _, phrase := range natural.Phrases {
+		literal, _ := analyzer.PreparePhrase(phrase)
+		groups = append(groups, literal.Match)
+		terms = append(terms, `"`+phrase+`"`)
+	}
+	return strings.Join(groups, " AND "), terms, len(natural.Phrases) > 0
+}
+
 // nameSearchCandidates leaves filtering and name-based ties to the outer
 // query. A candidate cutoff here would discard eligible equal-score names.
 func nameSearchCandidates(match string) (sqlquery.Query, error) {
@@ -2593,7 +2657,7 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if SearchNeedsQuery(query, opts) {
 		return nil, false, ErrSearchQueryRequired
 	}

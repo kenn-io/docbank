@@ -91,7 +91,7 @@
   .tabbed :global(.kit-detail-drawer__header) {
     padding-bottom: 0;
   }
-  .header :global(.tab-strip) {
+  .header :global(.kit-tabs__list) {
     border-bottom: 0;
   }
   .header {

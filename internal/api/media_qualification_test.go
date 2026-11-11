@@ -311,12 +311,13 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 				cfg.Profile.Retrieval.LexicalLimit, cfg.Profile.Retrieval.VectorLimit = option.LaneLimit, option.LaneLimit
 			}
 		}
+		unboundSupplied := supplied
 		supplied, err = processing.WithSuppliedMediaEmbeddings(supplied, generated)
 		require.NoError(t, err)
 		if option.LaneLimit > 0 {
 			supplied.Profile.Retrieval.LexicalLimit, supplied.Profile.Retrieval.VectorLimit = option.LaneLimit, option.LaneLimit
 		}
-		profiles := map[string]processing.ProfileConfig{name: supplied, "qualification-generated": generated}
+		profiles := map[string]processing.ProfileConfig{name: supplied, "qualification-generated": generated, "qualification-unbound": unboundSupplied}
 		if option.UnprocessedDonor {
 			donorDescriptor := encoder.descriptor
 			donorDescriptor.Fingerprint = ""

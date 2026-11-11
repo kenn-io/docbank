@@ -26,9 +26,10 @@ func (q *membershipCountingQuerier) QueryContext(ctx context.Context, query stri
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
 
-func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) {
+func checkSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	const body = "Synthetic overlapping collection source"
 	hash := sha256.Sum256([]byte(body))
 	ids := make([]string, 2)
@@ -36,7 +37,7 @@ func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) 
 		var err error
 		ids[i], err = newUUIDv4()
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, ids[i], nowRFC3339(), "file", "Synthetic collection")
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES($1,$2,$3,$4)`, ids[i], nowRFC3339(), "file", "Synthetic collection")
 		require.NoError(t, err)
 	}
 	members := make([]CollectionSnapshotMember, 3)
@@ -50,7 +51,7 @@ func TestSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T) 
 			}
 			provenanceID, err := provenanceIdentity(metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID, IngestID: id, OriginalPath: node.Name})
 			require.NoError(t, err)
-			_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, provenanceID, node.ID, id, node.Name)
+			_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES($1,$2,$3,$4)`, provenanceID, node.ID, id, node.Name)
 			require.NoError(t, err)
 		}
 		members[i].SourceCollectionIDs = slices.Clone(ids)
@@ -85,9 +86,10 @@ func streamSnapshotMembers(t *testing.T, members ...CollectionSnapshotMember) *b
 	return bytes.NewReader(lines.Bytes())
 }
 
-func TestSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t *testing.T) {
+func checkSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	content := "Synthetic stream source"
 	hash := sha256.Sum256([]byte(content))
 	node, err := s.CreateFile(t.Context(), s.RootID(), "stream.txt", hex.EncodeToString(hash[:]), int64(len(content)), "text/plain")
@@ -120,18 +122,21 @@ func TestSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDige
 	stored, err := s.SnapshotMembers(t.Context(), id, 0, 2)
 	require.NoError(t, err)
 	require.Equal(t, []CollectionSnapshotMember{member}, stored)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	var again bytes.Buffer
-	require.NoError(t, restored.ExportMetadata(t.Context(), &again))
-	require.Equal(t, exported.Bytes(), again.Bytes())
+	if s.postgresSchema == "" {
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		restored := newTestStore(t)
+		require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+		var again bytes.Buffer
+		require.NoError(t, restored.ExportMetadata(t.Context(), &again))
+		require.Equal(t, exported.Bytes(), again.Bytes())
+	}
 }
 
-func TestSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t *testing.T) {
+func checkSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	content := "Synthetic stream source"
 	hash := sha256.Sum256([]byte(content))
 	node, err := s.CreateFile(t.Context(), s.RootID(), "stream.txt", hex.EncodeToString(hash[:]), int64(len(content)), "text/plain")
@@ -180,9 +185,10 @@ func TestSealCollectionSnapshotStreamRejectsOversizedRowWithoutSealing(t *testin
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) {
+func checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	const count = 1001
 	members := make([]CollectionSnapshotMember, 0, count)
 	sourceIDs := make([]string, 2)
@@ -190,7 +196,7 @@ func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) 
 		var err error
 		sourceIDs[i], err = newUUIDv4()
 		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, sourceIDs[i], nowRFC3339(), "file", "Synthetic batch collection")
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES($1,$2,$3,$4)`, sourceIDs[i], nowRFC3339(), "file", "Synthetic batch collection")
 		require.NoError(t, err)
 	}
 	content := "Synthetic batch source"
@@ -226,7 +232,7 @@ func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) 
 			}
 			provenanceID, err := provenanceIdentity(metadataProvenance{Type: metadataProvenanceType, NodeID: node.id, IngestID: sourceID, OriginalPath: node.name})
 			require.NoError(t, err)
-			_, err = tx.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, provenanceID, node.id, sourceID, node.name)
+			_, err = tx.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES($1,$2,$3,$4)`, provenanceID, node.id, sourceID, node.name)
 			require.NoError(t, err)
 		}
 	}
@@ -244,7 +250,11 @@ func TestSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, count, sealed.MemberCount)
 	require.NoError(t, validateSnapshotMetadataRows(t.Context(), s.db, sealed))
-	require.NoError(t, s.ValidateMetadata(t.Context()))
+	if s.postgresSchema == "" {
+		require.NoError(t, s.ValidateMetadata(t.Context()))
+	} else {
+		checkRetentionMetadata(t, s)
+	}
 	wrongMemberHash := sealed
 	wrongMemberHash.MemberHash = fakeHash("ab")
 	require.ErrorIs(t, validateSnapshotMetadataRows(t.Context(), s.db, wrongMemberHash), ErrPackageConflict)

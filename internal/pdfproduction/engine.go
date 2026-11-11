@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"time"
 
@@ -184,11 +185,23 @@ func checkRSS(ctx context.Context, limit int64, read func(context.Context) (uint
 	return nil
 }
 
+// admitRSS refuses a job only when the process stays over the ceiling after
+// returning freeable memory to the OS. Garbage left by other work, such as
+// reading an upload, would otherwise count against the job.
+func admitRSS(ctx context.Context, limit int64, read func(context.Context) (uint64, error)) error {
+	err := checkRSS(ctx, limit, read)
+	if _, over := errors.AsType[*RSSLimitError](err); !over {
+		return err
+	}
+	debug.FreeOSMemory()
+	return checkRSS(ctx, limit, read)
+}
+
 // watchRSS covers the whole Go/WASM worker, including decoding, compression,
 // font data, compiled code and indexes. A breached ceiling cancels WASM as well
 // as the bounded Go streaming loops; accounting failure is fatal.
 func watchRSS(parent context.Context, limit int64, read func(context.Context) (uint64, error)) (context.Context, func(), error) {
-	if err := checkRSS(parent, limit, read); err != nil {
+	if err := admitRSS(parent, limit, read); err != nil {
 		return nil, nil, err
 	}
 	ctx, cancel := context.WithCancelCause(parent)
@@ -197,12 +210,21 @@ func watchRSS(parent context.Context, limit int64, read func(context.Context) (u
 		defer close(done)
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
+		// Reclaim at most once while running: a forced collection on every
+		// tick near the ceiling would stall the job.
+		reclaimed := false
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := checkRSS(ctx, limit, read); err != nil {
+				err := checkRSS(ctx, limit, read)
+				if _, over := errors.AsType[*RSSLimitError](err); over && !reclaimed {
+					reclaimed = true
+					debug.FreeOSMemory()
+					err = checkRSS(ctx, limit, read)
+				}
+				if err != nil {
 					cancel(err)
 					return
 				}

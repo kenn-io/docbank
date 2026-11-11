@@ -31,9 +31,10 @@ func TestSnapshotMemberHashUsesNumericNodeOrderAndDistinctMembership(t *testing.
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
 
-func TestSealCollectionSnapshotFreezesExactVersion(t *testing.T) {
+func checkSealCollectionSnapshotFreezesExactVersion(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	body := []byte("Synthetic document A")
 	hash := sha256.Sum256(body)
 	encodedHash := hex.EncodeToString(hash[:])
@@ -69,8 +70,10 @@ func TestSealCollectionSnapshotFreezesExactVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, request.Members, members)
 
-	_, err = s.db.ExecContext(t.Context(), `UPDATE collection_snapshot_members SET size=99 WHERE snapshot_id=?`, id)
-	require.ErrorContains(t, err, "collection snapshot members are immutable")
+	if s.postgresSchema == "" {
+		_, err = s.db.ExecContext(t.Context(), `UPDATE collection_snapshot_members SET size=99 WHERE snapshot_id=$1`, id)
+		require.ErrorContains(t, err, "collection snapshot members are immutable")
+	}
 	again, err := s.SealCollectionSnapshot(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, sealed, again)
@@ -92,9 +95,10 @@ func TestSealCollectionSnapshotFreezesExactVersion(t *testing.T) {
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
 
-func TestSnapshotSourceCollectionsFreezeMembership(t *testing.T) {
+func checkSnapshotSourceCollectionsFreezeMembership(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	body := []byte("Synthetic collection document")
 	hash := sha256.Sum256(body)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "source.txt", hex.EncodeToString(hash[:]), int64(len(body)), "text/plain")
@@ -104,12 +108,12 @@ func TestSnapshotSourceCollectionsFreezeMembership(t *testing.T) {
 	second, err := newUUIDv4()
 	require.NoError(t, err)
 	for _, collectionID := range []string{first, second} {
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES($1,$2,$3,$4)`,
 			collectionID, nowRFC3339(), "file", "Synthetic collection")
 		require.NoError(t, err)
 		provenanceID, idErr := newUUIDv4()
 		require.NoError(t, idErr)
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`,
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES($1,$2,$3,$4)`,
 			provenanceID, node.ID, collectionID, "source.txt")
 		require.NoError(t, err)
 	}
@@ -163,9 +167,10 @@ func TestSnapshotSourceCollectionsFreezeMembership(t *testing.T) {
 	require.Equal(t, sealed, read)
 }
 
-func TestSnapshotSelectedPagesUseVerifiedFullPDF(t *testing.T) {
+func checkSnapshotSelectedPagesUseVerifiedFullPDF(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "eight.pdf", fakeHash("a1"), 123, "application/pdf")
 	require.NoError(t, err)
 	source := document.PageSource{VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: 123}

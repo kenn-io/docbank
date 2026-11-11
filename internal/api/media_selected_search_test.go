@@ -92,7 +92,8 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 		require.Empty(t, report.Results)
 		require.Equal(t, "incomplete", report.Coverage.State)
 		require.Equal(t, mode, report.RequestedMode)
-		require.Equal(t, "unavailable", report.ActualMode)
+		require.Equal(t, "lexical", report.ActualMode)
+		require.Contains(t, report.Degradations, "semantic_unavailable")
 		f.encoder.mu.Lock()
 		require.Equal(t, before, f.encoder.calls, "ineligible scope must not encode query")
 		f.encoder.mu.Unlock()
@@ -223,15 +224,10 @@ func TestSelectedMediaSearchSkipsUnavailableEmbeddings(t *testing.T) {
 		require.Zero(t, report.Coverage.CompleteDocuments)
 		require.Len(t, report.MediaSelections, 1)
 		require.NotEmpty(t, report.MediaSelections[0].BuildID)
-		if mode == "semantic" {
-			require.Equal(t, "unavailable", report.ActualMode)
-			require.Empty(t, report.Results)
-		} else {
-			require.Equal(t, "lexical", report.ActualMode)
-			require.Contains(t, report.Degradations, "semantic_unavailable")
-			require.Len(t, report.Results, 1)
-			require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
-		}
+		require.Equal(t, "lexical", report.ActualMode)
+		require.Contains(t, report.Degradations, "semantic_unavailable")
+		require.Len(t, report.Results, 1)
+		require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
 		f.encoder.mu.Lock()
 		require.Equal(t, before, f.encoder.calls, "no eligible vector row must skip query encoding")
 		f.encoder.mu.Unlock()
@@ -243,7 +239,8 @@ func TestSelectedMediaSearchSkipsUnavailableEmbeddings(t *testing.T) {
 	request.MediaSources[0].SuppliedInputIDs = []string{}
 	report, err := client.SearchDocuments(t.Context(), request)
 	require.NoError(t, err)
-	require.Equal(t, "unavailable", report.ActualMode)
+	require.Equal(t, "lexical", report.ActualMode)
+	require.Contains(t, report.Degradations, "semantic_unavailable")
 }
 
 func TestSelectedMediaSearchFallsBackForUnpersistedEmbeddingDonor(t *testing.T) {
@@ -261,18 +258,28 @@ func TestSelectedMediaSearchFallsBackForUnpersistedEmbeddingDonor(t *testing.T) 
 		require.Equal(t, "incomplete", report.Coverage.State)
 		require.Equal(t, 1, report.Coverage.ScopedDocuments)
 		require.Zero(t, report.Coverage.CompleteDocuments)
-		if mode == "semantic" {
-			require.Equal(t, "unavailable", report.ActualMode)
-			require.Empty(t, report.Results)
-		} else {
-			require.Equal(t, "lexical", report.ActualMode)
-			require.Contains(t, report.Degradations, "semantic_unavailable")
-			require.Len(t, report.Results, 1)
-			require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
-		}
+		require.Equal(t, "lexical", report.ActualMode)
+		require.Contains(t, report.Degradations, "semantic_unavailable")
+		require.Len(t, report.Results, 1)
+		require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
 		f.unprocessedEncoder.mu.Lock()
 		require.Equal(t, before, f.unprocessedEncoder.calls, "an unpersisted donor has no eligible vector rows to query")
 		f.unprocessedEncoder.mu.Unlock()
+	}
+}
+
+func TestSelectedMediaSearchFallsBackWithoutEmbeddingBinding(t *testing.T) {
+	t.Parallel()
+	f := newMediaQualificationFixture(t)
+	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
+	for _, mode := range []string{"semantic", "hybrid"} {
+		report, err := client.SearchDocuments(t.Context(), f.request("qualification-unbound", mode, f.manifest.Records[0]))
+		require.NoError(t, err)
+		require.Equal(t, mode, report.RequestedMode)
+		require.Equal(t, "lexical", report.ActualMode)
+		require.Contains(t, report.Degradations, "semantic_unavailable")
+		require.Len(t, report.Results, 1)
+		require.Equal(t, "incomplete", report.Coverage.State)
 	}
 }
 

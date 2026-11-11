@@ -1174,6 +1174,79 @@ func TestSearchPrefixAndRename(t *testing.T) {
 	assert.Len(t, hits, 1)
 }
 
+func TestSearchPreparedWordsAndPhrases(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	words, err := s.Mkdir(t.Context(), s.RootID(), "words")
+	require.NoError(t, err)
+	stops, err := s.Mkdir(t.Context(), s.RootID(), "stops")
+	require.NoError(t, err)
+	for _, group := range []struct {
+		parent int64
+		names  []string
+	}{
+		{words.ID, []string{"invoice.pdf", "tax 2026.pdf", "tax draft 2026.pdf", "2026 tax.pdf", "case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf", "cash.pdf"}},
+		{stops.ID, []string{"the report.pdf", "the and.pdf", "tax.pdf", "of to and.pdf", "of to.pdf", "tax value.pdf", "the of.pdf"}},
+	} {
+		for _, name := range group.names {
+			_, err := s.CreateFile(t.Context(), group.parent, name, fakeHash(name), 1, "application/pdf")
+			require.NoError(t, err)
+		}
+	}
+	content, err := s.CreateFile(t.Context(), words.ID, "memo.txt", fakeHash("bc"), 4, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: content.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "Refunds take five days."}))
+	for _, tc := range []struct {
+		query  string
+		parent int64
+		want   []string
+		terms  []string
+	}{
+		{"the invoices", 0, []string{"invoice.pdf"}, []string{"invoices"}},
+		{"the invoice absent", 0, nil, []string{"invoice", "absent"}},
+		{`"tax 2026"`, 0, []string{"tax 2026.pdf"}, []string{`"tax 2026"`}},
+		{`"tax 2026" absent`, 0, nil, []string{"absent", `"tax 2026"`}},
+		{`"the invoices`, 0, nil, []string{`"the`, "invoices"}},
+		{"the refunds", 0, []string{"memo.txt"}, []string{"refunds"}},
+		{`"refunds take"`, 0, []string{"memo.txt"}, []string{`"refunds take"`}},
+		{`"the" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the"`}},
+		{`"the +" and`, stops.ID, []string{"the and.pdf"}, []string{"and", `"the +"`}},
+		{`"the report" and`, stops.ID, []string{"the report.pdf"}, []string{`"the report"`}},
+		{`"the" and absent`, stops.ID, nil, []string{"absent", `"the"`}},
+		{`"tax" and`, stops.ID, []string{"tax.pdf", "tax value.pdf"}, []string{`"tax"`}},
+		{`"of to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of to"`}},
+		{`"of-to" and`, stops.ID, []string{"of to and.pdf"}, []string{"and", `"of-to"`}},
+		{`"tax-value" and`, stops.ID, []string{"tax value.pdf"}, []string{`"tax-value"`}},
+		{`"the" "of"`, stops.ID, []string{"the of.pdf"}, []string{`"the"`, `"of"`}},
+		{`"the" "of" and`, stops.ID, nil, []string{"and", `"the"`, `"of"`}},
+	} {
+		hits, _, err := s.SearchPageWithOptions(t.Context(), tc.query, 20, SearchOptions{UnderNodeID: tc.parent})
+		require.NoError(t, err)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.Equal(t, tc.want, names, tc.query)
+		require.Equal(t, tc.terms, SearchRequiredTerms(tc.query), tc.query)
+	}
+	hits, _, err := s.SearchPage(t.Context(), "cases", 20)
+	require.NoError(t, err)
+	var names []string
+	for _, hit := range hits {
+		names = append(names, hit.Node.Name)
+	}
+	require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf"}, names)
+	for _, query := range []string{"case cases", "cases case"} {
+		hits, _, err := s.SearchPage(t.Context(), query, 20)
+		require.NoError(t, err)
+		var names []string
+		for _, hit := range hits {
+			names = append(names, hit.Node.Name)
+		}
+		require.ElementsMatch(t, []string{"case.pdf", "cased.pdf", "casing.pdf", "cases.pdf", "casework.pdf"}, names, query)
+	}
+}
+
 func TestSearchSurvivesOperatorInput(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

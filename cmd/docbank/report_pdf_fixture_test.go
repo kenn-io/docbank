@@ -94,7 +94,7 @@ func reportPDF(t *testing.T, text string) []byte {
 	var output bytes.Buffer
 	require.NoError(t, pdf.Output(&output))
 	// Avoid pdfcpu's host configuration and font directory.
-	pages, err := pdfapi.PageCount(bytes.NewReader(output.Bytes()), &model.Configuration{
+	pages, err := pdfapi.PageCount(t.Context(), bytes.NewReader(output.Bytes()), &model.Configuration{
 		Reader15: true, ValidationMode: model.ValidationRelaxed, Offline: true,
 		Limits: model.DefaultResourceLimits(),
 	})

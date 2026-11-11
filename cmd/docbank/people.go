@@ -31,11 +31,12 @@ var peopleCmd = &cobra.Command{
 from show. Package assignment IDs come from
 GET /api/v1/packages/by-id/{package_id}/custodians or MCP
 list_package_custodians. All commands print JSON.`,
-	GroupID: groupSources,
-	Use:     "people",
-	Short:   "Manage canonical people",
-	Args:    cobra.NoArgs,
-	RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	GroupID:     groupSources,
+	Use:         "people",
+	Short:       "Manage canonical people",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var peopleListCmd = &cobra.Command{

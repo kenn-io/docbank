@@ -73,7 +73,7 @@ func exportEmailPDFForRecipe(ctx context.Context, q metadataQuerier, version, ge
 }
 
 func exportEmailPDFProfiles(ctx context.Context, q metadataQuerier, version, after string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT DISTINCT a.profile_fingerprint FROM rendition_attachments a JOIN rendition_artifacts r ON r.build_id=a.build_id WHERE a.content_version_id=? AND r.role=? AND a.profile_fingerprint>? ORDER BY a.profile_fingerprint LIMIT 100`, version, string(document.EvidenceArtifactPDF), after)
+	rows, err := q.QueryContext(ctx, `SELECT DISTINCT a.profile_fingerprint FROM rendition_attachments a JOIN rendition_artifacts r ON r.build_id=a.build_id WHERE a.content_version_id=$1 AND r.role=$2 AND a.profile_fingerprint>$3 ORDER BY a.profile_fingerprint LIMIT 100`, version, string(document.EvidenceArtifactPDF), after)
 	if err != nil {
 		return nil, err
 	}

@@ -59,7 +59,7 @@ func (service *Service) searchMediaSources(
 	}
 	mode := prepared.mode
 	if nonlexical && len(plan.builds) == 0 {
-		mode = retrieval.ModeUnavailable
+		mode = retrieval.ModeLexical
 	}
 	if len(plan.builds) != 0 && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid) {
 		available, err := service.catalog.SelectedSemanticRowsAvailable(ctx, profile.record.Fingerprint, prepared.bindingID, scope)
@@ -67,11 +67,7 @@ func (service *Service) searchMediaSources(
 			return retrieval.Report{}, err
 		}
 		if !available {
-			if mode == retrieval.ModeHybrid {
-				mode = retrieval.ModeLexical
-			} else {
-				mode = retrieval.ModeUnavailable
-			}
+			mode = retrieval.ModeLexical
 		}
 	}
 	actual := mode
@@ -79,7 +75,7 @@ func (service *Service) searchMediaSources(
 		actual = retrieval.ModeLexical
 	}
 	report := retrieval.Report{RequestedMode: prepared.requestedMode, ActualMode: actual, Results: []retrieval.Result{}}
-	if len(plan.builds) != 0 && mode != retrieval.ModeUnavailable {
+	if len(plan.builds) != 0 {
 		execution := prepared
 		execution.mode = mode
 		closeEgress, err := service.beginSearchEgress(ctx, profile, execution)
@@ -92,15 +88,9 @@ func (service *Service) searchMediaSources(
 			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID, Authorization: prepared.authorization}
 		report, err = prepared.searcher.Search(ctx, query)
 		if errors.Is(err, retrieval.ErrSelectedEmbeddingsUnavailable) {
-			// Eligibility can disappear after the planning read. Never encode an
-			// empty leased allowlist; hybrid can still serve exact lexical evidence.
-			if mode == retrieval.ModeHybrid {
-				query.Mode = retrieval.ModeLexical
-				report, err = prepared.searcher.Search(ctx, query)
-			} else {
-				report = retrieval.Report{ActualMode: retrieval.ModeUnavailable, Results: []retrieval.Result{}}
-				err = nil
-			}
+			// Eligibility can disappear after the planning read.
+			query.Mode = retrieval.ModeLexical
+			report, err = prepared.searcher.Search(ctx, query)
 		}
 		if err != nil {
 			return retrieval.Report{}, err
@@ -118,7 +108,7 @@ func (service *Service) searchMediaSources(
 		report.Truncated = true
 	}
 	report.RequestedMode = prepared.requestedMode
-	if prepared.requestedMode == retrieval.ModeHybrid && report.ActualMode == retrieval.ModeLexical {
+	if nonlexical && report.ActualMode == retrieval.ModeLexical {
 		report.Degradations = append(report.Degradations, retrieval.DegradationSemanticUnavailable)
 	}
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)

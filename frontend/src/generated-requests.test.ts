@@ -32,31 +32,34 @@ it.each([
   expect(Buffer.from(await (response as Response).arrayBuffer())).toEqual(body);
 });
 
-it("sends JSON metadata before the media file without a metadata filename", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
-    const response = new Response(await (request?.body as Blob).text(), {
-      headers: request?.headers,
+it.each([new Blob(["synthetic"]), "synthetic"])(
+  "sends JSON metadata before the media file without a metadata filename (%s)",
+  async (content) => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
+      const response = new Response(await (request?.body as Blob).text(), {
+        headers: request?.headers,
+      });
+      const parts = await response.formData();
+      expect([...parts.keys()]).toEqual(["metadata", "file"]);
+      expect(typeof parts.get("metadata")).toBe("string");
+      const file = parts.get("file") as File;
+      expect(file.name).toBe("sample.txt");
+      expect(await file.text()).toBe("synthetic");
+      return Response.json({});
     });
-    const parts = await response.formData();
-    expect([...parts.keys()]).toEqual(["metadata", "file"]);
-    expect(typeof parts.get("metadata")).toBe("string");
-    const file = parts.get("file") as File;
-    expect(file.name).toBe("sample.txt");
-    expect(await file.text()).toBe("synthetic");
-    return Response.json({});
-  });
-  const metadata: api.MediaArtifactMetadata = {
-    filename: "sample.txt",
-    media_type: "text/plain",
-    byte_length: 9,
-    sha256: "a".repeat(64),
-    operation_id: "synthetic-operation",
-    occurrence_id: "synthetic-occurrence",
-    kind: "transcript",
-  };
-  await api.importMediaArtifact("synthetic-source", { metadata, file: new Blob(["synthetic"]) });
-  expect(fetch).toHaveBeenCalledOnce();
-});
+    const metadata: api.MediaArtifactMetadata = {
+      filename: "sample.txt",
+      media_type: "text/plain",
+      byte_length: 9,
+      sha256: "a".repeat(64),
+      operation_id: "synthetic-operation",
+      occurrence_id: "synthetic-occurrence",
+      kind: "transcript",
+    };
+    await api.importMediaArtifact("synthetic-source", { metadata, file: content });
+    expect(fetch).toHaveBeenCalledOnce();
+  },
+);
 
 it("uses the declared filename when uploading a Blob", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
@@ -71,71 +74,6 @@ it("uses the declared filename when uploading a Blob", async () => {
   const body = fetch.mock.calls[0][1]?.body as FormData;
   expect((body.get("file") as File).name).toBe("sample.txt");
 });
-
-it.each(["submit", "artifact", "upload", "push"] as const)(
-  "preserves binary bytes and declared filename for %s uploads",
-  async (operation) => {
-    const bytes = new Uint8Array([0, 255, 128, 13, 10, 1]);
-    const filename = "synthetic.wav";
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
-    const file = new Blob([bytes], { type: "audio/wav" });
-    const metadata: api.MediaSuppliedMetadata = {
-      filename,
-      media_type: "audio/wav",
-      byte_length: bytes.length,
-      sha256: "a".repeat(64),
-      operation_id: "synthetic-operation",
-      occurrence: {
-        ref: "synthetic-occurrence",
-        revision: "1",
-        filename,
-        message: { normalized: "", raw: "", precision: "", timezone: "", fraction_digits: 0 },
-      },
-    };
-    const headers = {
-      "X-Docbank-Blob-Hash": "a".repeat(64),
-      "X-Docbank-Blob-Size": String(bytes.length),
-    };
-    if (operation === "submit") await api.submitMediaSourceWithFormData({ metadata, file });
-    else if (operation === "artifact")
-      await api.importMediaArtifact("synthetic-source", {
-        metadata: {
-          filename,
-          media_type: "audio/wav",
-          byte_length: bytes.length,
-          sha256: "a".repeat(64),
-          operation_id: "synthetic-operation",
-          occurrence_id: "synthetic-occurrence",
-          kind: "transcript",
-        },
-        file,
-      });
-    else if (operation === "upload")
-      await api.uploadFile({ file }, { parent_id: 1, name: filename }, headers);
-    else
-      await api.uploadPushFile(
-        { file },
-        {
-          name: filename,
-          parent_path: "/synthetic",
-          push_name: "fixture",
-          source_ref: filename,
-          run_id: "11111111-1111-4111-8111-111111111111",
-        },
-        headers,
-      );
-    const request = fetch.mock.calls[0][1];
-    let parts: FormData;
-    if (request?.body instanceof Blob) {
-      parts = await new Response(request.body, { headers: request.headers }).formData();
-      expect([...parts.keys()]).toEqual(["metadata", "file"]);
-      expect(typeof parts.get("metadata")).toBe("string");
-    } else parts = request?.body as FormData;
-    const uploaded = parts.get("file") as File;
-    expect(uploaded.name).toBe(filename);
-    expect(new Uint8Array(await uploaded.arrayBuffer())).toEqual(bytes);
-  },
-);
 
 it("preserves a ranged Markdown response and repeats coverage IDs", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(

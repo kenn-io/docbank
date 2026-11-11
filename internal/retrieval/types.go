@@ -15,11 +15,10 @@ const (
 type Mode string
 
 const (
-	ModeUnavailable Mode = "unavailable" // Response-only: selected media performed no retrieval.
-	ModeAuto        Mode = "auto"
-	ModeLexical     Mode = "lexical"
-	ModeSemantic    Mode = "semantic"
-	ModeHybrid      Mode = "hybrid"
+	ModeAuto     Mode = "auto"
+	ModeLexical  Mode = "lexical"
+	ModeSemantic Mode = "semantic"
+	ModeHybrid   Mode = "hybrid"
 )
 
 type Lane string

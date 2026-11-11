@@ -4,43 +4,6 @@ export default defineConfig({
   docbank: {
     input: {
       target: "../internal/api/openapi.yaml",
-      override: {
-        transformer: (spec) => {
-          // Huma's wildcard encoding is valid on the wire. Orval gives it
-          // precedence over format: binary and otherwise admits string files.
-          const binaryUploads = new Set([
-            "submitMediaSource",
-            "importMediaArtifact",
-            "uploadFile",
-            "uploadPushFile",
-          ]);
-          for (const path of Object.values(spec.paths ?? {})) {
-            const operation = path?.post;
-            const body = operation?.requestBody;
-            if (
-              !operation?.operationId ||
-              !binaryUploads.has(operation.operationId) ||
-              !body ||
-              !("content" in body)
-            )
-              continue;
-            const multipart = body.content["multipart/form-data"];
-            const schema = multipart?.schema;
-            if (!schema || !("properties" in schema)) continue;
-            const file = schema.properties?.file;
-            const encoding = multipart.encoding?.file;
-            if (
-              file &&
-              "format" in file &&
-              file.format === "binary" &&
-              encoding?.contentType === "*/*"
-            ) {
-              encoding.contentType = "application/octet-stream";
-            }
-          }
-          return spec;
-        },
-      },
       filters: { mode: "exclude", tags: ["Photo events"], includeUnreferencedSchemas: true },
     },
     output: {
@@ -59,21 +22,11 @@ export default defineConfig({
               ": string",
             );
           }
-          if (
-            (operation.operationName === "uploadFile" ||
-              operation.operationName === "uploadPushFile") &&
-            operation.body.formData
-          ) {
-            const body = `${operation.operationName}Body`;
-            const original = operation.body.formData;
-            operation.body.formData = original.replace(
-              /formData\.append\(`file`,[^;]+;/u,
-              `formData.append(\`file\`, ${body}.file, params.name);`,
+          if (operation.operationName === "uploadFile" && operation.body.formData) {
+            operation.body.formData = operation.body.formData.replace(
+              /(formData\.append\(`file`, .*)\);/,
+              "$1, params.name);",
             );
-            if (original === operation.body.formData)
-              throw new Error(
-                "Binary upload filename transformer no longer matches generated form data",
-              );
           }
           return operation;
         },
