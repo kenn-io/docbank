@@ -141,8 +141,11 @@ func addCandidateContribution(result *Result, candidate Candidate, lane Lane) {
 	} else {
 		result.SemanticRank = cmp.Or(result.SemanticRank, candidate.Rank)
 		result.Excerpt = cmp.Or(result.Excerpt, candidate.Excerpt)
-		nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"
-		if result.rerankExcerpt == "" || nameOnly && strings.TrimSpace(candidate.Excerpt) != "" {
+		nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name" && strings.TrimSpace(candidate.Excerpt) != ""
+		if nameOnly {
+			result.Excerpt = candidate.Excerpt
+		}
+		if result.rerankExcerpt == "" || nameOnly {
 			result.rerankExcerpt = candidate.Excerpt
 		}
 	}
