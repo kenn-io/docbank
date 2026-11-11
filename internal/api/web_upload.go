@@ -17,6 +17,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"uuid"
 
@@ -81,37 +82,83 @@ type webPhotoReceipt struct {
 	AssetID string `json:"asset_id"`
 }
 
+type webSavedPhotoGroup struct {
+	Files   []webPhotoFile   `json:"files"`
+	Hashes  []string         `json:"hashes,omitzero"`
+	Status  string           `json:"status"`
+	Receipt *webPhotoReceipt `json:"receipt,omitzero"`
+}
+
+type webSavedPhotoImport struct {
+	ImportID    string               `json:"import_id"`
+	SourceID    string               `json:"source_id"`
+	Label       string               `json:"label"`
+	Destination string               `json:"destination"`
+	PickerKind  string               `json:"picker_kind"`
+	CreatedAt   string               `json:"created_at"`
+	GroupCount  int                  `json:"group_count"`
+	Groups      []webSavedPhotoGroup `json:"groups,omitzero"`
+}
+
 type webUploadMessage struct {
-	SourceID      *uuid.UUID          `json:"source_id,omitzero"`
-	ImportID      string              `json:"import_id,omitzero"`
-	Files         []webPhotoFile      `json:"files,omitzero"`
-	Groups        [][]int             `json:"groups,omitzero"`
-	Unsupported   []int               `json:"unsupported,omitzero"`
-	SkipReasons   map[int]string      `json:"skip_reasons,omitzero"`
-	Destination   string              `json:"destination,omitzero"`
-	Group         int                 `json:"group,omitzero"`
-	Hashes        []string            `json:"hashes,omitzero"`
-	Indexes       []int               `json:"indexes,omitzero"`
-	PhotoReceipt  *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
-	ContainerID   string              `json:"container_id,omitzero"`
-	ChunkIndex    int                 `json:"chunk_index,omitzero"`
-	ChunkReceipt  *store.MailboxChunk `json:"chunk_receipt,omitempty"`
-	Type          string              `json:"type"`
-	Token         string              `json:"token,omitzero"`
-	Nonce         string              `json:"nonce,omitzero"`
-	Proof         string              `json:"proof,omitzero"`
-	RequestID     string              `json:"request_id,omitzero"`
-	ParentID      int64               `json:"parent_id,omitzero"`
-	Name          string              `json:"name,omitzero"`
-	MIMEType      string              `json:"mime_type,omitzero"`
-	ExpectedHash  string              `json:"expected_hash,omitzero"`
-	ExpectedSize  int64               `json:"expected_size,omitzero"`
-	CheckExisting bool                `json:"check_existing,omitzero"`
-	VerifiedSize  int64               `json:"verified_size,omitzero"`
-	Receipt       *UploadReceipt      `json:"receipt,omitempty"`
-	Status        int                 `json:"status,omitzero"`
-	Code          string              `json:"code,omitzero"`
-	Detail        string              `json:"detail,omitzero"`
+	SourceID      *uuid.UUID            `json:"source_id,omitzero"`
+	ImportID      string                `json:"import_id,omitzero"`
+	Files         []webPhotoFile        `json:"files,omitzero"`
+	Groups        [][]int               `json:"groups,omitzero"`
+	Unsupported   []int                 `json:"unsupported,omitzero"`
+	SkipReasons   map[int]string        `json:"skip_reasons,omitzero"`
+	Destination   string                `json:"destination,omitzero"`
+	Group         int                   `json:"group,omitzero"`
+	Hashes        []string              `json:"hashes,omitzero"`
+	Indexes       []int                 `json:"indexes,omitzero"`
+	PhotoReceipt  *webPhotoReceipt      `json:"photo_group_receipt,omitempty"`
+	ContainerID   string                `json:"container_id,omitzero"`
+	ChunkIndex    int                   `json:"chunk_index,omitzero"`
+	ChunkReceipt  *store.MailboxChunk   `json:"chunk_receipt,omitempty"`
+	Type          string                `json:"type"`
+	Token         string                `json:"token,omitzero"`
+	Nonce         string                `json:"nonce,omitzero"`
+	Proof         string                `json:"proof,omitzero"`
+	RequestID     string                `json:"request_id,omitzero"`
+	ParentID      int64                 `json:"parent_id,omitzero"`
+	Name          string                `json:"name,omitzero"`
+	MIMEType      string                `json:"mime_type,omitzero"`
+	ExpectedHash  string                `json:"expected_hash,omitzero"`
+	ExpectedSize  int64                 `json:"expected_size,omitzero"`
+	CheckExisting bool                  `json:"check_existing,omitzero"`
+	VerifiedSize  int64                 `json:"verified_size,omitzero"`
+	Receipt       *UploadReceipt        `json:"receipt,omitempty"`
+	Status        int                   `json:"status,omitzero"`
+	Code          string                `json:"code,omitzero"`
+	Detail        string                `json:"detail,omitzero"`
+	PickerKind    string                `json:"picker_kind,omitzero"`
+	Offset        int                   `json:"offset,omitzero"`
+	Imports       []webSavedPhotoImport `json:"imports,omitzero"`
+	SavedImport   *webSavedPhotoImport  `json:"saved_import,omitzero"`
+}
+
+type browserPhotoClaims struct {
+	mu     sync.Mutex
+	active map[string]bool
+}
+
+func (c *browserPhotoClaims) claim(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == nil {
+		c.active = make(map[string]bool)
+	}
+	if c.active[key] {
+		return false
+	}
+	c.active[key] = true
+	return true
+}
+
+func (c *browserPhotoClaims) release(key string) {
+	c.mu.Lock()
+	delete(c.active, key)
+	c.mu.Unlock()
 }
 
 type webUploadRequest struct {
@@ -137,6 +184,7 @@ func registerWebUpload(
 		return
 	}
 	origin := strings.TrimSuffix(webURL, "/")
+	claims := &browserPhotoClaims{}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
 		panic("api: invalid browser origin for verified upload")
@@ -163,7 +211,7 @@ func registerWebUpload(
 			return
 		}
 		defer sessions.releaseTrackedUpload(conn)
-		handleWebUploadConnection(r.Context(), conn, d, g, sessions, r)
+		handleWebUploadConnection(r.Context(), conn, d, g, sessions, r, claims)
 	})
 }
 
@@ -217,6 +265,7 @@ func handleWebUploadConnection(
 	g *gate,
 	sessions *webSessionRegistry,
 	request *http.Request,
+	claims *browserPhotoClaims,
 ) {
 	defer func() { _ = conn.CloseNow() }()
 
@@ -278,8 +327,30 @@ func handleWebUploadConnection(
 			}
 			continue
 		}
+		if begin.Type == "register_photo_import" {
+			if !handleWebPhotoRegistration(ctx, conn, d, begin, photoImport) {
+				return
+			}
+			continue
+		}
+		if begin.Type == "list_photo_imports" {
+			if !handleListWebPhotoImports(ctx, conn, d, begin) {
+				return
+			}
+			continue
+		}
+		if begin.Type == "inspect_photo_import" || begin.Type == "resume_photo_import" {
+			loaded, ok := handleInspectWebPhotoImport(ctx, conn, d, begin, claims)
+			if !ok {
+				return
+			}
+			if begin.Type == "resume_photo_import" && loaded != nil {
+				photoImport = loaded
+			}
+			continue
+		}
 		if begin.Type == "begin_photo_group" {
-			if !handleWebPhotoGroup(ctx, conn, d, g, begin, photoImport) {
+			if !handleWebPhotoGroup(ctx, conn, d, g, begin, photoImport, claims) {
 				return
 			}
 			continue
@@ -758,12 +829,15 @@ func planWebPhotos(
 }
 
 type webPhotoImport struct {
-	id          string
-	files       []webPhotoFile
-	paths       []string
-	groups      [][]int
-	run         store.IngestRun
-	destination store.IngestDirectoryPlan
+	id              string
+	files           []webPhotoFile
+	paths           []string
+	groups          [][]int
+	run             store.IngestRun
+	destination     store.IngestDirectoryPlan
+	destinationPath string
+	sourceID        uuid.UUID
+	groupKeys       []string
 }
 
 func (p *webPhotoImport) sourceDescription() string {
@@ -777,6 +851,128 @@ func (p *webPhotoImport) sourceDescription() string {
 		return "browser: " + folder
 	}
 	return "browser: Choose files"
+}
+
+func handleWebPhotoRegistration(
+	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage, plan *webPhotoImport,
+) bool {
+	if plan == nil || plan.id != begin.ImportID || len(plan.groupKeys) != 0 ||
+		(begin.PickerKind != "files" && begin.PickerKind != "folder") {
+		return writeWebUploadProblem(ctx, conn, begin.RequestID,
+			NewError(http.StatusUnprocessableEntity, "validation", "invalid photo import plan")) == nil
+	}
+	groups := make([]store.BrowserPhotoImportGroup, len(plan.groups))
+	for i, indexes := range plan.groups {
+		for _, index := range indexes {
+			file := plan.files[index]
+			groups[i].Members = append(groups[i].Members, store.BrowserPhotoGroupMember{
+				Path: file.RelativePath, Role: store.ClassifyPhotoSource(file.RelativePath).Role,
+				SourcePath: plan.paths[index], Size: file.Size, Mtime: originalMtime(file.ModifiedTime),
+				DeclaredHash: file.ExpectedHash,
+			})
+		}
+		groups[i].Key = store.BrowserPhotoGroupKey(groups[i].Members)
+	}
+	id, err := d.Store.RegisterBrowserPhotoImport(ctx, store.BrowserPhotoImport{
+		SourceID: plan.sourceID, PickerKind: begin.PickerKind, Label: plan.sourceDescription(),
+		Destination: plan.destinationPath, Directory: plan.destination, Groups: groups,
+	})
+	if err != nil {
+		return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+	}
+	plan.id = id.String()
+	plan.groupKeys = make([]string, len(groups))
+	for i, group := range groups {
+		plan.groupKeys[i] = group.Key
+	}
+	return wsjson.Write(ctx, conn, webUploadMessage{
+		Type: "photo_import_registered", RequestID: begin.RequestID, ImportID: plan.id,
+	}) == nil
+}
+
+func savedPhotoImportHeader(item store.BrowserPhotoImport) webSavedPhotoImport {
+	return webSavedPhotoImport{
+		ImportID: item.ID.String(), SourceID: item.SourceID.String(), Label: item.Label, Destination: item.Destination,
+		PickerKind: item.PickerKind, CreatedAt: item.CreatedAt, GroupCount: item.GroupCount,
+	}
+}
+
+func handleListWebPhotoImports(ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage) bool {
+	items, err := d.Store.ListBrowserPhotoImports(ctx, begin.Offset, 50)
+	if err != nil {
+		return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+	}
+	imports := make([]webSavedPhotoImport, len(items))
+	for i, item := range items {
+		imports[i] = savedPhotoImportHeader(item)
+	}
+	return wsjson.Write(ctx, conn, webUploadMessage{Type: "photo_import_list", RequestID: begin.RequestID, Imports: imports}) == nil
+}
+
+func handleInspectWebPhotoImport(
+	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage, claims *browserPhotoClaims,
+) (*webPhotoImport, bool) {
+	id, err := uuid.Parse(begin.ImportID)
+	if err != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, NewError(http.StatusUnprocessableEntity, "validation", "invalid import")) == nil
+	}
+	claims.mu.Lock()
+	active := false
+	for key := range claims.active {
+		if strings.HasPrefix(key, id.String()+"/") {
+			active = true
+			break
+		}
+	}
+	var saved store.BrowserPhotoImport
+	if active {
+		saved, err = d.Store.ReadBrowserPhotoImport(ctx, id)
+	} else {
+		saved, err = d.Store.InspectBrowserPhotoImport(ctx, id)
+	}
+	if err != nil {
+		claims.mu.Unlock()
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+	}
+	view := savedPhotoImportHeader(saved)
+	plan := &webPhotoImport{id: id.String(), sourceID: saved.SourceID, destination: saved.Directory, destinationPath: saved.Destination}
+	for _, group := range saved.Groups {
+		entry := webSavedPhotoGroup{Status: "remaining", Hashes: group.Hashes}
+		if active {
+			entry.Status = "unconfirmed"
+			if claims.active[id.String()+"/"+group.Key] {
+				entry.Status = "pending"
+			}
+		}
+		if group.Receipt != nil {
+			entry.Status = "committed"
+			receipt := webPhotoReceiptValue(*group.Receipt)
+			entry.Receipt = &receipt
+		}
+		var indexes []int
+		for _, member := range group.Members {
+			file := webPhotoFile{RelativePath: member.Path, Size: member.Size, ExpectedHash: member.DeclaredHash}
+			if member.Mtime != "" {
+				modified, parseErr := time.Parse(time.RFC3339Nano, member.Mtime)
+				if parseErr != nil {
+					claims.mu.Unlock()
+					return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(parseErr)) == nil
+				}
+				millis := modified.UnixMilli()
+				file.ModifiedTime = &millis
+			}
+			indexes = append(indexes, len(plan.files))
+			plan.files = append(plan.files, file)
+			plan.paths = append(plan.paths, member.SourcePath)
+			entry.Files = append(entry.Files, file)
+		}
+		plan.groups = append(plan.groups, indexes)
+		plan.groupKeys = append(plan.groupKeys, group.Key)
+		view.Groups = append(view.Groups, entry)
+	}
+	claims.mu.Unlock()
+	ok := wsjson.Write(ctx, conn, webUploadMessage{Type: "photo_import_inspection", RequestID: begin.RequestID, SavedImport: &view}) == nil
+	return plan, ok
 }
 
 // unhashedBrowserPhotos lists the planned files that declared no hash but
@@ -875,6 +1071,7 @@ func handleWebPhotoPlan(
 	photoImport := &webPhotoImport{
 		paths: paths,
 		id:    rand.Text(), files: begin.Files, groups: groups, destination: destination,
+		destinationPath: begin.Destination, sourceID: sourceID,
 	}
 	err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
@@ -907,19 +1104,57 @@ func (p *webPhotoImport) groupFiles(begin webUploadMessage) ([]webPhotoFile, *Er
 		}
 		files[i] = p.files[index]
 	}
-	for i, index := range group {
-		p.files[index].ExpectedHash = begin.Hashes[i]
-	}
 	return files, nil
 }
 
 func handleWebPhotoGroup(
 	ctx context.Context, conn *websocket.Conn, d Deps, g *gate,
-	begin webUploadMessage, photoImport *webPhotoImport,
+	begin webUploadMessage, photoImport *webPhotoImport, claims *browserPhotoClaims,
 ) bool {
 	files, problem := photoImport.groupFiles(begin)
 	if problem != nil {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+	}
+	if len(photoImport.groupKeys) == 0 {
+		return writeWebUploadProblem(ctx, conn, begin.RequestID,
+			NewError(http.StatusUnprocessableEntity, "validation", "register the photo import before uploading")) == nil
+	}
+	var browserGroup *store.BrowserPhotoGroupRef
+	if len(photoImport.groupKeys) != 0 {
+		id, err := uuid.Parse(photoImport.id)
+		if err != nil {
+			return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+		}
+		ref := store.BrowserPhotoGroupRef{ImportID: id, GroupKey: photoImport.groupKeys[begin.Group]}
+		claimKey := id.String() + "/" + ref.GroupKey
+		if !claims.claim(claimKey) {
+			receipt, err := d.Store.BrowserPhotoGroupReceipt(ctx, ref)
+			if err != nil {
+				return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+			}
+			if receipt != nil {
+				if err := d.Store.PinBrowserPhotoGroupHashes(ctx, id, ref.GroupKey, begin.Hashes); err != nil {
+					return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+				}
+				return writeWebPhotoReceipt(ctx, conn, begin.RequestID, *receipt)
+			}
+			return wsjson.Write(ctx, conn, webUploadMessage{Type: "photo_group_pending", RequestID: begin.RequestID}) == nil
+		}
+		defer claims.release(claimKey)
+		if err := d.Store.PinBrowserPhotoGroupHashes(ctx, id, ref.GroupKey, begin.Hashes); err != nil {
+			return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+		}
+		receipt, err := d.Store.BrowserPhotoGroupReceipt(ctx, ref)
+		if err != nil {
+			return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+		}
+		if receipt != nil {
+			return writeWebPhotoReceipt(ctx, conn, begin.RequestID, *receipt)
+		}
+		browserGroup = &ref
+	}
+	for i, index := range photoImport.groups[begin.Group] {
+		photoImport.files[index].ExpectedHash = begin.Hashes[i]
 	}
 	var reader *webUploadReader
 	var result store.PhotoImportResult
@@ -969,12 +1204,21 @@ func handleWebPhotoGroup(
 			result, err = ing.CommitPhotoGroup(ctx, ingest.PhotoGroupCommit{
 				Run:         photoImport.run,
 				Destination: &photoImport.destination, Paths: paths, Mtimes: mtimes,
+				BrowserGroup: browserGroup,
 			}, prepared)
 			prepared = nil
 			return err
 		})
 	})
 	if err != nil {
+		if browserGroup != nil {
+			readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webUploadInactivity)
+			receipt, readErr := d.Store.BrowserPhotoGroupReceipt(readCtx, *browserGroup)
+			cancel()
+			if readErr == nil && receipt != nil {
+				return writeWebPhotoReceipt(ctx, conn, begin.RequestID, *receipt)
+			}
+		}
 		problem := uploadError(err)
 		if errors.Is(err, errWebUploadCanceled) {
 			problem = NewError(499, "canceled", "photo group upload canceled")
@@ -984,6 +1228,17 @@ func handleWebPhotoGroup(
 		}
 		return reader == nil || reader.ended
 	}
+	return writeWebPhotoReceipt(ctx, conn, begin.RequestID, result)
+}
+
+func writeWebPhotoReceipt(ctx context.Context, conn *websocket.Conn, requestID string, result store.PhotoImportResult) bool {
+	receipt := webPhotoReceiptValue(result)
+	return wsjson.Write(ctx, conn, webUploadMessage{
+		Type: "photo_group_receipt", RequestID: requestID, PhotoReceipt: &receipt,
+	}) == nil
+}
+
+func webPhotoReceiptValue(result store.PhotoImportResult) webPhotoReceipt {
 	status := "skipped"
 	if result.Ambiguity != nil {
 		status = "ambiguous"
@@ -994,8 +1249,5 @@ func handleWebPhotoGroup(
 	if result.Ambiguity != nil {
 		reason = result.Ambiguity.Reason
 	}
-	return wsjson.Write(ctx, conn, webUploadMessage{
-		Type: "photo_group_receipt", RequestID: begin.RequestID,
-		PhotoReceipt: &webPhotoReceipt{Status: status, AssetID: result.Asset.ID, Reason: reason},
-	}) == nil
+	return webPhotoReceipt{Status: status, AssetID: result.Asset.ID, Reason: reason}
 }

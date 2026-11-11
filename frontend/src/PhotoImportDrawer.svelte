@@ -12,11 +12,12 @@
     type PhotoImportTransport,
     type PhotoGroupReceipt,
     type TransferProgress,
+    type SavedPhotoImport,
+    hashFile,
   } from "./upload.js";
 
   import LocalFilePicker from "./LocalFilePicker.svelte";
   import { localFilePath, type PickerKind } from "./localFiles.js";
-  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 
   import { randomUUID } from "./crypto.js";
   import {
@@ -50,6 +51,7 @@
   type Item = {
     group: number;
     files: File[];
+    names?: string[];
     hashes: string[];
     state:
       | "ready"
@@ -57,13 +59,21 @@
       | "uploading"
       | "unconfirmed"
       | "failed"
+      | "pending"
+      | "missing"
+      | "changed"
       | PhotoGroupReceipt["status"];
     progress: TransferProgress;
     error?: string;
   };
-  let confirmation = $state<PhotoCullConfirmation>();
   let checkpoint = $state<PhotoImportCheckpoint>();
   let resuming = false;
+  let savedImports = $state<SavedPhotoImport[]>([]);
+  let selectedImport = $state("");
+  let savedImport = $state<SavedPhotoImport>();
+  let registered = false;
+  let registrationUncertain = $state(false);
+  let extraFiles = $state<string[]>([]);
   let pickerKind: "files" | "folder" = "files";
   const checkpointVaultID = $derived(vaultID);
   const checkpointSession = $derived(session);
@@ -116,6 +126,29 @@
   let sourceID = "";
   let plannedChannel: PhotoImportTransport | undefined;
   let interruptedPlan = $state.raw<PhotoImportTransport>();
+  let reconnectPlanNeeded = $state(false);
+  $effect(() => {
+    const current = channel;
+    if (
+      current !== plannedChannel &&
+      !savedImport &&
+      selectedFiles.length &&
+      !disabledReason &&
+      !running &&
+      !planning &&
+      checkpointReady
+    ) {
+      plannedChannel = current;
+      reconnectPlanNeeded = true;
+      if (registered || registrationUncertain) {
+        for (const item of items) {
+          if (item.state === "ready" || item.state === "failed") setState(item, "unconfirmed");
+        }
+      } else {
+        void plan(false, Boolean(sourceID));
+      }
+    }
+  });
   let plannedDestination = $state("");
   let running = $state(false);
   let planning = $state(false);
@@ -139,6 +172,9 @@
     ambiguous: 0,
     failed: 0,
     unconfirmed: 0,
+    pending: 0,
+    missing: 0,
+    changed: 0,
   });
   const pending = $derived(counts.ready + counts.failed);
   const started = $derived(counts.ready < items.length);
@@ -157,6 +193,9 @@
     ambiguous: "Ambiguous",
     failed: "Failed",
     unconfirmed: "Unconfirmed",
+    pending: "Still finishing",
+    missing: "Files missing",
+    changed: "Files changed",
   };
   onDestroy(() => {
     destroyed = true;
@@ -165,28 +204,123 @@
 
   async function choose(files: File[], kind: PickerKind): Promise<void> {
     if (!files.length || running || planning || !checkpointReady) return;
+    if (savedImport) {
+      await chooseSavedFiles(files);
+      return;
+    }
     try {
       photoImportDeclaration(files, destination);
     } catch (cause) {
       showError(cause);
       return;
     }
-    const expected = checkpoint;
-    if (expected && !resuming) {
-      planning = true;
-      const confirmed = await confirmation?.confirm(
-        "Replace the unfinished import?",
-        "Replace import",
-        "The current selection and its progress will be discarded.",
-      );
-      planning = false;
-      if (!confirmed || destroyed || checkpoint !== expected) return;
-    }
     pickerKind = kind;
     interruptedPlan = undefined;
+    registered = false;
+    registrationUncertain = false;
     sourceID = "";
     selectedFiles = files;
     await plan(true);
+  }
+
+  async function listSavedImports(): Promise<void> {
+    if (disabledReason || running || planning) return;
+    planning = true;
+    try {
+      const active = new AbortController();
+      const all: SavedPhotoImport[] = [];
+      for (let offset = 0; ; offset += 50) {
+        const page = await channel.listPhotoImports(offset, active.signal);
+        all.push(...page);
+        if (page.length < 50) break;
+      }
+      savedImports = all;
+    } catch (cause) {
+      showError(cause);
+    } finally {
+      planning = false;
+    }
+  }
+
+  async function inspectSavedImport(): Promise<void> {
+    if (!selectedImport || disabledReason || running || planning) return;
+    planning = true;
+    try {
+      const saved = await channel.inspectPhotoImport(
+        selectedImport,
+        false,
+        new AbortController().signal,
+      );
+      savedImport = saved;
+      registered = true;
+      registrationUncertain = false;
+      importID = saved.import_id;
+      reconnectPlanNeeded = false;
+      destination = saved.destination;
+      plannedDestination = destination;
+      selectedFiles = [];
+      extraFiles = [];
+      items = (saved.groups ?? []).map((group, index) => ({
+        group: index,
+        files: [],
+        names: group.files.map((file) => file.relative_path),
+        hashes: group.hashes ?? group.files.map(() => ""),
+        state:
+          group.status === "committed"
+            ? group.receipt!.status
+            : group.status === "remaining"
+              ? "missing"
+              : group.status,
+        progress: { processed: 0, total: group.files.reduce((sum, file) => sum + file.size, 0) },
+      }));
+      for (const state of Object.keys(counts) as Item["state"][])
+        counts[state] = items.filter((item) => item.state === state).length;
+    } catch (cause) {
+      showError(cause);
+    } finally {
+      planning = false;
+    }
+  }
+
+  async function chooseSavedFiles(files: File[]): Promise<void> {
+    if (!savedImport) return;
+    planning = true;
+    try {
+      const byPath = new Map(files.map((file) => [localFilePath(file), file]));
+      const known = new Set(
+        (savedImport.groups ?? []).flatMap((group) =>
+          group.files.map((file) => file.relative_path),
+        ),
+      );
+      extraFiles = files.map(localFilePath).filter((name) => !known.has(name));
+      const signal = new AbortController().signal;
+      for (const [index, group] of (savedImport.groups ?? []).entries()) {
+        const item = items[index];
+        const matched = group.files.map((file) => byPath.get(file.relative_path));
+        let changed = false;
+        for (const [i, file] of matched.entries()) {
+          if (!file) continue;
+          if (file.size !== group.files[i].size) changed = true;
+          if (group.hashes?.[i] && (await hashFile(file, signal, () => {})) !== group.hashes[i])
+            changed = true;
+        }
+        if (group.status === "committed") {
+          item.error = changed ? "Files changed since this group was imported." : undefined;
+          continue;
+        }
+        if (group.status !== "remaining") continue;
+        if (changed) setState(item, "changed");
+        else if (matched.some((file) => !file)) setState(item, "missing");
+        else {
+          item.files = matched as File[];
+          setState(item, "ready");
+        }
+      }
+    } catch (cause) {
+      showError(cause);
+    } finally {
+      planning = false;
+    }
   }
 
   async function plan(validated = false, reconnect = false): Promise<void> {
@@ -313,7 +447,7 @@
   function useSessionOnly(cause: unknown): boolean {
     if (!photoImportStorageUnavailable(cause)) return false;
     sessionOnly = true;
-    storageNotice = "Resume is unavailable for this import.";
+    storageNotice = "Browser shortcuts are unavailable.";
     return true;
   }
 
@@ -323,9 +457,9 @@
   }
 
   async function start(): Promise<void> {
-    if (running || planning || disabledReason || !checkpointReady || !pending) return;
+    if (running || planning || disabledReason || !checkpointReady || !pending || reconnectPlanNeeded || registrationUncertain) return;
     const runChannel = channel;
-    if (plannedDestination !== destination || plannedChannel !== runChannel) {
+    if (!savedImport && (plannedDestination !== destination || plannedChannel !== runChannel)) {
       await plan(false, plannedDestination === destination && Boolean(sourceID));
     }
     if (
@@ -348,10 +482,27 @@
     let added = false;
     let failedCause: unknown;
     try {
+      if (savedImport) {
+        const latest = await channel.inspectPhotoImport(importID, true, controller.signal);
+        for (const [index, group] of (latest.groups ?? []).entries()) {
+          if (items[index].state === "ready" && group.status !== "remaining") {
+            setState(
+              items[index],
+              group.status === "committed" ? group.receipt!.status : group.status,
+            );
+          }
+        }
+        savedImport = latest;
+      } else if (!registered) {
+        registrationUncertain = true;
+        importID = await channel.registerPhotoImport(importID, pickerKind, controller.signal);
+        registered = true;
+        registrationUncertain = false;
+      }
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
         if (item.state !== "ready" && item.state !== "failed") continue;
-        if (!sessionOnly) {
+        if (!sessionOnly && !savedImport) {
           try {
             if ((await storage.saved())?.revision !== checkpoint?.revision)
               throw new APIError(
@@ -420,7 +571,7 @@
         }
       }
       if (items.every((item) => ["added", "skipped", "ambiguous"].includes(item.state))) {
-        if (!sessionOnly) {
+        if (!sessionOnly && !savedImport) {
           try {
             await storage.replace(undefined, checkpoint);
           } catch (cause) {
@@ -478,19 +629,53 @@
       /></label
     >
     <div class="controls">
-      {#if checkpoint && !sessionOnly}
+      <Button
+        disabled={running || planning || !!disabledReason}
+        onclick={() => void listSavedImports()}>Saved imports</Button
+      >
+      {#if savedImports.length}
+        <select
+          bind:value={selectedImport}
+          aria-label="Saved import"
+          disabled={running || planning}
+        >
+          <option value="">Choose an import</option>
+          {#each savedImports as saved}
+            <option value={saved.import_id}
+              >{checkpoint?.sourceID === saved.source_id ? "Suggested · " : ""}{saved.label.replace(
+                /^browser: /,
+                "",
+              )} · {saved.destination} · {new Date(saved.created_at).toLocaleString()} · {saved.group_count}
+              groups</option
+            >
+          {/each}
+        </select>
         <Button
-          disabled={!checkpointReady || running || planning || !!disabledReason}
+          disabled={!selectedImport || running || planning || !!disabledReason}
+          onclick={() => void inspectSavedImport()}>Inspect import</Button
+        >
+      {/if}
+      {#if savedImport || registrationUncertain}
+        <Button
+          disabled={running || planning}
           onclick={() => {
-            resuming = true;
-            destination = checkpoint!.destination;
-            picker.choose(checkpoint!.pickerKind === "folder" ? "folder" : "files");
-          }}>Resume import</Button
+            savedImport = undefined;
+            selectedImport = "";
+            selectedFiles = [];
+            items = [];
+            registered = false;
+            registrationUncertain = false;
+            for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
+          }}>Start new import</Button
         >
       {/if}
       <LocalFilePicker
         bind:this={picker}
-        disabled={!checkpointReady || running || planning || !!disabledReason}
+        disabled={!checkpointReady ||
+          running ||
+          planning ||
+          !!disabledReason ||
+          registrationUncertain}
         filesLabel="Choose photo files"
         folderLabel="Choose photo folder"
         onopen={() => {
@@ -499,7 +684,6 @@
         onchoose={choose}
       />
     </div>
-    {#if !disabledReason && !error}<p>Keep this tab open until the import finishes.</p>{/if}
     {#if planning}
       <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
       {#if hashProgress}<progress
@@ -518,8 +702,12 @@
       <ul>
         {#each items as item}
           <li>
-            <strong>{item.files.map(localFilePath).join(", ")}</strong><span
-              >{labels[item.state]}</span
+            <strong>{(item.names ?? item.files.map(localFilePath)).join(", ")}</strong><span
+              >{item.names && item.state === "added"
+                ? "Imported earlier"
+                : item.names && item.state === "skipped"
+                  ? "Already in vault at import"
+                  : labels[item.state]}</span
             >
             {#if item.state === "hashing" || item.state === "uploading"}<progress
                 max={item.progress.total || 1}
@@ -532,11 +720,23 @@
         {#each unsupported as { file, reason }}<li>
             <strong>{localFilePath(file)}</strong><span>{reason}</span>
           </li>{/each}
+        {#each extraFiles as name}<li>
+            <strong>{name}</strong><span>Outside this import</span>
+          </li>{/each}
       </ul>
       <div class="controls">
         <Button
-          disabled={!checkpointReady || running || planning || !pending || !!disabledReason}
-          onclick={() => void start()}>Add {pending} group{pending === 1 ? "" : "s"}</Button
+          disabled={!checkpointReady ||
+            running ||
+            planning ||
+            !pending ||
+            !!disabledReason ||
+            reconnectPlanNeeded ||
+            registrationUncertain}
+          onclick={() => void start()}
+          >{savedImport
+            ? "Resume remaining"
+            : `Add ${pending} group${pending === 1 ? "" : "s"}`}</Button
         >
         {#if running}<Button disabled={stopping} onclick={() => (stopping = true)}
             >{stopping ? "Stopping after this group" : "Stop after this group"}</Button
@@ -545,8 +745,6 @@
     {/if}
   </div>
 </DrawerShell>
-
-<PhotoCullConfirmation bind:this={confirmation} />
 
 <style>
   .controls,

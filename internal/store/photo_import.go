@@ -38,7 +38,8 @@ type PhotoImportGroup struct {
 	DestinationPlan *IngestDirectoryPlan
 	Members         []PhotoImportMember
 	// CreateOnly preserves existing content when a source path has changed bytes.
-	CreateOnly bool
+	CreateOnly   bool
+	BrowserGroup *BrowserPhotoGroupRef
 }
 
 // Ambiguity reasons tell the operator why a group was left for manual pairing.
@@ -550,7 +551,18 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			*group.DestinationPlan = resolution.Rebase(*group.DestinationPlan)
 		}
 	}()
-	retErr = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	retErr = s.withLogicalTx(ctx, func(tx *sql.Tx) (err error) {
+		if group.BrowserGroup != nil {
+			replayed, err := s.prepareBrowserPhotoGroupTx(ctx, tx, &group, &result)
+			if err != nil || replayed {
+				return err
+			}
+		}
+		defer func() {
+			if err == nil && group.BrowserGroup != nil {
+				err = saveBrowserPhotoReceiptTx(ctx, tx, *group.BrowserGroup, result)
+			}
+		}()
 		if group.DestinationPlan != nil {
 			destination, resolved, err := s.ensureIngestDirectoryTx(ctx, tx, *group.DestinationPlan)
 			if err != nil {
@@ -561,6 +573,12 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				return err
 			}
 			group.DestinationID, resolution = destination.ID, resolved
+			if group.BrowserGroup != nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE browser_photo_imports SET destination_id=$1
+					WHERE import_id=$2 AND destination_id IS NULL`, destination.ID, group.BrowserGroup.ImportID.String()); err != nil {
+					return err
+				}
+			}
 		}
 		count := len(group.Members)
 		nodes := make([]Node, count)

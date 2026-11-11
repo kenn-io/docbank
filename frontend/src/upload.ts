@@ -108,6 +108,24 @@ export interface PhotoGroupReceipt {
   reason?: string;
 }
 
+export interface SavedPhotoGroup {
+  files: { relative_path: string; size: number; modified_time?: number }[];
+  hashes?: string[];
+  status: "remaining" | "pending" | "unconfirmed" | "committed";
+  receipt?: PhotoGroupReceipt;
+}
+
+export interface SavedPhotoImport {
+  import_id: string;
+  source_id?: string;
+  label: string;
+  destination: string;
+  picker_kind: "files" | "folder";
+  created_at: string;
+  group_count: number;
+  groups?: SavedPhotoGroup[];
+}
+
 const declarationUUID = "00000000-0000-4000-8000-000000000000";
 
 export function photoImportDeclaration(
@@ -143,6 +161,17 @@ export function photoImportDeclaration(
 }
 
 export interface PhotoImportTransport {
+  registerPhotoImport(
+    importID: string,
+    pickerKind: "files" | "folder",
+    signal: AbortSignal,
+  ): Promise<string>;
+  listPhotoImports(offset: number, signal: AbortSignal): Promise<SavedPhotoImport[]>;
+  inspectPhotoImport(
+    importID: string,
+    resume: boolean,
+    signal: AbortSignal,
+  ): Promise<SavedPhotoImport>;
   planPhotoImport(
     files: File[],
     destination: string,
@@ -197,6 +226,10 @@ interface UploadMessage {
   status?: number;
   code?: string;
   detail?: string;
+  picker_kind?: "files" | "folder";
+  offset?: number;
+  imports?: SavedPhotoImport[];
+  saved_import?: SavedPhotoImport;
 }
 
 export interface UploadTransport {
@@ -287,6 +320,75 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
 
   close(): void {
     this.retire(false, 1000, "browser closed");
+  }
+
+  private async photoControl(message: UploadMessage, signal: AbortSignal): Promise<UploadMessage> {
+    if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
+    throwIfAborted(signal);
+    this.busy = true;
+    const requestID = randomUUID();
+    try {
+      this.send({ ...message, request_id: requestID });
+      const reply = await this.nextMessage(signal, uploadResponseTimeoutMs);
+      this.requireMessage(reply, requestID);
+      this.throwProblem(reply);
+      return reply;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async registerPhotoImport(
+    importID: string,
+    pickerKind: "files" | "folder",
+    signal: AbortSignal,
+  ): Promise<string> {
+    const reply = await this.photoControl(
+      { type: "register_photo_import", import_id: importID, picker_kind: pickerKind },
+      signal,
+    );
+    if (reply.type !== "photo_import_registered" || !reply.import_id) throw this.protocolError();
+    return reply.import_id;
+  }
+
+  async listPhotoImports(offset: number, signal: AbortSignal): Promise<SavedPhotoImport[]> {
+    const reply = await this.photoControl({ type: "list_photo_imports", offset }, signal);
+    if (reply.type !== "photo_import_list" || (reply.imports && !Array.isArray(reply.imports)))
+      throw this.protocolError();
+    return reply.imports ?? [];
+  }
+
+  async inspectPhotoImport(
+    importID: string,
+    resume: boolean,
+    signal: AbortSignal,
+  ): Promise<SavedPhotoImport> {
+    const reply = await this.photoControl(
+      { type: resume ? "resume_photo_import" : "inspect_photo_import", import_id: importID },
+      signal,
+    );
+    if (
+      reply.type !== "photo_import_inspection" ||
+      !reply.saved_import ||
+      reply.saved_import.import_id !== importID ||
+      !Array.isArray(reply.saved_import.groups) ||
+      reply.saved_import.groups.some(
+        (group) =>
+          !Array.isArray(group.files) ||
+          !["remaining", "pending", "unconfirmed", "committed"].includes(group.status) ||
+          group.files.some(
+            (file) => typeof file.relative_path !== "string" || typeof file.size !== "number",
+          ) ||
+          (group.hashes !== undefined &&
+            (!Array.isArray(group.hashes) || group.hashes.length !== group.files.length)) ||
+          (group.status === "committed" &&
+            (!group.receipt ||
+              !["added", "skipped", "ambiguous"].includes(group.receipt.status) ||
+              typeof group.receipt.asset_id !== "string")),
+      )
+    )
+      throw this.protocolError();
+    return reply.saved_import;
   }
 
   async uploadFile(
@@ -479,7 +581,11 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       });
       processed = 0;
       let terminal = await this.nextMessage(signal);
-      for (const file of group) {
+      if (terminal.type === "photo_group_pending") {
+        this.requireMessage(terminal, requestID);
+        throw new APIError("This group is still finishing.", 409, "photo_group_pending");
+      }
+      for (const file of terminal.type === "photo_group_receipt" ? [] : group) {
         const ready = terminal;
         this.requireMessage(ready, requestID);
         this.throwProblem(ready);
