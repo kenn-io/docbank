@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -89,7 +90,10 @@ func newRecipientHTTPFixture(t *testing.T, gate *pausedCitationGate) recipientHT
 //nolint:paralleltest // Qualified PDFium measures whole-process RSS.
 func TestRecipientPackageHTTP(t *testing.T) {
 	ctx := t.Context()
-	f := newRecipientHTTPFixture(t, nil)
+	resume := make(chan struct{})
+	close(resume)
+	gate := &pausedCitationGate{OperationGate: api.NewOperationGate(), entered: make(chan struct{}), resume: resume}
+	f := newRecipientHTTPFixture(t, gate)
 	service, runtime, request, spool := f.service, f.runtime, f.request, f.spool
 	ts := httptest.NewServer(f.vault.Server.Handler())
 	t.Cleanup(ts.Close)
@@ -132,8 +136,43 @@ func TestRecipientPackageHTTP(t *testing.T) {
 	require.Equal(t, 409, resp.StatusCode, string(body))
 	_, err := service.PublishNumberedPDF(ctx, request, runtime)
 	require.NoError(t, err)
+	gate.entered, gate.once = make(chan struct{}), sync.Once{}
+	changed := request
+	changed.ReviewSHA256 = strings.Repeat("0", 64)
+	resp, body = call(alice, "POST", path, changed)
+	require.Equal(t, 409, resp.StatusCode, string(body))
+	select {
+	case <-gate.entered:
+		t.Fatal("changed review reached retained-blob capture")
+	default:
+	}
+	// A legal published Bates label may still be unrepresentable in recipient OPT.
+	ns, err := f.vault.EnsureBatesNamespace(ctx, "H,AND", "", 6)
+	require.NoError(t, err)
+	reserved, err := service.ReserveNumberedPDF(ctx, processing.NumberedReservationRequest{
+		Preparation: request.Preparation, Masks: request.Masks, ReviewSHA256: request.ReviewSHA256,
+		NamespaceID: uuid.MustParse(ns.NamespaceID), StartAt: 1, RetainOriginal: true,
+	}, runtime)
+	require.NoError(t, err)
+	unimportable := request
+	unimportable.AllocationID = reserved.AllocationID
+	_, err = service.PublishNumberedPDF(ctx, unimportable, runtime)
+	require.NoError(t, err)
+	gate.entered, gate.once = make(chan struct{}), sync.Once{}
+	resp, body = call(alice, "POST", path, unimportable)
+	require.Equal(t, 422, resp.StatusCode, string(body))
+	select {
+	case <-gate.entered:
+		t.Fatal("unimportable labels reached retained-blob capture")
+	default:
+	}
 	resp, body = call(alice, "POST", path, request)
 	require.Equal(t, 201, resp.StatusCode, string(body))
+	select {
+	case <-gate.entered:
+	default:
+		t.Fatal("successful build did not use verified blob capture")
+	}
 	var result struct {
 		processing.PreparedRecipientPackage
 

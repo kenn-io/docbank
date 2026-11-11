@@ -434,6 +434,22 @@ stamped allocations only. Use `redaction package` for a recipient delivery of nu
 
 ### Package completed numbered PDFs for a recipient
 
+In the browser review, choose **Download recipient ZIP** beside a completed
+numbered PDF. Each completed delivery keeps its own action, even after you edit
+masks or publish another range. The ZIP contains that retained PDF, its reviewed
+text without footer labels, and DAT/OPT load files for recipient import. Private
+preparation, masks and review files stay outside the ZIP.
+
+The server rechecks masks, text and numbers before offering the download. It does
+not render again or need the original to remain live. The page runtime is not
+required; the recorded renderer and writer must still be supported for full
+verification. No weaker check is substituted. The package holds no rendering
+slot while waiting for download, but only one package can wait or transfer at a
+time. Its unused download link expires after two minutes. Keep the tab open until
+the transfer finishes. Closing the review cancels its package; if cleanup fails,
+choose **Release package** before retrying. The completed PDF remains in
+Productions, while preparing a new recipient ZIP needs its open private review.
+
 `redaction package` puts completed numbered redactions into one ZIP for import
 by a recipient. It preserves each retained PDF and its numbers, verifies masks,
 text and visible labels against your saved reviews, and includes label-free

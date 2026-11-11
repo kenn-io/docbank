@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { Disclosure, Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
   import RedactionNumbering from "./RedactionNumbering.svelte";
+  import { RecipientPackageController } from "./recipientPackageController.svelte.js";
   import type { NumberingInputs } from "./redactionNumbering.js";
   import OriginalPreview from "./OriginalPreview.svelte";
   import type { PDFReviewBridge, ReaderReviewStatus, TextSelectionStatus } from "./pdfReview.js";
@@ -65,6 +66,11 @@
   let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
   let numberingReviews = $state<{ inputs: NumberingInputs; published: boolean }[]>([]);
+  const packageController = new RecipientPackageController(
+    () => session,
+    (cause) => onauthfailure(cause),
+    (message) => (notice = message),
+  );
   const latestNumbering = $derived(numberingReviews.at(-1));
   let numberingLocked = $state(false);
   let preview = $state<RedactionPreview>();
@@ -417,6 +423,7 @@
   function endReview() {
     if (!reviewing) return;
     reviewing = false;
+    void packageController.stop();
     generation++;
     controller.abort();
     clearImage();
@@ -678,6 +685,7 @@
             {session}
             inputs={item.inputs}
             {title}
+            {packageController}
             bind:locked={numberingLocked}
             {onauthfailure}
             onpublished={() => {

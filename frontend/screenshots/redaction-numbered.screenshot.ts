@@ -15,7 +15,9 @@ const exec = promisify(execFile),
   captures = process.env.DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR;
 test.skip(!captures, "The real-runtime review runner enables numbering qualification");
 test.use({ reducedMotion: "reduce", deviceScaleFactor: 2 });
-test("keeps a numbered reviewed PDF and recovers it without a renderer", async ({ page }) => {
+test("downloads recipient ZIPs for completed reviews and imports their numbers", async ({
+  page,
+}) => {
   test.setTimeout(240000);
   page.setDefaultTimeout(20000);
   const binary = process.env.DOCBANK_SCREENSHOT_BINARY!,
@@ -31,6 +33,17 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
       await exec(binary, args, { cwd: repository, env, timeout: 180000, maxBuffer: 20 << 20 })
     ).stdout.trim();
   let started = false;
+  const recipientEnv = { ...env, DOCBANK_HOME: path.join(scratch, "recipient-vault") };
+  let recipientStarted = false;
+  const recipientRun = async (...args: string[]) =>
+    (
+      await exec(binary, args, {
+        cwd: repository,
+        env: recipientEnv,
+        timeout: 120000,
+        maxBuffer: 20 << 20,
+      })
+    ).stdout.trim();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const stop = async () => {
@@ -321,6 +334,32 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     expect(JSON.stringify(checked)).toContain("masks_text_and_numbers");
     expect(await readFile(path.join(scratch, "checked.pdf"))).toEqual(bytes);
     await page.screenshot({ path: path.join(captures!, "numbered-kept.png") });
+    const packageButtons = drawer.getByRole("button", {
+      name: "Download recipient ZIP",
+      exact: true,
+    });
+    // A real successful build whose response is lost must release capacity before retry.
+    let builds = 0,
+      releases = 0;
+    await page.route("**/api/v1/redaction/recipient-packages", async (route) => {
+      if (route.request().method() === "DELETE") {
+        releases++;
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      expect(response.status()).toBe(201);
+      if (++builds === 1) await route.abort("failed");
+      else await route.fulfill({ response });
+    });
+    await packageButtons.click();
+    await expect.poll(() => releases).toBe(1);
+    await expect(packageButtons).toBeEnabled();
+    const firstPackage = page.waitForEvent("download");
+    await packageButtons.click();
+    const firstZIP = path.join(scratch, "first-recipient.zip");
+    await (await firstPackage).saveAs(firstZIP);
+    expect(builds).toBe(2);
     // Editing a new set of masks must not unmount the retained delivery.
     await drawer
       .getByRole("listitem")
@@ -386,11 +425,120 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await downloadNumbered.nth(0).click();
     await (await firstAgain).saveAs(path.join(scratch, "first-after-second.pdf"));
     expect(await readFile(path.join(scratch, "first-after-second.pdf"))).toEqual(bytes);
+    // Each action keeps the PDF and review that published its own delivery.
+    await expect(packageButtons).toHaveCount(2);
+    await page.setViewportSize({ width: 640, height: 400 });
+    await expect(async () => {
+      const bounds = await editor.boundingBox();
+      if (!bounds) throw Error("Editor missing");
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 20);
+      await page.mouse.wheel(0, 350);
+      await expect(packageButtons.nth(1)).toBeInViewport({ timeout: 500 });
+    }).toPass({ timeout: 10000 });
+    await page.screenshot({ path: path.join(captures!, "recipient-package-short.png") });
+    const secondPackage = page.waitForEvent("download");
+    await packageButtons.nth(1).click();
+    const secondZIP = path.join(scratch, "second-recipient.zip");
+    await (await secondPackage).saveAs(secondZIP);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.screenshot({ path: path.join(captures!, "recipient-package-kept.png") });
+    await drawer
+      .getByRole("region", { name: "Numbered PDF", exact: true })
+      .first()
+      .screenshot({ path: path.join(captures!, "recipient-package-action.png") });
+    const extracted = path.join(scratch, "received");
+    // Standard extraction checks our literal package layout, not a second package writer.
+    await exec("python3", [
+      "-c",
+      `import sys, zipfile, pathlib
+for archive, expected, text in [(sys.argv[1],sys.argv[3],b'[REDACTED]\\f[REDACTED]\\f'),(sys.argv[2],sys.argv[4],b'SECRET KEEP SECRET\\f[REDACTED]\\f')]:
+ with zipfile.ZipFile(archive) as z:
+  assert z.namelist()==['VOL001/PDF/000001.pdf','VOL001/TEXT/000001.txt','VOL001/DATA.DAT','VOL001/DATA.OPT','mapping.json','receipt.json']
+  assert z.read('VOL001/PDF/000001.pdf')==pathlib.Path(expected).read_bytes()
+  assert z.read('VOL001/TEXT/000001.txt')==text
+  assert not any('PRIVATE' in name for name in z.namelist())
+with zipfile.ZipFile(sys.argv[2]) as z:
+ assert z.read('VOL001/DATA.OPT')==b'QUAL000007,VOL001,PDF\\\\000001.pdf,Y,,,2\\r\\nQUAL000008,VOL001,PDF\\\\000001.pdf,,,,\\r\\n'
+ z.extractall(sys.argv[5])`,
+      firstZIP,
+      secondZIP,
+      pdf,
+      secondPDF,
+      extracted,
+    ]);
+    recipientStarted = true;
+    const preflight = JSON.parse(
+      await recipientRun(
+        "package",
+        "preflight",
+        extracted,
+        "--profile",
+        "dat-concordance-v1",
+        "--page-map-profile",
+        "opt-standard-v1",
+        "--encoding",
+        "utf-8",
+        "--map",
+        path.join(extracted, "mapping.json"),
+        "--json",
+      ),
+    );
+    expect(preflight.blocking).toBe(false);
+    expect(preflight.records).toBe(1);
+    const imported = JSON.parse(
+      await recipientRun(
+        "package",
+        "import",
+        preflight.preflight_id,
+        "--name",
+        "received-delivery",
+        "--index-supplied-text",
+        "--json",
+      ),
+    );
+    await expect(async () => {
+      const status = JSON.parse(
+        await recipientRun("package", "import", "status", imported.operation_id, "--json"),
+      );
+      expect(status.state).toBe("complete");
+    }).toPass({ timeout: 20000 });
+    const members = JSON.parse(
+      await recipientRun("package", "members", imported.package_id, "--json"),
+    );
+    expect(members.items).toHaveLength(1);
+    expect(members.items[0].blob_sha256).toBe(committed!.blob_sha256);
+    for (const role of ["produced_pdf", "supplied_text"]) {
+      const representation = members.items[0].representations.find(
+        (r: { role: string }) => r.role === role,
+      );
+      expect(representation).toBeDefined();
+      if (role === "supplied_text") expect(representation.text_authority).toBe("supplied");
+    }
+    for (const [index, label] of ["QUAL000007", "QUAL000008"].entries()) {
+      const labels = JSON.parse(
+        await recipientRun("labels", "lookup", label, "--package", imported.package_id, "--json"),
+      );
+      expect(labels.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            label_set: "received",
+            page_number: index + 1,
+            provenance: "received",
+          }),
+          expect.objectContaining({ label_set: ns.namespace_id, provenance: "received" }),
+        ]),
+      );
+    }
+    await recipientRun("daemon", "stop");
+    recipientStarted = false;
     await page.screenshot({ path: path.join(captures!, "numbered-second-review.png") });
     await drawer.getByRole("button", { name: "Open Productions", exact: true }).first().click();
     await expect(page.getByRole("main", { name: "Productions", exact: true })).toBeVisible();
     await stop();
-    await writeFile(path.join(scratch, "vault", "config.toml"), "");
+    await writeFile(
+      path.join(scratch, "vault", "config.toml"),
+      '[server]\napi_key = "recipient-restart-key"\n',
+    );
     started = true;
     await page.goto(await run("web", "--no-browser"));
     await page.getByRole("button", { name: "Productions", exact: true }).click();
@@ -405,8 +553,41 @@ test("keeps a numbered reviewed PDF and recovers it without a renderer", async (
     await results.getByRole("button", { name: "Download PDF", exact: true }).click();
     await (await recovered).saveAs(path.join(scratch, "recovered.pdf"));
     expect(await readFile(path.join(scratch, "recovered.pdf"))).toEqual(bytes);
+    await run("gc", "--run");
+    const apiOrigin = new URL(page.url()).origin,
+      headers = { "X-API-Key": "recipient-restart-key" };
+    const beforePackage = await page.request.get(
+      `${apiOrigin}/api/v1/bates/exports/${reserved!.allocation_id}`,
+      { headers },
+    );
+    expect(beforePackage.status()).toBe(200);
+    const retained = await beforePackage.json();
+    const restoredBuild = await page.request.post(
+      `${apiOrigin}/api/v1/redaction/recipient-packages`,
+      {
+        headers,
+        data: {
+          allocation_id: reserved!.allocation_id,
+          preparation: JSON.parse(await readFile(privateFiles[0]!, "utf8")),
+          masks: JSON.parse(await readFile(privateFiles[1]!, "utf8")),
+          review_sha256: JSON.parse(await readFile(privateFiles[2]!, "utf8")).sha256,
+        },
+      },
+    );
+    expect(restoredBuild.status()).toBe(201);
+    const restoredPackage = await restoredBuild.json();
+    const restoredZIP = await page.request.get(apiOrigin + restoredPackage.url);
+    expect(restoredZIP.status()).toBe(200);
+    expect(await restoredZIP.body()).toEqual(await readFile(firstZIP));
+    const afterPackage = await page.request.get(
+      `${apiOrigin}/api/v1/bates/exports/${reserved!.allocation_id}`,
+      { headers },
+    );
+    expect(await afterPackage.json()).toEqual(retained);
     expect(errors).toEqual([]);
   } finally {
+    if (recipientStarted && JSON.parse(await recipientRun("daemon", "status", "--json")).running)
+      await recipientRun("daemon", "stop");
     await stop();
     await rm(scratch, { recursive: true, force: true });
   }

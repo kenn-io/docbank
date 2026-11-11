@@ -48,6 +48,9 @@ func (s *Service) BuildRecipientPackage(ctx context.Context, owner string, reque
 		}
 		e.pins--
 		resultErr = errors.Join(resultErr, s.cleanRecipientPackageLocked())
+		if resultErr != nil && s.lifecycle.Err() != nil {
+			resultErr = errors.Join(resultErr, ErrRedactionPreparationUnavailable)
+		}
 	}()
 	inputs, err := s.admitRecipientPackage(ctx, request)
 	if err != nil {
@@ -102,15 +105,15 @@ func (s *Service) BuildRecipientPackage(ctx context.Context, owner string, reque
 	if err != nil {
 		return result, err
 	}
+	if err := os.Remove(pdfPath); err != nil {
+		return result, err
+	}
 	files, err := archive.Stat()
 	if err != nil {
 		return result, err
 	}
 	receipt.Documents = []RecipientPackageDocument{inputs.document}
 	if err = VerifyRecipientPackage(op.ctx, archive, files.Size(), receipt); err != nil {
-		return result, err
-	}
-	if err := os.Remove(pdfPath); err != nil {
 		return result, err
 	}
 	result = PreparedRecipientPackage{ID: e.result.ID, AllocationID: request.AllocationID,
@@ -211,7 +214,7 @@ func (s *Service) admitRecipientPackage(ctx context.Context, request RedactionRe
 		PDF:  RecipientPackageFile{Path: "VOL001/PDF/000001.pdf", Size: artifact.Size, SHA256: artifact.BlobSHA256},
 		Text: recipientFile("VOL001/TEXT/000001.txt", text)}
 	if err := ValidateRecipientDocuments([]RecipientPackageDocument{document}); err != nil {
-		return result, err
+		return result, fmt.Errorf("%w: %v", ErrRecipientPackageLimit, err)
 	}
 	return recipientPackageInputs{reservation: *r, artifact: artifact, review: review, document: document, text: text}, nil
 }

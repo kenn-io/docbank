@@ -11,6 +11,8 @@
   } from "@kenn-io/kit-ui";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import IconAction from "./IconAction.svelte";
+  import RecipientPackageAction from "./RecipientPackageAction.svelte";
+  import type { RecipientPackageController } from "./recipientPackageController.svelte.js";
   import { APIError } from "./api-transport.js";
   import { listBatesNamespaces, createBatesNamespace, downloadBatesExport } from "./bates.js";
   import {
@@ -31,6 +33,7 @@
     onpublished,
     onproductions,
     onnotice = () => {},
+    packageController,
   }: {
     session: string;
     inputs: NumberingInputs;
@@ -40,6 +43,7 @@
     onpublished: () => void;
     onproductions?: () => void;
     onnotice?: (message: string) => void;
+    packageController?: RecipientPackageController;
   } = $props();
   let opened = $state(false),
     namespaces = $state<BatesNamespace[]>([]),
@@ -246,6 +250,9 @@
       <Button tone="info" surface="solid" onclick={() => void download()}
         >Download numbered PDF</Button
       >
+      {#if packageController && frozen}
+        <RecipientPackageAction controller={packageController} inputs={frozen} {artifact} />
+      {/if}
       {#if onproductions}<Button onclick={onproductions}>Open Productions</Button>{/if}
     {:else if frozen}
       <p>
