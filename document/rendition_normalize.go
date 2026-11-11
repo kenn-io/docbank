@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 )
 
+const renditionSeparator = "\n\n---\n\n"
+
 // BuildRenditionV1 derives sanitized Markdown, normalized units, and lexical
 // spans from exactly one validated normalized-evidence/v1 authority.
 func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (RenditionV1, error) {
@@ -34,11 +36,9 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	remaining := policy.maxDocumentChars
 	truncated := false
 	for _, evidenceUnit := range evidence.Units {
-		separatorBudget := 0
-		if len(markdownUnits) > 0 {
-			separatorBudget = utf8.RuneCountInString("\n\n---\n\n")
-		}
-		unitBudget := min(policy.maxUnitRunes, max(remaining-separatorBudget, 0))
+		presentation := renditionPresentation(evidenceUnit, len(markdownUnits) == 0)
+		overhead := utf8.RuneCountInString(presentation + strings.Repeat(renditionSeparator, min(len(markdownUnits), 1)))
+		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
 		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionMarkdown(
 			renditionSourceText(evidenceUnit), policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
@@ -49,9 +49,8 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		unit := normalizedRenditionUnit(evidenceUnit, text)
 		result.Units = append(result.Units, unit)
 		if text != "" {
-			block := renditionPresentation(evidenceUnit, len(markdownUnits) == 0) + text
-			remaining = max(0, remaining-separatorBudget-utf8.RuneCountInString(block))
-			markdownUnits = append(markdownUnits, block)
+			remaining = max(0, remaining-overhead-utf8.RuneCountInString(text))
+			markdownUnits = append(markdownUnits, presentation+text)
 			result.LexicalSegments = append(result.LexicalSegments,
 				lexicalSegments(unit, len(result.LexicalSegments), policy.maxSegmentRunes)...)
 		}
@@ -64,7 +63,7 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		return RenditionV1{}, invalidRenditionError("evidence produced no readable text")
 	}
 	if len(markdownUnits) > 0 {
-		result.Markdown = []byte(strings.Join(markdownUnits, "\n\n---\n\n") + "\n")
+		result.Markdown = []byte(strings.Join(markdownUnits, renditionSeparator) + "\n")
 	}
 	result.MarkdownChecksum = checksumBytes(result.Markdown)
 	result.Checksum = renditionChecksum(result)

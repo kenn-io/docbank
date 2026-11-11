@@ -23,7 +23,7 @@ const (
 	maxEvidenceIdentifierBytes  = 1 << 10
 	maxEvidencePointerBytes     = 1 << 10
 	maxEvidenceReasonBytes      = 1 << 12
-	maxEvidenceSpeakerBytes     = 128
+	maxEvidenceSpeakerBytes     = 255
 	maxEvidenceTextBytes        = 256 << 20
 	maxEvidenceCoordinate       = int64(1_000_000_000_000_000)
 	maxEvidenceArtifacts        = 10_000
