@@ -36,7 +36,7 @@ separate storage repack to reclaim physical pack space.`,
 			rep.CandidateBlobs, rep.UntrackedFiles, rep.ReclaimableBytes)
 		if rep.PendingPackedBlobs > 0 {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"%d packed blob(s), %d stored byte(s) pending repack\n",
+				"%d packed blob(s), %d stored byte(s) pending repack: docbank storage repack\n",
 				rep.PendingPackedBlobs, rep.PendingPackedBytes)
 		}
 		if !gcRun {
