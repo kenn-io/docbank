@@ -644,6 +644,34 @@ Add a working password to the file, then build again. The daemon reads the file 
 
 Docbank uses pdfcpu v0.16.4 to open AES-256 PDFs, including passwords containing spaces and punctuation such as curly quotes or `£`. AES-256 password handling applies Unicode normalization to decomposed accents and fullwidth letters. Older RC4 and AES-128 ciphers use PDFDocEncoding, so Docbank also tries each password converted from UTF-8 to that encoding. A rejected password candidate does not prevent trying the remaining entries. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
 
+## Embed watched MP4s
+
+Enable [automatic MP4 discovery](../configuration.md#automatic-mp4-embeddings)
+on a Voyage original-file embedding binding in a processing profile. Preview
+a current MP4 with `docbank processing plan /archive/clip.mp4 --profile video`
+and approve that plan with `docbank processing build`, its
+`--plan-fingerprint`, and `--consent`. The grant authorizes this binding to
+send eligible MP4 originals throughout the vault, including new and updated
+watch imports. A grant from before you enabled discovery does not cover this.
+
+Discovery uses current display versions of visible, included video assets.
+Docbank verifies the MP4 and its size before upload. A file that exceeds the
+binding or inspection limit stays archived without an automatic vector. Vaults
+with audit authority follow the existing asset enrollment rules.
+
+Turning off discovery stops automatic admission, including recovery of
+automatic work that has yet to send. Revoking consent stops admitted work from
+sending. Requests already sent stay sent.
+
+Use the stored vectors to compare selected files locally. Supply the current
+version IDs for the source and each candidate.
+
+```bash
+docbank search --similar-to /archive/clip.mp4 --profile video \
+  --binding voyage_video --source-version <source-version> \
+  --source-version <candidate-version>
+```
+
 ## Find similar documents
 
 Choose a file's **Find similar** row action in the web app. The **Similar

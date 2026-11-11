@@ -35,17 +35,25 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 	return document.RenditionInputOriginalFile
 }
 
-// photoDiscoveryScope discloses that consent for a photo description or image
-// embedding profile queues every eligible photo in the vault, not just the
-// planned one.
-func photoDiscoveryScope(profile configuredProfile) string {
+// mediaDiscoveryScope explains the vault-wide work enabled by the reviewed grant.
+func mediaDiscoveryScope(profile configuredProfile) string {
+	var scope []string
 	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
 		return binding.InputKind == document.EmbeddingInputImage
 	})
-	if images || profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-		return "Granting consent automatically queues eligible photos throughout this vault."
+	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload &&
+		profile.portable.Rendition.Descriptor.ID == document.FaceDetectionProviderID {
+		scope = append(scope, "Granting consent automatically finds faces in eligible photos throughout this vault.")
+	} else if images || profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
+		scope = append(scope, "Granting consent automatically queues eligible photos throughout this vault.")
 	}
-	return ""
+	for _, runtime := range profile.embeddingRuntimes {
+		if runtime.automaticVideo {
+			scope = append(scope, "Granting consent automatically sends eligible MP4 originals throughout this vault to the configured provider.")
+			break
+		}
+	}
+	return strings.Join(scope, " ")
 }
 
 func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {

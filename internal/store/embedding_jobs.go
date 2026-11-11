@@ -19,6 +19,7 @@ var ErrEmbeddingJobFenced = errors.New("embedding job claim is fenced")
 const embeddingJobMaxClaims = 3
 
 type EmbeddingJobRequest struct {
+	AutomaticVideo   bool
 	RetryUnavailable bool
 	VectorSpaceID    string
 	ContentVersionID string
@@ -41,6 +42,7 @@ type EmbeddingJobStatus struct {
 	ProfileFingerprint           string
 	BindingID                    string
 	Activation                   document.EmbeddingActivation
+	AutomaticVideo               bool
 	State                        string
 	FailureCode                  EmbeddingFailureCode
 	AuthorizationGrantID         string
@@ -104,6 +106,14 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		request.InputGeneration.ProcessingProfileFingerprint != profile.Fingerprint {
 		return EmbeddingJob{}, errors.New("enqueueing embedding job: immutable authority does not match binding")
 	}
+	if request.AutomaticVideo != request.InputGeneration.IsAutomaticVideo() {
+		return EmbeddingJob{}, ErrEmbeddingJobFenced
+	}
+	if request.AutomaticVideo {
+		if err := validateAutomaticVideoBinding(request.InputGeneration, binding, fingerprints.EmbeddingInput[binding.Name]); err != nil {
+			return EmbeddingJob{}, err
+		}
+	}
 	authority, err := normalizeConsentAuthority(request.Authorization)
 	if err != nil || authority.profile != profile.Fingerprint || authority.disclosure != binding.DisclosureFingerprint {
 		return EmbeddingJob{}, errors.New("enqueueing embedding job: consent does not match binding")
@@ -160,6 +170,11 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		}
 		if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, request.InputGeneration); err != nil {
 			return err
+		}
+		if request.AutomaticVideo {
+			if err := validateAutomaticVideoEligibilityTx(ctx, tx, request.ContentVersionID, binding.MaxInputBytes); err != nil {
+				return err
+			}
 		}
 		if err := insertInputGenerationTx(ctx, tx, generationProjection); err != nil {
 			return err
@@ -234,13 +249,14 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 		return EmbeddingJobStatus{}, fmt.Errorf("embedding job: %w", ErrNotFound)
 	}
 	var status EmbeddingJobStatus
+	var producerPolicy string
 	var failure sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT job_id,content_version_id,profile_fingerprint,binding_id,state,failure_code,
-		authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence
-		FROM embedding_jobs WHERE job_id=$1`, id).Scan(&status.ID, &status.ContentVersionID,
+	err := s.db.QueryRowContext(ctx, `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code,
+		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence,g.chunk_policy_fingerprint
+		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id WHERE j.job_id=$1`, id).Scan(&status.ID, &status.ContentVersionID,
 		&status.ProfileFingerprint, &status.BindingID, &status.State, &failure,
 		&status.AuthorizationGrantID,
-		&status.AuthorizationIncarnationID, &status.AuthorizationRevocationFence)
+		&status.AuthorizationIncarnationID, &status.AuthorizationRevocationFence, &producerPolicy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EmbeddingJobStatus{}, ErrNotFound
 	}
@@ -259,6 +275,7 @@ func (s *Store) EmbeddingJobByID(ctx context.Context, id string) (EmbeddingJobSt
 		return EmbeddingJobStatus{}, err
 	}
 	status.Activation = binding.Activation
+	status.AutomaticVideo = producerPolicy == automaticVideoPolicyFingerprint
 	return status, nil
 }
 
@@ -297,7 +314,7 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 		return nil, err
 	}
 	query := `SELECT j.job_id,j.content_version_id,j.profile_fingerprint,j.binding_id,j.state,j.failure_code,
-		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence
+		j.authorization_grant_id,j.authorization_incarnation_id,j.authorization_revocation_fence,g.chunk_policy_fingerprint
 		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
 		WHERE j.content_version_id=$1 AND j.profile_fingerprint=$2
 		AND (j.input_kind IN ('original_file','image') OR EXISTS (
@@ -311,8 +328,8 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 			JOIN processing_consent_grants member
 			  ON member.consent_set_id=anchor.consent_set_id
 			WHERE anchor.grant_id=$3 AND member.grant_id=j.authorization_grant_id
-		)`
-		args = append(args, admittedGrantID)
+		) AND g.chunk_policy_fingerprint<>$4`
+		args = append(args, admittedGrantID, automaticVideoPolicyFingerprint)
 	}
 	query += ` ORDER BY j.binding_id,j.job_id`
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -323,11 +340,12 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 	var result []EmbeddingJobStatus
 	for rows.Next() {
 		var status EmbeddingJobStatus
+		var producerPolicy string
 		var failure sql.NullString
 		if err := rows.Scan(&status.ID, &status.ContentVersionID, &status.ProfileFingerprint,
 			&status.BindingID, &status.State, &failure, &status.AuthorizationGrantID,
 			&status.AuthorizationIncarnationID,
-			&status.AuthorizationRevocationFence); err != nil {
+			&status.AuthorizationRevocationFence, &producerPolicy); err != nil {
 			return nil, err
 		}
 		if failure.Valid {
@@ -338,6 +356,7 @@ func (s *Store) embeddingJobsForVersionProfile(ctx context.Context, versionID,
 			return nil, err
 		}
 		status.Activation = binding.Activation
+		status.AutomaticVideo = producerPolicy == automaticVideoPolicyFingerprint
 		result = append(result, status)
 	}
 	return result, rows.Err()
@@ -517,6 +536,14 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	}
 	if !reflect.DeepEqual(current, work) {
 		return ErrEmbeddingJobFenced
+	}
+	if work.InputGeneration.IsAutomaticVideo() {
+		if err := validateAutomaticVideoBinding(work.InputGeneration, work.Binding, work.EmbeddingInputFingerprint); err != nil {
+			return err
+		}
+		if err := validateAutomaticVideoEligibilityTx(ctx, tx, work.ContentVersionID, work.Binding.MaxInputBytes); err != nil {
+			return err
+		}
 	}
 	var eligible bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v

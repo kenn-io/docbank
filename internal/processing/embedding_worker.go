@@ -206,6 +206,15 @@ func validEmbeddingRuntimeFingerprint(fingerprint string) bool {
 	return err == nil
 }
 
+func (registry *EmbeddingRuntimeRegistry) automaticVideoBinding(work EmbeddingWork) bool {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	runtime, _ := registry.bindings[embeddingRuntimeBinding{
+		work.ProcessingProfile.Fingerprint, work.Binding.Name, work.Descriptor.Fingerprint,
+	}].(*ProviderEmbeddingRuntime)
+	return runtime != nil && runtime.automaticVideo
+}
+
 func (registry *EmbeddingRuntimeRegistry) Prepare(ctx context.Context, work EmbeddingWork) (EmbeddingExecution, error) {
 	if registry == nil {
 		return EmbeddingExecution{}, ErrEmbeddingRuntimeUnavailable
@@ -444,10 +453,16 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				spaces = runtime.VectorSpaces()
 			}
 			var imageProfiles []store.ProcessingProfileRecord
+			automaticVideo := make(map[string]bool)
 			if registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry); ok {
 				registry.mu.RLock()
 				for _, profile := range registry.profiles {
 					imageProfiles = append(imageProfiles, profile)
+				}
+				for binding, runtime := range registry.bindings {
+					if provider, ok := runtime.(*ProviderEmbeddingRuntime); ok && provider.automaticVideo {
+						automaticVideo[binding.profileFingerprint+"/"+binding.bindingID] = true
+					}
 				}
 				registry.mu.RUnlock()
 			}
@@ -462,7 +477,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				}
 			}
 			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
+				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, AutomaticVideoBindings: automaticVideo, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
 				After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
 				SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
 				ImageRejections:        worker.imageRejections,
@@ -623,6 +638,13 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	}()
 	if err := validateEmbeddingWork(work, worker.maxRows, worker.maxDimensions); err != nil || int64(len(work.InputGeneration.Inputs))*int64(work.Descriptor.Dimension)*4 > worker.maxVectorBlobBytes {
 		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
+	}
+
+	if work.InputGeneration.IsAutomaticVideo() {
+		registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry)
+		if !ok || !registry.automaticVideoBinding(work) {
+			return ErrEmbeddingWorkFenced
+		}
 	}
 
 	materializedGeneration := work.InputGeneration

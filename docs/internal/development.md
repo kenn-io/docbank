@@ -1111,6 +1111,14 @@ the same epoch, and preserve retry counts when another worker resumes them.
 Reconciliation checks current source and rendition authority, purge suppression,
 executable providers and current consent before scheduling retained inputs.
 
+Image and opted-in original-file MP4 discovery share a bounded profile/version
+scan. MP4 discovery reads catalog metadata and records a binding-specific input
+generation that carries the automatic producer policy. Recovery requires that
+exact executable binding. The enqueue transaction and provider fence recheck
+current visible, included display membership. The normal direct-file worker
+inspects and seals the MP4 bytes, then publishes to the same vector space used
+for explicit original-file work.
+
 Vector spaces, input generations, vector sets and their ordered row manifests
 are immutable. Vector values and rendered inputs stay in blob artifacts; the
 database retains their checksums, references and bounded projections. Runtime
