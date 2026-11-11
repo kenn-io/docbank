@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,13 +22,16 @@ type schemaContract struct {
 
 func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	catalog := releasedSchemaCatalog(t, db, true)
-	names := slices.Sorted(maps.Keys(catalog))
-	entries := make([][4]string, 0, len(names))
-	for _, name := range names {
-		object := catalog[name]
-		entries = append(entries, [4]string{name, object[0], object[1], object[2]})
+	rows, err := db.QueryContext(t.Context(), `SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var entries [][4]string
+	for rows.Next() {
+		var entry [4]string
+		require.NoError(t, rows.Scan(&entry[0], &entry[1], &entry[2], &entry[3]))
+		entries = append(entries, entry)
 	}
+	require.NoError(t, rows.Err())
 	data, err := canonical.Marshal(entries)
 	require.NoError(t, err)
 	return fmt.Sprintf("%x", sha256.Sum256(data))
@@ -146,6 +148,9 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 				require.NoError(t, err)
 				return digest
 			}
+			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
+			require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)}}, 49, probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)))
+			require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)}}, 49, probe(`CREATE TABLE contract_probe (id INTEGER, changed TEXT)`, trigger)), "set currentStorageSchemaVersion to 50")
 			digest := schemaCatalogDigest(t, db)
 			record := schemaContract{Version: 49, Digest: digest}
 			require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf(`add schema contract 000049-%s.json: {"digest":"%s","version":49}`, digest, digest))
