@@ -8,6 +8,7 @@
     readRelationPage,
     relationDisplayLimit,
     relationKey,
+    RelationPageChanged,
     type AttachmentIdentity,
     type RelationDirection,
     type RelationPage,
@@ -37,10 +38,11 @@
   let error = $state("");
   let retryable = $state(false);
   let retry = $state(0);
+  let changed = $state(false);
   let names = $state<Record<number, string>>({});
   let controller: AbortController | undefined;
   let epoch = 0;
-  let lastIdentity = "";
+  let lastAttempt = 0;
   const outgoing = $derived(direction === "outgoing");
   $effect(() => {
     total = page?.total;
@@ -54,9 +56,11 @@
   $effect(() => {
     const attempt = retry;
     const selected = attachmentIdentity(source);
-    const identity = `${session}:${source.key}:${direction}:${JSON.stringify(selected)}`;
-    const manual = identity === lastIdentity && attempt > 0;
-    lastIdentity = identity;
+    const identity = `${session}:${source.key}:${direction}`;
+    void identity;
+    const manual = attempt !== lastAttempt;
+    lastAttempt = attempt;
+    if (!manual) changed = false;
     const request = ++epoch;
     const pending = new AbortController();
     controller = pending;
@@ -73,6 +77,7 @@
         if (request === epoch) {
           page = next;
           error = "";
+          changed = false;
           void loadNames(next, pending.signal);
         }
       })
@@ -109,6 +114,7 @@
     } catch (cause) {
       if (request === epoch && !signal.aborted) {
         retryable = retryableHistoryError(cause);
+        changed = cause instanceof RelationPageChanged;
         error = message(cause);
       }
     } finally {
@@ -148,12 +154,15 @@
           </li>
         {/each}
       </ul>
-      {#if page.next && !error}
+      {#if page.next && !(error && (retryable || changed))}
         {#if page.items.length >= relationDisplayLimit}<p role="status">
             Showing the first {relationDisplayLimit}.
           </p>
-        {:else}<Button size="sm" surface="soft" disabled={loading} onclick={() => void loadMore()}
-            >Show more</Button
+        {:else}<Button
+            size="sm"
+            surface="soft"
+            disabled={loading}
+            onclick={() => void loadMore(!error)}>Show more</Button
           >{/if}
       {/if}
     {/if}
@@ -164,7 +173,10 @@
             ? "Couldn't load attachments"
             : "Couldn't load the document this file is attached to"}: {error}
         </p>
-        {#if retryable}<Button
+        {#if changed}<Button size="sm" surface="soft" disabled={loading} onclick={() => retry++}
+            >Reload attachments</Button
+          >
+        {:else if retryable}<Button
             size="sm"
             surface="soft"
             disabled={loading}
@@ -224,9 +236,8 @@
     font-size: var(--font-size-sm);
   }
   .problem-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    display: grid;
+    justify-items: start;
     gap: var(--space-2);
   }
   .problem {

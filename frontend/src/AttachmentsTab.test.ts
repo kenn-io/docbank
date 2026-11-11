@@ -210,3 +210,124 @@ it("keeps the first page while retrying a failed next page", async () => {
   await waitFor(() => expect(within(group).getAllByRole("listitem")).toHaveLength(51));
   expect(laterCalls).toBe(3);
 });
+
+it.each([404, 401])("keeps the next page available after a %s response", async (status) => {
+  let laterCalls = 0;
+  const onauthfailure = vi.fn();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const route = String(input);
+    if (route.includes("child_version_id=")) return Response.json(empty);
+    if (route.includes("after_order=")) {
+      laterCalls++;
+      if (laterCalls === 1) return Response.json({ detail: "Unavailable" }, { status });
+      return Response.json({
+        items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
+        total: 51,
+        next_operation_id: "",
+        next_order: 0,
+      });
+    }
+    return Response.json({
+      items: Array.from({ length: 50 }, (_, i) => ({
+        relation: relation(i + 1),
+        state: "pending",
+        reason: "text_extraction",
+      })),
+      total: 51,
+      next_operation_id: "synthetic",
+      next_order: 50,
+    });
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure });
+  const group = await screen.findByRole("region", { name: "Attachments" });
+  await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
+  expect(await within(group).findByText(/Unavailable/)).toBeTruthy();
+  expect(laterCalls).toBe(1);
+  expect(onauthfailure).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+  await fireEvent.click(within(group).getByRole("button", { name: "Show more" }));
+  await waitFor(() => expect(within(group).getAllByRole("listitem")).toHaveLength(51));
+});
+
+it("does not retry invalid UTF-8 in an attachment response", async () => {
+  let outgoing = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("child_version_id=")) return Response.json(empty);
+    outgoing++;
+    return new Response(new Uint8Array([0xff]));
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  const group = await screen.findByRole("region", { name: "Attachments" });
+  expect(await within(group).findByText(/invalid UTF-8/)).toBeTruthy();
+  expect(within(group).queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(outgoing).toBe(1);
+});
+
+it("reloads the first page when relations change between pages", async () => {
+  let firstCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const route = String(input);
+    if (route.includes("child_version_id=")) return Response.json(empty);
+    if (route.includes("after_order="))
+      return Response.json({
+        items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
+        total: 52,
+        next_operation_id: "",
+        next_order: 0,
+      });
+    firstCalls++;
+    return Response.json({
+      items: Array.from({ length: 50 }, (_, i) => ({
+        relation: relation(i + 1),
+        state: "pending",
+        reason: "text_extraction",
+      })),
+      total: 51,
+      next_operation_id: "synthetic",
+      next_order: 50,
+    });
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  const group = await screen.findByRole("region", { name: "Attachments" });
+  await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
+  await fireEvent.click(await within(group).findByRole("button", { name: "Reload attachments" }));
+  await waitFor(() => expect(firstCalls).toBe(2));
+  expect(await within(group).findByRole("button", { name: "Show more" })).toBeTruthy();
+});
+
+it("automatically retries a refreshed source after a manual retry", async () => {
+  let calls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("child_version_id=")) return Response.json(empty);
+    calls++;
+    if (calls === 1 || calls === 2 || calls === 4)
+      return Response.json({ detail: "Unavailable" }, { status: 503 });
+    return Response.json(empty);
+  });
+  const props = { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() };
+  const view = render(AttachmentsTab, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+  await screen.findByText("No published attachments");
+  await view.rerender({ ...props, source: { ...source } });
+  await waitFor(() => expect(calls).toBe(5));
+  expect(await screen.findByText("No published attachments")).toBeTruthy();
+});
+
+it("retries an interrupted attachment response stream", async () => {
+  let outgoing = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("child_version_id=")) return Response.json(empty);
+    outgoing++;
+    if (outgoing === 1)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError("Connection lost"));
+          },
+        }),
+      );
+    return Response.json(empty);
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  expect(await screen.findByText("No published attachments")).toBeTruthy();
+  expect(outgoing).toBe(2);
+});

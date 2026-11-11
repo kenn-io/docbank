@@ -23,6 +23,8 @@ export class APIError extends Error {
   }
 }
 
+export class NetworkError extends TypeError {}
+
 const requestSessionByError = new WeakMap<APIError, string>();
 
 // API failures from browser requests are tied to the tab credential that
@@ -84,12 +86,19 @@ async function send(
   }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
-  const response = await fetch(webURL(url), {
-    ...init,
-    headers,
-    credentials: "same-origin",
-    redirect: "error",
-  });
+  let response: Response;
+  try {
+    response = await fetch(webURL(url), {
+      ...init,
+      headers,
+      credentials: "same-origin",
+      redirect: "error",
+    });
+  } catch (cause) {
+    if (cause instanceof TypeError && !init.signal?.aborted)
+      throw new NetworkError(cause.message, { cause });
+    throw cause;
+  }
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
     try {

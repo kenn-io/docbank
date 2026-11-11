@@ -1,4 +1,4 @@
-import { APIError, sessionResponse } from "./api-transport.js";
+import { APIError, NetworkError, sessionResponse } from "./api-transport.js";
 import * as generated from "./generated/docbank.js";
 import type { RelatedSelectedSource, SelectedSource } from "./selectedSource.js";
 
@@ -197,6 +197,8 @@ export function validateRelationPage(
     invalid("continuation order disagrees");
   return { items, total, next: { operationID: nextID, order: nextOrder } };
 }
+export class RelationPageChanged extends Error {}
+
 export function appendRelationPage(first: RelationPage, next: RelationPage): RelationPage {
   if (
     !first.next ||
@@ -204,14 +206,16 @@ export function appendRelationPage(first: RelationPage, next: RelationPage): Rel
     !next.items.length ||
     !after(next.items[0].relation, first.next)
   )
-    invalid("relations changed between pages; reload this view");
+    throw new RelationPageChanged("Relations changed between pages; reload this view.");
   const items = [...first.items, ...next.items];
   if (
     items.length > relationDisplayLimit ||
     items.length > next.total ||
     (!next.next && items.length !== next.total)
   )
-    invalid("relations changed or exceeded the display limit");
+    throw new RelationPageChanged(
+      "Relations changed or exceeded the display limit; reload this view.",
+    );
   return { ...next, items };
 }
 async function readBoundedJSON(
@@ -227,7 +231,11 @@ async function readBoundedJSON(
   try {
     while (true) {
       signal.throwIfAborted();
-      const chunk = await reader.read();
+      const chunk = await reader.read().catch((cause: unknown) => {
+        if (cause instanceof TypeError && !signal.aborted)
+          throw new NetworkError(cause.message, { cause });
+        throw cause;
+      });
       if (chunk.done) break;
       size += chunk.value.byteLength;
       if (size > jsonByteLimit) invalid("JSON byte limit exceeded");
@@ -246,7 +254,13 @@ async function readBoundedJSON(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    invalid("invalid UTF-8");
+  }
+  return JSON.parse(text) as unknown;
 }
 export async function readRelationPage(
   session: string,
