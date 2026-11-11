@@ -2112,7 +2112,6 @@ function renderEmptySearch(coverage: () => Promise<Response>) {
 }
 
 it.each([
-  ["complete", "2 PDFs have 3 pages without a text layer.", false],
   ["singular", "1 PDF has 1 page without a text layer.", false],
   ["partial", "At least 2 PDFs have at least 3 pages without a text layer.", false],
   ["unavailable", "At least 2 PDFs have at least 3 pages without a text layer.", false],
@@ -2135,6 +2134,7 @@ it.each([
   }
   await submitSearch("missing");
   expect(await screen.findByText(message)).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
   if (tagged) {
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
@@ -2146,7 +2146,12 @@ it.each([
 it.each([
   [2, 3, false, "Across the current vault: 3 pages lack a text layer in 2 PDFs."],
   [1, 1, false, "Across the current vault: 1 page lacks a text layer in 1 PDF."],
-  [2, 3, true, "Across the current vault: at least 3 pages lack a text layer in at least 2 PDFs."],
+  [
+    0,
+    0,
+    true,
+    "Across the current vault, PDF text coverage is incomplete; some pages may not be searchable.",
+  ],
 ])(
   "shows current vault PDF gaps for an empty frozen query",
   async (pdfs, pages, partial, message) => {
@@ -2169,7 +2174,8 @@ it.each([
     await submitSearch("missing");
     const results = await screen.findByRole("region", { name: "Frozen query results" });
     expect(await within(results).findByText(message)).toBeTruthy();
-    expect(within(results).getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
+    if (pdfs === 2)
+      expect(within(results).getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
       .filter((url) => url.startsWith("/api/v1/search/text-coverage"))
