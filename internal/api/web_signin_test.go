@@ -18,7 +18,7 @@ func TestWebSignInStatusAvailableWithoutMasterKey(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.JSONEq(t, `{"enabled":false}`, w.Body.String())
+	require.JSONEq(t, `{"enabled":false,"same_address_after_restart":false}`, w.Body.String())
 	require.NotContains(t, w.Body.String(), cfg.Server.APIKey)
 }
 

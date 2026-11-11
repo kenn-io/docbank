@@ -52,6 +52,7 @@
     await onrestart();
     restarting = false;
     confirmRestart = false;
+    confirmRestart = false;
   }
   let tab = $state(untrack(() => initialTab));
   let switched = false;
@@ -140,9 +141,9 @@
           </div>
         {:else}
           <p>
-            Docbank was started with <code>docbank daemon run</code>, so restart it where it runs:
-            press Ctrl+C in its terminal and run it again, or restart its service or container, such
-            as <code>docker restart docbank</code>. Then sign in again.
+            If you started Docbank in a terminal, press Ctrl+C and repeat the original command. If
+            an operator runs its service or container, ask them to restart it. Then reopen Docbank
+            and sign in.
           </p>
         {/if}
       {/if}
@@ -171,11 +172,13 @@
       if (!restarting) confirmRestart = false;
     }}
   >
-    <p>Search by meaning starts after the restart.</p>
-    <p>
-      Every open Docbank tab signs out, and uploads, exports and command-line requests still running
-      stop.
-    </p>
+    <div class="restart-confirmation">
+      <p>Search by meaning starts after the restart.</p>
+      <p>
+        Every open Docbank tab signs out. This may interrupt uploads, exports, and command-line
+        requests.
+      </p>
+    </div>
     {#snippet footer()}
       <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
       <Button tone="danger" surface="solid" disabled={restarting} onclick={restart}
@@ -194,11 +197,15 @@
     padding: var(--space-5);
     font-size: var(--font-size-sm);
   }
+  .restart-confirmation {
+    display: grid;
+    gap: var(--space-4);
+  }
   .restart-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
   .row {
     justify-self: stretch;

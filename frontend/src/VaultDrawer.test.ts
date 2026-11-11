@@ -162,7 +162,9 @@ it.each<[string, Partial<SearchByMeaningSetup>, string, boolean]>([
     expect(props.onturnonsearchbymeaning).toHaveBeenCalledOnce();
   } else expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(screen.queryByRole("alert")?.textContent ?? "").toBe(setup.error ?? "");
-  expect(screen.queryByText(/started with/) !== null).toBe(!!setup.status?.restart_required);
+  expect(screen.queryByText(/If you started Docbank/) !== null).toBe(
+    !!setup.status?.restart_required,
+  );
   expect(screen.queryByRole("button", { name: "Use built-in instead" })).toBeNull();
   expect(screen.queryByText("Switching keeps your index")).toBeNull();
 });
@@ -190,7 +192,7 @@ it("keeps the restart step beside a failed status read", () => {
     readError: "Daemon busy",
   });
   expect(screen.getByRole("alert").textContent).toBe("Daemon busy");
-  expect(screen.getByText(/started with/)).toBeTruthy();
+  expect(screen.getByText(/If you started Docbank/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
 });
 

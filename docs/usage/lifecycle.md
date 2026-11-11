@@ -105,7 +105,7 @@ docbank update
 An install stops a running daemon, replaces the binary, and starts the new
 daemon with the same lifetime. If installation fails, Docbank attempts to restart the old daemon.
 `daemon start`, `daemon restart`, and command auto-start also replace a daemon
-whose binary or API protocol is incompatible with the invoking CLI.
+whose binary or API protocol is incompatible with the invoking CLI. The web app can request a restart only for a launcher-owned daemon. A foreground process, service, or container stays under its operator, who must restart it with its original options and environment.
 
 If Homebrew installed Docbank, run `brew upgrade docbank` instead.
 `docbank update` refuses to replace a binary that a package manager owns.

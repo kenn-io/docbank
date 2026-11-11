@@ -3,6 +3,7 @@ import type { BrowserSession } from "./browser-session.js";
 
 export interface SignInStatus {
   enabled: boolean;
+  same_address_after_restart?: boolean;
   session?: { token: string; upload_secret: string };
 }
 

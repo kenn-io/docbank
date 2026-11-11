@@ -723,9 +723,16 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			logger.Warn("telemetry heartbeat not started", "error", err)
 		}
 	}
-	var restartDaemon func(bool) error
+	var restartDaemon func(context.Context, bool) error
+	var restartMu sync.Mutex
+	restartLaunched := false
 	if background {
-		restartDaemon = func(openTab bool) error {
+		restartDaemon = func(ctx context.Context, openTab bool) error {
+			restartMu.Lock()
+			defer restartMu.Unlock()
+			if restartLaunched {
+				return nil
+			}
 			exe, err := os.Executable()
 			if err != nil {
 				return err
@@ -734,7 +741,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			if openTab {
 				args = append(args, "--open-web")
 			}
-			return kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+layout.Root), Stdout: io.Discard, Stderr: io.Discard})
+			err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+layout.Root), Stdout: io.Discard, Stderr: io.Discard})
+			if err == nil {
+				restartLaunched = true
+			}
+			return err
 		}
 	}
 	srv := api.NewServer(api.Deps{

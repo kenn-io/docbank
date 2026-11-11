@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/processing"
@@ -62,30 +61,21 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			status.RestartAvailable = d.RestartDaemon != nil
 			return &statusOutput{Body: status}, nil
 		})
-	type restartInput struct {
-		Origin string `header:"Origin"`
-	}
-	type restartOutput struct {
-		Body struct {
-			NewTab bool `json:"new_tab"`
-		}
-	}
 	huma.Register(api, huma.Operation{OperationID: "restartDaemon", Method: http.MethodPost,
 		Path: "/api/v1/processing/local/restart", Summary: "Restart Docbank", DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, input *restartInput) (*restartOutput, error) {
+		func(ctx context.Context, _ *struct{}) (*struct{}, error) {
 			if !browserSessionRequest(ctx) {
 				return nil, NewError(http.StatusForbidden, "forbidden", "A browser session is required")
 			}
 			if d.RestartDaemon == nil {
 				return nil, NewError(http.StatusConflict, "restart_unavailable", "Restart Docbank where it runs")
 			}
-			openTab := input.Origin == strings.TrimSuffix(d.WebURL, "/")
-			if err := d.RestartDaemon(openTab); err != nil {
+			login, _ := ctx.Value(browserLoginContextKey{}).(bool)
+			openTab := !(login && d.Cfg.Web.PublicOrigin != "")
+			if err := d.RestartDaemon(ctx, openTab); err != nil {
 				return nil, NewError(http.StatusInternalServerError, "restart_failed", err.Error())
 			}
-			out := &restartOutput{}
-			out.Body.NewTab = openTab
-			return out, nil
+			return &struct{}{}, nil
 		})
 	type planInput struct{ Body LocalTextPlanRequest }
 	type output struct{ Body LocalTextPlan }

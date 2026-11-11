@@ -674,13 +674,8 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	request.Header.Set(api.WebSessionHeader, token)
 	response, err := client.Do(request)
 	require.NoError(t, err)
-	var result struct {
-		NewTab bool `json:"new_tab"`
-	}
 	require.Equal(t, http.StatusAccepted, response.StatusCode)
-	require.NoError(t, json.UnmarshalRead(response.Body, &result))
 	require.NoError(t, response.Body.Close())
-	require.True(t, result.NewTab)
 	for {
 		select {
 		case <-t.Context().Done():

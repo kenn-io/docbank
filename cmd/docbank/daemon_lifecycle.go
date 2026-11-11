@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -162,7 +163,36 @@ daemon was running.`,
 		if err != nil {
 			return err
 		}
-		rec, wasRunning, err := daemonconn.Restart(cmd.Context(), layout.Root, !restartFromWeb)
+		ctx := cmd.Context()
+		if restartFromWeb {
+			// The detached helper owns its lifetime after the requesting daemon exits.
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			logger, result, logErr := buildServeLogger(layout, true)
+			if logErr != nil {
+				return logErr
+			}
+			defer func() { _ = result.Close() }()
+			_, _, err = daemonconn.Restart(ctx, layout.Root, false)
+			if err != nil {
+				logger.Error("web restart failed", "error", err)
+				return err
+			}
+			if restartOpenWeb {
+				c, openErr := daemonconn.EnsureWeb(ctx)
+				if openErr == nil {
+					defer func() { _ = c.Close() }()
+					openErr = runWeb(ctx, cmd.OutOrStdout(), layout.Root, c, false, openWebBrowser)
+				}
+				if openErr != nil {
+					logger.Error("web restart browser open failed", "error", openErr)
+					return openErr
+				}
+			}
+			return nil
+		}
+		rec, wasRunning, err := daemonconn.Restart(ctx, layout.Root, true)
 		if err != nil {
 			return err
 		}

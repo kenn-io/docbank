@@ -12109,12 +12109,11 @@ func (c *Client) PlanLocalText(ctx context.Context, options *PlanLocalTextReques
 }
 
 // RestartDaemon Restart Docbank
-func (c *Client) RestartDaemon(ctx context.Context, options *RestartDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestartDaemonResponse, error) {
+func (c *Client) RestartDaemon(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/restart",
 		Method:     "POST",
-		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -12122,18 +12121,12 @@ func (c *Client) RestartDaemon(ctx context.Context, options *RestartDaemonReques
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*RestartDaemonResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
 		switch resp.StatusCode {
 
 		case 202:
 
-			target := new(RestartDaemonResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "RestartDaemonResponse", Body: resp.Content, Err: err,
-				}
-			}
+			target := new(struct{})
 
 			return target, nil
 
@@ -24309,37 +24302,6 @@ func (o *PlanLocalTextRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
-// RestartDaemonRequestOptions is the options needed to make a request to RestartDaemon.
-type RestartDaemonRequestOptions struct {
-	Header *RestartDaemonHeaders
-}
-
-// GetPathParams returns the path params as a map.
-func (o *RestartDaemonRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *RestartDaemonRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *RestartDaemonRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *RestartDaemonRequestOptions) GetHeader() (map[string]string, error) {
-	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var headers map[string]string
-	err = json.Unmarshal(encoded, &headers)
-	return headers, err
-}
-
 // ApplyLocalTextRequestOptions is the options needed to make a request to ApplyLocalText.
 type ApplyLocalTextRequestOptions struct {
 	Body *ApplyLocalTextBody
@@ -27344,10 +27306,6 @@ type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
-type RestartDaemonHeaders struct {
-	Origin *string `json:"Origin,omitempty"`
-}
-
 type UploadPushFileHeaders struct {
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
@@ -28858,13 +28816,15 @@ type ReportTelemetryEventResponse struct {
 }
 
 type GetWebSignInResponse struct {
-	Enabled bool           `json:"enabled"`
-	Session *WebTabSession `json:"session,omitempty"`
+	Enabled                 bool           `json:"enabled"`
+	SameAddressAfterRestart *bool          `json:"same_address_after_restart,omitempty"`
+	Session                 *WebTabSession `json:"session,omitempty"`
 }
 
 type LoginWebSignInResponse struct {
-	Enabled bool           `json:"enabled"`
-	Session *WebTabSession `json:"session,omitempty"`
+	Enabled                 bool           `json:"enabled"`
+	SameAddressAfterRestart *bool          `json:"same_address_after_restart,omitempty"`
+	Session                 *WebTabSession `json:"session,omitempty"`
 }
 
 type ListWebSignInsResponse struct {
@@ -29969,8 +29929,6 @@ type GetDocumentProcessingJobErrorResponse = Error
 type PlanLocalTextResponse = api.LocalTextPlan
 
 type PlanLocalTextErrorResponse = Error
-
-type RestartDaemonResponse = RestartOutputBody
 
 type RestartDaemonErrorResponse = Error
 
@@ -31851,12 +31809,6 @@ type Resolution = kataevidence.Resolution
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 
 type ResolvedTextCitation = document.ResolvedTextCitation
-
-type RestartOutputBody struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	NewTab bool    `json:"new_tab"`
-}
 
 type RetentionDisclosurePolicyV1 = document.RetentionDisclosurePolicyV1
 

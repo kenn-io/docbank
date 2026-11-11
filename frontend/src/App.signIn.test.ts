@@ -649,6 +649,7 @@ it("returns a key session to the sign-in form after restart", async () => {
     if (url.endsWith("/login"))
       return Response.json({
         enabled: true,
+        same_address_after_restart: true,
         session: { token: "tab-token", upload_secret: "proof" },
       });
     if (url.startsWith("/api/v1/path"))
@@ -667,8 +668,7 @@ it("returns a key session to the sign-in form after restart", async () => {
         restart_required: true,
         restart_available: true,
       });
-    if (url === "/api/v1/processing/local/restart")
-      return Response.json({ new_tab: false }, { status: 202 });
+    if (url === "/api/v1/processing/local/restart") return new Response(null, { status: 202 });
     return Response.json({ items: [], total: 0 });
   });
   render(App);
@@ -682,6 +682,6 @@ it("returns a key session to the sign-in form after restart", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Restart Docbank" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
-  expect(await screen.findByText("Docbank is restarting. Sign in again in a moment.")).toBeTruthy();
+  expect(await screen.findByText("Restart requested.")).toBeTruthy();
   expect(screen.getByLabelText("API key")).toBeTruthy();
 });

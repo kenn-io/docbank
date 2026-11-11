@@ -386,6 +386,9 @@
   let keySignInEnabled = $state(false);
   let signInNotice = $state("");
   let keySession = $state(false);
+  let sameAddressAfterRestart = false;
+  let recovery = $state<"" | "same" | "per-run">("");
+  let restartAttempt: object | undefined;
   let apiKey = $state("");
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
@@ -1583,7 +1586,14 @@
     };
   });
 
-  function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+  function activateBrowserSession(
+    session: BrowserSession,
+    keyLogin = false,
+    sameAddress = false,
+  ): void {
+    restartAttempt = undefined;
+    recovery = "";
+    sameAddressAfterRestart = sameAddress;
     signInNotice = "";
     disposeBrowserSession?.();
     webSession = session.token;
@@ -1603,6 +1613,7 @@
       uploadChannelError = keyLogin
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
         : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+      void checkDisconnectedSession(session.token, sameAddress);
     });
     void channel.connect().then(
       () => {
@@ -1610,8 +1621,10 @@
         else channel.close();
       },
       (cause) => {
-        if (mounted && webSession === session.token)
+        if (mounted && webSession === session.token) {
           uploadChannelError = cause instanceof Error ? cause.message : String(cause);
+          void checkDisconnectedSession(session.token, sameAddress);
+        }
       },
     );
     const reporting = sessionReporting;
@@ -1621,6 +1634,18 @@
       telemetryReporting = undefined;
       channel.close();
     };
+  }
+
+  async function checkDisconnectedSession(session: string, sameAddress: boolean): Promise<void> {
+    try {
+      await generated.vaultIdentity({ session, signal: AbortSignal.timeout(3000) });
+    } catch {
+      if (!mounted || webSession !== session) return;
+      resetLocalSessionUI();
+      recovery = sameAddress ? "same" : "per-run";
+      keySignInEnabled = sameAddress;
+      signInNotice = "The connection to Docbank ended.";
+    }
   }
 
   async function submitSignIn(event: SubmitEvent): Promise<void> {
@@ -1634,7 +1659,8 @@
       const status = await signIn(credential);
       const session = tabSession(status);
       if (!session) throw new Error("The daemon did not issue a browser session.");
-      if (mounted) activateBrowserSession(session, true);
+      if (mounted)
+        activateBrowserSession(session, true, status.same_address_after_restart === true);
     } catch (cause) {
       if (mounted) error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -2024,20 +2050,43 @@
 
   async function restartDocbank(): Promise<void> {
     const session = webSession;
+    const sameAddress = keySession && sameAddressAfterRestart;
+    const attempt = (restartAttempt = {});
     localText.error = "";
+    let notice = "Restart requested.";
     try {
-      const result = await generated.restartDaemon(undefined, { session });
-      if (session !== webSession) return;
-      resetLocalSessionUI();
-      signInNotice = result.new_tab
-        ? "Docbank is restarting and opens in a new tab. If no tab opens, run docbank web."
-        : "Docbank is restarting. Sign in again in a moment.";
-      if (result.new_tab) keySignInEnabled = false;
+      const response = await generated.restartDaemon({
+        session,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status !== 202) throw new Error("Unexpected restart response");
     } catch (cause) {
-      if (session !== webSession) return;
-      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
-      localText.error = `Docbank couldn't restart: ${cause instanceof Error ? cause.message : String(cause)}`;
+      if (!mounted || restartAttempt !== attempt) return;
+      if (webSession === session && cause instanceof APIError) {
+        if (cause.status === 401) {
+          restartAttempt = undefined;
+          return handleFailure(cause);
+        }
+        if (cause.code === "restart_failed") {
+          restartAttempt = undefined;
+          localText.error = "Docbank couldn't start the restart.";
+          return;
+        }
+        if (cause.code === "restart_unavailable") {
+          restartAttempt = undefined;
+          if (localText.status) localText.status.restart_available = false;
+          readLocalTextStatus();
+          return;
+        }
+      }
+      notice = "Docbank couldn't confirm the restart.";
     }
+    if (!mounted || restartAttempt !== attempt) return;
+    restartAttempt = undefined;
+    if (webSession === session) resetLocalSessionUI();
+    recovery = sameAddress ? "same" : "per-run";
+    keySignInEnabled = sameAddress;
+    signInNotice = notice;
   }
 
   async function loadRoot(): Promise<void> {
@@ -3896,7 +3945,15 @@
     <Card level="raised" title="Open your Docbank">
       <div class="unlock-copy">
         {#if signInNotice}<p>{signInNotice}</p>{/if}
-        {#if keySignInEnabled}
+        {#if recovery === "per-run"}
+          <p>
+            If Docbank doesn't open, run <code>docbank web --no-browser</code> in the terminal used for
+            this vault, then open the URL it prints.
+          </p>
+        {:else if keySignInEnabled}
+          {#if recovery === "same"}<p>
+              Reload this page and sign in again when Docbank is available.
+            </p>{/if}
           <p>Sign in with the API key from your Docbank operator.</p>
           <form
             onsubmit={(event) => void submitSignIn(event)}
