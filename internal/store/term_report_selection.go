@@ -42,6 +42,7 @@ func (s *Store) RefreshTermReportSelection(ctx context.Context, documents []repo
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	result := make([]TermReportSelectionItem, len(selected.Documents))
 	var pathIDs []int64
 	var pathIndexes []int
@@ -49,7 +50,6 @@ func (s *Store) RefreshTermReportSelection(ctx context.Context, documents []repo
 		var nodeID int64
 		var name, kind, trashed, version, hash, modified, selectedRecorded string
 		if err := rows.Scan(&nodeID, &name, &kind, &trashed, &version, &hash, &modified, &selectedRecorded); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		item := TermReportSelectionItem{Selected: selected.Documents[i], Name: name, Modified: modified, SelectedRecorded: selectedRecorded, Status: "missing"}
