@@ -498,7 +498,7 @@ print('Verified report evidence, CSV and all three original byte streams')
       );
       await page.screenshot({ path: path.join(captures!, "selection-before.png") });
       await drawer.getByRole("button", { name: "Refresh selection" }).click();
-      await expect(drawer.getByText("Newer version", { exact: false })).toBeVisible();
+      await expect(drawer.getByText(/^Newer version · modified/)).toBeVisible();
       await page.screenshot({ path: path.join(captures!, "selection-after.png") });
       const include = drawer.getByRole("checkbox", { name: "Include current version" });
       await expect(include).not.toBeChecked();
