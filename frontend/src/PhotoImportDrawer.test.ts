@@ -197,6 +197,44 @@ it("refreshes a group committed between inspection and resume", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("loads saved imports one page at a time", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi
+      .fn()
+      .mockResolvedValueOnce(
+        Array.from({ length: 50 }, (_, index) => ({ ...saved, import_id: String(index) })),
+      )
+      .mockResolvedValueOnce([{ ...saved, import_id: "last" }]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pages",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+  await waitFor(() =>
+    expect(channel.listPhotoImports).toHaveBeenCalledWith(50, expect.any(AbortSignal)),
+  );
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+});
+
 it("refuses changed bytes and lists files outside the saved import", async () => {
   const saved = {
     import_id: "saved-import",
@@ -330,6 +368,94 @@ it("requires an explicit choice after a lost registration reply", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("inspects a checkpoint's saved receipt before sending groups", async () => {
+  const selected = [files()[0]];
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  savedImports.set("checkpoint-saved", {
+    sourceID: "source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: photoImportManifest(selected).digest,
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: selected[0].name, size: selected[0].size }],
+        receipt: { status: "added" as const },
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "checkpoint-saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByText("Imported earlier");
+  expect(channel.inspectPhotoImport).toHaveBeenCalledWith("source", expect.any(AbortSignal), true);
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+});
+
+it("keeps a missing saved import unconfirmed", async () => {
+  const selected = [files()[0]];
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  savedImports.set("missing-saved", {
+    sourceID: "source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    protocolVersion: 3,
+    manifestHash: photoImportManifest(selected).digest,
+    pickerKind: "files",
+  });
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "missing-saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByText(
+    "This import is no longer available for inspection. Its outcome is unconfirmed.",
+  );
+  expect(channel.planPhotoImport).not.toHaveBeenCalled();
+});
+
 it("resumes a checkpoint from before saved imports", async () => {
   const { photoImportManifest } = await import("./photoImportStorage.js");
   const selected = [files()[0]];
@@ -347,7 +473,7 @@ it("resumes a checkpoint from before saved imports", async () => {
       .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
     registerPhotoImport: vi.fn().mockResolvedValue("saved"),
     listPhotoImports: vi.fn().mockResolvedValue([]),
-    inspectPhotoImport: vi.fn(),
+    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
     uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
   };
   render(PhotoImportDrawer, {
@@ -1751,8 +1877,18 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
   const replacement: PhotoImportTransport = {
     registerPhotoImport: vi.fn(async (id: string) => id),
     listPhotoImports: vi.fn(async () => []),
-    inspectPhotoImport: vi.fn(async () => {
-      throw new Error("No saved import");
+    inspectPhotoImport: vi.fn().mockResolvedValue({
+      import_id: "first",
+      source_id: "source",
+      destination: "/",
+      groups: [
+        {
+          status: "committed",
+          files: [{ relative_path: "first.ARW", size: 1 }],
+          receipt: { status: "added" },
+        },
+        { status: "remaining", files: [{ relative_path: "second.ARW", size: 1 }] },
+      ],
     }),
     planPhotoImport: vi
       .fn()
@@ -1777,9 +1913,22 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
   await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
   await screen.findByText("Unconfirmed: 1");
   await view.rerender({ channel: replacement });
-  await screen.findByText("Unconfirmed: 2");
+  await screen.findByText("Unconfirmed: 1");
+  expect(screen.getByRole("button", { name: "Add 1 group" })).toHaveProperty("disabled", false);
   expect(replacement.planPhotoImport).not.toHaveBeenCalled();
   expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Imported earlier");
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+    "first",
+    1,
+    expect.any(Array),
+    expect.any(AbortSignal),
+    expect.any(Function),
+    ["cached-hash"],
+  );
 });
 
 it("retains a selection when the channel changes during checkpoint save", async () => {

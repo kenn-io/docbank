@@ -6855,6 +6855,7 @@ export interface PhotoImportCheckpoint {
   manifestHash: string;
   manifestVersion: number;
   pickerKind: string;
+  protocolVersion?: number;
   revision: string;
   sourceID: string;
 }

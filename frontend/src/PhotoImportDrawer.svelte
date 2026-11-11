@@ -72,6 +72,7 @@
   let resuming = false;
   let replacingConfirmed = false;
   let savedImports = $state<SavedPhotoImport[]>([]);
+  let moreImports = $state(false);
   let selectedImport = $state("");
   let savedImport = $state<SavedPhotoImport>();
   let registered = $state(false);
@@ -130,23 +131,6 @@
   let sourceID = "";
   let plannedChannel: PhotoImportTransport | undefined;
   let interruptedPlan = $state.raw<PhotoImportTransport>();
-  let reconnectPlanNeeded = $state(false);
-  $effect(() => {
-    const current = channel;
-    if (
-      plannedChannel &&
-      current !== plannedChannel &&
-      registered &&
-      !savedImport &&
-      !running &&
-      !planning
-    ) {
-      reconnectPlanNeeded = true;
-      for (const item of items) {
-        if (item.state === "ready" || item.state === "failed") setState(item, "unconfirmed");
-      }
-    }
-  });
   let plannedDestination = $state("");
   let running = $state(false);
   let planning = $state(false);
@@ -212,6 +196,22 @@
       await chooseSavedFiles(files);
       return;
     }
+    if (resuming && checkpoint) {
+      try {
+        await inspectAndApply(checkpoint.sourceID, false, true);
+        if (savedImport) await chooseSavedFiles(files);
+        return;
+      } catch (cause) {
+        if (!(cause instanceof APIError && cause.status === 404)) {
+          showError(cause);
+          return;
+        }
+        if (checkpoint.protocolVersion === 3) {
+          error = "This import is no longer available for inspection. Its outcome is unconfirmed.";
+          return;
+        }
+      }
+    }
     try {
       photoImportDeclaration(files, destination);
     } catch (cause) {
@@ -239,18 +239,16 @@
     await plan(true);
   }
 
-  async function listSavedImports(): Promise<void> {
+  async function listSavedImports(more = false): Promise<void> {
     if (disabledReason || running || planning) return;
     planning = true;
     try {
-      const active = new AbortController();
-      const all: SavedPhotoImport[] = [];
-      for (let offset = 0; ; offset += 50) {
-        const page = await channel.listPhotoImports(offset, active.signal);
-        all.push(...page);
-        if (page.length < 50) break;
-      }
-      savedImports = all;
+      const page = await channel.listPhotoImports(
+        more ? savedImports.length : 0,
+        new AbortController().signal,
+      );
+      savedImports = more ? [...savedImports, ...page] : page;
+      moreImports = page.length === 50;
     } catch (cause) {
       showError(cause);
     } finally {
@@ -258,23 +256,27 @@
     }
   }
 
-  async function inspectSavedImport(): Promise<void> {
-    if (!selectedImport || disabledReason || running || planning) return;
-    planning = true;
-    try {
-      const saved = await channel.inspectPhotoImport(
-        selectedImport,
-        false,
-        new AbortController().signal,
-      );
-      savedImport = saved;
-      registered = true;
-      registrationUncertain = false;
-      importID = saved.import_id;
-      reconnectPlanNeeded = false;
-      destination = saved.destination;
-      plannedDestination = destination;
-      plannedChannel = channel;
+  async function inspectAndApply(id: string, preserve: boolean, bySource = false): Promise<void> {
+    const activeChannel = channel;
+    const saved = await activeChannel.inspectPhotoImport(
+      id,
+      new AbortController().signal,
+      bySource,
+    );
+    if (channel !== activeChannel || destroyed) return;
+    if (preserve) {
+      for (const [index, group] of (saved.groups ?? []).entries()) {
+        const item = items[index];
+        if (group.status === "committed") {
+          setState(item, group.receipt!.status);
+          item.error = receiptReason(group.receipt?.reason);
+          item.importedEarlier = true;
+        } else if (group.status === "remaining") {
+          setState(item, item.files.length ? "ready" : "missing");
+          item.error = undefined;
+        } else setState(item, group.status);
+      }
+    } else {
       selectedFiles = [];
       extraFiles = [];
       unsupported = (saved.skipped ?? []).map((file) => ({ name: file.path, reason: file.reason }));
@@ -295,7 +297,39 @@
       }));
       for (const state of Object.keys(counts) as Item["state"][])
         counts[state] = items.filter((item) => item.state === state).length;
-      if (saved.groups?.some((group) => group.status === "committed")) await oncomplete();
+    }
+    savedImport = saved;
+    selectedImport = saved.import_id;
+    importID = saved.import_id;
+    registered = true;
+    registrationUncertain = false;
+    destination = saved.destination;
+    plannedDestination = destination;
+    plannedChannel = activeChannel;
+    if (saved.groups?.some((group) => group.status === "committed")) await oncomplete();
+  }
+
+  async function inspectSavedImport(): Promise<void> {
+    if (!selectedImport || disabledReason || running || planning) return;
+    planning = true;
+    try {
+      await inspectAndApply(selectedImport, false);
+    } catch (cause) {
+      showError(cause);
+    } finally {
+      planning = false;
+    }
+  }
+
+  async function inspectCurrentImport(): Promise<void> {
+    if ((!registered && !registrationUncertain) || running || planning || disabledReason) return;
+    planning = true;
+    try {
+      await inspectAndApply(
+        registrationUncertain ? sourceID : importID,
+        true,
+        registrationUncertain,
+      );
     } catch (cause) {
       showError(cause);
     } finally {
@@ -393,6 +427,7 @@
         );
       const next = {
         sourceID: reconnect ? sourceID : resuming ? checkpoint!.sourceID : randomUUID(),
+        protocolVersion: 3,
         revision: randomUUID(),
         destination: target,
         manifestVersion: 2,
@@ -493,12 +528,15 @@
       disabledReason ||
       !checkpointReady ||
       !pending ||
-      reconnectPlanNeeded ||
       registrationUncertain
     )
       return;
     const runChannel = channel;
-    if (!savedImport && (plannedDestination !== destination || plannedChannel !== runChannel)) {
+    if (
+      !savedImport &&
+      !registered &&
+      (plannedDestination !== destination || plannedChannel !== runChannel)
+    ) {
       await plan(false, plannedDestination === destination && Boolean(sourceID));
     }
     if (
@@ -509,7 +547,7 @@
       !pending ||
       disabledReason ||
       plannedDestination !== destination ||
-      (!savedImport && plannedChannel !== runChannel) ||
+      (!savedImport && !registered && plannedChannel !== runChannel) ||
       channel !== runChannel
     )
       return;
@@ -520,8 +558,8 @@
     let added = false;
     let failedCause: unknown;
     try {
-      if (savedImport) {
-        const latest = await channel.inspectPhotoImport(importID, true, controller.signal);
+      if (savedImport || (registered && plannedChannel !== runChannel)) {
+        const latest = await channel.inspectPhotoImport(importID, controller.signal);
         for (const [index, group] of (latest.groups ?? []).entries()) {
           if (items[index].state === "ready" && group.status !== "remaining") {
             setState(
@@ -536,6 +574,7 @@
           }
         }
         savedImport = latest;
+        plannedChannel = runChannel;
       } else if (!registered) {
         registrationUncertain = true;
         try {
@@ -679,6 +718,10 @@
         onclick={() => void listSavedImports()}>Saved imports</Button
       >
       {#if savedImports.length}
+        {#if moreImports}<Button
+            disabled={running || planning || !!disabledReason}
+            onclick={() => void listSavedImports(true)}>Load more</Button
+          >{/if}
         <select
           bind:value={selectedImport}
           aria-label="Saved import"
@@ -782,6 +825,12 @@
           </li>{/each}
       </ul>
       <div class="controls">
+        {#if (registered && counts.unconfirmed > 0) || registrationUncertain}
+          <Button
+            disabled={running || planning || !!disabledReason}
+            onclick={() => void inspectCurrentImport()}>Inspect import</Button
+          >
+        {/if}
         {#if !savedImport || items.some((item) => !["added", "skipped", "ambiguous"].includes(item.state))}
           <Button
             disabled={!checkpointReady ||
@@ -789,7 +838,6 @@
               planning ||
               !pending ||
               !!disabledReason ||
-              reconnectPlanNeeded ||
               registrationUncertain}
             onclick={() => void start()}
             >{savedImport

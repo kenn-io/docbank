@@ -14904,6 +14904,9 @@ components:
           type: integer
         pickerKind:
           type: string
+        protocolVersion:
+          format: int64
+          type: integer
         revision:
           format: uuid
           type: string

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -340,12 +341,12 @@ func handleWebUploadConnection(
 			}
 			continue
 		}
-		if begin.Type == "inspect_photo_import" || begin.Type == "resume_photo_import" {
+		if begin.Type == "inspect_photo_import" {
 			loaded, ok := handleInspectWebPhotoImport(ctx, conn, d, begin, claims)
 			if !ok {
 				return
 			}
-			if begin.Type == "resume_photo_import" && loaded != nil {
+			if loaded != nil {
 				photoImport = loaded
 			}
 			continue
@@ -838,7 +839,7 @@ type webPhotoImport struct {
 	destination     store.IngestDirectoryPlan
 	destinationPath string
 	sourceID        uuid.UUID
-	groupKeys       []string
+	registered      bool
 	skipped         []store.BrowserPhotoSkippedFile
 }
 
@@ -858,7 +859,7 @@ func (p *webPhotoImport) sourceDescription() string {
 func handleWebPhotoRegistration(
 	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage, plan *webPhotoImport,
 ) bool {
-	if plan == nil || plan.id != begin.ImportID || len(plan.groupKeys) != 0 ||
+	if plan == nil || plan.id != begin.ImportID || plan.registered ||
 		(begin.PickerKind != "files" && begin.PickerKind != "folder") {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID,
 			NewError(http.StatusUnprocessableEntity, "validation", "invalid photo import plan")) == nil
@@ -873,7 +874,6 @@ func handleWebPhotoRegistration(
 				DeclaredHash: file.ExpectedHash,
 			})
 		}
-		groups[i].Key = store.BrowserPhotoGroupKey(groups[i].Members)
 	}
 	id, err := d.Store.RegisterBrowserPhotoImport(ctx, store.BrowserPhotoImport{
 		SourceID: plan.sourceID, PickerKind: begin.PickerKind, Label: plan.sourceDescription(),
@@ -883,10 +883,7 @@ func handleWebPhotoRegistration(
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 	}
 	plan.id = id.String()
-	plan.groupKeys = make([]string, len(groups))
-	for i, group := range groups {
-		plan.groupKeys[i] = group.Key
-	}
+	plan.registered = true
 	return wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_registered", RequestID: begin.RequestID, ImportID: plan.id,
 	}) == nil
@@ -914,37 +911,46 @@ func handleListWebPhotoImports(ctx context.Context, conn *websocket.Conn, d Deps
 func handleInspectWebPhotoImport(
 	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage, claims *browserPhotoClaims,
 ) (*webPhotoImport, bool) {
-	id, err := uuid.Parse(begin.ImportID)
+	var id uuid.UUID
+	var err error
+	if begin.SourceID != nil && begin.ImportID == "" {
+		id, err = d.Store.BrowserPhotoImportIDForSource(ctx, *begin.SourceID)
+	} else {
+		id, err = uuid.Parse(begin.ImportID)
+	}
 	if err != nil {
+		if begin.SourceID != nil && begin.ImportID == "" {
+			return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
+		}
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, NewError(http.StatusUnprocessableEntity, "validation", "invalid import")) == nil
 	}
 	claims.mu.Lock()
-	active := false
+	active := make(map[string]bool)
 	for key := range claims.active {
 		if strings.HasPrefix(key, id.String()+"/") {
-			active = true
-			break
+			active[key] = true
 		}
 	}
+	claims.mu.Unlock()
 	var saved store.BrowserPhotoImport
-	if active {
+	if len(active) > 0 {
 		saved, err = d.Store.ReadBrowserPhotoImport(ctx, id)
 	} else {
 		saved, err = d.Store.InspectBrowserPhotoImport(ctx, id)
 	}
 	if err != nil {
-		claims.mu.Unlock()
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 	}
 	view := savedPhotoImportHeader(saved)
 	view.Skipped = saved.Skipped
-	plan := &webPhotoImport{id: id.String(), sourceID: saved.SourceID, destination: saved.Directory, destinationPath: saved.Destination}
-	for _, group := range saved.Groups {
+	plan := &webPhotoImport{id: id.String(), sourceID: saved.SourceID, destination: saved.Directory, destinationPath: saved.Destination, registered: true}
+	for ordinal, group := range saved.Groups {
 		entry := webSavedPhotoGroup{Status: "remaining", Hashes: group.Hashes}
-		if active {
-			entry.Status = "unconfirmed"
-			if claims.active[id.String()+"/"+group.Key] {
+		if len(active) > 0 {
+			if active[id.String()+"/"+strconv.Itoa(ordinal)] {
 				entry.Status = "pending"
+			} else if len(group.Hashes) != 0 {
+				entry.Status = "unconfirmed"
 			}
 		}
 		if group.Receipt != nil {
@@ -958,7 +964,6 @@ func handleInspectWebPhotoImport(
 			if member.Mtime != "" {
 				modified, parseErr := time.Parse(time.RFC3339Nano, member.Mtime)
 				if parseErr != nil {
-					claims.mu.Unlock()
 					return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(parseErr)) == nil
 				}
 				millis := modified.UnixMilli()
@@ -970,10 +975,8 @@ func handleInspectWebPhotoImport(
 			entry.Files = append(entry.Files, file)
 		}
 		plan.groups = append(plan.groups, indexes)
-		plan.groupKeys = append(plan.groupKeys, group.Key)
 		view.Groups = append(view.Groups, entry)
 	}
-	claims.mu.Unlock()
 	ok := wsjson.Write(ctx, conn, webUploadMessage{Type: "photo_import_inspection", RequestID: begin.RequestID, SavedImport: &view}) == nil
 	return plan, ok
 }
@@ -1121,7 +1124,7 @@ func handleWebPhotoGroup(
 	if problem != nil {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
 	}
-	if len(photoImport.groupKeys) == 0 {
+	if !photoImport.registered {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID,
 			NewError(http.StatusUnprocessableEntity, "validation", "register the photo import before uploading")) == nil
 	}
@@ -1129,15 +1132,15 @@ func handleWebPhotoGroup(
 	if err != nil {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 	}
-	ref := store.BrowserPhotoGroupRef{ImportID: id, GroupKey: photoImport.groupKeys[begin.Group]}
-	claimKey := id.String() + "/" + ref.GroupKey
+	ref := store.BrowserPhotoGroupRef{ImportID: id, Ordinal: begin.Group}
+	claimKey := id.String() + "/" + strconv.Itoa(ref.Ordinal)
 	if !claims.claim(claimKey) {
 		receipt, err := d.Store.BrowserPhotoGroupReceipt(ctx, ref)
 		if err != nil {
 			return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 		}
 		if receipt != nil {
-			if err := d.Store.PinBrowserPhotoGroupHashes(ctx, id, ref.GroupKey, begin.Hashes); err != nil {
+			if err := d.Store.PinBrowserPhotoGroupHashes(ctx, id, ref.Ordinal, begin.Hashes); err != nil {
 				return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 			}
 			return writeWebPhotoReceipt(ctx, conn, begin.RequestID, *receipt)
@@ -1145,7 +1148,7 @@ func handleWebPhotoGroup(
 		return wsjson.Write(ctx, conn, webUploadMessage{Type: "photo_group_pending", RequestID: begin.RequestID}) == nil
 	}
 	defer claims.release(claimKey)
-	if err := d.Store.PinBrowserPhotoGroupHashes(ctx, id, ref.GroupKey, begin.Hashes); err != nil {
+	if err := d.Store.PinBrowserPhotoGroupHashes(ctx, id, ref.Ordinal, begin.Hashes); err != nil {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 	}
 	receipt, err := d.Store.BrowserPhotoGroupReceipt(ctx, ref)
@@ -1213,13 +1216,11 @@ func handleWebPhotoGroup(
 		})
 	})
 	if err != nil {
-		if browserGroup != nil {
-			readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webUploadInactivity)
-			receipt, readErr := d.Store.BrowserPhotoGroupReceipt(readCtx, *browserGroup)
-			cancel()
-			if readErr == nil && receipt != nil {
-				return writeWebPhotoReceipt(ctx, conn, begin.RequestID, *receipt)
-			}
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webUploadInactivity)
+		receipt, readErr := d.Store.BrowserPhotoGroupReceipt(readCtx, *browserGroup)
+		cancel()
+		if readErr == nil && receipt != nil {
+			return writeWebPhotoReceipt(ctx, conn, begin.RequestID, *receipt)
 		}
 		problem := uploadError(err)
 		if errors.Is(err, errWebUploadCanceled) {

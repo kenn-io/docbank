@@ -170,8 +170,8 @@ export interface PhotoImportTransport {
   listPhotoImports(offset: number, signal: AbortSignal): Promise<SavedPhotoImport[]>;
   inspectPhotoImport(
     importID: string,
-    resume: boolean,
     signal: AbortSignal,
+    bySource?: boolean,
   ): Promise<SavedPhotoImport>;
   planPhotoImport(
     files: File[],
@@ -200,6 +200,7 @@ export function photoImportNeedsContentHash(file: File): boolean {
 
 interface UploadMessage {
   import_id?: string;
+  source_id?: string;
   files?: { relative_path: string; size: number; modified_time?: number }[];
   groups?: number[][];
   unsupported?: number[];
@@ -361,17 +362,20 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
 
   async inspectPhotoImport(
     importID: string,
-    resume: boolean,
     signal: AbortSignal,
+    bySource = false,
   ): Promise<SavedPhotoImport> {
     const reply = await this.photoControl(
-      { type: resume ? "resume_photo_import" : "inspect_photo_import", import_id: importID },
+      bySource
+        ? { type: "inspect_photo_import", source_id: importID }
+        : { type: "inspect_photo_import", import_id: importID },
       signal,
     );
     if (
       reply.type !== "photo_import_inspection" ||
       !reply.saved_import ||
-      reply.saved_import.import_id !== importID ||
+      (!bySource && reply.saved_import.import_id !== importID) ||
+      (bySource && reply.saved_import.source_id !== importID) ||
       !Array.isArray(reply.saved_import.groups) ||
       (reply.saved_import.skipped !== undefined &&
         (!Array.isArray(reply.saved_import.skipped) ||

@@ -8,26 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBrowserPhotoGroupKey(t *testing.T) {
-	t.Parallel()
-	members := []BrowserPhotoGroupMember{
-		{Path: "Trip/café.ARW", Role: PhotoRoleRAW},
-		{Path: "Trip/café.xmp", Role: PhotoRoleSidecar},
-	}
-	key := BrowserPhotoGroupKey(members)
-	assert.Equal(t, key, BrowserPhotoGroupKey([]BrowserPhotoGroupMember{
-		{Path: "Trip/cafe\u0301.ARW", Role: PhotoRoleRAW},
-		{Path: "Trip/cafe\u0301.xmp", Role: PhotoRoleSidecar},
-	}))
-	assert.NotEqual(t, key, BrowserPhotoGroupKey(members[:1]))
-	assert.NotEqual(t, key, BrowserPhotoGroupKey([]BrowserPhotoGroupMember{
-		{Path: "Trip/café.ARW", Role: PhotoRoleImage},
-		{Path: "Trip/café.xmp", Role: PhotoRoleSidecar},
-	}))
-	assert.NotEqual(t, BrowserPhotoGroupKey([]BrowserPhotoGroupMember{{Path: "ab", Role: "c"}}),
-		BrowserPhotoGroupKey([]BrowserPhotoGroupMember{{Path: "a", Role: "bc"}}))
-}
-
 func checkBrowserPhotoGroupReceiptReplay(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -35,19 +15,22 @@ func checkBrowserPhotoGroupReceiptReplay(t *testing.T, open func(*testing.T) *St
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
 	require.NoError(t, err)
 	members := []BrowserPhotoGroupMember{{Path: "Trip/capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/Trip/capture.xmp", Size: 4}}
-	key := BrowserPhotoGroupKey(members)
-	id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
+	plan := BrowserPhotoImport{
 		SourceID: uuid.New(), PickerKind: "folder", Label: "Trip", Destination: "/photos", Directory: directory,
-		Groups: []BrowserPhotoImportGroup{{Key: key, Members: members}},
-	})
+		Groups: []BrowserPhotoImportGroup{{Members: members}},
+	}
+	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
 	require.NoError(t, err)
+	sameID, err := s.RegisterBrowserPhotoImport(ctx, plan)
+	require.NoError(t, err)
+	require.Equal(t, id, sameID)
 	digest := fakeHash("a1")
-	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, key, []string{digest}))
-	require.Error(t, s.PinBrowserPhotoGroupHashes(ctx, id, key, []string{fakeHash("b2")}))
+	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{digest}))
+	require.Error(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{fakeHash("b2")}))
 	run, err := s.BeginIngest(ctx, "photo-import", "browser: Trip")
 	require.NoError(t, err)
 	group := PhotoImportGroup{
-		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, GroupKey: key},
+		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, Ordinal: 0},
 		Members: []PhotoImportMember{{Name: "capture.xmp", Role: PhotoRoleSidecar, BlobHash: digest,
 			Size: 4, OriginalPath: members[0].SourcePath}},
 		CreateOnly: true,
@@ -75,10 +58,9 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 		t.Helper()
 		directory, err := s.PrepareIngestDirectory(ctx, "/photos")
 		require.NoError(t, err)
-		key := BrowserPhotoGroupKey(declarations)
 		id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
 			SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-			Groups: []BrowserPhotoImportGroup{{Key: key, Members: declarations}}, Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
+			Groups: []BrowserPhotoImportGroup{{Members: declarations}}, Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
 		})
 		require.NoError(t, err)
 		run, err := s.BrowserPhotoImportRun(ctx, id)
@@ -91,8 +73,8 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 		for i, input := range inputs {
 			hashes[i] = input.BlobHash
 		}
-		require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, key, hashes))
-		group := PhotoImportGroup{BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, GroupKey: key}, Members: inputs, CreateOnly: true}
+		require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, hashes))
+		group := PhotoImportGroup{BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, Ordinal: 0}, Members: inputs, CreateOnly: true}
 		result, err := s.IngestPhotoGroup(ctx, run, group)
 		require.NoError(t, err)
 		replay, err := s.IngestPhotoGroup(ctx, run, group)
@@ -130,20 +112,19 @@ func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
 	require.NoError(t, err)
 	members := []BrowserPhotoGroupMember{{Path: "capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/capture.xmp", Size: 4}}
-	key := BrowserPhotoGroupKey(members)
 	id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
 		SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-		Groups: []BrowserPhotoImportGroup{{Key: key, Members: members}},
+		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	})
 	require.NoError(t, err)
 	digest := fakeHash("a1")
-	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, key, []string{digest}))
+	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{digest}))
 	_, err = s.db.ExecContext(ctx, `CREATE TRIGGER fail_browser_receipt BEFORE UPDATE OF receipt_json ON browser_photo_import_groups BEGIN SELECT RAISE(ABORT, 'receipt failed'); END`)
 	require.NoError(t, err)
 	run, err := s.BeginIngest(ctx, "photo-import", "browser: Choose files")
 	require.NoError(t, err)
 	_, err = s.IngestPhotoGroup(ctx, run, PhotoImportGroup{
-		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, GroupKey: key},
+		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, Ordinal: 0},
 		Members:      []PhotoImportMember{{Name: "capture.xmp", Role: PhotoRoleSidecar, BlobHash: digest, Size: 4, OriginalPath: members[0].SourcePath}},
 		CreateOnly:   true,
 	})
@@ -162,18 +143,17 @@ func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
 	require.NoError(t, err)
 	members := []BrowserPhotoGroupMember{{Path: "capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/capture.xmp", Size: 4}}
-	key := BrowserPhotoGroupKey(members)
 	id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
 		SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-		Groups: []BrowserPhotoImportGroup{{Key: key, Members: members}},
+		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	})
 	require.NoError(t, err)
 	for _, invalid := range []string{"{", "{}"} {
-		_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_import_groups SET receipt_json=$1 WHERE import_id=$2 AND group_key=$3`, invalid, id.String(), key)
+		_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_import_groups SET receipt_json=$1 WHERE import_id=$2 AND ordinal=$3`, invalid, id.String(), 0)
 		require.NoError(t, err)
 		_, err = s.InspectBrowserPhotoImport(ctx, id)
 		require.Error(t, err)
-		receipt, err := s.BrowserPhotoGroupReceipt(ctx, BrowserPhotoGroupRef{ImportID: id, GroupKey: key})
+		receipt, err := s.BrowserPhotoGroupReceipt(ctx, BrowserPhotoGroupRef{ImportID: id, Ordinal: 0})
 		require.Error(t, err)
 		assert.Nil(t, receipt)
 	}
@@ -190,4 +170,24 @@ func TestBrowserPhotoImportMissing(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.InspectBrowserPhotoImport(t.Context(), uuid.New())
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestBrowserPhotoImportRejectsFutureDeclaration(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
+	require.NoError(t, err)
+	plan := BrowserPhotoImport{SourceID: uuid.New(), PickerKind: "files", Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/a.xmp", Size: 1}}}}}
+	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
+	require.NoError(t, err)
+	again, err := s.RegisterBrowserPhotoImport(ctx, plan)
+	require.NoError(t, err)
+	require.Equal(t, id, again)
+	plan.Groups[0].Members[0].Size = 2
+	_, err = s.RegisterBrowserPhotoImport(ctx, plan)
+	require.Error(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET format_version=2 WHERE import_id=$1`, id.String())
+	require.NoError(t, err)
+	_, err = s.InspectBrowserPhotoImport(ctx, id)
+	require.Error(t, err)
 }

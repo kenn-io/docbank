@@ -1339,8 +1339,7 @@ as its files and destination identity. A daemon-wide claim reports an active
 group as pending; inspection checks stored receipts before allowing a resume.
 The deployment retains these records across restarts and same-vault cutovers.
 Portable metadata and backup restores omit import handles and their receipts.
-When adding a released-schema cutover for a source that contains these
-catalogs, call `restoreBrowserPhotoImportState` to copy both tables together.
+A released-schema cutover whose source contains these catalogs must copy both tables together.
 
 A retained XMP sync receipt lets import recognize accepted outside bytes without
 replacing the newer published sidecar. SQLite keeps its indexed source-path
