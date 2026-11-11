@@ -70,7 +70,6 @@
   let checking = $state(false);
   let checked = $state(0);
   let results = $state<TagResult[]>();
-  let complete = $state(false);
   let offset = $state(0);
   const remaining = $derived(results?.filter((row) => row.status === "remaining") ?? []);
   const unavailable = $derived(
@@ -81,15 +80,19 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      results = undefined;
-      complete = false;
-      receipt = confirmed;
+      if (recovering && results) {
+        const confirmedNodes = new Map(confirmed.nodes.map((node) => [node.node_id, node]));
+        results = results.map((row) => {
+          const node = confirmedNodes.get(row.node_id);
+          return node ? { ...row, revision: node.revision, status: "matched" } : row;
+        });
+      } else {
+        receipt = confirmed;
+      }
       onchanged?.(confirmed);
     },
     onunknown: () => {
       recovering = true;
-      results = undefined;
-      complete = false;
       onunknown?.();
     },
     unknownMessage:
@@ -135,18 +138,17 @@
 
   async function check(): Promise<void> {
     if (!request || checking || applying) return;
+    recovering = true;
     checking = true;
     checked = 0;
     results = undefined;
-    complete = false;
     run.failure = "";
     try {
-      const result = await checkTagResults(session, request, (value) => {
+      const rows = await checkTagResults(session, request, (value) => {
         if (alive) checked = value;
       });
       if (!alive) return;
-      results = result.rows;
-      complete = result.complete;
+      results = rows;
       offset = 0;
     } catch (cause) {
       if (!alive) return;
@@ -158,15 +160,17 @@
   }
 
   async function retry(): Promise<void> {
-    if (!request || !complete || !remaining.length || applying) return;
+    if (!request || !remaining.length || busy) return;
+    const attempted = new Set(remaining.map((row) => row.node_id));
     const outcome = await run.submit({
       ...request,
       operation_id: randomUUID(),
       nodes: remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! })),
     });
-    if (alive && outcome === "stale") {
-      results = undefined;
-      complete = false;
+    if (alive && (outcome === "stale" || outcome === "unknown")) {
+      results = results?.map((row) =>
+        attempted.has(row.node_id) ? { node_id: row.node_id, name: row.name, status: "unavailable" } : row,
+      );
     }
   }
 
@@ -346,30 +350,26 @@
     {#if receipt}
       <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
     {:else if (run.stale || recovering) && request}
-      {#if results && remaining.length && complete}<span class="footer-start"
-          ><Button size="sm" surface="soft" disabled={applying} onclick={() => void check()}
+      {#if results && (remaining.length || unavailable)}<span class="footer-start"
+          ><Button size="sm" surface="soft" disabled={busy} onclick={() => void check()}
             >Check again</Button
           ></span
         >{/if}
       <Button surface="soft" disabled={applying} onclick={close}
-        >{results && !remaining.length ? "Done" : "Close"}</Button
+        >{results && !remaining.length && !unavailable ? "Done" : "Close"}</Button
       >
-      {#if results && remaining.length && complete}
-        <Button tone="info" surface="solid" disabled={applying} onclick={() => void retry()}
+      {#if results && remaining.length}
+        <Button tone="info" surface="solid" disabled={busy} onclick={() => void retry()}
           >{assign ? "Add" : "Remove"} “{tag?.name}” {assign ? "to" : "from"}
           {documentCount(remaining.length)}</Button
         >
-      {:else if !results || !complete}
+      {:else if !results}
         <Button
           tone="info"
           surface="solid"
           disabled={checking || applying}
           onclick={() => void check()}
-          >{checking
-            ? "Checking…"
-            : results || !run.unknown
-              ? "Check again"
-              : "Check tag results"}</Button
+          >{checking ? "Checking…" : !run.unknown ? "Check again" : "Check tag results"}</Button
         >
       {/if}
     {:else}

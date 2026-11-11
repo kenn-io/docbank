@@ -1076,9 +1076,8 @@ export async function deleteTag(
 export async function liveNodeTags(
   session: string,
   nodeID: number,
-  nodeBefore?: Node,
 ): Promise<{ node: Node; items: Tag[]; total: number }> {
-  const before = nodeBefore ?? (await generated.getNode(nodeID, { session }));
+  const before = await generated.getNode(nodeID, { session });
   if (before.id !== nodeID || before.revision < 1 || before.trashed_at) {
     throw new Error("The daemon returned invalid live node authority for tag inspection.");
   }

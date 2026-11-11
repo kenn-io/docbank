@@ -222,16 +222,8 @@ it.each([true, false])(
         return Response.json(await receiptFor(request));
       }
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-      if (url.includes("/tags")) {
-        const hasTag = id === 7 ? assign : !assign;
-        return Response.json({
-          items: hasTag ? [catalog[0]] : [],
-          total: hasTag ? 1 : 0,
-          limit: 1000,
-          offset: 0,
-        });
-      }
-      return Response.json({ id, name: `Document ${id}`, revision: id === 7 ? 10 : 12 });
+      if (id === 7) throw new TypeError("Network error");
+      return Response.json({ id, name: `Document ${id}`, revision: 12 });
     });
     render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
     await chooseReview();
@@ -245,7 +237,10 @@ it.each([true, false])(
     await fireEvent.click(screen.getByText("Review documents"));
     expect(screen.getByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeTruthy();
     await fireEvent.click(retry);
-    await screen.findByRole("button", { name: "Done" });
+    await screen.findByText(assign ? "Has “Review”" : "Doesn't have “Review”");
+    expect(screen.getByText("Couldn't check")).toBeTruthy();
+    await screen.findByRole("button", { name: "Check again" });
+    expect(screen.getByText("Document 7")).toBeTruthy();
     expect(screen.queryByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeNull();
     expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
@@ -266,7 +261,7 @@ it.each(["unknown", "rejected", "stale"])(
           tag_revision: 2,
           nodes: body.nodes.map((node: { node_id: number; revision: number }) => ({
             ...node,
-            assigned: false,
+            assigned: node.node_id === 7 || applied,
           })),
         });
       }
@@ -287,15 +282,7 @@ it.each(["unknown", "rejected", "stale"])(
         );
       }
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-      if (url.includes("/tags")) {
-        const hasTag = id === 7 || applied;
-        return Response.json({
-          items: hasTag ? [catalog[0]] : [],
-          total: hasTag ? 1 : 0,
-          limit: 1000,
-          offset: 0,
-        });
-      }
+      if (id === 7) throw new TypeError("Network error");
       return Response.json({ id, name: `Document ${id}`, revision: id === 7 ? 10 : 12 });
     });
     render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
@@ -310,18 +297,15 @@ it.each(["unknown", "rejected", "stale"])(
     if (outcome === "rejected") {
       await screen.findByText("Retry refused");
       expect(screen.getByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
-      expect(screen.getByText(/1 of 2 documents/)).toBeTruthy();
+      expect(screen.getByText(/0 of 2 documents/)).toBeTruthy();
     } else {
       if (outcome === "stale")
         await screen.findByText("Some documents changed. Check their tags again.");
-      await fireEvent.click(
-        await screen.findByRole("button", {
-          name: outcome === "unknown" ? "Check tag results" : "Check again",
-        }),
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "Add “Review” to 1 document" })).toBeNull(),
       );
-      await screen.findByText(
-        outcome === "unknown" ? "All 2 documents have “Review”." : /1 of 2 documents/,
-      );
+      await fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+      await screen.findByText(outcome === "unknown" ? /1 of 2 documents/ : /0 of 2 documents/);
     }
   },
 );

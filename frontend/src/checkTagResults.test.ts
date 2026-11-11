@@ -15,50 +15,62 @@ const request: BatchTagRequest = {
 };
 afterEach(() => vi.restoreAllMocks());
 
-it("reads all tag pages and excludes missing and trashed documents", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+it("previews live documents and retains missing and trashed rows", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url.includes("preview")) {
+      expect(JSON.parse(String(init?.body)).nodes).toEqual([{ node_id: 1, revision: 4 }]);
+      return Response.json({
+        tag_id: request.tag_id,
+        tag_revision: 2,
+        nodes: [{ node_id: 1, revision: 4, assigned: true }],
+      });
+    }
     if (url.includes("/nodes/2"))
       return Response.json({ id: 2, name: "Trash", revision: 2, trashed_at: "2026-01-01" });
     if (url.includes("/nodes/3")) return Response.json({ detail: "Missing" }, { status: 404 });
-    if (url.includes("/tags")) {
-      const offset = Number(new URL(url, "http://example.test").searchParams.get("offset"));
-      const items =
-        offset === 0
-          ? Array.from({ length: 1000 }, (_, i) => ({ id: `tag-${i}` }))
-          : [{ id: request.tag_id }];
-      return Response.json({ items, total: 1001, limit: 1000, offset });
-    }
     return Response.json({ id: 1, name: "Live", revision: 4 });
   });
-  const result = await checkTagResults("session", request, () => {});
-  expect(result).toEqual({
-    complete: true,
-    rows: [
-      { node_id: 1, name: "Live", revision: 4, status: "matched" },
-      { node_id: 2, name: "Trash", status: "trash" },
-      { node_id: 3, name: "Document 3", status: "unavailable" },
-    ],
-  });
-  expect(fetch.mock.calls.some(([url]) => String(url).includes("offset=1000"))).toBe(true);
-  expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/nodes/1")).toHaveLength(2);
+  expect(await checkTagResults("session", request, () => {})).toEqual([
+    { node_id: 1, name: "Live", revision: 4, status: "matched" },
+    { node_id: 2, name: "Trash", status: "trash" },
+    { node_id: 3, name: "Document 3", status: "unavailable" },
+  ]);
+  expect(fetch).toHaveBeenCalledTimes(4);
 });
 
-it("blocks retry when a read fails or changes while tags load", async () => {
-  let reads = 0;
+it("keeps candidates unchecked when the preview rejects changed revisions", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.includes("/nodes/2")) throw new TypeError("Network error");
-    if (url.includes("/nodes/3")) return Response.json({ detail: "Missing" }, { status: 404 });
-    if (url.includes("/tags"))
-      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
-    return Response.json({ id: 1, name: "Live", revision: ++reads < 2 ? 4 : 5 });
+    if (String(input).includes("preview"))
+      return Response.json({ code: "stale_revision" }, { status: 409 });
+    const id = Number(String(input).match(/nodes\/(\d+)/)?.[1]);
+    return Response.json({ id, name: `Document ${id}`, revision: 4 });
   });
-  const result = await checkTagResults("session", request, () => {});
-  expect(result.complete).toBe(false);
-  expect(result.rows.map((row) => row.status)).toEqual([
-    "unavailable",
-    "unavailable",
-    "unavailable",
-  ]);
+  const rows = await checkTagResults("session", request, () => {});
+  expect(rows).toEqual(
+    request.nodes.map(({ node_id }) => ({
+      node_id,
+      name: `Document ${node_id}`,
+      status: "unavailable",
+    })),
+  );
+});
+
+it("skips the preview when no documents can be read", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+  const rows = await checkTagResults("session", request, () => {});
+  expect(rows.every((row) => row.status === "unavailable")).toBe(true);
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it.each(["node", "preview"])("propagates authentication failure from %s", async (source) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (source === "node" || String(input).includes("preview"))
+      return Response.json({ detail: "Unauthorized" }, { status: 401 });
+    const id = Number(String(input).match(/nodes\/(\d+)/)?.[1]);
+    return Response.json({ id, name: `Document ${id}`, revision: 4 });
+  });
+  await expect(checkTagResults("session", request, () => {})).rejects.toMatchObject({
+    status: 401,
+  });
 });
