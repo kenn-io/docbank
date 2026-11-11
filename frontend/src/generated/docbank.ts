@@ -7878,6 +7878,8 @@ export interface RenditionTextRequest {
   readonly $schema?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
+  /** Resolve the exact observed active rendition independently of the current default profile */
+  exact_rendition?: boolean;
   /** @minimum 1 */
   node_id: number;
   observed?: RenditionTextObserved;
@@ -10079,6 +10081,13 @@ hidden?: boolean;
 
 export type SetPhotoSettingsHeaders = {
 'If-Match': string;
+};
+
+export type ListDocumentProcessingProfilesParams = {
+/**
+ * Include configured profiles without an executable runtime
+ */
+include_configured?: boolean;
 };
 
 export type ListPushSourcesParams = {
@@ -19314,20 +19323,27 @@ return sessionJSON<ProcessingPlan>(getPlanDocumentProcessingUrl(),
 
 
 
-export const getListDocumentProcessingProfilesUrl = () => {
+export const getListDocumentProcessingProfilesUrl = (params?: ListDocumentProcessingProfilesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/processing/profiles`
+  return stringifiedParams.length > 0 ? `/api/v1/processing/profiles?${stringifiedParams}` : `/api/v1/processing/profiles`
 }
 
 /**
- * @summary List locally executable document-processing profiles
+ * @summary List document-processing profiles
  */
-export const listDocumentProcessingProfiles = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
+export const listDocumentProcessingProfiles = async (params?: ListDocumentProcessingProfilesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
 
-  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(),
+  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(params),
   {
     ...options,
     method: 'GET'

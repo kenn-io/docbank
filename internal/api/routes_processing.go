@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,12 +50,31 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	type profilesOutput struct{ Body []ProcessingProfileSummary }
 	huma.Register(api, huma.Operation{
 		OperationID: "listDocumentProcessingProfiles", Method: http.MethodGet,
-		Path: "/api/v1/processing/profiles", Summary: "List locally executable document-processing profiles",
-	}, func(_ context.Context, _ *struct{}) (*profilesOutput, error) {
+		Path: "/api/v1/processing/profiles", Summary: "List document-processing profiles",
+	}, func(_ context.Context, in *struct {
+		IncludeConfigured bool `query:"include_configured" doc:"Include configured profiles without an executable runtime"`
+	}) (*profilesOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
 		result := processingProfileSummaries(d.Processing)
+		if in.IncludeConfigured {
+			seen := make(map[string]bool, len(result))
+			for _, profile := range result {
+				seen[profile.Name] = true
+			}
+			for name := range d.Cfg.ProcessingProfiles {
+				if seen[name] {
+					continue
+				}
+				fingerprint, err := configuredProfileFingerprint(d.Cfg, name)
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, ProcessingProfileSummary{Name: name, Fingerprint: fingerprint})
+			}
+			sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		}
 		return &profilesOutput{Body: result}, nil
 	})
 

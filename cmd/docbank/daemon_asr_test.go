@@ -233,7 +233,7 @@ func TestDaemonDoclingASRFailures(t *testing.T) {
 func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 	provider := newDaemonDoclingServer(t)
 	_, daemon, _ := startDaemonASRTest(t, provider, "", true)
-	profiles, err := daemon.API().ListDocumentProcessingProfiles(t.Context())
+	profiles, err := daemon.API().ListDocumentProcessingProfiles(t.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 	require.NoError(t, err)
 	var names []string
 	for _, profile := range *profiles {
