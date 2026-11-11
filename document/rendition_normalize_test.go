@@ -159,6 +159,25 @@ func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
 	}
 }
 
+func TestImageUnderstandingReaderFixture(t *testing.T) {
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
+		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
+		Family: "image", UnitKind: EvidenceUnitGeneric,
+		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+		Units: []SourceEvidenceUnitV1{
+			{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "  literal \\# text\n```\ninside\n````\n\n", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+			{Order: 1, HeadingPath: []string{ImageUnderstandingHeading, "Literal description"}, Text: "next\\\nline\n", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+		},
+	})
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10000, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
+	require.NoError(t, err)
+	rendered, err := BuildRenditionV1(evidence, policy)
+	require.NoError(t, err)
+	want, err := os.ReadFile("testdata/image-understanding-reader.golden.md")
+	require.NoError(t, err)
+	assert.Equal(t, string(want), string(rendered.Markdown))
+}
+
 func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 	for _, tc := range []struct {
 		name, text, want, lexical string

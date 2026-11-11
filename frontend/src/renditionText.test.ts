@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   readVerifiedRenditionText,
@@ -195,13 +196,6 @@ const escapedImageText =
   "\n\t  # Machine\\-generated image understanding\n\n" +
   "flames\\. C:\\\\dir \\a\n\t\tline \\(1\\)  \n\n";
 
-// Mirrors the worker's serializeRenditionCodeBlock("", text + "\n").
-function imageSection(text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}\n${text}\n${fence}`;
-}
-
 const imageTexts = [
   "flames. C:\\dir \\a\n\t\tline (1)  ",
   "\n\n  indented\t\nends in a backslash\\\nand two\\\\\n",
@@ -212,13 +206,21 @@ const imageTexts = [
   "\n",
 ];
 
+const imageSections = [
+  "```\nflames. C:\\dir \\a\n\t\tline (1)  \n```",
+  "```\n\n\n  indented\t\nends in a backslash\\\nand two\\\\\n\n```",
+  "`````\n```\nliteral fence\n```\n````longer````\n~~~\ntilde\n~~~\n\n\n\n`````",
+  "```\n\\# not a heading \\* \\` \\\\\n```",
+  "```````\n``````\n```````",
+  "```\n\n```",
+  "```\n\n\n```",
+];
+
 it("shows each image understanding section exactly as transcribed", async () => {
   const markdown =
     "# Machine\\-generated image understanding\n\n" +
     "Configured model: gpt\\-4\\.1\n\n" +
-    imageTexts
-      .map((text, index) => `## Section \\(${index}\\)\n\n${imageSection(text)}`)
-      .join("\n\n") +
+    imageSections.map((section, index) => `## Section \\(${index}\\)\n\n${section}`).join("\n\n") +
     "\n";
   await expect(
     readArtifact(renditionArtifact(markdown), "compatible-vision.understand-v1"),
@@ -227,6 +229,23 @@ it("shows each image understanding section exactly as transcribed", async () => 
       "Configured model: gpt-4.1\n\n" +
       imageTexts.map((text, index) => `## Section (${index})\n\n${text}`).join("\n\n") +
       "\n",
+  );
+});
+
+it("reads the Go producer's image rendition", async () => {
+  const markdown = readFileSync(
+    "../document/testdata/image-understanding-reader.golden.md",
+    "utf8",
+  );
+  await expect(
+    readArtifact(renditionArtifact(markdown), "compatible-vision.understand-v1"),
+  ).resolves.toBe(
+    "# Machine-generated image understanding\n\n" +
+      "This is a model interpretation of an image, not verified source testimony. Possible meaning is uncertain without conversation context and does not establish anyone's beliefs, endorsement, or intent.\n\n" +
+      "Configured model: model\n\n" +
+      "## Visible text (best-effort transcription)\n\n" +
+      "  literal \\# text\n```\ninside\n````\n\n\n\n---\n\n" +
+      "## Literal description\n\nnext\\\nline\n\n",
   );
 });
 
