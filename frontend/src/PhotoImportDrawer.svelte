@@ -71,7 +71,7 @@
   let savedImports = $state<SavedPhotoImport[]>([]);
   let selectedImport = $state("");
   let savedImport = $state<SavedPhotoImport>();
-  let registered = false;
+  let registered = $state(false);
   let registrationUncertain = $state(false);
   let extraFiles = $state<string[]>([]);
   let pickerKind: "files" | "folder" = "files";
@@ -197,6 +197,12 @@
     missing: "Files missing",
     changed: "Files changed",
   };
+
+  function receiptReason(reason: string | undefined): string | undefined {
+    if (reason === "multiple_raw") return "Multiple RAW files share this name.";
+    if (reason === "separate_photos") return "These files belong to separate photos.";
+    return reason;
+  }
   onDestroy(() => {
     destroyed = true;
     controller?.abort();
@@ -266,6 +272,7 @@
         files: [],
         names: group.files.map((file) => file.relative_path),
         hashes: group.hashes ?? group.files.map(() => ""),
+        error: receiptReason(group.receipt?.reason),
         state:
           group.status === "committed"
             ? group.receipt!.status
@@ -313,7 +320,9 @@
             changed = true;
         }
         if (group.status === "committed") {
-          item.error = changed ? "Files changed since this group was imported." : undefined;
+          item.error = changed
+            ? "Files changed since this group was imported."
+            : receiptReason(group.receipt?.reason);
           continue;
         }
         if (group.status !== "remaining") continue;
@@ -543,12 +552,7 @@
           );
           added ||= receipt.status === "added";
           setState(item, receipt.status);
-          item.error =
-            receipt.reason === "multiple_raw"
-              ? "Multiple RAW files share this name."
-              : receipt.reason === "separate_photos"
-                ? "These files belong to separate photos."
-                : receipt.reason;
+          item.error = receiptReason(receipt.reason);
           refreshNeeded = true;
         } catch (cause) {
           if (controller.signal.aborted && !transmissionStarted) break;
@@ -557,9 +561,7 @@
           setState(item, state);
           item.error =
             state === "unconfirmed"
-              ? sessionOnly
-                ? "Import outcome is unconfirmed. Choose the same files or folder again. Photos and videos already in the vault are skipped. Other files, including standalone XMP sidecars, may be added again."
-                : "Import outcome is unconfirmed. Reload the page, then choose Resume import and reselect the same files or folder."
+              ? "Import outcome is unconfirmed. Open Saved imports, select this import, and choose Inspect import."
               : cause instanceof Error
                 ? cause.message
                 : String(cause);
@@ -663,7 +665,7 @@
           onclick={() => void inspectSavedImport()}>Inspect import</Button
         >
       {/if}
-      {#if savedImport || registrationUncertain}
+      {#if savedImport || registered || registrationUncertain}
         <Button
           disabled={running || planning}
           onclick={() => {
@@ -683,6 +685,7 @@
           running ||
           planning ||
           !!disabledReason ||
+          (registered && !savedImport) ||
           registrationUncertain}
         filesLabel="Choose photo files"
         folderLabel="Choose photo folder"
