@@ -932,6 +932,7 @@ var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 const (
 	MistralOCRAdapterContract      = mistral.DocumentAdapterContract
 	DoclingASRAdapterContract      = docling.ASRAdapterContract
+	DoclingASRM4AAdapterContract   = docling.ASRM4AAdapterContract
 	DoclingDocumentAdapterContract = docling.DocumentAdapterContract
 )
 
@@ -1106,7 +1107,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
 		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))
 	}
-	if profile.AdapterContract == DoclingASRAdapterContract {
+	if profile.AdapterContract == DoclingASRAdapterContract || profile.AdapterContract == DoclingASRM4AAdapterContract {
 		if _, err := document.NewEvidencePolicy(profile.MaxTranscriptChars); err != nil {
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
@@ -1145,8 +1146,8 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingASRM4AAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != MistralOCRAdapterContract && profile.AdapterContract != vision.AdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingASRM4AAdapterContract, DoclingDocumentAdapterContract, MistralOCRAdapterContract, vision.AdapterContract)
 	}
 	if profile.AdapterContract == MistralOCRAdapterContract {
 		return validateMistralRuntime(profile, prefix)
@@ -1169,7 +1170,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {
 			return fmt.Errorf("%s vision requires a withheld filename, structured evidence, and at most 1 MiB response", prefix)
 		}
-	case DoclingASRAdapterContract:
+	case DoclingASRAdapterContract, DoclingASRM4AAdapterContract:
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
 			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
 		}

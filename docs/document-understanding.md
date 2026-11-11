@@ -292,8 +292,12 @@ The audio capability path also accepts M4A originals with `.m4a` and
 metadata, local sample ranges, and finite duration while streaming the original.
 The local transcript and caption providers can use that capability without
 decoding audio. See [media recordings](cli-reference.md#docbank-media) for the
-container requirements and byte ceilings. Docling ASR and Gemini audio
-qualification remain limited to WAV and MP3.
+container requirements and byte ceilings. The opt-in Docling ASR v2 adapter
+submits those original bytes for speech recognition through the existing
+consent-bound rendition worker. Its separate descriptor preserves the v1
+WAV/MP3 consent boundary. See [audio transcription configuration](configuration.md#supplied-audio-transcription)
+for service and decoder requirements. Gemini audio qualification remains
+limited to WAV and MP3.
 
 Use `document/mediatranscript` when the source supplies segment timing. Its
 `media-transcript/v1` artifact retains ordered text, start and end

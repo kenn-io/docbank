@@ -98,11 +98,11 @@ daemon validates them before it creates a hosted provider and refuses redirects
 and unexpected provider behavior according to the adapter contract.
 
 A rendition profile can use the same deployment-local boundary for supplied
-audio transcription. Set `adapter_contract` to
-`docbank-docling-asr/v1`, bind `credential:<name>`, and add a `runtime` block
-with the Docling origin, request and polling bounds, allowed CIDRs, proxy
-mode, and transport timeouts. The qualified adapter accepts original WAV and
-MP3 input and publishes generated `media-transcript/v1` evidence. Its plan
+audio transcription. Set `adapter_contract` to `docbank-docling-asr/v1` for
+WAV and MP3, or `docbank-docling-asr/v2` to include M4A. Bind
+`credential:<name>` and add a `runtime` block with the Docling origin, request
+and polling bounds, allowed CIDRs, proxy mode, and transport timeouts. The
+adapter publishes generated `media-transcript/v1` evidence. Its plan
 discloses the destination before consent, and provider responses do not become
 portable policy. Set the rendition's `max_transcript_chars` independently of
 each processing profile's `max_document_chars`. A runtime that no processing

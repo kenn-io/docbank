@@ -17,7 +17,9 @@ import (
 
 const (
 	// ASRAdapterContract identifies the daemon's qualified audio rendition policy.
-	ASRAdapterContract          = "docbank-docling-asr/v1"
+	ASRAdapterContract = "docbank-docling-asr/v1"
+	// ASRM4AAdapterContract opts into M4A upload authority with a separate policy.
+	ASRM4AAdapterContract       = "docbank-docling-asr/v2"
 	qualifiedASRSchemaVersion   = "1.10.0"
 	qualifiedASRProviderVersion = "1.32.0"
 )
@@ -28,12 +30,15 @@ type ASRProfile struct {
 	Profile
 
 	MaxTranscriptChars int
+	// AllowM4A requires the v2 policy and an M4A-capable deployment.
+	AllowM4A bool
 }
 
 // ASRClient maps qualified Docling audio tracks to retained transcripts.
 type ASRClient struct {
 	client         *Client
 	evidencePolicy document.EvidencePolicy
+	allowM4A       bool
 }
 
 var _ document.RenditionProvider = (*ASRClient)(nil)
@@ -41,6 +46,15 @@ var _ document.RenditionProvider = (*ASRClient)(nil)
 // ASRPolicyFingerprint binds the qualified versions and every transcript evidence
 // bound. Use it as the ASR descriptor's PolicyFingerprint before sealing requests.
 func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
+	return asrPolicyFingerprint(maxTranscriptChars, ASRAdapterContract)
+}
+
+// ASRM4APolicyFingerprint binds M4A support independently of WAV/MP3 consent.
+func ASRM4APolicyFingerprint(maxTranscriptChars int) (string, error) {
+	return asrPolicyFingerprint(maxTranscriptChars, ASRM4AAdapterContract)
+}
+
+func asrPolicyFingerprint(maxTranscriptChars int, contract string) (string, error) {
 	policy, err := document.NewEvidencePolicy(maxTranscriptChars)
 	if err != nil {
 		return "", err
@@ -50,7 +64,7 @@ func ASRPolicyFingerprint(maxTranscriptChars int) (string, error) {
 		SchemaVersion   string                          `json:"schema_version"`
 		ProviderVersion string                          `json:"provider_version"`
 		EvidencePolicy  document.EvidencePolicyIdentity `json:"evidence_policy"`
-	}{ASRAdapterContract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
+	}{contract, qualifiedASRSchemaVersion, qualifiedASRProviderVersion, policy.Identity()})
 	if err != nil {
 		return "", err
 	}
@@ -63,7 +77,12 @@ func ASRDisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint,
 	return providerutil.RenditionDisclosureFingerprint(ASRAdapterContract, descriptor, endpoint, deployment)
 }
 
-// NewASR constructs the transcript provider for the qualified WAV/MP3 deployment.
+// ASRM4ADisclosureFingerprint binds a v2 profile to its endpoint and deployment.
+func ASRM4ADisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
+	return providerutil.RenditionDisclosureFingerprint(ASRM4AAdapterContract, descriptor, endpoint, deployment)
+}
+
+// NewASR constructs the WAV/MP3 provider or the opt-in M4A-capable v2 provider.
 func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client) (*ASRClient, error) {
 	client, err := newTransportClient(profile.Profile, secrets, httpClient)
 	if err != nil {
@@ -72,10 +91,14 @@ func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client)
 	descriptor := client.descriptor
 	if descriptor.ReturnsMarkdown || !descriptor.ReturnsStructured ||
 		len(descriptor.ArtifactRoles) != 1 || descriptor.ArtifactRoles[0] != document.EvidenceArtifactTranscript ||
-		!qualifiedASRFormats(descriptor.SupportedFormats) {
+		!qualifiedASRFormats(descriptor.SupportedFormats, profile.AllowM4A) {
 		return nil, errors.New("docling: ASR profile does not match the qualified deployment")
 	}
-	fingerprint, err := ASRPolicyFingerprint(profile.MaxTranscriptChars)
+	contract := ASRAdapterContract
+	if profile.AllowM4A {
+		contract = ASRM4AAdapterContract
+	}
+	fingerprint, err := asrPolicyFingerprint(profile.MaxTranscriptChars, contract)
 	if err != nil || descriptor.PolicyFingerprint != fingerprint {
 		return nil, errors.New("docling: ASR descriptor policy fingerprint does not match transcript bounds")
 	}
@@ -83,7 +106,7 @@ func NewASR(profile ASRProfile, secrets SecretResolver, httpClient *http.Client)
 	if err != nil {
 		return nil, err
 	}
-	return &ASRClient{client: client, evidencePolicy: policy}, nil
+	return &ASRClient{client: client, evidencePolicy: policy, allowM4A: profile.AllowM4A}, nil
 }
 
 func (client *ASRClient) Descriptor() document.RenditionDescriptor {
@@ -115,7 +138,7 @@ func (client *ASRClient) Render(
 	}
 	defer run.operation.Cancel()
 	if run.metadata.Filename == "" {
-		run.metadata.Filename = map[string]string{"audio/mpeg": "document.mp3", "audio/wav": "document.wav"}[run.metadata.MediaType]
+		run.metadata.Filename = map[string]string{"audio/mpeg": "document.mp3", "audio/wav": "document.wav", "audio/mp4": "document.m4a"}[run.metadata.MediaType]
 	}
 	task, result, err := client.client.convert(run, [][2]string{
 		{"from_formats", "audio"}, {"to_formats", "json"}, {"target_type", "inbody"},
@@ -135,11 +158,12 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 	}
 	facts, local := carrier.CapabilityProof().Facts()
 	metadata := upload.Metadata()
+	supportedType := facts.MediaType == "audio/wav" || facts.MediaType == "audio/mpeg" || (client.allowM4A && facts.MediaType == "audio/mp4")
 	if !local || facts.Checksum != authorization.CapabilityRecordChecksum ||
 		facts.Checksum != metadata.CapabilityRecordChecksum || facts.SourceSHA256 != metadata.SHA256 ||
 		facts.SourceBytes != metadata.ByteLength || facts.DescriptorFingerprint != client.client.descriptor.Fingerprint ||
 		facts.MediaFamily != "audio" || facts.MediaFamily != metadata.MediaFamily || facts.MediaType != metadata.MediaType ||
-		(facts.MediaType != "audio/wav" && facts.MediaType != "audio/mpeg") ||
+		!supportedType ||
 		facts.DurationMS <= 0 || facts.DurationMS > (24*time.Hour).Milliseconds() {
 		return 0, provider.Classified(document.RenditionErrorPolicyRejected, "Docling ASR audio capability does not match the upload", nil)
 	}
@@ -148,13 +172,20 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 
 var errASRTimingUnavailable = errors.New("timing_unavailable")
 
-func qualifiedASRFormats(formats []document.RenditionFormatCapability) bool {
-	if len(formats) != 2 {
+func qualifiedASRFormats(formats []document.RenditionFormatCapability, allowM4A bool) bool {
+	count := 2
+	if allowM4A {
+		count++
+	}
+	if len(formats) != count {
 		return false
 	}
 	want := map[document.RenditionFormatCapability]bool{
 		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile}: true,
 		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile}:  true,
+	}
+	if allowM4A {
+		want[document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile}] = true
 	}
 	for _, format := range formats {
 		if !want[format] {
@@ -229,6 +260,14 @@ func asrDocumentVersion(raw []byte) (string, error) {
 	return identity.Version, nil
 }
 
+// The M4A contract has no qualified provider version.
+func asrArtifactProviderVersion(allowM4A bool) string {
+	if allowM4A {
+		return ""
+	}
+	return qualifiedASRProviderVersion
+}
+
 func (client *ASRClient) buildResult(
 	run *rendering, task taskResponse, result doclingResult, durationMS int64,
 ) (document.RenditionResult, error) {
@@ -248,7 +287,7 @@ func (client *ASRClient) buildResult(
 	}
 	evidence, artifact, err := mediatranscript.Build(mediatranscript.ArtifactV1{
 		ContractVersion: "media-transcript/v1", Origin: "generated",
-		Provider: providerID, ProviderVersion: qualifiedASRProviderVersion,
+		Provider: providerID, ProviderVersion: asrArtifactProviderVersion(client.allowM4A),
 		Segments: segments,
 	}, run.authorization.MediaFamily, client.evidencePolicy)
 	if err != nil {

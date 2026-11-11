@@ -1,0 +1,40 @@
+{
+  "contract": "docbank-asr-qualification/v1",
+  "qualified_at": "2026-11-10",
+  "result": "M4A AAC and MP3 returned timed speech through the v2 adapter; both contained the expected terms.",
+  "source": "synthetic asr-spoken.wav transcoded to AAC/M4A",
+  "source_sha256": "cfa821a8af39100298a8917a6a0a88ebbe51345c76c2037217eefc9835a10ba8",
+  "artifact_sha256": "3f00a853aeba17132031b5e99063b798c8d1d02e59da43deae27161c28470733",
+  "mp3_artifact_sha256": "ee33bbb94d1ca9c51d1ea707fe0d160b0509627297a4f57cb3504ca60c1d934b",
+  "versions": {
+    "docling-serve": "1.32.0",
+    "docling-slim": "2.124.0",
+    "docling-core": "2.105.0",
+    "docling-jobkit": "3.5.0",
+    "openai-whisper": "20250625"
+  },
+  "decoder": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "aac",
+        "sample_rate": "22050",
+        "channels": 1
+      }
+    ],
+    "format": {
+      "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+      "duration": "3.260000"
+    }
+  },
+  "adapter": "docbank-docling-asr/v2",
+  "document_schema": "1.10.0",
+  "expected_terms": [
+    "delivery",
+    "arrives",
+    "friday"
+  ],
+  "expected_synthetic_phrase": "Telescope delivery arrives Friday at 3.",
+  "accuracy": "ASR may misrecognize words; this qualification verifies decoding and timed speech, not verbatim accuracy"
+}

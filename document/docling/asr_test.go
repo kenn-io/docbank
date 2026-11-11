@@ -23,6 +23,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/mediatranscript"
 )
 
@@ -262,13 +263,15 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 		{name: "WAV withheld filename", withholdFilename: true, mediaType: "audio/wav", filename: "asr-spoken.wav", taskID: "asr-wav", source: asrSpokenWAV, providerEnd: 3.06, wantEnd: 3060},
 		{name: "MP3 withheld filename", withholdFilename: true, mediaType: "audio/mpeg", filename: "asr-spoken.mp3", taskID: "asr-mp3", source: asrSpokenMP3, providerEnd: 3.08, wantEnd: 3080},
 		{name: "MP3", mediaType: "audio/mpeg", filename: "asr-spoken.mp3", taskID: "asr-mp3", source: asrSpokenMP3, providerEnd: 3.08, wantEnd: 3080},
+		{name: "M4A AAC", mediaType: "audio/mp4", filename: "synthetic.m4a", taskID: "asr-m4a", source: mediatest.AACM4A(), providerEnd: 0.03, wantEnd: 30},
+		{name: "M4A withheld filename", mediaType: "audio/mp4", filename: "synthetic.m4a", taskID: "asr-m4a", source: mediatest.AACM4A(), providerEnd: 0.03, wantEnd: 30, withholdFilename: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			fixture := newASRFixture(t, testCase.mediaType, testCase.filename, testCase.source)
 			fixture.authorization.DiscloseFilename = !testCase.withholdFilename
 			submittedMetadata := fixture.metadata
 			if testCase.withholdFilename {
-				submittedMetadata.Filename = map[string]string{"audio/wav": "document.wav", "audio/mpeg": "document.mp3"}[testCase.mediaType]
+				submittedMetadata.Filename = map[string]string{"audio/wav": "document.wav", "audio/mpeg": "document.mp3", "audio/mp4": "document.m4a"}[testCase.mediaType]
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
@@ -297,7 +300,11 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			require.NoError(t, err)
 			assert.Equal(t, "generated", artifact.Origin)
 			assert.Equal(t, "docling.serve-v1", artifact.Provider)
-			assert.Equal(t, "1.32.0", artifact.ProviderVersion)
+			if testCase.mediaType == "audio/mp4" {
+				assert.Empty(t, artifact.ProviderVersion)
+			} else {
+				assert.Equal(t, "1.32.0", artifact.ProviderVersion)
+			}
 			assert.Empty(t, artifact.Model)
 		})
 	}
@@ -406,15 +413,22 @@ func (fixture asrFixture) upload() document.AuthorizedUpload {
 func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrFixture {
 	t.Helper()
 	policyFingerprint, err := ASRPolicyFingerprint(100_000)
+	if mediaType == "audio/mp4" {
+		policyFingerprint, err = ASRM4APolicyFingerprint(100_000)
+	}
 	require.NoError(t, err)
+	formats := []document.RenditionFormatCapability{
+		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+	}
+	if mediaType == "audio/mp4" {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
+	}
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: policyFingerprint,
 		TrustBoundary:     document.RenditionTrustOperatorNetwork,
-		SupportedFormats: []document.RenditionFormatCapability{
-			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
-			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
-		},
+		SupportedFormats:  formats,
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 	})
@@ -433,7 +447,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		DescriptorFingerprint: descriptor.Fingerprint,
 		ProfileFingerprint:    strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
 		InputKind:      document.RenditionInputOriginalFile,
-		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1, MaxEntries: 1,
+		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
 		MaxDurationMS: 10_000,
@@ -465,7 +479,7 @@ func newASRClient(t *testing.T, origin string, descriptor document.RenditionDesc
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
 		MaxPollAttempts:  4,
 		MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
-		MaxTranscriptChars: 100_000,
+		MaxTranscriptChars: 100_000, AllowM4A: len(descriptor.SupportedFormats) == 3,
 	}, nil, http.DefaultClient)
 	require.NoError(t, err)
 	return client
@@ -523,4 +537,20 @@ func asrResultResponse(filename, schemaVersion string, end float64) map[string]a
 			},
 		},
 	}
+}
+
+func TestDoclingASRM4APolicyIsSeparate(t *testing.T) {
+	old, err := ASRPolicyFingerprint(100_000)
+	require.NoError(t, err)
+	current, err := ASRM4APolicyFingerprint(100_000)
+	require.NoError(t, err)
+	require.NotEqual(t, old, current, "M4A authority must not reuse WAV/MP3 consent")
+	fixture := newASRFixture(t, "audio/mp4", "synthetic.m4a", mediatest.AACM4A())
+	descriptor := fixture.descriptor
+	descriptor.PolicyFingerprint = old
+	descriptor.Fingerprint = ""
+	descriptor, err = document.NewRenditionDescriptor(descriptor)
+	require.NoError(t, err)
+	_, err = NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: descriptor, MaxTranscriptChars: 100_000, AllowM4A: true}, nil, http.DefaultClient)
+	require.Error(t, err, "v1 policy must not authorize M4A")
 }

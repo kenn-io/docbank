@@ -801,13 +801,39 @@ upload before granting consent with `docbank processing build`.
 
 ### Supplied audio transcription
 
-The daemon can transcribe supplied WAV and MP3 files through a configured
-Docling Serve deployment. The profile's descriptor, artifact policy, filename
-disclosure, and trust boundary are portable. The endpoint, transport policy,
+The daemon can transcribe supplied WAV, MP3, and M4A audio through a configured
+Docling Serve deployment with speech recognition installed. The profile's
+descriptor, artifact policy, filename disclosure, and trust boundary are portable. The endpoint, transport policy,
 and secret binding stay local to the daemon.
 
-Use `adapter_contract = "docbank-docling-asr/v1"` and set
-`credential_binding = "credential:<name>"` on the rendition profile. Its
+Use `adapter_contract = "docbank-docling-asr/v2"` for M4A/AAC alongside WAV and
+MP3. The existing `docbank-docling-asr/v1` profile keeps its WAV/MP3-only
+identity. Switching to v2 requires a new descriptor and disclosure fingerprint,
+a reviewed processing plan, and fresh consent. Existing grants never gain
+permission to upload another format implicitly.
+
+The earlier WAV/MP3 qualification used Docling Serve 1.32.0, Docling 2.124.0,
+and Docling Core 2.93.0. That Core version rejects M4A MIME metadata. A v2
+M4A deployment requires an audio decoder such as FFmpeg and must be qualified
+with synthetic speech before it receives real recordings. A local Docling Serve
+1.32.0 deployment using Docling Core 2.105.0 returned one timed segment each for
+synthetic [AAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-qualification.json)
+and [ALAC/M4A](https://github.com/kenn-io/docbank/blob/main/document/docling/testdata/asr-m4a-alac-qualification.json) speech.
+
+The adapter requests `from_formats=audio`, JSON output, and in-body results;
+it accepts only timed tracks in document schema 1.10.0. It does not select or
+claim a particular model. The M4A path inspects audio-only AAC/ALAC containers.
+M4A transcript artifacts omit `provider_version` because the response does not
+identify the deployment's installed version.
+
+For Go configuration builders, use `docling.ASRM4APolicyFingerprint` for v2
+and include `audio/mp4` in the descriptor alongside `audio/wav` and
+`audio/mpeg`, each with `original_file` input. Use
+`docling.ASRM4ADisclosureFingerprint` with that descriptor and the exact endpoint
+and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
+A v1 descriptor cannot authorize that upload.
+
+Set `credential_binding = "credential:<name>"` on the rendition profile. Its
 `runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
 `poll_interval`, `max_poll_attempts`, `allowed_cidrs`, `proxy_mode`, and the
 transport timeout fields. `spki_sha256` can pin the deployment certificate.
@@ -822,8 +848,11 @@ explicit port must be between 1 and 65535. Redirects are not followed.
 Set a positive `max_transcript_chars` on the rendition profile. This limit
 caps the generated transcript and is part of the descriptor's policy
 fingerprint. Each processing profile keeps its own `max_document_chars` limit
-for subsequent processing. A runtime with no selecting profile remains staged
-and isn't executable.
+for subsequent processing. Set `retain_typed_artifacts = true` on the selecting processing profile when
+another application needs the canonical transcript hash or language. Without it,
+normalized evidence remains readable but `artifact_sha256` and retained language
+are unavailable. Strict conversation consumers require that artifact identity.
+A runtime with no selecting profile remains staged and isn't executable.
 
 After a restart, queued work whose descriptor is no longer configured fails
 with `stale_authority`. Plan the work and grant consent for the changed profile
@@ -832,7 +861,13 @@ before retrying it.
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
 deployment fingerprint. Recompute it when the endpoint or deployment changes.
 The daemon rejects a mismatched binding before it starts provider work.
-For audio, Go applications can use `docling.ASRDisclosureFingerprint` from
+To find the descriptor fingerprint, set `descriptor_id` to `docling.serve-v1`
+and use 64 zeroes as a placeholder `descriptor_fingerprint`. Configure a
+selecting processing profile and start the daemon. Startup reports the expected
+fingerprint; copy it into the rendition profile before calculating the
+disclosure fingerprint below.
+For audio, Go applications can use `docling.ASRDisclosureFingerprint` for v1 or
+`docling.ASRM4ADisclosureFingerprint` for v2 from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
 from their config with Python 3.11 or later. Replace the path and profile name
 in this command, then copy the output into that profile's
