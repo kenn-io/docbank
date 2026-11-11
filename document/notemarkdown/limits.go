@@ -71,10 +71,18 @@ func (b *budget) node(ctx context.Context, depth int) error {
 	if depth > maxDepth {
 		return &LimitError{Resource: "ast_depth"}
 	}
+	return b.reserveNode(ctx)
+}
+
+func (b *budget) reserveNode(ctx context.Context) error {
 	if err := b.step(ctx, 1); err != nil {
 		return err
 	}
 	return addLimit("ast_nodes", &b.nodes, 1, maxNodes)
+}
+
+func (b *budget) refundNode() {
+	b.nodes--
 }
 
 func limitCount(resource string, n, limit int) error {

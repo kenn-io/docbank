@@ -7,7 +7,8 @@
 // line. Heading Start includes physical container markers; LineEnd includes the
 // EOL and Setext underline. SectionEnd is the next equal/higher heading or EOF;
 // SectionEndLine names that exclusive boundary. Path joins ancestors with " > ".
-// Goldmark supplies block structure at any depth. Code, HTML blocks and
+// A local bounded driver invokes Goldmark's public block parsers at any depth;
+// it skips Goldmark's private inline-text AST pass. Code, HTML blocks and
 // frontmatter suppress occurrences; inline code and HTML syntax hide links.
 // Text and Label collapse whitespace in raw authored inline source, retaining
 // emphasis, escapes, entities and link syntax. Slugs NFC-normalize that Text,
@@ -48,10 +49,21 @@
 // 32 diagnostics. Positive limits narrow; negative/above-hard limits are invalid.
 // Value/sequence limits apply to nested Raw values too, but not mapping keys.
 // Internal bounds also apply: YAML depth 32/8192 expanded nodes, AST depth
-// 128/262144 metered nodes, 4096-byte targets, 32 MiB derived strings and 64 Mi
-// work steps. Syntax input and the line index are bounded by MaxBytes, without
-// separate frontmatter-byte/line-count caps. YAML syntax reads metered chunks;
-// alias expansion and Markdown scans check cancellation at work checkpoints.
+// 128/262144 nodes, 4096-byte targets, 32 MiB derived strings and 64 Mi work
+// steps. The driver reserves the Document first and one node before each
+// candidate block Open; failed candidates refund, successful (including
+// abandoned Setext) nodes retain admission. A full node budget fails closed
+// before trying another candidate. Open/Continue scans use conservative
+// per-parser byte-pass bounds; list closes charge their child visits, code
+// closes charge every value segment conservatively, and retries/depth are
+// metered. Context is
+// checked at line and callback boundaries. One opaque Goldmark callback may
+// scan a line up to MaxBytes (4 MiB) without an internal checkpoint. The local
+// driver mirrors Goldmark v2.1.13 state handling; dependency upgrades require
+// source-parity review. Syntax input and the line index are bounded by MaxBytes,
+// without separate frontmatter-byte/line-count caps. YAML syntax reads metered
+// chunks; alias expansion and Markdown scans check cancellation at work
+// checkpoints.
 // The derived allowance covers one full-size heading's source copies, raw text,
 // conservative NFC admission and Path; amplified output still has a hard bound.
 // Every error returns a zero Note. Invalid UTF-8, NUL and invalid limit
