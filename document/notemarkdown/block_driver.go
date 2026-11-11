@@ -29,9 +29,15 @@ const (
 var openWorkFactor = [...]int{4, 3, 4, 6, 3, 8, 8, 3, 16, 2}
 var continueWorkFactor = [...]int{1, 1, 8, 6, 4, 1, 8, 3, 4, 3}
 
+func contextCheckpoint(ctx context.Context) {
+	mustParse(ctx.Err())
+}
+
 func parseBlockDocument(ctx context.Context, source []byte, parsers []parser.BlockParser, transformer parser.ParagraphTransformer, b *budget) *ast.Document {
+	contextCheckpoint(ctx)
 	// Goldmark's Parser.Parse allocates this root before either parse pass.
 	mustParse(b.node(ctx, 0))
+	contextCheckpoint(ctx)
 	root := ast.NewDocument()
 	reader := text.NewReader(source, text.NewDecoder())
 	pc := parser.NewContext()
@@ -41,7 +47,9 @@ func parseBlockDocument(ctx context.Context, source []byte, parsers []parser.Blo
 	var free []parser.BlockParser
 	var byTrigger [256][]parser.BlockParser
 	for _, bp := range parsers {
+		contextCheckpoint(ctx)
 		triggers := bp.Trigger()
+		contextCheckpoint(ctx)
 		if triggers == nil {
 			free = append(free, bp)
 			continue
@@ -57,6 +65,7 @@ func parseBlockDocument(ctx context.Context, source []byte, parsers []parser.Blo
 		}
 	}
 
+	contextCheckpoint(ctx)
 	state := blockDriver{ctx: ctx, b: b, free: free, byTrigger: byTrigger, transformer: transformer, reader: reader, pc: pc}
 	state.parseBlocks(root)
 	return root
@@ -84,12 +93,15 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 	d.pc.SetOpenedBlocks(nil)
 	var prevLineBlank, curLineBlank []bool
 	for {
+		contextCheckpoint(d.ctx)
 		if !d.skipBlankLines() {
 			return
 		}
+		contextCheckpoint(d.ctx)
 		if d.openBlocks(parent, true) != newBlocksOpened {
 			return
 		}
+		contextCheckpoint(d.ctx)
 		mustParse(d.b.step(d.ctx, 1))
 		d.reader.AdvanceLine()
 		prevLineBlank = prevLineBlank[:0]
@@ -102,6 +114,7 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 			lastIndex := l - 1
 			curLineBlank = curLineBlank[:0]
 			for i := range l {
+				contextCheckpoint(d.ctx)
 				be := opened[i]
 				line, _ := d.reader.PeekLine()
 				if line == nil {
@@ -112,10 +125,13 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 					return
 				}
 				mustParse(d.b.step(d.ctx, len(line)+1)) // blank test and line bookkeeping
+				contextCheckpoint(d.ctx)
 				curLineBlank = append(curLineBlank, util.IsBlank(line))
+				contextCheckpoint(d.ctx)
 				// Paragraph continuation is decided by openBlocks, as in Goldmark.
 				if !ast.IsParagraph(be.Node) {
 					continueState := be.Parser.Continue(be.Node, d.reader, d.pc)
+					contextCheckpoint(d.ctx)
 					if continueState&parser.Continue != 0 {
 						if continueState&parser.HasChildren != 0 && i == lastIndex {
 							isBlank := isBlankLine(i+1, prevLineBlank)
@@ -132,6 +148,7 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 				}
 				lastNode := opened[lastIndex].Node
 				result := d.openBlocks(thisParent, isBlank)
+				contextCheckpoint(d.ctx)
 				if result != paragraphContinuation {
 					if opened[lastIndex].Node != lastNode {
 						lastIndex--
@@ -142,6 +159,7 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 			}
 			mustParse(d.b.step(d.ctx, 1))
 			d.reader.AdvanceLine()
+			contextCheckpoint(d.ctx)
 			prevLineBlank, curLineBlank = curLineBlank, prevLineBlank
 		}
 	}
@@ -149,16 +167,21 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 
 func (d *blockDriver) skipBlankLines() bool {
 	for {
+		contextCheckpoint(d.ctx)
 		line, _ := d.reader.PeekLine()
 		if line == nil {
 			return false
 		}
 		mustParse(d.b.step(d.ctx, len(line)+1))
-		if !util.IsBlank(line) {
+		contextCheckpoint(d.ctx)
+		blank := util.IsBlank(line)
+		contextCheckpoint(d.ctx)
+		if !blank {
 			return true
 		}
 		mustParse(d.b.step(d.ctx, 1))
 		d.reader.AdvanceLine()
+		contextCheckpoint(d.ctx)
 	}
 }
 
@@ -170,9 +193,12 @@ func (d *blockDriver) openBlocks(parent ast.Node, blankLine bool) blockOpenResul
 		continuable = ast.IsParagraph(lastBlock.Node)
 	}
 retry:
+	contextCheckpoint(d.ctx)
 	line, seg := d.reader.PeekLine()
 	mustParse(d.b.step(d.ctx, len(line)+1)) // indent and line-offset scan
+	contextCheckpoint(d.ctx)
 	w, pos := util.IndentWidth(line, d.reader.LineOffset())
+	contextCheckpoint(d.ctx)
 	if len(line) == 0 {
 		d.pc.SetBlockOffset(-1)
 		d.pc.SetBlockIndent(-1)
@@ -190,23 +216,31 @@ retry:
 		}
 	}
 	for _, bp := range bps {
+		contextCheckpoint(d.ctx)
 		mustParse(d.b.step(d.ctx, 1))
 		if continuable && result == noBlocksOpened && !bp.CanInterruptParagraph() {
+			contextCheckpoint(d.ctx)
 			continue
 		}
+		contextCheckpoint(d.ctx)
 		if w > 3 && !bp.CanAcceptIndentedLine() {
+			contextCheckpoint(d.ctx)
 			continue
 		}
+		contextCheckpoint(d.ctx)
 		lastBlock = d.pc.LastOpenedBlock()
 		last := lastBlock.Node
 		_, blockPos := d.reader.Position()
 		node, state := bp.Open(parent, d.reader, d.pc)
+		contextCheckpoint(d.ctx)
 		if node == nil {
 			continue
 		}
 		node.SetPos(blockPos.Start + max(d.pc.BlockOffset()-seg.Padding, 0))
 		if state&parser.RequireParagraph != 0 && last == parent.LastChild() {
+			contextCheckpoint(d.ctx)
 			lastBlock.Parser.Close(last, d.reader, d.pc)
+			contextCheckpoint(d.ctx)
 			blocks := d.pc.OpenedBlocks()
 			d.pc.SetOpenedBlocks(blocks[:len(blocks)-1])
 			if d.transformParagraph(last.(*ast.Paragraph)) {
@@ -231,7 +265,9 @@ retry:
 
 continuable:
 	if result == noBlocksOpened && continuable {
+		contextCheckpoint(d.ctx)
 		state := lastBlock.Parser.Continue(lastBlock.Node, d.reader, d.pc)
+		contextCheckpoint(d.ctx)
 		if state&parser.Continue != 0 {
 			result = paragraphContinuation
 		}
@@ -242,8 +278,10 @@ continuable:
 func (d *blockDriver) closeBlocks(from, to int) {
 	blocks := d.pc.OpenedBlocks()
 	for i := from; i >= to; i-- {
+		contextCheckpoint(d.ctx)
 		node := blocks[i].Node
 		blocks[i].Parser.Close(node, d.reader, d.pc)
+		contextCheckpoint(d.ctx)
 		paragraph, ok := node.(*ast.Paragraph)
 		if ok && node.Parent() != nil {
 			d.transformParagraph(paragraph)
@@ -259,7 +297,9 @@ func (d *blockDriver) closeBlocks(from, to int) {
 }
 
 func (d *blockDriver) transformParagraph(node *ast.Paragraph) bool {
+	contextCheckpoint(d.ctx)
 	d.transformer.Transform(node, d.reader, d.pc)
+	contextCheckpoint(d.ctx)
 	return node.Parent() == nil
 }
 

@@ -40,23 +40,23 @@ type blockGuard struct {
 }
 
 func (g *blockGuard) Open(parent ast.Node, r text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	mustParse(g.ctx.Err())
 	line, _ := r.PeekLine()
 	mustParse(g.b.step(g.ctx, openWorkFactor[g.kind]*len(line)+1))
 	// Open implementations construct at most one AST node. Reserve before
 	// invoking one, and refund unsuccessful candidates; at the cap we fail
 	// closed without calling a candidate that might allocate.
-	if len(pc.OpenedBlocks()) > maxDepth {
+	if len(pc.OpenedBlocks()) >= maxDepth {
 		panic(parseAbort{&LimitError{Resource: "ast_depth"}})
 	}
 	mustParse(g.b.reserveNode(g.ctx))
+	mustParse(g.ctx.Err())
 	_, before := r.Position()
 	n, state := g.BlockParser.Open(parent, r, pc)
+	mustParse(g.ctx.Err())
 	if n == nil {
 		g.b.refundNode()
 	} else {
-		if len(pc.OpenedBlocks())+1 > maxDepth {
-			panic(parseAbort{&LimitError{Resource: "ast_depth"}})
-		}
 		if _, ok := n.(*ast.Heading); ok {
 			// Save the Setext underline before Goldmark replaces its Source
 			// with the paragraph's inline content during Close.
@@ -68,17 +68,21 @@ func (g *blockGuard) Open(parent ast.Node, r text.Reader, pc parser.Context) (as
 	return n, state
 }
 func (g *blockGuard) Continue(n ast.Node, r text.Reader, pc parser.Context) parser.State {
+	mustParse(g.ctx.Err())
 	line, _ := r.PeekLine()
 	mustParse(g.b.step(g.ctx, continueWorkFactor[g.kind]*len(line)+1))
 	_, before := r.Position()
 	state := g.BlockParser.Continue(n, r, pc)
+	mustParse(g.ctx.Err())
 	_, after := r.Position()
 	mustParse(g.b.step(g.ctx, max(0, after.Start-before.Start)))
 	return state
 }
 func (g *blockGuard) Close(n ast.Node, r text.Reader, pc parser.Context) {
 	mustParse(closeWork(g, n))
+	mustParse(g.ctx.Err())
 	g.BlockParser.Close(n, r, pc)
+	mustParse(g.ctx.Err())
 }
 
 type referenceGuard struct {
@@ -88,6 +92,8 @@ type referenceGuard struct {
 }
 
 func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Context) {
+	mustParse(g.ctx.Err())
+	defer func() { mustParse(g.ctx.Err()) }()
 	mustParse(g.b.step(g.ctx, 1))
 	segments := n.Source()
 	if len(segments) == 0 {

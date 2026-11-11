@@ -56,11 +56,12 @@
 // before trying another candidate. Open/Continue scans use conservative
 // per-parser byte-pass bounds; list closes charge their child visits, code
 // closes charge every value segment conservatively, and retries/depth are
-// metered. Context is
-// checked at line and callback boundaries. One opaque Goldmark callback may
-// scan a line up to MaxBytes (4 MiB) without an internal checkpoint. The local
-// driver mirrors Goldmark v2.1.13 state handling; dependency upgrades require
-// source-parity review. Syntax input and the line index are bounded by MaxBytes,
+// metered. Context is checked directly at line and callback boundaries; no
+// checkpoint runs inside an opaque callback. One callback may scan a source
+// line or accumulated code segments during Close up to MaxBytes (4 MiB), and a
+// list Close may visit up to the AST node cap. The local driver mirrors
+// Goldmark v2.1.13 state handling; dependency upgrades require source-parity
+// review. Syntax input and the line index are bounded by MaxBytes,
 // without separate frontmatter-byte/line-count caps. YAML syntax reads metered
 // chunks; alias expansion and Markdown scans check cancellation at work
 // checkpoints.
