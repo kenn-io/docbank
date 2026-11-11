@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,23 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
+
+type similarPlanFailingWriter struct{ calls int }
+
+func (w *similarPlanFailingWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == 3 {
+		return 0, errors.New("output closed")
+	}
+	return len(p), nil
+}
+
+func TestSearchSimilarPlanWriteFailure(t *testing.T) {
+	cmd, _ := processingTestCommand()
+	cmd.SetOut(&similarPlanFailingWriter{})
+	err := writeSimilarSearchReport(cmd, api.DocumentSimilarReport{State: "unavailable"}, "docbank processing plan id:42 --profile private")
+	require.ErrorContains(t, err, "writing processing plan command: output closed")
+}
 
 func TestSearchSimilarRejectsRerankingBeforeDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
