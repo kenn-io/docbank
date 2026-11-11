@@ -68,8 +68,6 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", "browser: Choose files")
-	require.NoError(t, err)
 	commit := func(declarations []BrowserPhotoGroupMember, inputs []PhotoImportMember) PhotoImportResult {
 		t.Helper()
 		directory, err := s.PrepareIngestDirectory(ctx, "/photos")
@@ -80,6 +78,9 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 			Groups: []BrowserPhotoImportGroup{{Key: key, Members: declarations}}, Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
 		})
 		require.NoError(t, err)
+		run, err := s.BrowserPhotoImportRun(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, id.String(), run.ID())
 		saved, err := s.InspectBrowserPhotoImport(ctx, id)
 		require.NoError(t, err)
 		require.Equal(t, []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}}, saved.Skipped)
