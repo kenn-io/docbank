@@ -103,6 +103,8 @@ type InspectionPolicy struct {
 	MaxDurationMS    int64 `json:"max_duration_ms"`
 	// VideoAudioTrack streams qualified MP4 sound tracks for video ASR.
 	VideoAudioTrack bool `json:"video_audio_track,omitzero"`
+	// QuickTimeAudioTrack streams qualified MOV sound tracks for video ASR.
+	QuickTimeAudioTrack bool `json:"quicktime_audio_track,omitzero"`
 }
 
 // CapabilityMeasurements records only finite, locally verified measurements.
@@ -168,7 +170,7 @@ func InspectCapability(ctx context.Context, reader io.Reader, policy InspectionP
 	}
 	baseType, _, _ := mime.ParseMediaType(policy.DeclaredMediaType)
 	ext := strings.ToLower(filepath.Ext(policy.Filename))
-	if streamingAudio(baseType, ext) || policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4" {
+	if quickTimeAudioCandidate(policy, baseType, ext) || streamingAudio(baseType, ext) || policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4" {
 		return inspectAudio(reader, policy, baseType, ext)
 	}
 	data, err := io.ReadAll(io.LimitReader(reader, policy.MaxSourceBytes+1))
@@ -1426,6 +1428,10 @@ func ReadPDFMetadata(ctx context.Context, data []byte) (PDFMetadata, error) {
 	}, nil
 }
 
+func quickTimeAudioCandidate(policy InspectionPolicy, baseType, ext string) bool {
+	return policy.QuickTimeAudioTrack && (baseType == "video/quicktime" || ext == ".mov")
+}
+
 // inspectAudio hashes the whole bounded source while retaining only parser
 // headers. Skipped audio and metadata bytes still contribute to source identity.
 func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext string) (CapabilityRecord, error) {
@@ -1434,12 +1440,17 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 	buffered := bufio.NewReader(io.TeeReader(limited, hash))
 	var record CapabilityRecord
 	var err error
-	if baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav" {
+	if quickTimeAudioCandidate(policy, baseType, ext) {
+		if baseType == "video/quicktime" && ext == ".mov" {
+			record, err = inspectM4A(buffered, policy, true, true)
+		} else {
+			record.Reason = CapabilityReasonMalformed
+		}
+	} else if baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav" {
 		record, err = inspectWAV(buffered, policy)
 	} else if baseType == "audio/mp4" || baseType == "audio/x-m4a" || ext == ".m4a" || policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4" {
-		moviePolicy := policy
-		moviePolicy.VideoAudioTrack = policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4"
-		record, err = inspectM4A(buffered, moviePolicy)
+		video := policy.VideoAudioTrack && baseType == "video/mp4" && ext == ".mp4"
+		record, err = inspectM4A(buffered, policy, video, false)
 	} else {
 		record, err = inspectMP3(buffered, policy)
 	}
@@ -1465,7 +1476,8 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 		(baseType == "audio/wav" || baseType == "audio/x-wav") ||
 		record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg" ||
 		record.Format == "m4a" && ext == ".m4a" && (baseType == "audio/mp4" || baseType == "audio/x-m4a") ||
-		policy.VideoAudioTrack && record.Format == "mp4" && ext == ".mp4" && baseType == "video/mp4"
+		policy.VideoAudioTrack && record.Format == "mp4" && ext == ".mp4" && baseType == "video/mp4" ||
+		policy.QuickTimeAudioTrack && record.Format == "mov" && ext == ".mov" && baseType == "video/quicktime"
 	if record.Eligible && !validIdentity {
 		record.Eligible, record.Reason = false, CapabilityReasonMalformed
 	}

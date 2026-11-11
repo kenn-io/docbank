@@ -117,3 +117,23 @@ func TestInspectMP4AudioTrackBoundedMemory(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, record.Eligible, "visual inspection retains its own bounds")
 }
+
+func TestInspectQuickTimeAudioTrackBoundedMemory(t *testing.T) {
+	const size int64 = 48 << 20
+	hash := sha256.New()
+	_, err := io.Copy(hash, mediatest.SizedMOV(size))
+	require.NoError(t, err)
+	policy := inspectionPolicy(mediatest.H264AACMOV(), "phone.mov", "video/quicktime")
+	policy.ExpectedBytes, policy.MaxSourceBytes = size, size
+	policy.ExpectedSHA256 = hex.EncodeToString(hash.Sum(nil))
+	policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	record, err := media.InspectCapability(t.Context(), mediatest.SizedMOV(size), policy)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	require.Equal(t, size, record.SourceBytes)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
+}

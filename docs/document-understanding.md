@@ -310,6 +310,14 @@ checksums; supplied captions keep visual inspection. Provider-host FFmpeg
 demuxes the audio. Timed text becomes video-family transcript evidence;
 embedded frame images remain subject to the existing response bound.
 
+The v4 contract adds a separate sealed `quicktime_audio_track` policy for
+`video/quicktime` with a retained `.mov` suffix. It requires the QuickTime
+major brand, a picture track, qualified AAC configuration, local sound
+ranges, and a continuous sound timeline with at most one AAC priming edit.
+The provider receives the original bytes after v4 consent and returns timed
+video transcript evidence. Supplied captions and existing ASR profiles keep
+their prior inspection policies.
+
 Use `document/mediatranscript` when the source supplies segment timing. Its
 `media-transcript/v1` artifact retains ordered text, start and end
 milliseconds, and an optional speaker for each segment. `ParseSubRip` accepts

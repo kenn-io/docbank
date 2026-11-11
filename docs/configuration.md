@@ -833,14 +833,24 @@ with an AAC or ALAC sound track. This contract also accepts every v2 audio
 format, so a watch can route `audio_video` to one profile. Automatic watch
 routing requires the per-family watch profile configuration. The worker uses
 the selected profile's consent; v1/v2 grants never authorize an MP4 upload.
-MP4s without qualified sound, fragmented containers, MOV, MKV, and WebM are
-not admitted. Non-visual metadata and timecode tracks are allowed.
+v3 admits unfragmented MP4 with qualified sound. Non-visual metadata and
+timecode tracks are allowed.
 
-The v3 deployment requires Docling Serve 1.32.0, `docling-slim` 2.124.0,
+Use `adapter_contract = "docbank-docling-asr/v4"` to add QuickTime movies
+alongside the v3 formats. Grant consent to the v4 profile before importing MOV
+files for automatic transcription. An eligible original has a retained
+`.mov` suffix, QuickTime MIME and brand, a picture track, and local AAC
+samples with a continuous timeline starting at zero after ordinary AAC
+priming. The adapter admits the FFmpeg version-1 AAC sound description with
+`wave`/`esds` and the ISO-style version-zero AAC description. It uploads the
+original bytes as `video/quicktime` and uses `document.mov` when withholding
+the name. MOV transcript artifacts omit the deployment version.
+
+The v3 and v4 deployments require Docling Serve 1.32.0, `docling-slim` 2.124.0,
 `docling-core` 2.105.0, `docling-jobkit` 3.5.0, and ASR dependencies such as
 `openai-whisper` 20250625. FFmpeg must be on the
 provider host's `PATH`; Docbank hosts need no FFmpeg. The adapter sends
-`from_formats=video` for MP4 and maps only timed transcript text. The v3
+`from_formats=video` for MP4 and MOV and maps only timed transcript text. The v3
 artifact omits `provider_version` because the response does not identify the
 deployment's installed version.
 
@@ -850,7 +860,7 @@ option disables those frames. Size `max_response_bytes` for approximately
 **512 MiB**. This cap sets a maximum video duration for a given frame size;
 1080p/4K frame sizes depend on content and need deployment qualification. A
 response beyond the bound fails without retaining a partial transcript.
-Set `max_document_bytes` for the largest MP4 (default 64 MiB, at most 1 GiB);
+Set `max_document_bytes` for the largest movie (default 64 MiB, at most 1 GiB);
 the client buffers uploads in memory. Set `total_timeout` and
 `max_poll_attempts × poll_interval` for the full transcription. Recognition
 accuracy depends on the deployment. Qualify it with synthetic speech before
@@ -864,8 +874,10 @@ and deployment identity. Embedded callers also set `ASRProfile.AllowM4A=true`.
 A v1 descriptor cannot authorize that upload. For v3, use
 `docling.ASRVideoPolicyFingerprint`, add `{video, video/mp4, original_file}`
 to the three audio formats, and set `ASRProfile.AllowMP4=true`. This flag
-implies M4A support. Recompute the descriptor and disclosure fingerprints and
-grant fresh consent when changing contracts.
+implies M4A support. For v4, use `docling.ASRQuickTimePolicyFingerprint`,
+add `{video, video/quicktime, original_file}` to the v3 formats, and set
+`ASRProfile.AllowMOV=true`. Recompute the descriptor and disclosure
+fingerprints and grant fresh consent when changing contracts.
 
 Set `credential_binding = "credential:<name>"` on the rendition profile. Its
 `runtime` section requires `endpoint`, `request_timeout`, `total_timeout`,
@@ -900,8 +912,9 @@ and use 64 zeroes as a placeholder `descriptor_fingerprint`. Configure a
 selecting processing profile and start the daemon. Startup reports the expected
 fingerprint; copy it into the rendition profile before calculating the
 disclosure fingerprint below.
-Go applications can use `docling.ASRDisclosureFingerprint` for v1 and v3 or
-`docling.ASRM4ADisclosureFingerprint` for v2 from
+Go applications can use `docling.ASRDisclosureFingerprint` for v1 and v3,
+`docling.ASRM4ADisclosureFingerprint` for v2, and
+`docling.ASRQuickTimeDisclosureFingerprint` for v4 from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
 from their config with Python 3.11 or later. Replace the path and profile name
 in this command, then copy the output into that profile's
@@ -924,9 +937,9 @@ print(hashlib.sha256("\0".join(values).encode()).hexdigest())
 PY
 ```
 
-The v2 disclosure fingerprint uses the v2 contract name. The v3 fingerprint
-uses the v1 contract name with the v3 descriptor fingerprint, which binds the
-MP4 policy and formats.
+The v2 and v4 disclosure fingerprints use their own contract names. The v3
+fingerprint uses the v1 contract name with the v3 descriptor fingerprint,
+which binds the MP4 policy and formats.
 
 The daemon registers one provider per descriptor fingerprint. Profiles with
 the same descriptor must use identical endpoint, credentials, and runtime
@@ -955,9 +968,9 @@ the 4 GiB default.
 This setting does not raise document inspection, image/video, transcript,
 caption, or hosted-provider bounds. Audio retains its 24-hour duration and codec
 qualification bounds. Remote MP4 video originals keep their 20 MiB limit.
-The v3 transcription path streams a retained MP4's audio-track inspection
-under the separate 1 GiB document/upload ceiling and does not use the visual
-20 MiB limit or visual frame-count proof.
+Docling v3 and v4 stream sound-track inspection under the separate 1 GiB
+document and upload ceiling. Visual inspection uses its own 20 MiB limit
+and frame-count proof.
 Transcript and caption uploads and the built-in profiles' responses
 keep their 16 MiB limits. A staging disk or quota failure releases the reservation,
 removes the failed file, and returns HTTP 503 with `media_staging_unavailable`;

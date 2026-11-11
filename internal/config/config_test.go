@@ -1411,12 +1411,16 @@ func TestWatchProcessingProfileValidation(t *testing.T) {
 }
 
 func TestDoclingASRVideoRuntime(t *testing.T) {
-	cfg := validRenditionRuntimeConfig(t)
-	profile := cfg.RenditionProfiles["primary"]
-	profile.AdapterContract = DoclingASRVideoAdapterContract
-	cfg.RenditionProfiles["primary"] = profile
-	require.NoError(t, cfg.Validate())
-	profile.MaxTranscriptChars = 0
-	cfg.RenditionProfiles["primary"] = profile
-	require.ErrorContains(t, cfg.Validate(), "max_transcript_chars")
+	for _, contract := range []string{DoclingASRVideoAdapterContract, DoclingASRQuickTimeAdapterContract} {
+		t.Run(contract, func(t *testing.T) {
+			cfg := validRenditionRuntimeConfig(t)
+			profile := cfg.RenditionProfiles["primary"]
+			profile.AdapterContract = contract
+			cfg.RenditionProfiles["primary"] = profile
+			require.NoError(t, cfg.Validate())
+			profile.MaxTranscriptChars = 0
+			cfg.RenditionProfiles["primary"] = profile
+			require.ErrorContains(t, cfg.Validate(), "max_transcript_chars")
+		})
+	}
 }

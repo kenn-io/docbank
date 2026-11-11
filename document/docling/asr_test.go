@@ -420,6 +420,8 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 	switch mediaType {
 	case "video/mp4":
 		policyFingerprint, err = ASRVideoPolicyFingerprint(100_000)
+	case "video/quicktime":
+		policyFingerprint, err = ASRQuickTimePolicyFingerprint(100_000)
 	case "audio/mp4":
 		policyFingerprint, err = ASRM4APolicyFingerprint(100_000)
 	}
@@ -428,14 +430,17 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
 		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
 	}
-	if mediaType == "audio/mp4" || mediaType == "video/mp4" {
+	if mediaType == "audio/mp4" || strings.HasPrefix(mediaType, "video/") {
 		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
 	}
-	if mediaType == "video/mp4" {
+	if strings.HasPrefix(mediaType, "video/") {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile})
+	}
+	if mediaType == "video/quicktime" {
 		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
 	}
 	family := "audio"
-	if mediaType == "video/mp4" {
+	if strings.HasPrefix(mediaType, "video/") {
 		family = "video"
 	}
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
@@ -456,7 +461,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		InputKind:                document.RenditionInputOriginalFile,
 	}
 	durationLimit := int64(10_000)
-	if mediaType == "video/mp4" {
+	if strings.HasPrefix(mediaType, "video/") {
 		durationLimit = (24 * time.Hour).Milliseconds()
 	}
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(source), media.InspectionPolicy{
@@ -464,9 +469,10 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: descriptor.Fingerprint,
 		ProfileFingerprint:    strings.Repeat("5", 64), DisclosureFingerprint: strings.Repeat("6", 64),
-		InputKind:       document.RenditionInputOriginalFile,
-		VideoAudioTrack: mediaType == "video/mp4",
-		MaxSourceBytes:  max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
+		InputKind:           document.RenditionInputOriginalFile,
+		VideoAudioTrack:     family == "video",
+		QuickTimeAudioTrack: mediaType == "video/quicktime",
+		MaxSourceBytes:      max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
 		MaxDurationMS: durationLimit,
@@ -498,7 +504,7 @@ func newASRClient(t *testing.T, origin string, descriptor document.RenditionDesc
 		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
 		MaxPollAttempts:  4,
 		MaxResponseBytes: 1 << 20, MaxDocumentBytes: 1 << 20,
-		MaxTranscriptChars: 100_000, AllowM4A: len(descriptor.SupportedFormats) == 3, AllowMP4: len(descriptor.SupportedFormats) == 4,
+		MaxTranscriptChars: 100_000, AllowM4A: len(descriptor.SupportedFormats) == 3, AllowMP4: len(descriptor.SupportedFormats) == 4, AllowMOV: len(descriptor.SupportedFormats) == 5,
 	}, nil, http.DefaultClient)
 	require.NoError(t, err)
 	return client
@@ -516,6 +522,7 @@ func assertDoclingASRSubmission(
 	require.NoError(t, err)
 	assert.Equal(t, "files", file.FormName())
 	assert.Equal(t, metadata.Filename, file.FileName())
+	assert.Equal(t, metadata.MediaType, file.Header.Get("Content-Type"))
 	gotSource, err := io.ReadAll(file)
 	require.NoError(t, err)
 	assert.Equal(t, source, gotSource)
@@ -531,7 +538,7 @@ func assertDoclingASRSubmission(
 		fields[part.FormName()] = append(fields[part.FormName()], string(value))
 	}
 	fromFormat := "audio"
-	if metadata.MediaType == "video/mp4" {
+	if metadata.MediaFamily == "video" {
 		fromFormat = "video"
 	}
 	assert.Equal(t, map[string][]string{
@@ -690,4 +697,38 @@ func TestDoclingASRVideoRejectsVisualOnlyCapability(t *testing.T) {
 	_, err = document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.Error(t, err)
 	require.Zero(t, submissions, "a video capability without sound proof must never be uploaded")
+}
+
+func TestDoclingASRQuickTimeUploadAndTiming(t *testing.T) {
+	fixture := newASRFixture(t, "video/quicktime", "synthetic.mov", mediatest.H264AACMOV())
+	v3 := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	require.NotEqual(t, v3.descriptor.PolicyFingerprint, fixture.descriptor.PolicyFingerprint)
+	_, err := NewASR(ASRProfile{Origin: "http://127.0.0.1", Descriptor: fixture.descriptor,
+		MaxTranscriptChars: 100_000, AllowMP4: true}, nil, http.DefaultClient)
+	require.ErrorContains(t, err, "does not match the qualified deployment")
+
+	fixture.authorization.DiscloseFilename = false
+	sent := fixture.metadata
+	sent.Filename = "document.mov"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == convertPath {
+			assertDoclingASRSubmission(t, r, sent, fixture.source)
+			writeJSON(t, w, doclingTask("quicktime", "success"))
+			return
+		}
+		result := asrResultResponse(sent.Filename, "1.10.0", 0.625)
+		asrJSONContent(t, result)["origin"] = map[string]any{"filename": sent.Filename, "mimetype": sent.MediaType}
+		writeJSON(t, w, result)
+	}))
+	t.Cleanup(server.Close)
+	client := newASRClient(t, server.URL, fixture.descriptor)
+	result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+	require.NoError(t, err)
+	require.Equal(t, "video", result.Evidence.Family)
+	require.Len(t, result.Artifacts, 1)
+	artifact, err := mediatranscript.Unmarshal(result.Artifacts[0].Payload)
+	require.NoError(t, err)
+	require.Empty(t, artifact.ProviderVersion)
+	require.Len(t, artifact.Segments, 1)
+	require.EqualValues(t, 625, artifact.Segments[0].EndMS)
 }

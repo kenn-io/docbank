@@ -2455,6 +2455,9 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 ) (media.CapabilityRecord, error) {
 	policy := renditionInspectionPolicy(node, version, profile)
 	switch {
+	case policy.QuickTimeAudioTrack && policy.DeclaredMediaType == "video/quicktime" && !strings.EqualFold(filepath.Ext(node.Name), ".mov"):
+		// Use the retained name before the privacy fallback substitutes document.mov.
+		return media.CapabilityRecord{Reason: media.CapabilityReasonMalformed}, nil
 	case version.Size == 0:
 		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
 	case version.Size > admittedSourceBytes(policy, profile):
@@ -2538,10 +2541,13 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 	if baseType, _, err := mime.ParseMediaType(declaredMediaType); err == nil {
 		declaredMediaType = baseType
 	}
-	videoAudioTrack := profile.portable.Rendition.AdapterContract == docling.ASRVideoAdapterContract
-	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType, VideoAudioTrack: videoAudioTrack,
-		PDFTextOnly:   profile.portable.Rendition.AdapterContract == pdftext.AdapterContract,
-		ExpectedBytes: version.Size, ExpectedSHA256: version.BlobHash,
+	contract := profile.portable.Rendition.AdapterContract
+	quickTimeAudioTrack := contract == docling.ASRQuickTimeAdapterContract
+	return media.InspectionPolicy{Filename: filename, DeclaredMediaType: declaredMediaType,
+		VideoAudioTrack:     contract == docling.ASRVideoAdapterContract || quickTimeAudioTrack,
+		QuickTimeAudioTrack: quickTimeAudioTrack,
+		PDFTextOnly:         profile.portable.Rendition.AdapterContract == pdftext.AdapterContract,
+		ExpectedBytes:       version.Size, ExpectedSHA256: version.BlobHash,
 		DescriptorFingerprint: profile.provider.Descriptor().Fingerprint,
 		ProfileFingerprint:    profile.record.Fingerprint,
 		DisclosureFingerprint: profile.portable.Rendition.DisclosureFingerprint,
@@ -2845,7 +2851,7 @@ func extensionForMediaType(value string) string {
 		"application/x-tex": ".tex", "application/x-ndjson": ".jsonl",
 		"application/xml": ".xml", "application/yaml": ".yaml",
 		"text/x-go": ".go", "text/x-python": ".py", "text/javascript": ".js",
-		"image/jpeg": ".jpg", "audio/wav": ".wav", "audio/x-wav": ".wav", "video/mp4": ".mp4",
+		"image/jpeg": ".jpg", "audio/wav": ".wav", "audio/x-wav": ".wav", "video/mp4": ".mp4", "video/quicktime": ".mov",
 		"audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "message/rfc822": ".eml",
 	}[base]; extension != "" {
 		return extension

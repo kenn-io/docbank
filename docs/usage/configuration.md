@@ -108,7 +108,8 @@ portable policy. Set the rendition's `max_transcript_chars` independently of
 each processing profile's `max_document_chars`. A runtime that no processing
 profile selects stays staged. Use `docbank-docling-asr/v2` to add M4A, or
 `docbank-docling-asr/v3` to add MP4 sound-track transcription alongside all
-three audio formats. v3 requires provider-host FFmpeg and fresh consent.
+three audio formats. Use `docbank-docling-asr/v4` to add qualified AAC MOV
+files. Each video contract requires provider-host FFmpeg and its own consent.
 Size upload, response, and timeout bounds for the video; embedded PNG frames
 count against the 512 MiB response ceiling. See the [audio and video configuration reference](../configuration.md#audio-and-video-transcription)
 for disclosure-fingerprint calculation and the restriction on sharing a descriptor

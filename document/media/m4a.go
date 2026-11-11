@@ -26,12 +26,16 @@ type m4aAudioFormat struct {
 	samplesPerFrame, sampleRate uint32
 }
 
-func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord, error) {
+func inspectM4A(reader *bufio.Reader, policy InspectionPolicy, allowVideo, quickTime bool) (CapabilityRecord, error) {
 	record := CapabilityRecord{MediaFamily: "audio", MediaType: "audio/mp4", Format: "m4a", Reason: CapabilityReasonMalformed}
-	if policy.VideoAudioTrack {
+	if allowVideo {
 		record.MediaFamily, record.MediaType, record.Format = "video", "video/mp4", "mp4"
 	}
-	info := mp4Info{audioInspection: true, soundTrackVideo: policy.VideoAudioTrack, localDataReferences: true, maxBoxes: policy.MaxEntries}
+	if quickTime {
+		record.MediaType, record.Format = "video/quicktime", "mov"
+	}
+	info := mp4Info{audioInspection: true, soundTrackVideo: allowVideo, quickTimeSound: quickTime,
+		localDataReferences: true, maxBoxes: policy.MaxEntries}
 	var movie []byte
 	var offset int64
 	ftypCount := 0
@@ -79,7 +83,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 			}
 			if kind == "ftyp" {
 				ftypCount++
-				if offset != 0 || ftypCount != 1 || len(payload) < 8 || len(payload)%4 != 0 || !m4aBrand(string(payload[:4])) {
+				if offset != 0 || ftypCount != 1 || len(payload) < 8 || len(payload)%4 != 0 || !soundMovieBrand(string(payload[:4]), quickTime) {
 					return record, nil
 				}
 			} else {
@@ -110,7 +114,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 	if ftypCount != 1 || info.moovCount != 1 || info.mdatCount == 0 {
 		return record, nil
 	}
-	if reason := qualifyM4AMovie(movie, &info, policy.VideoAudioTrack); reason != CapabilityReasonEligible {
+	if reason := qualifyM4AMovie(movie, &info, allowVideo); reason != CapabilityReasonEligible {
 		record.Reason = reason
 		return record, nil
 	}
@@ -137,7 +141,8 @@ func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityRea
 		}
 		return CapabilityReasonMalformed
 	}
-	if info.mvhdCount != 1 || len(info.tracks) == 0 || !info.localDataReferences || !allowVideo && info.pictureTracks != 0 {
+	if info.mvhdCount != 1 || len(info.tracks) == 0 || !info.localDataReferences || !allowVideo && info.pictureTracks != 0 ||
+		info.quickTimeSound && info.pictureTracks == 0 {
 		return CapabilityReasonMalformed
 	}
 	chunks := 0
@@ -164,7 +169,7 @@ func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityRea
 				return CapabilityReasonMalformed
 			}
 		}
-		if !track.proveAudioRanges(info) {
+		if info.quickTimeSound && !track.proveQuickTimeSoundTiming() || !track.proveAudioRanges(info) {
 			return CapabilityReasonMalformed
 		}
 	}
@@ -174,7 +179,41 @@ func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityRea
 	return CapabilityReasonEligible
 }
 
-func m4aBrand(brand string) bool {
+// proveQuickTimeSoundTiming limits MOV audio to the presentation timeline
+// FFmpeg preserves when Docling extracts it to WAV. An initial edit can
+// remove AAC priming. Empty or multiple edits can shift or splice audio.
+func (track *mp4TrackInfo) proveQuickTimeSoundTiming() bool {
+	frame := track.audioFormats[0].samplesPerFrame
+	for _, format := range track.audioFormats {
+		if uint64(format.sampleRate) != track.mediaTimescale || format.samplesPerFrame != frame {
+			return false
+		}
+	}
+	if track.editEntries > 1 || track.firstEditMediaTime > uint64(frame) {
+		return false
+	}
+	// FFmpeg can use QuickTime frame geometry for packet sizing instead
+	// of stsz when the table contains one unit-delta run.
+	timing := track.quickTimeSampleTiming
+	if track.sampleDuration == track.sampleCount || (len(timing) != 8 && len(timing) != 16) {
+		return false
+	}
+	firstDelta := binary.BigEndian.Uint32(timing[4:8])
+	if len(timing) == 8 && track.sampleCount == 1 {
+		return firstDelta <= frame
+	}
+	if firstDelta != frame {
+		return false
+	}
+	// The muxer may trim the duration of the last AAC packet.
+	return len(timing) == 8 || binary.BigEndian.Uint32(timing[8:12]) == 1 &&
+		binary.BigEndian.Uint32(timing[12:16]) <= frame
+}
+
+func soundMovieBrand(brand string, quickTime bool) bool {
+	if quickTime {
+		return brand == "qt  "
+	}
 	switch brand {
 	case "M4A ", "isom", "iso2", "mp41", "mp42":
 		return true
@@ -299,6 +338,49 @@ func validM4ASampleEntry(kind string, entry []byte) m4aAudioFormat {
 		return m4aAudioFormat{}
 	}
 	return format
+}
+
+// validQuickTimeAACEntry handles the native AAC SoundDescriptionV1 layout
+// from the qualified muxer and the ISO-style version-zero AAC description.
+func validQuickTimeAACEntry(kind string, entry []byte) m4aAudioFormat {
+	if kind != "mp4a" || len(entry) < 28 {
+		return m4aAudioFormat{}
+	}
+	version := binary.BigEndian.Uint16(entry[8:10])
+	if version == 0 {
+		return validM4ASampleEntry(kind, entry)
+	}
+	// Version 1 adds four packet/frame fields to the 28-byte base entry.
+	const waveOffset = 44
+	if version != 1 || len(entry) < waveOffset+8 ||
+		binary.BigEndian.Uint16(entry[16:18]) == 0 ||
+		binary.BigEndian.Uint16(entry[18:20]) == 0 ||
+		binary.BigEndian.Uint32(entry[24:28]) == 0 {
+		return m4aAudioFormat{}
+	}
+	waveHeader, waveSize, ok := mp4BoxHeader(entry, waveOffset)
+	if !ok || waveHeader != 8 || string(entry[waveOffset+4:waveOffset+8]) != "wave" {
+		return m4aAudioFormat{}
+	}
+	tail := entry[waveOffset+waveSize:]
+	if len(tail) != 0 && (len(tail) != 24 || binary.BigEndian.Uint32(tail[:4]) != 24 ||
+		string(tail[4:8]) != "chan" || binary.BigEndian.Uint32(tail[8:12]) != 0 ||
+		binary.BigEndian.Uint32(tail[20:24]) != 0) {
+		return m4aAudioFormat{}
+	}
+
+	wave := entry[waveOffset+waveHeader : waveOffset+waveSize]
+	const prefix = "\x00\x00\x00\x0cfrmamp4a\x00\x00\x00\x0cmp4a\x00\x00\x00\x00"
+	const terminator = "\x00\x00\x00\x08\x00\x00\x00\x00"
+	if len(wave) < len(prefix)+8+len(terminator) || string(wave[:len(prefix)]) != prefix ||
+		string(wave[len(wave)-len(terminator):]) != terminator {
+		return m4aAudioFormat{}
+	}
+	esds := wave[len(prefix) : len(wave)-len(terminator)]
+	if uint64(binary.BigEndian.Uint32(esds[:4])) != uint64(len(esds)) || string(esds[4:8]) != "esds" {
+		return m4aAudioFormat{}
+	}
+	return validAACDescriptor(esds[8:])
 }
 
 // m4aDescriptor extracts one MPEG-4 expandable-length descriptor without trusting

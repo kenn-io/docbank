@@ -192,6 +192,65 @@ func TestDaemonDoclingASRMP4Import(t *testing.T) {
 	require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
 }
 
+func TestDaemonDoclingASRQuickTimeWatch(t *testing.T) {
+	provider := newDaemonDoclingServer(t)
+	provider.allowVideo = true
+	cfg, _ := doclingASRProcessingConfig(t, provider.URL())
+	profile := cfg.RenditionProfiles["asr"]
+	profile.AdapterContract = config.DoclingASRQuickTimeAdapterContract
+	profile.DiscloseFilename = false
+	resolved, err := configuredDoclingASRProfile(profile)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = resolved.Descriptor.Fingerprint
+	profile.DisclosureFingerprint = docling.ASRQuickTimeDisclosureFingerprint(resolved.Descriptor, profile.Runtime.Endpoint, profile.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = profile
+
+	inbox, root := t.TempDir(), t.TempDir()
+	cfg.Watches = []config.WatchConfig{{Name: "movies", Source: inbox, Destination: "/movies",
+		Profile: "asr", CaptureOnChange: true, SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Hour)}}
+	cfg.Server.APIKey = daemonASRAPIKey
+	require.NoError(t, cfg.Validate())
+	require.NoError(t, writeDaemonASRConfig(root, cfg))
+	t.Setenv("DOCBANK_TEST_DOCLING_KEY", daemonASRProviderKey)
+	t.Setenv("DOCBANK_HOME", root)
+	startServe(t)
+	runtime := waitForDaemon(t, root)
+	daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
+	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
+
+	content := mediatest.H264AACMOV()
+	source := filepath.Join(t.TempDir(), "consent.mov")
+	require.NoError(t, os.WriteFile(source, content, 0o600))
+	_, err = runCLI(t, "add", source, "--dest", "/consent")
+	require.NoError(t, err)
+	node, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/consent/consent.mov"}})
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "asr"}
+	plan, err := daemon.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	require.Empty(t, plan.RenditionIneligibleReason)
+	require.Len(t, plan.Flow, 1)
+	require.Equal(t, docling.ASRQuickTimeAdapterContract, plan.Flow[0].RuntimeDisclosure.ImmediateProcessor)
+	_, err = daemon.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(inbox, "watched.mov"), content, 0o600))
+	settleDaemon(t)
+	watched, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/movies/watched.mov"}})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), provider.submissions.Load())
+	require.Equal(t, content, provider.submissionSource())
+	search, err := daemon.SearchDocuments(t.Context(), api.DocumentSearchRequest{
+		Query: "Telescope delivery", Mode: "lexical", Profile: "asr", Limit: 10,
+		Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: []string{watched.CurrentVersionID}},
+	})
+	require.NoError(t, err)
+	require.Len(t, search.Results, 1)
+	require.Equal(t, watched.CurrentVersionID, search.Results[0].ContentVersionID)
+	require.NotEmpty(t, search.Results[0].Evidence)
+	require.NotNil(t, search.Results[0].Evidence[0].TimeSpan)
+}
+
 func TestDaemonDoclingASRFailures(t *testing.T) {
 	t.Run("boundary value 0.0 for poll interval is rejected", func(t *testing.T) {
 		provider := newDaemonDoclingServer(t)
