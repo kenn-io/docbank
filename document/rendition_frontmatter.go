@@ -255,6 +255,14 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 				cursor += len("\n\n---\n\n")
 			}
 			cursor += len(renditionPresentation(NormalizedEvidenceUnitV1{HeadingPath: unit.HeadingPath, Locator: unit.Locator}, first))
+			block, opening := imageRenditionBlock(unit.Text)
+			if !bytes.HasPrefix(rendition.Markdown[min(cursor, len(rendition.Markdown)):], []byte(block)) {
+				return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
+			}
+			offset := cursor + opening
+			navigation.Entries = append(navigation.Entries, RenditionNavigationEntryV1{Key: unit.EvidenceUnitID, Kind: unit.Locator.Kind, Title: unit.HeadingPath[len(unit.HeadingPath)-1], Line: 1 + bytes.Count(rendition.Markdown[:offset], []byte{'\n'}), Byte: offset})
+			cursor += len(block)
+			continue
 		}
 		relative := bytes.Index(rendition.Markdown[min(cursor, len(rendition.Markdown)):], []byte(unit.Text))
 		if relative < 0 {

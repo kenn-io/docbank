@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/grounding"
 	querypkg "go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/vectorindex"
 	"go.kenn.io/kit/search/lexical"
@@ -340,7 +339,7 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 			return Node{}, fmt.Errorf("decoding lexical evidence headings: %w", err)
 		}
 		prefix := document.FormatRenditionHeadingContext(headings, "")
-		candidate.Excerpt = prefix + boundedExplainedSearchExcerpt(grounding.UnescapePunctuation(candidate.Excerpt), max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
+		candidate.Excerpt = prefix + boundedExplainedSearchExcerpt(candidate.Excerpt, max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
 	} else {
 		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt, maxExplainedSearchExcerptRunes)
 	}

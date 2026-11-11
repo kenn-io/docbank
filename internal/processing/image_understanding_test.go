@@ -14,6 +14,9 @@ import (
 	"encoding/json/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
+	goldmarkhtml "github.com/yuin/goldmark/v2/renderer/html"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/vision"
@@ -26,7 +29,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	model := "synthetic-vision"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fields := map[string]string{"visible_text": "SAVE\nNOW\n    ALPHA  \n\tBETA\t\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
+		fields := map[string]string{"visible_text": "SAVE\nNOW\n    ALPHA  \n\tBETA\\\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
 		raw, err := json.Marshal(fields)
 		if !assert.NoError(t, err) {
 			http.Error(w, "invalid response", http.StatusInternalServerError)
@@ -70,8 +73,21 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	assert.Equal(t, written.Hash, view.Build.SourceSHA256)
 	window, err := service.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: view.Attachment.ID, MaxChars: 16000})
 	require.NoError(t, err)
-	assert.Contains(t, window.Text, "    ALPHA  \n\tBETA\t")
-	assert.NotContains(t, window.Text, "```")
+	var rendered bytes.Buffer
+	markdown := []byte(window.Text)
+	root := parser.New().Parse(markdown)
+	require.NoError(t, ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			assert.NotEqual(t, ast.KindRawHTML, node.Kind())
+			assert.NotEqual(t, ast.KindHTMLBlock, node.Kind())
+		}
+		return ast.WalkContinue, nil
+	}))
+	require.NoError(t, goldmarkhtml.New().Render(&rendered, markdown, root))
+	assert.Contains(t, rendered.String(), "<pre><code>SAVE\nNOW\n    ALPHA  \n\tBETA\\\nR and D &amp;amp; partners\n===\n</code></pre>")
+	assert.Contains(t, rendered.String(), "<pre><code>A cartoon dog beside flames.\n</code></pre>")
+	assert.Contains(t, rendered.String(), "<h2>Visible text (best-effort transcription)</h2>")
+	assert.Contains(t, rendered.String(), "This is a model interpretation of an image")
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
@@ -90,7 +106,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ALPHA", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	assert.Contains(t, report.Results[0].Excerpt, "    ALPHA  \n\tBETA\t")
+	assert.Contains(t, report.Results[0].Excerpt, "    ALPHA  \n\tBETA\\")
 	assert.NotContains(t, report.Results[0].Excerpt, "```")
 
 	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ignoring danger", Mode: "semantic", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})

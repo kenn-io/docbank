@@ -1,6 +1,6 @@
 package document
 
-import "unicode/utf8"
+import "strings"
 
 // ImageUnderstandingProviderID selects an ordinary image interpretation rendition.
 const ImageUnderstandingProviderID = "compatible-vision.understand-v1"
@@ -19,18 +19,37 @@ func isImageUnderstandingUnit(headings []string) bool {
 	return len(headings) == 2 && headings[0] == ImageUnderstandingHeading
 }
 
-// sanitizeRenditionUnit sanitizes a unit's text. Interpretation text is plain,
-// so its whitespace is retained while Markdown punctuation is escaped.
+// sanitizeRenditionUnit sanitizes a unit's text, retaining literal image text.
 func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, maxLinkChars, maxSourceBytes, maxRunes int) (string, bool, bool, error) {
 	if !isImageUnderstandingUnit(unit.HeadingPath) {
 		return sanitizeRenditionMarkdown(unit.Text, maxLinkChars, maxSourceBytes, maxRunes)
 	}
 	source, sourceTruncated := truncateUTF8Bytes(unit.Text, maxSourceBytes)
-	escaped := EscapeRenditionText(source)
-	if utf8.RuneCountInString(escaped) > maxRunes {
-		return truncateEscapedRenditionText(source, maxRunes), sourceTruncated, true, nil
+	text, truncated := truncateRunes(source, maxRunes)
+	return text, sourceTruncated, truncated, nil
+}
+
+func imageRenditionBlock(text string) (string, int) {
+	block := serializeRenditionCodeBlock("", text+"\n")
+	return block, strings.IndexByte(block, '\n') + 1
+}
+
+func imageRenditionPrefix(text string, budget int) string {
+	end, count, run, longest := 0, 0, 0, 0
+	for offset, r := range text {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+		count++
+		if count+2*max(3, longest+1)+2 > budget {
+			break
+		}
+		end = offset + len(string(r))
 	}
-	return escaped, sourceTruncated, false, nil
+	return text[:end]
 }
 
 // renditionPresentation renders a readable unit's labels for readers: its

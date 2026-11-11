@@ -953,7 +953,7 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 	t.Run("image interpretation", func(t *testing.T) {
 		s, versions := newRenditionCatalogFixture(t)
 		profile := catalogProcessingProfile(t, false)
-		build := lexicalSearchBuild(s, profile, catalogBuildID, "SAVE\nNOW\nR and D \\&amp\\; partners")
+		build := lexicalSearchBuild(s, profile, catalogBuildID, "SAVE\nNOW\nR and D \\&amp; partners")
 		build.Units[0].HeadingPath = []string{document.ImageUnderstandingHeading, "Visible text (best-effort transcription)"}
 		build.ProviderReceipt = jsontext.Value(`{"provider_id":"compatible-vision.understand-v1"}`)
 		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
@@ -965,7 +965,7 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 		require.NoError(t, err)
 		require.Len(t, candidates, 1)
 		assert.Contains(t, candidates[0].Excerpt, document.ImageUnderstandingHeading+" / Visible text (best-effort transcription)")
-		assert.Contains(t, candidates[0].Excerpt, "SAVE\nNOW\nR and D &amp; partners")
+		assert.Contains(t, candidates[0].Excerpt, "SAVE\nNOW\nR and D \\&amp; partners")
 	})
 }
 

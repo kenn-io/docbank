@@ -37,18 +37,30 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		presentation := renditionPresentation(evidenceUnit, len(markdownUnits) == 0)
 		overhead := utf8.RuneCountInString(presentation + strings.Repeat("\n\n---\n\n", min(len(markdownUnits), 1)))
 		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
+		if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+			unitBudget = policy.maxUnitRunes
+		}
 		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionUnit(
 			evidenceUnit, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)
 		}
+		if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+			prefix := imageRenditionPrefix(text, max(remaining-overhead-1, 0))
+			renditionTruncated = renditionTruncated || len(prefix) != len(text)
+			text = prefix
+		}
 		truncated = truncated || sourceTruncated || renditionTruncated
 		unit := normalizedRenditionUnit(evidenceUnit, text)
 		result.Units = append(result.Units, unit)
 		if text != "" {
-			remaining = max(0, remaining-overhead-utf8.RuneCountInString(text))
-			markdownUnits = append(markdownUnits, presentation+text)
+			projected := text
+			if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+				projected, _ = imageRenditionBlock(text)
+			}
+			remaining = max(0, remaining-overhead-utf8.RuneCountInString(projected))
+			markdownUnits = append(markdownUnits, presentation+projected)
 			result.LexicalSegments = append(result.LexicalSegments,
 				lexicalSegments(unit, len(result.LexicalSegments), policy.maxSegmentRunes)...)
 		}

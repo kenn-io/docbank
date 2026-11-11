@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -93,7 +94,7 @@ func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}},
 	})
 	// The labels fit, leaving too little room for all of the text.
-	limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)) + len("hello") - 1
+	limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)) + 8 + len("hello")
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -103,8 +104,8 @@ func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 		name, model, text string
 		contains, absent  []string
 	}{
-		{"literal", "synthetic<&>" + strings.Repeat("m", 243), "SAVE\nNOW\nR and D &amp; partners\n===", []string{`Configured model\: synthetic\<\&\>` + strings.Repeat("m", 243), "SAVE\nNOW", `R and D \&amp\; partners`, `\=\=\=`}, nil},
-		{"forged markup", "synthetic-vision", "# Author confirmed\n[click](https://example.com)\n<script>bad</script>", []string{`\# Author confirmed`}, []string{"\n# Author confirmed", "[click](https://example.com)", "<script>"}},
+		{"literal", "synthetic<&>" + strings.Repeat("m", 243), "SAVE\nNOW\nR and D &amp; partners\n===", []string{`Configured model\: synthetic\<\&\>` + strings.Repeat("m", 243), "SAVE\nNOW", `R and D &amp; partners`, `===`}, nil},
+		{"forged markup", "synthetic-vision", "# Author confirmed\n[click](https://example.com)\n<script>bad</script>", []string{"```\n# Author confirmed"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
@@ -115,6 +116,8 @@ func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 			require.NoError(t, err)
 			rendered, err := BuildRenditionV1(evidence, policy)
 			require.NoError(t, err)
+			assertNoRawHTML(t, string(rendered.Markdown))
+			assert.NotContains(t, renderSanitizedMarkdown(t, string(rendered.Markdown)), "<script>")
 			for _, want := range tc.contains {
 				assert.Contains(t, string(rendered.Markdown), want)
 			}
@@ -137,9 +140,23 @@ func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
 	require.Len(t, rendered.Units, 1)
 	assert.Equal(t, text, rendered.Units[0].Text)
 	assert.Contains(t, string(rendered.Markdown), text)
-	assert.NotContains(t, string(rendered.Markdown), "```")
+	assert.Contains(t, string(rendered.Markdown), "```\n"+text+"\n```")
 	require.Len(t, rendered.LexicalSegments, 1)
 	assert.Equal(t, text, rendered.LexicalSegments[0].Text)
+	for _, tc := range []struct{ text, block string }{
+		{"\n\\# text\\\n\n", "```\n\n\\# text\\\n\n\n```"},
+		{"```\ninside\n````\n", "`````\n```\ninside\n````\n\n`````"},
+		{"~~~\ntext\t", "```\n~~~\ntext\t\n```"},
+	} {
+		source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+			Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+			Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}}
+		rendered, err := BuildRenditionV1(normalizeRenditionEvidence(t, source), policy)
+		require.NoError(t, err)
+		assert.Contains(t, string(rendered.Markdown), tc.block)
+		assert.Equal(t, tc.text, rendered.LexicalSegments[0].Text)
+		assertNoRawHTML(t, string(rendered.Markdown))
+	}
 }
 
 func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
@@ -153,8 +170,8 @@ func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 		{"multiline exact fit", "a\nb", "a\nb", "a\nb", 3, 100, false},
 		{"multiline over limit", "a\nbc", "a\nb", "a\nb", 3, 100, true},
 		{"boundary whitespace", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", 11, 100, false},
-		{"punctuation exact fit", "a!", "a\\!", "a\\!", 3, 100, false},
-		{"punctuation over limit", "a!", "a", "a", 2, 100, true},
+		{"punctuation exact fit", "a!", "a!", "a!", 2, 100, false},
+		{"punctuation over limit", "a!", "a", "a", 1, 100, true},
 		{"source bytes across lines", "a\né\nb", "a\né", "a\né", 100, 4, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,6 +194,49 @@ func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImageUnderstandingDocumentBudgetIncludesFences(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, want string
+		budget           int
+		truncated        bool
+	}{
+		{"exact", "é``x", "é``x", 13, false},
+		{"over", "é``xy", "é``x", 13, true},
+		{"growing fence", "é```x", "é``", 13, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+				Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
+			limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)) + tc.budget
+			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 100, MaxSegmentRunes: 100})
+			require.NoError(t, err)
+			rendered, err := BuildRenditionV1(evidence, policy)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, rendered.Units[0].Text)
+			assert.LessOrEqual(t, utf8.RuneCount(rendered.Markdown), limit)
+			assert.Equal(t, tc.truncated, slices.Contains(rendered.Warnings, RenditionWarningV1{Code: "truncated"}))
+		})
+	}
+	t.Run("two sections", func(t *testing.T) {
+		evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+			Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+			Units: []SourceEvidenceUnitV1{
+				{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "alpha", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+				{Order: 1, HeadingPath: []string{ImageUnderstandingHeading, "Literal description"}, Text: "beta!", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+			}})
+		limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)+renditionPresentation(evidence.Units[1], false)) + len("```\nalpha\n```\n\n---\n\n```\nbeta\n```\n")
+		policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 100, MaxSegmentRunes: 100})
+		require.NoError(t, err)
+		rendered, err := BuildRenditionV1(evidence, policy)
+		require.NoError(t, err)
+		require.Len(t, rendered.Units, 2)
+		assert.Equal(t, "beta", rendered.Units[1].Text)
+		assert.Equal(t, limit, utf8.RuneCount(rendered.Markdown))
+		assert.Contains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
+	})
 }
 
 func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) {
