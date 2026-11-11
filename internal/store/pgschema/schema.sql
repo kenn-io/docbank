@@ -2496,3 +2496,11 @@ CREATE INDEX package_import_jobs_pending ON {{schema}}.package_import_jobs(state
 CREATE INDEX package_labels_lookup ON {{schema}}.package_labels(label,provenance,package_id);
 
 CREATE INDEX export_jobs_pending ON {{schema}}.export_jobs(state,id);
+
+CREATE TABLE {{schema}}.storage_operation_stores (
+    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE,
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) ON DELETE CASCADE,
+    role TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (operation_id,store_id)
+);
+CREATE INDEX storage_operation_stores_store ON {{schema}}.storage_operation_stores(store_id,operation_id);
