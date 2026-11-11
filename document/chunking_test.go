@@ -295,17 +295,24 @@ func TestEmbeddingInputGenerationRejectsUnknownHeadingsFormatter(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
 }
 
-func TestEmbeddingInputGenerationRejectsVersionOneHeadings(t *testing.T) {
+func TestEmbeddingInputGenerationReadsVersionOneFormatter(t *testing.T) {
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Section"}}})
 	policy := testInputPolicy(t, 2, 0)
-	policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
 	current := build(t, evidence, policy)
-	current.Version = EmbeddingInputGenerationVersion
+	// Version 1 treated the formatter as an opaque identity on main.
+	current.Chunk.Formatter = RenditionChunkHeadingsFormatter
 	var err error
+	current.PolicyFingerprint, err = inputPolicyFingerprint(current.policyIdentity())
+	require.NoError(t, err)
 	current.Checksum, err = generationChecksum(current)
 	require.NoError(t, err)
-	_, err = MarshalEmbeddingInputGeneration(current)
-	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
+	encoded, err := MarshalEmbeddingInputGeneration(current)
+	require.NoError(t, err)
+	decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
+	require.NoError(t, err)
+	inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
+	require.NoError(t, err)
+	assert.Equal(t, "AABB", inputs[0].Text)
 }
 
 func TestBuildEmbeddingInputsTruncatesOnlyAnIndivisibleTokenWhenDeclared(t *testing.T) {
