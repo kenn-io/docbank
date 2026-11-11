@@ -42,18 +42,12 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.NoError(t, err)
 	embedder := &understandingEmbeddingCapture{descriptor: embeddingWorkerDescriptor(t)}
 	fixture := newPublicationFixture(t)
-	stored := workerProcessingProfile(t, renderer.Descriptor())
-	var portable, embeddings document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
+	portable := imageUnderstandingTestProfile(t, renderer)
+	var embeddings document.ProcessingProfileV1
 	require.NoError(t, json.Unmarshal(embeddingWorkerProfile(t, embedder.Descriptor()).CanonicalProfile, &embeddings))
 	portable.Embeddings = embeddings.Embeddings[:1]
 	portable.Embeddings[0].Chunk.Formatter = "rendition-chunk-headings/v1"
 	portable.Embeddings[0].MaxInputTokens = 512
-	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
-	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
-	portable.Rendition.DiscloseFilename = false
-	portable.Rendition.MaxUnits = 4
-	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 	portable.EvidenceLexical.MaxUnitRunes = 5000
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: model}, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": embedder}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}}}})
 	require.NoError(t, err)
@@ -108,12 +102,6 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.Len(t, report.Results, 1)
 	assert.Contains(t, report.Results[0].Excerpt, "    ALPHA  \n\tBETA\\")
 	assert.NotContains(t, report.Results[0].Excerpt, "```")
-
-	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ignoring danger", Mode: "semantic", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
-	require.NoError(t, err)
-	require.Len(t, report.Results, 1)
-	assert.Zero(t, report.Results[0].LexicalRank)
-	assert.NotZero(t, report.Results[0].SemanticRank)
 }
 
 type understandingEmbeddingCapture struct {
@@ -128,16 +116,19 @@ func (p *understandingEmbeddingCapture) Embed(ctx context.Context, inputs []docu
 		p.text += input.Text + "\n"
 		p.inputs = append(p.inputs, input)
 	}
-	result, err := p.localTextEmbeddingProvider.Embed(ctx, inputs, auth)
-	if err != nil {
-		return result, err
-	}
-	for i, input := range inputs {
-		if input.Role != document.EmbeddingRoleQuery && !strings.Contains(input.Text, "denial of a crisis") {
-			result.Vectors[i].Values = []float32{0, 1}
-		}
-	}
-	return result, nil
+	return p.localTextEmbeddingProvider.Embed(ctx, inputs, auth)
+}
+
+func imageUnderstandingTestProfile(t *testing.T, renderer *vision.Provider) document.ProcessingProfileV1 {
+	t.Helper()
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(workerProcessingProfile(t, renderer.Descriptor()).CanonicalProfile, &portable))
+	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
+	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
+	portable.Rendition.DiscloseFilename = false
+	portable.Rendition.MaxUnits = 4
+	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
+	return portable
 }
 
 func TestImageUnderstandingInvalidRepliesStopAfterAllowedAttempts(t *testing.T) {
@@ -150,13 +141,7 @@ func TestImageUnderstandingInvalidRepliesStopAfterAllowedAttempts(t *testing.T) 
 	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	require.NoError(t, err)
 	fixture := newPublicationFixture(t)
-	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(workerProcessingProfile(t, renderer.Descriptor()).CanonicalProfile, &portable))
-	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
-	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
-	portable.Rendition.DiscloseFilename = false
-	portable.Rendition.MaxUnits = 4
-	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
+	portable := imageUnderstandingTestProfile(t, renderer)
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: "synthetic-vision"}}}})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)

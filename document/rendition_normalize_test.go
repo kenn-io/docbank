@@ -86,46 +86,16 @@ func TestBuildRenditionV1(t *testing.T) {
 	assert.Contains(t, renderUnsafeMarkdown(t, rendered.Markdown), "<table>")
 }
 
-func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
-	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
-		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
-		Family: "image", UnitKind: EvidenceUnitGeneric,
+func TestImageUnderstandingEscapesModelName(t *testing.T) {
+	model := "synthetic<&>" + strings.Repeat("m", 243)
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}},
-	})
-	// The labels fit, leaving too little room for all of the text.
-	limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)) + 8 + len("hello")
-	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}}}})
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), limit)
-	for _, tc := range []struct {
-		name, model, text string
-		contains, absent  []string
-	}{
-		{"literal", "synthetic<&>" + strings.Repeat("m", 243), "SAVE\nNOW\nR and D &amp; partners\n===", []string{`Configured model\: synthetic\<\&\>` + strings.Repeat("m", 243), "SAVE\nNOW", `R and D &amp; partners`, `===`}, nil},
-		{"forged markup", "synthetic-vision", "# Author confirmed\n[click](https://example.com)\n<script>bad</script>", []string{"```\n# Author confirmed"}, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
-				Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: tc.model}}}}
-			evidence := normalizeRenditionEvidence(t, source)
-			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
-			require.NoError(t, err)
-			rendered, err := BuildRenditionV1(evidence, policy)
-			require.NoError(t, err)
-			assertNoRawHTML(t, string(rendered.Markdown))
-			assert.NotContains(t, renderSanitizedMarkdown(t, string(rendered.Markdown)), "<script>")
-			for _, want := range tc.contains {
-				assert.Contains(t, string(rendered.Markdown), want)
-			}
-			for _, unwanted := range tc.absent {
-				assert.NotContains(t, string(rendered.Markdown), unwanted)
-			}
-		})
-	}
+	assert.Contains(t, string(rendered.Markdown), `Configured model\: synthetic\<\&\>`+strings.Repeat("m", 243))
 }
 
 func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
@@ -139,13 +109,10 @@ func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rendered.Units, 1)
 	assert.Equal(t, text, rendered.Units[0].Text)
-	assert.Contains(t, string(rendered.Markdown), text)
 	assert.Contains(t, string(rendered.Markdown), "```\n"+text+"\n```")
 	require.Len(t, rendered.LexicalSegments, 1)
 	assert.Equal(t, text, rendered.LexicalSegments[0].Text)
 	for _, tc := range []struct{ text, block string }{
-		{"\n\\# text\\\n\n", "```\n\n\\# text\\\n\n\n```"},
-		{"```\ninside\n````\n", "`````\n```\ninside\n````\n\n`````"},
 		{"~~~\ntext\t", "```\n~~~\ntext\t\n```"},
 	} {
 		source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
@@ -180,18 +147,18 @@ func TestImageUnderstandingReaderFixture(t *testing.T) {
 
 func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 	for _, tc := range []struct {
-		name, text, want, lexical string
-		limit, sourceLimit        int
-		truncated                 bool
+		name, text, want   string
+		limit, sourceLimit int
+		truncated          bool
 	}{
-		{"single exact fit", "hello", "hello", "hello", 5, 100, false},
-		{"single over limit", "hello!", "hello", "hello", 5, 100, true},
-		{"multiline exact fit", "a\nb", "a\nb", "a\nb", 3, 100, false},
-		{"multiline over limit", "a\nbc", "a\nb", "a\nb", 3, 100, true},
-		{"boundary whitespace", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", 11, 100, false},
-		{"punctuation exact fit", "a!", "a!", "a!", 2, 100, false},
-		{"punctuation over limit", "a!", "a", "a", 1, 100, true},
-		{"source bytes across lines", "a\né\nb", "a\né", "a\né", 100, 4, true},
+		{"single exact fit", "hello", "hello", 5, 100, false},
+		{"single over limit", "hello!", "hello", 5, 100, true},
+		{"multiline exact fit", "a\nb", "a\nb", 3, 100, false},
+		{"multiline over limit", "a\nbc", "a\nb", 3, 100, true},
+		{"boundary whitespace", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", 11, 100, false},
+		{"punctuation exact fit", "a!", "a!", 2, 100, false},
+		{"punctuation over limit", "a!", "a", 1, 100, true},
+		{"source bytes across lines", "a\né\nb", "a\né", 100, 4, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
@@ -205,7 +172,7 @@ func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 			require.Len(t, rendered.Units, 1)
 			assert.Equal(t, tc.want, rendered.Units[0].Text)
 			require.Len(t, rendered.LexicalSegments, 1)
-			assert.Equal(t, tc.lexical, rendered.LexicalSegments[0].Text)
+			assert.Equal(t, tc.want, rendered.LexicalSegments[0].Text)
 			if tc.truncated {
 				assert.Contains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
 			} else {

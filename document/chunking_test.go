@@ -272,16 +272,14 @@ func TestBuildEmbeddingInputsFitsRenderedHeadingContext(t *testing.T) {
 				assert.LessOrEqual(t, input.RenderedTokens, policy.MaxInputTokens)
 				assert.Contains(t, input.Rendered, "Section\n\n")
 			}
-			if tc.name == "bytes" {
-				encoded, err := MarshalEmbeddingInputGeneration(generation)
-				require.NoError(t, err)
-				decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
-				require.NoError(t, err)
-				inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
-				require.NoError(t, err)
-				for index, input := range inputs {
-					assert.Equal(t, generation.Inputs[index].Rendered, policy.ModelInput.EncodeDocument(input.Text))
-				}
+			encoded, err := MarshalEmbeddingInputGeneration(generation)
+			require.NoError(t, err)
+			decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
+			require.NoError(t, err)
+			inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
+			require.NoError(t, err)
+			for index, input := range inputs {
+				assert.Equal(t, generation.Inputs[index].Rendered, policy.ModelInput.EncodeDocument(input.Text))
 			}
 		})
 	}

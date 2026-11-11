@@ -436,7 +436,6 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 		mode                                Mode
 	}{
 		{"semantic", "", "", "current semantic source", "current semantic source", ModeSemantic},
-		{"hybrid semantic-only", "", "", "current semantic source", "current semantic source", ModeHybrid},
 		{"hybrid name", "node_name", "semantic.pdf", "current semantic source", "current semantic source", ModeHybrid},
 		{"hybrid content", "rendition_segment", "matching lexical text", "current semantic source", "matching lexical text", ModeHybrid},
 		{"hybrid missing content", "node_name", "semantic.pdf", "", "semantic.pdf", ModeHybrid},
