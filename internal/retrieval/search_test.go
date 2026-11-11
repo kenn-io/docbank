@@ -173,6 +173,24 @@ func TestSearcherHybridUsesRRFWithoutComparingRawScores(t *testing.T) {
 	assert.InDelta(t, 2.0/61.0, report.Results[0].Score, 1e-12)
 }
 
+func TestSearcherBoundsSemanticExcerptForClients(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []Mode{ModeSemantic, ModeHybrid} {
+		t.Run(string(mode), func(t *testing.T) {
+			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+			full := document.ImageUnderstandingHeading + " / Possible meaning (interpretation)\n\n" + strings.Repeat("é", 600)
+			backend.semantic[0].Excerpt = full
+			report, err := searcher.Search(t.Context(), Query{Text: "query", Mode: mode, Limit: 3,
+				ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
+				Authorization: retrievalAuthorization(descriptor)})
+			require.NoError(t, err)
+			require.Len(t, report.Results, 1)
+			assert.Equal(t, string([]rune(full)[:512]), report.Results[0].Excerpt)
+			assert.Equal(t, full, report.Results[0].rerankExcerpt)
+		})
+	}
+}
+
 func TestSearcherRevalidatesTheNameItMatched(t *testing.T) {
 	t.Parallel()
 	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
