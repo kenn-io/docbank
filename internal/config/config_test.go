@@ -1364,6 +1364,13 @@ func TestVisionRuntimeConfig(t *testing.T) {
 		mismatch.RenditionProfiles["primary"] = photo
 		require.ErrorContains(t, mismatch.Validate(), "image understanding requires its own task and adapter")
 	})
+	t.Run("photo task with understanding adapter", func(t *testing.T) {
+		mismatch := cfg
+		understanding := profile
+		understanding.AdapterContract = vision.UnderstandingAdapterContract
+		mismatch.RenditionProfiles = map[string]RenditionProfileConfig{"primary": understanding}
+		require.ErrorContains(t, mismatch.Validate(), "image understanding requires its own task and adapter")
+	})
 
 	t.Run("unrecognized task", func(t *testing.T) {
 		unknown := profile
