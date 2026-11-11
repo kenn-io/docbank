@@ -29,13 +29,14 @@ type renditionTextObserved struct {
 }
 
 type renditionTextRequest struct {
-	NodeID    int64                  `json:"node_id" minimum:"1"`
-	Revision  int64                  `json:"revision" minimum:"1"`
-	VersionID string                 `json:"version_id" format:"uuid"`
-	BlobHash  string                 `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
-	Size      int64                  `json:"size" minimum:"0"`
-	Profile   string                 `json:"profile,omitempty" maxLength:"128"`
-	Observed  *renditionTextObserved `json:"observed,omitempty"`
+	NodeID         int64                  `json:"node_id" minimum:"1"`
+	Revision       int64                  `json:"revision" minimum:"1"`
+	VersionID      string                 `json:"version_id" format:"uuid"`
+	BlobHash       string                 `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
+	Size           int64                  `json:"size" minimum:"0"`
+	Profile        string                 `json:"profile,omitempty" maxLength:"128"`
+	ExactRendition bool                   `json:"exact_rendition,omitempty" doc:"Resolve the exact observed active rendition independently of the current default profile"`
+	Observed       *renditionTextObserved `json:"observed,omitempty"`
 }
 
 type renditionTextSource struct {
@@ -131,9 +132,18 @@ func resolveRenditionText(ctx context.Context, d Deps, request renditionTextRequ
 	if err != nil {
 		return renditionTextReceipt{}, err
 	}
-	selection, err := selectCollectionProfile(d, request.Profile, true)
-	if err != nil {
-		return renditionTextReceipt{}, err
+	var selection collectionProfileSelection
+	if request.ExactRendition {
+		if request.Profile != "" || request.Observed == nil || request.Observed.Configuration != "configured" ||
+			request.Observed.ProfileFingerprint == "" || request.Observed.AttachmentID == "" || request.Observed.BuildID == "" {
+			return renditionTextReceipt{}, NewError(http.StatusUnprocessableEntity, "invalid_rendition_selection", "An exact rendition requires an observed profile fingerprint, attachment, and build.")
+		}
+		selection.Coverage = store.CoverageSelection{Configuration: "configured", ProfileFingerprint: request.Observed.ProfileFingerprint}
+	} else {
+		selection, err = selectCollectionProfile(d, request.Profile, true)
+		if err != nil {
+			return renditionTextReceipt{}, err
+		}
 	}
 	profile, binding, coverage, err := renditionTextState(request, selection)
 	if err != nil {

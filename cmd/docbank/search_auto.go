@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -44,7 +45,7 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	if !automaticSearchEligible(query, limit, opts) {
 		return automaticSearchOutcome{}, nil
 	}
-	profiles, err := c.API().ListDocumentProcessingProfiles(ctx)
+	profiles, err := c.API().ListDocumentProcessingProfiles(ctx, &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 	if err != nil {
 		if code, _ := daemonconn.ProblemCode(err); code == "processing_unavailable" {
 			return automaticSearchOutcome{}, nil
