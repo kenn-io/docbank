@@ -380,13 +380,14 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if options.Agent {
 		return writeSimilarSearchAgent(cmd, report)
 	}
-	return writeSimilarSearchReport(cmd, report)
+	return writeSimilarSearchReport(cmd, report, node.ID, options.Profile)
 }
 
-func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport) error {
+func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport, nodeID int64, profile string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "similar to: id:%d (version %s)\nbinding: %s\n", report.Source.NodeID, report.Source.ContentVersionID, report.BindingID)
 	if report.State == "unavailable" {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unavailable: no current embedding for binding %q on version %s\n", report.BindingID, report.Source.ContentVersionID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "docbank processing plan id:%d --profile %s\n", nodeID, profile)
 		return nil
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "coverage: %s (%d/%d source documents complete)\n", report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)

@@ -59,6 +59,7 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 			assert.Equal(t, versions, request.Fence.ContentVersionIDs)
 			assert.Equal(t, int64(42), request.Selector.NodeID)
+			assert.Equal(t, "private", request.Selector.Profile)
 			assert.Equal(t, processingTestVersionID, request.Selector.ContentVersionID)
 			assert.NoError(t, json.MarshalWrite(w, api.DocumentSimilarReport{State: "unavailable", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: processingTestVersionID}, BindingID: "semantic",
 				MissingCoverage: &api.DocumentMissingCoverage{Kind: "embedding", BindingID: "semantic", ProfileFingerprint: strings.Repeat("a", 64), ContentVersionID: processingTestVersionID}, Coverage: api.DocumentSearchCoverage{State: "unknown"}}))
@@ -73,6 +74,7 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 	options := documentSearchCLIOptions{Profile: "private", ContentVersionIDs: versions, Limit: 20}
 	require.NoError(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, "", options))
 	assert.Contains(t, output.String(), "unavailable: no current embedding")
+	assert.Contains(t, output.String(), "docbank processing plan id:42 --profile private\n")
 	assert.Equal(t, 1, calls)
 	options.JSON = true
 	output.Reset()
