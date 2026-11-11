@@ -165,7 +165,7 @@ func TestMediaEvidenceReusesVerifiedGenerationAcrossLookups(t *testing.T) {
 	require.Error(t, err, "cache entries must match all catalog authority")
 }
 
-func TestSearcherSemanticRerankingUsesExactRenditionInputExcerpt(t *testing.T) {
+func TestSearcherReranksFullRenditionAndCapsPublicExcerpt(t *testing.T) {
 	full := strings.Repeat("é", 600)
 	policy, err := document.NewEvidencePolicy(4096)
 	require.NoError(t, err)

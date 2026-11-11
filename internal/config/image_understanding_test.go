@@ -37,6 +37,5 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 		tooLarge.MaxDocumentBytes = 16<<20 + 1
 		cfg.RenditionProfiles["primary"] = tooLarge
 		require.ErrorContains(t, cfg.Validate(), "at most 16 MiB")
-		cfg.RenditionProfiles["primary"] = profile
 	})
 }
