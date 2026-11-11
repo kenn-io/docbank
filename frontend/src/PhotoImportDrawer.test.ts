@@ -72,7 +72,7 @@ it("inspects a saved import and resumes only its remaining group", async () => {
       {
         status: "committed" as const,
         files: [{ relative_path: "done.JPG", size: 1 }],
-        receipt: { status: "added" as const, asset_id: "asset" },
+        receipt: { status: "ambiguous" as const, asset_id: "asset", reason: "multiple_raw" },
       },
       { status: "remaining" as const, files: [{ relative_path: "left.JPG", size: 1 }] },
     ],
@@ -98,6 +98,7 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("done.JPG");
+  expect(screen.getByText("Multiple RAW files share this name.")).toBeTruthy();
   expect(screen.getByText("notes.txt")).toBeTruthy();
   expect(screen.getByText("Unsupported type")).toBeTruthy();
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
@@ -908,18 +909,15 @@ it.each([
     expect(screen.queryByText("Keep this tab open until the import finishes.")).toBeNull();
     expect(screen.getByText("The verified upload channel ended.")).toBeTruthy();
     const guidance = screen.getByText(/Import outcome is unconfirmed\./).textContent;
-    if (sessionOnly) {
-      expect(guidance).toContain("Choose the same files or folder again.");
-      expect(guidance).toContain("Photos and videos already in the vault are skipped.");
-      expect(guidance).toContain(
-        "Other files, including standalone XMP sidecars, may be added again.",
-      );
-      expect(guidance).not.toMatch(/resume/i);
-    } else {
-      expect(guidance).toBe(
-        "Import outcome is unconfirmed. Reload the page, then choose Resume import and reselect the same files or folder.",
-      );
-    }
+    expect(guidance).toBe(
+      "Import outcome is unconfirmed. Open Saved imports, select this import, and choose Inspect import.",
+    );
+    await view.rerender({ disabledReason: undefined });
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Start new import" })).toHaveProperty(
+      "disabled",
+      false,
+    );
   },
 );
 
