@@ -10,6 +10,7 @@ import (
 )
 
 func TestOpenExisting(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	driver := DefaultSQLiteDriver()
 	_, err := OpenExisting(t.Context(), path, driver)
@@ -44,6 +45,7 @@ func TestOpenExisting(t *testing.T) {
 }
 
 func TestOpenExistingRefusesReleasedAndFresh(t *testing.T) {
+	t.Parallel()
 	driver := DefaultSQLiteDriver()
 	t.Run("released", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "docbank.db")

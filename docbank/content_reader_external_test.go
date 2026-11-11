@@ -17,6 +17,7 @@ import (
 )
 
 func TestContentReader(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
@@ -55,6 +56,7 @@ func TestContentReader(t *testing.T) {
 }
 
 func TestContentReaderPackedAndSidecars(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	v, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
@@ -95,7 +97,7 @@ func snapshotReaderTree(t *testing.T, root string) []string {
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return err
+			return fmt.Errorf("reading entry info for %s: %w", path, err)
 		}
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
@@ -118,19 +120,23 @@ func snapshotReaderTree(t *testing.T, root string) []string {
 }
 
 func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
+	t.Parallel()
 	for _, change := range []struct {
 		name  string
 		apply func(*testing.T, string)
 	}{
 		{"missing marker", func(t *testing.T, root string) {
+			t.Helper()
 			require.NoError(t, os.Remove(filepath.Join(root, "blobs", ".packstore-owner.json")))
 		}},
 		{"missing lock", func(t *testing.T, root string) { require.NoError(t, os.Remove(filepath.Join(root, "vault.lock"))) }},
 		{"missing database", func(t *testing.T, root string) { require.NoError(t, os.Remove(filepath.Join(root, "docbank.db"))) }},
 		{"empty database", func(t *testing.T, root string) {
+			t.Helper()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "docbank.db"), nil, 0o600))
 		}},
 		{"restore handoff", func(t *testing.T, root string) {
+			t.Helper()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "blobs", "tmp", "primary-restore-handoff.json"), []byte("pending"), 0o600))
 		}},
 	} {
@@ -149,6 +155,7 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 }
 
 func TestContentReaderCloseWaitsForStream(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	v, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
