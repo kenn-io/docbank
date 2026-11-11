@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/v2/parser"
 )
 
 // These anchored RE2 patterns validate one already bounded/metered tag. They
@@ -83,12 +84,12 @@ func (s *linkScanner) inlineHTML(start, end int) (int, error) {
 			continue
 		}
 		inside := s.src[start+1 : i]
-		uri, err := validAutolinkURI(s.ctx, inside, s.b)
-		if err != nil {
-			return 0, err
-		}
+		// The scan above has metered this bounded slice. ScanURL implements
+		// the same scheme grammar; retain our existing DEL exclusion.
+		uri := parser.ScanURL(inside) == len(inside) && bytes.IndexByte(inside, 0x7f) < 0
 		email := false
 		if !uri {
+			var err error
 			email, err = validAutolinkEmail(s.ctx, inside, s.b)
 			if err != nil {
 				return 0, err
@@ -136,41 +137,16 @@ func (s *linkScanner) emitAutolink(use, dest Span, email bool) error {
 	if email {
 		target = "mailto:" + raw
 	}
-	if decoded, err := url.PathUnescape(target); err == nil && utf8.ValidString(decoded) && !strings.ContainsRune(decoded, 0) {
-		target = decoded
+	target, fragment, err := s.targetParts(target)
+	if err != nil {
+		return err
 	}
-	link := parsedLink{Span: use, Form: "markdown", RawTarget: raw, Target: target, Label: raw}
-	s.links = append(s.links, link)
-	if s.linkAt != nil {
-		s.linkAt[use.Start] = link
-	}
+	s.links = append(s.links, parsedLink{Span: use, Form: "markdown", Target: target, Fragment: fragment, Label: raw})
 	return nil
 }
 
-func validAutolinkURI(ctx context.Context, value []byte, b *budget) (bool, error) {
-	colon := -1
-	for i := 0; i < len(value) && i <= 32; i++ {
-		if value[i] == ':' {
-			colon = i
-			break
-		}
-	}
-	if colon < 2 || !asciiLetter(value[0]) {
-		return false, nil
-	}
-	for i, c := range value {
-		if err := b.step(ctx, 1); err != nil {
-			return false, err
-		}
-		if c <= 0x20 || c == '<' || c == '>' || c == 0x7f {
-			return false, nil
-		}
-		if i > 0 && i < colon && !asciiLetter(c) && (c < '0' || c > '9') && c != '+' && c != '-' && c != '.' {
-			return false, nil
-		}
-	}
-	return true, nil
-}
+// CommonMark permits local parts longer than 64 bytes and domains longer than
+// 255 bytes. Goldmark's ScanEmail narrows those, so retain this metered grammar.
 func validAutolinkEmail(ctx context.Context, value []byte, b *budget) (bool, error) {
 	at := -1
 	for i, c := range value {

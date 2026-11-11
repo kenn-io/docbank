@@ -12,9 +12,8 @@ import (
 )
 
 type sourceBlock struct {
-	span, content             Span // raw physical heading span, compact inline source
-	level                     int
-	paragraph, paragraphStart bool
+	span, content Span // raw physical heading span, compact inline source
+	level         int
 }
 
 type blockPart struct {
@@ -72,9 +71,9 @@ func (g *blockGuard) Close(n ast.Node, r text.Reader, pc parser.Context) {
 }
 
 type referenceGuard struct {
-	ctx   context.Context
-	b     *budget
-	parts *[]blockPart
+	ctx  context.Context
+	b    *budget
+	refs map[string]string
 }
 
 func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Context) {
@@ -98,7 +97,7 @@ func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Con
 		view = append(view, r.Source()[seg.Start:seg.Stop]...)
 		ends = append(ends, len(view))
 	}
-	scanner := linkScanner{ctx: g.ctx, src: view, b: g.b, refs: map[string]referenceDefinition{}}
+	scanner := linkScanner{ctx: g.ctx, src: view, b: g.b, refs: g.refs}
 	pos, removed := 0, 0
 	for pos < len(view) {
 		line, next, err := sourceLineAt(g.ctx, view, pos, g.b)
@@ -113,9 +112,6 @@ func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Con
 		removed = min(removed, len(segments))
 	}
 	if removed > 0 {
-		mustParse(g.b.node(g.ctx, 1))
-		before := append([]text.Segment(nil), segments[:removed]...)
-		*g.parts = append(*g.parts, blockPart{segments: before, pos: before[0].Start})
 		if removed == len(segments) {
 			// Goldmark may Close a transformed paragraph again. Leave its
 			// original Source attached, as its own transformer does.
@@ -130,7 +126,7 @@ func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Con
 // scanBlocks builds one compact inline view from Goldmark's eligible blocks.
 // Each source segment retains an original-byte change point; container markers
 // disappear only from the view. Neither source bytes nor returned spans change.
-func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) (view []byte, blocks []sourceBlock, offsets []linkSourceOffset, err error) {
+func scanBlocks(ctx context.Context, original []byte, bodyStart int, refs map[string]string, b *budget) (view []byte, blocks []sourceBlock, offsets []linkSourceOffset, err error) {
 	defer func() {
 		if caught := recover(); caught != nil {
 			if abort, ok := caught.(parseAbort); ok {
@@ -171,7 +167,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 		priorities = append(priorities, util.Prioritized(guarded, (i+1)*100))
 	}
 	p := parser.New(parser.WithDefaultParsers(false), parser.WithBlockParsers(priorities...),
-		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](&referenceGuard{ctx: ctx, b: b, parts: &parts}, 100)))
+		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](&referenceGuard{ctx: ctx, b: b, refs: refs}, 100)))
 	root := p.Parse(src) // no renderer or Goldmark inline parser is installed
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nil, err
@@ -221,7 +217,7 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) 
 			return nil, nil, nil, err
 		}
 		view = append(view, '\n', '\n')
-		block := sourceBlock{content: content, level: part.level, paragraph: part.level == 0, paragraphStart: true}
+		block := sourceBlock{content: content, level: part.level}
 		if part.level > 0 {
 			pos := bodyStart + part.pos
 			if len(part.segments) > 0 {

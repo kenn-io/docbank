@@ -56,7 +56,7 @@ func TestContainerMultilineBoundaries(t *testing.T) {
 	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
 	require.Equal(t, "[two](two.md)", string(src[linkSpan(n.Links[1]).Start:linkSpan(n.Links[1]).End]))
 	require.Len(t, n.Headings, 1)
-	require.Equal(t, "Root two", n.Headings[0].Text)
+	require.Equal(t, "Root [two](two.md)", n.Headings[0].Text)
 	require.Equal(t, "# Root [two](two.md)\n", string(src[headingSpan(n.Headings[0]).Start:headingSpan(n.Headings[0]).End]))
 }
 
@@ -83,9 +83,8 @@ func TestContainerReferenceLabelLimit(t *testing.T) {
 	require.Equal(t, []string{"next.md"}, linkTargets(n.Links))
 }
 
-// These three remote-review suggestions contradict CommonMark 0.31.2
-// sections 4.6 and 5.1. Pin the actual graph consequences before declining them.
-func TestReviewHTMLAndQuoteBoundaries(t *testing.T) {
+// Container and HTML boundaries must hide only the appropriate occurrences.
+func TestHTMLAndQuoteLinkBoundaries(t *testing.T) {
 	for _, tc := range []struct{ name, source string }{
 		{"unprefixed blank ends quote", "> ```\n> [hidden](bad.md)\n\n> [shown](good.md)\n"},
 		{"prefixed blank retains fence", "> ```\n> [hidden](bad.md)\n>\n> [hidden](bad.md)\n> ```\n\n[shown](good.md)\n"},

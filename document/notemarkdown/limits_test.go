@@ -71,12 +71,20 @@ func TestInternalLimits(t *testing.T) {
 	requireLimit(t, addLimit("overflow", &value, math.MaxInt, math.MaxInt), "overflow")
 	for _, tc := range []struct{ src, resource string }{
 		{"---\na: " + strings.Repeat("[", 33) + "0" + strings.Repeat("]", 33) + "\n---", "yaml_depth"},
-		{"---\n" + strings.Repeat("# comment\n", 7000) + "---", "frontmatter_bytes"},
-		{strings.Repeat("\n", maxLines+1), "line_breaks"},
 		{"[x](" + strings.Repeat("a", maxTarget+1) + ")", "target_bytes"},
 	} {
 		n, err := Parse(t.Context(), []byte(tc.src), Limits{})
 		requireLimit(t, err, tc.resource)
 		require.Equal(t, Note{}, n)
 	}
+}
+
+func TestDiagnosticAdmission(t *testing.T) {
+	b := &budget{limits: Limits{MaxDiagnostics: 1}}
+	d, err := b.diagnostic(t.Context(), "invalid_frontmatter", Span{0, 4})
+	require.NoError(t, err)
+	require.Equal(t, []Diagnostic{{Code: "invalid_frontmatter", Span: Span{0, 4}}}, d)
+	d, err = b.diagnostic(t.Context(), "unclosed_frontmatter", Span{4, 8})
+	requireLimit(t, err, "diagnostics")
+	require.Nil(t, d)
 }

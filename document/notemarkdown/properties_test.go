@@ -71,8 +71,8 @@ func TestPropertyOriginalOffsets(t *testing.T) {
 		}
 		for i, l := range n.Links {
 			require.Equal(ht, links[i], Span{l.Start, l.End})
-			require.Equal(ht, "n", l.Target)
-			require.Equal(ht, "x.md", l.Fragment)
+			require.Equal(ht, "n#x.md", l.Target)
+			require.Empty(ht, l.Fragment)
 		}
 	}, hegel.WithTestCases(1000))
 }

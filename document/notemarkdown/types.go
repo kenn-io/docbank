@@ -66,7 +66,7 @@ type Link struct {
 
 // Source syntax stays private: consumers receive the P02 projection only.
 type parsedLink struct {
-	Span                     Span
-	Form                     string
-	RawTarget, Target, Label string
+	Span                    Span
+	Form                    string
+	Target, Fragment, Label string
 }

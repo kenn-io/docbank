@@ -123,7 +123,7 @@ func TestLinksHostileWorkAndCancellation(t *testing.T) {
 	require.Equal(t, Note{}, n)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, &budget{})
+	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, nil, &budget{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -146,7 +146,7 @@ func TestLinksP02LabelsFragmentsAndLiteralTargets(t *testing.T) {
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []Link{
-		{Ordinal: 0, Form: "markdown", Raw: "[**label**](A:notes.md#part)", Target: "A:notes.md", Fragment: "part", Label: "label", Start: 0, End: len("[**label**](A:notes.md#part)"), Line: 1},
+		{Ordinal: 0, Form: "markdown", Raw: "[**label**](A:notes.md#part)", Target: "A:notes.md", Fragment: "part", Label: "**label**", Start: 0, End: len("[**label**](A:notes.md#part)"), Line: 1},
 	}, n.Links[:1])
 	require.Equal(t, "A:notes.md", n.Links[1].Target)
 	require.Equal(t, "Heading", n.Links[1].Fragment)

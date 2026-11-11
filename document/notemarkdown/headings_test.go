@@ -43,7 +43,7 @@ func TestHeadingContainersSetextAndSuppression(t *testing.T) {
 	require.Equal(t, "> Nested Setext\n> ---\n", string(src[h.Start:h.LineEnd]))
 	n, err = Parse(t.Context(), []byte("# **A** [B](next.md) `code` &amp; é\n"), Limits{})
 	require.NoError(t, err)
-	require.Equal(t, "A B code & é", n.Headings[0].Text)
+	require.Equal(t, "**A** [B](next.md) `code` &amp; é", n.Headings[0].Text)
 	for _, src := range []string{"#", "### \n", "# ###\n"} {
 		n, err := Parse(t.Context(), []byte(src), Limits{})
 		require.NoError(t, err)

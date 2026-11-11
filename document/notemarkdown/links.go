@@ -10,73 +10,25 @@ import (
 	"github.com/yuin/goldmark/v2/util"
 )
 
-type referenceDefinition struct{ destination Span }
 type linkOpener struct {
 	start, label  int
 	embed, active bool
 }
 
 type linkScanner struct {
-	ctx    context.Context
-	src    []byte
-	b      *budget
-	refs   map[string]referenceDefinition
-	links  []parsedLink
-	linkAt map[int]parsedLink
+	ctx   context.Context
+	src   []byte
+	b     *budget
+	refs  map[string]string
+	links []parsedLink
 }
 
-func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budget) ([]parsedLink, error) {
-	s := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}, linkAt: map[int]parsedLink{}}
-	// Definitions are resolved before uses; retain byte spans, not copies of
-	// destinations. Unused definitions never become graph occurrences.
-	var excluded []Span
-	previousDefinitions := false
+func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, refs map[string]string, b *budget) ([]parsedLink, error) {
+	// The block guard has already admitted every definition before any use.
+	s := linkScanner{ctx: ctx, src: src, b: b, refs: refs}
 	for _, block := range blocks {
-		if !block.paragraph || (!block.paragraphStart && !previousDefinitions) {
-			previousDefinitions = false
-			continue
-		}
-		previousDefinitions = true
-		for pos := block.content.Start; pos < block.content.End; {
-			line, next, err := sourceLineAt(ctx, src, pos, b)
-			if err != nil {
-				return nil, err
-			}
-			line.End = min(line.End, block.content.End)
-			end, ok, err := s.definition(line, block.content.End)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				previousDefinitions = false
-				break // definitions cannot interrupt an existing paragraph
-			}
-			after := definitionNext(src, end)
-			if ok {
-				excluded = append(excluded, Span{pos, min(max(after, next), block.content.End)})
-			}
-			pos = max(next, after)
-		}
-	}
-	ex := 0
-	for _, block := range blocks {
-		start := block.content.Start
-		for ex < len(excluded) && excluded[ex].End <= start {
-			ex++
-		}
-		for ex < len(excluded) && excluded[ex].Start < block.content.End {
-			if start < excluded[ex].Start {
-				if err := s.inline(start, excluded[ex].Start); err != nil {
-					return nil, err
-				}
-			}
-			start = excluded[ex].End
-			ex++
-		}
-		if start < block.content.End {
-			if err := s.inline(start, block.content.End); err != nil {
-				return nil, err
-			}
+		if err := s.inline(block.content.Start, block.content.End); err != nil {
+			return nil, err
 		}
 	}
 	sort.SliceStable(s.links, func(i, j int) bool { return s.links[i].Span.Start < s.links[j].Span.Start })
@@ -217,7 +169,11 @@ func (s *linkScanner) definition(line Span, blockEnd int) (int, bool, error) {
 			definitionEnd = finish
 		}
 		if _, exists := s.refs[key]; !exists {
-			s.refs[key] = referenceDefinition{dest}
+			raw, err := s.rawDestination(dest)
+			if err != nil {
+				return 0, false, err
+			}
+			s.refs[key] = raw
 		}
 		return definitionEnd, true, nil
 	}
@@ -391,45 +347,53 @@ func (s *linkScanner) inlineTargetWithDestination(start, end int) (Span, int, bo
 	return Span{}, 0, false, nil
 }
 
-func (s *linkScanner) emit(use, dest Span, form string, embed bool) error {
+func (s *linkScanner) rawDestination(dest Span) (string, error) {
+	if err := limitCount("target_bytes", dest.End-dest.Start, maxTarget); err != nil {
+		return "", err
+	}
+	if err := s.b.reserveStrings(dest.End - dest.Start); err != nil {
+		return "", err
+	}
+	return string(s.src[dest.Start:dest.End]), nil
+}
+
+func (s *linkScanner) emit(use Span, raw string, labelSpan Span, form string) error {
 	if err := limitCount("links", len(s.links)+1, s.b.limits.MaxLinks); err != nil {
 		return err
 	}
-	if err := limitCount("target_bytes", dest.End-dest.Start, maxTarget); err != nil {
-		return err
-	}
-	if err := s.b.reserveStrings(dest.End - dest.Start); err != nil {
-		return err
-	}
-	raw := string(s.src[dest.Start:dest.End])
-	target, err := s.decodeTarget(raw, form == "wiki")
+	target, err := s.decodeTarget(raw, form == "wikilink" || form == "embed")
 	if err != nil {
 		return err
 	}
-
-	if decoded, decodeErr := url.PathUnescape(target); decodeErr == nil && utf8.ValidString(decoded) && !strings.ContainsRune(decoded, 0) {
-		target = decoded
-	}
-	label, err := s.linkLabel(use, form, target)
+	target, fragment, err := s.targetParts(target)
 	if err != nil {
 		return err
 	}
-	if form == "wiki" {
-		form = "wikilink"
-		if embed {
-			form = "embed"
-		}
-	} else if embed {
-		form = "image"
-	} else if form == "markdown_reference" {
-		form = "reference"
+	label, err := rawText(s.ctx, s.src[labelSpan.Start:labelSpan.End], s.b)
+	if err != nil {
+		return err
 	}
-	link := parsedLink{Span: use, Form: form, RawTarget: raw, Target: target, Label: label}
-	s.links = append(s.links, link)
-	if s.linkAt != nil {
-		s.linkAt[use.Start] = link
-	}
+	s.links = append(s.links, parsedLink{Span: use, Form: form, Target: target, Fragment: fragment, Label: label})
 	return nil
+}
+
+// Split syntax-decoded structural delimiters before percent-decoding each
+// component once. Encoded hashes remain filename/fragment characters.
+func (s *linkScanner) targetParts(authored string) (string, string, error) {
+	if err := s.b.step(s.ctx, len(authored)); err != nil {
+		return "", "", err
+	}
+	if err := s.b.reserveStrings(len(authored)); err != nil {
+		return "", "", err
+	}
+	target, fragment, _ := strings.Cut(authored, "#")
+	decode := func(value string) string {
+		if decoded, err := url.PathUnescape(value); err == nil && utf8.ValidString(decoded) && !strings.ContainsRune(decoded, 0) {
+			return decoded
+		}
+		return value
+	}
+	return decode(target), decode(fragment), nil
 }
 
 func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
@@ -571,7 +535,19 @@ func (s *linkScanner) inline(start, end int) error {
 					return err
 				}
 				if ok {
-					if err := s.emit(Span{i, finish}, dest, "wiki", embed); err != nil {
+					raw, err := s.rawDestination(dest)
+					if err != nil {
+						return err
+					}
+					label := dest
+					if dest.End < finish-2 {
+						label = Span{dest.End + 1, finish - 2}
+					}
+					form := "wikilink"
+					if embed {
+						form = "embed"
+					}
+					if err := s.emit(Span{i, finish}, raw, label, form); err != nil {
 						return err
 					}
 					i = finish
@@ -597,7 +573,7 @@ func (s *linkScanner) inline(start, end int) error {
 				return err
 			}
 			if ok {
-				if err := s.emit(Span{op.start, finish}, dest, form, op.embed); err != nil {
+				if err := s.emit(Span{op.start, finish}, dest, Span{op.label, i}, form); err != nil {
 					return err
 				}
 				if !op.embed {
@@ -616,11 +592,19 @@ func (s *linkScanner) inline(start, end int) error {
 	return nil
 }
 
-func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, string, bool, error) {
+func (s *linkScanner) closeLink(op linkOpener, closing, end int) (string, int, string, bool, error) {
 	if closing+1 < end && s.src[closing+1] == '(' {
 		dest, finish, ok, err := s.inlineTarget(closing+1, end)
-		if err != nil || ok {
-			return dest, finish, "markdown", ok, err
+		if err != nil {
+			return "", 0, "", false, err
+		}
+		if ok {
+			raw, err := s.rawDestination(dest)
+			form := "markdown"
+			if op.embed {
+				form = "image"
+			}
+			return raw, finish, form, true, err
 		}
 	}
 	labelStart, labelEnd, finish := op.label, closing, closing+1
@@ -628,7 +612,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, str
 		j := finish + 1
 		for j < end && j-finish <= 4*999+1 && s.src[j] != ']' && s.src[j] != '[' {
 			if err := s.b.step(s.ctx, 1); err != nil {
-				return Span{}, 0, "", false, err
+				return "", 0, "", false, err
 			}
 			if s.src[j] == '\\' && j+1 < end {
 				j++
@@ -644,10 +628,14 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (Span, int, str
 	}
 	key, err := s.referenceKey(labelStart, labelEnd)
 	if err != nil {
-		return Span{}, 0, "", false, err
+		return "", 0, "", false, err
 	}
 	ref, ok := s.refs[key]
-	return ref.destination, finish, "markdown_reference", ok, nil
+	form := "reference"
+	if op.embed {
+		form = "image"
+	}
+	return ref, finish, form, ok, nil
 }
 
 func (s *linkScanner) wiki(open, end int) (int, Span, bool, error) {
@@ -674,42 +662,4 @@ func (s *linkScanner) wiki(open, end int) (int, Span, bool, error) {
 		}
 	}
 	return 0, Span{}, false, nil
-}
-
-func (s *linkScanner) linkLabel(use Span, form, target string) (string, error) {
-	start := use.Start
-	if s.src[start] == '!' {
-		start++
-	}
-	end := use.End
-	if form == "wiki" {
-		start += 2
-		end -= 2
-		label := -1
-		for i := start; i < end; i++ {
-			if err := s.b.step(s.ctx, 1); err != nil {
-				return "", err
-			}
-			if s.src[i] == '\\' && i+1 < end {
-				i++
-				continue
-			}
-			if s.src[i] == '|' {
-				label = i + 1
-				break
-			}
-		}
-		if label < 0 {
-			return target, nil
-		}
-		return headingText(s.ctx, s.src, Span{label, end}, nil, s.b)
-	}
-	// The bracket stack already identified a valid link. Reuse the bounded
-	// display scanner to find its label, including nested images and code.
-	d := headingDisplay{ctx: s.ctx, src: s.src, b: s.b, links: s.linkAt}
-	closing, err := d.labelEnd(start, end)
-	if err != nil {
-		return "", err
-	}
-	return headingText(s.ctx, s.src, Span{start + 1, closing}, s.linkAt, s.b)
 }

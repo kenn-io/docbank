@@ -2,7 +2,6 @@ package notemarkdown
 
 import (
 	"context"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -34,9 +33,6 @@ func Parse(ctx context.Context, src []byte, limits Limits) (Note, error) {
 			if r == '\r' && next < len(src) && src[next] == '\n' {
 				next++
 			}
-			if err := limitCount("line_breaks", len(lineStarts), maxLines); err != nil {
-				return Note{}, err
-			}
 			lineStarts = append(lineStarts, next)
 		}
 		i += width
@@ -46,15 +42,16 @@ func Parse(ctx context.Context, src []byte, limits Limits) (Note, error) {
 	if err != nil {
 		return Note{}, err
 	}
-	view, blocks, offsets, err := scanBlocks(ctx, src, n.BodyStart, b)
+	refs := map[string]string{}
+	view, blocks, offsets, err := scanBlocks(ctx, src, n.BodyStart, refs, b)
 	if err != nil {
 		return Note{}, err
 	}
-	links, err := extractLinks(ctx, view, blocks, b)
+	links, err := extractLinks(ctx, view, blocks, refs, b)
 	if err != nil {
 		return Note{}, err
 	}
-	n.Headings, err = extractHeadings(ctx, view, src, blocks, links, lineStarts, b)
+	n.Headings, err = extractHeadings(ctx, view, src, blocks, lineStarts, b)
 	if err != nil {
 		return Note{}, err
 	}
@@ -63,9 +60,8 @@ func Parse(ctx context.Context, src []byte, limits Limits) (Note, error) {
 		if err := b.reserveStrings(span.End - span.Start); err != nil {
 			return Note{}, err
 		}
-		target, fragment, _ := strings.Cut(link.Target, "#")
 		n.Links = append(n.Links, Link{Ordinal: i, Form: link.Form, Raw: string(src[span.Start:span.End]),
-			Target: target, Fragment: fragment, Label: link.Label, Start: span.Start, End: span.End, Line: sourceLineNumber(lineStarts, span.Start)})
+			Target: link.Target, Fragment: link.Fragment, Label: link.Label, Start: span.Start, End: span.End, Line: sourceLineNumber(lineStarts, span.Start)})
 	}
 	if n.Frontmatter != nil {
 		for _, field := range n.Frontmatter.Fields {
