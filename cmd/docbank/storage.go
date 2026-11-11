@@ -591,7 +591,10 @@ var storageRepackCmd = &cobra.Command{
 	Example: `  docbank storage repack --json`,
 	Use:     "repack",
 	Short:   "Rewrite sparse packs and retire dead pack files",
-	Args:    cobra.NoArgs,
+	Long: `Retire packs with no live entries. Partially live packs are rewritten when at
+most half their entries remain and both the minimum age and dead-byte thresholds
+are met. Use smaller positive threshold values for earlier repacking.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {

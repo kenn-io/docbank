@@ -36,5 +36,5 @@ func TestGCPackedRepackGuidance(t *testing.T) {
 
 	out, err = runCLI(t, "vault", "gc", "--run")
 	require.NoError(t, err)
-	assert.Contains(t, out, "repack: docbank storage repack")
+	assert.Contains(t, out, "repack eligible packs: docbank storage repack (selection rules and options: docbank storage repack --help)")
 }
