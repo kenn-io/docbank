@@ -244,9 +244,12 @@ For a Docbank SQLite vault layout change, bump `currentStorageSchemaVersion`.
 For an unreleased version, run `make schema-contract-check` and add the
 canonical record printed when the test fails under
 `internal/store/testdata/schema-contracts/`, without changing earlier records.
-The digest covers SQLite catalog SQL for tables, triggers, views, and unique
-indexes. Record each new non-unique index at the same version; changing or
-removing a recorded index needs a version bump.
+The digest covers the SQLite catalog SQL of every table, trigger, view, and
+index, so any change under an unreleased version needs a version bump. When the
+test reports a collision, keep `main`'s records, remove your old record, bump
+the version, rerun the test against the combined layout, and add the record it
+prints. After release, `TestReleasedSchemaFixturesMatchVersions` still allows
+compatible non-unique indexes to be added in place.
 
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
