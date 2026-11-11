@@ -535,6 +535,14 @@
       {#if textSelection.error}<p class="notice" role="status">{textSelection.error}</p>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+      {#if !packageController.allocation && packageController.phase === "cleanup-failed"}<div
+          class="package-recovery"
+        >
+          <p class="error" role="alert">{packageController.error}</p>
+          <Button size="sm" onclick={() => void packageController.release()}
+            >Release recipient ZIP</Button
+          >
+        </div>{/if}
       {#if phase === "preparing"}<p role="status"><Spinner size={16} /> Preparing PDF…</p>
         <Button onclick={close}>Cancel preparation</Button>{/if}
       {#if preparation && currentPage}
@@ -890,6 +898,11 @@
     margin: 0;
     font-size: var(--font-size-sm);
     line-height: 1.5;
+  }
+  .package-recovery {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
   }
   .error {
     color: var(--status-error-text);

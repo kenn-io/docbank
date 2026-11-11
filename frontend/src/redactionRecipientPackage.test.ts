@@ -275,3 +275,24 @@ it("keeps one download status line without hiding a package that is still buildi
   expect(controller.note("first", "PDF started")).toBe(true);
   expect(controller.error).toBe("");
 });
+
+it("keeps a failed release recoverable after the review that owned it closes", async () => {
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify(response())))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Busy disk" }), { status: 500 }));
+  const controller = new RecipientPackageController(() => "tab", vi.fn());
+  await controller.start(inputs, artifact);
+  expect(click).toHaveBeenCalledOnce();
+  await controller.stop();
+  // No delivery owns the failure now, so the review panel shows the release action.
+  expect([controller.phase, controller.allocation]).toEqual(["cleanup-failed", ""]);
+  expect(controller.error).toBe(
+    "The recipient ZIP could not be released. Release it before trying again.",
+  );
+  fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await controller.release();
+  expect(controller.phase).toBe("idle");
+  expect(fetch.mock.calls.at(-1)![1]!.method).toBe("DELETE");
+});

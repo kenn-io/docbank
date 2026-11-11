@@ -133,9 +133,13 @@ export class RecipientPackageController {
     return true;
   }
 
+  // Closing a review removes the delivery that showed this package, so any
+  // failed release must be recovered from the review panel instead.
   stop() {
     this.generation++;
     this.request?.abort();
+    this.allocation = "";
+    this.message = "";
     return this.release(true);
   }
 }
