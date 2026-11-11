@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/yuin/goldmark/v2/util"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -141,7 +142,7 @@ func headingKey(ctx context.Context, text string, b *budget) (string, error) {
 }
 
 func asciiPunctuation(c byte) bool {
-	return c >= '!' && c <= '/' || c >= ':' && c <= '@' || c >= '[' && c <= '`' || c >= '{' && c <= '~'
+	return util.IsPunct(c)
 }
 
 func sourceLineNumber(starts []int, pos int) int {

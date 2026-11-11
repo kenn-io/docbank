@@ -18,8 +18,10 @@
 // Frontmatter opens with --- on line one after an optional BOM and closes with
 // --- or .... Its span includes fences; BodyStart follows the closing line.
 // Invalid/unsupported YAML yields invalid_frontmatter, nil Raw and no fields;
-// the body starts after the fence. An unclosed opener yields unclosed_frontmatter
-// and excludes only the opener. Diagnostics contain fixed codes and raw spans;
+// the body starts after the fence. An unclosed opener yields unclosed_frontmatter,
+// retains its span in nonnil Frontmatter with nil Raw, and excludes only the
+// opener. Frontmatter is nil only when no opener exists. Diagnostics contain
+// fixed codes and raw spans;
 // admission enforces MaxDiagnostics, though currently at most one is emitted.
 // Raw is JSON-compatible: timestamps use RFC 3339; aliases and merges are bounded,
 // explicit keys win, and earlier merge maps win. Duplicate/non-string keys,
