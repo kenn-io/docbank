@@ -187,6 +187,7 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 		report.Degradations = append(report.Degradations, rerankingDegradation)
 	}
 	for i := range report.Results {
+		report.Results[i].Excerpt = document.StripUnsafeControlCharacters(report.Results[i].Excerpt)
 		count := 0
 		for offset := range report.Results[i].Excerpt {
 			if count == 512 {
