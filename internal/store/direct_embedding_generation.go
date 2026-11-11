@@ -2,7 +2,8 @@ package store
 
 import "go.kenn.io/docbank/document"
 
-// AutomaticOriginalFileConsentClass authorizes discovery to send watched MP4 originals.
+// AutomaticOriginalFileConsentClass authorizes discovery to send every eligible
+// MP4 original in the vault, whether it arrived by watch or manual import.
 const AutomaticOriginalFileConsentClass = "original_file_automatic"
 
 // AutomaticOriginalFileDisclosureFingerprint scopes automatic consent to

@@ -63,6 +63,7 @@ function endpointHost(endpoint: string): string {
 
 const inputWords: Record<string, string> = {
   original_file: "this file",
+  original_file_automatic: "eligible MP4 originals throughout this vault, automatically,",
   filename: "its name",
   derived_upload: "a small preview",
   rendition_chunk: "this file's text",
@@ -167,6 +168,7 @@ export function ineligibleSentence(reason: string): string {
 
 const classWords: Record<string, string> = {
   original_file: "Original file",
+  original_file_automatic: "Eligible MP4 originals throughout this vault, sent automatically",
   filename: "File name",
   derived_upload: "Preview image",
   rendition_chunk: "Extracted text",

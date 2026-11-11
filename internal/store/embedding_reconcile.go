@@ -148,14 +148,25 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				profiles[generation.ProcessingProfileFingerprint] = cached
 			}
 			profile, portable, fingerprints := cached.record, cached.portable, cached.fingerprints
+			// A retained generation that no binding of its profile recognizes,
+			// such as an original-file input with an unknown producer recipe,
+			// is counted as skipped rather than dropped silently.
+			recognized := false
 			for _, binding := range portable.Embeddings {
 				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
 					continue
 				}
 				inputFP := fingerprints.EmbeddingInput[binding.Name]
-				if binding.InputKind == document.EmbeddingInputOriginalFile &&
-					directGenerationProducer(generation, binding, inputFP) != directProducerManual {
-					continue
+				if binding.InputKind == document.EmbeddingInputOriginalFile {
+					producer := directGenerationProducer(generation, binding, inputFP)
+					// Automatic generations are recognized but never recovered:
+					// discovery re-admits them under current opt-in and consent.
+					recognized = recognized || producer != directProducerUnknown
+					if producer != directProducerManual {
+						continue
+					}
+				} else {
+					recognized = true
 				}
 				selected := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
 				spaceID := selected.ID
@@ -201,6 +212,9 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 					candidates = append(candidates, embeddingReconcileCandidate{request: job,
 						binding: binding, fingerprints: fingerprints, space: space})
 				}
+			}
+			if !recognized {
+				result.Skipped++
 			}
 			result.Examined++
 		}
@@ -646,6 +660,10 @@ func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation
 const videoEmbeddingEligibility = `a.kind='video' AND ` + liveIncludedDisplayPredicate +
 	` AND a.hidden_at IS NULL AND (v.mime_type='video/mp4' OR v.mime_type LIKE 'video/mp4;%') AND v.size>0`
 
+// validateAutomaticVideoEligibilityTx keeps the media inspection ceiling as
+// well as the binding limit. Daemon configuration caps automatic bindings at
+// Voyage's 20,000,000 bytes, but Go callers reach discovery and admission
+// without it, and a stored profile may allow up to 1 GiB.
 func validateAutomaticVideoEligibilityTx(ctx context.Context, tx *sql.Tx, versionID string, maxBytes int64) error {
 	var eligible bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id

@@ -308,6 +308,7 @@ func checkEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *t
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Examined)
 	assert.Equal(t, 1, result.Enqueued)
+	assert.Zero(t, result.Skipped, "a sibling binding's generation is recognized, not skipped")
 
 	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs`)
 	require.NoError(t, err)
@@ -1945,7 +1946,13 @@ func checkEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T, 
 	request.After = first.Next
 	second, err := s.ReconcileEmbeddingJobs(t.Context(), request)
 	require.NoError(t, err)
-	require.Positive(t, first.Skipped+second.Skipped)
+	for _, page := range []EmbeddingReconcileResult{first, second} {
+		if page.Enqueued == 0 {
+			require.Positive(t, page.Skipped, "the damaged generation is skipped")
+		} else {
+			require.Zero(t, page.Skipped, "the readable generation is not skipped")
+		}
+	}
 	require.Equal(t, 1, first.Enqueued+second.Enqueued)
 	require.Empty(t, second.Next)
 	// Start the cancellation probe at the damaged generation's page.

@@ -1406,6 +1406,7 @@ func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerp
 	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return Status{}, err
 	}
+	embeddings = oneJobPerOriginalFileBinding(embeddings, profile)
 	status := aggregateStatus(jobID, rendition, embeddings)
 	for _, binding := range profile.Embeddings {
 		if status.State == "completed" && binding.Activation == document.EmbeddingRequired &&
@@ -1415,6 +1416,49 @@ func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerp
 		}
 	}
 	return status, nil
+}
+
+// oneJobPerOriginalFileBinding keeps one job for each original-file binding.
+// Its manual and automatic jobs settle one upload, so status reports the
+// binding once: a completed job first, then the most advanced live attempt,
+// then the lower job ID. Other bindings keep every job.
+func oneJobPerOriginalFileBinding(embeddings []store.EmbeddingJobStatus,
+	profile document.ProcessingProfileV1,
+) []store.EmbeddingJobStatus {
+	direct := make(map[string]bool, len(profile.Embeddings))
+	for _, binding := range profile.Embeddings {
+		direct[binding.Name] = binding.InputKind == document.EmbeddingInputOriginalFile
+	}
+	kept := make(map[string]int, len(embeddings))
+	result := make([]store.EmbeddingJobStatus, 0, len(embeddings))
+	for _, job := range embeddings {
+		index, seen := kept[job.BindingID]
+		switch {
+		case !direct[job.BindingID]:
+			result = append(result, job)
+		case !seen:
+			kept[job.BindingID] = len(result)
+			result = append(result, job)
+		case equivalentJobPrecedes(job, result[index]):
+			result[index] = job
+		}
+	}
+	return result
+}
+
+var equivalentJobStates = []string{"completed", "running", "retry_wait", "queued"}
+
+func equivalentJobPrecedes(left, right store.EmbeddingJobStatus) bool {
+	rank := func(state string) int {
+		if index := slices.Index(equivalentJobStates, state); index >= 0 {
+			return index
+		}
+		return len(equivalentJobStates)
+	}
+	if leftRank, rightRank := rank(left.State), rank(right.State); leftRank != rightRank {
+		return leftRank < rightRank
+	}
+	return left.ID < right.ID
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,

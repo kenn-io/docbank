@@ -55,7 +55,7 @@ func photoDiscoveryScope(profile configuredProfile) string {
 	return ""
 }
 
-// automaticVideoScope names the bindings that discovery feeds watched MP4
+// automaticVideoScope names the bindings that discovery feeds eligible MP4
 // originals. A binding name has at most 63 characters, so the sentence stays
 // within the published 256-character scope bound after the longest photo
 // sentence.
@@ -64,9 +64,9 @@ func automaticVideoScope(bindings []string) string {
 	case 0:
 		return ""
 	case 1:
-		return fmt.Sprintf("Granting consent automatically sends eligible watched MP4 originals throughout this vault to binding %q.", bindings[0])
+		return fmt.Sprintf("Granting consent automatically sends eligible MP4 originals throughout this vault to binding %q.", bindings[0])
 	default:
-		return fmt.Sprintf("Granting consent automatically sends eligible watched MP4 originals throughout this vault to %d bindings.", len(bindings))
+		return fmt.Sprintf("Granting consent automatically sends eligible MP4 originals throughout this vault to %d bindings.", len(bindings))
 	}
 }
 

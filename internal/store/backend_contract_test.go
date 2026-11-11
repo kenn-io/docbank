@@ -1509,6 +1509,20 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkAutomaticVideoEmbeddingReconciliation(t, newPostgresQueryStore)
 		}},
+		{"WatchedMP4JobsSettleEquivalentPeers", func(t *testing.T) {
+			t.Helper()
+			checkWatchedMP4JobsSettleEquivalentPeers(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkWatchedMP4JobsSettleEquivalentPeers(t, newPostgresQueryStore)
+		}},
+		{"EmbeddingReconciliationCountsUnknownDirectGeneration", func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationCountsUnknownDirectGeneration(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmbeddingReconciliationCountsUnknownDirectGeneration(t, newPostgresQueryStore)
+		}},
 		{"EmbeddingReconciliationSkipsExistingTerminalJob", func(t *testing.T) { t.Helper(); checkEmbeddingReconciliationSkipsExistingTerminalJob(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkEmbeddingReconciliationSkipsExistingTerminalJob(t, newPostgresQueryStore)

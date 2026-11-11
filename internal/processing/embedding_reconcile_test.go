@@ -348,7 +348,7 @@ func TestEmbeddingWorkerDiscoversWatchedMP4s(t *testing.T) {
 	selector := Selector{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Profile: "video"}
 	plan, err := service.Plan(ctx, selector)
 	require.NoError(t, err)
-	require.Contains(t, plan.Estimate.Scope, "automatically sends eligible watched MP4 originals throughout this vault")
+	require.Contains(t, plan.Estimate.Scope, "automatically sends eligible MP4 originals throughout this vault")
 	require.Contains(t, plan.Estimate.Scope, `binding "direct"`)
 	require.Contains(t, plan.DisclosedClasses, store.AutomaticOriginalFileConsentClass)
 	request := service.profileConsentRequests(service.profiles["video"])[0]
@@ -652,6 +652,70 @@ func TestWatchedMP4BothQueuedSendsOnce(t *testing.T) {
 	_, err = f.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
 	require.NoError(t, err)
 	require.Equal(t, 1, f.provider.runtime.calls())
+}
+
+func TestWatchedMP4StatusCountsEachBindingOnce(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	selector := f.add(t, "status.mp4", mediatest.H265MP4())
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	manual := f.enqueue(t, selector, false)
+	automatic := f.enqueue(t, selector, true)
+	for _, job := range []string{manual, automatic} {
+		status, err := f.service.Status(t.Context(), job)
+		require.NoError(t, err)
+		require.Equal(t, "queued", status.State)
+		require.Equal(t, []string{min(manual, automatic)}, status.EmbeddingJobIDs)
+		require.Zero(t, status.CompletedBindings)
+	}
+
+	processed, err := f.worker.RunJob(t.Context(), automatic)
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Equal(t, 1, f.provider.runtime.calls())
+	for _, job := range []string{manual, automatic} {
+		status, err := f.service.Status(t.Context(), job)
+		require.NoError(t, err)
+		require.Equal(t, "completed", status.State)
+		require.Len(t, status.EmbeddingJobIDs, 1, "one binding is reported once")
+		require.Equal(t, 1, status.CompletedBindings)
+	}
+}
+
+func TestOneJobPerOriginalFileBindingPrefersTheMostAdvancedJob(t *testing.T) {
+	t.Parallel()
+	profile := document.ProcessingProfileV1{Embeddings: []document.EmbeddingBindingV1{
+		{Name: "direct", InputKind: document.EmbeddingInputOriginalFile},
+		{Name: "chunks", InputKind: document.EmbeddingInputRenditionChunk},
+	}}
+	for _, test := range []struct {
+		name  string
+		left  string
+		right string
+		want  string
+	}{
+		{"completed over failed", "failed", "completed", "completed"},
+		{"running over queued", "queued", "running", "running"},
+		{"retry over abandoned", "abandoned", "retry_wait", "retry_wait"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			jobs := []store.EmbeddingJobStatus{
+				{ID: "a", BindingID: "direct", State: test.left},
+				{ID: "c1", BindingID: "chunks", State: "failed"},
+				{ID: "b", BindingID: "direct", State: test.right},
+				{ID: "c2", BindingID: "chunks", State: "completed"},
+			}
+			kept := oneJobPerOriginalFileBinding(jobs, profile)
+			require.Len(t, kept, 3, "chunk bindings keep every job")
+			require.Equal(t, "b", kept[0].ID)
+			require.Equal(t, test.want, kept[0].State)
+			require.Equal(t, []string{"c1", "c2"}, []string{kept[1].ID, kept[2].ID})
+		})
+	}
+	tied := oneJobPerOriginalFileBinding([]store.EmbeddingJobStatus{
+		{ID: "b", BindingID: "direct", State: "queued"}, {ID: "a", BindingID: "direct", State: "queued"},
+	}, profile)
+	require.Equal(t, []store.EmbeddingJobStatus{{ID: "a", BindingID: "direct", State: "queued"}}, tied)
 }
 
 func TestWatchedMP4SettlementStaysWithItsClip(t *testing.T) {

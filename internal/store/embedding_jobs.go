@@ -504,6 +504,33 @@ func settleOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, vaultID, candidat
 // own grant carries its consent class: original_file for a manual job and
 // original_file_automatic for an automatic one.
 func satisfiedOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, vaultID, candidateID, now string) ([]string, error) {
+	matched, err := equivalentOriginalFileJobsTx(ctx, tx, candidateID, now)
+	if err != nil {
+		return nil, err
+	}
+	var satisfied []string
+	for _, id := range matched {
+		work, err := loadEmbeddingJobWorkTx(ctx, tx, vaultID, id)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			// A peer whose authority cannot be loaded stays unfinished for
+			// its own claim; it never fails the caller's transaction.
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if embeddingJobConsentMatches(work.InputGeneration, work.Binding, work.EmbeddingInputFingerprint, work.Consent.InputClasses) &&
+			work.Consent.DisclosureFingerprint == embeddingJobDisclosureFingerprint(work.Binding, work.Consent.InputClasses[0]) {
+			satisfied = append(satisfied, id)
+		}
+	}
+	return satisfied, nil
+}
+
+// equivalentOriginalFileJobsTx lists the candidate tuple's unfinished jobs,
+// without a live lease, whose generation and head both carry the manual or
+// automatic ID derived for that tuple.
+func equivalentOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, candidateID, now string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT j.job_id,j.generation_id,j.content_version_id,j.profile_fingerprint,j.binding_id,
 		g.generation_checksum,g.chunk_policy_fingerprint,s.input_generation_id
 		FROM embedding_jobs c JOIN embedding_jobs j ON j.content_version_id=c.content_version_id
@@ -521,11 +548,11 @@ func satisfiedOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, vaultID, candi
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	var matched []string
 	for rows.Next() {
 		var id, generationID, version, profile, binding, sourceHash, inputFP, headGenerationID string
 		if err := rows.Scan(&id, &generationID, &version, &profile, &binding, &sourceHash, &inputFP, &headGenerationID); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		manual, automatic := directGenerationIDs(version, sourceHash, profile, binding, inputFP)
@@ -533,24 +560,7 @@ func satisfiedOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, vaultID, candi
 			matched = append(matched, id)
 		}
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	var satisfied []string
-	for _, id := range matched {
-		work, err := loadEmbeddingJobWorkTx(ctx, tx, vaultID, id)
-		if err != nil {
-			return nil, err
-		}
-		if embeddingJobConsentMatches(work.InputGeneration, work.Binding, work.EmbeddingInputFingerprint, work.Consent.InputClasses) &&
-			work.Consent.DisclosureFingerprint == embeddingJobDisclosureFingerprint(work.Binding, work.Consent.InputClasses[0]) {
-			satisfied = append(satisfied, id)
-		}
-	}
-	return satisfied, nil
+	return matched, rows.Err()
 }
 
 func (s *Store) RenewEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time, lease time.Duration) (EmbeddingJobClaim, error) {

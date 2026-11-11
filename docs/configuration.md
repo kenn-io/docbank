@@ -1144,7 +1144,7 @@ for automatic video uploads. Gemini's adapter is available to Go applications.
 
 Vault-wide discovery requires its own consent for the binding. A grant for
 explicit builds covers only the files the operator selects. Follow the
-[watched MP4 setup](usage/document-processing.md#embed-watched-mp4s) to review it.
+[automatic MP4 setup](usage/document-processing.md#embed-mp4s-automatically) to review it.
 
 #### Local text indexing
 

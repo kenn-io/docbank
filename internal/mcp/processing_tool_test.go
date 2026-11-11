@@ -506,7 +506,7 @@ func TestProcessingPlanToolAcceptsAutomaticVideoPlan(t *testing.T) {
 			RetainedClasses:  []string{"embedding_vector_set"}, ConsentRequired: true, ConsentState: "required",
 			Estimate: api.ProcessingEstimate{SourceBytes: 1, ProviderCalls: 1, VectorSpaces: 1,
 				Scope: "Granting consent automatically finds faces in eligible photos throughout this vault." +
-					" Granting consent automatically sends eligible watched MP4 originals throughout this vault to binding " +
+					" Granting consent automatically sends eligible MP4 originals throughout this vault to binding " +
 					strconv.Quote(longest) + "."},
 			BackupConsequence: "derivatives are backed up",
 		})

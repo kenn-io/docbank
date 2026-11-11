@@ -275,3 +275,119 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 	}
 	require.Len(t, jobs(second), 2, "new authorization may admit work for an unpurged display")
 }
+
+// checkWatchedMP4JobsSettleEquivalentPeers drives the manual and automatic
+// jobs for one clip through the store: a live lease excludes its peer, a
+// publish completes the waiting peer, a claim completes a peer left queued,
+// and settlement never reaches another clip.
+func checkWatchedMP4JobsSettleEquivalentPeers(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	ctx := t.Context()
+	s := open(t)
+	descriptor := embeddingCatalogDescriptor()
+	profile := catalogProcessingProfileWith(t, true, func(profile *document.ProcessingProfileV1) {
+		binding := &profile.Embeddings[0]
+		binding.Descriptor = document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}
+		binding.ModelInput, binding.ScalarEncoding = descriptor.ModelInput, descriptor.ScalarEncoding
+		binding.TrustBoundary = string(descriptor.TrustBoundary)
+	})
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return ensureProcessingProfileTx(ctx, tx, profile) }))
+	binding, fingerprints, err := embeddingBindingFromProfile(profile, "optional")
+	require.NoError(t, err)
+	inputFP := fingerprints.EmbeddingInput[binding.Name]
+	manualConsent := ProviderOperationAuthorizationRequest{Principal: "operator:settle", Scope: "embedding:settle",
+		ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+		InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+	automaticConsent := manualConsent
+	automaticConsent.DisclosureFingerprint = AutomaticOriginalFileDisclosureFingerprint(binding)
+	automaticConsent.InputClasses = []string{AutomaticOriginalFileConsentClass}
+	for _, consent := range []ProviderOperationAuthorizationRequest{manualConsent, automaticConsent} {
+		_, err := s.GrantConsent(ctx, ProcessingConsentGrantRequest{Principal: consent.Principal, Scope: consent.Scope,
+			ProfileFingerprint: consent.ProfileFingerprint, DisclosureFingerprint: consent.DisclosureFingerprint,
+			InputClasses: consent.InputClasses, RetainedArtifactClasses: consent.RetainedArtifactClasses})
+		require.NoError(t, err)
+	}
+	enqueue := func(name string) (ContentVersion, string, string) {
+		t.Helper()
+		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(name)), 100, "video/mp4")
+		require.NoError(t, err)
+		version, err := s.ContentVersionByID(ctx, node.CurrentVersionID)
+		require.NoError(t, err)
+		manual, err := s.EnqueueEmbeddingJob(ctx, EmbeddingJobRequest{ContentVersionID: version.ID, Profile: profile,
+			BindingID: binding.Name, Descriptor: descriptor, Authorization: manualConsent,
+			InputGeneration: DirectEmbeddingGeneration(version, profile.Fingerprint, inputFP, binding)})
+		require.NoError(t, err)
+		automatic, err := s.EnqueueEmbeddingJob(ctx, EmbeddingJobRequest{ContentVersionID: version.ID, Profile: profile,
+			BindingID: binding.Name, Descriptor: descriptor, Authorization: automaticConsent,
+			InputGeneration: AutomaticDirectEmbeddingGeneration(version, profile.Fingerprint, inputFP, binding)})
+		require.NoError(t, err)
+		return version, manual.ID, automatic.ID
+	}
+	state := func(jobID string) string {
+		t.Helper()
+		status, err := s.EmbeddingJobByID(ctx, jobID)
+		require.NoError(t, err)
+		return status.State
+	}
+	clip, manualID, automaticID := enqueue("clip.mp4")
+	_, otherManualID, otherAutomaticID := enqueue("other.mp4")
+	fingerprintsAllowed := []string{descriptor.Fingerprint}
+
+	at := time.Now().UTC()
+	claim, work, found, err := s.ClaimEmbeddingWork(ctx, manualID, "manual-worker", at, time.Minute, fingerprintsAllowed)
+	require.NoError(t, err)
+	require.True(t, found)
+	_, _, found, err = s.ClaimEmbeddingWork(ctx, automaticID, "video-worker", at, time.Minute, fingerprintsAllowed)
+	require.NoError(t, err)
+	require.False(t, found, "a live lease excludes the equivalent peer")
+	require.Equal(t, "queued", state(automaticID))
+
+	record := embeddingSetFixture(ctx, s, clip.ID, profile.Fingerprint, document.EmbeddingInputOriginalFile, binding.Name, "")
+	record.InputGeneration = work.InputGeneration
+	require.NoError(t, s.StageEmbeddingSetWithLease(ctx, record, claim.AttemptID, claim.Epoch, at))
+	prior, err := s.AuthorizeProviderOperation(ctx, manualConsent)
+	require.NoError(t, err)
+	head := EmbeddingHeadRecord{Key: EmbeddingHeadKey{clip.ID, binding.Name, document.EmbeddingInputOriginalFile},
+		SetID: record.ID, VectorSpaceID: work.VectorSpaceID, ProcessingProfileFingerprint: profile.Fingerprint,
+		PublishedAt: at.Format(timestampLayout), FencingToken: claim.Epoch}
+	require.NoError(t, s.PublishEmbeddingWork(ctx, claim, work, head, prior, EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at))
+	require.Equal(t, "completed", state(manualID))
+	require.Equal(t, "completed", state(automaticID), "publish completes the waiting peer")
+	require.Equal(t, "queued", state(otherManualID), "settlement stays with its clip")
+	require.Equal(t, "queued", state(otherAutomaticID), "settlement stays with its clip")
+
+	// A peer left queued after the publish completes when it is claimed.
+	_, err = s.db.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued' WHERE job_id=$1`, automaticID)
+	require.NoError(t, err)
+	_, _, found, err = s.ClaimEmbeddingWork(ctx, automaticID, "video-worker", at, time.Minute, fingerprintsAllowed)
+	require.NoError(t, err)
+	require.False(t, found, "a satisfied peer is settled instead of claimed")
+	require.Equal(t, "completed", state(automaticID))
+	_, err = s.db.ExecContext(ctx, `UPDATE embedding_jobs SET state='queued' WHERE job_id=$1`, automaticID)
+	require.NoError(t, err)
+	_, next, found, err := s.ClaimNextEmbeddingWork(ctx, "video-worker", at, time.Minute, fingerprintsAllowed)
+	require.NoError(t, err)
+	require.True(t, found, "settling a peer moves on to the next clip")
+	require.NotEqual(t, clip.ID, next.ContentVersionID)
+	require.Equal(t, "completed", state(automaticID))
+}
+
+// checkEmbeddingReconciliationCountsUnknownDirectGeneration counts a retained
+// original-file generation whose ID no binding derives as skipped.
+func checkEmbeddingReconciliationCountsUnknownDirectGeneration(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
+	retained := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
+		document.EmbeddingInputOriginalFile, "optional", "")
+	retained.InputGeneration.ID = testSHA256([]byte("unknown-producer"))
+	require.NoError(t, s.StageEmbeddingSet(t.Context(), retained))
+	request := EmbeddingReconcileRequest{Mutate: embeddingTestMutation, At: time.Now().UTC(), Limit: 100,
+		DescriptorFingerprints: []string{retained.VectorSpace.Descriptor.Fingerprint}}
+	result, err := s.ReconcileEmbeddingJobs(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Examined)
+	require.Equal(t, 1, result.Skipped)
+	require.Zero(t, result.Enqueued)
+}
