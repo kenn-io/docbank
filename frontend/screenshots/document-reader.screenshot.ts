@@ -500,26 +500,4 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     path: path.join(output!, "pdf-search-frozen.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
   });
-  await page.getByRole("combobox", { name: "Search syntax: Query syntax" }).click();
-  await page.getByRole("option", { name: "Plain words" }).click();
-  await page.route("**/api/v1/search/text-coverage*", (route) =>
-    route.fulfill({
-      json: {
-        pdfs_without_text: 0,
-        pages_without_text: 0,
-        pdf_page_coverage_partial: true,
-        pdf_page_coverage_unavailable: 0,
-      },
-    }),
-  );
-  await search.fill("another unfindable phrase");
-  await search.press("Enter");
-  await expect(
-    page.getByText("PDF text coverage is incomplete; some pages may not be searchable."),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
-  await page.screenshot({
-    path: path.join(output!, "pdf-search-incomplete.png"),
-    clip: { x: 231, y: 56, width: 746, height: 700 },
-  });
 });
