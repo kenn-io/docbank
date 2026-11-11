@@ -441,19 +441,27 @@ func (backend *retrievalBackendStub) ReleaseVectorIndexGeneration(ctx context.Co
 }
 
 func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Context,
-	requested []store.SearchCandidateIdentity, _ store.SearchOptions, _, _ string,
+	requested []store.SearchCandidateIdentity, scope store.SearchOptions, _, _ string,
 ) (store.SearchCandidateRevalidation, error) {
 	backend.revalidated = requested
 	candidates := make([]store.RevalidatedSearchCandidate, 0, len(backend.semantic))
 	for _, candidate := range backend.lexical {
+		buildID := ""
+		if len(scope.SelectedBuilds) != 0 {
+			buildID = candidate.BuildID
+		}
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
-			NodeID: candidate.Node.ID, ContentVersionID: candidate.Node.CurrentVersionID, Path: candidate.Path,
+			NodeID: candidate.Node.ID, ContentVersionID: candidate.Node.CurrentVersionID, BuildID: buildID, Path: candidate.Path,
 		})
 	}
 	for _, candidate := range backend.semantic {
+		buildID := ""
+		if len(scope.SelectedBuilds) != 0 {
+			buildID = candidate.MediaEvidence.BuildID
+		}
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
 			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID,
-			BuildID: candidate.MediaEvidence.BuildID, Path: candidate.Path,
+			BuildID: buildID, Path: candidate.Path,
 		})
 	}
 	return store.SearchCandidateRevalidation{Candidates: candidates, Coverage: backend.revalidationCoverage}, nil
