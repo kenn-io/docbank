@@ -40,7 +40,7 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		}
 		unitBudget := min(policy.maxUnitRunes, max(remaining-separatorBudget, 0))
 		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionMarkdown(
-			evidenceUnit.Text, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
+			renditionSourceText(evidenceUnit), policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)
@@ -49,9 +49,9 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		unit := normalizedRenditionUnit(evidenceUnit, text)
 		result.Units = append(result.Units, unit)
 		if text != "" {
-			remaining = max(0, remaining-separatorBudget)
-			remaining = max(0, remaining-utf8.RuneCountInString(text))
-			markdownUnits = append(markdownUnits, text)
+			block := renditionPresentation(evidenceUnit, len(markdownUnits) == 0) + text
+			remaining = max(0, remaining-separatorBudget-utf8.RuneCountInString(block))
+			markdownUnits = append(markdownUnits, block)
 			result.LexicalSegments = append(result.LexicalSegments,
 				lexicalSegments(unit, len(result.LexicalSegments), policy.maxSegmentRunes)...)
 		}

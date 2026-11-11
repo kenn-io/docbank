@@ -451,7 +451,7 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 		if err := validateRenditionBinding(*profile.Rendition); err != nil {
 			return err
 		}
-		if profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract && profile.Rendition.MaxUnits < 4 {
+		if profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract && profile.Rendition.MaxUnits < MinImageUnderstandingUnits {
 			return errors.New("image understanding requires at least four units")
 		}
 	}

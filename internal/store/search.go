@@ -333,13 +333,13 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 			return Node{}, fmt.Errorf("decoding lexical evidence locator: %w", err)
 		}
 	}
-	if providerID == "compatible-vision.understand-v1" {
+	if providerID == document.ImageUnderstandingProviderID {
 		var headings []string
 		if err := json.Unmarshal([]byte(headingsJSON), &headings); err != nil {
 			return Node{}, fmt.Errorf("decoding lexical evidence headings: %w", err)
 		}
 		prefix := document.FormatRenditionHeadingContext(headings, "")
-		candidate.Excerpt = prefix + boundedExplainedSearchExcerptLimit(candidate.Excerpt, max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
+		candidate.Excerpt = prefix + boundedExplainedSearchExcerptLimit(document.UnescapeRenditionText(candidate.Excerpt), max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
 	} else {
 		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
 	}

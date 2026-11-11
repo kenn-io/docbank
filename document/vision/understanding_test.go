@@ -20,17 +20,32 @@ import (
 	"go.kenn.io/docbank/document/vision/visiontest"
 )
 
+// shown renders evidence units as readers see them.
+func shown(evidence document.SourceEvidenceV1) string {
+	var out strings.Builder
+	for i, unit := range evidence.Units {
+		out.WriteString(document.ImageUnderstandingMarkdown(unit.HeadingPath, unit.Speaker, unit.Text, i == 0) + "\n\n")
+	}
+	return out.String()
+}
+
 func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`))
 	require.NoError(t, err)
 	evidence := value.evidence("synthetic-vision")
 	require.Len(t, evidence.Units, 4)
-	text := evidence.Units[0].Text + evidence.Units[1].Text + evidence.Units[2].Text + evidence.Units[3].Text
-	assert.Contains(t, text, "## Visible text (best-effort transcription)\n\nFINE")
+	var indexed string
+	for _, unit := range evidence.Units {
+		indexed += unit.Text + "\n"
+		assert.Equal(t, document.ImageUnderstandingHeading, unit.HeadingPath[0])
+	}
+	assert.Equal(t, "FINE\nA dog sits beside flames.\nMay joke about ignoring a problem.\nNo conversation context is available.\n", indexed)
+	text := shown(evidence)
+	assert.Contains(t, text, "## Visible text \\(best\\-effort transcription\\)\n\nFINE")
 	assert.Contains(t, text, "## Literal description\n\nA dog sits beside flames\\.")
-	assert.Contains(t, text, "## Possible meaning (interpretation)\n\nMay joke about ignoring a problem\\.")
+	assert.Contains(t, text, "## Possible meaning \\(interpretation\\)\n\nMay joke about ignoring a problem\\.")
 	assert.Contains(t, text, "No conversation context is available\\.")
-	assert.Contains(t, text, "does not establish anyone's beliefs, endorsement, or intent")
+	assert.Contains(t, text, `does not establish anyone\'s beliefs\, endorsement\, or intent`)
 }
 
 func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
@@ -38,9 +53,11 @@ func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
 	require.NoError(t, err)
 	evidence := value.evidence("synthetic<&>")
 	require.Len(t, evidence.Units, 1)
-	assert.Contains(t, evidence.Units[0].Text, `Configured model: synthetic\<\&\>`)
-	assert.Contains(t, evidence.Units[0].Text, `R and D \&amp\; partners`)
-	assert.Contains(t, evidence.Units[0].Text, `\=\=\=`)
+	assert.Equal(t, "R and D &amp; partners\n===", evidence.Units[0].Text)
+	text := shown(evidence)
+	assert.Contains(t, text, `Configured model\: synthetic\<\&\>`)
+	assert.Contains(t, text, `R and D \&amp\; partners`)
+	assert.Contains(t, text, `\=\=\=`)
 	assert.Len(t, evidence.Omissions, 4)
 }
 
@@ -64,7 +81,7 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 func TestUnderstandingCannotForgeSectionLabels(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`))
 	require.NoError(t, err)
-	text := value.evidence("synthetic-vision").Units[0].Text
+	text := shown(value.evidence("synthetic-vision"))
 	assert.Contains(t, text, `\# Author confirmed`)
 	assert.NotContains(t, text, "\n# Author confirmed")
 	assert.NotContains(t, text, "[click](https://example.com)")

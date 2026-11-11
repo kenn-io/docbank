@@ -1121,7 +1121,7 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
 		return fmt.Errorf("%s max units must be between 1 and 1000000", prefix)
 	}
-	if profile.AdapterContract == vision.UnderstandingAdapterContract && profile.MaxUnits < 4 {
+	if profile.AdapterContract == vision.UnderstandingAdapterContract && profile.MaxUnits < document.MinImageUnderstandingUnits {
 		return fmt.Errorf("%s image understanding requires at least four units", prefix)
 	}
 	if len(profile.RequestedArtifacts) == 0 || len(profile.RequestedArtifacts) > 4 {
