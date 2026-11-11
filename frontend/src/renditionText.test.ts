@@ -151,8 +151,7 @@ it.each([
   ).rejects.toThrow(/Malformed rendition text receipt/);
 });
 
-it("returns verified inert rendition text", async () => {
-  const markdown = "Verified <script>alert('blocked')</script>";
+function renditionArtifact(markdown: string, completeness = "complete") {
   const envelope = {
     docbank: {
       contract: "docbank-sanitized-markdown/v1",
@@ -163,7 +162,7 @@ it("returns verified inert rendition text", async () => {
         evidence_lexical_fingerprint: "b".repeat(64),
         normalized_evidence_contract: "normalized-evidence/v1",
         body_sha256: createHash("sha256").update(markdown).digest("hex"),
-        completeness: "complete",
+        completeness,
         truncated: false,
       },
       document: { unit_kind: "page", unit_count: 1 },
@@ -174,15 +173,44 @@ it("returns verified inert rendition text", async () => {
       },
     },
   };
-  const bytes = new TextEncoder().encode(`---\n${JSON.stringify(envelope)}\n---\n${markdown}`);
+  return new TextEncoder().encode(`---\n${JSON.stringify(envelope)}\n---\n${markdown}`);
+}
+
+async function readArtifact(bytes: Uint8Array<ArrayBuffer>, providerID?: string): Promise<string> {
   const digest = createHash("sha256").update(bytes).digest("hex");
   const ready = await resolveReady(bytes.length, digest);
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(bytes, { headers: renditionHeaders(ready, digest, bytes) }),
-  );
+  const headers = renditionHeaders(ready, digest, bytes);
+  if (providerID !== undefined) headers.set("X-Docbank-Rendition-Provider-ID", providerID);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(bytes, { headers }));
+  return readVerifiedRenditionText("session", source, 9, ready, new AbortController().signal);
+}
+
+it("returns verified inert rendition text", async () => {
   await expect(
-    readVerifiedRenditionText("session", source, 9, ready, new AbortController().signal),
+    readArtifact(renditionArtifact("Verified <script>alert('blocked')</script>")),
   ).resolves.toBe("Verified <script>alert('blocked')</script>");
+});
+
+const escapedImageText =
+  "\n\t  # Machine\\-generated image understanding\n\n" +
+  "flames\\. C:\\\\dir \\a\n\t\tline \\(1\\)  \n\n";
+
+it("shows image understanding punctuation literally while keeping its whitespace", async () => {
+  await expect(
+    readArtifact(renditionArtifact(escapedImageText), "compatible-vision.understand-v1"),
+  ).resolves.toBe(
+    "\n\t  # Machine-generated image understanding\n\n" + "flames. C:\\dir \\a\n\t\tline (1)  \n\n",
+  );
+});
+
+it.each([
+  ["another provider", "compatible-ocr.extract-v1"],
+  ["a receipt without a provider", ""],
+  ["no provider header", undefined],
+])("keeps degraded text from %s byte-for-byte", async (_name, providerID) => {
+  await expect(
+    readArtifact(renditionArtifact(escapedImageText, "degraded_provenance"), providerID),
+  ).resolves.toBe(escapedImageText);
 });
 
 it.each(["body digest", "generation header"])("rejects a wrong %s", async (problem) => {

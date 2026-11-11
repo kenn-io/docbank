@@ -62,6 +62,9 @@ const configurations = new Set<RenditionObservation["configuration"]>([
   "profile_required",
 ]);
 const maxTextBytes = 16 * 1024 * 1024;
+const imageUnderstandingProvider = "compatible-vision.understand-v1";
+// One pass over ASCII punctuation, matching grounding.UnescapePunctuation.
+const escapedPunctuation = /\\([!-/:-@[-`{-~])/g;
 
 function malformed(reason: string): never {
   throw new Error(`Malformed rendition text receipt: ${reason}.`);
@@ -289,5 +292,7 @@ export async function readVerifiedRenditionText(
   if (parsed.buildID !== ready.buildID || parsed.source.sha256 !== source.blobHash) {
     throw new Error("The received text disagreed with the selected rendition.");
   }
-  return parsed.markdown;
+  if (headers.get("X-Docbank-Rendition-Provider-ID") !== imageUnderstandingProvider)
+    return parsed.markdown;
+  return parsed.markdown.replace(escapedPunctuation, "$1");
 }
