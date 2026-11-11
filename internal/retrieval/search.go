@@ -33,8 +33,6 @@ type CandidateRevalidationBackend interface {
 
 var ErrExpandedSearchFailed = errors.New("expanded retrieval stage failed")
 
-var ErrSelectedEmbeddingsUnavailable = errors.New("selected builds have no eligible embedding rows")
-
 type SemanticBackend interface {
 	AcquireSemanticSearchAuthority(ctx context.Context, profile, binding, owner string, at time.Time,
 		duration time.Duration, options store.SearchOptions) (store.SemanticSearchAuthority, error)
@@ -423,9 +421,6 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 	coverage = Coverage{BindingRequired: authority.BindingRequired, State: CoverageUnknown}
 	if authority.ANNRows == nil && !authority.WholeSpace {
 		return nil, coverage, false, errors.New("semantic search authority lacks source-fenced ANN rows")
-	}
-	if len(query.Scope.SelectedBuilds) != 0 && !authority.WholeSpace && len(authority.ANNRows) == 0 {
-		return nil, coverage, false, ErrSelectedEmbeddingsUnavailable
 	}
 	provider, err := searcher.encoders.ResolveQueryEncoder(ctx, authority.VectorSpace.Descriptor)
 	if err != nil {

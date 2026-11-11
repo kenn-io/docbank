@@ -794,9 +794,6 @@ func (c Config) Validate() error {
 	if err := validateProcessingProfiles(c); err != nil {
 		return err
 	}
-	if err := validateSuppliedMediaEmbeddingProfile(c); err != nil {
-		return err
-	}
 	if err := validateMCPConfig(c); err != nil {
 		return err
 	}

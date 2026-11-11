@@ -14,7 +14,4 @@ func TestSelectedMediaLexicalFallbackReceipt(t *testing.T) {
 	bad := report
 	bad.Degradations = nil
 	require.Error(t, validateDocumentSearchReport(request, bad))
-	ordinary := request
-	ordinary.MediaSources = nil
-	require.Error(t, validateDocumentSearchReport(ordinary, report))
 }

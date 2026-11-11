@@ -46,12 +46,8 @@ func (service *Service) searchMediaSources(
 		scope.EmbeddingDescriptor, scope.VectorSpaceID = &descriptor, profile.vectorSpaces[prepared.bindingID]
 	}
 	nonlexical := prepared.requestedMode == retrieval.ModeSemantic || prepared.requestedMode == retrieval.ModeHybrid
-	bindingRequired := false
-	for _, binding := range profile.portable.Embeddings {
-		if binding.Name == prepared.bindingID {
-			bindingRequired = binding.Activation == document.EmbeddingRequired
-		}
-	}
+	binding, _ := selectEmbeddingBinding(profile.portable, prepared.bindingID)
+	bindingRequired := binding.Activation == document.EmbeddingRequired
 	mode := prepared.mode
 	if nonlexical && len(plan.builds) == 0 {
 		mode = retrieval.ModeLexical
@@ -84,11 +80,6 @@ func (service *Service) searchMediaSources(
 			defer closeEgress()
 			report, err = prepared.searcher.Search(ctx, query)
 		}()
-		if errors.Is(err, retrieval.ErrSelectedEmbeddingsUnavailable) {
-			// Eligibility can disappear after the planning read.
-			query.Mode = retrieval.ModeLexical
-			report, err = prepared.searcher.Search(ctx, query)
-		}
 		if err != nil {
 			return retrieval.Report{}, err
 		}

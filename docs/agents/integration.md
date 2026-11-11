@@ -101,43 +101,18 @@ ranking and limits. Removed or changed recordings leave coverage incomplete
 without crowding out valid matches. Read the exact transcript below to verify
 the evidence's build and supplied-input identity.
 
-For semantic or hybrid retrieval, configure a profile that already processed
-the selected transcript with a rendition-chunk embedding binding. Processing
-uses the ordinary plan, explicit consent, rendition worker and embedding
-continuation. The built-in supplied profiles have no
-embeddings by default. To compose supplied transcript embeddings, set
-`supplied_media_embedding_profile` to an existing executable processing profile
-whose bindings all use `rendition_chunk`. The daemon copies only those embedding
-bindings and runtimes into `supplied-transcript`; its local supplied provider,
-source-input binding, retention and evidence policies stay authoritative.
-Embedded callers use `ProcessingOptions.SuppliedMediaEmbeddingProfile` with a
-configured donor in `Profiles`. Captions keep their lexical default. Review
-and grant the new composed processing plan before retrying a transcript.
-Changing the donor creates a new profile identity and requires new consent;
-retained work from another fingerprint is fenced across restart.
-Selecting a search profile does not process or embed
-anything. Generated and supplied profiles retain separate authority; a mixed
-scope can therefore have incomplete embedding coverage even when every
-transcript is ready.
+For semantic or hybrid retrieval, the requested profile must already have
+embedded the selected transcripts through ordinary processing; search never
+processes media or grants consent. Supplied transcripts have no embeddings
+unless [`supplied_media_embedding_profile`](../configuration.md#embedding-workers-and-credentials)
+names a donor profile. Semantic evidence has `kind: "embedding"` with its input,
+generation, set and vector-space identities, and no `segment_id`. Its excerpt
+and timing come from the embedding input. When a hybrid result also has lexical
+evidence, use the lexical excerpt and timing.
 
-`media_selections` names each selected source, its origin and supplied
-input. Search evidence carries the `build_id`. Semantic evidence keeps
-`kind: "embedding"` and its input, generation, set and vector-space identities.
-It has no lexical `segment_id`. Its excerpt
-and optional timing come from the authenticated embedding input. Hybrid
-results may combine lexical and embedding references from the same build;
-the lexical excerpt takes precedence when both contribute. Use that
-reference's timing. Docbank checks exact build authority before scoring,
-limits and coverage, and reselects source/input authority after query encoding.
-Transcript readiness cannot override missing selected-build embeddings.
-
-Selected semantic and hybrid searches return word matches with
-`actual_mode: "lexical"` and a `semantic_unavailable` degradation when embeddings
-are unavailable. Coverage remains incomplete, and the query is not encoded.
-
-If vector-index authority changes while a query runs, Docbank returns
-`409 stale_index` and no results. Retry after the ordinary index worker has
-published current authority; do not relax the selector or substitute a build.
+When the selected builds have no embeddings, the search returns word matches
+with `actual_mode: "lexical"` and a `semantic_unavailable` degradation, and
+coverage stays incomplete.
 
 ## Read an exact media transcript
 

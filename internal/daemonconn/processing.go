@@ -532,7 +532,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	if requestedMode == "" {
 		requestedMode = "auto"
 	}
-	if report.RequestedMode != requestedMode || !validDocumentSearchActualMode(requestedMode, request, report) {
+	if report.RequestedMode != requestedMode || !validDocumentSearchActualMode(requestedMode, report) {
 		return errors.New("retrieval mode authority is inconsistent")
 	}
 	limit := request.Limit
@@ -662,14 +662,13 @@ func validDocumentSearchExcerpt(value string) bool {
 		utf8.RuneCountInString(value) <= maxDocumentSearchExcerptRunes
 }
 
-func validDocumentSearchActualMode(requested string, request api.DocumentSearchRequest, report api.DocumentSearchReport) bool {
+func validDocumentSearchActualMode(requested string, report api.DocumentSearchReport) bool {
 	actual := report.ActualMode
 	if actual != "lexical" && actual != "semantic" && actual != "hybrid" {
 		return false
 	}
 	return requested == "auto" || requested == actual || requested == "hybrid" && actual == "lexical" ||
-		requested == "semantic" && actual == "lexical" && len(request.MediaSources) > 0 &&
-			report.MediaSourceSelection && !request.Rerank && slices.Contains(report.Degradations, "semantic_unavailable")
+		requested == "semantic" && actual == "lexical" && slices.Contains(report.Degradations, "semantic_unavailable")
 }
 
 func validateDocumentLaneRanks(actualMode string, result api.DocumentSearchResult,

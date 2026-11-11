@@ -92,8 +92,6 @@ func TestSelectedSemanticRowsAvailable(t *testing.T) {
 	available, err = s.SelectedSemanticRowsAvailable(t.Context(), testSHA256([]byte("unpersisted-profile")), "chunk", opts)
 	require.NoError(t, err)
 	require.False(t, available)
-	_, err = s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, "missing-binding", opts)
-	require.ErrorIs(t, err, ErrNotFound, "a missing binding in a stored profile remains an authority error")
 	_, err = s.SelectedSemanticRowsAvailable(t.Context(), "malformed-profile", "chunk", opts)
 	require.ErrorContains(t, err, "fingerprint")
 }

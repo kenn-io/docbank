@@ -863,34 +863,23 @@ Each selected content/build pair has its own result. Its evidence carries
 `media_sources` and `build_id`. Lexical evidence uses `rendition_segment`;
 semantic evidence uses `embedding` with its exact input, generation, embedding
 set and vector-space identities. Semantic evidence has no `segment_id`.
-Its excerpt and optional timing come from the authenticated retained input.
-Displayed excerpts use the shared 512-rune limit (at most 2,048 UTF-8 bytes);
-this display bound leaves retained evidence and its source timing intact.
-Hybrid results can carry both references from the same selected build. When
+Its excerpt and optional timing come from the retained input; displayed
+excerpts use the shared 512-rune limit. Hybrid results can carry both references from the same selected build. When
 lexical evidence contributes the displayed excerpt, use its timing.
 
-Semantic and hybrid modes use only embeddings for the selected builds under
-the requested processing profile and binding. The selected profile must have
-already produced those chunk embeddings through ordinary processing. Search
-never processes media or grants consent. A ready transcript under a different
-profile is an embedding coverage gap, even when the same bytes have another
-embedded transcript. Both scoring and candidate limits enforce exact selected
-builds. Coverage counts content versions and is incomplete while any requested
-selection lacks ready evidence or any selected build lacks its embeddings. Pending or unavailable transcripts leave ready matches usable.
+Semantic and hybrid modes use only the selected builds' embeddings under the
+requested profile and binding, produced by ordinary processing; search never
+processes media. Coverage counts content versions and is incomplete while any
+requested selection lacks ready evidence or any selected build lacks its
+embeddings. Pending or unavailable transcripts leave ready matches usable.
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
 
 Selected semantic and hybrid requests fall back to word search when no embedding
 binding or eligible embedding rows are available. They return `actual_mode: "lexical"`
-and the `semantic_unavailable` degradation. Coverage remains incomplete, and
-ready selected transcripts can contribute word matches. These cases do not send
-query text to an encoder.
-`requested_mode` remains the caller's mode, and retrieval schedules no processing.
-
-A vector-index authority change during a semantic or hybrid request returns
-`409 stale_index` with no results. Retry after normal index publication;
-source reselection never authorizes another build as a substitute.
+and the `semantic_unavailable` degradation, keep coverage incomplete, and send
+no query text to an encoder.
 
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence
