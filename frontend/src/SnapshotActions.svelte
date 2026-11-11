@@ -81,6 +81,8 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
+      results = undefined;
+      complete = false;
       receipt = confirmed;
       onchanged?.(confirmed);
     },

@@ -242,8 +242,11 @@ it.each([true, false])(
       name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
     });
     expect(writes).toHaveLength(1);
+    await fireEvent.click(screen.getByText("Review documents"));
+    expect(screen.getByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeTruthy();
     await fireEvent.click(retry);
     await screen.findByRole("button", { name: "Done" });
+    expect(screen.queryByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeNull();
     expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
   },
