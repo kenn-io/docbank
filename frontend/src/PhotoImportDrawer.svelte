@@ -733,19 +733,21 @@
           </li>{/each}
       </ul>
       <div class="controls">
-        <Button
-          disabled={!checkpointReady ||
-            running ||
-            planning ||
-            !pending ||
-            !!disabledReason ||
-            reconnectPlanNeeded ||
-            registrationUncertain}
-          onclick={() => void start()}
-          >{savedImport
-            ? "Resume remaining"
-            : `Add ${pending} group${pending === 1 ? "" : "s"}`}</Button
-        >
+        {#if !savedImport || items.some((item) => !["added", "skipped", "ambiguous"].includes(item.state))}
+          <Button
+            disabled={!checkpointReady ||
+              running ||
+              planning ||
+              !pending ||
+              !!disabledReason ||
+              reconnectPlanNeeded ||
+              registrationUncertain}
+            onclick={() => void start()}
+            >{savedImport
+              ? "Resume remaining"
+              : `Add ${pending} group${pending === 1 ? "" : "s"}`}</Button
+          >
+        {/if}
         {#if running}<Button disabled={stopping} onclick={() => (stopping = true)}
             >{stopping ? "Stopping after this group" : "Stop after this group"}</Button
           >{/if}

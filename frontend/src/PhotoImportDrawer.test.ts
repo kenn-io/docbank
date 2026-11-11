@@ -114,6 +114,9 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     [""],
   );
   expect(channel.registerPhotoImport).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull(),
+  );
 });
 
 it("refuses changed bytes and lists files outside the saved import", async () => {
