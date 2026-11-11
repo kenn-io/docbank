@@ -182,8 +182,31 @@ func newProvenClientForDial(
 	}
 	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
 	c.hc = hc
+	c.pinned = &pinnedDaemon{record: rec}
 	ready = true
 	return c, nil
+}
+
+// pinnedDaemon is the runtime record whose ownership a connection proved.
+type pinnedDaemon struct{ record kitdaemon.RuntimeRecord }
+
+// errTransferTransport reports a process whose default HTTP transport was replaced.
+var errTransferTransport = errors.New("default HTTP transport cannot be cloned")
+
+// TransferConnection returns a connection to the same daemon for one long
+// transfer, so a slow body cannot occupy this connection's socket. A proven
+// connection repeats the ownership proof against its pinned runtime record and
+// fails rather than reaching a different listener. The caller owns and must
+// close the result; the receiver is never reused or closed.
+func (c *Connection) TransferConnection(ctx context.Context) (*Connection, error) {
+	if c.pinned != nil {
+		return newProvenClientFor(ctx, c.pinned.record)
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errTransferTransport
+	}
+	return &Connection{base: c.base, key: c.key, hc: &http.Client{Transport: transport.Clone()}}, nil
 }
 
 // errInvalidProofResponse marks a proof response that broke the exchange's

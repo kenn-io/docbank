@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/httpboundary"
 )
@@ -57,6 +58,7 @@ type httpLimits struct {
 type HTTPOptions struct {
 	BearerToken  string
 	AllowedHosts []string
+	PublicOrigin string
 	Logger       *slog.Logger
 	listenHost   string
 	limits       httpLimits
@@ -92,7 +94,7 @@ func (server *Server) HTTPTransportHandler(options HTTPOptions) (http.Handler, e
 	// The outer guard owns explicit Host validation, including Docker service
 	// names on loopback connections. Keep the public protocol handler protected.
 	inner := server.httpHandler(true)
-	return wrapHTTPTransport(inner, options)
+	return wrapHTTPTransport(inner, options, http.HandlerFunc(server.relayOriginalDownload))
 }
 
 // prepareHTTP binds one opaque credential-exclusion policy to the daemon lease
@@ -110,12 +112,20 @@ func (server *Server) prepareHTTP(ctx context.Context, bearer string) error {
 	return err
 }
 
-func wrapHTTPTransport(inner http.Handler, options HTTPOptions) (http.Handler, error) {
+func wrapHTTPTransport(inner http.Handler, options HTTPOptions, originalDownload http.Handler) (http.Handler, error) {
 	if inner == nil || !ValidHTTPBearerToken(options.BearerToken) {
 		return nil, errHTTPConfiguration
 	}
 	if err := httpboundary.ValidateHosts(options.AllowedHosts); err != nil {
 		return nil, err
+	}
+	publicOrigin := ""
+	if options.PublicOrigin != "" {
+		var err error
+		publicOrigin, err = config.CanonicalWebOrigin(options.PublicOrigin)
+		if err != nil {
+			return nil, err
+		}
 	}
 	limits, err := normalizeHTTPLimits(options.limits)
 	if err != nil {
@@ -129,6 +139,7 @@ func wrapHTTPTransport(inner http.Handler, options HTTPOptions) (http.Handler, e
 		inner: inner, tokenHash: sha256.Sum256([]byte(options.BearerToken)),
 		logger: logger, limits: limits,
 		listenHost: options.listenHost, allowedHosts: append([]string(nil), options.AllowedHosts...),
+		publicOrigin: publicOrigin, originalDownload: originalDownload,
 	}
 	return guard, nil
 }
@@ -183,15 +194,18 @@ func normalizeHTTPLimits(limits httpLimits) (httpLimits, error) {
 }
 
 type httpTransportGuard struct {
-	listenHost   string
-	allowedHosts []string
-	inner        http.Handler
-	tokenHash    [sha256.Size]byte
-	logger       *slog.Logger
-	limits       httpLimits
+	listenHost       string
+	publicOrigin     string
+	allowedHosts     []string
+	inner            http.Handler
+	originalDownload http.Handler
+	tokenHash        [sha256.Size]byte
+	logger           *slog.Logger
+	limits           httpLimits
 
-	activityMu  sync.Mutex
-	activeTotal int
+	activityMu      sync.Mutex
+	activeTotal     int
+	activeDownloads int
 }
 
 func (guard *httpTransportGuard) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -213,11 +227,23 @@ func (guard *httpTransportGuard) ServeHTTP(response http.ResponseWriter, request
 		http.Error(observed, "request headers too large", http.StatusRequestHeaderFieldsTooLarge)
 		return
 	}
-	if !guard.safeOrigin(request) {
+	origin, ok := guard.validatedOrigin(request)
+	if !ok {
 		errorCode = "origin_forbidden"
 		http.Error(observed, "forbidden origin", http.StatusForbidden)
 		return
 	}
+	if request.URL.Path == OriginalDownloadPath {
+		if request.Method != http.MethodGet {
+			errorCode = "method_not_allowed"
+			observed.Header().Set("Allow", http.MethodGet)
+			http.Error(observed, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		errorCode = guard.serveOriginalDownload(observed, request)
+		return
+	}
+	request = request.WithContext(context.WithValue(request.Context(), validatedMCPOriginKey{}, origin))
 	if request.Method != http.MethodPost {
 		errorCode = "method_not_allowed"
 		observed.Header().Set("Allow", http.MethodPost)
@@ -324,24 +350,40 @@ func headersWithin(header http.Header, maxFields, maxBytes int) bool {
 	return true
 }
 
-func (guard *httpTransportGuard) safeOrigin(request *http.Request) bool {
-	if !httpboundary.Allowed(request.Host, guard.listenHost, guard.allowedHosts) {
-		return false
+func (guard *httpTransportGuard) validatedOrigin(request *http.Request) (string, bool) {
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	origin := scheme + "://" + request.Host
+	publicMatch := false
+	if guard.publicOrigin != "" {
+		public, _ := url.Parse(guard.publicOrigin)
+		candidate, err := config.CanonicalWebOrigin(public.Scheme + "://" + request.Host)
+		publicMatch = err == nil && candidate == guard.publicOrigin
+		if publicMatch {
+			origin = guard.publicOrigin
+		}
+	}
+	if !publicMatch && !httpboundary.Allowed(request.Host, guard.listenHost, guard.allowedHosts) {
+		return "", false
 	}
 	values := request.Header.Values("Origin")
 	if len(values) == 0 {
-		return true
+		return origin, true
 	}
 	if len(values) != 1 {
-		return false
+		return "", false
 	}
-	origin, err := url.Parse(values[0])
-	if err != nil || !strings.EqualFold(origin.Scheme, "http") || origin.User != nil ||
-		origin.Host == "" || origin.Path != "" || origin.RawPath != "" || origin.RawQuery != "" ||
-		origin.ForceQuery || origin.Fragment != "" || origin.Opaque != "" {
-		return false
+	if publicMatch {
+		requested, err := config.CanonicalWebOrigin(values[0])
+		return origin, err == nil && requested == origin
 	}
-	return httpboundary.Same(origin.Host, request.Host)
+	requested, err := url.Parse(values[0])
+	return origin, err == nil && requested.Scheme == scheme && requested.User == nil &&
+		requested.Host != "" && requested.Path == "" && requested.RawPath == "" && requested.RawQuery == "" &&
+		!requested.ForceQuery && requested.Fragment == "" && requested.Opaque == "" && !strings.Contains(values[0], "#") &&
+		httpboundary.Same(requested.Host, request.Host)
 }
 
 func (guard *httpTransportGuard) authenticated(header http.Header) bool {
@@ -355,6 +397,37 @@ func (guard *httpTransportGuard) authenticated(header http.Header) bool {
 	}
 	candidateHash := sha256.Sum256([]byte(candidate))
 	return subtle.ConstantTimeCompare(candidateHash[:], guard.tokenHash[:]) == 1
+}
+
+func (guard *httpTransportGuard) serveOriginalDownload(w *observedResponseWriter, r *http.Request) string {
+	tickets := r.URL.Query()["ticket"]
+	if len(tickets) != 1 {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"title":"Not Found","status":404,"detail":"the browser download is missing, expired, or already used","code":"download_not_found"}`)
+		return "not_found"
+	}
+	guard.activityMu.Lock()
+	if guard.activeDownloads >= guard.limits.MaxConcurrentRequests {
+		guard.activityMu.Unlock()
+		http.Error(w, "too many active downloads", http.StatusTooManyRequests)
+		return "activity_limited"
+	}
+	guard.activeDownloads++
+	guard.activityMu.Unlock()
+	defer func() {
+		guard.activityMu.Lock()
+		guard.activeDownloads--
+		guard.activityMu.Unlock()
+	}()
+	guard.originalDownload.ServeHTTP(&downloadResponseWriter{ResponseWriter: w}, r)
+	if r.Context().Err() != nil {
+		return "request_cancelled"
+	}
+	if w.status >= http.StatusBadRequest {
+		return stableHTTPStatusCode(w.status)
+	}
+	return "ok"
 }
 
 func (guard *httpTransportGuard) acquire() bool {
@@ -408,6 +481,34 @@ func (writer *observedResponseWriter) WriteHeader(status int) {
 	writer.status = status
 	writer.ResponseWriter.WriteHeader(status)
 }
+
+type downloadResponseWriter struct{ http.ResponseWriter }
+
+func (w *downloadResponseWriter) withDeadline(write func() error) error {
+	controller := http.NewResponseController(w.ResponseWriter)
+	set, err := setHTTPDeadline(controller.SetWriteDeadline, time.Now().Add(originalDownloadIdleTimeout))
+	if err != nil {
+		return err
+	}
+	if set {
+		defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
+	}
+	return write()
+}
+
+func (w *downloadResponseWriter) Write(p []byte) (n int, err error) {
+	err = w.withDeadline(func() error {
+		n, err = w.ResponseWriter.Write(p)
+		return err
+	})
+	return n, err
+}
+
+func (w *downloadResponseWriter) FlushError() error {
+	return w.withDeadline(func() error { return http.NewResponseController(w.ResponseWriter).Flush() })
+}
+
+func (w *downloadResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (writer *observedResponseWriter) Write(body []byte) (int, error) {
 	if writer.status == 0 {
