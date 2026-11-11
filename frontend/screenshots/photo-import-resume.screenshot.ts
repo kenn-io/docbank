@@ -126,12 +126,13 @@ test("resumes the complete selection and source after a daemon and browser resta
     expect(plans).toHaveLength(1);
     await browser.close();
     await fixture.run("daemon", "stop");
-    browser = await chromium.launchPersistentContext(profile);
+    browser = await chromium.launchPersistentContext(path.join(workspace, "browser-new"));
     const resumed = await open();
     expect(resumed.url.origin).not.toBe(first.url.origin);
-    await expect(
-      resumed.page.getByRole("button", { name: "Resume import", exact: true }),
-    ).toBeVisible();
+    await resumed.page.getByRole("button", { name: "Saved imports", exact: true }).click();
+    await resumed.page.getByLabel("Saved import").selectOption({ index: 1 });
+    await resumed.page.getByRole("button", { name: "Inspect import", exact: true }).click();
+    await expect(resumed.page.getByText("Imported earlier").first()).toBeVisible();
     await resumed.page.screenshot({
       path: path.join(repository, ".superpowers", "photo-import-resume.png"),
       animations: "disabled",
@@ -142,22 +143,15 @@ test("resumes the complete selection and source after a daemon and browser resta
     const times = await stat(files[2]!);
     await writeFile(files[2]!, modified);
     await utimes(files[2]!, times.atime, times.mtime);
-    const chooserPromise = resumed.page.waitForEvent("filechooser");
-    await resumed.page.getByRole("button", { name: "Resume import", exact: true }).click();
-    const chooser = await chooserPromise;
-    expect(await chooser.element().getAttribute("webkitdirectory")).toBeNull();
-    await chooser.setFiles(files);
-    await expect(resumed.page.getByRole("alert")).toContainText("differ from the saved import");
+    await resumed.page.getByLabel("Choose photo files").setInputFiles(files);
+    await expect(resumed.page.getByText("Files changed", { exact: true })).toBeVisible();
     expect(plans).toHaveLength(1);
     await writeFile(files[2]!, original);
     await utimes(files[2]!, times.atime, times.mtime);
-    await resumed.page.getByRole("button", { name: "Resume import", exact: true }).click();
     await resumed.page.getByLabel("Choose photo files").setInputFiles(files);
-    await resumed.page.getByRole("button", { name: "Add 3 groups", exact: true }).click();
-    await expect(resumed.page.getByText("Added: 1", { exact: true })).toBeVisible();
-    await expect(resumed.page.getByText("Already in vault: 2", { exact: true })).toBeVisible();
-    expect(plans).toHaveLength(2);
-    expect(plans[1]).toBe(plans[0]);
+    await resumed.page.getByRole("button", { name: "Resume remaining", exact: true }).click();
+    await expect(resumed.page.getByText("Added: 3", { exact: true })).toBeVisible();
+    expect(plans).toHaveLength(1);
     // Wait for real source metadata before opening the final Library view.
     await expect
       .poll(async () => {
@@ -216,8 +210,8 @@ test("resumes the complete selection and source after a daemon and browser resta
     await expect(
       completed.page.getByRole("button", { name: "Add 3 groups", exact: true }),
     ).toBeVisible();
-    expect(plans).toHaveLength(3);
-    expect(plans[2]).not.toBe(plans[0]);
+    expect(plans).toHaveLength(2);
+    expect(plans[1]).not.toBe(plans[0]);
   } finally {
     await browser.close();
     await fixture.dispose();

@@ -89,6 +89,10 @@ func RuntimeConfig(tb testing.TB, setup *sql.DB, cfg pgschema.Config) *pgx.ConnC
 		"; GRANT INSERT,DELETE ON "+schema+".photo_set_members TO "+quotedRole)
 	require.NoError(tb, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(destination_id) ON "+schema+".browser_photo_imports TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(hashes_json,receipt_json) ON "+schema+".browser_photo_import_groups TO "+quotedRole)
+	require.NoError(tb, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,UPDATE(preference,revision,updated_at,burst_gap_seconds,backup_interval_seconds,backup_keep_last,hidden_unlock_lifetime_seconds,representative_sequence) ON "+schema+".photo_library_settings TO "+quotedRole+
 		"; GRANT DELETE,UPDATE(passcode_hash) ON "+schema+".photo_hidden_credentials TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_hidden_failures TO "+quotedRole+
