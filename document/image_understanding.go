@@ -14,6 +14,11 @@ const MinImageUnderstandingUnits = 4
 // MaxImageUnderstandingBytes is the largest image the provider accepts.
 const MaxImageUnderstandingBytes = 16 << 20
 
+// ValidImageUnderstandingAdapter reports whether the adapter and provider agree on image understanding.
+func ValidImageUnderstandingAdapter(adapter, provider string) bool {
+	return (adapter == ImageUnderstandingAdapterContract) == (provider == ImageUnderstandingProviderID)
+}
+
 func validateImageUnderstandingRendition(binding RenditionBindingV1) error {
 	if binding.AdapterContract != ImageUnderstandingAdapterContract {
 		return nil
