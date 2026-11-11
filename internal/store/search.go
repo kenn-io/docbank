@@ -2750,8 +2750,9 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		return SearchOptions{}, err
 	}
 	opts.MIMEType = normalizedMIME
+	var directory Node
 	if opts.UnderPath != "" {
-		directory, err := s.nodeByPath(ctx, queryer, opts.UnderPath)
+		directory, err = s.nodeByPath(ctx, queryer, opts.UnderPath)
 		if err != nil {
 			return SearchOptions{}, err
 		}
@@ -2759,12 +2760,13 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		// Canonical options retain only the resolved identity, so downstream
 		// normalization can validate them again without conflicting selectors.
 		opts.UnderPath = ""
-	}
-	if opts.UnderNodeID != 0 {
-		directory, err := nodeByIDQuery(ctx, queryer, opts.UnderNodeID)
+	} else if opts.UnderNodeID != 0 {
+		directory, err = nodeByIDQuery(ctx, queryer, opts.UnderNodeID)
 		if err != nil {
 			return SearchOptions{}, fmt.Errorf("search directory node %d: %w", opts.UnderNodeID, err)
 		}
+	}
+	if opts.UnderNodeID != 0 {
 		if directory.TrashedAt != nil {
 			return SearchOptions{}, fmt.Errorf("search directory node %d is trashed: %w",
 				opts.UnderNodeID, ErrNotFound)

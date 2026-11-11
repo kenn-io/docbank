@@ -76,6 +76,13 @@ func (s *Store) searchDiscoveryPage(
 	if limit <= 0 {
 		limit = 50
 	}
+	if opts.UnderPath != "" {
+		// Both phases must retain the same directory even if its path is reused.
+		opts, err = s.NormalizeSearchOptions(ctx, opts)
+		if err != nil {
+			return nil, false, receipt, err
+		}
+	}
 	ordinary, truncated, err := s.SearchPageWithOptions(ctx, query, limit, opts)
 	if err != nil {
 		return nil, false, receipt, err

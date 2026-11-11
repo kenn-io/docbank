@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -87,4 +88,33 @@ func TestSearchUnderPathByteLimit(t *testing.T) {
 	require.NoError(t, ValidateSearchDirectoryScope(0, "/"+strings.Repeat("a", MaxSearchUnderPathBytes-1)))
 	require.ErrorIs(t, ValidateSearchDirectoryScope(0, "/"+strings.Repeat("a", MaxSearchUnderPathBytes)), ErrInvalidSearchScope)
 	require.ErrorIs(t, ValidateSearchDirectoryScope(0, "/"+strings.Repeat("é", 8192)), ErrInvalidSearchScope)
+}
+
+func TestSearchUnderPathFuzzyPinsDirectoryAcrossPhases(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	scope, err := s.Mkdir(ctx, s.RootID(), "cases")
+	require.NoError(t, err)
+	ordinary := discoveryFile(t, s, scope.ID, "invocie.pdf")
+	fuzzy := discoveryFile(t, s, scope.ID, "invoice.pdf")
+	deps := s.discoveryDependencies()
+	// The existing budget boundary runs after ordinary hits and before the
+	// supplemental snapshot, so this mutation needs no timing or goroutines.
+	deps.budget = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		current, err := s.NodeByID(ctx, scope.ID)
+		require.NoError(t, err)
+		_, _, err = s.Move(ctx, scope.ID, s.RootID(), "renamed", current.Revision)
+		require.NoError(t, err)
+		replacement, err := s.Mkdir(ctx, s.RootID(), "cases")
+		require.NoError(t, err)
+		discoveryFile(t, s, replacement.ID, "invoice.pdf")
+		return context.WithCancel(ctx)
+	}
+	hits, _, _, err := s.searchDiscoveryPage(ctx, "invocie", 20, SearchOptions{UnderPath: "/cases"}, deps)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	require.Equal(t, ordinary.ID, hits[0].Node.ID)
+	require.Equal(t, fuzzy.ID, hits[1].Node.ID)
+	require.Equal(t, "/renamed/invoice.pdf", hits[1].Path)
 }

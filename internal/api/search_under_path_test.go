@@ -27,7 +27,7 @@ func TestSearchUnderPath(t *testing.T) {
 		var report api.SearchReport
 		require.NoError(t, json.Unmarshal([]byte(body), &report))
 		require.Equal(t, "/Café", report.UnderPath)
-		require.Zero(t, report.UnderNodeID)
+		require.Equal(t, dir.ID, report.UnderNodeID)
 		require.Len(t, report.Hits, 1)
 		require.Equal(t, file.ID, report.Hits[0].Node.ID)
 	}
@@ -41,6 +41,8 @@ func TestSearchUnderPath(t *testing.T) {
 			{"under_path=" + url.QueryEscape("/café"), "not_found", 404},
 			{fmt.Sprintf("under_path=/Café&under_node_id=%d", dir.ID), "validation", 422},
 			{"under_path=relative", "validation", 422},
+			{"under_path=", "validation", 422},
+			{"under_path", "validation", 422},
 			{"under_path=" + url.QueryEscape("/"+strings.Repeat("é", 8192)), "validation", 422},
 		} {
 			resp, body := get(t, ts, endpoint+tc.query, nil)

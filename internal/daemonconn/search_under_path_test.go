@@ -26,6 +26,7 @@ func TestSearchUnderPathTransport(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, byID.Hits, byPath.Hits)
 	require.Equal(t, "/Café", byPath.UnderPath)
+	require.Equal(t, dir.ID, byPath.UnderNodeID)
 	coverageID, err := c.SearchTextCoverage(t.Context(), daemonconn.SearchOptions{UnderNodeID: dir.ID})
 	require.NoError(t, err)
 	coveragePath, err := c.SearchTextCoverage(t.Context(), daemonconn.SearchOptions{UnderPath: "/Café"})
@@ -59,15 +60,39 @@ func TestSearchUnderPathValidationBeforeTransport(t *testing.T) {
 	require.Zero(t, calls.Load())
 }
 
-func TestSearchUnderPathRejectsMissingFilterEcho(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/notes", r.URL.Query().Get("under_path"))
-		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10}))
-	}))
-	t.Cleanup(ts.Close)
-	c := daemonconn.New(ts.URL, "synthetic-key")
-	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	_, err := c.SearchWithOptions(t.Context(), "mercury", 10, daemonconn.SearchOptions{UnderPath: "/notes"})
-	require.ErrorContains(t, err, "inconsistent filter authority")
+func TestSearchUnderPathReceiptAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options daemonconn.SearchOptions
+		path    string
+		id      int64
+		valid   bool
+	}{
+		{"resolved directory", daemonconn.SearchOptions{UnderPath: "/notes"}, "/notes", 42, true},
+		{"missing path", daemonconn.SearchOptions{UnderPath: "/notes"}, "", 42, false},
+		{"missing ID", daemonconn.SearchOptions{UnderPath: "/notes"}, "/notes", 0, false},
+		{"negative ID", daemonconn.SearchOptions{UnderPath: "/notes"}, "/notes", -1, false},
+		{"different path", daemonconn.SearchOptions{UnderPath: "/notes"}, "/other", 42, false},
+		{"different ID", daemonconn.SearchOptions{UnderNodeID: 42}, "", 43, false},
+		{"unexpected ID", daemonconn.SearchOptions{}, "", 42, false},
+		{"unexpected path", daemonconn.SearchOptions{}, "/notes", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, tc.options.UnderPath, r.URL.Query().Get("under_path"))
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10,
+					UnderPath: tc.path, UnderNodeID: tc.id}))
+			}))
+			t.Cleanup(ts.Close)
+			c := daemonconn.New(ts.URL, "synthetic-key")
+			t.Cleanup(func() { require.NoError(t, c.Close()) })
+			_, err := c.SearchWithOptions(t.Context(), "mercury", 10, tc.options)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "inconsistent filter authority")
+			}
+		})
+	}
 }

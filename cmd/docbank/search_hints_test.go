@@ -106,6 +106,9 @@ func TestEmptySearchHints(t *testing.T) {
 						var err error
 						report.UnderNodeID, err = strconv.ParseInt(cmp.Or(params.Get("under_node_id"), "0"), 10, 64)
 						assert.NoError(t, err)
+						if report.UnderPath != "" {
+							report.UnderNodeID = 42
+						}
 					}
 					if tc.nonempty || tc.fileHit || tc.folder {
 						report.Hits = []api.SearchHit{{Node: api.Node{ID: 42, Kind: "file", Name: "lease.txt"}, Path: "/lease.txt", Match: "name"}}

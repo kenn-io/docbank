@@ -203,7 +203,9 @@ bytes. The daemon resolves it on the search normalizer's querier, then uses
 the same descendant filter as `under_node_id`. Supply only one selector.
 Both selectors together return `422 validation`; a file returns `422 not_dir`;
 a missing or trashed folder returns `404 not_found`. GET search receipts echo
-the supplied path as `under_path`. The text-coverage GET route and document
+the supplied path as `under_path` and the resolved stable `under_node_id`.
+An explicitly empty `under_path` fails validation on both GET routes.
+The text-coverage GET route and document
 source-fence filters accept the same selector. Daemon protocol 126 prevents
 a client from sending it to an older daemon that could ignore the GET field.
 

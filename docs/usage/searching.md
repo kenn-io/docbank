@@ -219,7 +219,8 @@ Media-type matching ignores case and stored parameters. For example,
 contain no parameters. Directories and historical versions never match it.
 
 The directory filter accepts an absolute virtual path or `id:N`. The daemon
-resolves a path when it handles the search; JSON echoes it as `under_path`.
+resolves a path when it handles the search; JSON echoes the authored
+`under_path` and resolved stable `under_node_id`.
 Paths are case-exact and at most 16,384 UTF-8 bytes. A file path fails as
 `not_dir`; a missing or trashed folder fails as `not_found`. An `id:N`
 selector sends `under_node_id`, which keeps selecting that directory after a

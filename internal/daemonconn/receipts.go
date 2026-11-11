@@ -1113,8 +1113,12 @@ func (c *Connection) SearchWithOptions(
 		return out, err
 	}
 	out = *apiResponse
+	directoryMatches := out.UnderNodeID == opts.UnderNodeID
+	if opts.UnderPath != "" {
+		directoryMatches = out.UnderNodeID > 0
+	}
 	if out.PDFFilter != opts.PDFFilter || out.SourcePresent != opts.SourcePresent || out.TagID != opts.TagID || out.MIMEType != mimeType ||
-		out.UnderNodeID != opts.UnderNodeID || out.UnderPath != opts.UnderPath || out.ModifiedSince != modifiedSince ||
+		!directoryMatches || out.UnderPath != opts.UnderPath || out.ModifiedSince != modifiedSince ||
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
 	}

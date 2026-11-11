@@ -198,7 +198,7 @@ See docs/usage/search.md.`,
 		if searchUnder != "" {
 			opts.UnderNodeID = underSelector.id
 			opts.UnderPath = underSelector.path
-			underPath = searchUnder
+			underPath = underSelector.path
 		}
 		query := strings.Join(args, " ")
 		var automatic automaticSearchOutcome
@@ -279,6 +279,8 @@ func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underP
 		}
 		if underPath != "" {
 			filters = append(filters, fmt.Sprintf("directory %q", underPath))
+		} else if rep.UnderNodeID != 0 {
+			filters = append(filters, fmt.Sprintf("directory ID %s", formatNodeSelector(rep.UnderNodeID)))
 		}
 		if rep.ModifiedSince != "" {
 			filters = append(filters, fmt.Sprintf("modified since %q", rep.ModifiedSince))
