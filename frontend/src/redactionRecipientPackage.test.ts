@@ -167,15 +167,12 @@ it("offers a native ticket download bound to the completed delivery without coun
     });
     return new Response(JSON.stringify(response()));
   });
-  const notice = vi.fn(),
-    controller = new RecipientPackageController(() => "tab", vi.fn(), notice);
+  const controller = new RecipientPackageController(() => "tab", vi.fn());
   await controller.start(inputs, artifact);
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(click).toHaveBeenCalledTimes(1);
   expect(controller.phase).toBe("idle");
-  expect(notice).toHaveBeenLastCalledWith(
-    "Download started. Keep this tab open until the download finishes.",
-  );
+  expect(controller.message).toBe("Download started. Keep this review open until it finishes.");
   fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
   await controller.stop();
 });
@@ -187,10 +184,12 @@ it("keeps retries blocked after a lost creation reply until fresh owner cleanup 
     .mockResolvedValueOnce(
       new Response(JSON.stringify({ detail: "Removal failed" }), { status: 500 }),
     );
-  const controller = new RecipientPackageController(() => "tab", vi.fn(), vi.fn());
+  const controller = new RecipientPackageController(() => "tab", vi.fn());
   await controller.start(inputs, artifact);
   expect(controller.phase).toBe("cleanup-failed");
-  expect(controller.error).toBe("Removal failed");
+  expect(controller.error).toBe(
+    "The recipient ZIP could not be released. Release it before trying again.",
+  );
   await controller.start(inputs, artifact);
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(fetch.mock.calls[1]![1]!.method).toBe("DELETE");
@@ -223,7 +222,7 @@ it("serializes cancellation cleanup across deliveries and ignores a late success
         }),
     );
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-  const controller = new RecipientPackageController(() => "tab", vi.fn(), vi.fn());
+  const controller = new RecipientPackageController(() => "tab", vi.fn());
   const build = controller.start(inputs, artifact);
   const cleanup = controller.cancel();
   expect(controller.phase).toBe("releasing");
@@ -248,9 +247,11 @@ it("does not cancel an existing transfer when another package reports busy", asy
         { status: 503 },
       ),
     );
-  const controller = new RecipientPackageController(() => "tab", vi.fn(), vi.fn());
+  const controller = new RecipientPackageController(() => "tab", vi.fn());
   await controller.start(inputs, artifact);
   expect(controller.phase).toBe("idle");
-  expect(controller.error).toBe("Another package is active");
+  expect(controller.error).toBe(
+    "Another recipient ZIP is being prepared or downloaded. Try again when it finishes.",
+  );
   expect(fetch).toHaveBeenCalledTimes(1);
 });

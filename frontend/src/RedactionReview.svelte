@@ -69,7 +69,6 @@
   const packageController = new RecipientPackageController(
     () => session,
     (cause) => onauthfailure(cause),
-    (message) => (notice = message),
   );
   const latestNumbering = $derived(numberingReviews.at(-1));
   let numberingLocked = $state(false);

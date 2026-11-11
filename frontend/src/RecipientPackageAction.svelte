@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Spinner } from "@kenn-io/kit-ui";
+  import { Button } from "@kenn-io/kit-ui";
   import type { BatesExport } from "./generated/docbank.js";
   import type { NumberingInputs } from "./redactionNumbering.js";
   import type { RecipientPackageController } from "./recipientPackageController.svelte.js";
@@ -10,34 +10,42 @@
   }: { controller: RecipientPackageController; inputs: NumberingInputs; artifact: BatesExport } =
     $props();
   const active = $derived(controller.allocation === artifact.allocation_id);
+  const building = $derived(active && controller.phase === "building");
 </script>
 
-<Button
-  disabled={controller.phase !== "idle"}
-  onclick={() => void controller.start(inputs, artifact)}>Download recipient ZIP</Button
->
+{#if active && controller.phase === "cleanup-failed"}<Button
+    size="sm"
+    onclick={() => void controller.release()}>Release recipient ZIP</Button
+  >
+{:else}<Button
+    size="sm"
+    busy={building || (active && controller.phase === "releasing")}
+    busyLabel={building ? "Preparing recipient ZIP" : "Releasing recipient ZIP"}
+    ariaLabel="Download recipient ZIP"
+    disabled={controller.phase !== "idle"}
+    onclick={() => void controller.start(inputs, artifact)}>Recipient ZIP</Button
+  >{/if}
+{#if building}<Button
+    size="sm"
+    ariaLabel="Cancel recipient ZIP"
+    onclick={() => void controller.cancel()}>Cancel</Button
+  >{/if}
 {#if active}
-  {#if controller.phase === "building"}
-    <p role="status"><Spinner size={16} /> Checking PDF and preparing ZIP…</p>
-    <Button onclick={() => void controller.cancel()}>Cancel package</Button>
-  {:else if controller.phase === "releasing"}
-    <p role="status"><Spinner size={16} /> Releasing package…</p>
-  {:else if controller.phase === "cleanup-failed"}
-    <Button onclick={() => void controller.release()}>Release package</Button>
-  {/if}
-  {#if controller.error}<p role="alert">{controller.error}</p>{/if}
+  {#if building}<p class="status" role="status">Checking the PDF and preparing the ZIP…</p>
+  {:else if controller.message}<p class="status" role="status">{controller.message}</p>{/if}
+  {#if controller.error}<p class="error" role="alert">{controller.error}</p>{/if}
 {/if}
 
 <style>
   p {
-    font-size: 0.875rem;
+    margin: 0;
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
   }
-  [role="status"] {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
+  .status {
+    color: var(--text-muted);
   }
-  [role="alert"] {
+  .error {
     color: var(--status-error-text);
   }
 </style>

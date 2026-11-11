@@ -309,7 +309,9 @@ test("downloads recipient ZIPs for completed reviews and imports their numbers",
     const pdf = path.join(scratch, "numbered.pdf");
     await (await downloadEvent).saveAs(pdf);
     await expect(
-      drawer.getByText(/Download started\. Keep this tab open .*finishes\./),
+      drawer.getByText("Download started. Keep this review open until it finishes.", {
+        exact: true,
+      }),
     ).toHaveCount(1);
     const bytes = await readFile(pdf),
       digest = createHash("sha256").update(bytes).digest("hex");
