@@ -621,7 +621,7 @@
           {:else}<p class="tool-muted">
               {active.coverage.scoped} in date ranges · {active.coverage.searchable} searchable · {active
                 .coverage.missing_text} missing text · {active.coverage.incomplete_families} with incomplete
-              relationships · import or recorded dates: {active.coverage.fallback_dates} · expires {formatDate(
+              relationships · {active.coverage.fallback_dates} dated from vault records · expires {formatDate(
                 active.expires_at,
               )}
             </p>{/if}
