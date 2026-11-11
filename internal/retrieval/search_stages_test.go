@@ -463,7 +463,6 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 			assert.Equal(t, cmp.Or(test.lexical, test.semantic), ranked.Results[0].Excerpt)
 		})
 	}
-
 }
 
 func TestSearcherSemanticRerankingFailsClosedWithoutExcerpt(t *testing.T) {
