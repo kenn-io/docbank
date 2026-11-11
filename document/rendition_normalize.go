@@ -37,12 +37,8 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		presentation := renditionPresentation(evidenceUnit, len(markdownUnits) == 0)
 		overhead := utf8.RuneCountInString(presentation + strings.Repeat("\n\n---\n\n", min(len(markdownUnits), 1)))
 		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
-		markdown := evidenceUnit.Text
-		if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
-			markdown = EscapeRenditionText(markdown)
-		}
-		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionMarkdown(
-			markdown, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
+		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionUnit(
+			evidenceUnit, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)
