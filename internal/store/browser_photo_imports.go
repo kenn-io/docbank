@@ -38,6 +38,13 @@ type BrowserPhotoImport struct {
 	CreatedAt   string
 	GroupCount  int
 	Groups      []BrowserPhotoImportGroup
+	Skipped     []BrowserPhotoSkippedFile
+}
+
+// BrowserPhotoSkippedFile records a file excluded by preview planning.
+type BrowserPhotoSkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 // BrowserPhotoImportGroup preserves the members and result of one group.
@@ -135,12 +142,12 @@ func (s *Store) ReadBrowserPhotoImport(ctx context.Context, id uuid.UUID) (Brows
 func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrier bool) (BrowserPhotoImport, error) {
 	var item BrowserPhotoImport
 	read := func(tx *sql.Tx) error {
-		var source, suffix string
+		var source, suffix, skipped string
 		var anchor int64
 		var destination sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT source_id,picker_kind,label,destination,created_at,anchor_id,suffix_json,destination_id
+		if err := tx.QueryRowContext(ctx, `SELECT source_id,picker_kind,label,destination,created_at,anchor_id,suffix_json,destination_id,skipped_json
 			FROM browser_photo_imports WHERE import_id=$1 AND vault_id=$2`, id.String(), s.VaultID()).Scan(
-			&source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination); err != nil {
+			&source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination, &skipped); err != nil {
 			return err
 		}
 		var err error
@@ -151,6 +158,9 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 		}
 		item.Directory.anchorID = anchor
 		if err := json.Unmarshal([]byte(suffix), &item.Directory.segments); err != nil {
+			return err
+		}
+		if err := json.Unmarshal([]byte(skipped), &item.Skipped); err != nil {
 			return err
 		}
 		if destination.Valid {
@@ -295,12 +305,16 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 	if err != nil {
 		return uuid.Nil(), err
 	}
+	skipped, err := json.Marshal(plan.Skipped)
+	if err != nil {
+		return uuid.Nil(), err
+	}
 	id := uuid.New()
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_imports
-			(import_id, vault_id, source_id, picker_kind, label, destination, anchor_id, suffix_json, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id.String(), s.VaultID(), plan.SourceID.String(),
-			plan.PickerKind, plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), nowRFC3339())
+			(import_id, vault_id, source_id, picker_kind, label, destination, anchor_id, suffix_json, skipped_json, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id.String(), s.VaultID(), plan.SourceID.String(),
+			plan.PickerKind, plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), string(skipped), nowRFC3339())
 		if err != nil {
 			return err
 		}

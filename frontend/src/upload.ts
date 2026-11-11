@@ -124,6 +124,7 @@ export interface SavedPhotoImport {
   created_at: string;
   group_count: number;
   groups?: SavedPhotoGroup[];
+  skipped?: { path: string; reason: string }[];
 }
 
 const declarationUUID = "00000000-0000-4000-8000-000000000000";
@@ -372,6 +373,11 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       !reply.saved_import ||
       reply.saved_import.import_id !== importID ||
       !Array.isArray(reply.saved_import.groups) ||
+      (reply.saved_import.skipped !== undefined &&
+        (!Array.isArray(reply.saved_import.skipped) ||
+          reply.saved_import.skipped.some(
+            (file) => !file || typeof file.path !== "string" || typeof file.reason !== "string",
+          ))) ||
       reply.saved_import.groups.some(
         (group) =>
           !Array.isArray(group.files) ||
