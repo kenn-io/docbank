@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -1025,7 +1026,7 @@ func (provider *daemonDoclingServer) handleResult(response http.ResponseWriter, 
 		http.NotFound(response, request)
 		return
 	}
-	writeDaemonJSON(response, daemonASRResult(task.filename, provider.resultSchemaVersion))
+	writeDaemonJSON(response, daemonASRResult(task.filename, task.source, provider.resultSchemaVersion))
 }
 
 func (provider *daemonDoclingServer) submissionSource() []byte {
@@ -1062,14 +1063,18 @@ func slicesEqual(left, right []string) bool {
 	return true
 }
 
-func daemonASRResult(filename, schemaVersion string) map[string]any {
+// daemonASRResult records the upload's origin hash as Docling's VideoPipeline
+// does: the low 64 bits of its SHA-256.
+func daemonASRResult(filename string, source []byte, schemaVersion string) map[string]any {
+	digest := sha256.Sum256(source)
 	return map[string]any{
 		"status": "success", "errors": []string{},
 		"document": map[string]any{
 			"filename": filename, "md_content": nil,
 			"json_content": map[string]any{
 				"schema_name": "DoclingDocument", "version": schemaVersion,
-				"origin": map[string]any{"filename": filename}, "pages": map[string]any{},
+				"origin": map[string]any{"filename": filename, "binary_hash": binary.BigEndian.Uint64(digest[24:])},
+				"pages":  map[string]any{},
 				"texts": []any{map[string]any{
 					"text":   "Telescope delivery arrives Friday at 3.",
 					"source": []any{map[string]any{"kind": "track", "start_time": 0.0, "end_time": 0.005}},
