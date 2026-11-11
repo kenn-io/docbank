@@ -50,16 +50,17 @@ const understandingHeading = "Machine-generated image understanding; unverified;
 const understandingNotice = "This is a model interpretation of an image, not verified source testimony. Possible meaning is uncertain without conversation context and does not establish anyone's beliefs, endorsement, or intent."
 
 type understandingSection struct {
+	field string
 	title string
 	value *string
 }
 
 func (value understanding) sections() []understandingSection {
 	return []understandingSection{
-		{"Visible text (best-effort transcription)", value.VisibleText},
-		{"Literal description", value.LiteralDescription},
-		{"Possible meaning (interpretation)", value.PossibleMeaning},
-		{"Uncertainty and missing context", value.Uncertainty},
+		{"visible_text", "Visible text (best-effort transcription)", value.VisibleText},
+		{"literal_description", "Literal description", value.LiteralDescription},
+		{"possible_meaning", "Possible meaning (interpretation)", value.PossibleMeaning},
+		{"uncertainty", "Uncertainty and missing context", value.Uncertainty},
 	}
 }
 
@@ -70,19 +71,30 @@ func (section understandingSection) markdown() string {
 
 func (section understandingSection) text() string {
 	content := strings.ReplaceAll(strings.ReplaceAll(*section.value, "\r\n", "\n"), "\r", "\n")
-	if strings.TrimSpace(content) == "" {
-		content = "No supported content provided."
-	}
 	return content
 }
 
-func (value understanding) markdown() string {
-	var text strings.Builder
-	text.WriteString("# " + understandingTitle + "\n\n" + understandingNotice + "\n")
-	for _, section := range value.sections() {
-		text.WriteString(section.markdown())
+func (value understanding) evidence() document.SourceEvidenceV1 {
+	evidence := document.SourceEvidenceV1{
+		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceDegradedProvenance,
+		Family: "image", UnitKind: document.EvidenceUnitGeneric,
+		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "machine-generated image interpretation has no verified text coordinates or conversation context"}},
 	}
-	return text.String()
+	for _, section := range value.sections() {
+		if strings.TrimSpace(section.text()) == "" {
+			evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionField, Field: section.field, Reason: "no supported content provided"})
+			continue
+		}
+		text := section.markdown()
+		if len(evidence.Units) == 0 {
+			text = "# " + understandingTitle + "\n\n" + understandingNotice + "\n" + text
+		}
+		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
+			Order: len(evidence.Units), HeadingPath: []string{understandingHeading, section.title}, Text: text,
+			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone},
+		})
+	}
+	return evidence
 }
 
 func (p *Provider) renderUnderstanding(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
@@ -104,22 +116,18 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	if err != nil {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "invalid image understanding result", err)
 	}
-	markdown := value.markdown()
-	payload := []byte(markdown)
-	evidence := providerutil.DegradedEvidence("image", markdown, "machine-generated image interpretation has no verified text coordinates or conversation context")
-	// Each semantic layer carries its own heading and caveat through chunking.
-	evidence.Units = nil
-	for order, section := range value.sections() {
-		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
-			Order: order, HeadingPath: []string{understandingHeading, section.title},
-			Text:    section.text(),
-			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone},
-		})
+	evidence := value.evidence()
+	if len(evidence.Units) == 0 {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorMalformedEvidence, "no supported image content", nil)
+	}
+	var markdown strings.Builder
+	for _, unit := range evidence.Units {
+		markdown.WriteString(unit.Text)
 	}
 
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: authorization.SourceSHA256, UploadSHA256: meta.SHA256, OperationID: "understand-" + authorization.RenditionRequestFingerprint, StartedAt: started, CompletedAt: time.Now().UTC(), Warnings: []string{"degraded_provenance", "machine_generated_interpretation"}, Usage: document.RenditionUsage{Requests: 1, InputBytes: meta.ByteLength, OutputBytes: int64(len(raw)), Units: int64(len(evidence.Units))}})
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	return document.RenditionResult{Evidence: evidence, ProviderMarkdown: payload, Receipt: receipt}, nil
+	return document.RenditionResult{Evidence: evidence, ProviderMarkdown: []byte(markdown.String()), Receipt: receipt}, nil
 }

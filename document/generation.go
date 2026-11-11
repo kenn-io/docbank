@@ -13,7 +13,10 @@ import (
 )
 
 const (
+	// EmbeddingInputGenerationVersion identifies the original generation format.
 	EmbeddingInputGenerationVersion = 1
+	// EmbeddingInputGenerationHeadingsVersion identifies generations with heading context.
+	EmbeddingInputGenerationHeadingsVersion = 2
 
 	maxAttachmentTitleBytes   = 512
 	maxAttachmentContextBytes = 4096
@@ -271,7 +274,7 @@ func (generation EmbeddingInputGeneration) ToEmbeddingInputs(contract ModelInput
 	result := make([]EmbeddingInput, len(generation.Inputs))
 	for index, input := range generation.Inputs {
 		content := input.Content
-		if generation.Chunk.Formatter == RenditionChunkHeadingsFormatter {
+		if generation.Version == EmbeddingInputGenerationHeadingsVersion {
 			content = FormatRenditionHeadingContext(input.HeadingPath, content)
 		}
 		contextualized := contextualizeDocumentInput(attachment, content)
@@ -291,8 +294,8 @@ func generatedInputKey(ordinal int, checksum string) string {
 }
 
 func validateEmbeddingInputGeneration(generation EmbeddingInputGeneration) error {
-	if generation.Version != EmbeddingInputGenerationVersion {
-		return fmt.Errorf("embedding input generation version must be %d", EmbeddingInputGenerationVersion)
+	if generation.Version != EmbeddingInputGenerationVersion && (generation.Version != EmbeddingInputGenerationHeadingsVersion || generation.Chunk.Formatter != RenditionChunkHeadingsFormatter) {
+		return errors.New("unsupported embedding input generation version or formatter")
 	}
 	for _, fingerprint := range []struct{ value, name string }{
 		{generation.Checksum, "generation checksum"},

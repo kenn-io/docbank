@@ -593,6 +593,8 @@ docbank processing vision-fingerprints --task compatible-vision.understand-v1 --
 
 The four labeled output sections require `max_units` of at least four. Use the printed assignments in this configuration. The endpoint and credential settings follow the photo-description transport above:
 
+Sections without supported content are omitted and recorded as omissions. If the model returns no supported content in any section, the job fails without retrying that response.
+
 ```toml
 [credential_bindings.image_understanding]
 environment_variable = "DOCBANK_VISION_KEY"

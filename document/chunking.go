@@ -144,6 +144,9 @@ func BuildEmbeddingInputs(evidence NormalizedEvidenceV1, policy InputPolicy, lim
 		MaxInputTokens: policy.MaxInputTokens, MaxInputBytes: policy.MaxInputBytes,
 		Inputs: make([]GeneratedEmbeddingInput, 0, min(limits.MaxInputs, len(tokens))),
 	}
+	if policy.Chunk.Formatter == RenditionChunkHeadingsFormatter {
+		result.Version = EmbeddingInputGenerationHeadingsVersion
+	}
 	if policy.AttachmentContext != nil {
 		attachment := *policy.AttachmentContext
 		result.AttachmentContext = &attachment

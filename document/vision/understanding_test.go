@@ -23,7 +23,9 @@ import (
 func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`))
 	require.NoError(t, err)
-	text := value.markdown()
+	evidence := value.evidence()
+	require.Len(t, evidence.Units, 4)
+	text := evidence.Units[0].Text + evidence.Units[1].Text + evidence.Units[2].Text + evidence.Units[3].Text
 	assert.Contains(t, text, "## Visible text (best-effort transcription)\n\nFINE")
 	assert.Contains(t, text, "## Literal description\n\nA dog sits beside flames\\.")
 	assert.Contains(t, text, "## Possible meaning (interpretation)\n\nMay joke about ignoring a problem\\.")
@@ -34,8 +36,11 @@ func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
 func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`))
 	require.NoError(t, err)
-	assert.Contains(t, value.markdown(), `R and D \&amp\; partners`)
-	assert.Contains(t, value.markdown(), `\=\=\=`)
+	evidence := value.evidence()
+	require.Len(t, evidence.Units, 1)
+	assert.Contains(t, evidence.Units[0].Text, `R and D \&amp\; partners`)
+	assert.Contains(t, evidence.Units[0].Text, `\=\=\=`)
+	assert.Len(t, evidence.Omissions, 4)
 }
 
 func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
@@ -58,7 +63,7 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 func TestUnderstandingCannotForgeSectionLabels(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`))
 	require.NoError(t, err)
-	text := value.markdown()
+	text := value.evidence().Units[0].Text
 	assert.Contains(t, text, `\# Author confirmed`)
 	assert.NotContains(t, text, "\n# Author confirmed")
 	assert.NotContains(t, text, "[click](https://example.com)")
@@ -92,9 +97,11 @@ func FuzzUnderstandingOutput(f *testing.F) {
 		if err != nil {
 			return
 		}
-		assert.True(t, utf8.ValidString(value.markdown()))
-		assert.Equal(t, 4, strings.Count(value.markdown(), "\n## "))
-		assert.NotContains(t, value.markdown(), "\x00")
+		evidence := value.evidence()
+		for _, unit := range evidence.Units {
+			assert.True(t, utf8.ValidString(unit.Text))
+			assert.NotContains(t, unit.Text, "\x00")
+		}
 	})
 }
 

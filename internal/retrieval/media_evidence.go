@@ -150,10 +150,10 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 			return nil, err
 		}
 		excerpt := input.Content
-		if generation.Chunk.Formatter == document.RenditionChunkHeadingsFormatter {
+		if generation.Version == document.EmbeddingInputGenerationHeadingsVersion {
 			excerpt = document.FormatRenditionHeadingContext(input.HeadingPath, excerpt)
 		}
-		inputs[input.Key] = mediaEvidenceInput{excerpt: excerpt, span: span, showExcerpt: generation.Chunk.Formatter == document.RenditionChunkHeadingsFormatter}
+		inputs[input.Key] = mediaEvidenceInput{excerpt: excerpt, span: span, showExcerpt: generation.Version == document.EmbeddingInputGenerationHeadingsVersion}
 	}
 	return inputs, nil
 }

@@ -264,6 +264,7 @@ func TestBuildEmbeddingInputsChargesHeadingContext(t *testing.T) {
 			policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
 			policy.MaxInputBytes, policy.MaxInputTokens = tc.bytes, tc.tokens
 			generation := build(t, evidence, policy)
+			assert.Equal(t, EmbeddingInputGenerationHeadingsVersion, generation.Version)
 			require.Greater(t, len(generation.Inputs), 1)
 			assertGenerationSpans(t, evidence, generation)
 			for _, input := range generation.Inputs {
@@ -282,6 +283,31 @@ func TestBuildEmbeddingInputsChargesHeadingContext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEmbeddingInputGenerationVersionKeepsLegacyFormatterSemantics(t *testing.T) {
+	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Section"}}})
+	policy := testInputPolicy(t, 2, 0)
+	legacy := build(t, evidence, policy)
+	legacy.Chunk.Formatter = RenditionChunkHeadingsFormatter
+	var err error
+	legacy.PolicyFingerprint, err = inputPolicyFingerprint(legacy.policyIdentity())
+	require.NoError(t, err)
+	legacy.Checksum, err = generationChecksum(legacy)
+	require.NoError(t, err)
+	encoded, err := MarshalEmbeddingInputGeneration(legacy)
+	require.NoError(t, err)
+	decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
+	require.NoError(t, err)
+	inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
+	require.NoError(t, err)
+	assert.Equal(t, "AABB", inputs[0].Text)
+
+	policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
+	current := build(t, evidence, policy)
+	current.Chunk.Formatter = "other/v1"
+	_, err = MarshalEmbeddingInputGeneration(current)
+	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
 }
 
 func TestBuildEmbeddingInputsTruncatesOnlyAnIndivisibleTokenWhenDeclared(t *testing.T) {
