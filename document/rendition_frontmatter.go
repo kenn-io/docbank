@@ -252,7 +252,7 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 		// An image unit is found by its whole fenced block, which its escaped
 		// labels cannot contain; its entry starts after the opening fence.
 		needle, opening := unit.Text, 0
-		if isImageUnderstandingUnit(unit.HeadingPath) {
+		if rendition.imageUnderstanding && isImageUnderstandingUnit(unit.HeadingPath) {
 			needle, opening = imageRenditionBlock(unit.Text)
 		}
 		relative := bytes.Index(rendition.Markdown[cursor:], []byte(needle))

@@ -30,6 +30,7 @@ type RenditionLimits struct {
 // RenditionPolicy binds rendition construction to one immutable set of
 // limits. Renditions never chunk, so it carries no chunk bounds.
 type RenditionPolicy struct {
+	imageUnderstanding bool
 	maxDocumentChars   int
 	maxUnitRunes       int
 	maxSegmentRunes    int
@@ -110,15 +111,16 @@ type LexicalSegmentV1 struct {
 // evidence walk. Checksum covers the complete rendition manifest; Markdown and
 // its checksum are retained independently for blob storage.
 type RenditionV1 struct {
-	Checksum         string
-	Completeness     EvidenceCompleteness
-	ContractVersion  string
-	EvidenceChecksum string
-	LexicalSegments  []LexicalSegmentV1
-	Markdown         []byte
-	MarkdownChecksum string
-	Units            []NormalizedUnitV1
-	Warnings         []RenditionWarningV1
+	imageUnderstanding bool
+	Checksum           string
+	Completeness       EvidenceCompleteness
+	ContractVersion    string
+	EvidenceChecksum   string
+	LexicalSegments    []LexicalSegmentV1
+	Markdown           []byte
+	MarkdownChecksum   string
+	Units              []NormalizedUnitV1
+	Warnings           []RenditionWarningV1
 }
 
 func invalidRenditionError(reason string) error {

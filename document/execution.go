@@ -268,6 +268,7 @@ func renditionExecutionPoliciesForCanonicalProfileV1(
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
+	rendition.imageUnderstanding = profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract
 	return evidence, rendition, nil
 }
 
@@ -355,6 +356,7 @@ func (snapshot RenditionExecutionSnapshotV1) Policies() (
 	if err != nil {
 		return EvidencePolicy{}, RenditionPolicy{}, err
 	}
+	rendition.imageUnderstanding = snapshot.Authorization.ProviderID == ImageUnderstandingProviderID
 	return evidence, rendition, nil
 }
 

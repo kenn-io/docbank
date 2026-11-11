@@ -59,6 +59,7 @@ func TestEnvelopeRenditionV1KeepsNavigationBodyRelative(t *testing.T) {
 			}})
 		policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1000})
 		require.NoError(t, err)
+		policy.imageUnderstanding = true
 		imageRendition, err := BuildRenditionV1(evidence, policy)
 		require.NoError(t, err)
 		enveloped, _, err := EnvelopeRenditionV1(imageRendition, RenditionEnvelopeV1{BuildID: frontmatterHash("build"), SourceSHA256: frontmatterHash("source"), SourceFormat: "png", SourceMediaType: "image/png", RenditionRequestFingerprint: frontmatterHash("request"), EvidenceLexicalFingerprint: frontmatterHash("lexical"), NormalizedEvidenceContract: NormalizedEvidenceContractV1, UnitKind: EvidenceUnitGeneric})

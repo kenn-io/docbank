@@ -21,10 +21,11 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	}
 
 	result := RenditionV1{
-		Completeness:     evidence.Completeness,
-		ContractVersion:  RenditionContractV1,
-		EvidenceChecksum: evidenceChecksum,
-		Units:            make([]NormalizedUnitV1, 0, len(evidence.Units)),
+		imageUnderstanding: policy.imageUnderstanding,
+		Completeness:       evidence.Completeness,
+		ContractVersion:    RenditionContractV1,
+		EvidenceChecksum:   evidenceChecksum,
+		Units:              make([]NormalizedUnitV1, 0, len(evidence.Units)),
 	}
 	if evidence.Completeness == EvidenceDegradedProvenance {
 		result.Warnings = []RenditionWarningV1{{Code: "degraded_provenance"}}
@@ -34,16 +35,16 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	remaining := policy.maxDocumentChars
 	truncated := false
 	for _, evidenceUnit := range evidence.Units {
-		presentation := renditionPresentation(evidenceUnit, len(markdownUnits) == 0)
+		presentation := renditionPresentation(evidenceUnit, policy.imageUnderstanding, len(markdownUnits) == 0)
 		overhead := utf8.RuneCountInString(presentation + strings.Repeat("\n\n---\n\n", min(len(markdownUnits), 1)))
 		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
 		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionUnit(
-			evidenceUnit, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
+			evidenceUnit, policy.imageUnderstanding, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
 		if err != nil {
 			return RenditionV1{}, fmt.Errorf("render evidence unit %d: %w", evidenceUnit.Order, err)
 		}
-		if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+		if policy.imageUnderstanding && isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
 			prefix := imageRenditionPrefix(text, max(remaining-overhead-1, 0))
 			renditionTruncated = renditionTruncated || len(prefix) != len(text)
 			text = prefix
@@ -53,7 +54,7 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		result.Units = append(result.Units, unit)
 		if text != "" {
 			projected := text
-			if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
+			if policy.imageUnderstanding && isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
 				projected, _ = imageRenditionBlock(text)
 			}
 			remaining = max(0, remaining-overhead-utf8.RuneCountInString(projected))

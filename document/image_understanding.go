@@ -39,8 +39,8 @@ func isImageUnderstandingUnit(headings []string) bool {
 }
 
 // sanitizeRenditionUnit sanitizes a unit's text, retaining literal image text.
-func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, maxLinkChars, maxSourceBytes, maxRunes int) (string, bool, bool, error) {
-	if !isImageUnderstandingUnit(unit.HeadingPath) {
+func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, imageUnderstanding bool, maxLinkChars, maxSourceBytes, maxRunes int) (string, bool, bool, error) {
+	if !imageUnderstanding || !isImageUnderstandingUnit(unit.HeadingPath) {
 		return sanitizeRenditionMarkdown(unit.Text, maxLinkChars, maxSourceBytes, maxRunes)
 	}
 	source, sourceTruncated := truncateUTF8Bytes(unit.Text, maxSourceBytes)
@@ -74,8 +74,8 @@ func imageRenditionPrefix(text string, budget int) string {
 // renditionPresentation renders a readable unit's labels for readers: its
 // escaped section heading, and before the first unit the notice and the
 // model. Evidence keeps the plain text, so none of this is searched.
-func renditionPresentation(unit NormalizedEvidenceUnitV1, first bool) string {
-	if !isImageUnderstandingUnit(unit.HeadingPath) {
+func renditionPresentation(unit NormalizedEvidenceUnitV1, imageUnderstanding, first bool) string {
+	if !imageUnderstanding || !isImageUnderstandingUnit(unit.HeadingPath) {
 		return ""
 	}
 	labels := "## " + EscapeRenditionText(unit.HeadingPath[1]) + "\n\n"

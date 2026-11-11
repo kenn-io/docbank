@@ -101,6 +101,7 @@ func TestImageUnderstandingReaderFixture(t *testing.T) {
 	})
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10000, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
 	require.NoError(t, err)
+	policy.imageUnderstanding = true
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
 	want, err := os.ReadFile("testdata/image-understanding-reader.golden.md")
@@ -129,6 +130,7 @@ func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
 			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: tc.limit, MaxSegmentRunes: 100})
 			require.NoError(t, err)
+			policy.imageUnderstanding = true
 			policy.maxSourceUnitBytes = tc.sourceLimit
 			rendered, err := BuildRenditionV1(evidence, policy)
 			require.NoError(t, err)
@@ -159,9 +161,10 @@ func TestImageUnderstandingDocumentBudgetIncludesFences(t *testing.T) {
 			evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
 				Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
 				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
-			limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)) + tc.budget
+			limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true, true)) + tc.budget
 			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 100, MaxSegmentRunes: 100})
 			require.NoError(t, err)
+			policy.imageUnderstanding = true
 			rendered, err := BuildRenditionV1(evidence, policy)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, rendered.Units[0].Text)
@@ -176,9 +179,10 @@ func TestImageUnderstandingDocumentBudgetIncludesFences(t *testing.T) {
 				{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "alpha", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
 				{Order: 1, HeadingPath: []string{ImageUnderstandingHeading, "Literal description"}, Text: "beta!", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
 			}})
-		limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)+renditionPresentation(evidence.Units[1], false)) + len("```\nalpha\n```\n\n---\n\n```\nbeta\n```\n")
+		limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true, true)+renditionPresentation(evidence.Units[1], true, false)) + len("```\nalpha\n```\n\n---\n\n```\nbeta\n```\n")
 		policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 100, MaxSegmentRunes: 100})
 		require.NoError(t, err)
+		policy.imageUnderstanding = true
 		rendered, err := BuildRenditionV1(evidence, policy)
 		require.NoError(t, err)
 		require.Len(t, rendered.Units, 2)
