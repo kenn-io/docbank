@@ -29,7 +29,7 @@ func (r *slowVerificationReader) Read(p []byte) (int, error) {
 	if r.remaining == 0 {
 		return 0, io.EOF
 	}
-	time.Sleep(20 * time.Second) //nolint:kennlint // This reader runs inside a synctest bubble.
+	time.Sleep(20 * time.Second) //nolint:kennlint // sleeptest: This reader runs inside a synctest bubble.
 	r.remaining--
 	p[0] = 'x'
 	return 1, nil
