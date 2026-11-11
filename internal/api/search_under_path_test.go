@@ -38,6 +38,7 @@ func TestSearchUnderPath(t *testing.T) {
 		}{
 			{"under_path=" + url.QueryEscape("/Café/mercury.txt"), "not_dir", 422},
 			{"under_path=/missing", "not_found", 404},
+			{"under_path=" + url.QueryEscape("/Café/.."), "validation", 422},
 			{"under_path=" + url.QueryEscape("/café"), "not_found", 404},
 			{fmt.Sprintf("under_path=/Café&under_node_id=%d", dir.ID), "validation", 422},
 			{"under_path=relative", "validation", 422},

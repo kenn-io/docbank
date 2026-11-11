@@ -41,6 +41,8 @@ func checkSearchUnderPathNormalization(t *testing.T, open func(*testing.T) *Stor
 	}{
 		{"/café", 0, ErrNotFound},
 		{"/missing", 0, ErrNotFound},
+		{"/missing/..", 0, ErrNotFound},
+		{"/Café/..", 0, ErrInvalidSearchScope},
 		{"/Café/mercury.txt", 0, ErrNotDir},
 		{"/Café", dir.ID, ErrInvalidSearchScope},
 		{"relative", 0, ErrInvalidSearchScope},

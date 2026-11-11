@@ -70,6 +70,7 @@ func TestSearchUnderPathInvalidScopesNeverCallProvider(t *testing.T) {
 			{"/missing", "not_found", 0},
 			{"/trashed", "not_found", 0},
 			{"/mercury.txt", "not_dir", 0},
+			{"/..", "validation", 0},
 			{"/", "validation", f.catalog.RootID()},
 		} {
 			filters := map[string]any{"under_path": tc.path}

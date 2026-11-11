@@ -73,6 +73,11 @@ func TestEmptySearchHints(t *testing.T) {
 					if tc.filtered {
 						assert.NotEmpty(t, lexicalFilters)
 						for key, values := range lexicalFilters {
+							if key == "under_path" {
+								assert.NotContains(t, r.URL.Query(), "under_path")
+								assert.Equal(t, "42", r.URL.Query().Get("under_node_id"))
+								continue
+							}
 							assert.Equal(t, values, r.URL.Query()[key], key)
 						}
 					}
@@ -95,6 +100,10 @@ func TestEmptySearchHints(t *testing.T) {
 					report := api.SearchReport{Limit: 50, Hits: []api.SearchHit{}}
 					if tc.filtered {
 						params := r.URL.Query()
+						if tc.name == "under path" {
+							assert.Equal(t, "/cases", params.Get("under_path"))
+							assert.NotContains(t, params, "under_node_id")
+						}
 						lexicalFilters = params
 						for _, key := range []string{"q", "limit", "fuzzy"} {
 							lexicalFilters.Del(key)

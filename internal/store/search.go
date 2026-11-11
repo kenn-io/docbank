@@ -2754,6 +2754,9 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 	if opts.UnderPath != "" {
 		directory, err = s.nodeByPath(ctx, queryer, opts.UnderPath)
 		if err != nil {
+			if errors.Is(err, ErrInvalidName) {
+				return SearchOptions{}, fmt.Errorf("%w: %v", ErrInvalidSearchScope, err)
+			}
 			return SearchOptions{}, err
 		}
 		opts.UnderNodeID = directory.ID

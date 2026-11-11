@@ -229,7 +229,13 @@ See docs/usage/search.md.`,
 		}()
 		var hints []searchHint
 		if empty && strings.TrimSpace(query) != "" {
-			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), opts)
+			coverageOpts := opts
+			if coverageOpts.UnderPath != "" {
+				// Keep diagnostics on the directory selected by the search receipt.
+				coverageOpts.UnderPath = ""
+				coverageOpts.UnderNodeID = rep.UnderNodeID
+			}
+			coverage, coverageErr := c.SearchTextCoverage(cmd.Context(), coverageOpts)
 			if coverageErr != nil {
 				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
 			}
