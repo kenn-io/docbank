@@ -1,9 +1,6 @@
 package document
 
-import (
-	"strings"
-	"unicode/utf8"
-)
+import "strings"
 
 // ImageUnderstandingProviderID selects an ordinary image interpretation rendition.
 const ImageUnderstandingProviderID = "compatible-vision.understand-v1"
@@ -33,29 +30,6 @@ func UnescapeRenditionText(value string) string {
 		out.WriteRune(runes[i])
 	}
 	return out.String()
-}
-
-// sanitizeRenditionUnit sanitizes a unit's text. Interpretation text is plain,
-// so each line is escaped and sanitized alone and the line breaks Markdown
-// would fold into spaces survive.
-func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, maxLinkChars, maxSourceBytes, maxRunes int) (string, bool, bool, error) {
-	if !isImageUnderstandingUnit(unit.HeadingPath) {
-		return sanitizeRenditionMarkdown(unit.Text, maxLinkChars, maxSourceBytes, maxRunes)
-	}
-	var lines []string
-	var sourceTruncated, truncated bool
-	for line := range strings.SplitSeq(unit.Text, "\n") {
-		text, source, rendition, err := sanitizeRenditionMarkdown(EscapeRenditionText(line), maxLinkChars, maxSourceBytes, maxRunes)
-		if err != nil {
-			return "", false, false, err
-		}
-		sourceTruncated, truncated = sourceTruncated || source, truncated || rendition
-		lines = append(lines, text)
-		if maxRunes -= utf8.RuneCountInString(text) + 1; maxRunes <= 0 {
-			break
-		}
-	}
-	return strings.Trim(strings.Join(lines, "\n"), "\n"), sourceTruncated, truncated || maxRunes <= 0, nil
 }
 
 // renditionPresentation renders a readable unit's labels for readers: its

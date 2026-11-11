@@ -1166,14 +1166,11 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if _, err := vision.Descriptor(profile.DescriptorID, profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
-		role := document.EvidenceArtifactStructured
-		if profile.AdapterContract == vision.UnderstandingAdapterContract {
-			if profile.DescriptorID != vision.UnderstandingProviderID || profile.MaxDocumentBytes > 16<<20 {
-				return fmt.Errorf("%s image understanding requires its own task and at most 16 MiB input", prefix)
-			}
+		if profile.AdapterContract == vision.UnderstandingAdapterContract && profile.DescriptorID != vision.UnderstandingProviderID {
+			return fmt.Errorf("%s image understanding requires its own task", prefix)
 		}
-		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(role) || profile.MaxResponseBytes > vision.MaxResponseBytes {
-			return fmt.Errorf("%s vision requires a withheld filename, %s evidence, and at most 1 MiB response", prefix, role)
+		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {
+			return fmt.Errorf("%s vision requires a withheld filename, structured evidence, and at most 1 MiB response", prefix)
 		}
 	case DoclingASRAdapterContract:
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {

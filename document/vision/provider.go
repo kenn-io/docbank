@@ -104,7 +104,6 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 	}
 	contract, inputProfile := AdapterContract, InputProfile
 	formats := []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}
-	roles := []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 	if id == UnderstandingProviderID {
 		contract, inputProfile, formats = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v5", nil
 		for _, mediaType := range []string{"image/jpeg", "image/png", "image/webp"} {
@@ -112,16 +111,12 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 		}
 	}
 	fingerprint := providerutil.SHA256Hex([]byte(contract + "\x00" + model + "\x00" + inputProfile + "\x00" + text))
-	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: formats, ReturnsStructured: true, ArtifactRoles: roles})
+	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: formats, ReturnsStructured: true, ArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}})
 }
 
 // DisclosureFingerprint binds consent to the exact destination and deployment.
 func DisclosureFingerprint(descriptor document.RenditionDescriptor, endpoint, deployment string) string {
-	contract := AdapterContract
-	if descriptor.ID == UnderstandingProviderID {
-		contract = UnderstandingAdapterContract
-	}
-	return providerutil.SHA256Hex([]byte(strings.Join([]string{contract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment}, "\x00")))
+	return providerutil.SHA256Hex([]byte(strings.Join([]string{AdapterContract, descriptor.ID, descriptor.Fingerprint, endpoint, deployment}, "\x00")))
 }
 
 // ValidateOrigin accepts a provider root origin under the selected trust boundary.

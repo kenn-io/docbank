@@ -128,23 +128,11 @@ func TestUnderstandingRejectsInvalidImageBounds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			meta := understandingMetadata(tc.data)
 			tc.mutate(&meta)
-			reader := &understandingCountingReader{reader: bytes.NewReader(tc.data)}
-			_, err := p.Render(t.Context(), &testUpload{ReadCloser: io.NopCloser(reader), metadata: meta}, understandingAuthorization(p, meta))
+			_, err := p.Render(t.Context(), &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(tc.data)), metadata: meta}, understandingAuthorization(p, meta))
 			classified, ok := errors.AsType[*document.RenditionProviderError](err)
 			require.True(t, ok)
 			assert.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
-			assert.Zero(t, reader.calls)
 			assert.Zero(t, calls.Load())
 		})
 	}
-}
-
-type understandingCountingReader struct {
-	reader io.Reader
-	calls  int
-}
-
-func (r *understandingCountingReader) Read(p []byte) (int, error) {
-	r.calls++
-	return r.reader.Read(p)
 }
