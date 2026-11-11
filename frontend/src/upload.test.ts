@@ -568,6 +568,30 @@ it("hashes only the files the daemon asks for before it plans", async () => {
   channel.close();
 });
 
+it("reuses a selected file hash when planning on a new channel", async () => {
+  const { socket, channel } = await photoChannel();
+  const files = photoSelectionFiles();
+  const read = vi.spyOn(files[1], "slice");
+  const hash = "a".repeat(64);
+  socket.needHashes = [1];
+  await channel.planPhotoImport(
+    files,
+    "/photos",
+    "20000000-0000-4000-8000-000000000001",
+    new AbortController().signal,
+    vi.fn(),
+    new Map([[files[1], hash]]),
+  );
+  const declarations = socket.frames
+    .filter((frame): frame is string => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .filter((frame) => frame.type === "plan_photo_import");
+  expect(declarations).toHaveLength(1);
+  expect(declarations[0].files[1].expected_hash).toBe(hash);
+  expect(read).not.toHaveBeenCalled();
+  channel.close();
+});
+
 it("answers a second hash request when another import adds a matching size", async () => {
   const { socket, channel } = await photoChannel();
   socket.needHashes = [1];

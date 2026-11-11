@@ -149,6 +149,7 @@ export interface PhotoImportTransport {
     sourceID: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    knownHashes?: Map<File, string>,
   ): Promise<PhotoImportPlan>;
   // An empty entry in hashes is a file not hashed yet. The upload hashes it
   // first and fills in its entry, so a retry reuses the hash.
@@ -372,12 +373,13 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     sourceID: string,
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
+    knownHashes?: Map<File, string>,
   ): Promise<PhotoImportPlan> {
     if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
-    const hashes = new Map<File, string>();
+    const hashes = new Map(knownHashes);
     try {
       this.send(photoImportDeclaration(files, destination, sourceID, requestID, hashes));
       let plan = await this.nextMessage();

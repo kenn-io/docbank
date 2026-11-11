@@ -46,6 +46,7 @@ var (
 	errWebUploadCanceled = errors.New("browser upload canceled")
 	errWebUploadProtocol = errors.New("invalid browser upload protocol")
 	errWebUploadTooBig   = errors.New("upload control message exceeds its limit")
+	errWebVerifyStalled  = errors.New("stored content verification stalled")
 )
 
 type webPhotoFile struct {
@@ -318,19 +319,13 @@ func handleWebUploadConnection(
 					return err
 				}
 				if found {
-					stream, size, err := d.Blobs.OpenStreamContext(ctx, node.BlobHash)
-					if err == nil {
-						var read int64
-						read, err = copyWebUploadVerification(ctx, conn, request.requestID, stream)
-						if err == nil {
-							err = stream.Verify()
-						}
-						err = errors.Join(err, stream.Close())
-						if err == nil && (size != node.Size || read != node.Size) {
-							err = io.ErrUnexpectedEOF
-						}
-					}
+					err := verifyWebUpload(ctx, conn, request.requestID, node.Size, g.verification, func(ctx context.Context) (io.ReadCloser, int64, error) {
+						return d.Blobs.OpenStreamContext(ctx, node.BlobHash)
+					})
 					if err != nil {
+						if errors.Is(err, errWebVerifyStalled) {
+							return err
+						}
 						if ctx.Err() != nil {
 							return ctx.Err()
 						}
@@ -351,6 +346,9 @@ func handleWebUploadConnection(
 			return err
 		})
 		if uploadErr != nil {
+			if errors.Is(uploadErr, errWebVerifyStalled) {
+				return
+			}
 			problem := uploadError(uploadErr)
 			if errors.Is(uploadErr, errWebUploadCanceled) {
 				problem = NewError(499, "canceled", "browser upload canceled before authority")
@@ -381,25 +379,70 @@ func handleWebUploadConnection(
 	}
 }
 
-// copyWebUploadVerification reports only bytes actually read from storage.
-func copyWebUploadVerification(ctx context.Context, conn *websocket.Conn, requestID string, source io.Reader) (int64, error) {
-	buf := make([]byte, webUploadChunkBytes)
-	var total int64
+// A blocked storage read cannot always be interrupted. Keep its slot until it
+// returns, but let an abandoned verification release the mutation gate.
+func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string, expected int64, slots chan struct{}, open func(context.Context) (io.ReadCloser, int64, error)) error {
+	select {
+	case slots <- struct{}{}:
+	default:
+		return errWebVerifyStalled
+	}
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	progress := make(chan int64)
+	result := make(chan error, 1)
+	go func() {
+		defer func() { <-slots }()
+		stream, size, err := open(readCtx)
+		if err == nil {
+			var total int64
+			buf := make([]byte, webUploadChunkBytes)
+			for readCtx.Err() == nil {
+				var n int
+				n, err = stream.Read(buf)
+				total += int64(n)
+				if n > 0 {
+					select {
+					case progress <- total:
+					case <-readCtx.Done():
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+			if errors.Is(err, io.EOF) {
+				err = nil
+			}
+			if err == nil && readCtx.Err() != nil {
+				err = readCtx.Err()
+			}
+			if err == nil && (size != expected || total != expected) {
+				err = io.ErrUnexpectedEOF
+			}
+			err = errors.Join(err, stream.Close())
+		}
+		result <- err
+	}()
+	timer := time.NewTimer(webUploadInactivity)
+	defer timer.Stop()
 	lastProgress := time.Now()
 	for {
-		n, err := source.Read(buf)
-		total += int64(n)
-		if n > 0 && time.Since(lastProgress) >= webVerifyProgress {
-			if writeErr := wsjson.Write(ctx, conn, webUploadMessage{Type: "verification_progress", RequestID: requestID, VerifiedSize: total}); writeErr != nil {
-				return total, writeErr
+		select {
+		case err := <-result:
+			return err
+		case total := <-progress:
+			timer.Reset(webUploadInactivity)
+			if time.Since(lastProgress) >= webVerifyProgress {
+				if err := wsjson.Write(ctx, conn, webUploadMessage{Type: "verification_progress", RequestID: requestID, VerifiedSize: total}); err != nil {
+					return err
+				}
+				lastProgress = time.Now()
 			}
-			lastProgress = time.Now()
-		}
-		if errors.Is(err, io.EOF) {
-			return total, nil
-		}
-		if err != nil {
-			return total, err
+		case <-timer.C:
+			return errWebVerifyStalled
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }

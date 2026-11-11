@@ -84,6 +84,7 @@
     unsupported = [];
     resuming = false;
     selectedFiles = [];
+    interruptedPlan = undefined;
     plannedDestination = "";
     error = "";
     if (id) {
@@ -114,6 +115,7 @@
   let importID = $state("");
   let sourceID = "";
   let plannedChannel: PhotoImportTransport | undefined;
+  let interruptedPlan = $state.raw<PhotoImportTransport>();
   let plannedDestination = $state("");
   let running = $state(false);
   let planning = $state(false);
@@ -122,6 +124,12 @@
   let error = $state("");
   let controller: AbortController | null = null;
   let destroyed = false;
+  $effect(() => {
+    if (interruptedPlan && interruptedPlan !== channel && !planning && !disabledReason) {
+      interruptedPlan = undefined;
+      void plan();
+    }
+  });
   let counts = $state<Record<Item["state"], number>>({
     ready: 0,
     hashing: 0,
@@ -175,6 +183,7 @@
       if (!confirmed || destroyed || checkpoint !== expected) return;
     }
     pickerKind = kind;
+    interruptedPlan = undefined;
     sourceID = "";
     selectedFiles = files;
     await plan(true);
@@ -234,6 +243,17 @@
         (progress) => {
           hashProgress = progress;
         },
+        ...(reconnect
+          ? ([
+              new Map(
+                previousItems
+                  .flatMap((item) =>
+                    item.files.map((file, index) => [file, item.hashes[index]] as const),
+                  )
+                  .filter(([, hash]) => !!hash),
+              ),
+            ] as const)
+          : ([] as const)),
       );
       hashProgress = undefined;
       if (
@@ -280,6 +300,8 @@
         reason: plan.skip_reasons?.[index] ?? "Skipped",
       }));
     } catch (cause) {
+      if (!reconnect && cause instanceof UploadChannelError && !active.signal.aborted && !destroyed)
+        interruptedPlan = planChannel;
       if (!active.signal.aborted && !destroyed) showError(cause);
     } finally {
       hashProgress = undefined;

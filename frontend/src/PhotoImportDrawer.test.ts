@@ -1472,6 +1472,39 @@ it.each(["cancel", "confirm", "stale"])(
   },
 );
 
+it("replans a selection interrupted during its first plan without sending it", async () => {
+  const original: PhotoImportTransport = {
+    planPhotoImport: vi.fn().mockRejectedValue(new UploadChannelError("Disconnected")),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const replacement: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "second", groups: [[0]], unsupported: [] }),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "photo" }),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel: original,
+    vaultID: "initial-disconnect",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await screen.findByText("Disconnected");
+  await view.rerender({ channel: replacement });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
+});
+
 it("replans on a replacement channel and retains an unconfirmed group", async () => {
   const original: PhotoImportTransport = {
     planPhotoImport: vi.fn(async (files: File[]) => ({
@@ -1593,6 +1626,7 @@ it("retains a selection when the channel changes during checkpoint save", async 
     expect.anything(),
     "/",
     sourceID,
+    expect.anything(),
     expect.anything(),
     expect.anything(),
   );

@@ -17,11 +17,19 @@ import (
 
 type slowVerificationReader struct{ remaining int }
 
+type stalledVerificationReader struct{ started, release chan struct{} }
+
+func (r *stalledVerificationReader) Read([]byte) (int, error) {
+	close(r.started)
+	<-r.release
+	return 0, io.EOF
+}
+
 func (r *slowVerificationReader) Read(p []byte) (int, error) {
 	if r.remaining == 0 {
 		return 0, io.EOF
 	}
-	time.Sleep(40 * time.Second)
+	time.Sleep(20 * time.Second)
 	r.remaining--
 	p[0] = 'x'
 	return 1, nil
@@ -38,8 +46,10 @@ func TestWebUploadVerificationProgressOverSocket(t *testing.T) {
 				return
 			}
 			defer func() { _ = conn.CloseNow() }()
-			count, err := copyWebUploadVerification(r.Context(), conn, "retry", &slowVerificationReader{remaining: 3})
-			if err == nil && count == 3 {
+			err = verifyWebUpload(r.Context(), conn, "retry", 3, make(chan struct{}, 1), func(context.Context) (io.ReadCloser, int64, error) {
+				return io.NopCloser(&slowVerificationReader{remaining: 3}), 3, nil
+			})
+			if err == nil {
 				err = wsjson.Write(r.Context(), conn, webUploadMessage{Type: "receipt", RequestID: "retry"})
 			}
 			done <- err
@@ -55,6 +65,37 @@ func TestWebUploadVerificationProgressOverSocket(t *testing.T) {
 		require.NoError(t, wsjson.Read(t.Context(), conn, &receipt))
 		require.Equal(t, "receipt", receipt.Type)
 		require.NoError(t, <-done)
+	})
+}
+
+func TestAbandonedWebVerificationReleasesMaintenance(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		g := NewOperationGate()
+		started := make(chan struct{})
+		release := make(chan struct{})
+		finished := make(chan error, 1)
+		conn := dialBubbleWebSocket(t, func(w http.ResponseWriter, r *http.Request) {
+			server, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				finished <- err
+				return
+			}
+			defer func() { _ = server.CloseNow() }()
+			finished <- g.mutate(r.Context(), func() error {
+				return verifyWebUpload(r.Context(), server, "retry", 1, g.verification, func(context.Context) (io.ReadCloser, int64, error) {
+					return io.NopCloser(&stalledVerificationReader{started, release}), 1, nil
+				})
+			})
+		})
+		<-started
+		require.NoError(t, conn.CloseNow())
+		time.Sleep(webUploadInactivity)
+		synctest.Wait()
+		require.ErrorIs(t, <-finished, errWebVerifyStalled)
+		require.NoError(t, g.MaintainContext(t.Context(), func() error { return nil }))
+		close(release)
+		synctest.Wait()
 	})
 }
 
