@@ -66,6 +66,14 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	}
 }
 
+func TestOpenAPIRenditionTextProviderHeader(t *testing.T) {
+	t.Parallel()
+	operation := api.NewOfflineServer().API().OpenAPI().Paths["/api/v1/renditions/text/content"].Get
+	require.NotNil(t, operation)
+	require.Contains(t, operation.Responses, "200")
+	assert.Contains(t, operation.Responses["200"].Headers, "X-Docbank-Rendition-Provider-ID")
+}
+
 func TestOpenAPIPhotoQualitySignals(t *testing.T) {
 	t.Parallel()
 	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas

@@ -209,7 +209,7 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 	})
 
 	huma.Register(api, huma.Operation{OperationID: "readRenditionText", Method: http.MethodGet,
-		Path: "/api/v1/renditions/text/content", Summary: "Read one exact verified text rendition artifact"},
+		Path: "/api/v1/renditions/text/content", Summary: "Read one exact verified text rendition artifact", Responses: renditionTextContentResponses()},
 		func(ctx context.Context, in *struct {
 			NodeID             int64  `query:"node_id" minimum:"1"`
 			Revision           int64  `query:"revision" minimum:"1"`
@@ -283,6 +283,17 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				_, _ = hctx.BodyWriter().Write(body)
 			}}, nil
 		})
+}
+
+// renditionTextContentResponses documents the identity headers readRenditionText sets.
+func renditionTextContentResponses() map[string]*huma.Response {
+	headers := map[string]*huma.Param{}
+	for _, name := range []string{"X-Docbank-Rendition-SHA256", "X-Docbank-Rendition-Size", RenditionProfileHeader,
+		"X-Docbank-Rendition-Generation", RenditionAttachmentHeader, RenditionBuildHeader, RenditionArtifactHeader,
+		"X-Docbank-Rendition-Provider-ID", "Content-Digest"} {
+		headers[name] = &huma.Param{Schema: &huma.Schema{Type: "string"}}
+	}
+	return map[string]*huma.Response{"200": {Description: "OK", Headers: headers}}
 }
 
 // pdfSearchTextCoverage supplies the built-in profile and retained evidence reader.
