@@ -4,8 +4,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -1612,10 +1610,6 @@ func embeddingDocumentBinding(name string, profile EmbeddingProfileConfig) docum
 		Metric:           profile.Metric, Model: profile.Model, Name: name, Normalization: profile.Normalization,
 		QueryFormatter: profile.QueryFormatter, ScalarEncoding: profile.ScalarEncoding, TrustBoundary: profile.TrustBoundary,
 		ModelInput: modelInput,
-	}
-	if profile.AutoDiscoverVideo {
-		digest := sha256.Sum256([]byte("docbank/automatic-mp4-disclosure/v1\x00" + profile.DisclosureFingerprint))
-		result.DisclosureFingerprint = hex.EncodeToString(digest[:])
 	}
 	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
 		result.Chunk = &document.EmbeddingChunkPolicyV1{

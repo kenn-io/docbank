@@ -215,7 +215,7 @@ func executableProcessingProfiles(cfg config.Config,
 		executable := true
 		configured := processing.ProfileConfig{Profile: portable,
 			EmbeddingSimilarityFloors: make(map[string]float64),
-			AutomaticVideoBindings:    make(map[string]bool),
+			AutomaticVideoBindings:    make(map[string]struct{}),
 			EmbeddingProviders:        make(map[string]document.EmbeddingProvider),
 			EmbeddingDisclosures:      make(map[string]processing.RuntimeDisclosure),
 			EmbeddingClassifiers:      make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
@@ -244,7 +244,7 @@ func executableProcessingProfiles(cfg config.Config,
 				return nil, err
 			}
 			if bindingConfig.AutoDiscoverVideo {
-				configured.AutomaticVideoBindings[binding.Name] = true
+				configured.AutomaticVideoBindings[binding.Name] = struct{}{}
 			}
 			if runtime := bindingConfig.Runtime; runtime != nil {
 				if runtime.MinQuerySimilarity != nil {

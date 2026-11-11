@@ -307,7 +307,7 @@ func checkEmbeddingJobReconciliationRequiresCurrentAuthorityAndFreshConsent(t *t
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Examined)
-	assert.Equal(t, 2, result.Enqueued)
+	assert.Equal(t, 1, result.Enqueued)
 
 	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs`)
 	require.NoError(t, err)
@@ -344,9 +344,15 @@ func checkEmbeddingJobReconciliationRequiresExactChunkBindingPolicy(t *testing.T
 		RetainedArtifactClasses: consent.RetainedArtifactClasses,
 	})
 	require.NoError(t, err)
-	_, err = s.EnqueueEmbeddingJob(t.Context(), EmbeddingJobRequest{ContentVersionID: versionID,
+	request := EmbeddingJobRequest{ContentVersionID: versionID,
 		Profile: profile, BindingID: binding.Name, Descriptor: record.VectorSpace.Descriptor,
-		InputGeneration: record.InputGeneration, Authorization: consent})
+		InputGeneration: record.InputGeneration, Authorization: consent}
+	invalid := request
+	invalid.Authorization.InputClasses = []string{AutomaticOriginalFileConsentClass}
+	invalid.Authorization.DisclosureFingerprint = AutomaticOriginalFileDisclosureFingerprint(binding)
+	_, err = s.EnqueueEmbeddingJob(t.Context(), invalid)
+	require.ErrorContains(t, err, "generation and consent class")
+	_, err = s.EnqueueEmbeddingJob(t.Context(), request)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs`)
 	require.NoError(t, err)
@@ -442,7 +448,8 @@ func checkEmbeddingJobExistingStaleHeadDoesNotSuppressReplacement(t *testing.T, 
 	t.Parallel()
 	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint,
-		document.EmbeddingInputOriginalFile, "optional", "")
+		document.EmbeddingInputOriginalFile, "optional", "") // Keep a distinct serving generation for the same version and vector space.
+	old.InputGeneration.ID = testSHA256([]byte("stale-serving-input"))
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,
@@ -504,7 +511,6 @@ func embeddingJobTestRequest(tb testing.TB, s *Store, versionID string,
 	const bindingID = "optional"
 	record := embeddingSetFixture(tb.Context(), s, versionID, profile.Fingerprint,
 		document.EmbeddingInputOriginalFile, bindingID, "")
-	record.InputGeneration.ID = testSHA256([]byte(generationSeed))
 	binding := workerOptionalEmbeddingBinding(tb, profile)
 	consent := ProviderOperationAuthorizationRequest{
 		Principal: "operator:" + generationSeed, Scope: "embedding:" + bindingID,
@@ -1059,6 +1065,12 @@ func embeddingSetFixture(
 		for index, input := range generated.Inputs {
 			generation.Inputs[index] = EmbeddingInputReference{ID: input.Key, RenderedChecksum: input.Checksum}
 		}
+	} else if kind == document.EmbeddingInputOriginalFile {
+		version, err := s.ContentVersionByID(ctx, versionID)
+		if err != nil {
+			panic(err)
+		}
+		generation = DirectEmbeddingGeneration(version, profileFingerprint, fingerprints.EmbeddingInput[bindingID], binding)
 	} else {
 		generation.Inputs = []EmbeddingInputReference{{ID: versionID, RenderedChecksum: sourceChecksum}}
 	}
@@ -1462,6 +1474,7 @@ func checkEmbeddingJobReplacementConsentCannotRebindAdmittedWork(t *testing.T, o
 				_, fence, err := s.BeginEmbeddingProviderEgress(t.Context(), next, rebound, nil, at)
 				require.ErrorIs(t, err, ErrProcessingConsentRevoked)
 				require.Nil(t, fence)
+				require.NoError(t, s.AbandonEmbeddingWork(t.Context(), next, at))
 			}
 			freshClaim, fresh, found, err := s.ClaimEmbeddingWork(t.Context(), successor.ID, "fresh-worker",
 				at, time.Minute, []string{request.Descriptor.Fingerprint})
@@ -1908,7 +1921,6 @@ func checkEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T, 
 		InputGeneration: record.InputGeneration, Authorization: consent})
 	require.NoError(t, err)
 	sibling := embeddingJobTestRequest(t, s, versionID, profile, "after-unreadable")
-	sibling.InputGeneration.ID = strings.Repeat("f", 64)
 	_, err = s.EnqueueEmbeddingJob(t.Context(), sibling)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), `DELETE FROM embedding_jobs`)
@@ -1928,16 +1940,19 @@ func checkEmbeddingReconciliationAdvancesPastUnreadableGeneration(t *testing.T, 
 	}
 	first, err := s.ReconcileEmbeddingJobs(t.Context(), request)
 	require.NoError(t, err)
-	require.Positive(t, first.Skipped)
 	require.NotEmpty(t, first.Next)
 	request.After = first.Next
 	second, err := s.ReconcileEmbeddingJobs(t.Context(), request)
 	require.NoError(t, err)
-	require.Positive(t, second.Enqueued)
+	require.Positive(t, first.Skipped+second.Skipped)
+	require.Equal(t, 1, first.Enqueued+second.Enqueued)
 	require.Empty(t, second.Next)
+	// Start the cancellation probe at the damaged generation's page.
+	if first.Skipped != 0 {
+		request.After = ""
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	request.After = ""
 	request.HydrateGeneration = func(context.Context, EmbeddingInputGenerationRecord) (EmbeddingInputGenerationRecord, error) {
 		cancel()
 		return EmbeddingInputGenerationRecord{}, context.Canceled

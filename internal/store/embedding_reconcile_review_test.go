@@ -127,7 +127,7 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 		return node
 	}
 	first := add("first.mp4", 100, "video/mp4")
-	second := add("second.mp4", 100, "video/mp4")
+	second := add("second.mp4", 100, "video/mp4; codecs=avc1")
 	excluded := add("excluded.mp4", 100, "video/mp4")
 	asset, err := s.PhotoAssetForNode(ctx, excluded.ID)
 	require.NoError(t, err)
@@ -141,28 +141,31 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 	key := profile.Fingerprint + "/" + binding.Name
 	request := EmbeddingReconcileRequest{Limit: 1, At: at, DescriptorFingerprints: []string{descriptor.Fingerprint},
 		Mutate: embeddingTestMutation, ImageProfiles: []ProcessingProfileRecord{profile},
-		AutomaticVideoBindings: map[string]bool{key: true},
+		AutomaticVideoBindings: map[string]struct{}{key: {}},
 		VectorSpaces:           map[string]EmbeddingVectorSpaceRecord{key: {ID: fingerprints.VectorSpace[binding.Name], Descriptor: descriptor}}}
 	sweep := func() int {
 		t.Helper()
 		pages := 0
 		request.After, request.ImageAfter = "", ImageReconcilePosition{}
+		request.SkipGenerations, request.SkipImages = false, false
 		for {
 			page, err := s.ReconcileEmbeddingJobs(ctx, request)
 			require.NoError(t, err)
 			pages++
 			request.After, request.ImageAfter = page.Next, page.ImageNext
-			if page.ImageNext == (ImageReconcilePosition{}) {
+			request.SkipGenerations = page.Next == ""
+			request.SkipImages = page.ImageNext == (ImageReconcilePosition{})
+			if request.SkipGenerations && request.SkipImages {
 				return pages
 			}
 			require.Less(t, pages, 3)
 		}
 	}
-	grant := func(disclosure string, expiry *time.Time) {
+	grant := func(disclosure, class string, expiry *time.Time) {
 		t.Helper()
 		_, err := s.GrantConsent(ctx, ProcessingConsentGrantRequest{Principal: "operator:video", Scope: "embedding:video",
 			ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: disclosure,
-			InputClasses: []string{"original_file"}, RetainedArtifactClasses: []string{"embedding_vector_set"}, ExpiresAt: expiry})
+			InputClasses: []string{class}, RetainedArtifactClasses: []string{"embedding_vector_set"}, ExpiresAt: expiry})
 		require.NoError(t, err)
 	}
 	jobs := func(node Node) []EmbeddingJobStatus {
@@ -171,16 +174,17 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 		require.NoError(t, err)
 		return status
 	}
-	grant(sibling.DisclosureFingerprint, nil)
+	grant(AutomaticOriginalFileDisclosureFingerprint(sibling), AutomaticOriginalFileConsentClass, nil)
+	grant(binding.DisclosureFingerprint, string(binding.InputKind), nil)
 	require.Equal(t, 2, sweep(), "video-only discovery progresses across a full page")
 	require.Empty(t, jobs(first), "the sibling grant carries no automatic authority")
 	expiry := at.Add(time.Hour)
-	grant(binding.DisclosureFingerprint, &expiry)
+	grant(AutomaticOriginalFileDisclosureFingerprint(binding), AutomaticOriginalFileConsentClass, &expiry)
 	request.At = expiry
 	sweep()
 	require.Empty(t, jobs(first), "expired grant cannot admit work")
 	request.At = time.Now().UTC()
-	grant(binding.DisclosureFingerprint, nil)
+	grant(AutomaticOriginalFileDisclosureFingerprint(binding), AutomaticOriginalFileConsentClass, nil)
 	sweep()
 	sweep()
 	for _, node := range []Node{excluded, oversized, quicktime, photo} {
@@ -190,15 +194,46 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 		status := jobs(node)
 		require.Len(t, status, 1, "recovery may only schedule the opted-in binding")
 		require.Equal(t, binding.Name, status[0].BindingID)
-		require.True(t, status[0].AutomaticVideo)
-		explicit, err := s.EmbeddingJobsForVersionProfileConsentSet(ctx, node.CurrentVersionID, profile.Fingerprint, status[0].AuthorizationGrantID)
-		require.NoError(t, err)
-		require.Empty(t, explicit, "the explicit build status excludes automatic jobs")
 	}
-	claim, work, ok, err := s.ClaimEmbeddingWork(ctx, jobs(first)[0].ID, "video-worker", time.Now(), time.Minute, request.DescriptorFingerprints)
+	// The same version can have two admitted intents, but only one worker lease.
+	version, err := s.ContentVersionByID(ctx, first.CurrentVersionID)
+	require.NoError(t, err)
+	inputFP := fingerprints.EmbeddingInput[binding.Name]
+	manual := EmbeddingJobRequest{ContentVersionID: version.ID, Profile: profile, BindingID: binding.Name,
+		Descriptor: descriptor, InputGeneration: DirectEmbeddingGeneration(version, profile.Fingerprint, inputFP, binding),
+		Authorization: ProviderOperationAuthorizationRequest{Principal: "operator:video", Scope: "embedding:video",
+			ProfileFingerprint: profile.Fingerprint, DisclosureFingerprint: binding.DisclosureFingerprint,
+			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}}
+	wrongProducer := manual
+	wrongProducer.InputGeneration = AutomaticDirectEmbeddingGeneration(version, profile.Fingerprint, inputFP, binding)
+	_, err = s.EnqueueEmbeddingJob(ctx, wrongProducer)
+	require.ErrorContains(t, err, "generation and consent class")
+	wrongProducer = manual
+	wrongProducer.Authorization.InputClasses = []string{AutomaticOriginalFileConsentClass}
+	wrongProducer.Authorization.DisclosureFingerprint = AutomaticOriginalFileDisclosureFingerprint(binding)
+	_, err = s.EnqueueEmbeddingJob(ctx, wrongProducer)
+	require.ErrorContains(t, err, "generation and consent class")
+	wrongProducer = manual
+	wrongProducer.BindingID = sibling.Name
+	wrongProducer.Authorization.DisclosureFingerprint = sibling.DisclosureFingerprint
+	_, err = s.EnqueueEmbeddingJob(ctx, wrongProducer)
+	require.ErrorContains(t, err, "generation and consent class")
+
+	automaticID := jobs(first)[0].ID
+	manualJob, err := s.EnqueueEmbeddingJob(ctx, manual)
+	require.NoError(t, err)
+	manualClaim, _, found, err := s.ClaimEmbeddingWork(ctx, manualJob.ID, "manual-worker", time.Now(), time.Minute, request.DescriptorFingerprints)
+	require.NoError(t, err)
+	require.True(t, found)
+	_, _, found, err = s.ClaimEmbeddingWork(ctx, automaticID, "video-worker", time.Now(), time.Minute, request.DescriptorFingerprints)
+	require.NoError(t, err)
+	require.False(t, found, "automatic work must wait for the equivalent manual lease")
+	require.NoError(t, s.AbandonEmbeddingWork(ctx, manualClaim, time.Now()))
+
+	claim, work, ok, err := s.ClaimEmbeddingWork(ctx, automaticID, "video-worker", time.Now(), time.Minute, request.DescriptorFingerprints)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.True(t, work.InputGeneration.IsAutomaticVideo())
+	require.True(t, work.Automatic())
 	asset, err = s.PhotoAssetForNode(ctx, first.ID)
 	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
@@ -208,12 +243,16 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 	require.Nil(t, fence)
 	require.NoError(t, s.AbandonEmbeddingWork(ctx, claim, time.Now()))
 	sweep()
-	require.Equal(t, "abandoned", jobs(first)[0].State, "ineligible displays cannot recover")
+	status, err := s.EmbeddingJobByID(ctx, automaticID)
+	require.NoError(t, err)
+	require.Equal(t, "abandoned", status.State, "ineligible displays cannot recover automatically")
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
 	request.AutomaticVideoBindings = nil
 	sweep()
-	require.Equal(t, "abandoned", jobs(first)[0].State, "opt-out also fences retained automatic work")
+	status, err = s.EmbeddingJobByID(ctx, automaticID)
+	require.NoError(t, err)
+	require.Equal(t, "abandoned", status.State, "opt-out also fences retained automatic work")
 
 	claim, work, ok, err = s.ClaimEmbeddingWork(ctx, jobs(second)[0].ID, "video-worker", time.Now(), time.Minute, request.DescriptorFingerprints)
 	require.NoError(t, err)
@@ -227,9 +266,9 @@ func checkAutomaticVideoEmbeddingReconciliation(t *testing.T, open func(*testing
 
 	_, err = s.PurgeDerivatives(ctx, PurgeRequest{ContentVersionIDs: []string{first.CurrentVersionID}})
 	require.NoError(t, err)
-	grant(binding.DisclosureFingerprint, nil)
+	grant(AutomaticOriginalFileDisclosureFingerprint(binding), AutomaticOriginalFileConsentClass, nil)
 	request.At = time.Now().UTC()
-	request.AutomaticVideoBindings = map[string]bool{key: true}
+	request.AutomaticVideoBindings = map[string]struct{}{key: {}}
 	sweep()
 	for _, job := range jobs(first) {
 		require.NotEqual(t, "queued", job.State, "purge suppression blocks a fresh automatic grant")

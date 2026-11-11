@@ -1276,9 +1276,9 @@ func newRealEmbeddingWorkerWithDescriptor(tb testing.TB, kind document.Embedding
 		node, err := fixture.catalog.CreateFile(tb.Context(), fixture.catalog.RootID(), "synthetic.png", receipt.Hash, receipt.Size,
 			"image/png", processingBlobPhysical(tb, receipt))
 		require.NoError(tb, err)
-		generation.SourceVersionID = node.CurrentVersionID
-		generation.GenerationChecksum = receipt.Hash
-		generation.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
+		version, err := fixture.catalog.ContentVersionByID(tb.Context(), node.CurrentVersionID)
+		require.NoError(tb, err)
+		generation = store.DirectEmbeddingGeneration(version, fixture.profile.Fingerprint, fingerprints.EmbeddingInput[binding.Name], binding)
 	} else {
 		staged := fixture.stage(tb, publicationIDs{"b8", "58", "98"}, strings.Repeat("synthetic chunk evidence ", 12), "Example")
 		publisher, err := NewArtifactPublisher(fixture.catalog, fixture.blobs)
@@ -1581,10 +1581,14 @@ func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) 
 		require.NoError(t, err)
 		sibling := request
 		sibling.ContentVersionID = node.CurrentVersionID
-		sibling.InputGeneration.ID = workerHash("sibling-generation")
-		sibling.InputGeneration.SourceVersionID = node.CurrentVersionID
-		sibling.InputGeneration.GenerationChecksum = receipt.Hash
-		sibling.InputGeneration.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
+		version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+		require.NoError(t, err)
+		var portable document.ProcessingProfileV1
+		require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+		_, fingerprints, err := document.CanonicalProfile(portable)
+		require.NoError(t, err)
+		binding := portable.Embeddings[0]
+		sibling.InputGeneration = store.DirectEmbeddingGeneration(version, request.Profile.Fingerprint, fingerprints.EmbeddingInput[binding.Name], binding)
 		// Give the sibling a later queue timestamp so the original attempt times out.
 		time.Sleep(time.Second)
 		_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), sibling)

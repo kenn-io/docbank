@@ -38,7 +38,6 @@ type ProviderEmbeddingRuntime struct {
 	provider       document.EmbeddingProvider
 	blobs          embeddingRuntimeBlobs
 	vectorSpaceID  string
-	automaticVideo bool
 	spoolDirectory string
 	classify       func(error) (EmbeddingProviderFailure, time.Duration)
 }

@@ -6,7 +6,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -274,6 +276,7 @@ func TestEmbeddingWorkerRecoversBlobOperationContextErrors(t *testing.T) {
 
 type watchedVideoTestBlobs struct {
 	embeddingRuntimeBlobs
+
 	opens map[string]int
 }
 
@@ -307,10 +310,11 @@ func TestEmbeddingWorkerDiscoversWatchedMP4s(t *testing.T) {
 		uploaded = append(uploaded, workerHashBytes(data))
 	}
 	gate := newTestOperationGate()
-	service, err := NewService(ctx, ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: gate, SpoolDirectory: t.TempDir(),
+	config := ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: gate, SpoolDirectory: t.TempDir(),
 		Profiles: map[string]ProfileConfig{"video": {Profile: portable,
-			AutomaticVideoBindings: map[string]bool{"direct": true},
-			EmbeddingProviders:     map[string]document.EmbeddingProvider{"direct": provider}}}})
+			AutomaticVideoBindings: map[string]struct{}{"direct": {}},
+			EmbeddingProviders:     map[string]document.EmbeddingProvider{"direct": provider}}}}
+	service, err := NewService(ctx, config)
 	require.NoError(t, err)
 	runtimeBlobs := &watchedVideoTestBlobs{embeddingRuntimeBlobs: f.blobs, opens: make(map[string]int)}
 	service.profiles["video"].embeddingRuntimes["direct"].blobs = runtimeBlobs
@@ -341,7 +345,19 @@ func TestEmbeddingWorkerDiscoversWatchedMP4s(t *testing.T) {
 	selector := Selector{NodeID: first.ID, ContentVersionID: first.CurrentVersionID, Profile: "video"}
 	plan, err := service.Plan(ctx, selector)
 	require.NoError(t, err)
-	require.Contains(t, plan.Estimate.Scope, "automatically sends eligible MP4 originals throughout this vault")
+	require.Contains(t, plan.Estimate.Scope, "automatically sends eligible watched MP4 originals throughout this vault")
+	require.Contains(t, plan.Estimate.Scope, `binding "direct"`)
+	require.Contains(t, plan.DisclosedClasses, store.AutomaticOriginalFileConsentClass)
+	request := service.profileConsentRequests(service.profiles["video"])[0]
+	_, err = f.catalog.GrantConsent(ctx, store.ProcessingConsentGrantRequest{
+		Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
+		DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
+		RetainedArtifactClasses: request.RetainedArtifactClasses,
+	})
+	require.NoError(t, err)
+	plan, err = service.Plan(ctx, selector)
+	require.NoError(t, err)
+	require.True(t, plan.ConsentRequired, "explicit consent does not authorize discovery")
 	_, err = worker.ScanOnce(ctx)
 	require.NoError(t, err)
 	require.Empty(t, uploaded)
@@ -385,6 +401,51 @@ func TestEmbeddingWorkerDiscoversWatchedMP4s(t *testing.T) {
 	_, err = index.Rebuild(ctx, service.profiles["video"].vectorSpaces["direct"])
 	require.NoError(t, err)
 	selector.ContentVersionID = current.ID
+	// Keep a queued automatic job across the configuration reload.
+	queued := add("queued.mp4", mediatest.H265MP4())
+	profile := service.profiles["video"]
+	binding := profile.portable.Embeddings[0]
+	_, fingerprints, err := document.CanonicalProfile(profile.portable)
+	require.NoError(t, err)
+	key := profile.record.Fingerprint + "/" + binding.Name
+	_, err = f.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
+		Mutate: gate.MutateContext, At: now, Limit: 100, SkipGenerations: true,
+		ImageProfiles:          []store.ProcessingProfileRecord{profile.record},
+		AutomaticVideoBindings: map[string]struct{}{key: {}}, VectorSpaces: service.embeddings.VectorSpaces(),
+		DescriptorFingerprints: service.embeddings.Fingerprints(),
+	})
+	require.NoError(t, err)
+	queuedJobs, err := f.catalog.EmbeddingJobsForVersionProfile(ctx, queued.CurrentVersionID, profile.record.Fingerprint)
+	require.NoError(t, err)
+	require.Len(t, queuedJobs, 1)
+	beforeOptOut, err := service.Plan(ctx, selector)
+	require.NoError(t, err)
+	videoConfig := config.Profiles["video"]
+	videoConfig.AutomaticVideoBindings = nil
+	config.Profiles["video"] = videoConfig
+	service, err = NewService(ctx, config)
+	require.NoError(t, err)
+	afterOptOut, err := service.Plan(ctx, selector)
+	require.NoError(t, err)
+	require.Equal(t, beforeOptOut.ProfileFingerprint, afterOptOut.ProfileFingerprint)
+	require.NotEqual(t, beforeOptOut.Fingerprint, afterOptOut.Fingerprint)
+	require.Equal(t, fingerprints.Profile, afterOptOut.ProfileFingerprint)
+	workerConfig.Runtime = service.embeddings
+	worker, err = NewEmbeddingWorker(workerConfig)
+	require.NoError(t, err)
+	unadmitted := add("after-opt-out.mp4", mediatest.VP9MP4())
+	now = now.Add(time.Minute)
+	for range 2 {
+		_, err = worker.ScanOnce(ctx)
+		require.NoError(t, err)
+	}
+	queuedStatus, err := f.catalog.EmbeddingJobByID(ctx, queuedJobs[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, "abandoned", queuedStatus.State)
+	unadmittedJobs, err := f.catalog.EmbeddingJobsForVersionProfile(ctx, unadmitted.CurrentVersionID, profile.record.Fingerprint)
+	require.NoError(t, err)
+	require.Empty(t, unadmittedJobs)
+
 	report, err := service.FindSimilar(ctx, SimilarRequest{Selector: selector, BindingID: "direct",
 		Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{
 			first.CurrentVersionID, current.ID, second.CurrentVersionID,
@@ -392,5 +453,350 @@ func TestEmbeddingWorkerDiscoversWatchedMP4s(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	require.Equal(t, second.CurrentVersionID, report.Results[0].Document.ContentVersionID)
-	require.Len(t, uploaded, 3, "similarity uses stored vectors")
+	require.Len(t, uploaded, 3, "opt-out preserves similarity without another upload")
+}
+
+type watchedMP4Fixture struct {
+	publication      publicationFixture
+	provider         *embeddingWorkerFixture
+	config           ServiceConfig
+	service          *Service
+	worker           *EmbeddingWorker
+	profile          configuredProfile
+	binding          document.EmbeddingBindingV1
+	inputFingerprint string
+}
+
+func newWatchedMP4Fixture(t *testing.T) *watchedMP4Fixture {
+	t.Helper()
+	f := &watchedMP4Fixture{publication: newPublicationFixture(t), provider: newEmbeddingWorkerFixture(t)}
+	provider := &embeddingWorkerProvider{runtime: f.provider.runtime, binding: "direct", descriptor: f.provider.descriptor}
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(f.provider.profile.CanonicalProfile, &portable))
+	portable.Rendition = nil
+	portable.RetentionDisclosure.RetainSanitizedMarkdown = false
+	portable.Embeddings = portable.Embeddings[1:]
+	f.config = ServiceConfig{Catalog: f.publication.catalog, Blobs: f.publication.blobs,
+		Gate: newTestOperationGate(), SpoolDirectory: t.TempDir(),
+		Profiles: map[string]ProfileConfig{"video": {Profile: portable,
+			EmbeddingProviders:     map[string]document.EmbeddingProvider{"direct": provider},
+			AutomaticVideoBindings: map[string]struct{}{"direct": {}},
+		}},
+	}
+	f.open(t)
+	return f
+}
+
+func (f *watchedMP4Fixture) open(t *testing.T) {
+	t.Helper()
+	var err error
+	f.service, err = NewService(t.Context(), f.config)
+	require.NoError(t, err)
+	f.profile = f.service.profiles["video"]
+	f.binding = f.profile.portable.Embeddings[0]
+	_, fingerprints, err := document.CanonicalProfile(f.profile.portable)
+	require.NoError(t, err)
+	f.inputFingerprint = fingerprints.EmbeddingInput[f.binding.Name]
+	f.worker, err = NewEmbeddingWorker(EmbeddingWorkerConfig{
+		Catalog: f.config.Catalog, Authority: f.config.Catalog, Blobs: f.config.Blobs, GenerationBlobs: f.config.Blobs,
+		Runtime: f.service.embeddings, Gate: f.config.Gate, Owner: "watched-video-worker",
+		LeaseDuration: time.Minute, IdleDelay: time.Millisecond, RetryLimit: 3, MaxRetryDelay: time.Second,
+		AttemptLifetime: time.Minute, MaxRows: 100, MaxDimensions: 8, MaxVectorBlobBytes: 1 << 20,
+		DescriptorFingerprints: f.service.embeddings.Fingerprints(),
+	})
+	require.NoError(t, err)
+}
+
+func (f *watchedMP4Fixture) add(t *testing.T, name string, data []byte) Selector {
+	t.Helper()
+	ctx := t.Context()
+	catalog := f.config.Catalog
+	receipt, err := f.config.Blobs.WriteDetailedContext(ctx, bytes.NewReader(data))
+	require.NoError(t, err)
+	run, err := catalog.BeginIngest(ctx, "watch", "synthetic-ordering")
+	require.NoError(t, err)
+	node, err := catalog.IngestFileExact(ctx, run, catalog.RootID(), name, receipt.Hash, receipt.Size,
+		"video/mp4", name, "", processingBlobPhysical(t, receipt))
+	require.NoError(t, err)
+	return Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "video"}
+}
+
+func (f *watchedMP4Fixture) enqueue(t *testing.T, selector Selector, automatic bool) string {
+	t.Helper()
+	ctx := t.Context()
+	version, err := f.config.Catalog.ContentVersionByID(ctx, selector.ContentVersionID)
+	require.NoError(t, err)
+	requests := f.service.profileConsentRequests(f.profile)
+	consent := requests[0]
+	generation := store.DirectEmbeddingGeneration(version, f.profile.record.Fingerprint, f.inputFingerprint, f.binding)
+	if automatic {
+		consent = requests[1]
+		generation = store.AutomaticDirectEmbeddingGeneration(version, f.profile.record.Fingerprint, f.inputFingerprint, f.binding)
+	}
+	job, err := f.config.Catalog.EnqueueEmbeddingJob(ctx, store.EmbeddingJobRequest{
+		ContentVersionID: version.ID, Profile: f.profile.record, BindingID: f.binding.Name,
+		VectorSpaceID: f.profile.vectorSpaces[f.binding.Name], Descriptor: f.provider.descriptor,
+		InputGeneration: generation, Authorization: consent,
+	})
+	require.NoError(t, err)
+	return job.ID
+}
+
+func (f *watchedMP4Fixture) jobs(t *testing.T, selector Selector) []store.EmbeddingJobStatus {
+	t.Helper()
+	jobs, err := f.config.Catalog.EmbeddingJobsForVersionProfile(t.Context(), selector.ContentVersionID, f.profile.record.Fingerprint)
+	require.NoError(t, err)
+	return jobs
+}
+
+func TestWatchedMP4ManualThenAutomaticSendsOnce(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	for index, name := range []string{"published.mp4", "queued.mp4"} {
+		data := []func() []byte{mediatest.H265MP4, mediatest.VP9MP4}[index]()
+		selector := f.add(t, name, data)
+		require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+		manual := f.enqueue(t, selector, false)
+		before := f.provider.runtime.calls()
+		if name == "published.mp4" {
+			processed, err := f.worker.RunJob(t.Context(), manual)
+			require.NoError(t, err)
+			require.True(t, processed)
+		}
+		_, err := f.worker.ScanOnce(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, before+1, f.provider.runtime.calls())
+		jobs := f.jobs(t, selector)
+		require.Len(t, jobs, 1)
+		require.Equal(t, manual, jobs[0].ID)
+		require.Equal(t, "completed", jobs[0].State)
+	}
+}
+
+func TestWatchedMP4AutomaticThenManualSendsOnce(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		f := newWatchedMP4Fixture(t)
+		selector := f.add(t, "in-flight.mp4", mediatest.H265MP4())
+		require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+		automatic := f.enqueue(t, selector, true)
+		started, release := make(chan struct{}), make(chan struct{})
+		providerRelease := release
+		f.provider.runtime.inspectInputs = func([]document.EmbeddingInput) {
+			select {
+			case <-started:
+				return
+			default:
+				close(started)
+				<-providerRelease
+			}
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.worker.RunJob(t.Context(), automatic)
+			done <- err
+		}()
+		defer func() {
+			if release != nil {
+				close(release)
+				<-done
+			}
+		}()
+		select {
+		case <-started:
+		case err := <-done:
+			release = nil
+			t.Fatalf("automatic job exited before reaching the provider: %v", err)
+		}
+		manual := f.enqueue(t, selector, false)
+		processed, err := f.worker.RunJob(t.Context(), manual)
+		require.NoError(t, err)
+		require.False(t, processed)
+		close(release)
+		require.NoError(t, <-done)
+		release = nil
+		processed, err = f.worker.RunJob(t.Context(), manual)
+		require.NoError(t, err)
+		require.False(t, processed, "the published head completes the waiting build without a claim")
+		for _, job := range f.jobs(t, selector) {
+			require.Equal(t, "completed", job.State)
+		}
+		require.Equal(t, 1, f.provider.runtime.calls())
+	})
+}
+
+func TestWatchedMP4BothQueuedSendsOnce(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	selector := f.add(t, "both-queued.mp4", mediatest.H265MP4())
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	f.enqueue(t, selector, true)
+	f.enqueue(t, selector, false)
+	_, err := f.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, f.provider.runtime.calls())
+	jobs := f.jobs(t, selector)
+	require.Len(t, jobs, 2)
+	for _, job := range jobs {
+		require.Equal(t, "completed", job.State)
+	}
+	// A fresh explicit grant gives the build a new job ID and uses the head.
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	plan, err := f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = f.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	require.Equal(t, 1, f.provider.runtime.calls())
+}
+
+func TestWatchedMP4RestoreAfterOptOutSendsNothing(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	queued := f.add(t, "queued.mp4", mediatest.H265MP4())
+	rejected := f.add(t, "malformed.mp4", mediatest.MP4(16, 16, 1_000))
+	manual := f.add(t, "manual.mp4", mediatest.VP9MP4())
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	f.enqueue(t, queued, true)
+	rejectedJob := f.enqueue(t, rejected, true)
+	f.enqueue(t, manual, false)
+	processed, err := f.worker.RunJob(t.Context(), rejectedJob)
+	require.NoError(t, err)
+	require.True(t, processed)
+	rejectedJobs := f.jobs(t, rejected)
+	require.Len(t, rejectedJobs, 1)
+	require.Equal(t, store.EmbeddingFailureInputRejected, rejectedJobs[0].FailureCode)
+	require.Zero(t, f.provider.runtime.calls())
+
+	var metadata bytes.Buffer
+	require.NoError(t, f.config.Catalog.ExportMetadata(t.Context(), &metadata))
+	restored, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadata(t.Context(), &metadata))
+	f.config.Catalog = restored
+	f.open(t)
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	videoConfig := f.config.Profiles["video"]
+	videoConfig.AutomaticVideoBindings = nil
+	f.config.Profiles["video"] = videoConfig
+	f.open(t)
+
+	request := store.EmbeddingReconcileRequest{Limit: 1, At: time.Now(), Mutate: f.config.Gate.MutateContext,
+		ImageProfiles:          []store.ProcessingProfileRecord{f.profile.record},
+		DescriptorFingerprints: f.service.embeddings.Fingerprints(), VectorSpaces: f.service.embeddings.VectorSpaces()}
+	enqueued := 0
+	for range 4 {
+		page, err := restored.ReconcileEmbeddingJobs(t.Context(), request)
+		require.NoError(t, err)
+		enqueued += page.Enqueued
+		request.After, request.ImageAfter = page.Next, page.ImageNext
+		request.SkipGenerations = page.Next == ""
+		request.SkipImages = page.ImageNext == (store.ImageReconcilePosition{})
+		if request.SkipGenerations && request.SkipImages {
+			break
+		}
+	}
+	require.True(t, request.SkipGenerations && request.SkipImages)
+	require.Equal(t, 1, enqueued, "only the retained manual generation recovers")
+	require.Empty(t, f.jobs(t, queued))
+	require.Empty(t, f.jobs(t, rejected))
+	jobs := f.jobs(t, manual)
+	require.Len(t, jobs, 1)
+	processed, err = f.worker.RunJob(t.Context(), jobs[0].ID)
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Equal(t, 1, f.provider.runtime.calls())
+}
+
+func TestWatchedMP4MixedPlanReportsSavedConsentOnBuildFailure(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	video := f.config.Profiles["video"]
+	manual := video.Profile.Embeddings[0]
+	manual.Name = "manual-only"
+	manual.DisclosureFingerprint = workerHash("manual-only-disclosure")
+	video.Profile.Embeddings = append(video.Profile.Embeddings, manual)
+	video.EmbeddingProviders[manual.Name] = video.EmbeddingProviders["direct"]
+	var renditionProfile document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(f.publication.profile.CanonicalProfile, &renditionProfile))
+	video.RenditionProvider = newWorkerProvider(t)
+	descriptor := video.RenditionProvider.Descriptor()
+	renditionProfile.Rendition.Descriptor = document.ProviderDescriptorV1{ID: descriptor.ID, Fingerprint: descriptor.Fingerprint}
+	renditionProfile.Rendition.TrustBoundary = string(descriptor.TrustBoundary)
+	video.Profile.Rendition = renditionProfile.Rendition
+	video.Profile.RetentionDisclosure = renditionProfile.RetentionDisclosure
+	f.config.Profiles["video"] = video
+	f.open(t)
+	selector := f.add(t, "mixed.mp4", mediatest.H265MP4())
+
+	plan, err := f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.Contains(t, plan.Estimate.Scope, `binding "direct"`)
+	require.NotContains(t, plan.Estimate.Scope, "manual-only")
+	var automatic []FlowHop
+	for _, hop := range plan.Flow {
+		if len(hop.InputClasses) == 1 && hop.InputClasses[0] == store.AutomaticOriginalFileConsentClass {
+			automatic = append(automatic, hop)
+		}
+	}
+	require.Len(t, automatic, 1)
+	require.Equal(t, "automatic_embedding (direct)", automatic[0].Capability)
+	require.Equal(t, video.EmbeddingProviders["direct"].Descriptor().ID, automatic[0].ProviderID)
+	_, err = f.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.ErrorIs(t, err, ErrConsentSaved, "the PDF-only rendition rejects the selected MP4 after consent")
+	plan, err = f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.False(t, plan.ConsentRequired)
+	require.Zero(t, f.provider.runtime.calls())
+
+	video.AutomaticVideoBindings = nil
+	f.config.Profiles["video"] = video
+	f.open(t)
+	plan, err = f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	_, err = f.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrConsentSaved)
+}
+
+func TestWatchedMP4ConsentDoesNotFollowOptInToAnotherBinding(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	video := f.config.Profiles["video"]
+	sibling := video.Profile.Embeddings[0]
+	sibling.Name = "second-binding"
+	video.Profile.Embeddings = append(video.Profile.Embeddings, sibling)
+	video.EmbeddingProviders[sibling.Name] = video.EmbeddingProviders["direct"]
+	f.config.Profiles["video"] = video
+	f.open(t)
+	selector := f.add(t, "shared-disclosure.mp4", mediatest.H265MP4())
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	before, err := f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.False(t, before.ConsentRequired)
+
+	video.AutomaticVideoBindings = map[string]struct{}{sibling.Name: {}}
+	f.config.Profiles["video"] = video
+	f.open(t)
+	after, err := f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.Equal(t, before.ProfileFingerprint, after.ProfileFingerprint)
+	require.True(t, after.ConsentRequired)
+	_, err = f.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	jobs, err := f.config.Catalog.EmbeddingJobsForVersionProfile(t.Context(), selector.ContentVersionID, f.profile.record.Fingerprint)
+	require.ErrorIs(t, err, store.ErrNotFound, "no job has installed this previously unused profile")
+	require.Empty(t, jobs)
+	require.Zero(t, f.provider.runtime.calls())
+
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	// Drive the next discovery sweep directly after the new grant.
+	f.worker.reconcileAt = time.Time{}
+	_, err = f.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	jobs = f.jobs(t, selector)
+	require.Len(t, jobs, 1)
+	require.Equal(t, sibling.Name, jobs[0].BindingID)
+	require.Equal(t, "completed", jobs[0].State)
+	require.Equal(t, 1, f.provider.runtime.calls())
 }

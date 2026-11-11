@@ -46,7 +46,7 @@ type EmbeddingReconcileRequest struct {
 	SkipImages             bool
 	ImageRejections        map[ImagePreparationRejectionKey]struct{}
 	ImageProfiles          []ProcessingProfileRecord
-	AutomaticVideoBindings map[string]bool
+	AutomaticVideoBindings map[string]struct{}
 	ImageAfter             ImageReconcilePosition
 	PrepareImageGeneration func(context.Context, ProcessingProfileRecord, document.EmbeddingBindingV1, string) (EmbeddingInputGenerationRecord, document.EmbeddingDescriptor, error)
 	After                  string
@@ -148,10 +148,13 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				profiles[generation.ProcessingProfileFingerprint] = cached
 			}
 			profile, portable, fingerprints := cached.record, cached.portable, cached.fingerprints
-			// Image generations carry the image producer policy; original-file generations never do.
-			imageGeneration := generation.ChunkPolicyFingerprint == ImageEmbeddingPolicyFingerprint()
 			for _, binding := range portable.Embeddings {
-				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") || (binding.InputKind == document.EmbeddingInputOriginalFile && imageGeneration) {
+				if (binding.InputKind == document.EmbeddingInputRenditionChunk) != (generation.GenerationBlobHash != "") {
+					continue
+				}
+				inputFP := fingerprints.EmbeddingInput[binding.Name]
+				if binding.InputKind == document.EmbeddingInputOriginalFile &&
+					directGenerationProducer(generation, binding, inputFP) != directProducerManual {
 					continue
 				}
 				selected := request.VectorSpaces[profile.Fingerprint+"/"+binding.Name]
@@ -182,18 +185,6 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 						continue
 					}
 				}
-				automatic := generation.IsAutomaticVideo()
-				if automatic {
-					if !request.AutomaticVideoBindings[profile.Fingerprint+"/"+binding.Name] ||
-						validateAutomaticVideoBinding(generation, binding, fingerprints.EmbeddingInput[binding.Name]) != nil {
-						continue
-					}
-					if err := validateAutomaticVideoEligibilityTx(ctx, tx, generation.SourceVersionID, binding.MaxInputBytes); errors.Is(err, ErrEmbeddingJobFenced) {
-						continue
-					} else if err != nil {
-						return err
-					}
-				}
 				eligible, err := embeddingGenerationCurrentTx(ctx, tx, generation, profile.Fingerprint)
 				if err != nil {
 					return err
@@ -201,13 +192,13 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				if !eligible {
 					continue
 				}
-				job, err := s.reconcileEmbeddingCandidateTx(ctx, tx, generation, profile, binding, space.ID,
+				job, found, err := s.reconcileEmbeddingCandidateTx(ctx, tx, generation, profile, binding, inputFP, space.ID,
 					descriptor, request.At, &result.ConsentExpiresAt)
 				if err != nil {
 					return err
 				}
-				if job != nil {
-					candidates = append(candidates, embeddingReconcileCandidate{request: *job,
+				if found {
+					candidates = append(candidates, embeddingReconcileCandidate{request: job,
 						binding: binding, fingerprints: fingerprints, space: space})
 				}
 			}
@@ -242,13 +233,17 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 				continue
 			}
 		}
-		enqueued, err := s.enqueueReconciledEmbeddingJob(ctx, request, candidate.request)
-		if err != nil {
-			return EmbeddingReconcileResult{}, err
+		if err := request.Mutate(ctx, func() error {
+			_, err := s.EnqueueEmbeddingJob(ctx, candidate.request)
+			return err
+		}); err != nil {
+			// Purge can win after the discovery transaction or during hydration.
+			if errors.Is(err, ErrEmbeddingJobFenced) {
+				continue
+			}
+			return EmbeddingReconcileResult{}, fmt.Errorf("reconciling embedding job: %w", err)
 		}
-		if enqueued {
-			result.Enqueued++
-		}
+		result.Enqueued++
 	}
 	if more && len(generationIDs) != 0 {
 		result.Next = generationIDs[len(generationIDs)-1]
@@ -257,28 +252,42 @@ func (s *Store) ReconcileEmbeddingJobs(ctx context.Context, request EmbeddingRec
 }
 
 func (s *Store) reconcileEmbeddingCandidateTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord,
-	profile ProcessingProfileRecord, binding document.EmbeddingBindingV1, spaceID string,
+	profile ProcessingProfileRecord, binding document.EmbeddingBindingV1, inputFP, spaceID string,
 	descriptor document.EmbeddingDescriptor, at time.Time, expiry *time.Time,
-) (*EmbeddingJobRequest, error) {
+) (EmbeddingJobRequest, bool, error) {
 	satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, generation.SourceVersionID,
-		profile.Fingerprint, binding, generation.ID, spaceID)
+		profile.Fingerprint, binding, generation, inputFP, spaceID)
 	if err != nil || satisfied {
-		return nil, err
+		return EmbeddingJobRequest{}, false, err
 	}
 	suppression, err := loadEmbeddingPurgeSuppressionTx(ctx, tx,
 		EmbeddingHeadKey{generation.SourceVersionID, binding.Name, binding.InputKind}, profile.Fingerprint)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return nil, err
+		return EmbeddingJobRequest{}, false, err
 	}
 	if err == nil && suppression.active {
-		return nil, nil
+		return EmbeddingJobRequest{}, false, nil
 	}
+	if binding.InputKind == document.EmbeddingInputOriginalFile {
+		manual, automatic := equivalentEmbeddingGenerationIDs(generation, binding, inputFP)
+		var live bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_jobs
+			WHERE content_version_id=$1 AND profile_fingerprint=$2 AND binding_id=$3 AND input_kind='original_file'
+			AND generation_id IN ($4,$5) AND vector_space_id=$6 AND state IN ('queued','retry_wait','running'))`,
+			generation.SourceVersionID, profile.Fingerprint, binding.Name, manual, automatic, spaceID).Scan(&live); err != nil || live {
+			return EmbeddingJobRequest{}, false, err
+		}
+	}
+	inputClass := embeddingJobConsentClass(generation, binding, inputFP)
 	consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint,
-		binding.DisclosureFingerprint, binding.InputKind, at.UTC(), expiry)
+		embeddingJobDisclosureFingerprint(binding, inputClass), inputClass, at.UTC(), expiry)
 	if err != nil || !found {
-		return nil, err
+		return EmbeddingJobRequest{}, false, err
 	}
 	prior := consent.PriorAuthorization
+	if prior == nil {
+		return EmbeddingJobRequest{}, false, errors.New("embedding reconciliation consent lacks admission authority")
+	}
 	jobID := embeddingJobID(s.vaultID, generation.SourceVersionID, profile.Fingerprint,
 		binding.Name, binding.InputKind, generation.ID, prior.GrantID,
 		prior.ProcessingIncarnationID, prior.RevocationFence)
@@ -286,33 +295,32 @@ func (s *Store) reconcileEmbeddingCandidateTx(ctx context.Context, tx *sql.Tx, g
 	var failure sql.NullString
 	err = tx.QueryRowContext(ctx, `SELECT state,failure_code FROM embedding_jobs WHERE job_id=$1`, jobID).Scan(&state, &failure)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
+		return EmbeddingJobRequest{}, false, err
 	}
 	recoverableAuthorization := state == "failed" && failure.Valid &&
 		EmbeddingFailureCode(failure.String) == EmbeddingFailureAuthorization
 	if err == nil && state != "abandoned" && !recoverableAuthorization {
-		return nil, nil
+		return EmbeddingJobRequest{}, false, nil
 	}
-	return &EmbeddingJobRequest{
+	return EmbeddingJobRequest{
 		ContentVersionID: generation.SourceVersionID, Profile: profile, BindingID: binding.Name,
 		VectorSpaceID: spaceID, Descriptor: descriptor, InputGeneration: generation, Authorization: consent,
-		AutomaticVideo: generation.IsAutomaticVideo(),
-	}, nil
+	}, true, nil
 }
 
-func (s *Store) enqueueReconciledEmbeddingJob(ctx context.Context, request EmbeddingReconcileRequest, job EmbeddingJobRequest) (bool, error) {
+func (s *Store) enqueueReconciledEmbeddingJob(ctx context.Context, request EmbeddingReconcileRequest, job EmbeddingJobRequest) error {
 	err := request.Mutate(ctx, func() error {
 		_, err := s.EnqueueEmbeddingJob(ctx, job)
 		return err
 	})
 	if errors.Is(err, ErrEmbeddingJobFenced) || errors.Is(err, ErrProcessingConsentRevoked) ||
 		errors.Is(err, ErrProcessingConsentExpired) || errors.Is(err, ErrProcessingConsentRequired) {
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("reconciling embedding job: %w", err)
+		return fmt.Errorf("reconciling embedding job: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 func embeddingGenerationCurrentTx(ctx context.Context, tx *sql.Tx, generation EmbeddingInputGenerationRecord, profile string) (bool, error) {
@@ -329,22 +337,23 @@ func embeddingGenerationCurrentTx(ctx context.Context, tx *sql.Tx, generation Em
 }
 
 func exactEmbeddingHeadExistsTx(ctx context.Context, tx *sql.Tx, versionID, profile string,
-	binding document.EmbeddingBindingV1, generationID, spaceID string,
+	binding document.EmbeddingBindingV1, generation EmbeddingInputGenerationRecord, inputFP, spaceID string,
 ) (bool, error) {
+	manual, automatic := equivalentEmbeddingGenerationIDs(generation, binding, inputFP)
 	var exists bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads h
 		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
 		WHERE h.content_version_id=$1 AND h.binding_id=$2 AND h.input_kind=$3
 		AND h.profile_fingerprint=$4
-		AND s.profile_fingerprint=$4 AND s.input_generation_id=$5 AND s.vector_space_id=$6)`,
-		versionID, binding.Name, binding.InputKind, profile, generationID, spaceID).Scan(&exists)
+		AND s.profile_fingerprint=$4 AND s.input_generation_id IN ($5,$6) AND s.vector_space_id=$7)`,
+		versionID, binding.Name, binding.InputKind, profile, manual, automatic, spaceID).Scan(&exists)
 	return exists, err
 }
 
 func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profile, disclosure string,
-	inputKind document.EmbeddingInputKind, at time.Time, expiry *time.Time,
+	inputClass string, at time.Time, expiry *time.Time,
 ) (ProviderOperationAuthorizationRequest, bool, error) {
-	inputs, _ := json.Marshal([]string{string(inputKind)})
+	inputs, _ := json.Marshal([]string{inputClass})
 	retained, _ := json.Marshal([]string{"embedding_vector_set"})
 	rows, err := tx.QueryContext(ctx, `SELECT g.principal,g.scope FROM processing_consent_grants g
 		JOIN current_processing_incarnation c ON c.incarnation_id=g.incarnation_id
@@ -365,7 +374,7 @@ func embeddingReconcileConsentTx(ctx context.Context, tx *sql.Tx, vaultID, profi
 		}
 		candidate := ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
 			ProfileFingerprint: profile, DisclosureFingerprint: disclosure,
-			InputClasses: []string{string(inputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
+			InputClasses: []string{inputClass}, RetainedArtifactClasses: []string{"embedding_vector_set"}}
 		candidates = append(candidates, candidate)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
@@ -425,7 +434,7 @@ func (s *Store) discoverMediaEmbeddingJobs(ctx context.Context, request Embeddin
 					continue
 				}
 				images = images || binding.InputKind == document.EmbeddingInputImage && request.PrepareImageGeneration != nil
-				if request.AutomaticVideoBindings[name+"/"+binding.Name] && binding.InputKind == document.EmbeddingInputOriginalFile {
+				if _, automatic := request.AutomaticVideoBindings[name+"/"+binding.Name]; automatic && binding.InputKind == document.EmbeddingInputOriginalFile {
 					videoMaxBytes = max(videoMaxBytes, min(binding.MaxInputBytes, media.MaxBytes))
 				}
 			}
@@ -436,24 +445,26 @@ func (s *Store) discoverMediaEmbeddingJobs(ctx context.Context, request Embeddin
 			if name == request.ImageAfter.ProfileFingerprint {
 				after = request.ImageAfter.ContentVersionID
 			}
-			rows, err := tx.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,v.recorded_at,a.kind
+			if err := func() error {
+				rows, err := tx.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,v.recorded_at,a.kind
 				FROM content_versions v JOIN nodes n ON n.id=v.node_id
 				JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id
 				WHERE v.version_id>$1 AND n.current_version_id=v.version_id AND a.display_file_id=f.file_id
 				AND (($2 AND `+photoDescriptionEligibility+`) OR (`+videoEmbeddingEligibility+` AND v.size<=$3))
 				ORDER BY v.version_id LIMIT $4`, after, images, videoMaxBytes, request.Limit+1-len(pairs))
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				p := pair{profile: name}
-				if err := rows.Scan(&p.version.ID, &p.version.BlobHash, &p.version.Size, &p.version.RecordedAt, &p.kind); err != nil {
-					_ = rows.Close()
+				if err != nil {
 					return err
 				}
-				pairs = append(pairs, p)
-			}
-			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				defer func() { _ = rows.Close() }()
+				for rows.Next() {
+					p := pair{profile: name}
+					if err := rows.Scan(&p.version.ID, &p.version.BlobHash, &p.version.Size, &p.version.RecordedAt, &p.kind); err != nil {
+						return err
+					}
+					pairs = append(pairs, p)
+				}
+				return rows.Err()
+			}(); err != nil {
 				return err
 			}
 			if len(pairs) > request.Limit {
@@ -479,7 +490,7 @@ func (s *Store) discoverMediaEmbeddingJobs(ctx context.Context, request Embeddin
 				}
 				if p.kind == "video" {
 					key := profile.Fingerprint + "/" + binding.Name
-					if !request.AutomaticVideoBindings[key] || binding.InputKind != document.EmbeddingInputOriginalFile ||
+					if _, automatic := request.AutomaticVideoBindings[key]; !automatic || binding.InputKind != document.EmbeddingInputOriginalFile ||
 						p.version.Size > binding.MaxInputBytes {
 						continue
 					}
@@ -487,14 +498,15 @@ func (s *Store) discoverMediaEmbeddingJobs(ctx context.Context, request Embeddin
 					if space.ID == "" || space.Descriptor.Fingerprint != binding.Descriptor.Fingerprint {
 						continue
 					}
-					generation := automaticVideoEmbeddingGeneration(p.version, profile.Fingerprint, fingerprints.EmbeddingInput[binding.Name], binding)
-					job, err := s.reconcileEmbeddingCandidateTx(ctx, tx, generation, profile, binding, space.ID,
+					inputFP := fingerprints.EmbeddingInput[binding.Name]
+					generation := AutomaticDirectEmbeddingGeneration(p.version, profile.Fingerprint, inputFP, binding)
+					job, found, err := s.reconcileEmbeddingCandidateTx(ctx, tx, generation, profile, binding, inputFP, space.ID,
 						space.Descriptor, request.At, consentExpiry)
 					if err != nil {
 						return err
 					}
-					if job != nil {
-						jobs = append(jobs, *job)
+					if found {
+						jobs = append(jobs, job)
 					}
 					continue
 				}
@@ -516,7 +528,7 @@ func (s *Store) discoverMediaEmbeddingJobs(ctx context.Context, request Embeddin
 				if _, rejected := request.ImageRejections[key]; rejected {
 					continue
 				}
-				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, binding.InputKind, request.At, consentExpiry)
+				consent, found, err := embeddingReconcileConsentTx(ctx, tx, s.vaultID, profile.Fingerprint, binding.DisclosureFingerprint, string(binding.InputKind), request.At, consentExpiry)
 				if err != nil {
 					return err
 				}
@@ -551,12 +563,12 @@ func (s *Store) discoverMediaEmbeddingJobs(ctx context.Context, request Embeddin
 		job := EmbeddingJobRequest{ContentVersionID: target.version, Profile: target.profile,
 			BindingID: target.binding.Name, VectorSpaceID: request.VectorSpaces[target.profile.Fingerprint+"/"+target.binding.Name].ID,
 			Descriptor: descriptor, InputGeneration: generation, Authorization: target.consent}
-		if _, err := s.enqueueReconciledEmbeddingJob(ctx, request, job); err != nil {
+		if err := s.enqueueReconciledEmbeddingJob(ctx, request, job); err != nil {
 			return ImageReconcilePosition{}, err
 		}
 	}
 	for _, job := range jobs {
-		if _, err := s.enqueueReconciledEmbeddingJob(ctx, request, job); err != nil {
+		if err := s.enqueueReconciledEmbeddingJob(ctx, request, job); err != nil {
 			return ImageReconcilePosition{}, err
 		}
 	}
@@ -631,54 +643,8 @@ func validateImageEmbeddingPreviewTx(ctx context.Context, tx *sql.Tx, generation
 	return nil
 }
 
-// DirectEmbeddingGeneration identifies the exact original-file input to a binding.
-func DirectEmbeddingGeneration(version ContentVersion, profileFingerprint,
-	embeddingInputFingerprint string, binding document.EmbeddingBindingV1,
-) EmbeddingInputGenerationRecord {
-	id := LengthPrefixedSHA256("docbank/direct-file-input-generation/v1", version.ID, version.BlobHash,
-		profileFingerprint, binding.Name, embeddingInputFingerprint)
-	return EmbeddingInputGenerationRecord{ID: id, SourceVersionID: version.ID,
-		ProcessingProfileFingerprint: profileFingerprint,
-		EvidenceFingerprint:          LengthPrefixedSHA256("docbank/direct-file-evidence/v1", version.BlobHash),
-		TokenizerFingerprint:         LengthPrefixedSHA256("docbank/direct-file-tokenizer/v1", "none"),
-		ChunkPolicyFingerprint:       embeddingInputFingerprint,
-		FormatterFingerprint:         LengthPrefixedSHA256("docbank/direct-file-formatter/v1", binding.DocumentFormatter, binding.ModelInput.Fingerprint),
-		GenerationChecksum:           version.BlobHash,
-		Inputs:                       []EmbeddingInputReference{{ID: version.ID, RenderedChecksum: version.BlobHash}},
-		CreatedAt:                    version.RecordedAt}
-}
-
-const automaticVideoGenerationTag = "docbank/automatic-mp4-input-generation/v1"
-
-var automaticVideoPolicyFingerprint = LengthPrefixedSHA256(automaticVideoGenerationTag)
-
-// IsAutomaticVideo reports whether the retained producer policy requires
-// current display eligibility and an opted-in binding at execution.
-func (generation EmbeddingInputGenerationRecord) IsAutomaticVideo() bool {
-	return generation.ChunkPolicyFingerprint == automaticVideoPolicyFingerprint
-}
-
-func automaticVideoEmbeddingGeneration(version ContentVersion, profile, inputFingerprint string,
-	binding document.EmbeddingBindingV1,
-) EmbeddingInputGenerationRecord {
-	generation := DirectEmbeddingGeneration(version, profile, inputFingerprint, binding)
-	generation.ID = LengthPrefixedSHA256(automaticVideoGenerationTag, generation.ID)
-	generation.ChunkPolicyFingerprint = automaticVideoPolicyFingerprint
-	return generation
-}
-
-func validateAutomaticVideoBinding(generation EmbeddingInputGenerationRecord, binding document.EmbeddingBindingV1, inputFingerprint string) error {
-	version := ContentVersion{ID: generation.SourceVersionID, BlobHash: generation.GenerationChecksum}
-	expected := automaticVideoEmbeddingGeneration(version, generation.ProcessingProfileFingerprint, inputFingerprint, binding)
-	if binding.InputKind != document.EmbeddingInputOriginalFile || generation.ID != expected.ID ||
-		generation.AttachmentID != "" || generation.GenerationBlobHash != "" {
-		return ErrEmbeddingJobFenced
-	}
-	return nil
-}
-
 const videoEmbeddingEligibility = `a.kind='video' AND ` + liveIncludedDisplayPredicate +
-	` AND a.hidden_at IS NULL AND v.mime_type='video/mp4' AND v.size>0`
+	` AND a.hidden_at IS NULL AND (v.mime_type='video/mp4' OR v.mime_type LIKE 'video/mp4;%') AND v.size>0`
 
 func validateAutomaticVideoEligibilityTx(ctx context.Context, tx *sql.Tx, versionID string, maxBytes int64) error {
 	var eligible bool

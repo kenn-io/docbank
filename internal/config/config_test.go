@@ -269,26 +269,23 @@ func TestProcessingProfileRejectsOriginalFileChunkPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "original_file")
 }
 
-func TestAutomaticVideoDiscoveryChangesConsentIdentity(t *testing.T) {
+func TestAutomaticVideoDiscoveryPreservesProfileIdentity(t *testing.T) {
 	cfg := validProcessingConfig()
 	binding := cfg.EmbeddingProfiles["semantic"]
 	binding.InputKind, binding.Chunk, binding.MaxInputTokens = string(document.EmbeddingInputOriginalFile), EmbeddingChunkConfig{}, 0
 	cfg.EmbeddingProfiles["semantic"] = binding
 	resolved, err := cfg.ProcessingProfile("archive")
 	require.NoError(t, err)
-	_, manual, err := document.CanonicalProfile(resolved.Document)
+	manualJSON, manual, err := document.CanonicalProfile(resolved.Document)
 	require.NoError(t, err)
 	manualBinding := resolved.Document.Embeddings[0]
 
 	binding.AutoDiscoverVideo = true
-	automaticBinding := embeddingDocumentBinding(manualBinding.Name, binding)
-	require.NotEqual(t, manualBinding.DisclosureFingerprint, automaticBinding.DisclosureFingerprint)
-	require.Equal(t, manualBinding.Descriptor, automaticBinding.Descriptor)
-	resolved.Document.Embeddings[0] = automaticBinding
-	_, automatic, err := document.CanonicalProfile(resolved.Document)
+	resolved.Document.Embeddings[0] = embeddingDocumentBinding(manualBinding.Name, binding)
+	automaticJSON, automatic, err := document.CanonicalProfile(resolved.Document)
 	require.NoError(t, err)
-	require.NotEqual(t, manual.Profile, automatic.Profile)
-	require.Equal(t, manual.VectorSpace, automatic.VectorSpace)
+	require.Equal(t, manualJSON, automaticJSON)
+	require.Equal(t, manual, automatic)
 
 	cfg.EmbeddingProfiles["semantic"] = binding
 	_, err = cfg.ProcessingProfile("archive")

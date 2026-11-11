@@ -1052,11 +1052,6 @@ func validateEmbeddingBindingAuthority(record EmbeddingSetRecord, binding docume
 		descriptor.CompatibilityID != binding.CompatibilityID || descriptor.ModelInput != binding.ModelInput || !slices.Contains(descriptor.InputKinds, binding.InputKind) {
 		return errors.New("embedding descriptor differs from binding")
 	}
-	if record.InputGeneration.IsAutomaticVideo() {
-		if err := validateAutomaticVideoBinding(record.InputGeneration, binding, record.EmbeddingInputFingerprint); err != nil {
-			return err
-		}
-	}
 	if record.InputKind == document.EmbeddingInputImage {
 		if err := validateImageEmbeddingGeneration(record.InputGeneration, binding.Name); err != nil {
 			return err
