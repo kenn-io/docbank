@@ -623,13 +623,33 @@ func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 }
 
 func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
-	bin := buildDocbank(t)
+	if testing.Short() {
+		t.Skip("integration test: builds the binary")
+	}
+	// Supply a synthetic embedded entry point so backend-only builds can exercise
+	// the real web listener without building the frontend.
+	buildDir := t.TempDir()
+	entry := filepath.Join(buildDir, "index.html")
+	require.NoError(t, os.WriteFile(entry, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0o600))
+	webIndex, err := filepath.Abs(filepath.Join("..", "..", "internal", "web", "dist", "index.html"))
+	require.NoError(t, err)
+	overlay, err := json.Marshal(map[string]any{"Replace": map[string]string{webIndex: entry}})
+	require.NoError(t, err)
+	overlayPath := filepath.Join(buildDir, "overlay.json")
+	require.NoError(t, os.WriteFile(overlayPath, overlay, 0o600))
+	bin := filepath.Join(buildDir, "docbank")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5", "-overlay", overlayPath, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, string(out))
 	root := t.TempDir()
 	env := append(os.Environ(), "DOCBANK_HOME="+root, "DOCBANK_TELEMETRY_ENABLED=0", "BROWSER=/bin/false")
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 	cmd := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
 	cmd.Env = env
-	out, err := cmd.CombinedOutput()
+	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	launch, err := url.Parse(strings.TrimSpace(string(out)))
 	require.NoError(t, err)
