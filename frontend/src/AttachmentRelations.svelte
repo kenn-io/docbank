@@ -35,7 +35,7 @@
   } = $props();
   let page = $state<RelationPage>();
   let loading = $state(false);
-  let error = $state("");
+  let error = $state<string | null>(null);
   let retryable = $state(false);
   let names = $state<Record<number, string>>({});
   let controller: AbortController | undefined;
@@ -69,7 +69,7 @@
     const pending = new AbortController();
     controller = pending;
     loading = true;
-    error = "";
+    error = null;
     try {
       const next = await readHistory(
         () => readRelationPage(session, selected, direction, pending.signal),
@@ -103,7 +103,7 @@
       );
       if (request !== epoch) return;
       page = appendRelationPage(before, next);
-      error = "";
+      error = null;
       void loadNames(next, signal);
     } catch (cause) {
       if (request === epoch && !signal.aborted) {
@@ -130,7 +130,7 @@
   }
 </script>
 
-{#if error || page?.items.length}
+{#if error !== null || page?.items.length}
   <section aria-label={outgoing ? "Attachments" : "Attached to"}>
     <strong>{outgoing ? "Attachments" : "Attached to"}</strong>
     {#if page}
@@ -147,7 +147,7 @@
           </li>
         {/each}
       </ul>
-      {#if page.next && !error}
+      {#if page.next && error === null}
         {#if page.items.length >= relationDisplayLimit}<p role="status">
             Showing the first {relationDisplayLimit}.
           </p>
@@ -156,12 +156,12 @@
           >{/if}
       {/if}
     {/if}
-    {#if error}
+    {#if error !== null}
       <div class="problem-row">
         <p class="problem" role="status">
           {outgoing
             ? "Couldn't load attachments"
-            : "Couldn't load the document this file is attached to"}: {error}
+            : "Couldn't load the document this file is attached to"}{#if error}: {error}{/if}
         </p>
         {#if retryable}<Button
             size="sm"

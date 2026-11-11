@@ -175,6 +175,25 @@ it("keeps unavailable occurrences visible and fences replaced-source and denied 
   expect(screen.queryByText("No published attachments")).toBeNull();
 });
 
+it("offers recovery after an attachment network error with no message", async () => {
+  let calls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).includes("child_version_id=")) return Response.json(empty);
+    if (++calls <= 2) throw new TypeError();
+    return Response.json({
+      items: [{ relation: relation(1), state: "pending", reason: "text_extraction" }],
+      total: 1,
+      next_operation_id: "",
+      next_order: 0,
+    });
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  const group = await screen.findByRole("region", { name: "Attachments" });
+  await fireEvent.click(await within(group).findByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("button", { name: "same.txt" })).toBeTruthy();
+  expect(calls).toBe(3);
+});
+
 it("keeps the first page while retrying a failed next page", async () => {
   let laterCalls = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -182,7 +201,7 @@ it("keeps the first page while retrying a failed next page", async () => {
     if (route.includes("child_version_id=")) return Response.json(empty);
     if (route.includes("after_order=")) {
       laterCalls++;
-      if (laterCalls <= 2) return Response.json({ detail: "Unavailable" }, { status: 503 });
+      if (laterCalls <= 2) throw new TypeError();
       return Response.json({
         items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
         total: 51,

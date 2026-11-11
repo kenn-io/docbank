@@ -213,6 +213,24 @@ it("retries a transient failure and allows one manual attempt", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
+it("offers recovery after a network error with no message", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError())
+    .mockRejectedValueOnce(new TypeError())
+    .mockResolvedValueOnce(Response.json({ node, items: [], total: 0, limit: 1000, offset: 0 }));
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("No source history recorded")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
 it("does not retry a permission failure", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")

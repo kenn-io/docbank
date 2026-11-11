@@ -41,7 +41,7 @@
   let page = $state<ContentVersionPage | null>(null);
   let opened = $state<Set<string>>(new Set());
   let loading = $state(true);
-  let error = $state("");
+  let error = $state<string | null>(null);
   let generation = 0;
   let controller: AbortController | undefined;
   let retryable = $state(false);
@@ -82,7 +82,7 @@
     controller = pending;
     const request = ++generation;
     loading = true;
-    error = "";
+    error = null;
     try {
       const next = await readHistory(
         () =>
@@ -169,9 +169,9 @@
 
     {#if loading}
       <div class="status"><Spinner size={16} /> Loading versions…</div>
-    {:else if error}
+    {:else if error !== null}
       <div class="error-block">
-        <p class="error" role="alert">Couldn't load versions: {error}</p>
+        <p class="error" role="alert">Couldn't load versions{#if error}: {error}{/if}</p>
         {#if retryable}<Button size="sm" onclick={() => void load(false)}>Try again</Button>{/if}
       </div>
     {:else if !page || page.items.length === 0}

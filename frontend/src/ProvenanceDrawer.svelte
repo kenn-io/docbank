@@ -26,7 +26,7 @@
 
   let page = $state<ProvenancePage | null>(null);
   let loading = $state(true);
-  let error = $state("");
+  let error = $state<string | null>(null);
   let generation = 0;
   let controller: AbortController | undefined;
   let retryable = $state(false);
@@ -52,7 +52,7 @@
     controller = pending;
     const request = ++generation;
     loading = true;
-    error = "";
+    error = null;
     try {
       const next = await readHistory(
         () =>
@@ -91,9 +91,11 @@
     {#if currentPath}<CopyValue value={currentPath} label="document path" />{/if}
     {#if loading}
       <div class="loading" role="status"><Spinner size={16} /> Loading provenance…</div>
-    {:else if error}
+    {:else if error !== null}
       <div class="error-block">
-        <p class="error" role="alert">Couldn't load source history: {error}</p>
+        <p class="error" role="alert">
+          Couldn't load source history{#if error}: {error}{/if}
+        </p>
         {#if retryable}<Button size="sm" onclick={() => void load(false)}>Try again</Button>{/if}
       </div>
     {:else if !page?.items.length}
