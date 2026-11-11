@@ -747,7 +747,7 @@ retry:
 					transport.CloseIdleConnections()
 					response, err := client.Do(request.Clone(t.Context()))
 					if response != nil {
-						response.Body.Close()
+						require.NoError(t, response.Body.Close())
 					}
 					require.Error(t, err)
 					fresh := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
