@@ -2174,3 +2174,9 @@ it("ignores coverage from an older search", async () => {
   expect(screen.queryByText(/without a text layer/)).toBeNull();
   expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
 });
+
+it("ends the browser session when PDF coverage returns 401", async () => {
+  renderEmptySearch(async () => new Response("{}", { status: 401 }));
+  await submitSearch("missing");
+  expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
+});

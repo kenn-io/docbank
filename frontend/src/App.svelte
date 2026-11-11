@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ocrGuideURL } from "./processing-summary.js";
   import { webURL, webPath } from "./web-path.js";
   import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
@@ -2170,7 +2171,9 @@
       .then((coverage) => {
         if (current) pdfCoverage = coverage;
       })
-      .catch(() => {});
+      .catch((cause: unknown) => {
+        if (current && cause instanceof APIError && cause.status === 401) handleFailure(cause);
+      });
     return () => {
       current = false;
       controller.abort();
@@ -3873,12 +3876,7 @@
 {/snippet}
 
 {#snippet pdfOCRGuide()}
-  <a
-    class="pdf-ocr-link"
-    href="https://docbank.ai/docs/usage/document-processing/#ocr"
-    target="_blank"
-    rel="noreferrer">Learn about OCR</a
-  >
+  <a class="pdf-ocr-link" href={ocrGuideURL} target="_blank" rel="noreferrer">Learn about OCR</a>
 {/snippet}
 
 {#snippet emptyAddMenu()}

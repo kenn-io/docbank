@@ -322,12 +322,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			return false
 		}
 		for key, entries := range values {
-			switch key {
-			case "pdf_filter", "source_present", "tag_id", "mime_type", "under_node_id", "modified_since", "modified_before":
-				if len(entries) != 1 {
-					return false
-				}
-			default:
+			if key != "tag_id" || len(entries) != 1 {
 				return false
 			}
 		}

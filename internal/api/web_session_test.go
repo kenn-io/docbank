@@ -164,8 +164,9 @@ func TestWebSessionTextCoverage(t *testing.T) {
 		allowed      bool
 	}{
 		{http.MethodGet, "/api/v1/search/text-coverage", true},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&mime_type=application%2Fpdf", true},
-		{http.MethodGet, "/api/v1/search/text-coverage?source_present=true&under_node_id=1&pdf_filter=x&modified_since=x&modified_before=x", true},
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x", true},
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&mime_type=application%2Fpdf", false},
+		{http.MethodGet, "/api/v1/search/text-coverage?source_present=true&under_node_id=1&pdf_filter=x&modified_since=x&modified_before=x", false},
 		{http.MethodPost, "/api/v1/search/text-coverage", false},
 		{http.MethodGet, "/api/v1/search/text-coverage?extra=1", false},
 		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&tag_id=y", false},

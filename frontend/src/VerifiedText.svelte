@@ -6,6 +6,7 @@
   import { APIError } from "./api-transport.js";
   import { previewEligibility, readVerifiedPreview } from "./download.js";
   import type { HighlightTerm } from "./query.js";
+  import { ocrGuideURL } from "./processing-summary.js";
   import {
     resolveRenditionText,
     readVerifiedRenditionText,
@@ -167,11 +168,7 @@
     };
   });
 
-  const missingPages = $derived(
-    resolution && (resolution.state === "ready" || resolution.state === "verified_empty")
-      ? (resolution.pagesWithoutText ?? [])
-      : [],
-  );
+  const missingPages = $derived(resolution?.pagesWithoutText ?? []);
 
   function pageRanges(pages: number[]): string {
     const ranges: string[] = [];
@@ -208,12 +205,10 @@
   <p class="notice" role="status">
     {missingPages.length === 1 ? "Page" : "Pages"}
     {pageRanges(missingPages)}
-    {missingPages.length === 1 ? "has" : "have"} no text layer.
-    If {missingPages.length === 1 ? "it is a scan" : "they are scans"},
-    <a
-      href="https://docbank.ai/docs/usage/document-processing/#ocr"
-      target="_blank"
-      rel="noreferrer"
+    {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1
+      ? "it is a scan"
+      : "they are scans"},
+    <a href={ocrGuideURL} target="_blank" rel="noreferrer"
       >OCR can read {missingPages.length === 1 ? "it" : "them"}</a
     >.
   </p>
@@ -269,6 +264,9 @@
   {#if queryHighlightError}<p class="notice" role="status">
       Query highlights unavailable: {queryHighlightError}
     </p>{/if}
+  {#if !loading && !error && missingPages.length}
+    {@render pdfNotice()}
+  {/if}
   {#if loading}
     <div class="loading" role="status"><Spinner size={14} /> Loading text…</div>
   {:else if error}
@@ -278,9 +276,6 @@
       <p class="notice" role="status">
         {stateMessage(resolution.state as Exclude<RenditionTextResolution["state"], "ready">)}
       </p>
-    {/if}
-    {#if missingPages.length}
-      {@render pdfNotice()}
     {/if}
     <pre
       bind:this={textBox}
@@ -304,9 +299,7 @@
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
       </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
-  {:else if resolution?.state === "verified_empty" && missingPages.length}
-    {@render pdfNotice()}
-  {:else if resolution && resolution.state !== "ready"}
+  {:else if resolution && resolution.state !== "ready" && !(resolution.state === "verified_empty" && missingPages.length)}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
 </div>

@@ -181,7 +181,7 @@ it.each([
   ["ready", [3, 4, 7], /Pages 3–4, 7 have no text layer/, /OCR can read them/],
   ["verified_empty", [3, 4], /Pages 3–4 have no text layer/, /OCR can read them/],
   ["verified_empty", [2], /Page 2 has no text layer/, /OCR can read it/],
-  ["failed", [2], null, null],
+  ["failed", [2], /Page 2 has no text layer/, /OCR can read it/],
 ] as const)("shows %s text coverage for PDF pages %j", async (state, pages, notice, link) => {
   const pdfSource = {
     ...source,
@@ -215,22 +215,54 @@ it.each([
     authorizationRevision: 3,
     onauthfailure: vi.fn(),
   });
-  if (notice && link) {
-    const rendered = await screen.findByText(notice);
-    expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
-      "https://docbank.ai/docs/usage/document-processing/#ocr",
-    );
-    if (state === "ready")
-      expect(
-        rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-    else
-      expect(
-        screen.queryByText("Processing verified that this document has no readable text."),
-      ).toBeNull();
-  } else {
-    await screen.findByText("Text processing failed for this selected version.");
-    expect(screen.queryByText(/no text layer/)).toBeNull();
-  }
+  const rendered = await screen.findByText(notice);
+  expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  if (state === "ready")
+    expect(
+      rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  else if (state === "failed")
+    expect(screen.getByText("Text processing failed for this selected version.")).toBeTruthy();
+  else
+    expect(
+      screen.queryByText("Processing verified that this document has no readable text."),
+    ).toBeNull();
+});
+
+it("shows PDF page gaps when the rendition is unprocessed", async () => {
+  const pdf = { ...source, name: "scan.pdf", mimeType: "application/pdf" };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      state: "unprocessed",
+      source: {
+        node_id: 7,
+        revision: 3,
+        version_id: pdf.versionID,
+        blob_hash: pdf.blobHash,
+        size: pdf.size,
+        media_type: pdf.mimeType,
+      },
+      profile: { name: "archive", configuration: "configured", fingerprint: "b".repeat(64) },
+      generation_id: "",
+      attachment_id: "",
+      build_id: "",
+      pages_without_text: [2],
+    }),
+  );
+  render(VerifiedText, {
+    session: "session",
+    source: pdf,
+    authorizationRevision: 3,
+    profileName: "archive",
+    onauthfailure: vi.fn(),
+    onprocess: vi.fn(),
+  });
+  expect(await screen.findByText(/Page 2 has no text layer/)).toBeTruthy();
+  expect(screen.getByRole("link", { name: /OCR can read it/ }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  expect(screen.getByRole("button", { name: "Process…" })).toBeTruthy();
 });
