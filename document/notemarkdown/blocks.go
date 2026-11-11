@@ -36,17 +36,27 @@ type blockGuard struct {
 	ctx  context.Context
 	b    *budget
 	ends map[ast.Node]int
+	kind blockParserKind
 }
 
 func (g *blockGuard) Open(parent ast.Node, r text.Reader, pc parser.Context) (ast.Node, parser.State) {
-	mustParse(g.b.step(g.ctx, 1))
-	if len(pc.OpenedBlocks()) > maxDepth {
+	mustParse(g.ctx.Err())
+	line, _ := r.PeekLine()
+	mustParse(g.b.step(g.ctx, openWorkFactor[g.kind]*len(line)+1))
+	// Open implementations construct at most one AST node. Reserve before
+	// invoking one, and refund unsuccessful candidates; at the cap we fail
+	// closed without calling a candidate that might allocate.
+	if len(pc.OpenedBlocks()) >= maxDepth {
 		panic(parseAbort{&LimitError{Resource: "ast_depth"}})
 	}
+	mustParse(g.b.reserveNode(g.ctx))
+	mustParse(g.ctx.Err())
 	_, before := r.Position()
 	n, state := g.BlockParser.Open(parent, r, pc)
-	if n != nil {
-		mustParse(g.b.node(g.ctx, len(pc.OpenedBlocks())+1))
+	mustParse(g.ctx.Err())
+	if n == nil {
+		g.b.refundNode()
+	} else {
 		if _, ok := n.(*ast.Heading); ok {
 			// Save the Setext underline before Goldmark replaces its Source
 			// with the paragraph's inline content during Close.
@@ -58,16 +68,21 @@ func (g *blockGuard) Open(parent ast.Node, r text.Reader, pc parser.Context) (as
 	return n, state
 }
 func (g *blockGuard) Continue(n ast.Node, r text.Reader, pc parser.Context) parser.State {
-	mustParse(g.b.step(g.ctx, 1))
+	mustParse(g.ctx.Err())
+	line, _ := r.PeekLine()
+	mustParse(g.b.step(g.ctx, continueWorkFactor[g.kind]*len(line)+1))
 	_, before := r.Position()
 	state := g.BlockParser.Continue(n, r, pc)
+	mustParse(g.ctx.Err())
 	_, after := r.Position()
 	mustParse(g.b.step(g.ctx, max(0, after.Start-before.Start)))
 	return state
 }
 func (g *blockGuard) Close(n ast.Node, r text.Reader, pc parser.Context) {
-	mustParse(g.b.step(g.ctx, 1))
+	mustParse(closeWork(g, n))
+	mustParse(g.ctx.Err())
 	g.BlockParser.Close(n, r, pc)
+	mustParse(g.ctx.Err())
 }
 
 type referenceGuard struct {
@@ -77,6 +92,8 @@ type referenceGuard struct {
 }
 
 func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Context) {
+	mustParse(g.ctx.Err())
+	defer func() { mustParse(g.ctx.Err()) }()
 	mustParse(g.b.step(g.ctx, 1))
 	segments := n.Source()
 	if len(segments) == 0 {
@@ -123,6 +140,29 @@ func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Con
 
 }
 
+func newBlockParserSet(ctx context.Context, b *budget, ends map[ast.Node]int) []parser.BlockParser {
+	parsers := []parser.BlockParser{
+		parser.NewSetextHeadingParser(), parser.NewThematicBreakParser(),
+		parser.NewListParser(), parser.NewListItemParser(), parser.NewCodeBlockParser(),
+		parser.NewATXHeadingParser(), parser.NewFencedCodeBlockParser(),
+		parser.NewBlockquoteParser(), parser.NewHTMLBlockParser(), parser.NewParagraphParser(),
+	}
+	guarded := make([]parser.BlockParser, 0, len(parsers))
+	for i, bp := range parsers {
+		guarded = append(guarded, &blockGuard{BlockParser: bp, ctx: ctx, b: b, ends: ends, kind: blockParserKind(i)})
+	}
+	return guarded
+}
+
+func newGoldmarkBlockParser(parsers []parser.BlockParser, transformer parser.ParagraphTransformer) parser.Parser {
+	priorities := make([]util.PrioritizedValue[parser.BlockParser], 0, len(parsers))
+	for i, bp := range parsers {
+		priorities = append(priorities, util.Prioritized(bp, (i+1)*100))
+	}
+	return parser.New(parser.WithDefaultParsers(false), parser.WithBlockParsers(priorities...),
+		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](transformer, 100)))
+}
+
 // scanBlocks builds one compact inline view from Goldmark's eligible blocks.
 // Each source segment retains an original-byte change point; container markers
 // disappear only from the view. Neither source bytes nor returned spans change.
@@ -155,26 +195,18 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, refs map[st
 	}
 	var parts []blockPart
 	ends := map[ast.Node]int{}
-	parsers := []parser.BlockParser{
-		parser.NewSetextHeadingParser(), parser.NewThematicBreakParser(),
-		parser.NewListParser(), parser.NewListItemParser(), parser.NewCodeBlockParser(),
-		parser.NewATXHeadingParser(), parser.NewFencedCodeBlockParser(),
-		parser.NewBlockquoteParser(), parser.NewHTMLBlockParser(), parser.NewParagraphParser(),
-	}
-	priorities := make([]util.PrioritizedValue[parser.BlockParser], 0, len(parsers))
-	for i, p := range parsers {
-		var guarded parser.BlockParser = &blockGuard{BlockParser: p, ctx: ctx, b: b, ends: ends}
-		priorities = append(priorities, util.Prioritized(guarded, (i+1)*100))
-	}
-	p := parser.New(parser.WithDefaultParsers(false), parser.WithBlockParsers(priorities...),
-		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](&referenceGuard{ctx: ctx, b: b, refs: refs}, 100)))
-	root := p.Parse(src) // no renderer or Goldmark inline parser is installed
+	transformer := &referenceGuard{ctx: ctx, b: b, refs: refs}
+	guarded := newBlockParserSet(ctx, b, ends)
+	root := parseBlockDocument(ctx, src, guarded, transformer, b)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nil, err
 	}
 	var visit func(ast.Node, int) error
 	visit = func(n ast.Node, depth int) error {
-		if err := b.node(ctx, depth); err != nil {
+		if depth > maxDepth {
+			return &LimitError{Resource: "ast_depth"}
+		}
+		if err := b.step(ctx, 1); err != nil {
 			return err
 		}
 		part := blockPart{pos: n.Pos()}

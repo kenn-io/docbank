@@ -31,16 +31,15 @@ func TestParenthesizedLinkTitles(t *testing.T) {
 		name, inline, reference string
 		valid                   bool
 	}{
-		{"nested", `[x](foo (a(b)))`, `[r]: foo (a(b))`, true},
-		{"deeper", `[x](foo (a(b(c))))`, `[r]: foo (a(b(c)))`, true},
+		{"unescaped opener", `[x](foo (a(b)))`, `[r]: foo (a(b))`, false},
+		{"unclosed nested", `[x](foo (a(b))`, `[r]: foo (a(b)`, false},
 		{"empty", `[x](foo ())`, `[r]: foo ()`, true},
 		{"escaped opener", `[x](foo (a\(b))`, `[r]: foo (a\(b)`, true},
 		{"escaped closer", `[x](foo (a\)b))`, `[r]: foo (a\)b)`, true},
-		{"escaped backslash", `[x](foo (a\\(b)))`, `[r]: foo (a\\(b))`, true},
-		{"multiline", "[x](foo (a\n(b)))", "[r]: foo (a\n(b))", true},
+		{"escaped backslash", `[x](foo (a\\b))`, `[r]: foo (a\\b)`, true},
+		{"multiline", "[x](foo (a\nb))", "[r]: foo (a\nb)", true},
 		{"quoted parentheses", `[x](foo "a(b")`, `[r]: foo "a(b"`, true},
-		{"missing close", `[x](foo (a(b))`, `[r]: foo (a(b)`, false},
-		{"unclosed nested", `[x](foo (a(b)`, `[r]: foo (a(b`, false},
+		{"missing close", `[x](foo (a)`, `[r]: foo (a`, false},
 	} {
 		for _, form := range []struct{ name, source, raw string }{
 			{"inline", tc.inline, tc.inline},
@@ -86,6 +85,22 @@ func TestLinksSyntaxDecodeOnly(t *testing.T) {
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"n(x).md?x=&", "a%2Fb.md", "&amp;%2F"}, linkTargets(n.Links))
+}
+
+func TestBareDestinationsRejectASCIIControls(t *testing.T) {
+	control := string([]byte{1})
+	for _, src := range []string{
+		"[a](x" + control + "y)",
+		"[a][r]\n\n[r]: x" + control + "y\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		require.Empty(t, n.Links)
+	}
+	// The existing angle-destination contract remains unchanged.
+	n, err := Parse(t.Context(), []byte("[a](<x"+control+"y>)"), Limits{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"x" + control + "y"}, linkTargets(n.Links))
 }
 
 func TestLinksRepeatedReferenceBudget(t *testing.T) {

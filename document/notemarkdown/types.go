@@ -42,6 +42,9 @@ type Note struct {
 }
 
 type Frontmatter struct {
+	// Start and End retain the opener span even when no closing fence exists.
+	// Raw is nil for absent/invalid YAML; a nonnil Frontmatter with nil Raw
+	// distinguishes a diagnosed opener from no opener (Frontmatter == nil).
 	Start, End    int
 	Raw           map[string]any
 	Fields        []Field

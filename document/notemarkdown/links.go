@@ -227,6 +227,9 @@ func (s *linkScanner) destination(start, end int) (Span, int, bool, error) {
 				return Span{}, 0, false, nil
 			}
 		} else {
+			if c < 0x20 || c == 0x7f {
+				return Span{}, 0, false, nil
+			}
 			if linkSpace(c) {
 				break
 			}
@@ -264,7 +267,6 @@ func (s *linkScanner) title(start, end int) (int, bool, error) {
 	} else if closing != '\'' && closing != '"' {
 		return start, false, nil
 	}
-	depth := 1
 	for i := start + 1; i < end; i++ {
 		if err := s.b.step(s.ctx, 1); err != nil {
 			return 0, false, err
@@ -273,16 +275,13 @@ func (s *linkScanner) title(start, end int) (int, bool, error) {
 			i++
 			continue
 		}
-		// A nested parenthesized title must close before the enclosing title
-		// (and then the inline link) can close. Escaped punctuation is literal.
+		// CommonMark titles do not nest parentheses. Literal punctuation stays
+		// valid through the escaped-character branch above.
 		if closing == ')' && s.src[i] == '(' {
-			depth++
+			return start, false, nil
 		}
 		if s.src[i] == closing {
-			depth--
-			if depth == 0 {
-				return i + 1, true, nil
-			}
+			return i + 1, true, nil
 		}
 	}
 	return start, false, nil
