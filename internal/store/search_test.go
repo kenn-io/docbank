@@ -962,17 +962,7 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 		build.Units[0].HeadingPath = []string{document.ImageUnderstandingHeading, "Visible text (best-effort transcription)"}
 		build.Units[0].Locator = document.EvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone, Name: "synthetic-vision"}
 		build.Completeness = document.EvidenceDegradedProvenance
-		for i, heading := range []string{"Literal description", "Possible meaning (interpretation)", "Uncertainty and missing context"} {
-			unit := build.Units[0]
-			unit.ID, unit.EvidenceUnitID = "rendition_unit_"+testSHA256([]byte(fmt.Sprintf("unit-%d", i))), "unit_"+testSHA256([]byte(fmt.Sprintf("evidence-%d", i)))
-			unit.Checksum, unit.Order = testSHA256([]byte(fmt.Sprintf("checksum-%d", i))), i+1
-			unit.HeadingPath = []string{document.ImageUnderstandingHeading, heading}
-			build.Units = append(build.Units, unit)
-			text := []string{"A cartoon dog", "A possible joke", "Context is unknown"}[i]
-			checksum := testSHA256([]byte(text))
-			build.LexicalSegments = append(build.LexicalSegments, RenditionLexicalSegmentRecord{ID: "lexical_segment_" + checksum, UnitID: unit.ID, Order: i + 1, CharEnd: len([]rune(text)), Checksum: checksum, Text: text})
-		}
-		receipt, err := json.Marshal(document.RenditionReceipt{ProviderID: document.ImageUnderstandingProviderID, DescriptorFingerprint: fakeHash("a3"), PolicyFingerprint: testSHA256([]byte("policy")), RenditionRequestFingerprint: profile.RenditionRequestFingerprint, AuthorizationFingerprint: testSHA256([]byte("authorization")), SourceSHA256: catalogSourceHash, OperationID: "synthetic-operation", StartedAt: embeddingCatalogTime, CompletedAt: embeddingCatalogTime, Usage: document.RenditionUsage{Requests: 1, InputBytes: 20, Units: 4}})
+		receipt, err := json.Marshal(document.RenditionReceipt{ProviderID: document.ImageUnderstandingProviderID, DescriptorFingerprint: fakeHash("a3"), PolicyFingerprint: testSHA256([]byte("policy")), RenditionRequestFingerprint: profile.RenditionRequestFingerprint, AuthorizationFingerprint: testSHA256([]byte("authorization")), SourceSHA256: catalogSourceHash, OperationID: "synthetic-operation", StartedAt: embeddingCatalogTime, CompletedAt: embeddingCatalogTime, Usage: document.RenditionUsage{Requests: 1, InputBytes: 20, Units: 1}})
 		require.NoError(t, err)
 		build.ProviderReceipt = receipt
 		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
