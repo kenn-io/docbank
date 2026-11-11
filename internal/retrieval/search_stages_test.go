@@ -459,7 +459,11 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 			require.Len(t, reranker.candidates, 1)
 			assert.Equal(t, test.want, reranker.candidates[0].Excerpt)
 			require.Len(t, ranked.Results, 1)
-			assert.Equal(t, test.lexical, ranked.Results[0].Excerpt)
+			wantExcerpt := test.lexical
+			if test.mode == ModeSemantic {
+				wantExcerpt = test.semantic
+			}
+			assert.Equal(t, wantExcerpt, ranked.Results[0].Excerpt)
 		})
 	}
 }

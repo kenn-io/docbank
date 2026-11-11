@@ -99,11 +99,20 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 		assert.Equal(t, node.CurrentVersionID, report.Results[0].Document.ContentVersionID)
 		require.NotEmpty(t, reranker.excerpts)
 		assert.Contains(t, reranker.excerpts[0], "Machine-generated image understanding; unverified; sender intent unknown / ")
-		if mode != "semantic" {
-			assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / ")
-			assert.Contains(t, report.Results[0].Excerpt, "Possible meaning (interpretation)")
-			assert.Contains(t, report.Results[0].Excerpt, "denial")
-		}
+		assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / ")
+		assert.Contains(t, report.Results[0].Excerpt, "Possible meaning (interpretation)")
+		assert.Contains(t, report.Results[0].Excerpt, "denial")
+	}
+	for _, mode := range []string{"semantic", "hybrid"} {
+		report, err := service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ignoring danger", Mode: mode, Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
+		require.NoError(t, err, mode)
+		require.Len(t, report.Results, 1, mode)
+		assert.Zero(t, report.Results[0].LexicalRank, mode)
+		assert.NotZero(t, report.Results[0].SemanticRank, mode)
+		assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / Possible meaning (interpretation)", mode)
+		assert.Contains(t, report.Results[0].Excerpt, "denial of a crisis", mode)
+		require.NotEmpty(t, report.Results[0].Evidence, mode)
+		assert.Equal(t, node.CurrentVersionID, report.Results[0].Evidence[0].ContentVersionID, mode)
 	}
 	literal, err := service.Search(t.Context(), SearchRequest{Profile: "images", Query: "partners", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
 	require.NoError(t, err)
@@ -156,7 +165,16 @@ func (p *understandingEmbeddingCapture) Embed(ctx context.Context, inputs []docu
 		p.text += input.Text + "\n"
 		p.inputs = append(p.inputs, input)
 	}
-	return p.localTextEmbeddingProvider.Embed(ctx, inputs, auth)
+	result, err := p.localTextEmbeddingProvider.Embed(ctx, inputs, auth)
+	if err != nil {
+		return result, err
+	}
+	for i, input := range inputs {
+		if input.Role != document.EmbeddingRoleQuery && !strings.Contains(input.Text, "denial of a crisis") {
+			result.Vectors[i].Values = []float32{0, 1}
+		}
+	}
+	return result, nil
 }
 
 func TestImageUnderstandingInvalidRepliesStopAfterAllowedAttempts(t *testing.T) {
