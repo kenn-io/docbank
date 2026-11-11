@@ -652,12 +652,12 @@ a current MP4 with `docbank processing plan /archive/clip.mp4 --profile video`
 and approve that plan with `docbank processing build`, its
 `--plan-fingerprint`, and `--consent`. The grant authorizes this binding to
 send every eligible MP4 original in the vault: files already archived, manual
-imports, and new or updated watch imports. A grant from before you enabled discovery does not cover this.
+imports, and new or updated watch imports. A grant from before you enabled
+discovery does not cover this.
 
 Discovery uses current display versions of visible, included video assets.
 Docbank verifies the MP4 and its size before upload. A file that exceeds the
-binding or inspection limit stays archived without an automatic vector. Vaults
-with audit authority follow the existing asset enrollment rules.
+binding or inspection limit stays archived without an automatic vector.
 
 Turning off discovery stops new automatic jobs and fences automatic jobs that
 have yet to send, including after a restore. Existing vectors stay searchable

@@ -35,9 +35,6 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 	return document.RenditionInputOriginalFile
 }
 
-// photoDiscoveryScope discloses that consent for a photo description or image
-// embedding profile queues every eligible photo in the vault, not just the
-// planned one.
 // Consent scope sentences shown in a plan. The face sentence replaces the
 // photo sentence, and the automatic video sentence follows either one.
 const (
@@ -45,6 +42,9 @@ const (
 	faceScanScope   = "Granting consent automatically finds faces in eligible photos throughout this vault."
 )
 
+// photoDiscoveryScope discloses that consent for a photo description or image
+// embedding profile queues every eligible photo in the vault, not just the
+// planned one.
 func photoDiscoveryScope(profile configuredProfile) string {
 	images := slices.ContainsFunc(profile.portable.Embeddings, func(binding document.EmbeddingBindingV1) bool {
 		return binding.InputKind == document.EmbeddingInputImage

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ProcessingFlowHop } from "./generated/docbank.js";
 import {
   consentLabel,
   describeClasses,
@@ -42,7 +43,7 @@ describe("processing summary", () => {
         metadata_classes: ["byte_length"],
         retained_artifact_roles: [],
       },
-    } as const;
+    } satisfies Partial<ProcessingFlowHop>;
     const video = plan("video", {
       flow: [
         hop({ ...voyage, input_classes: ["original_file"] }),
