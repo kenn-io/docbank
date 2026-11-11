@@ -1736,15 +1736,25 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
-		if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
+		bindingMode := mode
+		selectedSemantic := request.MediaSources != nil && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid)
+		if selectedSemantic {
+			bindingMode = retrieval.ModeSemantic
+		}
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, bindingMode)
+		if selectedSemantic && errors.Is(bindingErr, ErrSemanticUnavailable) {
+			mode = retrieval.ModeLexical
+		} else if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
 			mode = retrieval.ModeLexical
 		} else if bindingErr != nil {
 			return preparedSearch{}, bindingErr
 		}
 		if bindingErr == nil {
-			if mode == retrieval.ModeSemantic && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
-				return preparedSearch{}, ErrSemanticUnavailable
+			if (mode == retrieval.ModeSemantic || selectedSemantic) && !profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
+				if !selectedSemantic {
+					return preparedSearch{}, ErrSemanticUnavailable
+				}
+				mode = retrieval.ModeLexical
 			}
 			request.BindingID = binding.Name
 			searcherConfig.Encoders = service.embeddings

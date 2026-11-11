@@ -519,18 +519,12 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 				return errors.New("semantic search evidence does not match coverage authority")
 			}
 			semanticSpace = expectedSpace
-			scoped, complete, coverageErr := semanticSearchCoverageTx(ctx, tx,
+			scoped, complete, versions, coverageErr := semanticSearchCoverageTx(ctx, tx,
 				semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
 			if coverageErr != nil {
 				return coverageErr
 			}
-			result.Coverage = &SearchCoverageSnapshot{ScopedDocuments: scoped, CompleteDocuments: complete}
-			if len(normalized.SelectedBuilds) != 0 {
-				result.Coverage.CompleteContentVersionIDs, err = selectedSemanticCompleteVersionsTx(ctx, tx, semanticProfileFingerprint, semanticBindingID, binding.InputKind, semanticSpace, normalized)
-				if err != nil {
-					return err
-				}
-			}
+			result.Coverage = &SearchCoverageSnapshot{ScopedDocuments: scoped, CompleteDocuments: complete, CompleteContentVersionIDs: versions}
 		} else if semanticSpace != "" {
 			return errors.New("semantic search evidence lacks coverage authority")
 		}
@@ -1013,20 +1007,20 @@ func selectedSemanticCompleteVersionsTx(ctx context.Context, tx metadataQuerier,
 
 func semanticSearchCoverageTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
-) (required, complete int, retErr error) {
+) (required, complete int, versions []string, retErr error) {
 	required, err := liveSearchScopeCount(ctx, tx, opts)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	if len(opts.SelectedBuilds) != 0 {
-		versions, err := selectedSemanticCompleteVersionsTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
-		return required, len(versions), err
+		versions, err = selectedSemanticCompleteVersionsTx(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID, opts)
+		return required, len(versions), versions, err
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	args := append([]any{profileFingerprint, bindingID, inputKind, vectorSpaceID}, filterArgs...)
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
   AND eh.profile_fingerprint=? AND eh.binding_id=? AND eh.input_kind=? AND eh.vector_space_id=? `+filterSQL, args...).Scan(&complete)
-	return required, complete, err
+	return required, complete, nil, err
 }
 
 // ResolveSemanticCandidates applies current-version, live-head, and operator

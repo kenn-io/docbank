@@ -41,11 +41,6 @@ func (service *Service) searchMediaSources(
 	plan := newMediaSearchPlan(request.MediaSources, requests, selected)
 	profile := service.profiles[request.Profile]
 	scope := store.SearchOptions{SelectedBuilds: plan.builds}
-	for _, build := range plan.builds {
-		scope.ContentVersionIDs = append(scope.ContentVersionIDs, build.ContentVersionID)
-	}
-	slices.Sort(scope.ContentVersionIDs)
-	scope.ContentVersionIDs = slices.Compact(scope.ContentVersionIDs)
 	if provider := profile.embedders[prepared.bindingID]; provider != nil {
 		descriptor := provider.Descriptor()
 		scope.EmbeddingDescriptor, scope.VectorSpaceID = &descriptor, profile.vectorSpaces[prepared.bindingID]

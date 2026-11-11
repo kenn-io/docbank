@@ -150,7 +150,7 @@ func (s *Store) ResolveSimilarCandidates(ctx context.Context, profile, binding s
 			return ErrVectorIndexSourceStale
 		}
 		result.SourceManifestChecksum = manifest
-		result.ScopedDocuments, result.CompleteDocuments, err = semanticSearchCoverageTx(ctx, tx, profile, binding, kind, space, opts)
+		result.ScopedDocuments, result.CompleteDocuments, _, err = semanticSearchCoverageTx(ctx, tx, profile, binding, kind, space, opts)
 		if err != nil {
 			return err
 		}
