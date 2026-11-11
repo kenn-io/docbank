@@ -39,7 +39,7 @@ separate storage repack to reclaim physical pack space.`,
 				"%d packed blob(s), %d stored byte(s) pending repack\n",
 				rep.PendingPackedBlobs, rep.PendingPackedBytes)
 			if gcRun {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "repack: docbank storage repack (see --help for thresholds)")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "repack: docbank storage repack")
 			}
 		}
 		if !gcRun {
