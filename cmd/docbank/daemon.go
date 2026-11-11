@@ -741,7 +741,14 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			if openTab {
 				args = append(args, "--open-web")
 			}
-			err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+layout.Root), Stdout: io.Discard, Stderr: io.Discard})
+			err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+layout.Root), Stdout: io.Discard, Stderr: io.Discard, Exited: func(err error) {
+				restartMu.Lock()
+				restartLaunched = false
+				restartMu.Unlock()
+				if err != nil {
+					logger.Error("web restart helper failed", "error", err)
+				}
+			}})
 			if err == nil {
 				restartLaunched = true
 			}

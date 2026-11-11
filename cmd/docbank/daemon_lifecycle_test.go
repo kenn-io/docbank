@@ -645,6 +645,7 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, string(out))
 	root := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
 	env := append(os.Environ(), "DOCBANK_HOME="+root, "DOCBANK_TELEMETRY_ENABLED=0", "BROWSER=/bin/false")
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 	cmd := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
@@ -672,6 +673,38 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	require.NoError(t, err)
 	request.Header.Set("Origin", launch.Scheme+"://"+launch.Host)
 	request.Header.Set(api.WebSessionHeader, token)
+	{
+		// The helper must fail before it stops the running daemon.
+		lockPath := filepath.Join(os.Getenv("DOCBANK_LOCK_DIR"), "daemon-launch.lock")
+		require.NoError(t, os.Remove(lockPath))
+		require.NoError(t, os.Mkdir(lockPath, 0o700))
+		logs := filepath.Join(root, "logs")
+		require.NoError(t, watcher.Add(logs))
+		response, err := client.Do(request.Clone(t.Context()))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusAccepted, response.StatusCode)
+		require.NoError(t, response.Body.Close())
+		for {
+			select {
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			case err := <-watcher.Errors:
+				require.NoError(t, err)
+			case <-watcher.Events:
+				files, err := filepath.Glob(filepath.Join(logs, "docbank*.log"))
+				require.NoError(t, err)
+				for _, file := range files {
+					contents, err := os.ReadFile(file)
+					require.NoError(t, err)
+					if strings.Contains(string(contents), "web restart helper failed") {
+						require.NoError(t, os.Remove(lockPath))
+						goto retry
+					}
+				}
+			}
+		}
+	}
+retry:
 	response, err := client.Do(request)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusAccepted, response.StatusCode)

@@ -2141,6 +2141,51 @@ it("keeps the session when restart fails", async () => {
   expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
 });
 
+it("keeps the workspace and shows a rejected restart", async () => {
+  searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    apply: async () => json(localPlan),
+    restart: async () =>
+      Response.json({ code: "web_browser", detail: "Restart denied" }, { status: 403 }),
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart Docbank" }));
+  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
+  expect(await within(drawer).findByText("Restart denied")).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
+});
+
+it("keeps the workspace when the upload connection and identity check fail", async () => {
+  let socket: EventTarget;
+  vi.stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        socket = this;
+      }
+      close() {}
+    },
+  );
+  const harness = searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    apply: async () => json(localPlan),
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  harness.fetchMock.mockClear();
+  harness.fetchMock.mockImplementationOnce(async () => {
+    throw new Error("offline");
+  });
+  socket!.dispatchEvent(new Event("error"));
+  await waitFor(() =>
+    expect(harness.fetchMock).toHaveBeenCalledWith("/api/v1/vault", expect.anything()),
+  );
+  expect(within(drawer).getByText("Restart required")).toBeTruthy();
+});
+
 it("shows the owner step when the daemon cannot restart itself", async () => {
   let available = true;
   searchWithMeaningOff({

@@ -1639,7 +1639,8 @@
   async function checkDisconnectedSession(session: string, sameAddress: boolean): Promise<void> {
     try {
       await generated.vaultIdentity({ session, signal: AbortSignal.timeout(3000) });
-    } catch {
+    } catch (cause) {
+      if (!(cause instanceof APIError) || cause.status !== 401) return;
       if (!mounted || webSession !== session) return;
       resetLocalSessionUI();
       recovery = sameAddress ? "same" : "per-run";
@@ -2076,6 +2077,11 @@
           restartAttempt = undefined;
           if (localText.status) localText.status.restart_available = false;
           readLocalTextStatus();
+          return;
+        }
+        if (cause.status >= 400 && cause.status < 500) {
+          restartAttempt = undefined;
+          localText.error = cause.message;
           return;
         }
       }

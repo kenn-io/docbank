@@ -52,7 +52,6 @@
     await onrestart();
     restarting = false;
     confirmRestart = false;
-    confirmRestart = false;
   }
   let tab = $state(untrack(() => initialTab));
   let switched = false;
