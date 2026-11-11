@@ -191,6 +191,7 @@ interface UploadMessage {
   expected_hash?: string;
   expected_size?: number;
   check_existing?: boolean;
+  verified_size?: number;
   receipt?: UploadReceipt;
   status?: number;
   code?: string;
@@ -315,8 +316,21 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
         expected_size: file.size,
         check_existing: checkExisting,
       });
-      const ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
+      let ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
       this.requireMessage(ready, requestID);
+      let verifiedSize = 0;
+      while (checkExisting && ready.type === "verification_progress") {
+        if (
+          !Number.isSafeInteger(ready.verified_size) ||
+          ready.verified_size! <= verifiedSize ||
+          ready.verified_size! > file.size
+        ) {
+          throw this.protocolError();
+        }
+        verifiedSize = ready.verified_size!;
+        ready = await this.nextMessage(signal, uploadResponseTimeoutMs);
+        this.requireMessage(ready, requestID);
+      }
       this.throwProblem(ready);
       if (checkExisting && ready.type === "receipt" && ready.receipt?.status === "skipped") {
         try {

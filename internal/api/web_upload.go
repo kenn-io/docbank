@@ -39,6 +39,7 @@ const (
 	webUploadControlBytes = 4096
 	webUploadAuthTimeout  = 10 * time.Second
 	webUploadInactivity   = 30 * time.Second
+	webVerifyProgress     = 10 * time.Second
 )
 
 var (
@@ -104,6 +105,7 @@ type webUploadMessage struct {
 	ExpectedHash  string              `json:"expected_hash,omitzero"`
 	ExpectedSize  int64               `json:"expected_size,omitzero"`
 	CheckExisting bool                `json:"check_existing,omitzero"`
+	VerifiedSize  int64               `json:"verified_size,omitzero"`
 	Receipt       *UploadReceipt      `json:"receipt,omitempty"`
 	Status        int                 `json:"status,omitzero"`
 	Code          string              `json:"code,omitzero"`
@@ -319,7 +321,7 @@ func handleWebUploadConnection(
 					stream, size, err := d.Blobs.OpenStreamContext(ctx, node.BlobHash)
 					if err == nil {
 						var read int64
-						read, err = io.Copy(io.Discard, stream)
+						read, err = copyWebUploadVerification(ctx, conn, request.requestID, stream)
 						if err == nil {
 							err = stream.Verify()
 						}
@@ -375,6 +377,29 @@ func handleWebUploadConnection(
 			Type: "receipt", RequestID: request.requestID, Receipt: receipt,
 		}); err != nil {
 			return
+		}
+	}
+}
+
+// copyWebUploadVerification reports only bytes actually read from storage.
+func copyWebUploadVerification(ctx context.Context, conn *websocket.Conn, requestID string, source io.Reader) (int64, error) {
+	buf := make([]byte, webUploadChunkBytes)
+	var total int64
+	lastProgress := time.Now()
+	for {
+		n, err := source.Read(buf)
+		total += int64(n)
+		if n > 0 && time.Since(lastProgress) >= webVerifyProgress {
+			if writeErr := wsjson.Write(ctx, conn, webUploadMessage{Type: "verification_progress", RequestID: requestID, VerifiedSize: total}); writeErr != nil {
+				return total, writeErr
+			}
+			lastProgress = time.Now()
+		}
+		if errors.Is(err, io.EOF) {
+			return total, nil
+		}
+		if err != nil {
+			return total, err
 		}
 	}
 }

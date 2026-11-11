@@ -30,6 +30,94 @@ afterEach(() => {
 });
 
 describe("verified browser upload", () => {
+  it("waits for a slow stored-content check while bytes advance", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    vi.useFakeTimers();
+    const hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      hash,
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    for (const verified_size of [1, 2]) {
+      await vi.advanceTimersByTimeAsync(40_000);
+      socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await vi.advanceTimersByTimeAsync(40_000);
+    socket.emit({
+      type: "receipt",
+      request_id: socket.requestID,
+      receipt: {
+        status: "skipped",
+        computed_hash: hash,
+        computed_size: 3,
+        node: { parent_id: 2, name: "report.txt", blob_hash: hash, size: 3 },
+      },
+    });
+    expect((await upload).status).toBe("skipped");
+    expect(socket.frames.some((frame) => typeof frame !== "string")).toBe(false);
+  });
+
+  it("ends a stored-content check after progress stops", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    vi.useFakeTimers();
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      "a".repeat(64),
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    const failure = expect(upload).rejects.toBeInstanceOf(UploadChannelError);
+    socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size: 1 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await failure;
+    expect(socket.closed).toBe(true);
+    expect(socket.frames.some((frame) => typeof frame !== "string")).toBe(false);
+  });
+
+  it("rejects repeated verification progress", async () => {
+    const socket = new DaemonSocket();
+    socket.ready = false;
+    const channel = new VerifiedUploadChannel(
+      { token: testToken, uploadSecret: testUploadSecret },
+      () => socket as unknown as WebSocket,
+    );
+    await channel.connect();
+    const upload = channel.uploadFile(
+      2,
+      new File(["abc"], "report.txt"),
+      "a".repeat(64),
+      new AbortController().signal,
+      () => {},
+      true,
+    );
+    const failure = expect(upload).rejects.toBeInstanceOf(UploadChannelError);
+    socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size: 1 });
+    await Promise.resolve();
+    await Promise.resolve();
+    socket.emit({ type: "verification_progress", request_id: socket.requestID, verified_size: 1 });
+    await failure;
+    expect(socket.closed).toBe(true);
+  });
+
   it("accepts a stored receipt before sending retry bytes", async () => {
     const socket = new DaemonSocket();
     socket.ready = false;

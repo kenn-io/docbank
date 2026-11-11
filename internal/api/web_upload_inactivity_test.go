@@ -15,6 +15,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type slowVerificationReader struct{ remaining int }
+
+func (r *slowVerificationReader) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(40 * time.Second)
+	r.remaining--
+	p[0] = 'x'
+	return 1, nil
+}
+
+func TestWebUploadVerificationProgressOverSocket(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		done := make(chan error, 1)
+		conn := dialBubbleWebSocket(t, func(w http.ResponseWriter, r *http.Request) {
+			conn, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				done <- err
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+			count, err := copyWebUploadVerification(r.Context(), conn, "retry", &slowVerificationReader{remaining: 3})
+			if err == nil && count == 3 {
+				err = wsjson.Write(r.Context(), conn, webUploadMessage{Type: "receipt", RequestID: "retry"})
+			}
+			done <- err
+		})
+		for _, size := range []int64{1, 2, 3} {
+			var message webUploadMessage
+			require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+			require.Equal(t, "verification_progress", message.Type)
+			require.Equal(t, "retry", message.RequestID)
+			require.Equal(t, size, message.VerifiedSize)
+		}
+		var receipt webUploadMessage
+		require.NoError(t, wsjson.Read(t.Context(), conn, &receipt))
+		require.Equal(t, "receipt", receipt.Type)
+		require.NoError(t, <-done)
+	})
+}
+
 // dialBubbleWebSocket serves handler over the bubble's in-memory network, so
 // websocket read deadlines run on the bubble's fake clock.
 func dialBubbleWebSocket(t *testing.T, handler http.HandlerFunc) *websocket.Conn {
