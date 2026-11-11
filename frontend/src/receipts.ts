@@ -431,6 +431,10 @@ export function validateDocumentSearchReport(
       !(
         requestedMode === "semantic" &&
         actualMode === "lexical" &&
+        Array.isArray(request.media_sources) &&
+        request.media_sources.length > 0 &&
+        report.media_source_selection === true &&
+        request.rerank !== true &&
         Array.isArray(report.degradations) &&
         report.degradations.includes("semantic_unavailable")
       ))

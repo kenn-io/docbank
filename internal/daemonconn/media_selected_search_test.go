@@ -14,4 +14,15 @@ func TestSelectedMediaLexicalFallbackReceipt(t *testing.T) {
 	bad := report
 	bad.Degradations = nil
 	require.Error(t, validateDocumentSearchReport(request, bad))
+	ordinary := request
+	ordinary.MediaSources = nil
+	require.Error(t, validateDocumentSearchReport(ordinary, report))
+	bad = report
+	bad.MediaSourceSelection = false
+	require.Error(t, validateDocumentSearchReport(request, bad))
+	reranked := request
+	reranked.Rerank = true
+	bad = report
+	bad.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "skipped"}
+	require.Error(t, validateDocumentSearchReport(reranked, bad))
 }

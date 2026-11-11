@@ -305,4 +305,15 @@ it("accepts a lexical fallback for selected semantic search", () => {
   };
   expect(validateDocumentSearchReport(report, request).actual_mode).toBe("lexical");
   expect(() => validateDocumentSearchReport({ ...report, degradations: [] }, request)).toThrow();
+  const { media_sources: _, ...ordinary } = request;
+  expect(() => validateDocumentSearchReport(report, ordinary)).toThrow();
+  expect(() =>
+    validateDocumentSearchReport({ ...report, media_source_selection: false }, request),
+  ).toThrow();
+  expect(() =>
+    validateDocumentSearchReport(
+      { ...report, reranking: { outcome: "skipped", candidate_count: 0 } },
+      { ...request, rerank: true },
+    ),
+  ).toThrow();
 });

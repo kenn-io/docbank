@@ -369,6 +369,17 @@ func TestSearcherRejectsMissingSourceFenceBeforeEmbedding(t *testing.T) {
 	assert.False(t, backend.releasedAt.IsZero())
 }
 
+func TestSearcherDetectsSelectedEmbeddingsRemovedBeforeEncoding(t *testing.T) {
+	searcher, backend, provider, descriptor := retrievalSearcherFixture(t, true, 1)
+	backend.authority.ANNRows = []vectorindex.RowIdentity{}
+	_, err := searcher.Search(t.Context(), Query{Text: "query", Mode: ModeSemantic,
+		Scope:         store.SearchOptions{SelectedBuilds: []store.SearchSelectedBuild{{ContentVersionID: "version", BuildID: "build"}}},
+		Authorization: retrievalAuthorization(descriptor)})
+	require.ErrorIs(t, err, ErrSelectedEmbeddingsUnavailable)
+	assert.Zero(t, provider.calls)
+	assert.False(t, backend.releasedAt.IsZero())
+}
+
 func retrievalANNRows(t *testing.T, generation *vectorindex.Generation) []vectorindex.RowIdentity {
 	t.Helper()
 	metadata := generation.Metadata()

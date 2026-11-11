@@ -80,6 +80,10 @@ func (service *Service) searchMediaSources(
 			defer closeEgress()
 			report, err = prepared.searcher.Search(ctx, query)
 		}()
+		if errors.Is(err, retrieval.ErrSelectedEmbeddingsUnavailable) {
+			query.Mode = retrieval.ModeLexical
+			report, err = prepared.searcher.Search(ctx, query)
+		}
 		if err != nil {
 			return retrieval.Report{}, err
 		}
