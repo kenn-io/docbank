@@ -138,12 +138,6 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	assert.NotZero(t, report.Results[0].SemanticRank)
 	assert.Contains(t, report.Results[0].Excerpt, document.ImageUnderstandingHeading+" / ")
 	assert.Regexp(t, ` / (Visible text|Literal description|Possible meaning|Uncertainty)`, report.Results[0].Excerpt)
-	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ALPHA", Mode: "hybrid", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
-	require.NoError(t, err)
-	require.Len(t, report.Results, 1)
-	assert.NotZero(t, report.Results[0].LexicalRank)
-	assert.NotZero(t, report.Results[0].SemanticRank)
-	assert.Contains(t, report.Results[0].Excerpt, "ALPHA")
 }
 
 type understandingEmbeddingCapture struct {

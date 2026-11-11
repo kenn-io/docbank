@@ -21,11 +21,12 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 	}
 
 	result := RenditionV1{
+		Completeness:     evidence.Completeness,
+		ContractVersion:  RenditionContractV1,
+		EvidenceChecksum: evidenceChecksum,
+		Units:            make([]NormalizedUnitV1, 0, len(evidence.Units)),
+
 		imageUnderstanding: policy.imageUnderstanding,
-		Completeness:       evidence.Completeness,
-		ContractVersion:    RenditionContractV1,
-		EvidenceChecksum:   evidenceChecksum,
-		Units:              make([]NormalizedUnitV1, 0, len(evidence.Units)),
 	}
 	if evidence.Completeness == EvidenceDegradedProvenance {
 		result.Warnings = []RenditionWarningV1{{Code: "degraded_provenance"}}

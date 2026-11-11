@@ -1166,7 +1166,7 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		if _, err := vision.Descriptor(profile.DescriptorID, profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
-		if !document.ValidImageUnderstandingAdapter(profile.AdapterContract, profile.DescriptorID) {
+		if (profile.AdapterContract == vision.UnderstandingAdapterContract) != (profile.DescriptorID == vision.UnderstandingProviderID) {
 			return fmt.Errorf("%s image understanding requires its own task and adapter", prefix)
 		}
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > vision.MaxResponseBytes {

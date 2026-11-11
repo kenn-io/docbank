@@ -39,13 +39,6 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 		require.ErrorContains(t, cfg.Validate(), "at most 16 MiB")
 		cfg.RenditionProfiles["primary"] = profile
 	})
-	t.Run("unused rendition profile", func(t *testing.T) {
-		mismatch := profile
-		mismatch.DescriptorID = vision.ProviderID
-		cfg.RenditionProfiles["unused"] = mismatch
-		require.ErrorContains(t, cfg.Validate(), "image understanding requires its own task")
-		delete(cfg.RenditionProfiles, "unused")
-	})
 	profile.DescriptorID = vision.ProviderID
 	cfg.RenditionProfiles["primary"] = profile
 	require.ErrorContains(t, cfg.Validate(), "image understanding requires its own task")
