@@ -1252,6 +1252,13 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
+  // Upload drawers show their own channel notice, so the page banner would repeat it.
+  const uploadBannerVisible = $derived(
+    (uploadConnectionState === "failed" ||
+      uploadConnectionState === "manual" ||
+      uploadConnectionState === "fatal") &&
+      !(activePanel && ["photoImport", "upload", "mailbox", "loadFile"].includes(activePanel.kind)),
+  );
   const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
     shortcutHelpOpen
       ? "help"
@@ -4287,7 +4294,7 @@
         {/snippet}
       </TopBar>
 
-      {#if photoMode && (uploadConnectionState === "failed" || uploadConnectionState === "manual" || uploadConnectionState === "fatal")}
+      {#if photoMode && uploadBannerVisible}
         <div class="banner error">
           <UploadChannelNotice
             state={uploadConnectionState}
@@ -4870,7 +4877,7 @@
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
               {/if}
-              {#if uploadConnectionState === "failed" || uploadConnectionState === "manual" || uploadConnectionState === "fatal"}
+              {#if uploadBannerVisible}
                 <div class="banner error">
                   <UploadChannelNotice
                     state={uploadConnectionState}

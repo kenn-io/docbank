@@ -455,11 +455,15 @@
 
 <DrawerShell title="Add photos" closeLabel="Close add photos" {onclose}>
   <div class="photo-import">
-    {#if disabledReason}
-      <UploadChannelNotice state={connectionState} message={disabledReason} {onreconnect} />
-    {:else if error}
+    <UploadChannelNotice
+      visible={Boolean(disabledReason)}
+      state={connectionState}
+      message={disabledReason}
+      {onreconnect}
+    />
+    {#if !disabledReason && error}
       <p role="alert">{error}</p>
-    {:else if !checkpointReady}
+    {:else if !disabledReason && !checkpointReady}
       <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
     {/if}
     {#if storageNotice}<p role="status">{storageNotice}</p>{/if}

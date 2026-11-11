@@ -176,11 +176,12 @@
   {onclose}
 >
   <div class="tool-body">
-    {#if disabledReason}<UploadChannelNotice
-        state={connectionState}
-        message={disabledReason}
-        {onreconnect}
-      />{/if}
+    <UploadChannelNotice
+      visible={Boolean(disabledReason)}
+      state={connectionState}
+      message={disabledReason}
+      {onreconnect}
+    />
     <section class="tool-section" aria-label="Package source">
       <FileChooser
         accept=".zip,application/zip"

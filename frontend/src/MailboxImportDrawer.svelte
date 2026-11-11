@@ -232,11 +232,12 @@
   {onclose}
 >
   <div class="tool-body">
-    {#if disabledReason}<UploadChannelNotice
-        state={connectionState}
-        message={disabledReason}
-        {onreconnect}
-      />{/if}
+    <UploadChannelNotice
+      visible={Boolean(disabledReason)}
+      state={connectionState}
+      message={disabledReason}
+      {onreconnect}
+    />
     <section class="tool-section" aria-label="Mailbox source">
       <div class="tool-grid">
         <div class="tool-field tool-span-4">

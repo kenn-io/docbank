@@ -271,9 +271,12 @@
   footer={items.length ? uploadFooter : undefined}
 >
   <div class="tool-body">
-    {#if disabledReason}
-      <UploadChannelNotice state={connectionState} message={disabledReason} {onreconnect} />
-    {/if}
+    <UploadChannelNotice
+      visible={Boolean(disabledReason)}
+      state={connectionState}
+      message={disabledReason}
+      {onreconnect}
+    />
 
     <div class="picker" class:picker-empty={items.length === 0}>
       {#if items.length > 0}
