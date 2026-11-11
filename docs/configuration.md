@@ -486,22 +486,25 @@ When a routed profile has text-chunk embeddings and current build consent, the
 by watches that route to this profile, including ASR transcripts. It runs only
 `rendition_chunk` bindings. A document qualifies when all of these hold:
 
-- A configured watch imported it, and that watch routes the file to the
-  profile. The route is resolved as at import; when the media family comes
-  from the file suffix, the worker uses the source file name the watch
-  recorded, so renaming the document in the vault doesn't change it.
+- A configured watch imported it, and that watch's current route sends the
+  file to the profile. The worker evaluates the route as configured now, not
+  as it was at import. When the media family comes from the file suffix, it
+  uses the source file name the watch recorded, so renaming the document in
+  the vault doesn't change it.
 - The document's current version has the bytes the watch last recorded for
   its source. After a manual edit, the document waits until it matches again.
 - That version has a published rendition for the profile.
 
-Files added to a watch destination by hand, files imported by a nested watch
-that routes elsewhere, and documents outside every watch are not embedded
-automatically; use explicit processing for them. A rendition doesn't record
-who built it, so a qualifying document's rendition counts even when an
-operator built it with explicit processing for the same profile. The worker
-also picks up qualifying renditions with missing chunk embeddings when consent
-is granted. If vault-wide local text selects the same profile, its worker
-handles that profile's backlog.
+Files that no routing watch imported are never embedded automatically. That
+includes files added to a watch destination by hand, files imported by a
+nested watch that routes elsewhere, and documents outside every watch; use
+explicit processing for them. A qualifying document's published rendition
+counts however it was built, including by explicit processing or for bytes
+written manually that the watch later converged onto, because the profile already
+admitted it. Adding a route later picks up the published renditions of that
+watch's current files. The worker also picks up qualifying renditions with
+missing chunk embeddings when consent is granted. If vault-wide local text
+selects the same profile, its worker handles that profile's backlog.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
