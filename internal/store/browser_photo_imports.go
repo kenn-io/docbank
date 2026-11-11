@@ -134,6 +134,20 @@ func (s *Store) InspectBrowserPhotoImport(ctx context.Context, id uuid.UUID) (Br
 	return s.readBrowserPhotoImport(ctx, id, true)
 }
 
+// BrowserPhotoImportRun reconstructs the authority-free run for a saved import.
+func (s *Store) BrowserPhotoImportRun(ctx context.Context, id uuid.UUID) (IngestRun, error) {
+	record := metadataIngest{Type: metadataIngestType, ID: id.String(), SourceKind: "photo-import"}
+	err := s.db.QueryRowContext(ctx, `SELECT created_at,label FROM browser_photo_imports WHERE import_id=$1 AND vault_id=$2`,
+		id.String(), s.VaultID()).Scan(&record.StartedAt, &record.SourceDesc)
+	if err != nil {
+		return IngestRun{}, fmt.Errorf("reading browser photo import run: %w", err)
+	}
+	if err := validateIngestRecord(record); err != nil {
+		return IngestRun{}, fmt.Errorf("validating browser photo import run: %w", err)
+	}
+	return IngestRun{record: record}, nil
+}
+
 // ReadBrowserPhotoImport reads saved facts without waiting for a writer.
 func (s *Store) ReadBrowserPhotoImport(ctx context.Context, id uuid.UUID) (BrowserPhotoImport, error) {
 	return s.readBrowserPhotoImport(ctx, id, false)

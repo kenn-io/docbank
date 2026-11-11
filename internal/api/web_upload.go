@@ -1201,8 +1201,7 @@ func handleWebPhotoGroup(
 			}
 			var err error
 			if photoImport.run.ID() == "" {
-				photoImport.run, err = d.Store.BeginIngest(ctx, "photo-import",
-					photoImport.sourceDescription())
+				photoImport.run, err = d.Store.BrowserPhotoImportRun(ctx, browserGroup.ImportID)
 				if err != nil {
 					return err
 				}

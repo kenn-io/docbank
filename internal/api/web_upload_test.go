@@ -626,6 +626,10 @@ func TestBrowserPhotoImportsScopeSourcesAndReuseRun(t *testing.T) {
 	members := []map[string]any{declaration("Card/IMG_0001.JPG", first), declaration("Card/IMG_0002.JPG", second)}
 	importID := planBrowserPhotos(t, conn, members)
 	a := uploadBrowserPhoto(t, conn, importID, 0, members[0], first)
+	require.NoError(t, conn.Close(websocket.StatusNormalClosure, ""))
+	conn = browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "resume_photo_import", "request_id": "resume", "import_id": importID}))
+	require.Equal(t, "photo_import_inspection", readPhotoResponse(t, conn).Type)
 	b := uploadBrowserPhoto(t, conn, importID, 1, members[1], second)
 	require.Equal(t, "photo_group_receipt", a.Type)
 	require.Equal(t, "photo_group_receipt", b.Type)
