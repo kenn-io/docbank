@@ -2091,36 +2091,81 @@ it.each(["names", "meaning", "frozen"])(
 );
 
 function renderEmptySearch(coverage: () => Promise<Response>) {
-  installHarness({ profiles: [], files: [], baseReport: report("lexical", []), coverage });
+  const files = [node(2, "report.txt", baseVersion)];
+  const baseReport = report("lexical", []);
+  const harness = installHarness({ profiles: [], files, baseReport, coverage });
   render(App);
+  return harness;
 }
 
-// prettier-ignore
 it.each([
-  [{ pdfs_without_text: 2, pages_without_text: 3 }, "2 PDFs have 3 pages without a text layer."],
-  [{ pdfs_without_text: 1, pages_without_text: 1 }, "1 PDF has 1 page without a text layer."],
-  [{ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_partial: true }, "At least 2 PDFs have at least 3 pages without a text layer."],
-  [{ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_unavailable: 1 }, "At least 2 PDFs have at least 3 pages without a text layer."],
-])("shows PDF coverage for %j", async (data, message) => {
-  renderEmptySearch(async () => json(data));
+  ["complete", "2 PDFs have 3 pages", false],
+  ["singular", "1 PDF has 1 page", false],
+  ["partial", "At least 2 PDFs have at least 3 pages", false],
+  ["unavailable", "At least 2 PDFs have at least 3 pages", false],
+  ["complete", "2 PDFs have 3 pages", true],
+])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
+  const coverage = {
+    pdfs_without_text: kind === "singular" ? 1 : 2,
+    pages_without_text: kind === "singular" ? 1 : 3,
+    pdf_page_coverage_partial: kind === "partial",
+    pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
+  };
+  const { fetchMock } = renderEmptySearch(async () => json(coverage));
+  if (tagged) {
+    await screen.findAllByText("report.txt");
+    await fireEvent.click(
+      screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+    );
+    await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
+  }
   await submitSearch("missing");
-  expect(await screen.findByText(message)).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe("https://docbank.ai/docs/usage/document-processing/#ocr");
+  expect(await screen.findByText(`${message} without a text layer.`)).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  if (tagged) {
+    const request = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .find((url) => url.startsWith("/api/v1/search/text-coverage"));
+    expect(new URL(request!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
+  }
 });
-// prettier-ignore
-it.each(["zero", "failure"])("keeps the empty search quiet when coverage is %s", async (state) => {
-  const coverage = vi.fn(async () => state === "zero" ? json({ pdfs_without_text: 0, pages_without_text: 0 }) : new Response("failure", { status: 500 }));
-  renderEmptySearch(coverage);
-  await submitSearch("missing");
-  await waitFor(() => expect(coverage).toHaveBeenCalled());
-  expect(screen.queryByText(/without a text layer/)).toBeNull();
-  expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
-});
-// prettier-ignore
+
+it.each(["zero", "failure", "frozen"])(
+  "keeps the empty search quiet when coverage is %s",
+  async (state) => {
+    const coverage = vi.fn(async () =>
+      state === "failure"
+        ? new Response("failure", { status: 500 })
+        : json({ pdfs_without_text: 0, pages_without_text: 0 }),
+    );
+    renderEmptySearch(coverage);
+    if (state === "frozen") {
+      await screen.findByRole("searchbox", { name: "Search documents" });
+      await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
+      await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
+    }
+    await submitSearch("missing");
+    if (state === "frozen") {
+      const results = await screen.findByRole("region", { name: "Frozen query results" });
+      expect(within(results).getByText("No matching documents")).toBeTruthy();
+      expect(coverage).not.toHaveBeenCalled();
+    } else await waitFor(() => expect(coverage).toHaveBeenCalled());
+    expect(screen.queryByText(/without a text layer/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
+  },
+);
+
 it("ignores coverage from an older search", async () => {
   let resolve!: (response: Response) => void;
-  const old = new Promise<Response>((done) => { resolve = done; });
-  const coverage = vi.fn().mockReturnValueOnce(old).mockResolvedValue(json({ pdfs_without_text: 0, pages_without_text: 0 }));
+  const old = new Promise<Response>((done) => {
+    resolve = done;
+  });
+  const coverage = vi
+    .fn()
+    .mockReturnValueOnce(old)
+    .mockResolvedValue(json({ pdfs_without_text: 0, pages_without_text: 0 }));
   renderEmptySearch(coverage);
   await submitSearch("first");
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(1));
@@ -2129,30 +2174,4 @@ it("ignores coverage from an older search", async () => {
   await act(async () => resolve(json({ pdfs_without_text: 1, pages_without_text: 1 })));
   expect(screen.queryByText(/without a text layer/)).toBeNull();
   expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
-});
-// prettier-ignore
-it("leaves frozen empty searches without a PDF coverage notice", async () => {
-  const coverage = vi.fn(async () => json({ pdfs_without_text: 1, pages_without_text: 1 }));
-  renderEmptySearch(coverage);
-  await screen.findByRole("searchbox", { name: "Search documents" });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
-  await submitSearch("missing");
-  const results = await screen.findByRole("region", { name: "Frozen query results" });
-  expect(within(results).getByText("No matching documents")).toBeTruthy();
-  expect(coverage).not.toHaveBeenCalled();
-  expect(within(results).queryByText(/without a text layer/)).toBeNull();
-});
-// prettier-ignore
-it("scopes PDF coverage to the selected tag", async () => {
-  const coverage = vi.fn(async () => json({ pdfs_without_text: 1, pages_without_text: 1 }));
-  const { fetchMock } = installHarness({ profiles: [], files: [node(2, "report.txt", baseVersion)], baseReport: report("lexical", []), coverage });
-  render(App);
-  await screen.findAllByText("report.txt");
-  await fireEvent.click(await screen.findByRole("combobox", { name: "Browse or filter by tag: All tags" }));
-  await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
-  await submitSearch("missing");
-  await waitFor(() => expect(coverage).toHaveBeenCalled());
-  const request = fetchMock.mock.calls.map(([url]) => String(url)).find((url) => url.startsWith("/api/v1/search/text-coverage"));
-  expect(new URL(request!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
 });
