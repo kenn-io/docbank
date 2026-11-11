@@ -31,7 +31,7 @@ it.each([
     status: { fallback_reason: reason, coverage_incomplete: incomplete },
     total: 3,
   });
-  expect(screen.getByRole("status").textContent).toContain(message);
+  expect(screen.getByRole("status").textContent?.replace(/\s+/g, " ")).toContain(message);
 });
 
 it.each([
@@ -39,5 +39,5 @@ it.each([
   [false, 12, "Top 12 matches. Select all, export, and Cull use these photos."],
 ] as const)("shows the search limit for located=%s", (located, total, message) => {
   render(PhotoSearchStatus, { status: { truncated: true }, total, located });
-  expect(screen.getByRole("status").textContent).toContain(message);
+  expect(screen.getByRole("status").textContent?.replace(/\s+/g, " ")).toContain(message);
 });
