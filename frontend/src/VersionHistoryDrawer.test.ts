@@ -297,3 +297,21 @@ describe("version history drawer", () => {
     expect(screen.getByText(createdVersionID)).toBeTruthy();
   });
 });
+
+it("retries version history after a temporary failure", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError("Network error"))
+    .mockRejectedValueOnce(new TypeError("Network error"))
+    .mockResolvedValueOnce(Response.json({ items: [], total: 0, limit: 1000, offset: 0 }));
+  render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("No versions")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});

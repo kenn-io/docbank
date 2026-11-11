@@ -174,3 +174,39 @@ it("keeps unavailable occurrences visible and fences replaced-source and denied 
   expect(screen.queryByRole("button", { name: "same.txt" })).toBeNull();
   expect(screen.queryByText("No published attachments")).toBeNull();
 });
+
+it("keeps the first page while retrying a failed next page", async () => {
+  let laterCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const route = String(input);
+    if (route.includes("child_version_id=")) return Response.json(empty);
+    if (route.includes("after_order=")) {
+      laterCalls++;
+      if (laterCalls <= 2) return Response.json({ detail: "Unavailable" }, { status: 503 });
+      return Response.json({
+        items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
+        total: 51,
+        next_operation_id: "",
+        next_order: 0,
+      });
+    }
+    return Response.json({
+      items: Array.from({ length: 50 }, (_, i) => ({
+        relation: relation(i + 1),
+        state: "pending",
+        reason: "text_extraction",
+      })),
+      total: 51,
+      next_operation_id: "synthetic",
+      next_order: 50,
+    });
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  const group = await screen.findByRole("region", { name: "Attachments" });
+  await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
+  const retry = await within(group).findByRole("button", { name: "Try again" });
+  expect(within(group).getAllByRole("listitem")).toHaveLength(50);
+  await fireEvent.click(retry);
+  await waitFor(() => expect(within(group).getAllByRole("listitem")).toHaveLength(51));
+  expect(laterCalls).toBe(3);
+});

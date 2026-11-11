@@ -192,3 +192,39 @@ it.each([
     expect(screen.queryByText("Last-Modified")).toBeNull();
   }
 });
+
+it("retries a transient failure and allows one manual attempt", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ detail: "Unavailable" }, { status: 500 }))
+    .mockResolvedValueOnce(Response.json({ detail: "Unavailable" }, { status: 503 }))
+    .mockResolvedValueOnce(Response.json({ node, items: [], total: 0, limit: 1000, offset: 0 }));
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await fireEvent.click(retry);
+  expect(await screen.findByText("No source history recorded")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it("does not retry a permission failure", async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(Response.json({ detail: "Denied" }, { status: 403 }));
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect((await screen.findByRole("alert")).textContent).toContain("Denied");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
