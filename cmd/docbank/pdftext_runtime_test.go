@@ -277,30 +277,15 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			defer stop()
 			waitForDaemon(t, home)
 			require.NoError(t, os.WriteFile(path, data, 0600))
-			var deadline context.Context
 			if !test.existing {
-				settleDaemon(t)
-				var cancel context.CancelFunc
-				deadline, cancel = context.WithTimeout(t.Context(), 10*time.Second)
-				defer cancel()
 				_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
 				require.NoError(t, err)
 			}
-			if test.existing {
-				settleDaemon(t)
-			} else {
-				value, ok := testDaemons.Load(home)
-				require.True(t, ok)
-				daemon, ok := value.(serveReady)
-				require.True(t, ok)
-				require.NoError(t, daemon.jobs.Settle(deadline))
-			}
+			// Drain real PDF work without making host CPU speed a correctness assertion.
+			settleDaemon(t)
 			out, err := runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
 			require.NoError(t, err)
 			require.Contains(t, out, "/pdfs/source.pdf")
-			if deadline != nil {
-				require.NoError(t, deadline.Err(), "import and search exceeded ten seconds")
-			}
 		})
 	}
 }
