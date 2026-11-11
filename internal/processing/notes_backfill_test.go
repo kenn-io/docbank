@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,6 +67,7 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 		for _, test := range []struct{ name, src string }{
 			{"good.md", "---\ntags: [blue]\n---\n# Original\n"}, {"bad.md", "\xff"},
 			{"malformed.md", "---\ntitle: [broken\n---\n# Readable\n"},
+			{"expanded.md", "---\nbase: &m\n  ? " + strings.Repeat("a", 700000) + "\n  : 0\ncopies: [" + strings.Repeat("*m,", 39) + "*m]\n---\n# Readable\n"},
 		} {
 			require.NoError(t, blobs.WithMutation(ctx, func() error {
 				hash, size, err := blobs.WriteContext(ctx, strings.NewReader(test.src))
@@ -79,11 +81,21 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 		// Oversize classification must not try to open unavailable blob bytes.
 		_, err = catalog.CreateFile(ctx, catalog.RootID(), "oversize.md", strings.Repeat("a", 64), store.MaxNoteBytes+1, "text/markdown")
 		require.NoError(t, err)
+		page, err := catalog.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, "", 25)
+		require.NoError(t, err)
+		failure := errors.New("synthetic publication failure")
+		failing := &notePublicationFailure{NoteCatalog: catalog, err: failure}
+		for _, target := range page.Targets {
+			if target.Path == "/good.md" {
+				require.ErrorIs(t, processNoteTarget(ctx, failing, blobs, target), failure)
+			}
+		}
+		require.Equal(t, 1, failing.calls, "ordinary errors retain retry behavior without terminal fallback")
 		require.NoError(t, RebuildNotes(ctx, catalog, blobs))
 		status, err := catalog.NotesStatus(ctx, notemarkdown.Recipe, nil)
 		require.NoError(t, err)
 		require.Equal(t, 2, status[0].Parsed)
-		require.Equal(t, 2, status[0].Failed)
+		require.Equal(t, 3, status[0].Failed)
 		require.Zero(t, status[0].Pending)
 		view, err := catalog.NoteByPath(ctx, "/good.md", notemarkdown.Recipe)
 		require.NoError(t, err)
@@ -92,6 +104,11 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 		view, err = catalog.NoteByPath(ctx, "/malformed.md", notemarkdown.Recipe)
 		require.NoError(t, err)
 		require.Equal(t, "Readable", view.Summary.Title)
+		view, err = catalog.NoteByPath(ctx, "/expanded.md", notemarkdown.Recipe)
+		require.NoError(t, err)
+		require.Equal(t, "limit", view.State, "Raw overflow completes as a terminal classification")
+		require.Zero(t, view.HeadingCount)
+		require.Nil(t, view.Frontmatter)
 		revision := catalog.WriteRevision()
 		worker := NewNoteBackfill(catalog, blobs, nil, nil)
 		for range 3 {
@@ -106,6 +123,17 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 			require.Equal(t, revision, catalog.WriteRevision())
 		}
 	})
+}
+
+type notePublicationFailure struct {
+	NoteCatalog
+	err   error
+	calls int
+}
+
+func (c *notePublicationFailure) PublishNoteParse(context.Context, store.NoteTarget, string, string, notemarkdown.Note) error {
+	c.calls++
+	return c.err
 }
 
 func TestNoteRebuildPropagatesCancellation(t *testing.T) {

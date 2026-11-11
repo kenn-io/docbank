@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json/jsontext"
@@ -350,13 +351,35 @@ func checkNoteAuthoredValuesAndCollections(t *testing.T, newStore func(*testing.
 			require.Empty(t, view.Frontmatter)
 		}
 	}
+	const identities = "---\naliases: [Cafe\u0301, Café, '..odd:alias']\n---\n[Relative](cafe%CC%81.md)\n[Absolute](/work/cafe%CC%81/other.md)\n[[Cafe\u0301]]\n"
+	n := createNoteFixture(t, s, deep.ID, "identities.md", identities, "text/markdown")
+	publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], identities, notemarkdown.Recipe)
+	rows, err := s.db.QueryContext(ctx, `SELECT target_path,target_key FROM note_links WHERE version_id=$1 ORDER BY ordinal`, n.CurrentVersionID)
+	require.NoError(t, err)
+	var paths, keys []*string
+	for rows.Next() {
+		var targetPath, targetKey *string
+		require.NoError(t, rows.Scan(&targetPath, &targetKey))
+		paths, keys = append(paths, targetPath), append(keys, targetKey)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Equal(t, []*string{new("/work/café/café.md"), new("/work/café/other.md"), nil}, paths)
+	require.Equal(t, []*string{nil, nil, new("café")}, keys)
+	var alias, key string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT alias,alias_key FROM note_aliases WHERE version_id=$1 AND alias_key=$2`, n.CurrentVersionID, "café").Scan(&alias, &key))
+	require.Equal(t, "Cafe\u0301", alias, "first authored spelling remains display data")
+	require.Equal(t, "café", key)
+	var aliasCount int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM note_aliases WHERE version_id=$1`, n.CurrentVersionID).Scan(&aliasCount))
+	require.Equal(t, 2, aliasCount, "NFC aliases deduplicate while arbitrary punctuation remains valid")
 	createNoteFixture(t, s, dir.ID, "outer.md", "body", "text/markdown")
 	createNoteFixture(t, s, s.RootID(), "root.md", "body", "text/markdown")
 	watches := []NoteWatch{{"outer", "/work/"}, {"inner", "//work//cafe\u0301///"}, {"root", "//"}}
 	status, err := s.NotesStatus(ctx, notemarkdown.Recipe, watches)
 	require.NoError(t, err)
 	require.Equal(t, 1, status[0].Pending)
-	require.Equal(t, 5, status[1].Parsed)
+	require.Equal(t, 6, status[1].Parsed)
 	require.Equal(t, 1, status[2].Pending)
 	require.Zero(t, status[3].Parsed+status[3].Pending+status[3].Failed)
 }
@@ -479,6 +502,7 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "vault.db")
 			db, legacy := newReleasedFixtureStore(t, dbPath, driver.driver, schemaV0170SQL, 48)
 			n := createReleasedFixtureFile(t, legacy, "released.md", fakeHash("d4"), 8, "text/markdown")
+			require.NoError(t, execReleasedWatchAbsence(ctx, db, n))
 			tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 			require.NoError(t, err)
 			var before bytes.Buffer
@@ -493,6 +517,14 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			require.Equal(t, before.String(), after.String(), "cutover preserves deterministic logical authority")
 			require.FileExists(t, dbPath+".schema-v48.bak")
 			require.NoError(t, s.ValidateMetadata(ctx))
+			pending, err := s.NoteByPath(ctx, "/released.md", notemarkdown.Recipe)
+			require.NoError(t, err)
+			require.Equal(t, "gone", pending.Summary.SourceState)
+			_, err = s.db.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name='fixture'`)
+			require.NoError(t, err)
+			pending, err = s.NoteByPath(ctx, "/released.md", notemarkdown.Recipe)
+			require.NoError(t, err)
+			require.Equal(t, "present", pending.Summary.SourceState)
 			targets := noteTargets(t, s, notemarkdown.Recipe)
 			require.Len(t, targets, 1)
 			require.Equal(t, n.CurrentVersionID, targets[0].VersionID)
@@ -502,6 +534,14 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			require.Equal(t, "Title", view.Summary.Title)
 		})
 	}
+}
+
+func execReleasedWatchAbsence(ctx context.Context, db *sql.DB, n Node) error {
+	if _, err := db.ExecContext(ctx, `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('fixture','released.md',$1,$2,$3)`, n.ID, n.BlobHash, n.Size); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00Z')`)
+	return err
 }
 
 func FuzzNoteCollectionSlashBoundary(f *testing.F) {

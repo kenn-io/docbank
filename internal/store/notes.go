@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document/notemarkdown"
+	"golang.org/x/text/unicode/norm"
 )
 
 const MaxNoteBytes int64 = 4 << 20
@@ -20,10 +21,10 @@ const MaxNoteBytes int64 = 4 << 20
 // NoteTarget captures the source and placement observed by the note worker.
 // The placement fence matters even when a move leaves the version unchanged.
 type NoteTarget struct {
-	NodeID, Revision                          int64
-	VersionID, BlobHash, Path, Name, MIMEType string
-	Size                                      int64
-	Prune                                     bool
+	NodeID, Revision          int64
+	VersionID, BlobHash, Path string
+	Size                      int64
+	Prune                     bool
 }
 
 type NotePage struct {
@@ -79,13 +80,30 @@ func IsNoteCandidate(n Node) bool {
 // NoteCollection returns the nearest containing watch destination, or root.
 // A slash boundary prevents /work from also matching /workshop.
 func NoteCollection(notePath string, watches []NoteWatch) (NoteWatch, error) {
+	destinations, err := noteDestinations(watches)
+	if err != nil {
+		return NoteWatch{}, err
+	}
+	return noteCollection(notePath, watches, destinations), nil
+}
+
+func noteDestinations(watches []NoteWatch) ([]string, error) {
+	destinations := make([]string, len(watches))
+	for i, watch := range watches {
+		var err error
+		destinations[i], err = canonicalBatchMovePath(watch.Destination)
+		if err != nil {
+			return nil, fmt.Errorf("note collection %q: %w", watch.Name, err)
+		}
+	}
+	return destinations, nil
+}
+
+func noteCollection(notePath string, watches []NoteWatch, destinations []string) NoteWatch {
 	best := NoteWatch{Destination: "/"}
 	bestLength := 1
-	for _, watch := range watches {
-		dest, err := canonicalBatchMovePath(watch.Destination)
-		if err != nil {
-			return NoteWatch{}, fmt.Errorf("note collection %q: %w", watch.Name, err)
-		}
+	for i, watch := range watches {
+		dest := destinations[i]
 		if dest != "/" && !strings.HasPrefix(notePath, dest+"/") {
 			continue
 		}
@@ -94,12 +112,12 @@ func NoteCollection(notePath string, watches []NoteWatch) (NoteWatch, error) {
 			bestLength = len(dest)
 		}
 	}
-	return best, nil
+	return best
 }
 
 // Traverse live ancestry, so a file below a trashed directory is ineligible.
 const noteTreeCTE = `WITH RECURSIVE note_tree(id,path) AS (
- SELECT id,CAST('/' AS TEXT) FROM nodes WHERE parent_id IS NULL AND trashed_at IS NULL
+ SELECT id,CASE WHEN parent_id IS NULL THEN '/' ELSE '/'||name END FROM nodes WHERE parent_id IS NULL AND trashed_at IS NULL
  UNION ALL
  SELECT n.id,CASE WHEN t.path='/' THEN '/'||n.name ELSE t.path||'/'||n.name END
  FROM nodes n JOIN note_tree t ON n.parent_id=t.id WHERE n.trashed_at IS NULL
@@ -180,7 +198,7 @@ func (s *Store) ScanNoteTargetsAfter(ctx context.Context, recipe, after string, 
 				}
 				continue
 			}
-			target.Path, target.Name, target.MIMEType = paths[i], n.Name, n.MimeType
+			target.Path = paths[i]
 			target.Revision, target.BlobHash, target.Size = n.Revision, n.BlobHash, n.Size
 			stale := recipes[i] == nil || *recipes[i] != recipe
 			if !stale {
@@ -245,7 +263,7 @@ func (s *Store) PruneNoteParse(ctx context.Context, target NoteTarget) error {
 // PublishNoteParse stores only parser structure. Stale targets do no work;
 // the next scan captures the replacement version or new placement.
 func (s *Store) PublishNoteParse(ctx context.Context, target NoteTarget, recipe, state string, note notemarkdown.Note) error {
-	frontmatter, diagnostic, err := validateNoteParse(target, recipe, state, note)
+	frontmatter, diagnostic, err := validateNoteParse(ctx, target, recipe, state, note)
 	if err != nil {
 		return err
 	}
@@ -296,7 +314,7 @@ func (s *Store) PublishNoteParse(ctx context.Context, target NoteTarget, recipe,
 	})
 }
 
-func validateNoteParse(target NoteTarget, recipe, state string, note notemarkdown.Note) (*string, *string, error) {
+func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state string, note notemarkdown.Note) (*string, *string, error) {
 	invalid := func() (*string, *string, error) { return nil, nil, errors.New("invalid note projection") }
 	if target.VersionID == "" || recipe == "" || len(recipe) > 256 || !utf8.ValidString(recipe) || target.Size < 0 {
 		return invalid()
@@ -345,15 +363,11 @@ func validateNoteParse(target NoteTarget, recipe, state string, note notemarkdow
 			}
 		}
 		if f.Raw != nil {
-			encoded, err := json.Marshal(f.Raw)
+			encoded, err := encodeNoteRaw(ctx, f.Raw)
 			if err != nil {
 				return nil, nil, fmt.Errorf("encoding note frontmatter: %w", err)
 			}
-			if len(encoded) > int(MaxNoteBytes)*6 {
-				return invalid()
-			}
-			text := string(encoded)
-			raw = &text
+			raw = &encoded
 		} else {
 			// Parser diagnostics are bounded codes, never authored YAML text.
 			if len(note.Diagnostics) != 1 {
@@ -382,7 +396,7 @@ func insertNoteStructure(ctx context.Context, tx *sql.Tx, target NoteTarget, not
 			}
 		}
 		for _, alias := range f.Aliases {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO note_aliases(version_id,alias_key,alias) VALUES($1,$2,$3) ON CONFLICT(version_id,alias_key) DO NOTHING`, target.VersionID, strings.ToLower(alias), alias); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO note_aliases(version_id,alias_key,alias) VALUES($1,$2,$3) ON CONFLICT(version_id,alias_key) DO NOTHING`, target.VersionID, strings.ToLower(norm.NFC.String(alias)), alias); err != nil {
 				return err
 			}
 		}
@@ -426,7 +440,7 @@ func noteLinkIdentity(notePath, form, target string) (*string, *string) {
 		return nil, nil
 	}
 	if (form == "wikilink" || form == "embed") && !strings.Contains(target, "/") {
-		key := strings.ToLower(target)
+		key := strings.ToLower(norm.NFC.String(target))
 		if strings.HasSuffix(key, ".markdown") {
 			key = strings.TrimSuffix(key, ".markdown")
 		} else {
@@ -438,7 +452,11 @@ func noteLinkIdentity(notePath, form, target string) (*string, *string) {
 	if !strings.HasPrefix(target, "/") {
 		resolved = path.Join(path.Dir(notePath), target)
 	}
-	return &resolved, nil
+	canonical, err := canonicalBatchMovePath(resolved)
+	if err != nil {
+		return nil, nil
+	}
+	return &canonical, nil
 }
 
 // NoteByPath reads one current eligible note and its derived structure from a
@@ -497,6 +515,10 @@ func (s *Store) NoteByPath(ctx context.Context, notePath, recipe string) (NoteVi
 // NotesStatus counts current candidates by their nearest configured collection.
 // Oversize Markdown counts as a failed attempt once classified by the worker.
 func (s *Store) NotesStatus(ctx context.Context, recipe string, watches []NoteWatch) ([]NoteWatchStatus, error) {
+	destinations, err := noteDestinations(watches)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]NoteWatchStatus, 0, len(watches)+1)
 	positions := map[string]int{}
 	for _, watch := range append(append([]NoteWatch{}, watches...), NoteWatch{Destination: "/"}) {
@@ -508,17 +530,14 @@ func (s *Store) NotesStatus(ctx context.Context, recipe string, watches []NoteWa
 		items = append(items, NoteWatchStatus{Name: watch.Name, Destination: watch.Destination})
 	}
 	lastAt := make(map[int]string)
-	err := queryRows(ctx, s.db, noteTreeCTE+`SELECT t.path,COALESCE(p.state,'pending'),COALESCE(p.parsed_at,'')
+	err = queryRows(ctx, s.db, noteTreeCTE+`SELECT t.path,COALESCE(p.state,'pending'),COALESCE(p.parsed_at,'')
  FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
- LEFT JOIN note_parses p ON p.version_id=cv.version_id AND p.recipe=$1 WHERE `+noteCandidateSQL+` ORDER BY cv.version_id`, []any{recipe}, func(rows *sql.Rows) error {
+ LEFT JOIN note_parses p ON p.version_id=cv.version_id AND p.recipe=$1 WHERE `+noteCandidateSQL, []any{recipe}, func(rows *sql.Rows) error {
 		var notePath, state, at string
 		if err := rows.Scan(&notePath, &state, &at); err != nil {
 			return err
 		}
-		watch, err := NoteCollection(notePath, watches)
-		if err != nil {
-			return err
-		}
+		watch := noteCollection(notePath, watches, destinations)
 		index := positions[watch.Name+"\x00"+watch.Destination]
 		item := &items[index]
 		switch state {

@@ -1,5 +1,21 @@
 package store
 
+import (
+	"context"
+	"database/sql"
+)
+
+// Upgrade preserves absence observations; backup/restore intentionally omits
+// them. Their watch_sources parents have already been restored from metadata.
+func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	if err := restoreV41SourceState(ctx, source, target); err != nil {
+		return err
+	}
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return copyReleasedRowsOrdered(ctx, source, tx, "watch_source_absences", "", "watch_name,source_ref")
+	})
+}
+
 // schemaV48Layout freezes the exact released v0.17.0 fixture columns.
 const schemaV48Layout = `{
   "audit_authority": ["allocation_entry_count", "allocation_genesis_digest", "allocation_head", "lineage_id", "operation_sequence_high_water", "singleton"],

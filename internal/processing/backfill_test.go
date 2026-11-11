@@ -176,6 +176,22 @@ func TestBackfillPageProgressPreservesControlRelistAndRetries(t *testing.T) {
 	})
 }
 
+func TestBackfillFilteredPagesAdvanceWithoutPacing(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a", "b", "c")
+		for _, key := range catalog.keys {
+			catalog.done[key] = true
+		}
+		worker := newTestBackfill(catalog, 1, true)
+		worker.List, worker.ListPage = nil, catalog.scan
+		started := time.Now()
+		require.NoError(t, worker.Run(t.Context()))
+		require.Equal(t, started, time.Now(), "filtered pages reach explicit EOF without a timer")
+		require.Equal(t, 4, catalog.listed)
+	})
+}
+
 func TestBackfillRejectsAmbiguousListingsAndInvalidPageProgress(t *testing.T) {
 	t.Parallel()
 	worker := newTestBackfill(newFakeBackfillCatalog(), 2, true)

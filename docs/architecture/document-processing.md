@@ -106,22 +106,41 @@ contract. Five derived catalogs retain the current version's parse, fields,
 headings, links and aliases. They contain no original bytes and are omitted
 from metadata JSONL. Storage schema 49 upgrades the released v0.17.0 schema 48
 through the existing fresh-database cutover and preserves the logical format.
+The cutover also preserves watch source absence observations, which are local
+operational state omitted from metadata JSONL.
 PostgreSQL mirrors these catalogs using its canonical schema fingerprint.
 
-The bounded worker starts with the daemon and wakes after catalog writes.
+The bounded worker starts with the daemon and uses the shared `WriteRevision`
+signal after catalog writes. This is an approved deviation from P03's proposed
+`vault_changes` event wake: it uses the existing backfill owner without another
+event consumer or authority. An unrelated global revision can still require
+O(N) candidate revalidation; incremental discovery is not delivered here.
 It replaces obsolete recipes, removes projections without a current live note,
 and refreshes relative link paths after a node or ancestor moves. Each page
 selects at most 25 current-note or cached version identities before checking
 their ancestry and bounded cached links. Unchanged and trashed rows advance the
 scan cursor; only EOF completes a pass. Cleanup rechecks live ownership in its
 write transaction. An unchanged no-work pass settles until a catalog write.
-Publication
-checks the observed version, revision and canonical path in one transaction.
+Filtered pages continue without a timer. At 5,000 unchanged candidates and page
+size 25, this removes about 20 seconds of forced 100 ms page pacing; it does
+not change the amount of candidate revalidation. Publication checks the observed
+version, revision and canonical path in one transaction.
 Filename title fallback is computed from the live name. UTF-8 or NUL failures,
 oversize inputs and parser limits record `not_utf8`, `too_large` or `limit`
 without blocking other notes. Malformed or unclosed YAML leaves readable body
 structure and retains its bounded parser diagnostic alongside null frontmatter.
 Operational blob or database errors remain retryable.
+
+Frontmatter JSON has an independent 24 MiB encoded limit. One standard JSON
+traversal counts each string's quoted size in UTF-8 aligned chunks using at
+most 6,146 bytes of scratch, including mapping keys and buffered nested prefixes.
+An admitted quoted token and the destination each contain at most 24 MiB;
+encoder and object-name tracking storage are O(limit + nesting depth).
+Encoding stops at the remaining byte budget, with cancellation checks between
+chunks and destination writes. Escaping, separators and container bytes count
+toward the limit, with no trailing newline. Overflow publishes a fenced
+terminal `limit` with no partial frontmatter, fields, headings, links or aliases.
+Cancellation and other encoding failures keep their original error behavior.
 
 Restore rebuilds note structure from restored original blobs before publishing
 the target vault. A bad note's terminal classification does not fail restore.

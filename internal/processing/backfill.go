@@ -162,9 +162,6 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 		targets := page.Targets
 		if len(targets) == 0 {
 			cursor = page.Next
-			if err := jobs.Idle(ctx, backfillBatchPause, true); err != nil {
-				return err
-			}
 			continue
 		}
 		idleDelay = b.IdleDelay

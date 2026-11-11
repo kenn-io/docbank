@@ -206,6 +206,8 @@ polls while it waits for index publication to finish.
 
 The daemon's content jobs include:
 
+- `derive:notes` derives current Markdown structure and classifies content
+  limits. A complete unchanged pass settles until the catalog changes.
 - `extract:plain-text` verifies and indexes supported current text content with
   a bounded worker.
 - `extract:source-metadata` reads retained originals that the current extractor
