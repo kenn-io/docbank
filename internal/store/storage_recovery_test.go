@@ -9,11 +9,10 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
-	t *testing.T,
-) {
+func checkStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
@@ -23,7 +22,7 @@ func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
 
 	hash := fakeHash("abcd")
 	_, err = s.db.ExecContext(t.Context(),
-		`INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`,
+		`INSERT INTO blobs(hash,size,created_at) VALUES($1,4,$2)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
@@ -31,8 +30,8 @@ func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
 		) VALUES
-			(?,?,?,'loose','raw',4,1),
-			(?,?,?,'loose','raw',4,1)`,
+			($1,$2,$3,'loose','raw',4,1),
+			($4,$5,$6,'loose','raw',4,1)`,
 		hash, s.primaryStoreID, "40000000-0000-4000-8000-000000000001",
 		hash, secondary.ID, "40000000-0000-4000-8000-000000000002",
 	)
@@ -53,8 +52,8 @@ func TestStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(
 	require.NoError(t, s.BeginStorageRecoveryPublication(ctx, operation.ID, plan))
 
 	_, err = s.db.ExecContext(t.Context(), `
-		UPDATE blob_locations SET generation=?
-		WHERE blob_hash=? AND store_id=?`,
+		UPDATE blob_locations SET generation=$1
+		WHERE blob_hash=$2 AND store_id=$3`,
 		"40000000-0000-4000-8000-000000000003", hash, secondary.ID,
 	)
 	require.NoError(t, err)

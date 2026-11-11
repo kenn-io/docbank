@@ -6,7 +6,6 @@ var sqliteOnlyBackendTables = map[string]string{
 	"vector_membership_epochs":          "vector index lifecycle is unqualified",
 	"photo_timeline_pending":            "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
 	"photo_xmp_unsettled_pending":       "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
-	"storage_operation_stores":          "multi-store operations are unqualified",
 	"vector_index_build_jobs":           "vector index lifecycle is unqualified",
 	"vector_index_reader_leases":        "vector index lifecycle is unqualified",
 	"vector_index_unavailable_coverage": "vector index lifecycle is unqualified",
@@ -25,7 +24,7 @@ var deferredBackendIndexes = map[string]string{
 	"rendition_attachments_build":       "rendition_attachments",
 	"term_report_history_recent":        "term_report_history",
 	// This is a write invariant, not a deferred access optimization. The
-	// multi-store port must enforce active evacuation uniqueness in Go; copying
+	// shared writer admission enforces active evacuation uniqueness in Go; copying
 	// SQLite's closed state list into the new schema is forbidden.
 	"one_active_evacuation_per_store": "storage_operations",
 }
