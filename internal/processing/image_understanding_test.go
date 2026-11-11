@@ -24,6 +24,7 @@ import (
 
 func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T) {
 	t.Parallel()
+	model := strings.Repeat("m", 255)
 	var partial atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -39,7 +40,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 		_, _ = w.Write(visiontest.Completion(string(raw)))
 	}))
 	defer server.Close()
-	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	require.NoError(t, err)
 	embedder := &understandingEmbeddingCapture{descriptor: embeddingWorkerDescriptor(t)}
 	reranker := &understandingRerankingCapture{}
@@ -57,7 +58,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	portable.Rendition.MaxUnits = 4
 	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactMarkdown}
 	portable.EvidenceLexical.MaxUnitRunes = 5000
-	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: "synthetic-vision"}, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": embedder}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}, RerankingProvider: reranker, RerankingProfile: retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 10, MaxExcerptBytes: 4096}, RerankingDeadline: time.Second, RerankingFailurePolicy: retrieval.ProviderFailureFailClosed, RerankingDisclosure: RuntimeDisclosure{ImmediateProcessor: "synthetic", UltimateProcessor: "synthetic", Endpoint: "https://rerank.example.invalid", Deployment: workerHash("reranker")}}}})
+	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: model}, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": embedder}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}, RerankingProvider: reranker, RerankingProfile: retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 10, MaxExcerptBytes: 4096}, RerankingDeadline: time.Second, RerankingFailurePolicy: retrieval.ProviderFailureFailClosed, RerankingDisclosure: RuntimeDisclosure{ImmediateProcessor: "synthetic", UltimateProcessor: "synthetic", Endpoint: "https://rerank.example.invalid", Deployment: workerHash("reranker")}}}})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.JPEG(32, 24, color.White)))
@@ -77,6 +78,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	assert.NotEmpty(t, view.Build.ProviderReceipt)
 	window, err := service.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: view.Attachment.ID, MaxChars: 16000})
 	require.NoError(t, err)
+	assert.Contains(t, window.Text, model)
 	assert.Contains(t, window.Text, `R and D \&amp\; partners`)
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)

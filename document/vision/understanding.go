@@ -71,9 +71,10 @@ func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 			evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionField, Field: section.field, Reason: "no supported content provided"})
 			continue
 		}
+		// Generic locator names retain the model without changing the speaker limit.
 		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
-			Order: len(evidence.Units), HeadingPath: []string{document.ImageUnderstandingHeading, section.title}, Text: content, Speaker: model,
-			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone},
+			Order: len(evidence.Units), HeadingPath: []string{document.ImageUnderstandingHeading, section.title}, Text: content,
+			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone, Name: model},
 		})
 	}
 	return evidence
@@ -104,7 +105,7 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	}
 	var markdown strings.Builder
 	for i, unit := range evidence.Units {
-		markdown.WriteString(document.ImageUnderstandingMarkdown(unit.HeadingPath, unit.Speaker, unit.Text, i == 0) + "\n\n")
+		markdown.WriteString(document.ImageUnderstandingMarkdown(unit.HeadingPath, unit.Locator.Name, unit.Text, i == 0) + "\n\n")
 	}
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: authorization.SourceSHA256, UploadSHA256: meta.SHA256, OperationID: "understand-" + authorization.RenditionRequestFingerprint, StartedAt: started, CompletedAt: time.Now().UTC(), Warnings: []string{"degraded_provenance", "machine_generated_interpretation"}, Usage: document.RenditionUsage{Requests: 1, InputBytes: meta.ByteLength, OutputBytes: int64(len(raw)), Units: int64(len(evidence.Units))}})
 	if err != nil {

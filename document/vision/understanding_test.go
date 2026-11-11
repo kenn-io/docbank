@@ -32,6 +32,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 	}{
 		{"sections", "synthetic-vision", `{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`, []string{"## Visible text \\(best\\-effort transcription\\)\n\nFINE", "## Literal description\n\nA dog sits beside flames\\.", "## Possible meaning \\(interpretation\\)\n\nMay joke about ignoring a problem\\.", `No conversation context is available\.`, `does not establish anyone\'s beliefs`}, nil, 1, false},
 		{"literal", "synthetic<&>", `{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{`Configured model\: synthetic\<\&\>`, `R and D \&amp\; partners`, `\=\=\=`}, nil, 4, false},
+		{"long model", strings.Repeat("m", 255), `{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{strings.Repeat("m", 255)}, nil, 4, false},
 		{"forged markup", "synthetic-vision", `{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{`\# Author confirmed`}, []string{"\n# Author confirmed", "[click](https://example.com)", "<script>"}, 4, false},
 		{"all empty", "synthetic-vision", `{"visible_text":"","literal_description":" ","possible_meaning":"","uncertainty":""}`, nil, nil, 0, true},
 	}

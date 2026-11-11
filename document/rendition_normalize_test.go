@@ -90,10 +90,10 @@ func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
 		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
 		Family: "image", UnitKind: EvidenceUnitGeneric,
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Speaker: "model", Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone}}},
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}},
 	})
 	// The labels fit, leaving too little room for all of the text.
-	limit := utf8.RuneCountInString(ImageUnderstandingMarkdown(evidence.Units[0].HeadingPath, evidence.Units[0].Speaker, "", true)) + len("hello") - 1
+	limit := utf8.RuneCountInString(ImageUnderstandingMarkdown(evidence.Units[0].HeadingPath, evidence.Units[0].Locator.Name, "", true)) + len("hello") - 1
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
@@ -107,7 +107,7 @@ func TestUnderstandingRetainsLongConfiguredModel(t *testing.T) {
 		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
 		Family: "image", UnitKind: EvidenceUnitGeneric,
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Speaker: model, Text: "FINE", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone}}},
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Text: "FINE", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}}},
 	})
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1_000})
 	require.NoError(t, err)

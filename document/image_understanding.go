@@ -58,5 +58,5 @@ func renditionPresentation(unit NormalizedEvidenceUnitV1, first bool) string {
 	if !isImageUnderstandingUnit(unit.HeadingPath) {
 		return ""
 	}
-	return ImageUnderstandingMarkdown(unit.HeadingPath, unit.Speaker, "", first)
+	return ImageUnderstandingMarkdown(unit.HeadingPath, unit.Locator.Name, "", first)
 }
