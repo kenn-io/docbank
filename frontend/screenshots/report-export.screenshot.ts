@@ -317,7 +317,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
       await expect(
         drawer.getByRole("paragraph").filter({ hasText: "3 in date ranges" }),
       ).toContainText(
-        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete related-file information · import or recorded dates: 1 · expires",
+        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete relationships · import or recorded dates: 1 · expires",
       );
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({

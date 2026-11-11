@@ -557,7 +557,7 @@
         </div>
         <div class="tool-field tool-span-3">
           <span class="tool-label" id="report-coverage-label"
-            >Missing dates, text, or related-file information</span
+            >Incomplete dates, text, or relationships</span
           >
           <SelectDropdown
             title="Missing information"
@@ -621,8 +621,9 @@
           {:else}<p class="tool-muted">
               {active.coverage.scoped} in date ranges · {active.coverage.searchable} searchable · {active
                 .coverage.missing_text} missing text · {active.coverage.incomplete_families} with incomplete
-              related-file information · import or recorded dates: {active.coverage.fallback_dates} ·
-              expires {formatDate(active.expires_at)}
+              relationships · import or recorded dates: {active.coverage.fallback_dates} · expires {formatDate(
+                active.expires_at,
+              )}
             </p>{/if}
           {#if active.coverage.warnings?.length}<ul>
               {#each active.coverage.warnings as warning}<li>{warning}</li>{/each}
