@@ -1502,6 +1502,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkEmbeddingReconciliationSkipsSuppressedRetainedGeneration(t, newPostgresQueryStore)
 		}},
+		{"AutomaticVideoEmbeddingReconciliation", func(t *testing.T) {
+			t.Helper()
+			checkAutomaticVideoEmbeddingReconciliation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAutomaticVideoEmbeddingReconciliation(t, newPostgresQueryStore)
+		}},
 		{"EmbeddingReconciliationSkipsExistingTerminalJob", func(t *testing.T) { t.Helper(); checkEmbeddingReconciliationSkipsExistingTerminalJob(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkEmbeddingReconciliationSkipsExistingTerminalJob(t, newPostgresQueryStore)

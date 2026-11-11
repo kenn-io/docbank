@@ -215,6 +215,7 @@ func executableProcessingProfiles(cfg config.Config,
 		executable := true
 		configured := processing.ProfileConfig{Profile: portable,
 			EmbeddingSimilarityFloors: make(map[string]float64),
+			AutomaticVideoBindings:    make(map[string]struct{}),
 			EmbeddingProviders:        make(map[string]document.EmbeddingProvider),
 			EmbeddingDisclosures:      make(map[string]processing.RuntimeDisclosure),
 			EmbeddingClassifiers:      make(map[string]func(error) (processing.EmbeddingProviderFailure, time.Duration)),
@@ -241,6 +242,9 @@ func executableProcessingProfiles(cfg config.Config,
 			bindingConfig, err := cfg.EmbeddingProfile(binding.Name)
 			if err != nil {
 				return nil, err
+			}
+			if bindingConfig.AutoDiscoverVideo {
+				configured.AutomaticVideoBindings[binding.Name] = struct{}{}
 			}
 			if runtime := bindingConfig.Runtime; runtime != nil {
 				if runtime.MinQuerySimilarity != nil {
@@ -306,6 +310,11 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 		policy, manifest, err := voyageDirectFilePolicy(profile)
 		if err != nil {
 			return nil, document.EmbeddingDescriptor{}, err
+		}
+		if profile.AutoDiscoverVideo {
+			if _, err := policy.Authorize(manifest, voyage.CapabilityVideoMP4); err != nil {
+				return nil, document.EmbeddingDescriptor{}, fmt.Errorf("automatic video discovery: %w", err)
+			}
 		}
 		configured.Mode, configured.Policy, configured.CapabilityManifest = voyage.EmbeddingModeDirectFile, policy, manifest
 	}

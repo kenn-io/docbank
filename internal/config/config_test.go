@@ -269,6 +269,29 @@ func TestProcessingProfileRejectsOriginalFileChunkPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "original_file")
 }
 
+func TestAutomaticVideoDiscoveryPreservesProfileIdentity(t *testing.T) {
+	cfg := validProcessingConfig()
+	binding := cfg.EmbeddingProfiles["semantic"]
+	binding.InputKind, binding.Chunk, binding.MaxInputTokens = string(document.EmbeddingInputOriginalFile), EmbeddingChunkConfig{}, 0
+	cfg.EmbeddingProfiles["semantic"] = binding
+	resolved, err := cfg.ProcessingProfile("archive")
+	require.NoError(t, err)
+	manualJSON, manual, err := document.CanonicalProfile(resolved.Document)
+	require.NoError(t, err)
+	manualBinding := resolved.Document.Embeddings[0]
+
+	binding.AutoDiscoverVideo = true
+	resolved.Document.Embeddings[0] = embeddingDocumentBinding(manualBinding.Name, binding)
+	automaticJSON, automatic, err := document.CanonicalProfile(resolved.Document)
+	require.NoError(t, err)
+	require.Equal(t, manualJSON, automaticJSON)
+	require.Equal(t, manual, automatic)
+
+	cfg.EmbeddingProfiles["semantic"] = binding
+	_, err = cfg.ProcessingProfile("archive")
+	require.ErrorContains(t, err, "auto_discover_video requires an original_file Voyage runtime")
+}
+
 func TestRerankingConfigIsStrictAndStaysOutsidePortableProfile(t *testing.T) {
 	base := validProcessingConfig()
 	base.CredentialBindings = map[string]CredentialBindingConfig{

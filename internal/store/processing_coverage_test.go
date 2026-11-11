@@ -124,6 +124,7 @@ func checkProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T, o
 	t.Parallel()
 	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	old.InputGeneration.ID = testSHA256([]byte("previous-serving-input"))
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,

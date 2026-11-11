@@ -356,6 +356,7 @@ type EmbeddingProfileConfig struct {
 	// Embedder is the preferred text-service configuration. The overlapping
 	// flat fields remain supported for legacy configurations.
 	Embedder                 *embedconfig.Embedder     `toml:"embedder" sensitive:"true"`
+	AutoDiscoverVideo        bool                      `toml:"auto_discover_video"`
 	Activation               string                    `toml:"activation"`
 	AuthorizationFingerprint string                    `toml:"authorization_fingerprint"`
 	Chunk                    EmbeddingChunkConfig      `toml:"chunk"`
@@ -1358,6 +1359,10 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	}
 	if profile.InputKind != string(document.EmbeddingInputOriginalFile) && profile.InputKind != string(document.EmbeddingInputRenditionChunk) && profile.InputKind != string(document.EmbeddingInputImage) {
 		return fmt.Errorf("%s input_kind must be original_file, image, or rendition_chunk", prefix)
+	}
+	if profile.AutoDiscoverVideo && (profile.InputKind != string(document.EmbeddingInputOriginalFile) ||
+		profile.Runtime == nil || profile.Runtime.AdapterContract != "docbank-voyage-embeddings/v1") {
+		return fmt.Errorf("%s auto_discover_video requires an original_file Voyage runtime", prefix)
 	}
 	if profile.Dimensions <= 0 || profile.Dimensions > 1_000_000 {
 		return fmt.Errorf("%s dimensions must be between 1 and 1000000", prefix)

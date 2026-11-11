@@ -1111,6 +1111,16 @@ the same epoch, and preserve retry counts when another worker resumes them.
 Reconciliation checks current source and rendition authority, purge suppression,
 executable providers and current consent before scheduling retained inputs.
 
+Image and opted-in original-file MP4 discovery share a bounded profile/version
+scan. Discovery uses a separate consent class for the opted-in binding and tags
+only the input generation ID. Restore retains the generation ID, so retained
+recovery can distinguish manual work from automatic work without the jobs
+table. Only discovery recovers automatic generations. Admission and provider
+egress recheck current visible, included display membership. The direct-file
+worker inspects and seals the MP4 bytes. Automatic and explicit jobs share an
+exact head and serialize their claims for the same version, profile, binding,
+and vector space.
+
 Vector spaces, input generations, vector sets and their ordered row manifests
 are immutable. Vector values and rendered inputs stay in blob artifacts; the
 database retains their checksums, references and bounded projections. Runtime
