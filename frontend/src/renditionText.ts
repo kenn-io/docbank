@@ -63,8 +63,9 @@ const configurations = new Set<RenditionObservation["configuration"]>([
 ]);
 const maxTextBytes = 16 * 1024 * 1024;
 const imageUnderstandingProvider = "compatible-vision.understand-v1";
-// One pass over ASCII punctuation, matching grounding.UnescapePunctuation.
-const escapedPunctuation = /\\([!-/:-@[-`{-~])/g;
+// One forward pass: a section fenced as F\nText\nF, F longer than any
+// backtick run in Text, yields Text unread; labels outside unescape punctuation.
+const imageUnderstanding = /^(`{3,})\n([\s\S]*?)\n\1$|\\([!-/:-@[-`{-~])/gm;
 
 function malformed(reason: string): never {
   throw new Error(`Malformed rendition text receipt: ${reason}.`);
@@ -294,5 +295,9 @@ export async function readVerifiedRenditionText(
   }
   if (headers.get("X-Docbank-Rendition-Provider-ID") !== imageUnderstandingProvider)
     return parsed.markdown;
-  return parsed.markdown.replace(escapedPunctuation, "$1");
+  return parsed.markdown.replace(
+    imageUnderstanding,
+    (_match, fence: string | undefined, text: string, punctuation: string) =>
+      fence === undefined ? punctuation : text,
+  );
 }

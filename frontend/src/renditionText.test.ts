@@ -195,11 +195,38 @@ const escapedImageText =
   "\n\t  # Machine\\-generated image understanding\n\n" +
   "flames\\. C:\\\\dir \\a\n\t\tline \\(1\\)  \n\n";
 
-it("shows image understanding punctuation literally while keeping its whitespace", async () => {
+// Mirrors the worker's serializeRenditionCodeBlock("", text + "\n").
+function imageSection(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}\n${text}\n${fence}`;
+}
+
+const imageTexts = [
+  "flames. C:\\dir \\a\n\t\tline (1)  ",
+  "\n\n  indented\t\nends in a backslash\\\nand two\\\\\n",
+  "```\nliteral fence\n```\n````longer````\n~~~\ntilde\n~~~\n\n\n",
+  "\\# not a heading \\* \\` \\\\",
+  "``````",
+  "",
+  "\n",
+];
+
+it("shows each image understanding section exactly as transcribed", async () => {
+  const markdown =
+    "# Machine\\-generated image understanding\n\n" +
+    "Configured model: gpt\\-4\\.1\n\n" +
+    imageTexts
+      .map((text, index) => `## Section \\(${index}\\)\n\n${imageSection(text)}`)
+      .join("\n\n") +
+    "\n";
   await expect(
-    readArtifact(renditionArtifact(escapedImageText), "compatible-vision.understand-v1"),
+    readArtifact(renditionArtifact(markdown), "compatible-vision.understand-v1"),
   ).resolves.toBe(
-    "\n\t  # Machine-generated image understanding\n\n" + "flames. C:\\dir \\a\n\t\tline (1)  \n\n",
+    "# Machine-generated image understanding\n\n" +
+      "Configured model: gpt-4.1\n\n" +
+      imageTexts.map((text, index) => `## Section (${index})\n\n${text}`).join("\n\n") +
+      "\n",
   );
 });
 
