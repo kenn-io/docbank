@@ -745,7 +745,10 @@ retry:
 				if rec.PID != old.PID {
 					require.False(t, daemonconn.Explicit(rec))
 					transport.CloseIdleConnections()
-					_, err := client.Do(request.Clone(t.Context()))
+					response, err := client.Do(request.Clone(t.Context()))
+					if response != nil {
+						response.Body.Close()
+					}
 					require.Error(t, err)
 					fresh := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
 					fresh.Env = env

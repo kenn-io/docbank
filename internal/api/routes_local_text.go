@@ -71,7 +71,7 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 				return nil, NewError(http.StatusConflict, "restart_unavailable", "Restart Docbank where it runs")
 			}
 			login, _ := ctx.Value(browserLoginContextKey{}).(bool)
-			openTab := !(login && d.Cfg.Web.PublicOrigin != "")
+			openTab := !login || d.Cfg.Web.PublicOrigin == ""
 			if err := d.RestartDaemon(ctx, openTab); err != nil {
 				return nil, NewError(http.StatusInternalServerError, "restart_failed", err.Error())
 			}

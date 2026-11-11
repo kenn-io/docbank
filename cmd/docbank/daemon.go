@@ -749,10 +749,11 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 					logger.Error("web restart helper failed", "error", err)
 				}
 			}})
-			if err == nil {
-				restartLaunched = true
+			if err != nil {
+				return fmt.Errorf("starting web restart helper: %w", err)
 			}
-			return err
+			restartLaunched = true
+			return nil
 		}
 	}
 	srv := api.NewServer(api.Deps{
