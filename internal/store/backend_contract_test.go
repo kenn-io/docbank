@@ -1987,7 +1987,14 @@ var backendSuites = []backendSuite{
 		{"AuditEnrollmentChangedPreview", nil, checkAuditEnrollmentChangedPreviewPostgres},
 		{"AuditEnrollmentPhotoReceipt", nil, checkAuditEnrollmentPhotoReceiptPostgres},
 	}},
-	{name: "documents", postgres: "native operations", scope: "Ordinary and audited creation, replacement, revert and moves; physical and photo effects.", scenarios: []backendScenario{
+	{name: "documents", postgres: "native operations", scope: "Ordinary and audited creation, replacement, revert and moves; directory search-scope normalization; physical and photo effects.", scenarios: []backendScenario{
+		{"SearchUnderPathNormalization", func(t *testing.T) {
+			t.Helper()
+			checkSearchUnderPathNormalization(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSearchUnderPathNormalization(t, newPostgresQueryStore)
+		}},
 		{"DocumentWrites", func(t *testing.T) {
 			t.Helper()
 			checkDocumentWrites(t, newTestStore)

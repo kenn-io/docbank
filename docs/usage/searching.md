@@ -218,10 +218,14 @@ Media-type matching ignores case and stored parameters. For example,
 `text/plain` also matches `text/plain; charset=utf-8`. The filter itself must
 contain no parameters. Directories and historical versions never match it.
 
-The directory filter accepts a path or `id:N`. The CLI resolves it to a stable
-node ID, which JSON echoes as `under_node_id`. Moving or renaming that
-directory does not change which directory the request selects. The directory
-itself is excluded from results.
+The directory filter accepts an absolute virtual path or `id:N`. The daemon
+resolves a path when it handles the search; JSON echoes it as `under_path`.
+Paths are case-exact and at most 16,384 UTF-8 bytes. A file path fails as
+`not_dir`; a missing or trashed folder fails as `not_found`. An `id:N`
+selector sends `under_node_id`, which keeps selecting that directory after a
+move or rename. The directory itself is excluded from results. HTTP and MCP
+callers may send either `under_path` or `under_node_id`; sending both fails
+validation before retrieval or a provider call.
 
 Time filters require absolute RFC3339 timestamps. Docbank normalizes
 offsets to UTC and echoes the bounds in JSON. The start is inclusive and the

@@ -332,7 +332,8 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		if !ok {
 			return arguments["filters"] == nil
 		}
-		return validOptionalRFC3339Nano(filters, "modified_since") &&
+		return stringBytesWithin(filters, "under_path", store.MaxSearchUnderPathBytes) &&
+			validOptionalRFC3339Nano(filters, "modified_since") &&
 			validOptionalRFC3339Nano(filters, "modified_before")
 	default:
 		return true
@@ -454,6 +455,8 @@ func stableDomainError(err error) (string, int) {
 	switch {
 	case errors.As(err, &scope):
 		return "scope_too_large", scope.ObservedScopeCount
+	case errors.Is(err, store.ErrInvalidSearchScope):
+		return "validation", 0
 	case errors.Is(err, store.ErrNotFound):
 		return "not_found", 0
 	case errors.Is(err, store.ErrProcessingSourceFenceStaleVersion):

@@ -31,6 +31,7 @@ func TestEmptySearchHints(t *testing.T) {
 		{name: "human", pending: 1},
 		{name: "JSON", flags: []string{"--json"}, pending: 1, everyWord: true},
 		{name: "tag", filtered: true, flags: []string{"--tag", processingTestVersionID}},
+		{name: "under path", filtered: true, flags: []string{"--under", "/cases"}},
 		{name: "under", filtered: true, flags: []string{"--under", "id:42"}},
 		{name: "MIME", filtered: true, flags: []string{"--mime-type", "application/pdf"}},
 		{name: "since", filtered: true, flags: []string{"--modified-since", "2000-01-01T00:00:00Z"}},
@@ -84,6 +85,7 @@ func TestEmptySearchHints(t *testing.T) {
 					w.Header().Set("ETag", `"1"`)
 					assert.NoError(t, json.MarshalWrite(w, api.Tag{ID: processingTestVersionID, Name: "urgent", Revision: 1}))
 				case "/api/v1/nodes/42":
+					t.Error("search must forward its folder selector without a client-side lookup")
 					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "dir", Path: "/cases"}))
 				case "/api/v1/search":
 					if r.Method != http.MethodGet {
@@ -97,6 +99,7 @@ func TestEmptySearchHints(t *testing.T) {
 						for _, key := range []string{"q", "limit", "fuzzy"} {
 							lexicalFilters.Del(key)
 						}
+						report.UnderPath = params.Get("under_path")
 						report.TagID, report.MIMEType = params.Get("tag_id"), params.Get("mime_type")
 						report.PDFFilter, report.SourcePresent = params.Get("pdf_filter"), params.Get("source_present") == "true"
 						report.ModifiedSince, report.ModifiedBefore = params.Get("modified_since"), params.Get("modified_before")

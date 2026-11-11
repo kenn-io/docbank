@@ -2333,6 +2333,11 @@ export interface DocumentSourceFenceFilters {
   tag_id?: string;
   /** @minimum 1 */
   under_node_id?: number;
+  /**
+     * @maxLength 16384
+     * @pattern ^/
+     */
+  under_path?: string;
 }
 
 export type DocumentSearchScopeKind = typeof DocumentSearchScopeKind[keyof typeof DocumentSearchScopeKind];
@@ -8330,6 +8335,7 @@ export interface SearchReport {
   tag_id?: string;
   truncated: boolean;
   under_node_id?: number;
+  under_path?: string;
 }
 
 export type SearchTextCoverageFamiliesItem = typeof SearchTextCoverageFamiliesItem[keyof typeof SearchTextCoverageFamiliesItem];
@@ -10261,6 +10267,11 @@ mime_type?: string;
  */
 under_node_id?: number;
 /**
+ * @maxLength 16384
+ * @pattern ^/
+ */
+under_path?: string;
+/**
  * @maxLength 64
  */
 modified_since?: string;
@@ -10301,6 +10312,11 @@ mime_type?: string;
  * @minimum 1
  */
 under_node_id?: number;
+/**
+ * @maxLength 16384
+ * @pattern ^/
+ */
+under_path?: string;
 /**
  * @maxLength 64
  */
@@ -20371,7 +20387,7 @@ export const getSearchUrl = (params?: SearchParams,) => {
 }
 
 /**
- * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
+ * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID or absolute path restricts results to its descendants; supply only one. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
  * @summary Search live document names and extracted text
  */
 export const search = async (params?: SearchParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchReport> => {

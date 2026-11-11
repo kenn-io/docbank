@@ -604,6 +604,7 @@ func fenceInputProperties() schema {
 			"tag_id":          uuidSchema(),
 			"mime_type":       stringSchema(255),
 			"under_node_id":   integerSchema(1, 0),
+			"under_path":      schema{"type": "string", "minLength": 1, "maxLength": store.MaxSearchUnderPathBytes, "pattern": "^/"},
 			"modified_since":  dateTimeSchema(),
 			"modified_before": dateTimeSchema(),
 		}),

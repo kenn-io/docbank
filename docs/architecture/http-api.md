@@ -140,7 +140,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
-| `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&fuzzy=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and `truncated` status; `fuzzy=true` appends bounded one-typo filename/path discovery with a coverage receipt | Implemented |
+| `GET /search?q=&tag_id=&mime_type=&under_node_id=&under_path=&modified_since=&modified_before=&fuzzy=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and `truncated` status; `fuzzy=true` appends bounded one-typo filename/path discovery with a coverage receipt | Implemented |
 | `GET /processing/profiles` · `POST /processing/plans` | list executable profiles / preview one source version and its provider disclosures | Implemented |
 | `POST /processing/jobs` · `GET /processing/jobs/{id}` | run a reviewed plan with streamed job identity / read aggregate status | Implemented |
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
@@ -194,9 +194,18 @@ query requires `tag_id`, `modified_since`, or `modified_before`. This is a
 request rule. `limit` bounds the response size, not the database work.
 Filter-only hits include live files and directories except the vault root.
 They are ordered by current `modified_at` descending, then name and ID, and
-identify their source with `match: "filter"`. `mime_type` and `under_node_id`
+identify their source with `match: "filter"`. `mime_type`, `under_node_id`, and `under_path`
 narrow a page but cannot anchor a blank query alone. A blank unanchored query
 returns `422 search_query_required`.
+
+`under_path` is an absolute virtual directory path of at most 16,384 UTF-8
+bytes. The daemon resolves it on the search normalizer's querier, then uses
+the same descendant filter as `under_node_id`. Supply only one selector.
+Both selectors together return `422 validation`; a file returns `422 not_dir`;
+a missing or trashed folder returns `404 not_found`. GET search receipts echo
+the supplied path as `under_path`. The text-coverage GET route and document
+source-fence filters accept the same selector. Daemon protocol 126 prevents
+a client from sending it to an older daemon that could ignore the GET field.
 
 Search scope validation checks that the tag definition exists without counting
 its assignments. Tags with no assignments are valid scopes. Lexical searches
@@ -810,7 +819,7 @@ bodies are bounded to 16 MiB.
 Search accepts exactly one of `fence` or `scope`. Send
 `"scope": {"kind": "all_live", "filters": {...}}` to search all live files
 without listing versions. Optional filters are `source_present`, `tag_id`,
-`mime_type`, `under_node_id`, `modified_since`, and `modified_before`, with
+`mime_type`, `under_node_id`, `under_path`, `modified_since`, and `modified_before`, with
 the same semantics as source-fence resolution. Semantic and hybrid coverage
 reports `scoped_documents` and `complete_documents` over that population.
 A scope cannot be combined with `media_sources`. Explicit fences retain the

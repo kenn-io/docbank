@@ -196,15 +196,9 @@ See docs/usage/search.md.`,
 		}
 		var underPath string
 		if searchUnder != "" {
-			directory, resolveErr := underSelector.resolve(cmd.Context(), c)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			if directory.Kind != "dir" {
-				return fmt.Errorf("search scope %q: %w", searchUnder, store.ErrNotDir)
-			}
-			opts.UnderNodeID = directory.ID
-			underPath = directory.Path
+			opts.UnderNodeID = underSelector.id
+			opts.UnderPath = underSelector.path
+			underPath = searchUnder
 		}
 		query := strings.Join(args, " ")
 		var automatic automaticSearchOutcome
@@ -240,7 +234,7 @@ See docs/usage/search.md.`,
 				slog.DebugContext(cmd.Context(), "search text coverage unavailable", "error", coverageErr)
 			}
 			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
-				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
+				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.UnderPath != "" || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
 			fuzzyRan := opts.Fuzzy && (rep.Fuzzy == nil || rep.Fuzzy.Status != store.FuzzyStatusNotRun)
 			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, fuzzyRan)
 		}

@@ -421,6 +421,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
 		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
+		UnderPath      string `query:"under_path" maxLength:"16384" pattern:"^/"`
 		ModifiedSince  string `query:"modified_since" maxLength:"64"`
 		ModifiedBefore string `query:"modified_before" maxLength:"64"`
 	}) (*textCoverageOutput, error) {
@@ -433,7 +434,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
 		opts := searchFilterOptions(&DocumentSourceFenceFilters{SourcePresent: in.SourcePresent, TagID: in.TagID,
-			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, ModifiedSince: since, ModifiedBefore: before})
+			MIMEType: mimeType, UnderNodeID: in.UnderNodeID, UnderPath: in.UnderPath, ModifiedSince: since, ModifiedBefore: before})
 		opts.PDFFilter = in.PDFFilter
 		profile, noTextLayer := pdfSearchTextCoverage(d)
 		coverage, err := d.Store.SearchTextCoverage(ctx, opts, profile, noTextLayer)
@@ -456,7 +457,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 			"such filter-only results are ordered by modification time descending. " +
 			"An optional stable tag ID requires that assignment for every result. An optional " +
 			"parameter-free MIME type matches the current file version with or without parameters. " +
-			"An optional live directory node ID restricts results to its descendants. Optional " +
+			"An optional live directory node ID or absolute path restricts results to its descendants; supply only one. Optional " +
 			"absolute modification timestamps form an inclusive-since, exclusive-before interval. " +
 			"source_present=true excludes documents whose watched source is observed gone; push-owned documents remain included. " +
 			"fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary " +
@@ -471,6 +472,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
 		UnderNodeID    int64  `query:"under_node_id" minimum:"1"`
+		UnderPath      string `query:"under_path" maxLength:"16384" pattern:"^/"`
 		ModifiedSince  string `query:"modified_since" maxLength:"64"`
 		ModifiedBefore string `query:"modified_before" maxLength:"64"`
 	}) (*searchOutput, error) {
@@ -487,7 +489,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		opts := store.SearchOptions{
 			PDFFilter:     in.PDFFilter,
 			SourcePresent: in.SourcePresent,
-			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			TagID:         in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID, UnderPath: in.UnderPath,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
 		var hits []store.SearchHit
@@ -509,7 +511,7 @@ func registerReadRoutes(api huma.API, d Deps) {
 		out := &searchOutput{Body: SearchReport{
 			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
 			PDFFilter:     in.PDFFilter,
-			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			SourcePresent: in.SourcePresent, TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID, UnderPath: in.UnderPath,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}
 		for _, h := range hits {

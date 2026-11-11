@@ -13661,6 +13661,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
 		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
+		"under_path":      {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search",
@@ -14218,6 +14219,7 @@ func (c *Client) SearchTextCoverage(ctx context.Context, options *SearchTextCove
 		"source_present":  {Style: "form", Explode: &[]bool{false}[0]},
 		"tag_id":          {Style: "form", Explode: &[]bool{false}[0]},
 		"under_node_id":   {Style: "form", Explode: &[]bool{false}[0]},
+		"under_path":      {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/search/text-coverage",
@@ -28654,6 +28656,7 @@ type SearchQuery struct {
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`
 	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
+	UnderPath      *string `json:"under_path,omitempty"`
 	ModifiedSince  *string `json:"modified_since,omitempty"`
 	ModifiedBefore *string `json:"modified_before,omitempty"`
 }
@@ -28669,6 +28672,7 @@ type SearchTextCoverageQuery struct {
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`
 	UnderNodeID    *int64  `json:"under_node_id,omitempty"`
+	UnderPath      *string `json:"under_path,omitempty"`
 	ModifiedSince  *string `json:"modified_since,omitempty"`
 	ModifiedBefore *string `json:"modified_before,omitempty"`
 }
