@@ -31,6 +31,7 @@ const (
 	RenditionAttachmentHeader   = "X-Docbank-Rendition-Attachment"
 	RenditionBuildHeader        = "X-Docbank-Rendition-Build"
 	RenditionArtifactHeader     = "X-Docbank-Rendition-Artifact"
+	RenditionProviderHeader     = "X-Docbank-Rendition-Provider-ID"
 	RenditionProfileHeader      = "X-Docbank-Rendition-Profile"
 	RenditionCompletenessHeader = "X-Docbank-Rendition-Completeness"
 	RenditionWarningsHeader     = "X-Docbank-Rendition-Warnings"

@@ -278,7 +278,7 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 				hctx.SetHeader("X-Docbank-Rendition-Attachment", in.AttachmentID)
 				hctx.SetHeader("X-Docbank-Rendition-Build", in.BuildID)
 				hctx.SetHeader("X-Docbank-Rendition-Artifact", in.ArtifactID)
-				hctx.SetHeader("X-Docbank-Rendition-Provider-ID", receipt.ProviderID)
+				hctx.SetHeader(RenditionProviderHeader, receipt.ProviderID)
 				hctx.SetHeader("Content-Digest", contentDigest(digest[:]))
 				_, _ = hctx.BodyWriter().Write(body)
 			}}, nil
@@ -290,7 +290,7 @@ func renditionTextContentResponses() map[string]*huma.Response {
 	headers := map[string]*huma.Param{}
 	for _, name := range []string{"X-Docbank-Rendition-SHA256", "X-Docbank-Rendition-Size", RenditionProfileHeader,
 		"X-Docbank-Rendition-Generation", RenditionAttachmentHeader, RenditionBuildHeader, RenditionArtifactHeader,
-		"X-Docbank-Rendition-Provider-ID", "Content-Digest"} {
+		RenditionProviderHeader, "Content-Digest"} {
 		headers[name] = &huma.Param{Schema: &huma.Schema{Type: "string"}}
 	}
 	return map[string]*huma.Response{"200": {Description: "OK", Headers: headers}}
