@@ -134,6 +134,17 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	report, err := service.Search(t.Context(), SearchRequest{Profile: "images", Query: "supported", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{partialNode.CurrentVersionID}}})
 	require.NoError(t, err)
 	assert.Empty(t, report.Results)
+	service.Stop()
+	replacement, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: "replacement-model", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	require.NoError(t, err)
+	portable.Rendition.Descriptor = document.ProviderDescriptorV1{ID: replacement.Descriptor().ID, Fingerprint: replacement.Descriptor().Fingerprint}
+	portable.Embeddings = nil
+	restarted, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: replacement, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: "replacement-model"}}}})
+	require.NoError(t, err)
+	t.Cleanup(restarted.Stop)
+	window, err = restarted.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: view.Attachment.ID, MaxChars: 16000})
+	require.NoError(t, err)
+	assert.Contains(t, window.Text, `Configured model\: synthetic\-vision`)
 }
 
 type understandingEmbeddingCapture struct {

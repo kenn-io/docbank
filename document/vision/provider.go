@@ -106,7 +106,7 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 	formats := []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}
 	roles := []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 	if id == UnderstandingProviderID {
-		contract, inputProfile = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v3"
+		contract, inputProfile = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v4"
 		roles = nil
 		formats = nil
 		for _, mediaType := range []string{"image/jpeg", "image/png", "image/webp"} {

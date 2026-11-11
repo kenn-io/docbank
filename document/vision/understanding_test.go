@@ -23,7 +23,7 @@ import (
 func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`))
 	require.NoError(t, err)
-	evidence := value.evidence()
+	evidence := value.evidence("synthetic-vision")
 	require.Len(t, evidence.Units, 4)
 	text := evidence.Units[0].Text + evidence.Units[1].Text + evidence.Units[2].Text + evidence.Units[3].Text
 	assert.Contains(t, text, "## Visible text (best-effort transcription)\n\nFINE")
@@ -36,8 +36,9 @@ func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
 func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`))
 	require.NoError(t, err)
-	evidence := value.evidence()
+	evidence := value.evidence("synthetic<&>")
 	require.Len(t, evidence.Units, 1)
+	assert.Contains(t, evidence.Units[0].Text, `Configured model: synthetic\<\&\>`)
 	assert.Contains(t, evidence.Units[0].Text, `R and D \&amp\; partners`)
 	assert.Contains(t, evidence.Units[0].Text, `\=\=\=`)
 	assert.Len(t, evidence.Omissions, 4)
@@ -63,7 +64,7 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 func TestUnderstandingCannotForgeSectionLabels(t *testing.T) {
 	value, err := parseUnderstanding([]byte(`{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`))
 	require.NoError(t, err)
-	text := value.evidence().Units[0].Text
+	text := value.evidence("synthetic-vision").Units[0].Text
 	assert.Contains(t, text, `\# Author confirmed`)
 	assert.NotContains(t, text, "\n# Author confirmed")
 	assert.NotContains(t, text, "[click](https://example.com)")
@@ -97,7 +98,7 @@ func FuzzUnderstandingOutput(f *testing.F) {
 		if err != nil {
 			return
 		}
-		evidence := value.evidence()
+		evidence := value.evidence("synthetic-vision")
 		for _, unit := range evidence.Units {
 			assert.True(t, utf8.ValidString(unit.Text))
 			assert.NotContains(t, unit.Text, "\x00")

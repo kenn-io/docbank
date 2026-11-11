@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
@@ -38,7 +37,7 @@ func parseUnderstanding(raw []byte) (understanding, error) {
 		return value, err
 	}
 	for _, field := range []*string{value.VisibleText, value.LiteralDescription, value.PossibleMeaning, value.Uncertainty} {
-		if field == nil || len(*field) > document.MaxPhotoTextBytes || !utf8.ValidString(*field) || strings.ContainsRune(*field, 0) {
+		if field == nil || len(*field) > document.MaxPhotoTextBytes || strings.ContainsRune(*field, 0) {
 			return understanding{}, errors.New("image understanding requires four bounded text fields")
 		}
 	}
@@ -74,7 +73,7 @@ func (section understandingSection) text() string {
 	return content
 }
 
-func (value understanding) evidence() document.SourceEvidenceV1 {
+func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 	evidence := document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceDegradedProvenance,
 		Family: "image", UnitKind: document.EvidenceUnitGeneric,
@@ -87,7 +86,7 @@ func (value understanding) evidence() document.SourceEvidenceV1 {
 		}
 		text := section.markdown()
 		if len(evidence.Units) == 0 {
-			text = "# " + understandingTitle + "\n\n" + understandingNotice + "\n" + text
+			text = "# " + understandingTitle + "\n\n" + understandingNotice + "\n\nConfigured model: " + document.EscapeRenditionText(model) + "\n" + text
 		}
 		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
 			Order: len(evidence.Units), HeadingPath: []string{understandingHeading, section.title}, Text: text,
@@ -116,7 +115,7 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	if err != nil {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorTransient, "invalid image understanding result", err)
 	}
-	evidence := value.evidence()
+	evidence := value.evidence(p.profile.Model)
 	if len(evidence.Units) == 0 {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorMalformedEvidence, "no supported image content", nil)
 	}
