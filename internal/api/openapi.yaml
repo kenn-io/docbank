@@ -31386,34 +31386,6 @@ paths:
       responses:
         "200":
           description: OK
-          headers:
-            Content-Digest:
-              schema:
-                type: string
-            X-Docbank-Rendition-Artifact:
-              schema:
-                type: string
-            X-Docbank-Rendition-Attachment:
-              schema:
-                type: string
-            X-Docbank-Rendition-Build:
-              schema:
-                type: string
-            X-Docbank-Rendition-Generation:
-              schema:
-                type: string
-            X-Docbank-Rendition-Profile:
-              schema:
-                type: string
-            X-Docbank-Rendition-Provider-ID:
-              schema:
-                type: string
-            X-Docbank-Rendition-SHA256:
-              schema:
-                type: string
-            X-Docbank-Rendition-Size:
-              schema:
-                type: string
         default:
           content:
             application/problem+json:
