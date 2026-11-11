@@ -32,6 +32,15 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 		return personDetailToolOutput{}, err
 	}
 	output := personDetailToolOutput{privateCache: newPrivateCache(), PersonDetail: detail}
+	err = fitToolPage(&output, func() int { return len(output.Assertions) }, func(end int) {
+		output.Assertions = output.Assertions[:end]
+		output.AssertionsTruncated = true
+		output.AssertionsNextCursor = output.Assertions[end-1].AssertionID
+	})
+	return output, err
+}
+
+func fitToolPage(output any, count func() int, shrink func(int)) error {
 	// The real ceiling is the complete MCP envelope boundedToolSuccess
 	// builds for every read tool: the structured content plus its duplicate
 	// escaped-text copy. A fraction of the raw struct rejects identities
@@ -40,18 +49,16 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 	for {
 		envelope, err := toolEnvelopeBytes(output, nil)
 		if err != nil {
-			return personDetailToolOutput{}, err
+			return err
 		}
 		if envelope <= envelopeBudget {
-			return output, nil
+			return nil
 		}
-		if len(output.Assertions) <= 1 {
-			return personDetailToolOutput{}, errToolResultTooLarge
+		if count() <= 1 {
+			return errToolResultTooLarge
 		}
-		end := max(1, len(output.Assertions)*envelopeBudget/envelope)
-		output.Assertions = output.Assertions[:end]
-		output.AssertionsTruncated = true
-		output.AssertionsNextCursor = output.Assertions[len(output.Assertions)-1].AssertionID
+		end := max(1, min(count()-1, count()*envelopeBudget/envelope))
+		shrink(end)
 	}
 }
 

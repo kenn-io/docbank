@@ -9453,6 +9453,11 @@ export type LookupContentReferencesParams = {
  * @pattern ^[0-9a-f]{64}$
  */
 sha256: string;
+live_current?: boolean;
+/**
+ * @minimum 0
+ */
+size?: number;
 /**
  * @minimum 1
  * @maximum 1000
@@ -12299,7 +12304,7 @@ export const getLookupContentReferencesUrl = (params: LookupContentReferencesPar
 }
 
 /**
- * Results are logical content-version references, not physical loose or pack entries. Live current references sort first, followed by live history and trashed references.
+ * Results are logical content-version references, not physical loose or pack entries. Live current references sort first, followed by live history and trashed references. Set live_current=true to return only live current documents; size optionally matches exact bytes.
  * @summary Find stable document versions that retain a SHA-256 identity
  */
 export const lookupContentReferences = async (params: LookupContentReferencesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ContentReferencePage> => {

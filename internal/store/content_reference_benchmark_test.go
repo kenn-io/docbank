@@ -39,7 +39,7 @@ func BenchmarkContentReferencesByHash(b *testing.B) {
 			}))
 			b.ReportAllocs()
 			for b.Loop() {
-				refs, total, err := s.ContentReferencesByHash(ctx, hash, 50, 0)
+				refs, total, err := s.ContentReferencesByHash(ctx, hash, 50, 0, ContentReferenceOptions{})
 				if err != nil || total != files || len(refs) != 50 {
 					b.Fatalf("references=%d total=%d err=%v", len(refs), total, err)
 				}

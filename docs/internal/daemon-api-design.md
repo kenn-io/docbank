@@ -267,7 +267,10 @@ the index to existing vaults on open; query results and job history are unchange
 ### Content-hash references
 
 `GET /api/v1/content-references` and `docbank document refs` return retained logical
-versions of the selected content, including history and trash. The lookup
+versions of the selected content, including history and trash. The HTTP route
+accepts `live_current=true` to return only live current documents and optional
+`size` to match an exact byte count, including zero. These filters apply before
+totals and paging; the CLI keeps the unfiltered lookup. The lookup
 counts and orders matching version identities before loading full metadata,
 checksums, and live paths for the selected page. Both the total and page come
 from one SQL statement, so a concurrent content replacement or trash operation

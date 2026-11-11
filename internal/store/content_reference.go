@@ -18,12 +18,18 @@ type ContentReference struct {
 	IsCurrent bool
 }
 
+// ContentReferenceOptions narrows references before totals and paging.
+type ContentReferenceOptions struct {
+	LiveCurrent bool
+	Size        *int64
+}
+
 // ContentReferencesByHash returns one bounded, deterministic page of logical
 // references to canonical SHA-256 content. A physical blob with no retained
 // content version is not a match. Live current references sort first, followed
 // by live history and then trashed references.
 func (s *Store) ContentReferencesByHash(
-	ctx context.Context, hash string, limit, offset int,
+	ctx context.Context, hash string, limit, offset int, filter ContentReferenceOptions,
 ) ([]ContentReference, int, error) {
 	if _, err := packstore.ParseHash(hash); err != nil {
 		return nil, 0, errors.New("content hash must be canonical lowercase SHA-256")
@@ -35,18 +41,29 @@ func (s *Store) ContentReferencesByHash(
 		return nil, 0, errors.New("content-reference offset must not be negative")
 	}
 
+	where := "v.blob_hash = ?"
+	args := []any{hash}
+	if filter.LiveCurrent {
+		where += " AND EXISTS (SELECT 1 FROM current_content_members m WHERE m.node_id = v.node_id AND m.version_id = v.version_id)"
+	}
+	if filter.Size != nil {
+		where += " AND v.size = ?"
+		args = append(args, *filter.Size)
+	}
+	args = append(args, limit, offset)
+
 	// Totals and page are one statement so concurrent replacement, trash, or
 	// trash-empty is observed entirely before or after the mutation. Select the
 	// page before loading full metadata, checksums, and live paths.
 	rows, err := s.db.QueryContext(ctx, `
-		WITH RECURSIVE matching AS (
+		WITH RECURSIVE `+CurrentContentMembershipCTE+`, matching AS (
 			SELECT v.version_id, v.node_id, v.node_revision,
 			       n.trashed_at IS NOT NULL AS trashed_sort,
 			       v.version_id != n.current_version_id AS historical_sort
 			FROM content_versions v
 			JOIN blobs b ON b.hash = v.blob_hash AND b.size = v.size
 			JOIN nodes n ON n.id = v.node_id
-			WHERE v.blob_hash = ?
+			WHERE `+where+`
 		), selected AS (
 			SELECT * FROM matching
 			ORDER BY trashed_sort, historical_sort, node_id, node_revision DESC, version_id
@@ -101,7 +118,7 @@ func (s *Store) ContentReferencesByHash(
 		FROM totals LEFT JOIN page ON true
 		LEFT JOIN paths ON paths.version_id = page.version_id
 		ORDER BY page.trashed_sort, page.historical_sort, page.node_id,
-		         page.node_revision DESC, page.version_id`, hash, limit, offset)
+		         page.node_revision DESC, page.version_id`, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("looking up content hash %s: %w", hash, err)
 	}

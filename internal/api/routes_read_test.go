@@ -374,6 +374,24 @@ func TestContentReferenceLookupIsLogicalPaginatedAndRepresentationNeutral(t *tes
 	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
 	require.NoError(t, err)
 
+	// The query flag must reach the store; an omitted size must stay unset.
+	filteredURL := "/api/v1/content-references?sha256=" + wantedHash + "&live_current=true"
+	filteredResp, filteredBody := get(t, ts, filteredURL, nil)
+	require.Equal(t, http.StatusOK, filteredResp.StatusCode, filteredBody)
+	var filtered api.ContentReferencePage
+	require.NoError(t, json.Unmarshal([]byte(filteredBody), &filtered))
+	require.Equal(t, 1, filtered.Total)
+	require.Len(t, filtered.Items, 1)
+	require.Equal(t, current.ID, filtered.Items[0].Node.ID)
+	response, emptyBody := get(t, ts, filteredURL+"&size=0", nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, emptyBody)
+	var empty api.ContentReferencePage
+	require.NoError(t, json.Unmarshal([]byte(emptyBody), &empty))
+	require.Zero(t, empty.Total)
+	require.Empty(t, empty.Items)
+	response, invalidBody := get(t, ts, filteredURL+"&size=-1", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, invalidBody)
+
 	lookup := "/api/v1/content-references?sha256=" + wantedHash + "&limit=10&offset=0"
 	resp, body := get(t, ts, lookup, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)

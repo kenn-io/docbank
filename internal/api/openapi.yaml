@@ -23944,7 +23944,7 @@ paths:
       summary: Inspect bounded current collection quality and text coverage
   /api/v1/content-references:
     get:
-      description: Results are logical content-version references, not physical loose or pack entries. Live current references sort first, followed by live history and trashed references.
+      description: Results are logical content-version references, not physical loose or pack entries. Live current references sort first, followed by live history and trashed references. Set live_current=true to return only live current documents; size optionally matches exact bytes.
       operationId: lookupContentReferences
       parameters:
         - explode: false
@@ -23954,6 +23954,19 @@ paths:
           schema:
             pattern: ^[0-9a-f]{64}$
             type: string
+        - explode: false
+          in: query
+          name: live_current
+          schema:
+            default: false
+            type: boolean
+        - explode: false
+          in: query
+          name: size
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
         - explode: false
           in: query
           name: limit

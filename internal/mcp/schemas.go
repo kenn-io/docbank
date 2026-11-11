@@ -17,6 +17,7 @@ const (
 	packageIDField            = "package_id"
 	versionField              = "content_version_id"
 	personIDField             = "person_id"
+	sizeField                 = "size"
 	schemaStateField          = "state"
 	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
@@ -119,10 +120,10 @@ func packageImportOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
 		"operation_id": uuidSchema(), schemaJobIDField: uuidSchema(), packageIDField: uuidSchema(),
 		"preflight_id": uuidSchema(), schemaStateField: enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
-		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
+		"committed": integerSchema(0, 100_000), schemaTotalField: integerSchema(1, 100_000),
 		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(stringSchema(4096), 100),
 		schemaCreatedAtField: dateTimeSchema(), "updated_at": dateTimeSchema(),
-	}), cacheRequired("operation_id", schemaJobIDField, packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", schemaCreatedAtField, "updated_at")...)
+	}), cacheRequired("operation_id", schemaJobIDField, packageIDField, "preflight_id", schemaStateField, "committed", schemaTotalField, "gap_count", schemaCreatedAtField, "updated_at")...)
 }
 
 func getPackageImportSchemas() (schema, schema) {
@@ -442,7 +443,7 @@ func batesExportProperties() schema {
 	return schema{
 		"recipe": schema{"type": "object"}, "allocation": allocation, "namespace": batesNamespaceSchema(),
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "blob_sha256": sha256Schema(),
-		"size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
+		sizeField: integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, maxBatesLabels), "recipe_sha256": sha256Schema(),
 		"manifest_sha256": sha256Schema(), schemaStateField: schema{"type": "string", jsonSchemaConst: "verified"},
 		schemaCreatedAtField: dateTimeSchema(), "pages": arraySchema(batesExportPageReceiptSchema(), maxBatesLabels),
@@ -511,7 +512,7 @@ func findBatesExportsSchemas() (schema, schema) {
 	}, "kind", "occurrence_id")
 	candidate := objectSchema(schema{
 		"artifact_id": uuidSchema(), "allocation_id": uuidSchema(), "snapshot_id": uuidSchema(),
-		"blob_sha256": sha256Schema(), "size": integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
+		"blob_sha256": sha256Schema(), sizeField: integerSchema(1, 0), "media_type": schema{"type": "string", jsonSchemaConst: batesExportMediaType},
 		"page_count": integerSchema(1, 1_000_000), "manifest_sha256": sha256Schema(), schemaStateField: enumSchema("verified"),
 		schemaCreatedAtField: dateTimeSchema(), "evidence": arraySchema(evidence, maxBatesCandidateEvidence),
 		"evidence_truncated": booleanSchema(), "evidence_cursor": stringSchema(maxCursorCharacters),
@@ -1058,4 +1059,24 @@ func promotePhotoNodeSchemas() (schema, schema) {
 
 func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
+}
+
+func findDocumentsByHashSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"sha256": sha256Schema(), "size": integerSchema(0, 0),
+		schemaLimitField:  schema{"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+		schemaOffsetField: integerSchema(0, 0),
+	}, "sha256")
+	item := objectSchema(schema{
+		"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(),
+		"path": stringSchema(0), "size": integerSchema(0, 0),
+		"media_type": stringSchema(0), "blob_hash": sha256Schema(),
+		"metadata_truncated": booleanSchema(),
+	}, "node_id", "content_version_id", "path", "size", "media_type", "blob_hash")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"items": arraySchema(item, 100), "total": integerSchema(0, 0),
+		"next_offset":    integerSchema(1, 0),
+		schemaLimitField: integerSchema(1, 100), schemaOffsetField: integerSchema(0, 0),
+	}), cacheRequired("items", "total", schemaLimitField, schemaOffsetField)...)
+	return input, output
 }

@@ -81,6 +81,7 @@ var readToolDefinitions = []toolDefinition{
 	findConflictsTool,
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
+	{name: "find_documents_by_hash", title: "Find documents by hash", description: "Find live current documents retaining a SHA-256 content identity, optionally matching its exact size.", schemas: findDocumentsByHashSchemas},
 	{name: "read_rendition_text", title: "Read rendition text", description: "Read a bounded Unicode window from an active sanitized Markdown rendition.", schemas: readRenditionTextSchemas},
 	{name: "get_processing_plan", title: "Get processing plan", description: "Preview the exact provider disclosure and consent state for one document version.", schemas: getProcessingPlanSchemas},
 	{name: "get_processing_status", title: "Get processing status", description: "Read the current state of one stable processing job.", schemas: getProcessingStatusSchemas},

@@ -56,7 +56,11 @@ The HTTP equivalents are:
 - `GET /api/v1/nodes/{id}/versions?limit=&offset=`
 - `GET /api/v1/versions/{version_id}`
 - `GET /api/v1/versions/{version_id}/content`
-- `GET /api/v1/content-references?sha256=&limit=&offset=`
+- `GET /api/v1/content-references?sha256=&live_current=&size=&limit=&offset=`
+
+For content references, `live_current=true` returns only live current documents.
+The optional `size` matches an exact byte count, including zero. Both filters
+apply before totals and paging; omitted filters preserve history and trash.
 
 Current-node and ID-addressed version streams both send
 `X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
