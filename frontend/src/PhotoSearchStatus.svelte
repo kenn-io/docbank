@@ -32,7 +32,8 @@
         index_unavailable: "The image index is unavailable",
         unsupported_query: "This query can't run as an image search",
       } as Record<string, string>
-    )[status.fallback_reason] ?? "Image search is unavailable"}. Showing metadata matches.
+    )[status.fallback_reason] ?? "Image search is unavailable"}. Showing matches based on photo
+    details.
   </p>
 {:else if status.coverage_incomplete}
   <p class="photo-search-limit" role="status">

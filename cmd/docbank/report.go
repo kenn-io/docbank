@@ -37,7 +37,7 @@ func writeReportCoverage(output io.Writer, summary report.Summary) error {
 		if index >= len(summary.Terms) {
 			break
 		}
-		if _, err := fmt.Fprintf(output, "term %d: %d searchable, %d missing text, %d with incomplete related-file information, %d dates from import or recorded time\n",
+		if _, err := fmt.Fprintf(output, "term %d: %d searchable, %d missing text, %d with incomplete related-file information, import or recorded dates: %d\n",
 			summary.Terms[index].Number, row.Searchable, row.MissingText, row.IncompleteFamilies, row.FallbackDates); err != nil {
 			return fmt.Errorf("writing term coverage: %w", err)
 		}

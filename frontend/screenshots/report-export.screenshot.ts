@@ -124,9 +124,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
       await drawer.getByText("Options", { exact: true }).click();
       await expect(
         drawer.getByRole("combobox", { name: /^Missing information:/ }),
-      ).toHaveAccessibleName(
-        "Missing information: Stop report",
-      );
+      ).toHaveAccessibleName("Missing information: Stop report");
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
@@ -316,8 +314,10 @@ test("qualifies selected reports and original exports under a mount", async ({ p
           "1",
         ]);
       }
-      await expect(drawer.getByRole("paragraph").filter({ hasText: "3 in date ranges" })).toContainText(
-        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete related-file information · 1 dates from import or recorded time · expires",
+      await expect(
+        drawer.getByRole("paragraph").filter({ hasText: "3 in date ranges" }),
+      ).toContainText(
+        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete related-file information · import or recorded dates: 1 · expires",
       );
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({
