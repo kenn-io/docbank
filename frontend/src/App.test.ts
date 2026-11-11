@@ -1371,6 +1371,70 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   expect(screen.getByRole("region", { name: "Verified content of readme.txt" })).toBeTruthy();
 });
 
+it("reloads inspector tags after checking an uncertain change when folder refresh fails", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 2,
+    assignment_count: 4,
+  };
+  let applied = false;
+  let lost = false;
+  let tagReads = 0;
+  let nodeReads = 0;
+  let writes = 0;
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/nodes/3") {
+      nodeReads++;
+      return json(selectionNode(3, "readme.txt", "file", 1, applied ? 2 : 1));
+    }
+    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+      tagReads++;
+      return json({ items: applied ? [tag] : [], total: applied ? 1 : 0, limit: 1000, offset: 0 });
+    }
+    if (lost && url === "/api/v1/nodes/1/children?limit=1000&offset=0")
+      return json({ detail: "Folder refresh unavailable" }, 503);
+    if (url === "/api/v1/batch/tags") {
+      writes++;
+      lost = true;
+      throw new TypeError("Lost response");
+    }
+    return backend(input, init);
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
+  await screen.findByRole("region", { name: "Verified content of readme.txt" });
+  await waitFor(() => expect(nodeReads).toBeGreaterThanOrEqual(2));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "tax" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
+  const before = tagReads;
+  const beforeNodes = nodeReads;
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Folder refresh unavailable");
+  await waitFor(() => expect(tagReads).toBeGreaterThan(before));
+  await waitFor(() => expect(nodeReads).toBeGreaterThanOrEqual(beforeNodes + 2));
+  applied = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+  await waitFor(() =>
+    expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("tax"),
+  );
+  expect(writes).toBe(1);
+});
+
 it("uses refreshed live metadata for the selected row and tag actions", async () => {
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();

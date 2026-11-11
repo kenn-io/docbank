@@ -192,6 +192,20 @@ it("refreshes observations and locks an unknown selection result", async () => {
   expect(onunknown).toHaveBeenCalledOnce();
 });
 
+it("requires a refreshed selection after an initial stale refusal", async () => {
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(Response.json({ code: "stale_revision" }, { status: 409 }));
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Some documents changed. Close, refresh, and select them again.");
+  expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Check/ })).toBeNull();
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
 it("reads a recovery file without starting an action", async () => {
   const onstart = vi.fn();
   const onimport = vi.fn();

@@ -37,6 +37,7 @@
     onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
     onunknown?: () => void;
+    onchecked?: () => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
     onclose: () => void;
@@ -55,6 +56,7 @@
     onstart,
     onchanged,
     onunknown,
+    onchecked,
     oncreated,
     onimport,
     onclose,
@@ -102,7 +104,12 @@
   });
   const applying = $derived(run.pending);
   const stale = $derived(run.stale);
-  const failure = $derived(readFailure || run.failure);
+  const failure = $derived(
+    readFailure ||
+      (run.stale && !recovering && run.failure
+        ? "Some documents changed. Close, refresh, and select them again."
+        : run.failure),
+  );
   let fileInput = $state<HTMLInputElement>();
   // The selection is captured when the dialog opens; later clicks on the page do not change it.
   const captured = untrack(() => targets.map((target) => ({ ...target })));
@@ -138,8 +145,7 @@
   }
 
   async function check(): Promise<void> {
-    if (!request || checking || applying) return;
-    recovering = true;
+    if (!recovering || !request || checking || applying) return;
     checking = true;
     checked = 0;
     results = undefined;
@@ -151,6 +157,7 @@
       if (!alive) return;
       results = rows;
       offset = 0;
+      onchecked?.();
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -341,7 +348,7 @@
     {/if}
     {#if receipt}
       <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
-    {:else if (run.stale || recovering) && request}
+    {:else if recovering && request}
       {#if results && (remaining.length || unavailable)}<span class="footer-start"
           ><Button size="sm" surface="soft" disabled={busy} onclick={() => void check()}
             >Check again</Button
@@ -364,6 +371,8 @@
           >{checking ? "Checking…" : !run.unknown ? "Check again" : "Check tag results"}</Button
         >
       {/if}
+    {:else if stale}
+      <Button surface="soft" disabled={applying} onclick={close}>Close</Button>
     {:else}
       <Button surface="soft" disabled={applying} onclick={close}>Cancel</Button>
       <Button tone="info" surface="solid" disabled={locked || !tag || count === 0} onclick={apply}
