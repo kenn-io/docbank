@@ -89,9 +89,6 @@ func TestEmptySearchHints(t *testing.T) {
 				case "/api/v1/tags/" + processingTestVersionID:
 					w.Header().Set("ETag", `"1"`)
 					assert.NoError(t, json.MarshalWrite(w, api.Tag{ID: processingTestVersionID, Name: "urgent", Revision: 1}))
-				case "/api/v1/nodes/42":
-					t.Error("search must forward its folder selector without a client-side lookup")
-					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "dir", Path: "/cases"}))
 				case "/api/v1/search":
 					if r.Method != http.MethodGet {
 						fallback(w, r)

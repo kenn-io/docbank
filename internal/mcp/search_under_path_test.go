@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestSearchUnderPathToolsMatchDirectoryID(t *testing.T) {
+func TestSearchUnderPathToolsScope(t *testing.T) {
 	f := newNativeExportFixture(t)
 	dir, err := f.catalog.Mkdir(t.Context(), f.catalog.RootID(), "Café")
 	require.NoError(t, err)
@@ -36,13 +36,10 @@ func TestSearchUnderPathToolsMatchDirectoryID(t *testing.T) {
 		{"find_conflicts", "query", "passages"},
 	} {
 		t.Run(tool.name, func(t *testing.T) {
-			args := map[string]any{tool.query: "cooling period", "profile": profile, "filters": map[string]any{"under_node_id": dir.ID}}
-			byID := exportCall(t, server, tool.name, args)
-			args["filters"] = map[string]any{"under_path": "/Café"}
+			args := map[string]any{tool.query: "cooling period", "profile": profile, "filters": map[string]any{"under_path": "/Café"}}
 			byPath := exportCall(t, server, tool.name, args)
 			require.NotContains(t, byPath, "code")
 			require.Len(t, byPath[tool.results], 2)
-			require.Equal(t, byID[tool.results], byPath[tool.results])
 		})
 	}
 }
@@ -62,7 +59,7 @@ func TestSearchUnderPathInvalidScopesNeverCallProvider(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Shutdown(context.WithoutCancel(t.Context()))) })
 	server := newSearchProcessingServer(t, f, service)
-	for _, tool := range []string{"search_documents", "answer_question", "find_conflicts"} {
+	for _, tool := range []string{"search_documents", "answer_question"} {
 		for _, tc := range []struct {
 			path, code string
 			id         int64

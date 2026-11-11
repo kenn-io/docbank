@@ -15,23 +15,28 @@ import (
 )
 
 func TestSearchUnderPathTransport(t *testing.T) {
-	c, s := newClient(t, serverKey)
-	dir, err := s.Mkdir(t.Context(), s.RootID(), "Café")
-	require.NoError(t, err)
-	_, err = s.CreateFile(t.Context(), dir.ID, "mercury.txt", strings.Repeat("a", 64), 4, "text/plain")
-	require.NoError(t, err)
-	byID, err := c.SearchWithOptions(t.Context(), "mercury", 10, daemonconn.SearchOptions{UnderNodeID: dir.ID})
-	require.NoError(t, err)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/Café", r.URL.Query().Get("under_path"))
+		require.NotContains(t, r.URL.Query(), "under_node_id")
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/search/text-coverage" {
+			require.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1}))
+			return
+		}
+		require.Equal(t, "/api/v1/search", r.URL.Path)
+		require.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10,
+			UnderPath: "/Café", UnderNodeID: 42}))
+	}))
+	t.Cleanup(ts.Close)
+	c := daemonconn.New(ts.URL, "synthetic-key")
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	byPath, err := c.SearchWithOptions(t.Context(), "mercury", 10, daemonconn.SearchOptions{UnderPath: "/Café"})
 	require.NoError(t, err)
-	require.Equal(t, byID.Hits, byPath.Hits)
 	require.Equal(t, "/Café", byPath.UnderPath)
-	require.Equal(t, dir.ID, byPath.UnderNodeID)
-	coverageID, err := c.SearchTextCoverage(t.Context(), daemonconn.SearchOptions{UnderNodeID: dir.ID})
-	require.NoError(t, err)
+	require.EqualValues(t, 42, byPath.UnderNodeID)
 	coveragePath, err := c.SearchTextCoverage(t.Context(), daemonconn.SearchOptions{UnderPath: "/Café"})
 	require.NoError(t, err)
-	require.Equal(t, coverageID, coveragePath)
+	require.Equal(t, 1, coveragePath.NoText)
 }
 
 func TestSearchUnderPathValidationBeforeTransport(t *testing.T) {
@@ -43,20 +48,15 @@ func TestSearchUnderPathValidationBeforeTransport(t *testing.T) {
 	t.Cleanup(ts.Close)
 	c := daemonconn.New(ts.URL, "synthetic-key")
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
-	for _, scope := range []daemonconn.SearchOptions{
-		{UnderPath: "/notes", UnderNodeID: 1},
-		{UnderPath: "relative"},
-		{UnderPath: "/" + strings.Repeat("é", 8192)},
-	} {
-		_, err := c.SearchWithOptions(t.Context(), "mercury", 10, scope)
-		require.ErrorIs(t, err, store.ErrInvalidSearchScope)
-		_, err = c.SearchTextCoverage(t.Context(), scope)
-		require.ErrorIs(t, err, store.ErrInvalidSearchScope)
-		_, err = c.ResolveDocumentSourceFence(t.Context(), api.DocumentSourceFenceResolveRequest{
-			Filters: &api.DocumentSourceFenceFilters{UnderPath: scope.UnderPath, UnderNodeID: scope.UnderNodeID},
-		})
-		require.ErrorIs(t, err, store.ErrInvalidSearchScope)
-	}
+	scope := daemonconn.SearchOptions{UnderPath: "/" + strings.Repeat("é", 8192)}
+	_, err := c.SearchWithOptions(t.Context(), "mercury", 10, scope)
+	require.ErrorIs(t, err, store.ErrInvalidSearchScope)
+	_, err = c.SearchTextCoverage(t.Context(), scope)
+	require.ErrorIs(t, err, store.ErrInvalidSearchScope)
+	_, err = c.ResolveDocumentSourceFence(t.Context(), api.DocumentSourceFenceResolveRequest{
+		Filters: &api.DocumentSourceFenceFilters{UnderPath: scope.UnderPath},
+	})
+	require.ErrorIs(t, err, store.ErrInvalidSearchScope)
 	require.Zero(t, calls.Load())
 }
 

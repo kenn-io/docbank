@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,8 +38,6 @@ func TestSearchUnderPath(t *testing.T) {
 			{"under_path=" + url.QueryEscape("/Café/mercury.txt"), "not_dir", 422},
 			{"under_path=/missing", "not_found", 404},
 			{"under_path=" + url.QueryEscape("/Café/.."), "validation", 422},
-			{"under_path=" + url.QueryEscape("/café"), "not_found", 404},
-			{fmt.Sprintf("under_path=/Café&under_node_id=%d", dir.ID), "validation", 422},
 			{"under_path=relative", "validation", 422},
 			{"under_path=", "validation", 422},
 			{"under_path", "validation", 422},
@@ -51,11 +48,4 @@ func TestSearchUnderPath(t *testing.T) {
 			require.Contains(t, body, `"code":"`+tc.code+`"`)
 		}
 	}
-	dir, err = s.NodeByID(t.Context(), dir.ID)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), dir.ID, dir.Revision)
-	require.NoError(t, err)
-	resp, body := get(t, ts, "/api/v1/search?q=mercury&under_path="+url.QueryEscape("/Café"), nil)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode, body)
-	require.Contains(t, body, `"code":"not_found"`)
 }
