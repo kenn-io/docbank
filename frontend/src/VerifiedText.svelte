@@ -370,13 +370,8 @@
     border-radius: var(--radius-md);
     background: var(--bg-inset);
   }
-  .notice a,
-  .notice a:visited {
+  .notice a {
     color: var(--accent-blue);
-    text-decoration: none;
     white-space: nowrap;
-  }
-  .notice a:hover {
-    text-decoration: underline;
   }
 </style>
