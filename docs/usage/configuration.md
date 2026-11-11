@@ -110,7 +110,7 @@ profile selects stays staged. Use `docbank-docling-asr/v2` to add M4A, or
 `docbank-docling-asr/v3` to add MP4 sound-track transcription alongside all
 three audio formats. v3 requires provider-host FFmpeg and fresh consent.
 Size upload, response, and timeout bounds for the video; embedded PNG frames
-count against the 512 MiB response ceiling. See the [audio and video configuration reference](../configuration.md#audio-and-video-transcription)
+count against the 512 MiB response ceiling at their base64-encoded size. See the [audio and video configuration reference](../configuration.md#audio-and-video-transcription)
 for disclosure-fingerprint calculation and the restriction on sharing a descriptor
 across deployments.
 

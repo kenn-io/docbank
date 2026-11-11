@@ -304,7 +304,9 @@ The opt-in Docling ASR v3 contract adds `video/mp4` with `.mp4`. Its sealed
 one qualified AAC/ALAC sound track and local sound-sample ranges, and admits
 non-visual metadata/timecode tracks. It keeps the 16 MiB movie-metadata bound
 and 1 GiB source ceiling while avoiding the visual 20 MiB and 10,000-frame
-limits. It rejects fragmented containers and videos without qualified sound.
+limits. It rejects fragmented containers, videos without qualified sound,
+and sound tracks whose edit list would shift transcript times: an empty edit,
+several edits, or a media start beyond ordinary AAC encoder priming.
 The flag is omitted from existing policies, preserving their bytes and
 checksums; supplied captions keep visual inspection. Provider-host FFmpeg
 demuxes the audio. Timed text becomes video-family transcript evidence;

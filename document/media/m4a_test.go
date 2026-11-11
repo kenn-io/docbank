@@ -349,3 +349,36 @@ func TestInspectMP4ExistingPolicyIdentity(t *testing.T) {
 	require.True(t, record.Eligible)
 	require.Equal(t, "a3255099414355444e81b8fce938cb7ffd0c6b0fea0e9ed384be187cd26a5625", record.PolicyFingerprint)
 }
+
+func TestInspectMP4AudioTimeline(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		codec    string
+		edits    []mediatest.SoundEdit
+		eligible bool
+	}{
+		{name: "no edit list", codec: "mp4a", eligible: true},
+		{name: "AAC priming 1024", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 1024}}, eligible: true},
+		{name: "AAC priming 2112", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 2112}}, eligible: true},
+		{name: "ALAC from zero", codec: "alac", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 0}}, eligible: true},
+		{name: "delayed media start", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 94976}}},
+		{name: "empty edit delays sound", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1979, MediaTime: -1}, {Duration: 1000, MediaTime: 1024}}},
+		{name: "multiple edits", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 500, MediaTime: 1024}, {Duration: 500, MediaTime: 24000}}},
+		{name: "ALAC media offset", codec: "alac", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 1024}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			data := mediatest.M4AWithSoundEdits(testCase.codec, testCase.edits...)
+			if testCase.edits == nil {
+				data = mediatest.M4A(testCase.codec)
+			}
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.Equal(t, testCase.eligible, record.Eligible, record.Reason)
+			if !testCase.eligible {
+				require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+			}
+		})
+	}
+}

@@ -830,23 +830,34 @@ identify the deployment's installed version.
 
 Use `adapter_contract = "docbank-docling-asr/v3"` to add original MP4 video
 with an AAC or ALAC sound track. This contract also accepts every v2 audio
-format, so a watch can route `audio_video` to one profile. Automatic watch
-routing requires the per-family watch profile configuration. The worker uses
-the selected profile's consent; v1/v2 grants never authorize an MP4 upload.
-MP4s without qualified sound, fragmented containers, MOV, MKV, and WebM are
-not admitted. Non-visual metadata and timecode tracks are allowed.
+format, so one profile can serve audio and video. Routing `audio_video` from
+a watch needs the per-family watch `profiles` map from
+[#1419](https://github.com/kenn-io/docbank/pull/1419), which this release does
+not include. The worker uses the selected profile's consent; v1/v2 grants
+never authorize an MP4 upload. MP4s without qualified sound, fragmented
+containers, MOV, MKV, and WebM are not admitted. Non-visual metadata and
+timecode tracks are allowed.
+
+The provider extracts the sound track to audio that starts at zero, so
+transcript times are only correct when the sound starts at the start of the
+movie. Inspection refuses an MP4, before any upload, when a sound track's edit
+list has an empty edit, more than one edit, or a media start beyond ordinary
+AAC encoder priming (three AAC frames, which covers the common 1024- and
+2112-sample delays). A sound track without an edit list, or with one edit that
+starts at zero, is admitted.
 
 The v3 deployment requires Docling Serve 1.32.0, `docling-slim` 2.124.0,
 `docling-core` 2.105.0, `docling-jobkit` 3.5.0, and ASR dependencies such as
 `openai-whisper` 20250625. FFmpeg must be on the
 provider host's `PATH`; Docbank hosts need no FFmpeg. The adapter sends
-`from_formats=video` for MP4 and maps only timed transcript text. The v3
-artifact omits `provider_version` because the response does not identify the
-deployment's installed version.
+`from_formats=video` for MP4 and maps only timed transcript text. Like v2, the
+v3 artifact omits `provider_version` because the response does not identify
+the deployment's installed version.
 
 The pinned provider embeds one PNG frame per ten seconds of video. No request
-option disables those frames. Size `max_response_bytes` for approximately
-`(duration_seconds / 10 + 1) × frame_PNG_bytes + transcript_bytes`, up to
+option disables those frames. The response carries each frame base64-encoded,
+about 4/3 of the PNG's size. Size `max_response_bytes` for approximately
+`(duration_seconds / 10 + 1) × frame_PNG_bytes × 4/3 + transcript_bytes`, up to
 **512 MiB**. This cap sets a maximum video duration for a given frame size;
 1080p/4K frame sizes depend on content and need deployment qualification. A
 response beyond the bound fails without retaining a partial transcript.
