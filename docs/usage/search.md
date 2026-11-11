@@ -147,6 +147,8 @@ for receipt fields and degradation causes.
 - **`hybrid`** combines lexical and semantic candidates.
 - **Explicit `auto`** uses lexical retrieval and reports `lexical` as the actual mode.
 
+Semantic-only results include the matched chunk as their excerpt when readable text is available.
+
 HTTP and embedded callers can [prefer content matches over filenames](../architecture/http-api.md#coverage-and-source-fenced-search)
 with `content_first: true` or `ContentFirst: true`.
 

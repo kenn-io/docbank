@@ -26,7 +26,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	model := "synthetic-vision"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fields := map[string]string{"visible_text": "SAVE\nNOW\n    ALPHA\n    BETA\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
+		fields := map[string]string{"visible_text": "SAVE\nNOW\n    ALPHA  \n\tBETA\t\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
 		raw, err := json.Marshal(fields)
 		if !assert.NoError(t, err) {
 			http.Error(w, "invalid response", http.StatusInternalServerError)
@@ -70,7 +70,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	assert.Equal(t, written.Hash, view.Build.SourceSHA256)
 	window, err := service.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: view.Attachment.ID, MaxChars: 16000})
 	require.NoError(t, err)
-	assert.Contains(t, window.Text, "    ALPHA\n    BETA")
+	assert.Contains(t, window.Text, "    ALPHA  \n\tBETA\t")
 	assert.NotContains(t, window.Text, "```")
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ALPHA", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	assert.Contains(t, report.Results[0].Excerpt, "    ALPHA\n    BETA")
+	assert.Contains(t, report.Results[0].Excerpt, "    ALPHA  \n\tBETA\t")
 	assert.NotContains(t, report.Results[0].Excerpt, "```")
 
 	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ignoring danger", Mode: "semantic", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})

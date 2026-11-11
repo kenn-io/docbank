@@ -234,6 +234,9 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
 			p.Rendition.MaxUnits = 4
 		}, "headings formatter"},
+		{"headings formatter without image understanding", func(p *document.ProcessingProfileV1) {
+			p.Embeddings[1].Chunk.Formatter = document.RenditionChunkHeadingsFormatter
+		}, "headings formatter requires image understanding"},
 		{"chunk embedding with photo description", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = vision.AdapterContract
 			p.RetentionDisclosure.RetainSanitizedMarkdown = false

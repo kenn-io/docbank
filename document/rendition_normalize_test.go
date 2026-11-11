@@ -144,14 +144,18 @@ func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
 
 func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 	for _, tc := range []struct {
-		name, text, want string
-		limit            int
-		truncated        bool
+		name, text, want, lexical string
+		limit, sourceLimit        int
+		truncated                 bool
 	}{
-		{"single exact fit", "hello", "hello", 5, false},
-		{"single over limit", "hello!", "hello", 5, true},
-		{"multiline exact fit", "a\nb", "a\nb", 3, false},
-		{"multiline over limit", "a\nbc", "a\nb", 3, true},
+		{"single exact fit", "hello", "hello", "hello", 5, 100, false},
+		{"single over limit", "hello!", "hello", "hello", 5, 100, true},
+		{"multiline exact fit", "a\nb", "a\nb", "a\nb", 3, 100, false},
+		{"multiline over limit", "a\nbc", "a\nb", "a\nb", 3, 100, true},
+		{"boundary whitespace", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", "\n  a \t\n\tb\t\n", 11, 100, false},
+		{"punctuation exact fit", "a!", "a\\!", "a\\!", 3, 100, false},
+		{"punctuation over limit", "a!", "a", "a", 2, 100, true},
+		{"source bytes across lines", "a\né\nb", "a\né", "a\né", 100, 4, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
@@ -159,10 +163,13 @@ func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
 				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
 			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: tc.limit, MaxSegmentRunes: 100})
 			require.NoError(t, err)
+			policy.maxSourceUnitBytes = tc.sourceLimit
 			rendered, err := BuildRenditionV1(evidence, policy)
 			require.NoError(t, err)
 			require.Len(t, rendered.Units, 1)
 			assert.Equal(t, tc.want, rendered.Units[0].Text)
+			require.Len(t, rendered.LexicalSegments, 1)
+			assert.Equal(t, tc.lexical, rendered.LexicalSegments[0].Text)
 			if tc.truncated {
 				assert.Contains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
 			} else {

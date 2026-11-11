@@ -1,9 +1,6 @@
 package document
 
-import (
-	"strings"
-	"unicode/utf8"
-)
+import "unicode/utf8"
 
 // ImageUnderstandingProviderID selects an ordinary image interpretation rendition.
 const ImageUnderstandingProviderID = "compatible-vision.understand-v1"
@@ -23,26 +20,17 @@ func isImageUnderstandingUnit(headings []string) bool {
 }
 
 // sanitizeRenditionUnit sanitizes a unit's text. Interpretation text is plain,
-// so each line is escaped and sanitized alone and the line breaks Markdown
-// would fold into spaces survive.
+// so its whitespace is retained while Markdown punctuation is escaped.
 func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, maxLinkChars, maxSourceBytes, maxRunes int) (string, bool, bool, error) {
 	if !isImageUnderstandingUnit(unit.HeadingPath) {
 		return sanitizeRenditionMarkdown(unit.Text, maxLinkChars, maxSourceBytes, maxRunes)
 	}
-	var lines []string
-	var sourceTruncated, truncated bool
-	for line := range strings.SplitSeq(unit.Text, "\n") {
-		text, source, rendition, err := sanitizeRenditionMarkdown(EscapeRenditionText(line), maxLinkChars, maxSourceBytes, maxRunes)
-		if err != nil {
-			return "", false, false, err
-		}
-		sourceTruncated, truncated = sourceTruncated || source, truncated || rendition
-		lines = append(lines, text)
-		if maxRunes -= utf8.RuneCountInString(text) + 1; maxRunes <= 0 {
-			break
-		}
+	source, sourceTruncated := truncateUTF8Bytes(unit.Text, maxSourceBytes)
+	escaped := EscapeRenditionText(source)
+	if utf8.RuneCountInString(escaped) > maxRunes {
+		return truncateEscapedRenditionText(source, maxRunes), sourceTruncated, true, nil
 	}
-	return strings.Trim(strings.Join(lines, "\n"), "\n"), sourceTruncated, truncated || maxRunes <= 0, nil
+	return escaped, sourceTruncated, false, nil
 }
 
 // renditionPresentation renders a readable unit's labels for readers: its
