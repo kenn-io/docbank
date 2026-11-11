@@ -47,6 +47,7 @@ var (
 	errWebUploadProtocol = errors.New("invalid browser upload protocol")
 	errWebUploadTooBig   = errors.New("upload control message exceeds its limit")
 	errWebVerifyStalled  = errors.New("stored content verification stalled")
+	errWebVerifyBusy     = errors.New("stored content verification slots full")
 )
 
 type webPhotoFile struct {
@@ -323,6 +324,9 @@ func handleWebUploadConnection(
 						return d.Blobs.OpenStreamContext(ctx, node.BlobHash)
 					})
 					if err != nil {
+						if errors.Is(err, errWebVerifyBusy) {
+							return NewError(http.StatusServiceUnavailable, "verification_busy", "Upload verification is unavailable. Restart Docbank, sign in again, and retry the upload.")
+						}
 						if errors.Is(err, errWebVerifyStalled) {
 							return err
 						}
@@ -385,7 +389,7 @@ func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string
 	select {
 	case slots <- struct{}{}:
 	default:
-		return errWebVerifyStalled
+		return errWebVerifyBusy
 	}
 	readCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

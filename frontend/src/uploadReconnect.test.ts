@@ -78,6 +78,21 @@ it("disposes a pending retry without opening another connection", async () => {
   expect(states).toEqual(["connected", "reconnecting"]);
 });
 
+it("lets a manual retry replace a pending reconnect", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("WebSocket", Socket);
+  const states: UploadConnectionState[] = [];
+  const connection = new UploadReconnect(session, (state) => states.push(state));
+  connection.start();
+  await vi.waitFor(() => expect(states).toEqual(["connected"]));
+  sockets[0].close();
+  await vi.advanceTimersByTimeAsync(100);
+  connection.retry();
+  await vi.advanceTimersByTimeAsync(250);
+  expect(states).toEqual(["connected", "reconnecting", "manual", "connected"]);
+  connection.close();
+});
+
 it("stops when the new daemon proof is wrong", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("WebSocket", Socket);

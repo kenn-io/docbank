@@ -12,7 +12,6 @@ export type UploadConnectionState =
 
 export class UploadReconnect {
   private channel: VerifiedUploadChannel | undefined;
-  private timer: ReturnType<typeof setTimeout> | undefined;
   private abort = new AbortController();
   private disposed = false;
   private generation = 0;
@@ -40,7 +39,6 @@ export class UploadReconnect {
     this.disposed = true;
     this.generation++;
     this.abort.abort();
-    clearTimeout(this.timer);
     this.channel?.close();
   }
 
@@ -50,12 +48,13 @@ export class UploadReconnect {
     for (const delay of delays) {
       if (delay)
         await new Promise<void>((resolve) => {
+          let timer: ReturnType<typeof setTimeout>;
           const finish = (): void => {
-            clearTimeout(this.timer);
+            clearTimeout(timer);
             this.abort.signal.removeEventListener("abort", finish);
             resolve();
           };
-          this.timer = setTimeout(finish, delay);
+          timer = setTimeout(finish, delay);
           this.abort.signal.addEventListener("abort", finish, { once: true });
         });
       if (this.disposed || generation !== this.generation) return;

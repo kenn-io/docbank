@@ -68,6 +68,16 @@ func TestWebUploadVerificationProgressOverSocket(t *testing.T) {
 	})
 }
 
+func TestWebUploadVerificationSlotsFull(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+	err := verifyWebUpload(t.Context(), nil, "retry", 1, slots, func(context.Context) (io.ReadCloser, int64, error) {
+		t.Fatal("opened content without a verification slot")
+		return nil, 0, nil
+	})
+	require.ErrorIs(t, err, errWebVerifyBusy)
+}
+
 func TestAbandonedWebVerificationReleasesMaintenance(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
