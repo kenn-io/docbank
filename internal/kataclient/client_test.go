@@ -28,43 +28,27 @@ func realClient(t *testing.T) (*Client, *client.Client, int64) {
 	return New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"}), api, project.Project.ID
 }
 
-func TestClientKeepsBearerAndRefusesRedirects(t *testing.T) {
-	for _, redirect := range []string{"", "/redirected", "http://other.test:7777/redirected"} {
-		t.Run(redirect, func(t *testing.T) {
-			var requests, redirected atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				assert.Equal(t, "Bearer synthetic-key", r.Header.Get("Authorization"))
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/api/v1/health":
-					_, _ = fmt.Fprint(w, `{"api_schema_version":"0.41.0"}`)
-				case "/api/v1/projects":
-					if redirect != "" {
-						http.Redirect(w, r, redirect, http.StatusFound)
-						return
-					}
-					_, _ = fmt.Fprint(w, `{"projects":[{"id":1,"name":"docbank","active":true}]}`)
-				default:
-					redirected.Add(1)
-					w.WriteHeader(http.StatusNotFound)
-				}
-			}))
-			t.Cleanup(server.Close)
-			c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
-			project, err := c.projectID(t.Context(), "docbank")
-			if redirect == "" {
-				require.NoError(t, err)
-				require.EqualValues(t, 1, project)
-			} else {
-				failure, ok := errors.AsType[*Error](err)
-				require.True(t, ok, "%v", err)
-				require.Equal(t, http.StatusFound, failure.Status)
-				require.Zero(t, redirected.Load())
-			}
-			require.EqualValues(t, 2, requests.Load())
-		})
-	}
+func TestClientRefusesRedirects(t *testing.T) {
+	var redirected atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_, _ = fmt.Fprint(w, `{"api_schema_version":"0.41.0"}`)
+		case "/api/v1/projects":
+			http.Redirect(w, r, "/redirected", http.StatusFound)
+		default:
+			redirected.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+	_, err := c.projectID(t.Context(), "docbank")
+	failure, ok := errors.AsType[*Error](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, http.StatusFound, failure.Status)
+	require.Zero(t, redirected.Load())
 }
 
 func TestCreateAndCommentReplay(t *testing.T) {

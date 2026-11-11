@@ -70,6 +70,7 @@ func TestKataEndpointPolicyBoundaries(t *testing.T) {
 		{"http://kata:7777", false, false},
 		{"http://kata:7777", true, true},
 		{"http://8.8.8.8:7777", true, false},
+		{"https://8.8.8.8:443", true, true},
 	} {
 		t.Run(fmt.Sprintf("%s/trust=%t", tc.endpoint, tc.trust), func(t *testing.T) {
 			got, err := kataEndpointConfig(t, tc.endpoint, tc.trust).Resolve("")
@@ -77,7 +78,7 @@ func TestKataEndpointPolicyBoundaries(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tc.endpoint, got.Endpoint)
 			} else {
-				require.ErrorContains(t, err, "trust_private_network = true")
+				require.ErrorContains(t, err, "HTTP endpoint must be loopback")
 				if tc.trust {
 					require.ErrorContains(t, err, "public IPs require HTTPS")
 				}
@@ -101,7 +102,6 @@ func TestKataEndpointRestrictionsAndNormalization(t *testing.T) {
 	for _, tc := range []struct{ raw, want string }{
 		{" HTTPS://Example.test:443/ ", "https://Example.test:443"},
 		{" HTTP://LOCALHOST:80/ ", "http://LOCALHOST:80"},
-		{"https://8.8.8.8:443", "https://8.8.8.8:443"},
 	} {
 		got, err := kataEndpointConfig(t, tc.raw, true).Resolve("")
 		require.NoError(t, err)

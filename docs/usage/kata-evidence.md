@@ -27,7 +27,6 @@ Add this optional section to `$DOCBANK_HOME/config.toml`:
 [integrations.kata]
 enabled = true
 endpoint = "http://127.0.0.1:7777"
-trust_private_network = false
 api_key_env = "DOCBANK_KATA_TOKEN"
 default_project = "docbank"
 ```
@@ -45,7 +44,7 @@ private container network, set `endpoint = "http://kata:7777"` and
 `trust_private_network = true` in this section. This opt-in also permits private,
 link-local, unspecified and carrier-grade NAT IP addresses. Public IP literals
 remain rejected over plain HTTP. DNS names are accepted on your statement that their network is
-trusted; Docbank does not classify them as public or private. HTTP sends the
+trusted. HTTP sends the
 token and document evidence in plaintext, so enable this only on a network you
 trust. The setting defaults to `false` and is independent of `[web]` trust.
 
