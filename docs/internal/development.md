@@ -464,6 +464,14 @@ GRANT INSERT ON documents.package_records, documents.package_labels,
 GRANT UPDATE(state, snapshot_id, completed_at) ON documents.packages TO docbank_runtime;
 GRANT UPDATE(state, epoch, token, claim_owner, lease_expires_at, updated_at)
     ON documents.package_import_jobs TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at)
+    ON documents.export_sources TO docbank_runtime;
+GRANT INSERT ON documents.export_chunks, documents.export_members,
+    documents.export_documents, documents.export_role_roots TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, expires_at)
+    ON documents.export_plans TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at, epoch, token, archive_name)
+    ON documents.export_jobs TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
@@ -773,7 +781,7 @@ expiry and retained representation versions.
 The native Store admits received packages and their source collections, stages
 files under worker leases, publishes immutable source rows and scoped labels,
 and completes or cancels imports on both backends. Filesystem parsing, import
-workers, export jobs, portable metadata recovery and public PostgreSQL opening
+workers, portable metadata recovery and public PostgreSQL opening
 remain separate qualification boundaries.
 
 Admission commits the source collection, package identity, volume mappings and
@@ -812,6 +820,48 @@ completion values under writer admission; the PostgreSQL grants do not prevent
 direct SQL from rewriting those columns. SQLite's released receipt trigger
 prevents updates but does not prevent deletion. These database-level differences
 do not change the qualified Store operations.
+
+#### Document export plans and jobs
+
+The native Store supports explicit members, current node IDs and chunked uploads
+as export sources on both backends. It seals exact retained versions, plans
+originals and available retained text, page images, email PDFs and attachment
+outputs, and provides frozen previews and output-problem pages. Explicit photo
+members can capture authored metadata and publish an already-prepared render.
+Query-driven and mailbox source discovery, rendering and filesystem workers,
+portable recovery and public PostgreSQL opening remain separate boundaries.
+
+Source admission reserves the owner and operation before invoking a resolver.
+A failed or cancelled resolution keeps that reservation, so retry cannot silently
+select newer documents. Chunk retries must match the original bytes; sealing
+requires every chunk and the promised member digest. Plans pin exact output
+receipts, paths, optional-role failures, volume choices and retention roots.
+A failed plan commits no quota reservation, document rows or roots.
+
+Job claims and progress use the existing writer admission. Restart and cancellation
+advance the claim epoch and clear its token; old attempts cannot publish. A
+successful finish stores the terminal receipt and archive name together and
+extends source and plan retention. Cancellation and failure reduce the extension.
+Expired authority keeps its versions and blobs until cleanup removes its rows.
+Archive release checks the owner and terminal state before calling the existing
+removal callback; a callback failure keeps the job. Archive removal must tolerate
+retries because SQL rollback cannot restore a removed file.
+
+Plans, frozen previews, problem pages, photo inputs and live output/attachment
+discovery use read snapshots where multiple rows must agree. Archive document
+walks release each page before callbacks so blob reads and claim checks can
+re-enter the Store. Cleanup during a read affects the next request. PostgreSQL decodes stored
+JSON bytes only for concrete JSON predicates and uses `GREATEST` for scalar
+retention comparisons; SQLite keeps its existing expressions. Both retain the
+same canonical bytes and fingerprints.
+
+The `exports` contracts cover native source sealing, chunk replay, pinned roles,
+plan rollback, job completion and release, restart/revocation, cleanup and output
+inspection. PostgreSQL-specific cases revoke a final write to verify rollback,
+remove expired plans between read statements, and recheck explicit photo inputs
+before publication. Runtime grants permit only inserts into members, chunks,
+planned documents and roots; source, plan and job updates are limited to their
+existing mutable columns. These grants do not replace Store lifecycle checks.
 
 #### PostgreSQL reference implementations
 

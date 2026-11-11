@@ -57,6 +57,12 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(canonical_json,state,expires_at) ON "+schema+".export_sources TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".export_chunks,"+schema+".export_members,"+schema+".export_documents,"+schema+".export_role_roots TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(canonical_json,expires_at) ON "+schema+".export_plans TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(canonical_json,state,expires_at,epoch,token,archive_name) ON "+schema+".export_jobs TO "+quotedRole)
+	require.NoError(t, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".collection_snapshots,"+schema+".collection_snapshot_members,"+schema+".collection_snapshot_representations,"+schema+".packages,"+schema+".package_volumes,"+schema+".bates_namespaces,"+schema+".bates_namespace_cursors,"+schema+".bates_allocations,"+schema+".bates_page_labels,"+schema+".bates_artifacts,"+schema+".bates_artifact_pages TO "+quotedRole+
 		"; GRANT UPDATE(next_sequence) ON "+schema+".bates_namespace_cursors TO "+quotedRole+
 		"; GRANT UPDATE(state,committed_at) ON "+schema+".bates_allocations TO "+quotedRole+

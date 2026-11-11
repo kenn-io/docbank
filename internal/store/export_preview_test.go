@@ -8,9 +8,10 @@ import (
 	"uuid"
 )
 
-func TestExportPreviewUsesFrozenReceiptsAndOwner(t *testing.T) {
+func checkExportPreviewUsesFrozenReceiptsAndOwner(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("ab"), 12, "text/plain")
 	require.NoError(t, err)
 	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}}}, nil)
@@ -33,7 +34,7 @@ func TestExportPreviewUsesFrozenReceiptsAndOwner(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.ExportPlanPreview(t.Context(), "owner", "invalid")
 	require.ErrorIs(t, err, bundle.ErrConflict)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE export_plans SET expires_at=? WHERE id=?`, "2000-01-01T00:00:00Z", p.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE export_plans SET expires_at=$1 WHERE id=$2`, "2000-01-01T00:00:00Z", p.ID)
 	require.NoError(t, err)
 	_, err = s.ExportPlanPreview(t.Context(), "owner", p.ID)
 	require.ErrorIs(t, err, bundle.ErrExpired)

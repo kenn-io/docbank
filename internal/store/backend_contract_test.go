@@ -133,6 +133,63 @@ var backendSuites = []backendSuite{
 			checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newPostgresQueryStore)
 		}},
 	}},
+	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query/mailbox source selection, filesystem execution and recovery.", scenarios: []backendScenario{
+		{"ExportWorkerFailureAndCapacity", func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newPostgresQueryStore) }},
+		{"ExportDiscoverySnapshots", nil, checkExportDiscoverySnapshotsPostgres},
+
+		{"ExportEmailInspection", func(t *testing.T) { t.Helper(); checkExportEmailInspection(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportEmailInspection(t, newPostgresQueryStore) }},
+		{"ExportFinishRollback", nil, checkExportFinishRollbackPostgres},
+		{"ExplicitPhotoExport", nil, checkExplicitPhotoExportPostgres},
+
+		{"ExportJobPublicationAndRelease", func(t *testing.T) { t.Helper(); checkExportJobPublicationAndRelease(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportJobPublicationAndRelease(t, newPostgresQueryStore) }},
+		{"ExportRestartRevocationAndCleanup", func(t *testing.T) { t.Helper(); checkExportRestartRevocationAndCleanup(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportRestartRevocationAndCleanup(t, newPostgresQueryStore) }},
+		{"ExportFailedResolutionKeepsReservation", func(t *testing.T) { t.Helper(); checkExportFailedResolutionKeepsReservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportFailedResolutionKeepsReservation(t, newPostgresQueryStore) }},
+		{"ExportPlanRollback", nil, checkExportPlanRollbackPostgres},
+		{"ExportReadSnapshots", nil, checkExportReadSnapshotsPostgres},
+		{"ExportChunksSealExactVersionsAndRejectChangedRetries", func(t *testing.T) {
+			t.Helper()
+			checkExportChunksSealExactVersionsAndRejectChangedRetries(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportChunksSealExactVersionsAndRejectChangedRetries(t, newPostgresQueryStore)
+		}},
+		{"ExportPlanFailureRollsBackAdmissionAndAllowsRetry", func(t *testing.T) {
+			t.Helper()
+			checkExportPlanFailureRollsBackAdmissionAndAllowsRetry(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportPlanFailureRollsBackAdmissionAndAllowsRetry(t, newPostgresQueryStore)
+		}},
+		{"ExportPlanOptionalPagesRespectMetadataBounds", func(t *testing.T) { t.Helper(); checkExportPlanOptionalPagesRespectMetadataBounds(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkExportPlanOptionalPagesRespectMetadataBounds(t, newPostgresQueryStore)
+		}},
+		{"ExportPlanPinsRolesAndCannotInventMissingText", func(t *testing.T) { t.Helper(); checkExportPlanPinsRolesAndCannotInventMissingText(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkExportPlanPinsRolesAndCannotInventMissingText(t, newPostgresQueryStore)
+		}},
+		{"ExportPreviewUsesFrozenReceiptsAndOwner", func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newPostgresQueryStore) }},
+		{"ExportPublicationReleasedOnlyAfterRetentionCleanup", func(t *testing.T) {
+			t.Helper()
+			checkExportPublicationReleasedOnlyAfterRetentionCleanup(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportPublicationReleasedOnlyAfterRetentionCleanup(t, newPostgresQueryStore)
+		}},
+		{"ExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune", func(t *testing.T) {
+			t.Helper()
+			checkExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t, newPostgresQueryStore)
+		}},
+		{"ExportUpload1001MembersRequiresEveryChunkAndExactDigest", func(t *testing.T) {
+			t.Helper()
+			checkExportUpload1001MembersRequiresEveryChunkAndExactDigest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportUpload1001MembersRequiresEveryChunkAndExactDigest(t, newPostgresQueryStore)
+		}}}},
 	{name: "sealed-delivery", postgres: "native operations", scope: "Inline and streaming sealed snapshots, package identity and preflights, Bates reservations and verified artifacts with history and custodian evidence; excludes query selection, received-package imports and filesystem delivery.", scenarios: []backendScenario{
 		{"SealedDeliveryReservationRollback", nil, checkSealedDeliveryReservationRollbackPostgres},
 		{"SealedDeliveryArtifactRollback", nil, checkSealedDeliveryArtifactRollbackPostgres},
@@ -2056,7 +2113,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums and export jobs remain unqualified; sealed-delivery covers snapshots, package identity and Bates; received-packages covers native intake and completion; people-curation covers custodians."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums remain unqualified; exports covers native explicit-source plans and jobs; sealed-delivery covers snapshots, package identity and Bates; received-packages covers native intake and completion; people-curation covers custodians."},
 	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }

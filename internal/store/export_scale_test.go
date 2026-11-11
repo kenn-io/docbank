@@ -33,9 +33,10 @@ func seedExportMembers(t *testing.T, s *Store, start, end int) []bundle.Member {
 	return members
 }
 
-func TestExportUpload1001MembersRequiresEveryChunkAndExactDigest(t *testing.T) {
+func checkExportUpload1001MembersRequiresEveryChunkAndExactDigest(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	members := seedExportMembers(t, s, 0, 1001)
 	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "upload", Total: len(members), MemberHash: ExportMemberHash(members)}, nil)
 	require.NoError(t, err)
@@ -48,11 +49,11 @@ func TestExportUpload1001MembersRequiresEveryChunkAndExactDigest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1001, sealed.Total)
 	require.Equal(t, source.MemberHash, sealed.MemberHash)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE export_sources SET expires_at='2000-01-01T00:00:00.000000000Z' WHERE id=?`, source.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE export_sources SET expires_at='2000-01-01T00:00:00.000000000Z' WHERE id=$1`, source.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.CleanupExportAuthority(t.Context()))
 	var retained int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_members WHERE source_id=?`, source.ID).Scan(&retained))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_members WHERE source_id=$1`, source.ID).Scan(&retained))
 	require.Zero(t, retained)
 }
 

@@ -2494,3 +2494,5 @@ CREATE INDEX packages_history ON {{schema}}.packages(predecessor_package_id,crea
 
 CREATE INDEX package_import_jobs_pending ON {{schema}}.package_import_jobs(state,id);
 CREATE INDEX package_labels_lookup ON {{schema}}.package_labels(label,provenance,package_id);
+
+CREATE INDEX export_jobs_pending ON {{schema}}.export_jobs(state,id);
