@@ -10,12 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-// Enrollment must validate retained catalogs even when their documents are
-// outside the new scope. Use native publications so nested readers see real rows.
-func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
-	t.Helper()
-	t.Parallel()
-	for name, seed := range map[string]func(*testing.T) *Store{
+func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
+	return map[string]func(*testing.T) *Store{
 		"processing": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)
@@ -126,7 +122,15 @@ func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
 			require.NoError(t, err)
 			return s
 		},
-	} {
+	}
+}
+
+// Enrollment must validate retained catalogs even when their documents are
+// outside the new scope. Use native publications so nested readers see real rows.
+func checkAuditEnrollmentCatalogsPostgres(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	for name, seed := range retainedMetadataCatalogSeeds() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			setup, owner := pgtest.NewDatabase(t)

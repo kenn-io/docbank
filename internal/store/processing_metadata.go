@@ -255,60 +255,67 @@ type metadataRenditionJobWaiter struct {
 }
 
 // processingMetadataTables exports the processing records in dependency order.
-var processingMetadataTables = []metadataRecordCodec{
-	newMetadataTable(metadataTable[metadataProcessingIncarnation]{
-		record: metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}, table: "processing_incarnations",
-		suffix: `i WHERE EXISTS(SELECT 1 FROM processing_consent_grants g WHERE g.incarnation_id=i.incarnation_id)
+var processingMetadataTables = processingMetadataTablesForDialect(metadataJSONDialect{})
+var postgresProcessingMetadataTables = processingMetadataTablesForDialect(metadataJSONDialect{postgres: true})
+
+func processingMetadataTablesForDialect(d metadataJSONDialect) []metadataRecordCodec {
+	return []metadataRecordCodec{
+		newMetadataTable(metadataTable[metadataProcessingIncarnation]{
+			record: metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}, table: "processing_incarnations",
+			suffix: `i WHERE EXISTS(SELECT 1 FROM processing_consent_grants g WHERE g.incarnation_id=i.incarnation_id)
 			OR EXISTS(SELECT 1 FROM processing_consent_revocations r WHERE r.incarnation_id=i.incarnation_id)
 			ORDER BY i.incarnation_id`,
-		validate: validateMetadataProcessingIncarnation,
-		insert:   importMetadataProcessingIncarnation}),
-	processingConsentRevocationMetadata, processingConsentGrantMetadata,
-	newMetadataTable(metadataTable[metadataProcessingProfile]{
-		record: metadataProcessingProfile{Type: metadataProcessingProfileType}, table: "processing_profiles",
-		suffix: "ORDER BY profile_fingerprint", insert: importMetadataProcessingProfile}),
-	newMetadataTable(metadataTable[metadataRenditionBuild]{
-		record: metadataRenditionBuild{Type: metadataRenditionBuildType}, table: "rendition_builds",
-		suffix: "ORDER BY build_id", validate: validateMetadataRenditionBuild}),
-	newMetadataTable(metadataTable[metadataRenditionArtifact]{
-		record: metadataRenditionArtifact{Type: metadataRenditionArtifactType, State: RenditionArtifactVerified},
-		table:  "rendition_artifacts", suffix: "ORDER BY build_id,artifact_id", validate: validateMetadataRenditionArtifact}),
-	newMetadataTable(metadataTable[metadataRenditionUnit]{
-		record: metadataRenditionUnit{Type: metadataRenditionUnitType}, table: "rendition_units",
-		suffix: "ORDER BY build_id,unit_order,unit_id", validate: validateMetadataRenditionUnit}),
-	newMetadataTable(metadataTable[metadataRenditionSegment]{
-		record: metadataRenditionSegment{Type: metadataRenditionSegmentType}, table: "rendition_lexical_segments",
-		suffix: "ORDER BY build_id,segment_order,segment_id", validate: validateMetadataRenditionSegment}),
-	newMetadataTable(metadataTable[metadataRenditionAttachment]{
-		record: metadataRenditionAttachment{Type: metadataRenditionAttachType}, table: "rendition_attachments",
-		suffix: "ORDER BY content_version_id,profile_fingerprint,attachment_id", validate: validateMetadataRenditionAttachment}),
-	newMetadataTable(metadataTable[metadataRenditionHead]{
-		record: metadataRenditionHead{Type: metadataRenditionHeadType}, table: "rendition_heads",
-		suffix: "ORDER BY content_version_id,profile_fingerprint",
-		validate: func(value metadataRenditionHead) error {
-			return validateRenditionHeadRecord(RenditionHeadRecord{
-				ContentVersionID:             value.ContentVersionID,
-				ProcessingProfileFingerprint: value.ProcessingProfileFingerprint,
-				AttachmentID:                 value.AttachmentID, PublishedAt: value.PublishedAt,
-			})
-		},
-		insert: importMetadataRenditionHead}),
-	// The lexical generation writes five tables, which the pristine check counts
-	// in its existence-gated loop.
-	newMetadataTable(metadataTable[metadataLexicalGeneration]{
-		record:    metadataLexicalGeneration{Type: metadataLexicalGenerationType},
-		exportAll: exportLexicalGenerations, insert: restoreLexicalGenerationTx}),
-	newMetadataTable(metadataTable[metadataRenditionJob]{
-		record: metadataRenditionJob{Type: metadataRenditionJobType}, table: "rendition_jobs",
-		validate: validateMetadataRenditionJob, exportAll: exportRenditionJobs, insert: importMetadataRenditionJob}),
-	newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
-		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
-		suffix: "WHERE " + backedUpRenditionJobs + " ORDER BY job_id,waiter_id", checkExport: true,
-		validate: func(value metadataRenditionJobWaiter) error {
-			_, err := validateMetadataRenditionJobWaiter(value)
-			return err
-		},
-		insert: importMetadataRenditionJobWaiter}),
+			validate: validateMetadataProcessingIncarnation,
+			insert:   importMetadataProcessingIncarnation}),
+		processingConsentRevocationMetadata, processingConsentGrantMetadata,
+		newMetadataTable(metadataTable[metadataProcessingProfile]{
+			record: metadataProcessingProfile{Type: metadataProcessingProfileType}, table: "processing_profiles",
+			suffix: "ORDER BY profile_fingerprint", insert: importMetadataProcessingProfile}),
+		newMetadataTable(metadataTable[metadataRenditionBuild]{
+			record: metadataRenditionBuild{Type: metadataRenditionBuildType}, table: "rendition_builds",
+			suffix: "ORDER BY build_id", validate: validateMetadataRenditionBuild}),
+		newMetadataTable(metadataTable[metadataRenditionArtifact]{
+			record: metadataRenditionArtifact{Type: metadataRenditionArtifactType, State: RenditionArtifactVerified},
+			table:  "rendition_artifacts", suffix: "ORDER BY build_id,artifact_id", validate: validateMetadataRenditionArtifact}),
+		newMetadataTable(metadataTable[metadataRenditionUnit]{
+			record: metadataRenditionUnit{Type: metadataRenditionUnitType}, table: "rendition_units",
+			suffix: "ORDER BY build_id,unit_order,unit_id", validate: validateMetadataRenditionUnit}),
+		newMetadataTable(metadataTable[metadataRenditionSegment]{
+			record: metadataRenditionSegment{Type: metadataRenditionSegmentType}, table: "rendition_lexical_segments",
+			suffix: "ORDER BY build_id,segment_order,segment_id", validate: validateMetadataRenditionSegment}),
+		newMetadataTable(metadataTable[metadataRenditionAttachment]{
+			record: metadataRenditionAttachment{Type: metadataRenditionAttachType}, table: "rendition_attachments",
+			suffix: "ORDER BY content_version_id,profile_fingerprint,attachment_id", validate: validateMetadataRenditionAttachment}),
+		newMetadataTable(metadataTable[metadataRenditionHead]{
+			record: metadataRenditionHead{Type: metadataRenditionHeadType}, table: "rendition_heads",
+			suffix: "ORDER BY content_version_id,profile_fingerprint",
+			validate: func(value metadataRenditionHead) error {
+				return validateRenditionHeadRecord(RenditionHeadRecord{
+					ContentVersionID:             value.ContentVersionID,
+					ProcessingProfileFingerprint: value.ProcessingProfileFingerprint,
+					AttachmentID:                 value.AttachmentID, PublishedAt: value.PublishedAt,
+				})
+			},
+			insert: importMetadataRenditionHead}),
+		// The lexical generation writes five tables, which the pristine check counts
+		// in its existence-gated loop.
+		newMetadataTable(metadataTable[metadataLexicalGeneration]{
+			record:    metadataLexicalGeneration{Type: metadataLexicalGenerationType},
+			exportAll: exportLexicalGenerations, insert: restoreLexicalGenerationTx}),
+		newMetadataTable(metadataTable[metadataRenditionJob]{
+			record: metadataRenditionJob{Type: metadataRenditionJobType}, table: "rendition_jobs",
+			validate: validateMetadataRenditionJob, exportAll: func(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+				return exportRenditionJobs(ctx, q, write, d)
+			}, insert: importMetadataRenditionJob}),
+		newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
+			record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
+			suffix: "WHERE " + backedUpRenditionJobs(d) + " ORDER BY job_id,waiter_id", checkExport: true,
+			validate: func(value metadataRenditionJobWaiter) error {
+				_, err := validateMetadataRenditionJobWaiter(value)
+				return err
+			},
+			insert: importMetadataRenditionJobWaiter}),
+	}
 }
 
 var (
@@ -339,9 +346,11 @@ var (
 
 // Photo description jobs rebuild after restore; their owner decisions are
 // backed up as suggestion records.
-const backedUpRenditionJobs = `job_id IN (SELECT job_id FROM rendition_jobs WHERE json_extract(execution_identity_json,'$.upload.input_kind')<>'derived_upload')`
+func backedUpRenditionJobs(d metadataJSONDialect) string {
+	return "job_id IN (SELECT job_id FROM rendition_jobs WHERE " + d.text("execution_identity_json", "upload.input_kind") + "<>'derived_upload')"
+}
 
-func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite, d metadataJSONDialect) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT job_id,vault_uid,source_sha256,rendition_request_fingerprint,
 		       evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
@@ -351,7 +360,7 @@ func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadata
 		       provider_resume_handle,selected_waiter_id,authorization_grant_id,
 		       authorization_incarnation_id,authorization_revocation_fence,
 		       lexical_generation_id,failure_code,created_at,updated_at
-		FROM rendition_jobs WHERE `+backedUpRenditionJobs+` ORDER BY job_id`)
+		FROM rendition_jobs WHERE `+backedUpRenditionJobs(d)+` ORDER BY job_id`)
 	if err != nil {
 		return fmt.Errorf("exporting rendition jobs: %w", err)
 	}
@@ -435,10 +444,6 @@ func exportLexicalGenerations(
 			&record.ManifestDigest, &record.BuiltAt, &record.Headed); err != nil {
 			return fmt.Errorf("scanning lexical generation metadata: %w", err)
 		}
-		record.BuildIDs, err = lexicalGenerationBuildIDsQuery(ctx, tx, record.GenerationID)
-		if err != nil {
-			return err
-		}
 		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
@@ -448,6 +453,10 @@ func exportLexicalGenerations(
 		return fmt.Errorf("closing lexical generation metadata: %w", err)
 	}
 	for _, record := range records {
+		record.BuildIDs, err = lexicalGenerationBuildIDsQuery(ctx, tx, record.GenerationID)
+		if err != nil {
+			return err
+		}
 		segments, err := readLexicalManifestRowsTx(ctx, tx, record.GenerationID, "")
 		if err != nil {
 			return err
@@ -466,7 +475,7 @@ func lexicalGenerationBuildIDsQuery(
 ) (_ []string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT build_id
 		FROM rendition_lexical_generation_builds
-		WHERE generation_id=? ORDER BY build_id`, generationID)
+		WHERE generation_id=$1 ORDER BY build_id`, generationID)
 	if err != nil {
 		return nil, fmt.Errorf("reading lexical generation %s membership: %w", generationID, err)
 	}
@@ -1673,11 +1682,7 @@ func validateProcessingBlobReferences(ctx context.Context, tx metadataQuerier) e
 }
 
 func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier, postgres bool) error {
-	backedUpJobs := backedUpRenditionJobs
-	if postgres {
-		j := metadataJSONDialect{postgres: true}
-		backedUpJobs = "job_id IN (SELECT job_id FROM rendition_jobs WHERE " + j.text("execution_identity_json", "upload.input_kind") + "<>'derived_upload')"
-	}
+	backedUpJobs := backedUpRenditionJobs(metadataJSONDialect{postgres: postgres})
 	if err := validateProcessingConsentState(ctx, tx); err != nil {
 		return err
 	}
