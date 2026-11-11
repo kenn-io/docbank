@@ -5,16 +5,21 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -614,5 +619,66 @@ func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 				assert.NotContains(t, out, "Run docbank daemon restart to keep it running.")
 			}
 		})
+	}
+}
+
+func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
+	bin := buildDocbank(t)
+	root := t.TempDir()
+	env := append(os.Environ(), "DOCBANK_HOME="+root, "DOCBANK_TELEMETRY_ENABLED=0", "BROWSER=/bin/false")
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
+	cmd := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	launch, err := url.Parse(strings.TrimSpace(string(out)))
+	require.NoError(t, err)
+	fragment, err := url.ParseQuery(launch.Fragment)
+	require.NoError(t, err)
+	token := fragment.Get("web_session")
+	require.NotEmpty(t, token)
+	old := waitForDaemon(t, root)
+	require.False(t, daemonconn.Explicit(old))
+	watcher, err := fsnotify.NewWatcher()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = watcher.Close() })
+	require.NoError(t, watcher.Add(root))
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", launch.Port()))
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, launch.Scheme+"://"+launch.Host+"/api/v1/processing/local/restart", nil)
+	require.NoError(t, err)
+	request.Header.Set("Origin", launch.Scheme+"://"+launch.Host)
+	request.Header.Set(api.WebSessionHeader, token)
+	response, err := client.Do(request)
+	require.NoError(t, err)
+	var result struct {
+		NewTab bool `json:"new_tab"`
+	}
+	require.Equal(t, http.StatusAccepted, response.StatusCode)
+	require.NoError(t, json.UnmarshalRead(response.Body, &result))
+	require.NoError(t, response.Body.Close())
+	require.True(t, result.NewTab)
+	for {
+		select {
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		case err := <-watcher.Errors:
+			require.NoError(t, err)
+		case <-watcher.Events:
+			records, err := daemonconn.RuntimeStore(root).List()
+			require.NoError(t, err)
+			for _, rec := range records {
+				if rec.PID != old.PID {
+					require.False(t, daemonconn.Explicit(rec))
+					transport.CloseIdleConnections()
+					_, err := client.Do(request.Clone(t.Context()))
+					require.Error(t, err)
+					return
+				}
+			}
+		}
 	}
 }

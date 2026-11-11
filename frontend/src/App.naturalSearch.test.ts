@@ -17,6 +17,7 @@ const localOff = {
   provider: "",
   download_bytes: 290_000_000,
   restart_required: false,
+  restart_available: false,
 };
 const localSaved = { ...localOff, download_bytes: 0, restart_required: true };
 const localPlan = { fingerprint: "f".repeat(64), server: "local", flow: [] };
@@ -111,7 +112,11 @@ interface HarnessOptions {
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
   snapshotRows?: SnapshotRow[];
-  localText?: { status: () => unknown; apply: () => Promise<Response> };
+  localText?: {
+    status: () => unknown;
+    apply: () => Promise<Response>;
+    restart?: () => Promise<Response>;
+  };
 }
 
 function installHarness(options: HarnessOptions) {
@@ -287,6 +292,8 @@ function installHarness(options: HarnessOptions) {
       const status = options.localText.status();
       return status instanceof Response ? status : json(status);
     }
+    if (options.localText?.restart && url === "/api/v1/processing/local/restart")
+      return options.localText.restart();
     if (options.localText && url === "/api/v1/processing/local/plans") return json(localPlan);
     if (options.localText && url === "/api/v1/processing/local/setup") {
       localSetups.push(JSON.parse(String(init?.body)));
@@ -1208,9 +1215,7 @@ it("keeps setup running across drawer visits and drops the off hint once saved",
   await submitSearch("notes again");
   drawer = await openSearchByMeaningTab();
   expect(await within(drawer).findByText("Restart required")).toBeTruthy();
-  expect(within(drawer).getByText(/to finish\./).textContent).toBe(
-    "Run docbank daemon restart to finish.",
-  );
+  expect(within(drawer).getByText(/Docbank was started with/)).toBeTruthy();
   expect(within(drawer).queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(harness.localSetups).toHaveLength(1);
   await closeSystem();
@@ -2086,3 +2091,37 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
+
+it.each([
+  [true, "Docbank is restarting and opens in a new tab. If no tab opens, run docbank web."],
+  [false, "Docbank is restarting. Sign in again in a moment."],
+])("returns to sign-in after restart, new tab %s", async (newTab, notice) => {
+  searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    apply: async () => json(localPlan),
+    restart: async () => Response.json({ new_tab: newTab }, { status: 202 }),
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
+  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
+  expect(await screen.findByText(notice)).toBeTruthy();
+});
+
+it("keeps the session when restart fails", async () => {
+  searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    apply: async () => json(localPlan),
+    restart: async () => Response.json({ detail: "spawn failed" }, { status: 500 }),
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
+  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
+  expect(await within(drawer).findByText(/Docbank couldn't restart/)).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
+});

@@ -384,6 +384,7 @@
     webSession ? new HiddenAccess(webSession, handleFailure) : undefined,
   );
   let keySignInEnabled = $state(false);
+  let signInNotice = $state("");
   let keySession = $state(false);
   let apiKey = $state("");
   let signInPending = $state(false);
@@ -1583,6 +1584,7 @@
   });
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    signInNotice = "";
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -2018,6 +2020,24 @@
     // Saving always leaves a restart pending, so a failed re-read still shows the restart step.
     if (!error && localText.status) localText.status.restart_required = true;
     readLocalTextStatus();
+  }
+
+  async function restartDocbank(): Promise<void> {
+    const session = webSession;
+    localText.error = "";
+    try {
+      const result = await generated.restartDaemon(undefined, { session });
+      if (session !== webSession) return;
+      resetLocalSessionUI();
+      signInNotice = result.new_tab
+        ? "Docbank is restarting and opens in a new tab. If no tab opens, run docbank web."
+        : "Docbank is restarting. Sign in again in a moment.";
+      if (result.new_tab) keySignInEnabled = false;
+    } catch (cause) {
+      if (session !== webSession) return;
+      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
+      localText.error = `Docbank couldn't restart: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
   }
 
   async function loadRoot(): Promise<void> {
@@ -3875,6 +3895,7 @@
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
       <div class="unlock-copy">
+        {#if signInNotice}<p>{signInNotice}</p>{/if}
         {#if keySignInEnabled}
           <p>Sign in with the API key from your Docbank operator.</p>
           <form
@@ -5385,6 +5406,7 @@
           onauthfailure={handleFailure}
           onreadsearchbymeaning={readLocalTextStatus}
           onturnonsearchbymeaning={turnOnLocalText}
+          onrestart={restartDocbank}
         />
       {/if}
       {#if panel.kind === "savedQueries"}

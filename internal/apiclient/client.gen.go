@@ -12108,6 +12108,52 @@ func (c *Client) PlanLocalText(ctx context.Context, options *PlanLocalTextReques
 	return responseParser(ctx, resp)
 }
 
+// RestartDaemon Restart Docbank
+func (c *Client) RestartDaemon(ctx context.Context, options *RestartDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestartDaemonResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/restart",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RestartDaemonResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(RestartDaemonResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RestartDaemonResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RestartDaemonErrorResponse](resp, "RestartDaemonErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/restart")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 202)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ApplyLocalText Approve vault-wide and ongoing text indexing
 func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyLocalTextResponse, error) {
 	var err error
@@ -24263,6 +24309,37 @@ func (o *PlanLocalTextRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// RestartDaemonRequestOptions is the options needed to make a request to RestartDaemon.
+type RestartDaemonRequestOptions struct {
+	Header *RestartDaemonHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RestartDaemonRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *RestartDaemonRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RestartDaemonRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RestartDaemonRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ApplyLocalTextRequestOptions is the options needed to make a request to ApplyLocalText.
 type ApplyLocalTextRequestOptions struct {
 	Body *ApplyLocalTextBody
@@ -27267,6 +27344,10 @@ type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type RestartDaemonHeaders struct {
+	Origin *string `json:"Origin,omitempty"`
+}
+
 type UploadPushFileHeaders struct {
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
@@ -29889,6 +29970,10 @@ type PlanLocalTextResponse = api.LocalTextPlan
 
 type PlanLocalTextErrorResponse = Error
 
+type RestartDaemonResponse = RestartOutputBody
+
+type RestartDaemonErrorResponse = Error
+
 type ApplyLocalTextResponse = api.LocalTextPlan
 
 type ApplyLocalTextErrorResponse = Error
@@ -31766,6 +31851,12 @@ type Resolution = kataevidence.Resolution
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 
 type ResolvedTextCitation = document.ResolvedTextCitation
+
+type RestartOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	NewTab bool    `json:"new_tab"`
+}
 
 type RetentionDisclosurePolicyV1 = document.RetentionDisclosurePolicyV1
 

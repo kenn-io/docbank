@@ -11,7 +11,13 @@
 
 <script lang="ts">
   import { setContext, untrack } from "svelte";
-  import { Button, SearchByMeaningRow, Spinner, type SearchByMeaningState } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Modal,
+    SearchByMeaningRow,
+    Spinner,
+    type SearchByMeaningState,
+  } from "@kenn-io/kit-ui";
   import DrawerShell from "./DrawerShell.svelte";
   import BackupDrawer from "./BackupDrawer.svelte";
   import StorageDrawer from "./StorageDrawer.svelte";
@@ -28,6 +34,7 @@
     onauthfailure,
     onreadsearchbymeaning,
     onturnonsearchbymeaning,
+    onrestart,
   }: {
     session: string;
     initialTab?: string;
@@ -36,7 +43,16 @@
     onauthfailure: (cause: unknown) => void;
     onreadsearchbymeaning: () => () => void;
     onturnonsearchbymeaning: () => void;
+    onrestart: () => Promise<void>;
   } = $props();
+  let confirmRestart = $state(false);
+  let restarting = $state(false);
+  async function restart(): Promise<void> {
+    restarting = true;
+    await onrestart();
+    restarting = false;
+    confirmRestart = false;
+  }
   let tab = $state(untrack(() => initialTab));
   let switched = false;
   const options = [
@@ -117,7 +133,18 @@
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
       {/if}
       {#if meaning?.restart_required}
-        <p>Run <code>docbank daemon restart</code> to finish.</p>
+        {#if meaning.restart_available}
+          <div class="restart-row">
+            <p>Restart Docbank to finish turning on search by meaning.</p>
+            <Button size="sm" onclick={() => (confirmRestart = true)}>Restart Docbank</Button>
+          </div>
+        {:else}
+          <p>
+            Docbank was started with <code>docbank daemon run</code>, so restart it where it runs:
+            press Ctrl+C in its terminal and run it again, or restart its service or container, such
+            as <code>docker restart docbank</code>. Then sign in again.
+          </p>
+        {/if}
       {/if}
     </section>
   </DrawerShell>
@@ -137,6 +164,27 @@
   </DrawerShell>
 {/if}
 
+{#if confirmRestart}
+  <Modal
+    title="Restart Docbank?"
+    onclose={() => {
+      if (!restarting) confirmRestart = false;
+    }}
+  >
+    <p>Search by meaning starts after the restart.</p>
+    <p>
+      Every open Docbank tab signs out, and uploads, exports and command-line requests still running
+      stop.
+    </p>
+    {#snippet footer()}
+      <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
+      <Button tone="danger" surface="solid" disabled={restarting} onclick={restart}
+        >{restarting ? "Restarting…" : "Restart Docbank"}</Button
+      >
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
   .usage,
   .meaning {
@@ -145,6 +193,12 @@
     gap: var(--space-5);
     padding: var(--space-5);
     font-size: var(--font-size-sm);
+  }
+  .restart-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
   }
   .row {
     justify-self: stretch;

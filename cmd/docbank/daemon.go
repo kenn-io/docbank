@@ -723,6 +723,20 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			logger.Warn("telemetry heartbeat not started", "error", err)
 		}
 	}
+	var restartDaemon func(bool) error
+	if background {
+		restartDaemon = func(openTab bool) error {
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			args := []string{"daemon", "restart", "--from-web"}
+			if openTab {
+				args = append(args, "--open-web")
+			}
+			return kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+layout.Root), Stdout: io.Discard, Stderr: io.Discard})
+		}
+	}
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		RequestEmailPDF:           requestEmailPDF,
@@ -731,7 +745,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText,
+		Processing: processingService, LocalText: localText, RestartDaemon: restartDaemon,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
 			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,

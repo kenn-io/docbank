@@ -3883,6 +3883,7 @@ export interface LocalTextStatus {
   active: boolean;
   download_bytes: number;
   provider: LocalTextStatusProvider;
+  restart_available: boolean;
   restart_required: boolean;
 }
 
@@ -8023,6 +8024,12 @@ export interface ResolvedTextCitation {
   text_sha256: string;
 }
 
+export interface RestartOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  new_tab: boolean;
+}
+
 export interface RevertNodeContentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -10081,6 +10088,10 @@ hidden?: boolean;
 
 export type SetPhotoSettingsHeaders = {
 'If-Match': string;
+};
+
+export type RestartDaemonHeaders = {
+Origin?: string;
 };
 
 export type ListDocumentProcessingProfilesParams = {
@@ -19218,6 +19229,44 @@ return sessionJSON<LocalTextPlan>(getPlanLocalTextUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(localTextPlanRequest)
+  }
+);}
+
+
+
+export const getRestartDaemonUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/restart`
+}
+
+/**
+ * @summary Restart Docbank
+ */
+export const restartDaemon = async (headers?: RestartDaemonHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<RestartOutputBody> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RestartOutputBody>(getRestartDaemonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
   }
 );}
 

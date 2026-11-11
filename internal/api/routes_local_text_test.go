@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -82,4 +83,62 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	request.PlanFingerprint = testHash("stale")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+}
+
+func TestRestartDaemonBrowserSession(t *testing.T) {
+	t.Parallel()
+	var calls []bool
+	var failure bool
+	ts, _ := newTestServer(t, func(deps *api.Deps) {
+		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) { return api.LocalTextStatus{}, nil }
+		deps.RestartDaemon = func(openTab bool) error {
+			calls = append(calls, openTab)
+			if failure {
+				return errors.New("spawn failed")
+			}
+			return nil
+		}
+	})
+	token := issueWebSession(t, ts)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token, "Origin": strings.TrimSuffix(testWebURL, "/")}
+	response, body := do(t, ts, http.MethodGet, "/api/v1/processing/local/status", headers, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, `"restart_available":true`)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
+	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	require.Contains(t, body, `"new_tab":true`)
+	require.Equal(t, []bool{true}, calls)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", nil, nil)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	failure = true
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
+	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
+}
+
+func TestRestartDaemonUnavailable(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(deps *api.Deps) {
+		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) { return api.LocalTextStatus{}, nil }
+	})
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "Origin": strings.TrimSuffix(testWebURL, "/")}
+	response, body := do(t, ts, http.MethodGet, "/api/v1/processing/local/status", headers, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, `"restart_available":false`)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+}
+
+func TestRestartDaemonPublicOrigin(t *testing.T) {
+	t.Parallel()
+	var called bool
+	_, catalog := newTestServer(t, func(deps *api.Deps) {
+		deps.WebLoginEnabled = true
+		deps.Cfg.Web.PublicOrigin = signInOrigin
+		deps.RestartDaemon = func(openTab bool) error { called = true; assert.False(t, openTab); return nil }
+	})
+	status, cookie := loginBrowser(t, catalog.Server)
+	response := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
+	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"new_tab":false`)
+	require.True(t, called)
 }

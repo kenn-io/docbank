@@ -851,7 +851,7 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
-Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then choose **Restart Docbank** and confirm. Every open tab signs out, and running uploads, exports, and command-line requests stop. A new tab opens for `docbank web`; an API-key sign-in at a configured address returns to its sign-in form. If Docbank runs in a terminal, service, or container, restart it there and sign in again. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the

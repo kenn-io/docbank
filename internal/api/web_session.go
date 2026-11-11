@@ -450,7 +450,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if method == http.MethodPost && r.URL.RawQuery == "" {
 		switch path {
-		case "/api/v1/processing/local/plans", "/api/v1/processing/local/setup",
+		case "/api/v1/processing/local/plans", "/api/v1/processing/local/setup", "/api/v1/processing/local/restart",
 			"/api/v1/processing/plans", "/api/v1/processing/jobs",
 			"/api/v1/processing/consent/grants", "/api/v1/processing/consent/revocations",
 			"/api/v1/processing/source-fences/resolve", "/api/v1/search", "/api/v1/search/similar":

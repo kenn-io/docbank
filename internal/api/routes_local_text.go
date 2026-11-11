@@ -3,16 +3,18 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/processing"
 )
 
 type LocalTextStatus struct {
-	Active          bool   `json:"active"`
-	Provider        string `json:"provider" enum:",local,ollama,configured"`
-	DownloadBytes   int64  `json:"download_bytes"`
-	RestartRequired bool   `json:"restart_required"`
+	Active           bool   `json:"active"`
+	Provider         string `json:"provider" enum:",local,ollama,configured"`
+	DownloadBytes    int64  `json:"download_bytes"`
+	RestartRequired  bool   `json:"restart_required"`
+	RestartAvailable bool   `json:"restart_available"`
 }
 
 type LocalTextPlanRequest struct {
@@ -57,7 +59,33 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}
+			status.RestartAvailable = d.RestartDaemon != nil
 			return &statusOutput{Body: status}, nil
+		})
+	type restartInput struct {
+		Origin string `header:"Origin"`
+	}
+	type restartOutput struct {
+		Body struct {
+			NewTab bool `json:"new_tab"`
+		}
+	}
+	huma.Register(api, huma.Operation{OperationID: "restartDaemon", Method: http.MethodPost,
+		Path: "/api/v1/processing/local/restart", Summary: "Restart Docbank", DefaultStatus: http.StatusAccepted},
+		func(ctx context.Context, input *restartInput) (*restartOutput, error) {
+			if !browserSessionRequest(ctx) {
+				return nil, NewError(http.StatusForbidden, "forbidden", "A browser session is required")
+			}
+			if d.RestartDaemon == nil {
+				return nil, NewError(http.StatusConflict, "restart_unavailable", "Restart Docbank where it runs")
+			}
+			openTab := input.Origin == strings.TrimSuffix(d.WebURL, "/")
+			if err := d.RestartDaemon(openTab); err != nil {
+				return nil, NewError(http.StatusInternalServerError, "restart_failed", err.Error())
+			}
+			out := &restartOutput{}
+			out.Body.NewTab = openTab
+			return out, nil
 		})
 	type planInput struct{ Body LocalTextPlanRequest }
 	type output struct{ Body LocalTextPlan }

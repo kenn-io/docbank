@@ -106,6 +106,7 @@ const off = {
   provider: "",
   download_bytes: 290_000_000,
   restart_required: false,
+  restart_available: false,
 } as const;
 const offLine = "Downloads 290 MB once, shared by all Kenn apps";
 
@@ -114,6 +115,7 @@ function searchProps(searchByMeaning: Partial<SearchByMeaningSetup> = {}) {
     searchByMeaning: { readError: "", pending: false, error: "", ...searchByMeaning },
     onreadsearchbymeaning: vi.fn(() => vi.fn()),
     onturnonsearchbymeaning: vi.fn(),
+    onrestart: vi.fn(async () => {}),
   };
 }
 
@@ -160,7 +162,7 @@ it.each<[string, Partial<SearchByMeaningSetup>, string, boolean]>([
     expect(props.onturnonsearchbymeaning).toHaveBeenCalledOnce();
   } else expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(screen.queryByRole("alert")?.textContent ?? "").toBe(setup.error ?? "");
-  expect(screen.queryByText(/daemon restart/) !== null).toBe(!!setup.status?.restart_required);
+  expect(screen.queryByText(/started with/) !== null).toBe(!!setup.status?.restart_required);
   expect(screen.queryByRole("button", { name: "Use built-in instead" })).toBeNull();
   expect(screen.queryByText("Switching keeps your index")).toBeNull();
 });
@@ -188,7 +190,7 @@ it("keeps the restart step beside a failed status read", () => {
     readError: "Daemon busy",
   });
   expect(screen.getByRole("alert").textContent).toBe("Daemon busy");
-  expect(screen.getByText(/daemon restart/)).toBeTruthy();
+  expect(screen.getByText(/started with/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
 });
 
@@ -200,4 +202,32 @@ it("reads status on entering the tab and stops when leaving it", async () => {
   expect(stop).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("tab", { name: "Running now" }));
   expect(stop).toHaveBeenCalledOnce();
+});
+
+it("confirms a restart and disables both actions while it is pending", async () => {
+  let finish!: () => void;
+  const props = openSearchTab({
+    status: { ...off, restart_required: true, restart_available: true },
+  });
+  props.onrestart.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Restart Docbank" }));
+  let dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(props.onrestart).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Restart Docbank" }));
+  dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Restart Docbank" }));
+  expect(props.onrestart).toHaveBeenCalledOnce();
+  expect(
+    (within(dialog).getByRole("button", { name: "Restarting…" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(
+    (within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  finish();
 });

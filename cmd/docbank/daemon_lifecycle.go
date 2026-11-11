@@ -148,6 +148,8 @@ var daemonStopCmd = &cobra.Command{
 	},
 }
 
+var restartFromWeb, restartOpenWeb bool
+
 var daemonRestartCmd = &cobra.Command{
 	Example: `  docbank daemon restart`,
 	Use:     "restart",
@@ -160,9 +162,17 @@ daemon was running.`,
 		if err != nil {
 			return err
 		}
-		rec, wasRunning, err := daemonconn.Restart(cmd.Context(), layout.Root, true)
+		rec, wasRunning, err := daemonconn.Restart(cmd.Context(), layout.Root, !restartFromWeb)
 		if err != nil {
 			return err
+		}
+		if restartOpenWeb {
+			c, err := daemonconn.EnsureWeb(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+			return runWeb(cmd.Context(), cmd.OutOrStdout(), layout.Root, c, false, openWebBrowser)
 		}
 		if wasRunning {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restarted: pid %d at %s (%s)\n",
@@ -176,6 +186,10 @@ daemon was running.`,
 }
 
 func init() {
+	daemonRestartCmd.Flags().BoolVar(&restartFromWeb, "from-web", false, "")
+	daemonRestartCmd.Flags().BoolVar(&restartOpenWeb, "open-web", false, "")
+	_ = daemonRestartCmd.Flags().MarkHidden("from-web")
+	_ = daemonRestartCmd.Flags().MarkHidden("open-web")
 	daemonStatusCmd.Flags().BoolVar(&daemonStatusJSON, "json", false, "print JSON to stdout")
 	daemonCmd.AddCommand(daemonRunCmd, daemonStartCmd, daemonStatusCmd, daemonStopCmd, daemonRestartCmd)
 	rootCmd.AddCommand(daemonCmd)

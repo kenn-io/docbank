@@ -8478,6 +8478,8 @@ components:
             - ollama
             - configured
           type: string
+        restart_available:
+          type: boolean
         restart_required:
           type: boolean
       required:
@@ -8485,6 +8487,7 @@ components:
         - provider
         - download_bytes
         - restart_required
+        - restart_available
       type: object
       x-go-type: api.LocalTextStatus
       x-go-type-import:
@@ -18640,6 +18643,21 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    RestartOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RestartOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        new_tab:
+          type: boolean
+      required:
+        - new_tab
+      type: object
     RetentionDisclosurePolicyV1:
       additionalProperties: false
       properties:
@@ -30353,6 +30371,28 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Preview vault-wide text indexing
+  /api/v1/processing/local/restart:
+    post:
+      operationId: restartDaemon
+      parameters:
+        - in: header
+          name: Origin
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestartOutputBody"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Restart Docbank
   /api/v1/processing/local/setup:
     post:
       operationId: applyLocalText
