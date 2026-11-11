@@ -834,7 +834,7 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"capability":         enumSchema("rendition", "embedding", "query_embedding"),
 		"provider_id":        stringSchema(128),
 		"trust_boundary":     enumSchema("local_process", "operator_network", "hosted_provider"),
-		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "derived_upload", "rendition_chunk", "query_text", "image"), "maxItems": 5, "uniqueItems": true},
+		"input_classes":      schema{"type": "array", "items": enumSchema("original_file", "original_file_automatic", "derived_upload", "rendition_chunk", "query_text", "image"), "maxItems": 6, "uniqueItems": true},
 		"runtime_disclosure": runtimeDisclosure,
 		"disclose_filename":  booleanSchema(),
 		"filename":           stringSchema(255),
@@ -844,7 +844,9 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"vault_uid":           uuidSchema(),
 		"selector":            objectSchema(processingSelectorProperties(), "node_id", "content_version_id", "profile"),
 		"profile_fingerprint": sha256Schema(),
-		"flow":                arraySchema(flowHop, 129),
+		// Rendition and reranking, plus embedding, automatic video and query
+		// hops for each of at most 64 bindings.
+		"flow": arraySchema(flowHop, 2+3*64),
 		"disclosed_classes": schema{
 			"type": "array", "items": stringSchema(128), "maxItems": 129, "uniqueItems": true,
 		},

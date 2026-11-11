@@ -667,7 +667,8 @@ from sending. Requests already sent stay sent.
 
 An explicit build and discovery share the resulting vector for the same
 source version and binding. If both jobs are queued, only one can send
-while its lease is active.
+while its lease is active. When one publishes the vector, the other
+completes at once, even while it waits to retry a provider failure.
 
 Use the stored vectors to compare selected files locally. Supply the current
 version IDs for the source and each candidate.

@@ -780,7 +780,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
 			if hop.ProviderID == document.FaceDetectionProviderID {
-				plan.Estimate.Scope = "Granting consent automatically finds faces in eligible photos throughout this vault."
+				plan.Estimate.Scope = faceScanScope
 				plan.BackupConsequence = "Face boxes, measurements, and your decisions are included in backups. Restoring a backup allows another scan and provider call for each eligible photo."
 			}
 			// Only the grid preview leaves the vault, not the original file.
@@ -809,6 +809,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			plan.RetainedClasses = append(plan.RetainedClasses, "typed_artifacts")
 		}
 	}
+	var automaticBindings []string
 	for _, binding := range profile.portable.Embeddings {
 		disclosure := profile.embedDisclosures[binding.Name]
 		plan.Flow = append(plan.Flow, FlowHop{Capability: "embedding", ProviderID: binding.Descriptor.ID,
@@ -816,14 +817,10 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			RuntimeDisclosure: disclosure})
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(binding.InputKind))
 		if _, automatic := profile.automaticVideoBindings[binding.Name]; automatic {
-			provider := binding.Descriptor.ID
-			if disclosure.UltimateProcessor != "" {
-				provider = disclosure.UltimateProcessor
-			}
-			plan.Estimate.Scope = strings.TrimSpace(plan.Estimate.Scope + fmt.Sprintf(
-				" Granting consent automatically sends eligible watched MP4 originals throughout this vault to %s using binding %q.",
-				provider, binding.Name))
-			plan.Flow = append(plan.Flow, FlowHop{Capability: "automatic_embedding (" + binding.Name + ")",
+			// The input class, not the capability, marks the automatic hop.
+			// The hop already discloses the provider.
+			automaticBindings = append(automaticBindings, binding.Name)
+			plan.Flow = append(plan.Flow, FlowHop{Capability: "embedding",
 				ProviderID: binding.Descriptor.ID, TrustBoundary: binding.TrustBoundary,
 				InputClasses: []string{store.AutomaticOriginalFileConsentClass}, RuntimeDisclosure: disclosure})
 			plan.DisclosedClasses = append(plan.DisclosedClasses, store.AutomaticOriginalFileConsentClass)
@@ -840,6 +837,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "query_text")
 		}
 	}
+	plan.Estimate.Scope = strings.TrimSpace(plan.Estimate.Scope + " " + automaticVideoScope(automaticBindings))
 	if profile.rerankingProvider != nil {
 		plan.Flow = append(plan.Flow, FlowHop{Capability: "reranking",
 			ProviderID:        profile.rerankingDisclosure.UltimateProcessor,

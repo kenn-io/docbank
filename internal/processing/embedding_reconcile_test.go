@@ -7,6 +7,9 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -651,7 +654,7 @@ func TestWatchedMP4BothQueuedSendsOnce(t *testing.T) {
 	require.Equal(t, 1, f.provider.runtime.calls())
 }
 
-func TestWatchedMP4ClaimSettlesOnlyItsOwnClip(t *testing.T) {
+func TestWatchedMP4SettlementStaysWithItsClip(t *testing.T) {
 	t.Parallel()
 	f := newWatchedMP4Fixture(t)
 	first := f.add(t, "first.mp4", mediatest.H265MP4())
@@ -660,24 +663,23 @@ func TestWatchedMP4ClaimSettlesOnlyItsOwnClip(t *testing.T) {
 	firstAutomatic := f.enqueue(t, first, true)
 	firstManual := f.enqueue(t, first, false)
 	secondAutomatic := f.enqueue(t, second, true)
-	processed, err := f.worker.RunJob(t.Context(), firstAutomatic)
+	processed, err := f.worker.RunJob(t.Context(), secondAutomatic)
 	require.NoError(t, err)
 	require.True(t, processed)
+	for _, job := range f.jobs(t, first) {
+		require.Equal(t, "queued", job.State, "another clip's publish leaves this clip's jobs alone")
+	}
 
-	processed, err = f.worker.RunJob(t.Context(), secondAutomatic)
+	processed, err = f.worker.RunJob(t.Context(), firstAutomatic)
 	require.NoError(t, err)
 	require.True(t, processed)
 	states := map[string]string{}
 	for _, job := range f.jobs(t, first) {
 		states[job.ID] = job.State
 	}
-	require.Equal(t, "queued", states[firstManual], "another clip's claim leaves this clip's jobs alone")
-
+	require.Equal(t, "completed", states[firstManual], "this clip's publish completes its waiting peer")
 	_, err = f.worker.ScanOnce(t.Context())
 	require.NoError(t, err)
-	for _, job := range f.jobs(t, first) {
-		require.Equal(t, "completed", job.State)
-	}
 	require.Equal(t, 2, f.provider.runtime.calls())
 }
 
@@ -772,7 +774,7 @@ func TestWatchedMP4MixedPlanReportsSavedConsentOnBuildFailure(t *testing.T) {
 		}
 	}
 	require.Len(t, automatic, 1)
-	require.Equal(t, "automatic_embedding (direct)", automatic[0].Capability)
+	require.Equal(t, "embedding", automatic[0].Capability)
 	require.Equal(t, video.EmbeddingProviders["direct"].Descriptor().ID, automatic[0].ProviderID)
 	_, err = f.service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.ErrorIs(t, err, ErrConsentSaved, "the PDF-only rendition rejects the selected MP4 after consent")
@@ -831,4 +833,91 @@ func TestWatchedMP4ConsentDoesNotFollowOptInToAnotherBinding(t *testing.T) {
 	require.Equal(t, sibling.Name, jobs[0].BindingID)
 	require.Equal(t, "completed", jobs[0].State)
 	require.Equal(t, 1, f.provider.runtime.calls())
+}
+
+func TestAutomaticVideoScopeStaysWithinPublishedBound(t *testing.T) {
+	t.Parallel()
+	longest := "a" + strings.Repeat("z", 62)
+	many := make([]string, 64)
+	for index := range many {
+		many[index] = longest
+	}
+	for _, prefix := range []string{"", photoQueueScope, faceScanScope} {
+		for _, bindings := range [][]string{{longest}, many} {
+			scope := strings.TrimSpace(prefix + " " + automaticVideoScope(bindings))
+			require.LessOrEqual(t, len(scope), 256, scope)
+		}
+	}
+	require.Contains(t, automaticVideoScope([]string{longest}), strconv.Quote(longest))
+	require.Empty(t, automaticVideoScope(nil))
+}
+
+func TestWatchedMP4PlanNamesLongestBindingWithinBound(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	longest := "a" + strings.Repeat("z", 62)
+	video := f.config.Profiles["video"]
+	video.Profile.Embeddings[0].Name = longest
+	video.EmbeddingProviders = map[string]document.EmbeddingProvider{longest: video.EmbeddingProviders["direct"]}
+	video.AutomaticVideoBindings = map[string]struct{}{longest: {}}
+	f.config.Profiles["video"] = video
+	f.open(t)
+	selector := f.add(t, "long.mp4", mediatest.H265MP4())
+
+	plan, err := f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(plan.Estimate.Scope), 256)
+	require.Contains(t, plan.Estimate.Scope, strconv.Quote(longest))
+	var automatic []FlowHop
+	for _, hop := range plan.Flow {
+		if slices.Contains(hop.InputClasses, store.AutomaticOriginalFileConsentClass) {
+			automatic = append(automatic, hop)
+		}
+	}
+	require.Len(t, automatic, 1)
+	require.Equal(t, "embedding", automatic[0].Capability)
+}
+
+// A job waiting on a provider retry completes as soon as its equivalent peer
+// publishes the exact vector, without waiting for its retry timer.
+func TestWatchedMP4WaitingPeerCompletesWhenOtherPublishes(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name          string
+		waitAutomatic bool
+	}{
+		{name: "manual waits, automatic publishes"},
+		{name: "automatic waits, manual publishes", waitAutomatic: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newWatchedMP4Fixture(t)
+				selector := f.add(t, "retry.mp4", mediatest.H265MP4())
+				require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+				waiting := f.enqueue(t, selector, testCase.waitAutomatic)
+				transient := []error{embeddingTransientError{}, embeddingTransientError{}, embeddingTransientError{}}
+				f.provider.runtime.mu.Lock()
+				f.provider.runtime.failures["direct"] = transient
+				f.provider.runtime.mu.Unlock()
+				processed, err := f.worker.RunJob(t.Context(), waiting)
+				require.NoError(t, err)
+				require.True(t, processed)
+				job, err := f.config.Catalog.EmbeddingJobByID(t.Context(), waiting)
+				require.NoError(t, err)
+				require.Equal(t, "retry_wait", job.State)
+				failed := f.provider.runtime.calls()
+				require.Equal(t, len(transient), failed)
+
+				publisher := f.enqueue(t, selector, !testCase.waitAutomatic)
+				processed, err = f.worker.RunJob(t.Context(), publisher)
+				require.NoError(t, err)
+				require.True(t, processed)
+				for _, job := range f.jobs(t, selector) {
+					require.Equal(t, "completed", job.State, job.ID)
+				}
+				require.Equal(t, failed+1, f.provider.runtime.calls(), "one successful upload serves both jobs")
+			})
+		})
+	}
 }
