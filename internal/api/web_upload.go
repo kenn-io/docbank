@@ -439,7 +439,7 @@ func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string
 			timer.Reset(webUploadInactivity)
 			if time.Since(lastProgress) >= webVerifyProgress {
 				if err := wsjson.Write(ctx, conn, webUploadMessage{Type: "verification_progress", RequestID: requestID, VerifiedSize: total}); err != nil {
-					return err
+					return fmt.Errorf("writing upload verification progress: %w", err)
 				}
 				lastProgress = time.Now()
 			}

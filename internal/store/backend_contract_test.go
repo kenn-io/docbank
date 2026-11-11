@@ -2011,7 +2011,7 @@ var backendSuites = []backendSuite{
 		{"DocumentReintroducedPackMappings", nil, checkDocumentReintroducedPackMappingsPostgres},
 	}},
 	{name: "imports", postgres: "native operations", scope: "Native document ingest, plans and watch/push observations; excludes grouped photo import.", scenarios: []backendScenario{
-		{"FindUploadedFile", func(t *testing.T) { checkFindUploadedFile(t, newTestStore(t)) }, func(t *testing.T) { checkFindUploadedFile(t, newPostgresQueryStore(t)) }},
+		{"FindUploadedFile", func(t *testing.T) { t.Helper(); checkFindUploadedFile(t, newTestStore(t)) }, func(t *testing.T) { t.Helper(); checkFindUploadedFile(t, newPostgresQueryStore(t)) }},
 		{"IngestOperations", nil, checkIngestOperationsPostgres},
 		{"PlannedIngest", nil, checkPlannedIngestPostgres},
 		{"WatchAndPush", nil, checkWatchAndPushPostgres},
