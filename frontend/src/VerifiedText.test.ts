@@ -33,7 +33,7 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
           version_id: source.versionID,
           blob_hash: source.blobHash,
           size: 50,
-          media_type: state === "failed" ? "application/pdf" : source.mimeType,
+          media_type: "image/png",
         },
         profile: {
           name: "",
@@ -43,13 +43,12 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
         generation_id: "",
         attachment_id: "",
         build_id: "",
-        pages_without_text: state === "failed" ? [2] : [],
       }),
     );
     const onprocess = vi.fn();
     render(VerifiedText, {
       session: "session",
-      source: state === "failed" ? { ...source, mimeType: "application/pdf" } : source,
+      source,
       authorizationRevision: 3,
       onauthfailure: vi.fn(),
       onprocess,
@@ -66,7 +65,6 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
       expect(
         await screen.findByText("Text processing failed for this selected version."),
       ).toBeTruthy();
-      expect(screen.queryByText(/no text layer/)).toBeNull();
     } else {
       expect(
         await screen.findByText("Processing verified that this document has no readable text."),
@@ -77,13 +75,17 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
   },
 );
 
-it("finds text, wraps navigation, and clears the find query", async () => {
+async function mockReadyText(source: SelectedSource, pages: number[] = []) {
   const { createHash } = await import("node:crypto");
   const body = "Report one. Report two.";
   const envelope = {
     docbank: {
       contract: "docbank-sanitized-markdown/v1",
-      source: { sha256: source.blobHash, format: "png", media_type: source.mimeType },
+      source: {
+        sha256: source.blobHash,
+        format: source.mimeType === "application/pdf" ? "pdf" : "png",
+        media_type: source.mimeType,
+      },
       rendition: {
         build_id: "e".repeat(64),
         rendition_request_fingerprint: "a".repeat(64),
@@ -107,7 +109,7 @@ it("finds text, wraps navigation, and clears the find query", async () => {
     .mockResolvedValueOnce(
       Response.json({
         state: "ready",
-        pages_without_text: [3, 4, 7],
+        pages_without_text: pages,
         source: {
           node_id: 7,
           revision: 3,
@@ -144,6 +146,10 @@ it("finds text, wraps navigation, and clears the find query", async () => {
         },
       }),
     );
+}
+
+it("finds text, wraps navigation, and clears the find query", async () => {
+  await mockReadyText(source);
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -154,14 +160,6 @@ it("finds text, wraps navigation, and clears the find query", async () => {
     authorizationRevision: 3,
     onauthfailure: vi.fn(),
   });
-  const notice = await screen.findByText(/Pages 3–4, 7 have no text layer/);
-  expect(screen.getByRole("link", { name: /OCR can read them/ }).getAttribute("href")).toBe(
-    "https://docbank.ai/docs/usage/document-processing/#ocr",
-  );
-  expect(
-    notice.compareDocumentPosition(screen.getByLabelText("Verified text of scan.png")) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
   const input = await screen.findByLabelText("Find in verified text");
   await fireEvent.input(input, { target: { value: "report" } });
   expect(screen.getByText("1 of 2")).toBeTruthy();
@@ -180,43 +178,59 @@ it("finds text, wraps navigation, and clears the find query", async () => {
 });
 
 it.each([
-  [[3, 4], /Pages 3–4 have no text layer/, /OCR can read them/],
-  [[2], /Page 2 has no text layer/, /OCR can read it/],
-  [[], null, null],
-])("shows text coverage for PDF pages %j", async (pages, notice, link) => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({
-      state: "verified_empty",
-      source: {
-        node_id: 7,
-        revision: 3,
-        version_id: source.versionID,
-        blob_hash: source.blobHash,
-        size: 50,
-        media_type: source.mimeType,
-      },
-      profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
-      generation_id: "",
-      attachment_id: "",
-      build_id: "",
-      pages_without_text: pages,
-    }),
-  );
+  ["ready", [3, 4, 7], /Pages 3–4, 7 have no text layer/, /OCR can read them/],
+  ["verified_empty", [3, 4], /Pages 3–4 have no text layer/, /OCR can read them/],
+  ["verified_empty", [2], /Page 2 has no text layer/, /OCR can read it/],
+  ["failed", [2], null, null],
+] as const)("shows %s text coverage for PDF pages %j", async (state, pages, notice, link) => {
+  const pdfSource = {
+    ...source,
+    name: "scan.pdf",
+    path: "/scan.pdf",
+    mimeType: "application/pdf",
+  };
+  if (state === "ready") await mockReadyText(pdfSource, [...pages]);
+  else
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        state,
+        source: {
+          node_id: 7,
+          revision: 3,
+          version_id: source.versionID,
+          blob_hash: source.blobHash,
+          size: 50,
+          media_type: pdfSource.mimeType,
+        },
+        profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+        pages_without_text: pages,
+      }),
+    );
   render(VerifiedText, {
     session: "session",
-    source,
+    source: pdfSource,
     authorizationRevision: 3,
     onauthfailure: vi.fn(),
   });
-  const emptyMessage = "Processing verified that this document has no readable text.";
   if (notice && link) {
-    expect(await screen.findByText(notice)).toBeTruthy();
+    const rendered = await screen.findByText(notice);
     expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
       "https://docbank.ai/docs/usage/document-processing/#ocr",
     );
-    expect(screen.queryByText(emptyMessage)).toBeNull();
+    if (state === "ready")
+      expect(
+        rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    else
+      expect(
+        screen.queryByText("Processing verified that this document has no readable text."),
+      ).toBeNull();
   } else {
-    expect(await screen.findByText(emptyMessage)).toBeTruthy();
+    await screen.findByText("Text processing failed for this selected version.");
     expect(screen.queryByText(/no text layer/)).toBeNull();
   }
 });

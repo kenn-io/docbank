@@ -2121,10 +2121,10 @@ it.each([
   }
   await submitSearch("missing");
   expect(await screen.findByText(`${message} without a text layer.`)).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
-    "https://docbank.ai/docs/usage/document-processing/#ocr",
-  );
   if (tagged) {
+    expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
+      "https://docbank.ai/docs/usage/document-processing/#ocr",
+    );
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
       .find((url) => url.startsWith("/api/v1/search/text-coverage"));

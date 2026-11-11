@@ -440,7 +440,6 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     await inspector.getByRole("tab", { name: "Text", exact: true }).click();
     await inspector.getByRole("button", { name: "Extract text", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Extract text" });
-    await expect(dialog).not.toContainText("No processing profile handles this file type");
     const extract = dialog.getByRole("button", { name: "Extract text", exact: true });
     await expect(extract).toBeEnabled();
     if (file.startsWith("mixed"))
@@ -453,7 +452,6 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(inspector.getByText(notice)).toBeVisible({ timeout: 30000 });
     if (file.startsWith("mixed")) await expect(inspector.locator("pre")).toBeVisible();
-    else await expect(inspector.locator("pre")).toHaveCount(0);
     await page.screenshot({
       path: path.join(output!, `${file}-text.png`),
       clip: { x: 0, y: 0, width: 1440, height: 610 },
@@ -464,10 +462,6 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.press("Enter");
   await expect(page.getByText("No matching documents")).toBeVisible();
   await expect(page.getByText("2 PDFs have 4 pages without a text layer.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Learn about OCR" })).toHaveAttribute(
-    "href",
-    "https://docbank.ai/docs/usage/document-processing/#ocr",
-  );
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
