@@ -228,6 +228,32 @@ func checkNoteFailureAndValidation(t *testing.T, newStore func(*testing.T) *Stor
 	revision := s.WriteRevision()
 	pruneNoteFixtures(t, s)
 	require.Equal(t, revision, s.WriteRevision())
+	for _, extra := range []int{-1, 0, 1} {
+		// B admits this explicit long key; its index tuple also includes the
+		// actual 36-byte version and one-byte scalar value.
+		src := "---\n? " + strings.Repeat("k", 2048-36-1+extra) + "\n: x\n---\n# Readable\n"
+		fieldCount := 1
+		if extra < 0 {
+			src, fieldCount = "---\na: "+strings.Repeat("x", 1024)+"\nb: "+strings.Repeat("y", 1024)+"\nc: "+strings.Repeat("z", 1024)+"\n---\n# Readable\n", 3
+		}
+		n := createNoteFixture(t, s, s.RootID(), fmt.Sprintf("indexed-%d.md", extra), src, "text/markdown")
+		note, err := notemarkdown.Parse(ctx, []byte(src), notemarkdown.Limits{})
+		require.NoError(t, err)
+		var target NoteTarget
+		for _, candidate := range noteTargets(t, s, notemarkdown.Recipe) {
+			if candidate.VersionID == n.CurrentVersionID {
+				target = candidate
+			}
+		}
+		err = s.PublishNoteParse(ctx, target, notemarkdown.Recipe, "ok", note)
+		if extra <= 0 {
+			require.NoError(t, err)
+			require.Equal(t, []int{1, fieldCount, 1, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
+		} else {
+			require.ErrorIs(t, err, ErrNoteIndexLimit)
+			require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
+		}
+	}
 }
 
 func checkNoteFiveThousand(t *testing.T, newStore func(*testing.T) *Store) {
@@ -294,8 +320,9 @@ func TestNoteEligibilityAndCollection(t *testing.T) {
 		{"/workshop/n.md", watches, watches[2]},
 		{"/n.md", nil, NoteWatch{Destination: "/"}},
 	} {
-		got, err := NoteCollection(test.path, test.watches)
+		destinations, err := noteDestinations(test.watches)
 		require.NoError(t, err)
+		got := noteCollection(test.path, test.watches, destinations)
 		require.Equal(t, test.want, got)
 	}
 }
@@ -536,33 +563,55 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 	}
 }
 
+func TestNoteIndexedTupleAdmission(t *testing.T) {
+	t.Parallel()
+	target := NoteTarget{VersionID: strings.Repeat("v", 36), Path: "/note.md"}
+	canonicalTarget := "/" + strings.Repeat("e\u0301/", 682) + "x"
+	for _, test := range []struct {
+		name string
+		note notemarkdown.Note
+	}{
+		{"field", notemarkdown.Note{Frontmatter: &notemarkdown.Frontmatter{Fields: []notemarkdown.Field{{Key: strings.Repeat("é", 1005), Value: "xx"}}}}},
+		{"alias", notemarkdown.Note{Frontmatter: &notemarkdown.Frontmatter{Aliases: []string{strings.Repeat("E\u0301", 1006)}}}},
+		{"path", notemarkdown.Note{Links: []notemarkdown.Link{{Form: "markdown", Target: canonicalTarget}}}},
+		{"wiki", notemarkdown.Note{Links: []notemarkdown.Link{{Form: "wikilink", Target: strings.Repeat("E\u0301", 1024)}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, validateNoteIndexes(t.Context(), target, test.note))
+			if f := test.note.Frontmatter; f != nil {
+				if len(f.Fields) > 0 {
+					f.Fields[0].Value += "x"
+				} else {
+					f.Aliases[0] += "x"
+				}
+			} else {
+				test.note.Links[0].Target += "x"
+			}
+			require.ErrorIs(t, validateNoteIndexes(t.Context(), target, test.note), ErrNoteIndexLimit)
+		})
+	}
+	var fields []notemarkdown.Field
+	for i := range 64 {
+		fields = append(fields, notemarkdown.Field{Key: fmt.Sprintf("key-%d", i), Value: strings.Repeat("x", 1024)})
+	}
+	require.NoError(t, validateNoteIndexes(t.Context(), target, notemarkdown.Note{Frontmatter: &notemarkdown.Frontmatter{Fields: fields}}), "each tuple fits despite total exceeding 2048 bytes")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, validateNoteIndexes(ctx, target, notemarkdown.Note{Frontmatter: &notemarkdown.Frontmatter{Fields: fields}}), context.Canceled)
+	for _, n := range []int{2048, 2049} {
+		err := validateNoteIndexes(t.Context(), NoteTarget{VersionID: strings.Repeat("v", n)}, notemarkdown.Note{})
+		if n == 2048 {
+			require.NoError(t, err)
+		} else {
+			require.ErrorIs(t, err, ErrNoteIndexLimit)
+		}
+	}
+}
+
 func execReleasedWatchAbsence(ctx context.Context, db *sql.DB, n Node) error {
 	if _, err := db.ExecContext(ctx, `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('fixture','released.md',$1,$2,$3)`, n.ID, n.BlobHash, n.Size); err != nil {
 		return err
 	}
 	_, err := db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00Z')`)
 	return err
-}
-
-func FuzzNoteCollectionSlashBoundary(f *testing.F) {
-	f.Add("work", "note.md")
-	f.Add("資料", "A:notes.md")
-	f.Fuzz(func(t *testing.T, folder, name string) {
-		var err error
-		folder, err = NormalizeName(folder)
-		if err != nil {
-			t.Skip()
-		}
-		name, err = NormalizeName(name)
-		if err != nil {
-			t.Skip()
-		}
-		watch := NoteWatch{"watch", "/" + folder}
-		got, err := NoteCollection("/"+folder+"/"+name, []NoteWatch{watch})
-		require.NoError(t, err)
-		require.Equal(t, watch, got)
-		got, err = NoteCollection("/"+folder+"-sibling/"+name, []NoteWatch{watch})
-		require.NoError(t, err)
-		require.Equal(t, NoteWatch{Destination: "/"}, got)
-	})
 }

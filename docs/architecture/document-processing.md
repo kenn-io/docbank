@@ -121,9 +121,7 @@ selects at most 25 current-note or cached version identities before checking
 their ancestry and bounded cached links. Unchanged and trashed rows advance the
 scan cursor; only EOF completes a pass. Cleanup rechecks live ownership in its
 write transaction. An unchanged no-work pass settles until a catalog write.
-Filtered pages continue without a timer. At 5,000 unchanged candidates and page
-size 25, this removes about 20 seconds of forced 100 ms page pacing; it does
-not change the amount of candidate revalidation. Publication checks the observed
+Filtered pages continue without a timer. Publication checks the observed
 version, revision and canonical path in one transaction.
 Filename title fallback is computed from the live name. UTF-8 or NUL failures,
 oversize inputs and parser limits record `not_utf8`, `too_large` or `limit`
@@ -141,6 +139,16 @@ chunks and destination writes. Escaping, separators and container bytes count
 toward the limit, with no trailing newline. Overflow publishes a fenced
 terminal `limit` with no partial frontmatter, fields, headings, links or aliases.
 Cancellation and other encoding failures keep their original error behavior.
+
+Indexed text has a separate shared SQLite/PostgreSQL admission boundary:
+each index tuple contains at most 2,048 UTF-8 text bytes, with 128 bytes reserved
+for headers, alignment, length words and fixed-width ordinals. Fields count
+key, value and actual version ID together; aliases count normalized alias key
+and version ID. Link path and key indexes each count their canonical text
+individually. Version-only and version-plus-ordinal primary keys count version
+text. Admission happens before the publication transaction. Overflow completes
+as the same zero-structure `limit`; many individually admissible rows remain
+valid regardless of their combined size.
 
 Restore rebuilds note structure from restored original blobs before publishing
 the target vault. A bad note's terminal classification does not fail restore.

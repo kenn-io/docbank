@@ -70,7 +70,7 @@ func processNoteTarget(ctx context.Context, catalog NoteCatalog, blobs *blob.Sto
 		return err
 	}
 	err = catalog.PublishNoteParse(ctx, target, notemarkdown.Recipe, state, note)
-	if errors.Is(err, store.ErrNoteRawLimit) {
+	if errors.Is(err, store.ErrNoteRawLimit) || errors.Is(err, store.ErrNoteIndexLimit) {
 		return catalog.PublishNoteParse(ctx, target, notemarkdown.Recipe, "limit", notemarkdown.Note{})
 	}
 	return err
@@ -79,9 +79,6 @@ func processNoteTarget(ctx context.Context, catalog NoteCatalog, blobs *blob.Sto
 func parseNoteOriginal(ctx context.Context, src []byte) (notemarkdown.Note, string, error) {
 	if err := ctx.Err(); err != nil {
 		return notemarkdown.Note{}, "", err
-	}
-	if int64(len(src)) > store.MaxNoteBytes {
-		return notemarkdown.Note{}, "too_large", nil
 	}
 	note, err := notemarkdown.Parse(ctx, src, notemarkdown.Limits{})
 	if errors.Is(err, notemarkdown.ErrLimit) {

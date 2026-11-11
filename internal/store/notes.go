@@ -77,16 +77,6 @@ func IsNoteCandidate(n Node) bool {
 		(n.MimeType == "text/markdown" || strings.HasSuffix(name, ".md") || strings.HasSuffix(name, ".markdown"))
 }
 
-// NoteCollection returns the nearest containing watch destination, or root.
-// A slash boundary prevents /work from also matching /workshop.
-func NoteCollection(notePath string, watches []NoteWatch) (NoteWatch, error) {
-	destinations, err := noteDestinations(watches)
-	if err != nil {
-		return NoteWatch{}, err
-	}
-	return noteCollection(notePath, watches, destinations), nil
-}
-
 func noteDestinations(watches []NoteWatch) ([]string, error) {
 	destinations := make([]string, len(watches))
 	for i, watch := range watches {
@@ -136,7 +126,7 @@ func (s *Store) ScanNoteTargetsAfter(ctx context.Context, recipe, after string, 
 	var page NotePage
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `WITH candidates AS (
- SELECT cv.version_id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
+ SELECT cv.version_id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id AND n.id=cv.node_id
  WHERE cv.version_id>$1 AND n.trashed_at IS NULL AND `+noteCandidateSQL+`
  ORDER BY cv.version_id LIMIT $2
  ), cached AS (
@@ -315,6 +305,9 @@ func (s *Store) PublishNoteParse(ctx context.Context, target NoteTarget, recipe,
 }
 
 func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state string, note notemarkdown.Note) (*string, *string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	invalid := func() (*string, *string, error) { return nil, nil, errors.New("invalid note projection") }
 	if target.VersionID == "" || recipe == "" || len(recipe) > 256 || !utf8.ValidString(recipe) || target.Size < 0 {
 		return invalid()
@@ -323,6 +316,9 @@ func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state str
 		return invalid()
 	}
 	if state != "ok" {
+		if len(target.VersionID) > 2048 {
+			return nil, nil, ErrNoteIndexLimit
+		}
 		if note.Frontmatter != nil || len(note.Headings) > 0 || len(note.Links) > 0 || len(note.Diagnostics) > 0 || note.Title != "" || note.TitleSource != "" || note.BodyStart != 0 || note.Lines != 0 {
 			return invalid()
 		}
@@ -385,7 +381,55 @@ func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state str
 			}
 		}
 	}
-	return raw, diagnostic, nil
+	return raw, diagnostic, validateNoteIndexes(ctx, target, note)
+}
+
+// ErrNoteIndexLimit identifies deterministic indexed-text overflow, before SQL.
+var ErrNoteIndexLimit = errors.New("note indexed text exceeds 2048 bytes")
+
+// Each actual tuple admits 2048 text bytes plus a conservative 128-byte margin
+// for headers, alignment, varlena lengths and an ordinal. This fits the standard
+// 8 KiB PostgreSQL B-tree page without compression; SQLite uses the same limit.
+// Version-only and version+ordinal PKs count version; fields count key+value+
+// version (also bounding their PK), aliases count normalized key+version (also
+// bounding the key index), and link path/key indexes each count their own text.
+func validateNoteIndexes(ctx context.Context, target NoteTarget, note notemarkdown.Note) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	const budget = 2048
+	versionBytes := len(target.VersionID)
+	if versionBytes > budget {
+		return ErrNoteIndexLimit
+	}
+	if f := note.Frontmatter; f != nil {
+		for _, field := range f.Fields {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if len(field.Key) > budget-versionBytes || len(field.Value) > budget-versionBytes-len(field.Key) {
+				return ErrNoteIndexLimit
+			}
+		}
+		for _, alias := range f.Aliases {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if len(strings.ToLower(norm.NFC.String(alias))) > budget-versionBytes {
+				return ErrNoteIndexLimit
+			}
+		}
+	}
+	for _, link := range note.Links {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		p, key := noteLinkIdentity(target.Path, link.Form, link.Target)
+		if (p != nil && len(*p) > budget) || (key != nil && len(*key) > budget) {
+			return ErrNoteIndexLimit
+		}
+	}
+	return ctx.Err()
 }
 
 func insertNoteStructure(ctx context.Context, tx *sql.Tx, target NoteTarget, note notemarkdown.Note) error {
