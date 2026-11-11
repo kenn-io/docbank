@@ -397,8 +397,10 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("configuring media origins: %w", err)
 	}
+	watchProfiles := watchProfileNames(cfg.Watches)
 	processingService, err := processing.NewService(sigCtx, processing.ServiceConfig{
 		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
+		WatchProfiles:     watchProfiles,
 		RenditionRuntimes: runtimeRegistry,
 		Principal:         "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
 		Lifecycle:     sigCtx,
@@ -431,7 +433,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			return err
 		}
 	}
-	for _, name := range watchProfileNames(cfg.Watches) {
+	for _, name := range watchProfiles {
 		if name == choice.Profile {
 			continue
 		}

@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
@@ -48,14 +49,27 @@ func (service *Service) AdmitImportedRendition(ctx context.Context, node store.N
 // WatchEmbeddings embeds only text chunks of versions this profile already rendered.
 // Listing and execution retain the profile's existing build-consent checks.
 func (service *Service) WatchEmbeddings(name string) *LocalTextSetup {
-	profile, ok := service.profiles[name]
-	if !ok {
+	profile := service.profiles[name]
+	if !slices.ContainsFunc(profile.portable.Embeddings, isChunkEmbedding) {
 		return nil
 	}
-	for _, binding := range profile.portable.Embeddings {
-		if binding.InputKind == document.EmbeddingInputRenditionChunk {
-			return &LocalTextSetup{Service: service, Selected: name, rendered: true, lane: "watch-embeddings:" + name}
-		}
+	return &LocalTextSetup{Service: service, Selected: name, rendered: true, lane: "watch-embeddings:" + name}
+}
+
+func isChunkEmbedding(binding document.EmbeddingBindingV1) bool {
+	return binding.InputKind == document.EmbeddingInputRenditionChunk
+}
+
+func (service *Service) embedPublishedRendition(ctx context.Context, selector Selector, options processingRunOptions) ([]string, error) {
+	_, version, profile, err := service.resolve(ctx, selector)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	// Use the current build consent set and the published head's exact attachment.
+	authorization, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(profile))
+	if err != nil {
+		return nil, err
+	}
+	options.embeddingInputKind = document.EmbeddingInputRenditionChunk
+	return service.runEmbeddings(ctx, version, profile, service.principal, service.scope, authorization.GrantID, nil, options)
 }

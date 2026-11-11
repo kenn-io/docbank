@@ -17,6 +17,11 @@ const job = (fields: Partial<Job>): Job => ({
 });
 
 describe("activity lanes", () => {
+  it("describes the processing profile for a watch embedding lane", () => {
+    const [lane] = jobLanes([job({ lane: "embed:watch:pdf" })]);
+    expect(lane).toMatchObject({ title: "Preparing similarity search", description: "pdf" });
+  });
+
   it("compares UTC timestamps at full fractional precision and retains paused idle lanes", () => {
     const [lane] = jobLanes(
       [

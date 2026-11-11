@@ -247,6 +247,7 @@
           <section class="job" aria-label={lane.title}>
             <div class="job-row">
               <strong class="job-name">{lane.title}</strong>
+              {#if lane.description}<span class="muted">{lane.description}</span>{/if}
               {#if state !== "Running"}<span class="state" data-state={state}>{state}</span>{/if}
               <div class="controls">
                 {@render laneControls(lane)}

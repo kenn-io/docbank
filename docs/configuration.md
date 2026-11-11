@@ -485,7 +485,9 @@ When a routed profile has text-chunk embeddings and current build consent, the
 daemon embeds the text of current versions with a published rendition for that
 profile, including ASR transcripts. The `embed:watch:<profile>` worker runs only
 `rendition_chunk` bindings. It also picks up already published renditions with
-missing chunk embeddings when consent is granted.
+missing chunk embeddings when consent is granted, including renditions built
+manually outside watched folders. If vault-wide local text selects the same
+profile, its worker handles the backlog.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,

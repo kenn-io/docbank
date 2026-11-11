@@ -252,7 +252,7 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 			bindings++
 		}
 	}
-	if bindings == 0 {
+	if !setup.rendered && bindings == 0 {
 		return nil, nil
 	}
 	var result []store.DocumentSummary
@@ -309,23 +309,31 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 
 func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {
 	selector := Selector{Profile: setup.Selected, NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}
-	profile := setup.Service.profiles[setup.Selected]
-	plan, err := setup.Service.Plan(ctx, selector)
-	if err != nil {
-		return err
-	}
-	if plan.RenditionIneligibleReason != "" {
-		if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
-			setup.skip(item, "")
-		}
-		return nil
-	}
 	options := processingRunOptions{retryUnavailable: true, deferIndex: true}
+	var jobIDs []string
+	var err error
 	if setup.rendered {
-		options.embeddingInputKind = document.EmbeddingInputRenditionChunk
+		jobIDs, err = setup.Service.embedPublishedRendition(ctx, selector, options)
+		if isEmbeddingConsentFailure(err) {
+			return nil
+		}
+	} else {
+		profile := setup.Service.profiles[setup.Selected]
+		plan, planErr := setup.Service.Plan(ctx, selector)
+		if planErr != nil {
+			return planErr
+		}
+		if plan.RenditionIneligibleReason != "" {
+			if profileRenditionInput(profile) == document.RenditionInputOriginalFile {
+				setup.skip(item, "")
+			}
+			return nil
+		}
+		var job Job
+		job, err = setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
+			runOptions: options})
+		jobIDs = job.EmbeddingJobIDs
 	}
-	job, err := setup.Service.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint,
-		runOptions: options})
 	if errors.Is(err, document.ErrTokenizerLimit) {
 		setup.skip(item, "tokenizer_limit")
 		return nil
@@ -341,7 +349,7 @@ func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSum
 		return err
 	}
 	skipCode := ""
-	for _, id := range job.EmbeddingJobIDs {
+	for _, id := range jobIDs {
 		status, statusErr := setup.Service.catalog.EmbeddingJobByID(ctx, id)
 		if statusErr != nil {
 			return statusErr
@@ -405,8 +413,11 @@ func (setup *LocalTextSetup) publicationPending(ctx context.Context) (bool, erro
 	if !ok {
 		return false, nil
 	}
-	for _, space := range profile.vectorSpaces {
-		pending, err := setup.Service.catalog.VectorIndexPublicationPending(ctx, space)
+	for _, binding := range profile.portable.Embeddings {
+		if setup.rendered && !isChunkEmbedding(binding) {
+			continue
+		}
+		pending, err := setup.Service.catalog.VectorIndexPublicationPending(ctx, profile.vectorSpaces[binding.Name])
 		if err != nil || pending {
 			return pending, err
 		}
