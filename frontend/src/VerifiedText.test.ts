@@ -152,7 +152,14 @@ it("finds text, wraps navigation, and clears the find query", async () => {
     authorizationRevision: 3,
     onauthfailure: vi.fn(),
   });
-  expect(await screen.findByText(/Pages 3–4, 7 have no text layer/)).toBeTruthy();
+  const notice = await screen.findByText(/Pages 3–4, 7 have no text layer/);
+  expect(screen.getByRole("link", { name: /OCR can read them/ }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  expect(
+    notice.compareDocumentPosition(screen.getByLabelText("Verified text of scan.png")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   const input = await screen.findByLabelText("Find in verified text");
   await fireEvent.input(input, { target: { value: "report" } });
   expect(screen.getByText("1 of 2")).toBeTruthy();

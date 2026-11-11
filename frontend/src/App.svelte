@@ -1108,6 +1108,10 @@
   let searchQuery = $state("");
   let activeQuery = $state("");
   let pdfCoverage = $state<generated.SearchTextCoverage | null>(null);
+  const pdfCoverageIncomplete = $derived(
+    !!pdfCoverage &&
+      (pdfCoverage.pdf_page_coverage_partial || pdfCoverage.pdf_page_coverage_unavailable > 0),
+  );
   let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
@@ -4885,7 +4889,7 @@
                         ? "No documents yet"
                         : "Empty folder"}
                   description={activeQuery && pdfCoverage?.pdfs_without_text
-                    ? `${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
+                    ? `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
                     : tagBrowse && taggedTrashed > 0
                       ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
                       : emptyRoot
