@@ -238,14 +238,24 @@
       </p>
     {:else if results && tag}
       <p class="consequence">
-        {#if remaining.length === 0 && unavailable === 0}
+        {#if results.length === 1 && unavailable === 0}
+          The document {remaining.length === 0
+            ? assign
+              ? `has “${tag?.name}”`
+              : `doesn't have “${tag?.name}”`
+            : assign
+              ? `doesn't have “${tag?.name}” yet`
+              : `still has “${tag?.name}”`}.
+        {:else if remaining.length === 0 && unavailable === 0}
           {assign
-            ? `All ${results.length} documents have “${tag?.name}”.`
-            : `None of the ${results.length} documents have “${tag?.name}”.`}
+            ? `All ${documentCount(results.length)} have “${tag?.name}”.`
+            : `None of the ${documentCount(results.length)} have “${tag?.name}”.`}
         {:else}
-          {matched} of {results.length} documents {assign
-            ? `have “${tag?.name}”`
-            : `don't have “${tag?.name}”`}. {remaining.length} still need the change.
+          {matched} of {documentCount(results.length)}
+          {assign
+            ? `${matched === 1 ? "has" : "have"} “${tag?.name}”`
+            : `${matched === 1 ? "doesn't" : "don't"} have “${tag?.name}”`}. {remaining.length} still
+          need the change.
         {/if}
       </p>
       {#if unavailable}<p class="status">
