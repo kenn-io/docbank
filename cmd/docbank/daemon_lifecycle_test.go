@@ -658,6 +658,17 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	require.NoError(t, err)
 	token := fragment.Get("web_session")
 	require.NotEmpty(t, token)
+	second := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
+	second.Env = env
+	secondOut, err := second.CombinedOutput()
+	require.NoError(t, err, string(secondOut))
+	secondLaunch, err := url.Parse(strings.TrimSpace(string(secondOut)))
+	require.NoError(t, err)
+	secondFragment, err := url.ParseQuery(secondLaunch.Fragment)
+	require.NoError(t, err)
+	secondToken := secondFragment.Get("web_session")
+	require.NotEmpty(t, secondToken)
+	require.NotEqual(t, token, secondToken)
 	old := waitForDaemon(t, root)
 	require.False(t, daemonconn.Explicit(old))
 	watcher, err := fsnotify.NewWatcher()
@@ -705,10 +716,22 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 		}
 	}
 retry:
+	lock, err := (home.Layout{Root: root}).TryLockLaunch()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Release() })
 	response, err := client.Do(request)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusAccepted, response.StatusCode)
 	require.NoError(t, response.Body.Close())
+	secondRequest := request.Clone(t.Context())
+	secondRequest.Header.Set(api.WebSessionHeader, secondToken)
+	response, err = client.Do(secondRequest)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	current := waitForDaemon(t, root)
+	require.Equal(t, old.PID, current.PID)
+	require.NoError(t, lock.Release())
 	for {
 		select {
 		case <-t.Context().Done():
@@ -724,6 +747,21 @@ retry:
 					transport.CloseIdleConnections()
 					_, err := client.Do(request.Clone(t.Context()))
 					require.Error(t, err)
+					fresh := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
+					fresh.Env = env
+					freshOut, err := fresh.CombinedOutput()
+					require.NoError(t, err, string(freshOut))
+					freshURL, err := url.Parse(strings.TrimSpace(string(freshOut)))
+					require.NoError(t, err)
+					for _, oldToken := range []string{token, secondToken} {
+						identity, err := http.NewRequestWithContext(t.Context(), http.MethodGet, freshURL.Scheme+"://"+freshURL.Host+"/api/v1/vault", nil)
+						require.NoError(t, err)
+						identity.Header.Set(api.WebSessionHeader, oldToken)
+						resp, err := http.DefaultClient.Do(identity)
+						require.NoError(t, err)
+						require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+						require.NoError(t, resp.Body.Close())
+					}
 					return
 				}
 			}

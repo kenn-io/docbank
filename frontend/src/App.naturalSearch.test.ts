@@ -2102,7 +2102,7 @@ it.each([
     },
     "Docbank couldn't confirm the restart.",
   ],
-])("returns to recovery after an %s response", async (_, restart, notice) => {
+])("keeps the workspace after an %s response", async (_, restart, notice) => {
   const request = vi.fn(restart);
   const harness = searchWithMeaningOff({
     status: () => ({ ...localSaved, restart_available: true }),
@@ -2110,14 +2110,25 @@ it.each([
     restart: request,
   });
   render(App);
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "unfinished draft" } });
   const drawer = await openSearchByMeaningTab();
   await within(drawer).findByText("Restart required");
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
-  expect(await screen.findByText(notice)).toBeTruthy();
-  expect(screen.getByText("docbank web --no-browser")).toBeTruthy();
-  expect(request).toHaveBeenCalledOnce();
+  expect(
+    await within(drawer).findByText(new RegExp(notice.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))),
+  ).toBeTruthy();
+  expect((search as HTMLInputElement).value).toBe("unfinished draft");
+  expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+      name: "Restart Docbank",
+    }),
+  );
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
   const call = harness.fetchMock.mock.calls.find(
     ([input]) => String(input) === "/api/v1/processing/local/restart",
   );
@@ -2184,6 +2195,8 @@ it("keeps the workspace when the upload connection and identity check fail", asy
     expect(harness.fetchMock).toHaveBeenCalledWith("/api/v1/vault", expect.anything()),
   );
   expect(within(drawer).getByText("Restart required")).toBeTruthy();
+  expect(await screen.findByText(/Lost connection to Docbank/)).toBeTruthy();
+  expect(screen.getByText("docbank web --no-browser")).toBeTruthy();
 });
 
 it("shows the owner step when the daemon cannot restart itself", async () => {

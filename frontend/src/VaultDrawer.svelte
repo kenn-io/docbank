@@ -6,6 +6,7 @@
     readError: string;
     pending: boolean;
     error: string;
+    notice?: string;
   };
 </script>
 
@@ -128,6 +129,7 @@
       {#if searchByMeaning.error}
         <p class="error" role="alert">{searchByMeaning.error}</p>
       {/if}
+      {#if searchByMeaning.notice}<p role="status">{searchByMeaning.notice}</p>{/if}
       {#if searchByMeaning.readError}
         <p class="error" role="alert">{searchByMeaning.readError}</p>
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>

@@ -196,14 +196,6 @@ daemon was running.`,
 		if err != nil {
 			return err
 		}
-		if restartOpenWeb {
-			c, err := daemonconn.EnsureWeb(cmd.Context())
-			if err != nil {
-				return err
-			}
-			defer func() { _ = c.Close() }()
-			return runWeb(cmd.Context(), cmd.OutOrStdout(), layout.Root, c, false, openWebBrowser)
-		}
 		if wasRunning {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "restarted: pid %d at %s (%s)\n",
 				rec.PID, rec.Address, rec.Version)

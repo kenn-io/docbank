@@ -386,7 +386,6 @@
   let keySignInEnabled = $state(false);
   let signInNotice = $state("");
   let keySession = $state(false);
-  let sameAddressAfterRestart = false;
   let recovery = $state<"" | "same" | "per-run">("");
   let restartAttempt: object | undefined;
   let apiKey = $state("");
@@ -1104,6 +1103,7 @@
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
+  let connectionRecovery = $state<"same" | "per-run" | "">("");
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -1593,7 +1593,6 @@
   ): void {
     restartAttempt = undefined;
     recovery = "";
-    sameAddressAfterRestart = sameAddress;
     signInNotice = "";
     disposeBrowserSession?.();
     webSession = session.token;
@@ -1601,6 +1600,7 @@
     keySession = keyLogin;
     error = "";
     uploadChannelError = "";
+    connectionRecovery = "";
     if (savedQueryDraft) queryBarOpen = true;
     void loadRoot();
     void loadTagCatalog();
@@ -1612,7 +1612,7 @@
       if (uploadChannel !== channel) return;
       uploadChannelError = keyLogin
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
-        : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+        : "The verified upload channel ended. Run `docbank web --no-browser` again before selecting more files.";
       void checkDisconnectedSession(session.token, sameAddress);
     });
     void channel.connect().then(
@@ -1640,8 +1640,11 @@
     try {
       await generated.vaultIdentity({ session, signal: AbortSignal.timeout(3000) });
     } catch (cause) {
-      if (!(cause instanceof APIError) || cause.status !== 401) return;
       if (!mounted || webSession !== session) return;
+      if (!(cause instanceof APIError) || cause.status !== 401) {
+        connectionRecovery = sameAddress ? "same" : "per-run";
+        return;
+      }
       resetLocalSessionUI();
       recovery = sameAddress ? "same" : "per-run";
       keySignInEnabled = sameAddress;
@@ -2051,10 +2054,10 @@
 
   async function restartDocbank(): Promise<void> {
     const session = webSession;
-    const sameAddress = keySession && sameAddressAfterRestart;
     const attempt = (restartAttempt = {});
     localText.error = "";
-    let notice = "Restart requested.";
+    localText.notice = "";
+    let notice = "Restart requested. Docbank may restart later; if it doesn't, try again.";
     try {
       const response = await generated.restartDaemon({
         session,
@@ -2085,14 +2088,12 @@
           return;
         }
       }
-      notice = "Docbank couldn't confirm the restart.";
+      notice =
+        "Docbank couldn't confirm the restart. It may still happen later; if it doesn't, try again.";
     }
     if (!mounted || restartAttempt !== attempt) return;
     restartAttempt = undefined;
-    if (webSession === session) resetLocalSessionUI();
-    recovery = sameAddress ? "same" : "per-run";
-    keySignInEnabled = sameAddress;
-    signInNotice = notice;
+    if (webSession === session) localText.notice = notice;
   }
 
   async function loadRoot(): Promise<void> {
@@ -4183,6 +4184,19 @@
     {/if}
 
     <div class="app-main" style:--content-inset={photoMode ? "var(--space-5)" : undefined}>
+      {#if connectionRecovery}
+        <div class="banner error" role="alert">
+          <span>
+            Lost connection to Docbank. If it restarted,
+            {#if connectionRecovery === "same"}
+              reload this page and sign in again.
+            {:else}
+              ask the operator to restart it, or run <code>docbank web --no-browser</code> in the terminal
+              used for this vault if you manage it, then open the URL it prints.
+            {/if}
+          </span>
+        </div>
+      {/if}
       <TopBar class="app-top-bar">
         {#snippet left()}
           <span class="nav-toggle">

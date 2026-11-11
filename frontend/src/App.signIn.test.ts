@@ -634,7 +634,18 @@ it("ignores a delayed tag rename success after signing in again", async () => {
   expect(fixture.state.logins).toBe(2);
 });
 
-it("returns a key session to the sign-in form after restart", async () => {
+it("keeps a key session while restart is pending", async () => {
+  let socket: EventTarget;
+  vi.stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        socket = this;
+      }
+      close() {}
+    },
+  );
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -669,6 +680,7 @@ it("returns a key session to the sign-in form after restart", async () => {
         restart_available: true,
       });
     if (url === "/api/v1/processing/local/restart") return new Response(null, { status: 202 });
+    if (url === "/api/v1/vault") throw new Error("offline");
     return Response.json({ items: [], total: 0 });
   });
   render(App);
@@ -682,6 +694,9 @@ it("returns a key session to the sign-in form after restart", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Restart Docbank" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
-  expect(await screen.findByText("Restart requested.")).toBeTruthy();
-  expect(screen.getByLabelText("API key")).toBeTruthy();
+  expect(await screen.findByText(/Restart requested/)).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "System" })).toBeTruthy();
+  socket!.dispatchEvent(new Event("error"));
+  expect(await screen.findByText(/reload this page and sign in again/)).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "System" })).toBeTruthy();
 });

@@ -39,6 +39,8 @@ Cancellation before apply and failed server startup leave the saved choice uncha
 
 In the web app, open **System → Search by meaning**, review the download size, and choose **Turn on** to approve setup. Setup starts the server and saves the indexing choice for this vault and new imports. Choose **Restart Docbank** and confirm to start indexing. Open tabs sign out, and uploads, exports, and command-line requests may be interrupted. A per-run address attempts to open a new tab; if it does not open, run `docbank web --no-browser` in the terminal used for the vault and open the printed URL. At a configured public address, reload and sign in again. If you started Docbank in a terminal, press Ctrl+C and repeat the original command. Ask the operator to restart a service or container. Then reopen Docbank and sign in. A lost response cannot confirm whether the restart was requested.
 
+An accepted request can wait before the restart starts. Your workspace stays open until the session ends. If the restart doesn't happen, try again; a request made while the helper is still waiting joins the existing attempt.
+
 For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
 Preview the current version before sending a document or query to any provider:
