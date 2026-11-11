@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-var ErrMediaSearchInvalid = errors.New("media search selectors are invalid")
+var ErrMediaSearchInvalid = errors.New("invalid media search request")
 
 // MaxMediaSearchSuppliedInputIDs bounds one selector's supplied input set.
 const MaxMediaSearchSuppliedInputIDs = 64

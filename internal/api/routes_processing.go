@@ -797,7 +797,7 @@ func fromProcessingError(err error) error {
 		detail string
 	}{
 		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search",
-			"media search selectors or mode are invalid"},
+			"invalid media search request"},
 		{processing.ErrRenditionRuntimeUnavailable, http.StatusServiceUnavailable, "rendition_runtime_unavailable", "the rendition provider is not ready"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
