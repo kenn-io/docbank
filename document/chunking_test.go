@@ -295,6 +295,19 @@ func TestEmbeddingInputGenerationRejectsUnknownHeadingsFormatter(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
 }
 
+func TestEmbeddingInputGenerationRejectsVersionOneHeadings(t *testing.T) {
+	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Section"}}})
+	policy := testInputPolicy(t, 2, 0)
+	policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
+	current := build(t, evidence, policy)
+	current.Version = EmbeddingInputGenerationVersion
+	var err error
+	current.Checksum, err = generationChecksum(current)
+	require.NoError(t, err)
+	_, err = MarshalEmbeddingInputGeneration(current)
+	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
+}
+
 func TestBuildEmbeddingInputsTruncatesOnlyAnIndivisibleTokenWhenDeclared(t *testing.T) {
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "abcdefghij"}})
 	policy := testInputPolicy(t, 1, 0)

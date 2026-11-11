@@ -293,7 +293,7 @@ func generatedInputKey(ordinal int, checksum string) string {
 }
 
 func validateEmbeddingInputGeneration(generation EmbeddingInputGeneration) error {
-	if generation.Version != EmbeddingInputGenerationVersion && (generation.Version != EmbeddingInputGenerationHeadingsVersion || generation.Chunk.Formatter != RenditionChunkHeadingsFormatter) {
+	if generation.Version != EmbeddingInputGenerationVersion && generation.Version != EmbeddingInputGenerationHeadingsVersion || (generation.Version == EmbeddingInputGenerationHeadingsVersion) != (generation.Chunk.Formatter == RenditionChunkHeadingsFormatter) {
 		return errors.New("unsupported embedding input generation version or formatter")
 	}
 	for _, fingerprint := range []struct{ value, name string }{

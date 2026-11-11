@@ -38,7 +38,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 	require.NoError(t, err)
 	data := []byte("synthetic-image")
 	meta := understandingMetadata(data)
-	result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
+	result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, imageAuthorization(p, meta))
 	require.NoError(t, err)
 	assert.Empty(t, result.ProviderMarkdown)
 	require.Len(t, result.Artifacts, 1)
@@ -68,7 +68,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 		defer empty.Close()
 		p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: empty.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, empty.Client())
 		require.NoError(t, err)
-		_, err = document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
+		_, err = document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, imageAuthorization(p, meta))
 		classified, ok := errors.AsType[*document.RenditionProviderError](err)
 		require.True(t, ok)
 		assert.Equal(t, document.RenditionErrorMalformedEvidence, classified.Code())
@@ -83,7 +83,7 @@ func TestUnderstandingRendersSections(t *testing.T) {
 		require.NoError(t, err)
 		data := []byte("synthetic-image")
 		meta := understandingMetadata(data)
-		result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
+		result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, imageAuthorization(p, meta))
 		require.NoError(t, err)
 		require.Len(t, result.Evidence.Units, 3)
 		assert.Equal(t, "  A\tB\u00a0C\nD[2J", result.Evidence.Units[0].Text)
@@ -121,7 +121,7 @@ func understandingMetadata(data []byte) document.AuthorizedUploadMetadata {
 	return document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/png", InputKind: document.RenditionInputOriginalFile, ByteLength: int64(len(data)), SHA256: providerutil.SHA256Hex(data), CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
 }
 
-func understandingAuthorization(p *Provider, meta document.AuthorizedUploadMetadata) document.RenditionAuthorization {
+func imageAuthorization(p *Provider, meta document.AuthorizedUploadMetadata) document.RenditionAuthorization {
 	now := time.Now().UTC()
 	return document.RenditionAuthorization{ProviderID: p.descriptor.ID, DescriptorFingerprint: p.descriptor.Fingerprint, PolicyFingerprint: p.descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: meta.SHA256, SourceBytes: meta.ByteLength, CapabilityRecordChecksum: meta.CapabilityRecordChecksum, ProviderMetadataChecksum: meta.ProviderMetadataChecksum, MediaFamily: meta.MediaFamily, MediaType: meta.MediaType, InputKind: meta.InputKind, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
 }
@@ -145,7 +145,7 @@ func TestUnderstandingRejectsOversizedAndUnsupportedImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			meta := understandingMetadata(tc.data)
 			tc.mutate(&meta)
-			_, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(tc.data)), metadata: meta}, understandingAuthorization(p, meta))
+			_, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(tc.data)), metadata: meta}, imageAuthorization(p, meta))
 			if tc.want == "" {
 				classified, ok := errors.AsType[*document.RenditionProviderError](err)
 				require.True(t, ok)
