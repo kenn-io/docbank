@@ -95,6 +95,10 @@ returns `processing_consent_required`. Expired or revoked consent returns
 `processing_consent_expired` or `processing_consent_revoked`. Search does not
 grant consent automatically.
 
+When similar search reports a missing source embedding, run the displayed
+`docbank processing plan` command and review the disclosure. Follow the
+[processing build instructions](document-processing.md) to process the document, then retry the search.
+
 Preview `docbank processing plan <path-or-id> --profile <configured-profile> --json`
 and review its query-text disclosure. Then either:
 
