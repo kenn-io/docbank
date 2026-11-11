@@ -1,7 +1,6 @@
 package retrieval
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -460,7 +459,7 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 			require.Len(t, reranker.candidates, 1)
 			assert.Equal(t, test.want, reranker.candidates[0].Excerpt)
 			require.Len(t, ranked.Results, 1)
-			assert.Equal(t, cmp.Or(test.lexical, test.semantic), ranked.Results[0].Excerpt)
+			assert.Equal(t, test.want, ranked.Results[0].Excerpt)
 		})
 	}
 }
