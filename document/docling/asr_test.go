@@ -695,6 +695,9 @@ func TestDoclingASRVideoRejectsVisualOnlyCapability(t *testing.T) {
 	_, err = document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
 	require.Error(t, err)
 	require.Zero(t, submissions, "a video capability without sound proof must never be uploaded")
+	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+	require.True(t, ok)
+	require.ErrorContains(t, providerErr.Unwrap(), "Docling ASR video sound-track capability does not match the upload")
 }
 
 func TestDoclingASRRejectsDelayedMP4SoundBeforeUpload(t *testing.T) {

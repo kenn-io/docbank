@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -326,6 +327,37 @@ func TestInspectMP4AudioWithNonVisualTracks(t *testing.T) {
 			require.True(t, record.Eligible, record.Reason)
 		})
 	}
+}
+
+// The provider transcribes one extracted sound stream, so video mode refuses
+// a second sound track even when both tracks qualify on their own.
+func TestInspectMP4RejectsSecondSoundTrack(t *testing.T) {
+	data := mediatest.M4A("mp4a")
+	mdat := bytes.Index(data, []byte("mdat")) - 4
+	// Give the second track its own four sample bytes after the first's.
+	data = slices.Insert(data, mdat+12, 5, 6, 7, 8)
+	binary.BigEndian.PutUint32(data[mdat:mdat+4], 16)
+	movie := bytes.Index(data, []byte("moov")) - 4
+	track := bytes.Index(data, []byte("trak")) - 4
+	second := bytes.Clone(data[track:])
+	binary.BigEndian.PutUint32(second[bytes.Index(second, []byte("tkhd"))+16:], 2)
+	stco := bytes.Index(second, []byte("stco")) + 12
+	binary.BigEndian.PutUint32(second[stco:stco+4], uint32(mdat+12)) //nolint:gosec // tiny fixture
+	data = append(data, second...)
+	binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie)) //nolint:gosec // tiny fixture
+
+	audio := inspectionPolicy(data, "call.m4a", "audio/mp4")
+	audio.MaxDurationMS = 1000
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), audio)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, "audio-only M4A keeps its existing behavior: %s", record.Reason)
+
+	video := inspectionPolicy(data, "phone.mp4", "video/mp4")
+	video.VideoAudioTrack, video.MaxDurationMS = true, 300000
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), video)
+	require.NoError(t, err)
+	require.False(t, record.Eligible)
+	require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
 }
 
 func TestInspectMP4AudioWithVideoCompositionOffsets(t *testing.T) {
