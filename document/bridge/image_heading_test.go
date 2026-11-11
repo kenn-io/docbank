@@ -29,7 +29,7 @@ func TestBridgeOrdinaryEvidenceWithImageHeading(t *testing.T) {
 		if !assert.NoError(t, err) {
 			return
 		}
-		envelope["result"].(map[string]any)["evidence"] = map[string]any{"media_type": evidenceMediaType, "byte_length": len(data), "sha256": sha256String(data), "inline": jsontext.Value(data)}
+		completedResultMap(envelope)["evidence"] = map[string]any{"media_type": evidenceMediaType, "byte_length": len(data), "sha256": sha256String(data), "inline": jsontext.Value(data)}
 		writeBridgeJSON(t, w, http.StatusOK, envelope)
 	}))
 	t.Cleanup(server.Close)
