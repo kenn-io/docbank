@@ -91,7 +91,7 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 	}
 	if u.Scheme == "http" {
 		if _, err := embedconfig.CanonicalEndpoint(u.String(), k.TrustPrivateNetwork); err != nil {
-			return KataConnection{}, errors.New("integrations.kata: HTTP endpoint must be loopback or, with trust_private_network = true, on a trusted private network; public IPs require HTTPS")
+			return KataConnection{}, errors.New("integrations.kata: HTTP endpoint must be loopback or, with trust_private_network = true, on a trusted private network; public IPs require HTTPS; a hostname is required")
 		}
 	}
 	if (k.APIKeyEnv == "") == (k.APIKeyFile == "") {
