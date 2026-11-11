@@ -133,7 +133,7 @@ func inspectM4A(reader *bufio.Reader, policy InspectionPolicy, allowVideo, quick
 
 // qualifyM4AMovie proves qualified sound samples occupy disjoint local data.
 // Video mode also admits picture and known non-visual tracks without proving
-// their sample payloads; sound is still required.
+// their sample payloads; it requires exactly one sound track.
 func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityReason {
 	if !scanMP4Boxes(movie, info, nil, "moov", 1) {
 		if info.boxCount > info.maxBoxes {
@@ -175,6 +175,11 @@ func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityRea
 		}
 	}
 	if soundTracks == 0 || !mp4SampleRangesDoNotOverlap(info.sampleRanges) {
+		return CapabilityReasonMalformed
+	}
+	// The provider extracts and transcribes one sound stream, so a second
+	// track could leave the proven duration describing a different stream.
+	if allowVideo && soundTracks > 1 {
 		return CapabilityReasonMalformed
 	}
 	return CapabilityReasonEligible

@@ -212,7 +212,11 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 		facts.MediaFamily != metadata.MediaFamily || facts.MediaType != metadata.MediaType ||
 		!supportedType ||
 		facts.DurationMS <= 0 || facts.DurationMS > (24*time.Hour).Milliseconds() {
-		return 0, provider.Classified(document.RenditionErrorPolicyRejected, "Docling ASR audio capability does not match the upload", nil)
+		capability := "audio"
+		if metadata.MediaFamily == "video" {
+			capability = "video sound-track"
+		}
+		return 0, provider.Classified(document.RenditionErrorPolicyRejected, "Docling ASR "+capability+" capability does not match the upload", nil)
 	}
 	return facts.DurationMS, nil
 }
