@@ -26,6 +26,42 @@ func TestLinksCommonMarkForms(t *testing.T) {
 	require.Equal(t, "[one][r]", string(src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End]))
 }
 
+func TestParenthesizedLinkTitles(t *testing.T) {
+	for _, tc := range []struct {
+		name, inline, reference string
+		valid                   bool
+	}{
+		{"nested", `[x](foo (a(b)))`, `[r]: foo (a(b))`, true},
+		{"deeper", `[x](foo (a(b(c))))`, `[r]: foo (a(b(c)))`, true},
+		{"empty", `[x](foo ())`, `[r]: foo ()`, true},
+		{"escaped opener", `[x](foo (a\(b))`, `[r]: foo (a\(b)`, true},
+		{"escaped closer", `[x](foo (a\)b))`, `[r]: foo (a\)b)`, true},
+		{"escaped backslash", `[x](foo (a\\(b)))`, `[r]: foo (a\\(b))`, true},
+		{"multiline", "[x](foo (a\n(b)))", "[r]: foo (a\n(b))", true},
+		{"quoted parentheses", `[x](foo "a(b")`, `[r]: foo "a(b"`, true},
+		{"missing close", `[x](foo (a(b))`, `[r]: foo (a(b)`, false},
+		{"unclosed nested", `[x](foo (a(b)`, `[r]: foo (a(b`, false},
+	} {
+		for _, form := range []struct{ name, source, raw string }{
+			{"inline", tc.inline, tc.inline},
+			{"reference", "[x][r]\n\n" + tc.reference + "\n", "[x][r]"},
+		} {
+			t.Run(form.name+"/"+tc.name, func(t *testing.T) {
+				n, err := Parse(t.Context(), []byte(form.source), Limits{})
+				require.NoError(t, err)
+				if !tc.valid {
+					require.Empty(t, n.Links)
+					return
+				}
+				require.Len(t, n.Links, 1)
+				require.Equal(t, "foo", n.Links[0].Target)
+				require.Equal(t, form.raw, n.Links[0].Raw)
+				require.Equal(t, form.raw, form.source[n.Links[0].Start:n.Links[0].End])
+			})
+		}
+	}
+}
+
 func TestLinksWikiForms(t *testing.T) {
 	src := []byte("[[Note]] [[Note#Heading|label]] [[#Heading]] ![[image.png]] [[pipe\\|name|label]]")
 	n, err := Parse(t.Context(), src, Limits{})
@@ -123,7 +159,7 @@ func TestLinksHostileWorkAndCancellation(t *testing.T) {
 	require.Equal(t, Note{}, n)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, &budget{})
+	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, nil, &budget{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -146,7 +182,7 @@ func TestLinksP02LabelsFragmentsAndLiteralTargets(t *testing.T) {
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []Link{
-		{Ordinal: 0, Form: "markdown", Raw: "[**label**](A:notes.md#part)", Target: "A:notes.md", Fragment: "part", Label: "label", Start: 0, End: len("[**label**](A:notes.md#part)"), Line: 1},
+		{Ordinal: 0, Form: "markdown", Raw: "[**label**](A:notes.md#part)", Target: "A:notes.md", Fragment: "part", Label: "**label**", Start: 0, End: len("[**label**](A:notes.md#part)"), Line: 1},
 	}, n.Links[:1])
 	require.Equal(t, "A:notes.md", n.Links[1].Target)
 	require.Equal(t, "Heading", n.Links[1].Fragment)

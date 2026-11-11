@@ -32,16 +32,20 @@ func TestLaterScanCancellation(t *testing.T) {
 			return err
 		},
 		"autolink-uri": func(ctx context.Context, b *budget) error {
-			_, err := validAutolinkURI(ctx, []byte("https:"+text), b)
+			s := linkScanner{ctx: ctx, src: []byte("<https:" + text + ">"), b: b}
+			_, err := s.inlineHTML(0, len(s.src))
 			return err
 		},
 		"autolink-email": func(ctx context.Context, b *budget) error {
 			_, err := validAutolinkEmail(ctx, []byte(text+"@example.invalid"), b)
 			return err
 		},
-		"heading-display": func(ctx context.Context, b *budget) error {
-			_, err := headingText(ctx, []byte(text), Span{0, len(text)}, nil, b)
+		"raw-text": func(ctx context.Context, b *budget) error {
+			_, err := rawText(ctx, []byte(text), b)
 			return err
+		},
+		"yaml-syntax": func(ctx context.Context, b *budget) error {
+			return decodeFrontmatter(ctx, []byte("#"+text), &Frontmatter{}, b)
 		},
 		"code-index": func(ctx context.Context, b *budget) error {
 			s := linkScanner{ctx: ctx, src: []byte(strings.Repeat("`", 30000)), b: b}

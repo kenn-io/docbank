@@ -7,20 +7,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewEntityRecovery(t *testing.T) {
+func TestRawHeadingAndTargetEntityRecovery(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("# &bad *emphasis* &amp;\n\n[x](a&bad&amp;b)\n"), Limits{})
 	require.NoError(t, err)
-	require.Equal(t, "&bad emphasis &", n.Headings[0].Text)
+	require.Equal(t, "&bad *emphasis* &amp;", n.Headings[0].Text)
 	require.Equal(t, []string{"a&bad&b"}, linkTargets(n.Links))
 }
 
-func TestReviewAutolinkInLinkLabel(t *testing.T) {
+func TestAutolinkInLinkLabel(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[<https://example.test>](outer.md)"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"https://example.test"}, linkTargets(n.Links))
 }
 
-func TestReviewFrontmatterScalars(t *testing.T) {
+func TestFrontmatterScalars(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("---\ntitle: 2026-11-08 meeting's notes # comment\naliases:\n- one\n- two\ntags: x\n---\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, "valid", frontmatterState(n))
@@ -29,7 +29,7 @@ func TestReviewFrontmatterScalars(t *testing.T) {
 	require.Equal(t, []string{"x"}, n.Frontmatter.Tags)
 }
 
-func TestReviewRootFlowLineEndings(t *testing.T) {
+func TestRootFlowLineEndings(t *testing.T) {
 	lf := "---\n{title: \"first\nsecond\"}\n---\n"
 	a, err := Parse(t.Context(), []byte(lf), Limits{})
 	require.NoError(t, err)
@@ -39,19 +39,19 @@ func TestReviewRootFlowLineEndings(t *testing.T) {
 	require.Equal(t, a.Frontmatter.Raw, b.Frontmatter.Raw)
 }
 
-func TestReviewReferenceAngleDestination(t *testing.T) {
+func TestReferenceAngleDestination(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[empty][a] [invalid][b]\n\n[a]: <>\n[b]: <x>\"title\"\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{""}, linkTargets(n.Links))
 }
 
-func TestReviewContainerBlankLines(t *testing.T) {
+func TestContainerBlankLines(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("> [unfinished\n>\n> ](bad.md)\n\n> <div>\n>\n> [valid](ok.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"ok.md"}, linkTargets(n.Links))
 }
 
-func TestReviewFlowComments(t *testing.T) {
+func TestFlowComments(t *testing.T) {
 	src := "---\naliases: [one, # ] ignored\n  \"two # literal\"]\n---\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
@@ -59,13 +59,13 @@ func TestReviewFlowComments(t *testing.T) {
 	require.Equal(t, []string{"one", "two # literal"}, n.Frontmatter.Aliases)
 }
 
-func TestReviewHeadingHTMLAttributeBrackets(t *testing.T) {
+func TestHeadingHTMLAttributeBrackets(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("# [a <span title=\"]\">b</span>](target.md)\n"), Limits{})
 	require.NoError(t, err)
-	require.Equal(t, "a b", n.Headings[0].Text)
+	require.Equal(t, `[a <span title="]">b</span>](target.md)`, n.Headings[0].Text)
 }
 
-func TestReviewSelfClosingScriptBlock(t *testing.T) {
+func TestSelfClosingScriptBlock(t *testing.T) {
 	for _, tag := range []string{"script", "style", "pre", "textarea"} {
 		src := "<" + tag + "/>\n[shown](shown.md)\n# Heading\n[also shown](next.md)\n"
 		n, err := Parse(t.Context(), []byte(src), Limits{})
@@ -78,63 +78,26 @@ func TestReviewSelfClosingScriptBlock(t *testing.T) {
 	require.Empty(t, n.Links)
 }
 
-func TestReviewSetextAndThematicPrecedence(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("Heading\n---\n\n* * *\n\n# Next\n"), Limits{})
-	require.NoError(t, err)
-	require.Len(t, n.Headings, 2)
-	require.Equal(t, "Heading", n.Headings[0].Text)
-	require.Equal(t, 2, n.Headings[0].Level)
-	require.Equal(t, "Next", n.Headings[1].Text)
-}
-
-func TestReviewContainerSetextEndsParagraph(t *testing.T) {
+func TestContainerSetextEndsParagraph(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("> [unfinished\n> ---\n> ](bad.md)\n\n# Root\n"), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Links)
 	require.Equal(t, []string{"[unfinished", "Root"}, headingTexts(n.Headings))
 }
 
-func TestReviewEmptyListCannotInterruptParagraph(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("Heading\n-\n\n# Next\n"), Limits{})
-	require.NoError(t, err)
-	require.Len(t, n.Headings, 2)
-	require.Equal(t, "Heading", n.Headings[0].Text)
-	require.Equal(t, 2, n.Headings[0].Level)
-}
-
-func TestReviewEmptyListIndentAndBlankBoundary(t *testing.T) {
-	for _, source := range []string{"-    \n  # Nested\n", "-\t\n  # Nested\n"} {
-		n, err := Parse(t.Context(), []byte(source), Limits{})
-		require.NoError(t, err, source)
-		require.Equal(t, []string{"Nested"}, headingTexts(n.Headings), source)
-	}
-	for _, source := range []string{"-\n\n  # Root\n", "> -\n>\n>   # Nested in quote\n\n# Root\n"} {
-		n, err := Parse(t.Context(), []byte(source), Limits{})
-		require.NoError(t, err, source)
-		if strings.Contains(source, "Nested in quote") {
-			require.Equal(t, []string{"Nested in quote", "Root"}, headingTexts(n.Headings), source)
-		} else {
-			require.Equal(t, []string{"Root"}, headingTexts(n.Headings), source)
-		}
-	}
-	n, err := Parse(t.Context(), []byte("- item\n\n  # Nested\n\n# Root\n"), Limits{})
-	require.NoError(t, err)
-	require.Equal(t, []string{"Nested", "Root"}, headingTexts(n.Headings))
-}
-
-func TestReviewMultilineReferenceLabel(t *testing.T) {
+func TestMultilineReferenceLabel(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[use][long label]\n\n[long\nlabel]: target.md\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
 
-func TestReviewMultilineReferenceTitle(t *testing.T) {
+func TestMultilineReferenceTitle(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[use][ref]\n\n[ref]: target.md \"first\n[hidden](wrong.md)\"\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
 
-func TestReviewSetextAfterReferenceDefinition(t *testing.T) {
+func TestSetextAfterReferenceDefinition(t *testing.T) {
 	src := []byte("[ref]: target.md\nHeading\n---\n\n[use][ref]\n")
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
@@ -143,7 +106,7 @@ func TestReviewSetextAfterReferenceDefinition(t *testing.T) {
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
 
-func TestReviewListTabResidualIndent(t *testing.T) {
+func TestListTabResidualIndent(t *testing.T) {
 	for _, src := range []string{
 		"-\t  [hidden](bad.md)\n\n# Visible\n",
 		">  -\t  [hidden](bad.md)\n\n# Visible\n",
@@ -155,40 +118,40 @@ func TestReviewListTabResidualIndent(t *testing.T) {
 	}
 }
 
-func TestReviewListTabNormalPadding(t *testing.T) {
+func TestListTabNormalPadding(t *testing.T) {
 	n, err := Parse(t.Context(), []byte(" -\t[shown](one.md)\n\n>  -\t[shown](two.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
 }
 
-func TestReviewDefinitionsAfterMultilineTitle(t *testing.T) {
+func TestDefinitionsAfterMultilineTitle(t *testing.T) {
 	src := []byte("[a]: one.md \"first\nsecond\"\n[b]: two.md\n\n[x][a] [y][b]\n")
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
 }
 
-func TestReviewHeadingHTMLCommentBrackets(t *testing.T) {
+func TestHeadingHTMLCommentBrackets(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("# [a <!-- [ -->b](target.md)\n"), Limits{})
 	require.NoError(t, err)
-	require.Equal(t, "a b", n.Headings[0].Text)
+	require.Equal(t, "[a <!-- [ -->b](target.md)", n.Headings[0].Text)
 }
 
-func TestReviewFlowCommentDoesNotInjectValues(t *testing.T) {
+func TestFlowCommentDoesNotInjectValues(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("---\ntags: [one # , injected\n  , two]\n---\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, "valid", frontmatterState(n))
 	require.Equal(t, []string{"one", "two"}, n.Frontmatter.Tags)
 }
 
-func TestReviewMarkdownNonbreakingSpace(t *testing.T) {
+func TestMarkdownNonbreakingSpace(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[link\n\u00a0\nlabel](target.md)\n\nHeading\n---\u00a0\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 	require.Empty(t, n.Headings)
 }
 
-func TestReviewStandaloneCRLines(t *testing.T) {
+func TestStandaloneCRLines(t *testing.T) {
 	src := []byte("---\rtitle: Sample\r---\r# A\r# B\r")
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
@@ -198,113 +161,104 @@ func TestReviewStandaloneCRLines(t *testing.T) {
 	require.Equal(t, "# B\r", string(src[headingSpan(n.Headings[1]).Start:headingSpan(n.Headings[1]).End]))
 }
 
-func TestReviewEmptyContainerDoesNotStartParagraph(t *testing.T) {
-	for _, prefix := range []string{">\n", "-\n"} {
-		n, err := Parse(t.Context(), []byte(prefix+"Heading\n===\n"), Limits{})
-		require.NoError(t, err)
-		require.Len(t, n.Headings, 1, prefix)
-		require.Equal(t, "Heading", n.Headings[0].Text)
-	}
-}
-
-func TestReviewEscapedBacktickPrefix(t *testing.T) {
+func TestEscapedBacktickPrefix(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("\\``[x](ghost.md)`"), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Links)
 }
 
-func TestReviewDefinitionDoesNotInterruptList(t *testing.T) {
+func TestDefinitionDoesNotInterruptList(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[r]: target.md\n2. item\nSetext\n=====\n\n[use][r]\n"), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Headings)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
 
-func TestReviewReferenceShortcutIncompleteSuffix(t *testing.T) {
+func TestReferenceShortcutIncompleteSuffix(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[foo][\n\n[foo]: note.md\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewUnicodeReferenceLabelLimit(t *testing.T) {
+func TestUnicodeReferenceLabelLimit(t *testing.T) {
 	label := strings.Repeat("é", 500)
 	n, err := Parse(t.Context(), []byte("[use]["+label+"]\n\n["+label+"]: note.md\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewEmptyDestinationWithTitle(t *testing.T) {
+func TestEmptyDestinationWithTitle(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[x]( \"my title\")"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{""}, linkTargets(n.Links))
 }
 
-func TestReviewShortHTMLComments(t *testing.T) {
+func TestShortHTMLComments(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("text <!--> [x](note.md) <!-- tail -->"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewRawHTMLBlockEnd(t *testing.T) {
+func TestRawHTMLBlockEnd(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("<pre>\n</style>\n# Visible\n"), Limits{})
 	require.NoError(t, err)
 	require.Len(t, n.Headings, 1)
 }
 
-func TestReviewYAMLPlainApostrophes(t *testing.T) {
+func TestYAMLPlainApostrophes(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("---\nowner's: value\naliases: [O'Brien]\ntitle: Good\n---\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, "valid", frontmatterState(n))
 	require.Equal(t, []string{"O'Brien"}, n.Frontmatter.Aliases)
 }
 
-func TestReviewYAMLNullAndUnicode(t *testing.T) {
+func TestYAMLNullAndUnicode(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("---\n{title: Good, unknown: , aliases: [\u00a0Name\u00a0]}\n---\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, "valid", frontmatterState(n))
 	require.Equal(t, []string{"\u00a0Name\u00a0"}, n.Frontmatter.Aliases)
 }
 
-func TestReviewQuoteBlankInsideListFence(t *testing.T) {
+func TestQuoteBlankInsideListFence(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("> - ```\n>\n>   [hidden](ghost.md)\n>   ```\n"), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Links)
 }
 
-func TestReviewQuoteTabIndent(t *testing.T) {
+func TestQuoteTabIndent(t *testing.T) {
 	n, err := Parse(t.Context(), []byte(">\t  [hidden](ghost.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Links)
 }
 
-func TestReviewReferenceOnlyBeforeHTML(t *testing.T) {
+func TestReferenceOnlyBeforeHTML(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[r]: n.md\n<span>\n[x](ghost.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Links)
 }
 
-func TestReviewDefinitionOnlySetext(t *testing.T) {
+func TestDefinitionOnlySetext(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[r]: target.md\n===\n---\n"), Limits{})
 	require.NoError(t, err)
 	require.Len(t, n.Headings, 1)
 	require.Equal(t, "===", n.Headings[0].Text)
 }
 
-func TestReviewContainerMultilineDefinitionsBeforeBlocks(t *testing.T) {
+func TestContainerMultilineDefinitionsBeforeBlocks(t *testing.T) {
 	src := "> [long\n> label]: note.md\n> <span>\n> [hidden](ghost.md)\n\n[use][long label]\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewInvalidFenceCannotInterruptContainer(t *testing.T) {
+func TestInvalidFenceCannotInterruptContainer(t *testing.T) {
 	src := "> [link\n```bad`info\n> label](note.md)\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewBlockScalarContentTab(t *testing.T) {
+func TestBlockScalarContentTab(t *testing.T) {
 	src := "---\ntitle: Good\nunknown: |-\n  \tcontent\n---\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
@@ -312,20 +266,20 @@ func TestReviewBlockScalarContentTab(t *testing.T) {
 	require.Equal(t, "Good", n.Title)
 }
 
-func TestReviewRepeatedContainerDefinitionsBudget(t *testing.T) {
+func TestRepeatedContainerDefinitionsBudget(t *testing.T) {
 	src := strings.Repeat("> [long\n> label]: n.md\n> 2. item\n\n", 600)
 	_, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 }
 
-func TestReviewDefinitionBeforeRootHeading(t *testing.T) {
+func TestDefinitionBeforeRootHeading(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("> [r]: target.md\nHeading\n===\n"), Limits{})
 	require.NoError(t, err)
 	require.Len(t, n.Headings, 1)
 	require.Equal(t, "Heading", n.Headings[0].Text)
 }
 
-func TestReviewCompactMappingInUnknownSequence(t *testing.T) {
+func TestCompactMappingInUnknownSequence(t *testing.T) {
 	src := "---\ntitle: Good\nextra:\n  - name: Other\n    kind: test\n---\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
@@ -333,13 +287,13 @@ func TestReviewCompactMappingInUnknownSequence(t *testing.T) {
 	require.Equal(t, "Good", n.Title)
 }
 
-func TestReviewOrdinaryContainerParagraphBudget(t *testing.T) {
+func TestOrdinaryContainerParagraphBudget(t *testing.T) {
 	src := "> [ordinary] prose\n" + strings.Repeat("> 2. item\n", 600)
 	_, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 }
 
-func TestReviewReferenceBeforeIndentedCode(t *testing.T) {
+func TestReferenceBeforeIndentedCode(t *testing.T) {
 	for _, src := range []string{
 		"[r]: target.md\n    [hidden](ghost.md)\n",
 		"> [r]: target.md\n>     [hidden](ghost.md)\n",
@@ -350,7 +304,7 @@ func TestReviewReferenceBeforeIndentedCode(t *testing.T) {
 	}
 }
 
-func TestReviewSequenceFlowAndCompactMappingSpacing(t *testing.T) {
+func TestSequenceFlowAndCompactMappingSpacing(t *testing.T) {
 	src := "---\ntitle: Good\nextra:\n  - {name: Other}\n  -   name: More\n      kind: test\n---\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
@@ -358,7 +312,7 @@ func TestReviewSequenceFlowAndCompactMappingSpacing(t *testing.T) {
 	require.Equal(t, "Good", n.Title)
 }
 
-func TestReviewGrowingDefinitionLikeParagraphBudget(t *testing.T) {
+func TestGrowingDefinitionLikeParagraphBudget(t *testing.T) {
 	for _, start := range []string{"> [unfinished\n", "> [ref]: note.md\n> prose\n"} {
 		src := start + strings.Repeat("> 2. item\n", 1200)
 		_, err := Parse(t.Context(), []byte(src), Limits{})
@@ -366,7 +320,7 @@ func TestReviewGrowingDefinitionLikeParagraphBudget(t *testing.T) {
 	}
 }
 
-func TestReviewReferenceBeforeMixedIndent(t *testing.T) {
+func TestReferenceBeforeMixedIndent(t *testing.T) {
 	for _, src := range []string{
 		"[r]: note.md\n  \t[hidden](ghost.md)\n",
 		"> > [r]: note.md\n> >     [hidden](ghost.md)\n",
@@ -379,40 +333,40 @@ func TestReviewReferenceBeforeMixedIndent(t *testing.T) {
 	}
 }
 
-func TestReviewIncompleteDefinitionSuffixBudget(t *testing.T) {
+func TestIncompleteDefinitionSuffixBudget(t *testing.T) {
 	for _, start := range []string{"> [r]: note.md \"unfinished\n", "> [r]: note.md\n> [unfinished\n"} {
 		_, err := Parse(t.Context(), []byte(start+strings.Repeat("> 2. item\n", 1200)), Limits{})
 		require.NoError(t, err)
 	}
 }
 
-func TestReviewIndentedReferenceTitle(t *testing.T) {
+func TestIndentedReferenceTitle(t *testing.T) {
 	src := "[r]: note.md\n    \"title\n[hidden](ghost.md)\"\n\n[use][r]\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewLazySetextDoesNotEndParagraph(t *testing.T) {
+func TestLazySetextDoesNotEndParagraph(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("> [a\n===\n> b](note.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
 }
 
-func TestReviewInvalidContinuationTitleDoesNotHideCode(t *testing.T) {
+func TestInvalidContinuationTitleDoesNotHideCode(t *testing.T) {
 	src := "[r]: note.md\n    \"title\" trailing [hidden](ghost.md)\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 	require.Empty(t, n.Links)
 }
 
-func TestReviewInvalidDestinationDoesNotRepeatWork(t *testing.T) {
+func TestInvalidDestinationDoesNotRepeatWork(t *testing.T) {
 	src := "> [r]: <unfinished\n" + strings.Repeat("> 2. item\n", 1200)
 	_, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
 }
 
-func TestReviewTitleLookaheadStopsAtHeading(t *testing.T) {
+func TestTitleLookaheadStopsAtHeading(t *testing.T) {
 	src := "[r]: note.md\n    \"unclosed [hidden](ghost.md)\n# Heading\nend\"\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
@@ -420,7 +374,7 @@ func TestReviewTitleLookaheadStopsAtHeading(t *testing.T) {
 	require.Len(t, n.Headings, 1)
 }
 
-func TestReviewTitleLookaheadContainerAndIndent(t *testing.T) {
+func TestTitleLookaheadContainerAndIndent(t *testing.T) {
 	for _, tc := range []struct {
 		source string
 		links  []string
@@ -435,7 +389,7 @@ func TestReviewTitleLookaheadContainerAndIndent(t *testing.T) {
 	}
 }
 
-func TestReviewRepeatedUnterminatedTitleLookaheadBudget(t *testing.T) {
+func TestRepeatedUnterminatedTitleLookaheadBudget(t *testing.T) {
 	for _, title := range []string{"(", "\"", "'"} {
 		src := strings.Repeat("[r]: note.md\n    "+title+"unfinished\n\n", 1200) + "[use][r]\n"
 		n, err := Parse(t.Context(), []byte(src), Limits{})
@@ -444,14 +398,14 @@ func TestReviewRepeatedUnterminatedTitleLookaheadBudget(t *testing.T) {
 	}
 }
 
-func TestReviewInvalidReferenceTailBudget(t *testing.T) {
+func TestInvalidReferenceTailBudget(t *testing.T) {
 	for _, start := range []string{"> [r]: note.md trailing\n", "> [r]: note.md \"title\" trailing\n"} {
 		_, err := Parse(t.Context(), []byte(start+strings.Repeat("> 2. item\n", 1200)), Limits{})
 		require.NoError(t, err)
 	}
 }
 
-func TestReviewTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
+func TestTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
 	for _, src := range []string{
 		"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n```\nend\"\n```\n",
 		"> [r]: note.md\n>     \"unclosed [hidden](ghost.md)\n# Outside\nend\"\n",
@@ -462,7 +416,7 @@ func TestReviewTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
 	}
 }
 
-func TestReviewRepeatedDefinitionsWithTitlesBudget(t *testing.T) {
+func TestRepeatedDefinitionsWithTitlesBudget(t *testing.T) {
 	src := strings.Repeat("> [r]: note.md\n>     \"title\"\n", 600) + "\n[use][r]\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)

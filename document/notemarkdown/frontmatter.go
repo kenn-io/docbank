@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -33,9 +34,6 @@ func parseFrontmatter(ctx context.Context, src []byte, b *budget) (*Frontmatter,
 		if err != nil {
 			return nil, 0, nil, err
 		}
-		if err := limitCount("frontmatter_bytes", end-start, maxFrontmatter); err != nil {
-			return nil, 0, nil, err
-		}
 		text := bytes.TrimRight(src[line.Start:line.End], " \t")
 		if bytes.Equal(text, []byte("---")) || bytes.Equal(text, []byte("...")) {
 			fm := &Frontmatter{Start: start, End: end}
@@ -43,29 +41,32 @@ func parseFrontmatter(ctx context.Context, src []byte, b *budget) (*Frontmatter,
 				if !errors.Is(err, errYAML) {
 					return nil, 0, nil, err
 				}
-				return &Frontmatter{Start: start, End: end}, end, []Diagnostic{{Code: "invalid_frontmatter", Span: Span{start, end}}}, nil
+				diagnostics, err := b.diagnostic(ctx, "invalid_frontmatter", Span{start, end})
+				return &Frontmatter{Start: start, End: end}, end, diagnostics, err
 			}
 			return fm, end, nil, nil
 		}
 		next = end
 	}
-	if err := limitCount("frontmatter_bytes", len(src)-start, maxFrontmatter); err != nil {
-		return nil, 0, nil, err
-	}
 	// Without a closing fence there is no reliable YAML/body boundary. Exclude
 	// only the opener so authored headings and links can still be read.
-	return &Frontmatter{Start: start, End: contentStart}, contentStart,
-		[]Diagnostic{{Code: "unclosed_frontmatter", Span: Span{start, len(src)}}}, nil
+	diagnostics, err := b.diagnostic(ctx, "unclosed_frontmatter", Span{start, len(src)})
+	return &Frontmatter{Start: start, End: contentStart}, contentStart, diagnostics, err
 }
 
 func decodeFrontmatter(ctx context.Context, src []byte, fm *Frontmatter, b *budget) error {
-	if err := b.step(ctx, len(src)); err != nil {
+	// Syntax input is bounded by MaxBytes, including comments and whitespace.
+	// Feed small metered chunks so syntax decoding also observes cancellation.
+	// Decode to nodes; alias expansion remains in the separately bounded walk.
+	if err := b.reserveStrings(len(src)); err != nil {
 		return err
 	}
-	// The decoder sees at most 64 KiB. Decode to nodes first: never ask YAML to
-	// expand aliases into Go values before our depth/node/byte admissions.
+	reader := yamlReader{ctx: ctx, b: b, src: src}
 	var doc yaml.Node
-	if err := yaml.Unmarshal(src, &doc); err != nil {
+	if err := yaml.NewDecoder(&reader).Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+		if reader.err != nil {
+			return reader.err
+		}
 		return errYAML
 	}
 	if err := ctx.Err(); err != nil {
@@ -128,6 +129,31 @@ func decodeFrontmatter(ctx context.Context, src []byte, fm *Frontmatter, b *budg
 	return nil
 }
 
+type yamlReader struct {
+	ctx context.Context
+	b   *budget
+	src []byte
+	err error
+}
+
+func (r *yamlReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		r.err = err
+		return 0, err
+	}
+	if len(r.src) == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), len(r.src), 1024)
+	if err := r.b.step(r.ctx, n); err != nil {
+		r.err = err
+		return 0, err
+	}
+	copy(p, r.src[:n])
+	r.src = r.src[n:]
+	return n, nil
+}
+
 type yamlDecoder struct {
 	ctx    context.Context
 	b      *budget
@@ -172,7 +198,7 @@ func (d *yamlDecoder) value(n *yaml.Node, depth int) (any, error) {
 			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
 				return nil, errYAML
 			}
-			if err := d.admitScalar(key.Value); err != nil {
+			if err := d.admitKey(key.Value); err != nil {
 				return nil, err
 			}
 			if _, exists := out[key.Value]; exists {
@@ -258,11 +284,19 @@ func (d *yamlDecoder) value(n *yaml.Node, depth int) (any, error) {
 }
 
 func (d *yamlDecoder) admitScalar(s string) error {
-	if !utf8.ValidString(s) || bytes.IndexByte([]byte(s), 0) >= 0 {
-		return errYAML
-	}
 	if err := limitCount("frontmatter_value_bytes", len(s), d.b.limits.MaxValueBytes); err != nil {
 		return err
+	}
+	return d.admitKey(s)
+}
+
+// Mapping keys share text and allocation admission, but are not values.
+func (d *yamlDecoder) admitKey(s string) error {
+	if err := d.b.step(d.ctx, len(s)); err != nil {
+		return err
+	}
+	if !utf8.ValidString(s) || bytes.IndexByte([]byte(s), 0) >= 0 {
+		return errYAML
 	}
 	return d.b.reserveStrings(len(s))
 }

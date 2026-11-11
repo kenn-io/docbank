@@ -14,6 +14,7 @@ func TestParseInputAndTitle(t *testing.T) {
 	}{
 		{"", "", "", 1}, {"plain\r\ntext", "", "", 2},
 		{"# First\n# Second\n", "First", "h1", 3},
+		{"#\n# Second\n", "", "h1", 3},
 		{"---\ntitle: Authored\n---\n# Heading\n", "Authored", "frontmatter", 5},
 		{"---\ntitle: ''\n---\n# Heading", "Heading", "h1", 4},
 		{"---\ntitle: 42\n---\n# Heading", "42", "frontmatter", 4},

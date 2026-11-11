@@ -4,8 +4,6 @@ import "context"
 
 const (
 	maxInput       = 4 << 20
-	maxFrontmatter = 64 << 10
-	maxLines       = 65536
 	maxHeadings    = 4096
 	maxLinks       = 10000
 	maxMetadata    = 256
@@ -17,13 +15,27 @@ const (
 	maxDepth       = 128
 	maxNodes       = 262144
 	maxWork        = 64 << 20
-	maxDerived     = 16 << 20
 	maxDiagnostics = 32
 )
+
+// One MaxBytes-sized heading admits clone, view, raw text, a conservative
+// 3x NFC output bound and Path: about 7x input. Keep bounded headroom.
+const maxDerived = 32 << 20
 
 type budget struct {
 	work, derived, nodes int
 	limits               Limits
+	diagnostics          int
+}
+
+func (b *budget) diagnostic(ctx context.Context, code string, span Span) ([]Diagnostic, error) {
+	if err := b.step(ctx, 1); err != nil {
+		return nil, err
+	}
+	if err := addLimit("diagnostics", &b.diagnostics, 1, b.limits.MaxDiagnostics); err != nil {
+		return nil, err
+	}
+	return []Diagnostic{{Code: code, Span: span}}, nil
 }
 
 func addLimit(resource string, value *int, n, limit int) error {

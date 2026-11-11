@@ -11,17 +11,10 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-func extractHeadings(ctx context.Context, view, original []byte, blocks []sourceBlock, links []parsedLink, lineStarts []int, b *budget) ([]Heading, error) {
+func extractHeadings(ctx context.Context, view, original []byte, blocks []sourceBlock, lineStarts []int, b *budget) ([]Heading, error) {
 	var result []Heading
-	linkAt := map[int]parsedLink{}
-	for _, link := range links {
-		if err := b.step(ctx, 1); err != nil {
-			return nil, err
-		}
-		linkAt[link.Span.Start] = link
-	}
-	used := stringSet{}
-	nextSuffix := stringCounters{}
+	used := map[string]bool{}
+	nextSuffix := map[string]int{}
 	for _, block := range blocks {
 		if block.level == 0 {
 			continue
@@ -29,7 +22,7 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 		if err := limitCount("headings", len(result)+1, b.limits.MaxHeadings); err != nil {
 			return nil, err
 		}
-		text, err := headingText(ctx, view, block.content, linkAt, b)
+		text, err := rawText(ctx, view[block.content.Start:block.content.End], b)
 		if err != nil {
 			return nil, err
 		}
@@ -41,17 +34,17 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 			base = "section"
 		}
 		anchor := base
-		counter, err := nextSuffix.counter(ctx, base, b)
-		if err != nil {
+		// Admit map hashing before each lookup; candidates are already allocated.
+		if err := b.step(ctx, 2*len(base)); err != nil {
 			return nil, err
 		}
-		suffix := max(1, *counter)
+		suffix := max(1, nextSuffix[base])
 		for {
-			duplicate, err := used.add(ctx, anchor, b)
-			if err != nil {
+			if err := b.step(ctx, 2*len(anchor)); err != nil {
 				return nil, err
 			}
-			if !duplicate {
+			if !used[anchor] {
+				used[anchor] = true
 				break
 			}
 			if err := b.step(ctx, 1); err != nil {
@@ -64,7 +57,7 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 			anchor = base + "-" + strconv.Itoa(suffix)
 			suffix++
 		}
-		*counter = suffix
+		nextSuffix[base] = suffix
 		result = append(result, Heading{Ordinal: len(result), Level: block.level, Start: block.span.Start, LineEnd: block.span.End, SectionEnd: len(original), Line: sourceLineNumber(lineStarts, block.span.Start), SectionEndLine: len(lineStarts), Text: text, Slug: anchor})
 	}
 	var stack []int
@@ -92,6 +85,33 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 		stack = append(stack, i)
 	}
 	return result, nil
+}
+
+// rawText retains authored inline syntax and collapses Unicode whitespace.
+func rawText(ctx context.Context, src []byte, b *budget) (string, error) {
+	if err := b.reserveStrings(len(src)); err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	out.Grow(len(src))
+	pending := false
+	for len(src) > 0 {
+		r, width := utf8.DecodeRune(src)
+		src = src[width:]
+		if err := b.step(ctx, width); err != nil {
+			return "", err
+		}
+		if unicode.IsSpace(r) {
+			pending = out.Len() > 0
+			continue
+		}
+		if pending {
+			out.WriteByte(' ')
+			pending = false
+		}
+		out.WriteRune(r)
+	}
+	return out.String(), nil
 }
 
 func headingKey(ctx context.Context, text string, b *budget) (string, error) {
