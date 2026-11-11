@@ -28,9 +28,9 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	var partial atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fields := map[string]string{"visible_text": "R and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
+		fields := map[string]string{"visible_text": "SAVE\nNOW\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
 		if partial.Load() {
-			fields = map[string]string{"visible_text": "Only visible words", "literal_description": "", "possible_meaning": " ", "uncertainty": ""}
+			fields = map[string]string{"visible_text": "image", "literal_description": "", "possible_meaning": " ", "uncertainty": ""}
 		}
 		raw, err := json.Marshal(fields)
 		if !assert.NoError(t, err) {
@@ -79,6 +79,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	window, err := service.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: view.Attachment.ID, MaxChars: 16000})
 	require.NoError(t, err)
 	assert.Contains(t, window.Text, model)
+	assert.Contains(t, window.Text, "SAVE\nNOW")
 	assert.Contains(t, window.Text, `R and D \&amp\; partners`)
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)
@@ -86,6 +87,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.Equal(t, "completed", jobs[0].State, "%+v", jobs[0])
 	require.NotEmpty(t, embedder.text)
 	assert.Contains(t, embedder.text, "denial of a crisis")
+	assert.Contains(t, embedder.text, "SAVE\nNOW")
 	assert.Contains(t, embedder.text, "R and D &amp; partners")
 	for _, input := range embedder.inputs {
 		assert.Contains(t, input.Text, "Machine-generated image understanding; unverified; sender intent unknown / ")
@@ -117,6 +119,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	literal, err := service.Search(t.Context(), SearchRequest{Profile: "images", Query: "partners", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
 	require.NoError(t, err)
 	require.Len(t, literal.Results, 1)
+	assert.Contains(t, literal.Results[0].Excerpt, "SAVE\nNOW")
 	assert.Contains(t, literal.Results[0].Excerpt, "R and D &amp; partners")
 	partial.Store(true)
 	startInputs := len(embedder.inputs)
@@ -129,6 +132,17 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.NoError(t, err)
 	_, err = service.Start(t.Context(), StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 	require.NoError(t, err)
+	partialView, err := fixture.catalog.ActiveRendition(t.Context(), partialNode.CurrentVersionID, service.profiles["images"].record.Fingerprint)
+	require.NoError(t, err)
+	partialWindow, err := service.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: partialNode.ID, ContentVersionID: partialNode.CurrentVersionID, AttachmentID: partialView.Attachment.ID, MaxChars: 16000})
+	require.NoError(t, err)
+	front, body, err := document.ParseRenditionFrontMatterV1([]byte(partialWindow.Text))
+	require.NoError(t, err)
+	require.Len(t, front.Navigation.Entries, 1)
+	textStart := bytes.Index(body, []byte("\n\nimage\n"))
+	require.NotEqual(t, -1, textStart)
+	assert.Equal(t, textStart+2, front.Navigation.Entries[0].Byte)
+	assert.Equal(t, 1+bytes.Count(body[:textStart+2], []byte("\n")), front.Navigation.Entries[0].Line)
 	require.Greater(t, len(embedder.inputs), startInputs)
 	for _, input := range embedder.inputs[startInputs:] {
 		assert.Equal(t, "Visible text (best-effort transcription)", input.HeadingPath[1])
