@@ -471,9 +471,8 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
     ),
   );
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
-  expect(await screen.findByRole("alert")).toHaveProperty(
-    "textContent",
-    "Selected documents changed. Refresh the workspace and reselect the intended current versions.",
+  expect((await screen.findByRole("alert")).textContent?.replace(/\s+/g, " ").trim()).toBe(
+    "The report didn't run. Some selected documents have a newer version or are no longer available.",
   );
   expect(submitted).toHaveLength(2);
 });
@@ -608,4 +607,104 @@ it("loads imports for the Searches page only once a report is started", async ()
   await fireEvent.click(screen.getByRole("radio", { name: "Selected imports" }));
   expect(await screen.findByRole("checkbox", { name: /New source/ })).toBeTruthy();
   expect(collectionReads()).toBe(1);
+});
+
+it("requires acceptance before using current document versions", async () => {
+  const old = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  const current = {
+    ...old,
+    version_id: "20000000-0000-4000-8000-000000000002",
+    sha256: "b".repeat(64),
+  };
+  const trashed = { ...old, node_id: 2 };
+  const missing = { ...old, node_id: 3 };
+  const submissions: any[] = [];
+  const onselectionchanged = vi.fn();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (String(url).endsWith("/selection"))
+      return json([
+        {
+          selected: old,
+          current,
+          name: "changed.txt",
+          modified: "2026-09-20T12:00:00Z",
+          status: "changed",
+        },
+        { selected: trashed, name: "trash.txt", status: "trashed" },
+        { selected: missing, status: "missing" },
+      ]);
+    submissions.push(JSON.parse(String(init?.body)));
+    if (submissions.length > 1) return json(oldSummary);
+    return new Response(
+      JSON.stringify({ code: "report_selection_changed", detail: "Selection changed" }),
+      { status: 409, headers: { "Content-Type": "application/problem+json" } },
+    );
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [old, trashed, missing],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+    onselectionchanged,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
+  expect(await screen.findByText("In trash")).toBeTruthy();
+  expect(screen.getByText("No longer available")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Use this selection" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  const checkbox = screen.getByRole("checkbox", { name: "Include current version" });
+  expect(checkbox).toHaveProperty("checked", false);
+  await fireEvent.click(checkbox);
+  await fireEvent.click(screen.getByRole("button", { name: "Use this selection" }));
+  expect(onselectionchanged).toHaveBeenCalledOnce();
+  expect(submissions).toHaveLength(1);
+  expect(screen.getByText(/Selection updated: 1 using current versions, 2 left out/)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await waitFor(() => expect(submissions).toHaveLength(2));
+  expect(submissions[1].selected_documents.documents).toEqual([current]);
+});
+
+it("ignores a conflict from an earlier draft", async () => {
+  const document = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  let finish!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    return new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [document],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
+    target: { value: "beta" },
+  });
+  finish(
+    new Response(
+      JSON.stringify({ code: "report_selection_changed", detail: "Selection changed" }),
+      { status: 409, headers: { "Content-Type": "application/problem+json" } },
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Create report" })).toHaveProperty("disabled", false),
+  );
+  expect(screen.queryByRole("button", { name: "Refresh selection" })).toBeNull();
 });

@@ -7979,6 +7979,8 @@ export interface RepositoryClaim {
 }
 
 export interface SelectedDocuments {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   documents?: Identity[];
 }
 
@@ -8783,6 +8785,14 @@ export interface TermReportHistoryPage {
   readonly $schema?: string;
   items: TermReportHistory[];
   total: number;
+}
+
+export interface TermReportSelectionItem {
+  current?: Identity;
+  modified?: string;
+  name?: string;
+  selected: Identity;
+  status: string;
 }
 
 export interface TextOutlineEntry {
@@ -20505,6 +20515,44 @@ return sessionJSON<Summary>(getCreateTermReportUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(request)
+  }
+);}
+
+
+
+export const getRefreshTermReportSelectionUrl = () => {
+
+
+
+
+  return `/api/v1/search-exports/selection`
+}
+
+/**
+ * @summary Compare selected document versions
+ */
+export const refreshTermReportSelection = async (selectedDocuments: NonReadonly<SelectedDocuments>, options?: Parameters<typeof sessionJSON>[1]): Promise<TermReportSelectionItem[]> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TermReportSelectionItem[]>(getRefreshTermReportSelectionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(selectedDocuments)
   }
 );}
 

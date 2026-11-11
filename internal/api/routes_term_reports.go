@@ -95,6 +95,22 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			},
 			Capture: gate.CaptureContext}
 	}
+	huma.Register(api, huma.Operation{OperationID: "refreshTermReportSelection", Method: http.MethodPost,
+		Path: "/api/v1/search-exports/selection", Summary: "Compare selected document versions",
+		MaxBodyBytes: 8 << 20}, func(ctx context.Context, in *struct{ Body report.SelectedDocuments }) (*struct {
+		Body []store.TermReportSelectionItem
+	}, error) {
+		if _, err := termReportOwner(ctx); err != nil {
+			return nil, err
+		}
+		items, err := d.Store.RefreshTermReportSelection(ctx, in.Body.Documents)
+		if err != nil {
+			return nil, termReportError(err)
+		}
+		return &struct {
+			Body []store.TermReportSelectionItem
+		}{Body: items}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "createTermReport", Method: http.MethodPost,
 		Path: "/api/v1/search-exports", Summary: "Prepare a frozen search export",
 		MaxBodyBytes: 8 << 20}, func(ctx context.Context, in *struct{ Body report.Request }) (*struct{ Body report.Summary }, error) {

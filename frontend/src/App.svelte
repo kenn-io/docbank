@@ -5409,6 +5409,7 @@
           session={webSession}
           initialExpression={searchQuery}
           initialDocuments={panel.documents}
+          onselectionchanged={refreshCurrentView}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
         />
