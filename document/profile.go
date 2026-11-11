@@ -454,8 +454,8 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 		if (profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract) != (profile.Rendition.Descriptor.ID == ImageUnderstandingProviderID) {
 			return errors.New("image understanding requires its own adapter and task")
 		}
-		if profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract && profile.Rendition.MaxUnits < MinImageUnderstandingUnits {
-			return errors.New("image understanding requires at least four units")
+		if err := validateImageUnderstandingRendition(*profile.Rendition); err != nil {
+			return err
 		}
 	}
 	if err := validateEvidenceLexicalPolicy(profile.EvidenceLexical); err != nil {

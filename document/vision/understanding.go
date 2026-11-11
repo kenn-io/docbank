@@ -81,7 +81,7 @@ func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 func (p *Provider) renderUnderstanding(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
 	started := time.Now().UTC()
 	meta := upload.Metadata()
-	if meta.ByteLength > 16<<20 {
+	if meta.ByteLength > document.MaxImageUnderstandingBytes {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "image understanding requires an image at most 16 MiB", nil)
 	}
 	data, err := providerutil.ReadAuthorizedUpload(ctx, upload, meta, string(provider))
