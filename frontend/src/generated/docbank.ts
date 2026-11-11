@@ -2137,7 +2137,6 @@ export interface DocumentIdentity {
 }
 
 export interface DocumentMediaSelection {
-  build_id: string;
   completeness: string;
   content_version_id: string;
   origin: string;

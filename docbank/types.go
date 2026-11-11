@@ -533,7 +533,6 @@ type DocumentMediaSelection struct {
 	Origin           string `json:"origin"`
 	SuppliedInputID  string `json:"supplied_input_id,omitzero"`
 	Completeness     string `json:"completeness"`
-	BuildID          string `json:"build_id"`
 }
 
 type DocumentSearchReport struct {

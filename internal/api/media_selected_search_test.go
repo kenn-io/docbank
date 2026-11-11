@@ -44,9 +44,8 @@ func TestSelectedMediaSearchRealProcessing(t *testing.T) {
 				require.NotEmpty(t, report.Results[0].Excerpt)
 				require.Len(t, report.MediaSelections, 1)
 				require.Equal(t, record.Origin, report.MediaSelections[0].Origin)
-				require.NotEmpty(t, report.MediaSelections[0].BuildID)
 				for _, evidence := range report.Results[0].Evidence {
-					require.Equal(t, report.MediaSelections[0].BuildID, evidence.BuildID)
+					require.NotEmpty(t, evidence.BuildID)
 					require.Len(t, evidence.MediaSources, 1)
 					require.Equal(t, record.SourceID, evidence.MediaSources[0].SourceID)
 					if evidence.Kind == "embedding" {
@@ -159,7 +158,7 @@ func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
 		require.NotEmpty(t, excerpt)
 		require.True(t, strings.HasPrefix(text, excerpt))
 		require.Equal(t, "embedding", report.Results[0].Evidence[0].Kind)
-		require.Equal(t, report.MediaSelections[0].BuildID, report.Results[0].Evidence[0].BuildID)
+		require.NotEmpty(t, report.Results[0].Evidence[0].BuildID)
 		require.Nil(t, report.Results[0].Evidence[0].TimeSpan, "untimed source stays untimed")
 	}
 	transcript, err := f.service.MediaTranscript(t.Context(), processing.MediaTranscriptRequest{SourceID: record.SourceID, SourceVersionID: record.SourceVersionID, ContentVersionID: record.ContentVersionID})
@@ -209,7 +208,6 @@ func TestSelectedMediaSearchFallbacks(t *testing.T) {
 				require.Len(t, report.Results, 1)
 				require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
 				require.Len(t, report.MediaSelections, 1)
-				require.NotEmpty(t, report.MediaSelections[0].BuildID)
 				encoder.mu.Lock()
 				require.Equal(t, before, encoder.calls, "fallback must not encode the query")
 				encoder.mu.Unlock()
@@ -224,6 +222,15 @@ func TestSelectedMediaSearchFallbacks(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "lexical", report.ActualMode)
 				require.Contains(t, report.Degradations, "semantic_unavailable")
+			}
+			if test == "unpersisted donor" {
+				_, err := f.service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+				report, err := client.SearchDocuments(t.Context(), f.request(f.unprocessedProfile, "semantic", supplied))
+				require.NoError(t, err)
+				require.Equal(t, "lexical", report.ActualMode)
+				require.Contains(t, report.Degradations, "semantic_unavailable")
+				require.Len(t, report.Results, 1)
 			}
 		})
 	}
@@ -254,7 +261,7 @@ func TestSelectedMediaSearchFencesDistractorsBeforeLaneLimit(t *testing.T) {
 		require.Equal(t, 1, report.Coverage.ScopedDocuments)
 		require.False(t, report.Truncated)
 		for _, evidence := range report.Results[0].Evidence {
-			require.Equal(t, report.MediaSelections[0].BuildID, evidence.BuildID)
+			require.NotEmpty(t, evidence.BuildID)
 			require.Len(t, evidence.MediaSources, 1)
 			require.Equal(t, target.SourceID, evidence.MediaSources[0].SourceID)
 		}

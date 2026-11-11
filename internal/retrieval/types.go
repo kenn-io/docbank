@@ -152,8 +152,8 @@ type TraceEvent struct {
 }
 
 type MediaSelection struct {
-	SourceID, SourceVersionID, ContentVersionID    string
-	Origin, SuppliedInputID, Completeness, BuildID string
+	SourceID, SourceVersionID, ContentVersionID string
+	Origin, SuppliedInputID, Completeness       string
 }
 
 type Report struct {

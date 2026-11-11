@@ -264,7 +264,7 @@ func (plan *mediaSearchPlan) mediaSelections(
 		}
 		result = append(result, retrieval.MediaSelection{SourceID: source.SourceID,
 			SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID,
-			Origin: selected.origin, SuppliedInputID: selected.inputID, BuildID: selected.view.Build.ID,
+			Origin: selected.origin, SuppliedInputID: selected.inputID,
 			Completeness: string(selected.view.Build.Completeness)})
 	}
 	return result

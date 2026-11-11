@@ -4215,8 +4215,6 @@ components:
     DocumentMediaSelection:
       additionalProperties: false
       properties:
-        build_id:
-          type: string
         completeness:
           type: string
         content_version_id:
@@ -4235,7 +4233,6 @@ components:
         - content_version_id
         - origin
         - completeness
-        - build_id
       type: object
       x-go-type: api.DocumentMediaSelection
       x-go-type-import:

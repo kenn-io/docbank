@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -13,13 +11,9 @@ func configuredSuppliedMediaProfile(cfg config.Config, catalog *store.Store, blo
 	profiles map[string]processing.ProfileConfig,
 ) (string, processing.ProfileConfig, error) {
 	name, profile, err := processing.NewSuppliedMediaProfile(catalog, blobs, "daemon:operator")
-	if err != nil || cfg.SuppliedMediaEmbeddingProfile == "" {
+	if err != nil {
 		return name, profile, err
 	}
-	donor, ok := profiles[cfg.SuppliedMediaEmbeddingProfile]
-	if !ok {
-		return "", processing.ProfileConfig{}, fmt.Errorf("supplied media embedding profile %q has no executable runtime", cfg.SuppliedMediaEmbeddingProfile)
-	}
-	profile, err = processing.WithSuppliedMediaEmbeddings(profile, donor)
+	profile, err = processing.ComposeSuppliedMediaEmbeddings(profile, profiles, cfg.SuppliedMediaEmbeddingProfile)
 	return name, profile, err
 }

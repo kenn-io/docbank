@@ -2,11 +2,24 @@ package processing
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 
 	"go.kenn.io/docbank/document"
 )
+
+// ComposeSuppliedMediaEmbeddings adds the configured donor when one is named.
+func ComposeSuppliedMediaEmbeddings(supplied ProfileConfig, profiles map[string]ProfileConfig, name string) (ProfileConfig, error) {
+	if name == "" {
+		return supplied, nil
+	}
+	donor, ok := profiles[name]
+	if !ok {
+		return ProfileConfig{}, fmt.Errorf("supplied media embedding profile %q has no executable runtime", name)
+	}
+	return WithSuppliedMediaEmbeddings(supplied, donor)
+}
 
 // WithSuppliedMediaEmbeddings adds an explicitly selected donor's chunk
 // embeddings to the built-in supplied transcript profile. Its rendition,
