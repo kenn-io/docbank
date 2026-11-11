@@ -314,7 +314,8 @@ demuxes the audio. Timed text becomes video-family transcript evidence;
 embedded frame images remain subject to the existing response bound.
 
 The v4 contract adds a separate sealed `quicktime_audio_track` policy for
-`video/quicktime` with a retained `.mov` suffix. It requires the QuickTime
+`video/quicktime` whose provider filename ends in `.mov`, which is
+`document.mov` when the name is withheld. It requires the QuickTime
 major brand, a picture track, qualified AAC configuration, local sound
 ranges, and one-frame AAC packet timing. It applies the same sound-timeline
 refusal as v3.

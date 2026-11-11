@@ -2305,15 +2305,7 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 			return RenditionExecution{}, err
 		}
 	}
-	name := work.ExecutionIdentity.Upload.Filename
-	if !work.ExecutionIdentity.Authorization.DiscloseFilename {
-		// Runtime work withholds the retained name, so it cannot prove a MOV
-		// suffix again. Admission sealed that proof in the capability checksum.
-		// The synthetic name restates it, and the sealed-identity comparison
-		// stops the upload before egress unless admission made the same proof.
-		name = syntheticFilename("", version.MimeType, false)
-	}
-	node := store.Node{ID: version.NodeID, Name: name,
+	node := store.Node{ID: version.NodeID, Name: work.ExecutionIdentity.Upload.Filename,
 		CurrentVersionID: version.ID, BlobHash: version.BlobHash, Size: version.Size, MimeType: version.MimeType}
 	profile := configuredProfile{portable: portable, provider: runtime.provider, record: work.Profile,
 		mediaMaxBytes: runtime.mediaMaxBytes}
@@ -2517,12 +2509,7 @@ func renditionInspectionPolicy(
 	node store.Node, version store.ContentVersion, profile configuredProfile,
 ) media.InspectionPolicy {
 	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
-	policy := inspectionPolicy(filename, version, profile)
-	// Prove the retained suffix before the privacy fallback names every MOV
-	// document.mov. The capability checksum seals this proof into queued work.
-	policy.RetainedMOVName = policy.QuickTimeAudioTrack && policy.DeclaredMediaType == "video/quicktime" &&
-		strings.EqualFold(filepath.Ext(node.Name), ".mov")
-	return policy
+	return inspectionPolicy(filename, version, profile)
 }
 
 // admittedSourceBytes is the largest source a plan or runtime admits. The

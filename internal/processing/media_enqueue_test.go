@@ -916,17 +916,29 @@ func TestWatchQuickTimeImportAdmission(t *testing.T) {
 			require.False(t, queued, "the v3 grant cannot authorize MOV under either contract")
 
 			grant(mov, "v4")
-			wrong := importFile("wrong.mp4", "video/quicktime", mediatest.H264AACMOV())
+			// A trailing free box keeps these bytes, and so the job, distinct from phone.mov.
+			wrong := importFile("wrong.mp4", "video/quicktime", append(mediatest.H264AACMOV(), 0, 0, 0, 8, 'f', 'r', 'e', 'e'))
 			plan, err := service.Plan(t.Context(), Selector{NodeID: wrong.ID, ContentVersionID: wrong.CurrentVersionID, Profile: "v4"})
 			require.NoError(t, err)
-			require.Equal(t, string(media.CapabilityReasonSourceName), plan.RenditionIneligibleReason)
+			if disclose {
+				// The provider would see the .mp4 name, so the suffix check refuses it as MP4's does.
+				require.Equal(t, string(media.CapabilityReasonMalformed), plan.RenditionIneligibleReason)
+			} else {
+				// The provider sees only document.mov and the QuickTime bytes.
+				require.Empty(t, plan.RenditionIneligibleReason)
+			}
 			require.NoError(t, service.AdmitImportedRendition(t.Context(), wrong, "v4"))
-			_, queued, err = f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			claim, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
 			require.NoError(t, err)
-			require.False(t, queued)
+			require.Equal(t, !disclose, queued, "the v4 grant covers the profile, so only the suffix check refuses")
+			if queued {
+				work, err := f.catalog.RenditionJobWorkByClaim(t.Context(), claim, time.Now())
+				require.NoError(t, err)
+				require.Equal(t, wrong.CurrentVersionID, work.Waiter.ContentVersionID)
+			}
 
 			require.NoError(t, service.AdmitImportedRendition(t.Context(), mov, "v4"))
-			claim, queued, err := f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
+			claim, queued, err = f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
 			require.NoError(t, err)
 			require.True(t, queued)
 			work, err := f.catalog.RenditionJobWorkByClaim(t.Context(), claim, time.Now())

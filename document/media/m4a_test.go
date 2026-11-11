@@ -391,6 +391,7 @@ func TestInspectQuickTimeAudioTrack(t *testing.T) {
 	}{
 		{"native AAC", "phone.mov", "video/quicktime", nil, true},
 		{"version-zero AAC with channel layout", "phone.mov", "video/quicktime", quickTimeVersionZeroSound, true},
+		{"uppercase suffix", "PHONE.MOV", "video/quicktime", nil, true},
 		{"wrong suffix", "phone.mp4", "video/quicktime", nil, false},
 		{"wrong MIME", "phone.mov", "video/mp4", nil, false},
 		{"wrong brand", "phone.mov", "video/quicktime", func(b []byte) []byte { copy(b[8:12], "isom"); return b }, false},
@@ -433,10 +434,13 @@ func TestInspectQuickTimeAudioTrack(t *testing.T) {
 			}
 			policy := inspectionPolicy(data, tc.filename, tc.mime)
 			policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
-			policy.RetainedMOVName = tc.filename == "phone.mov"
 			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 			require.NoError(t, err)
 			require.Equal(t, tc.eligible, record.Eligible, record)
+			if !tc.eligible && tc.mutate == nil {
+				// A suffix or MIME mismatch refuses as MP4's does.
+				require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+			}
 			if tc.eligible {
 				require.Equal(t, "mov", record.Format)
 				require.Equal(t, "video/quicktime", record.MediaType)
@@ -495,7 +499,7 @@ func TestInspectQuickTimeRejectsLegacyPacketSizing(t *testing.T) {
 	}
 	data = slices.Delete(data, stts+20, stts+28)
 	policy := inspectionPolicy(data, "phone.mov", "video/quicktime")
-	policy.MaxDurationMS, policy.QuickTimeAudioTrack, policy.RetainedMOVName = 24*60*60*1000, true, true
+	policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.False(t, record.Eligible)
@@ -516,7 +520,7 @@ func TestInspectQuickTimeRejectsDelayedSound(t *testing.T) {
 	empty := []byte{0, 0, 0x56, 0x22, 0xff, 0xff, 0xff, 0xff, 0, 1, 0, 0}
 	data = slices.Insert(data, elst+12, empty...)
 	policy := inspectionPolicy(data, "phone.mov", "video/quicktime")
-	policy.MaxDurationMS, policy.QuickTimeAudioTrack, policy.RetainedMOVName = 24*60*60*1000, true, true
+	policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.False(t, record.Eligible)
@@ -546,22 +550,6 @@ func quickTimeVersionZeroSound(data []byte) []byte {
 	return slices.Concat(data[:entry], replacement, data[entry+oldSize:])
 }
 
-func TestInspectQuickTimeRequiresRetainedName(t *testing.T) {
-	t.Parallel()
-	data := mediatest.H264AACMOV()
-	for _, tc := range []struct {
-		filename string
-		proven   bool
-	}{{"document.mov", false}, {"phone.mp4", true}} {
-		policy := inspectionPolicy(data, tc.filename, "video/quicktime")
-		policy.MaxDurationMS, policy.QuickTimeAudioTrack, policy.RetainedMOVName = 24*60*60*1000, true, tc.proven
-		record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
-		require.NoError(t, err)
-		require.False(t, record.Eligible)
-		require.Equal(t, media.CapabilityReasonSourceName, record.Reason, tc.filename)
-	}
-}
-
 func TestInspectQuickTimeEquivalentTimingRuns(t *testing.T) {
 	t.Parallel()
 	data := mediatest.H264AACMOV()
@@ -579,7 +567,7 @@ func TestInspectQuickTimeEquivalentTimingRuns(t *testing.T) {
 	run := binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, 1), delta)
 	data = slices.Insert(data, stts+20, run...)
 	policy := inspectionPolicy(data, "phone.mov", "video/quicktime")
-	policy.MaxDurationMS, policy.QuickTimeAudioTrack, policy.RetainedMOVName = 24*60*60*1000, true, true
+	policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
 	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
 	require.NoError(t, err)
 	require.True(t, record.Eligible, record.Reason)

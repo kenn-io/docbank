@@ -473,7 +473,6 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		InputKind:           document.RenditionInputOriginalFile,
 		VideoAudioTrack:     family == "video",
 		QuickTimeAudioTrack: mediaType == "video/quicktime",
-		RetainedMOVName:     mediaType == "video/quicktime",
 		MaxSourceBytes:      max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,

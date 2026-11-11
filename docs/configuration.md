@@ -842,18 +842,20 @@ Use `adapter_contract = "docbank-docling-asr/v4"` to add QuickTime movies
 alongside the v3 formats. A v3 grant never authorizes a MOV upload; grant
 consent to the v4 profile before importing MOV files for automatic
 transcription. Watch routing of MOV files has the same #1419 requirement as
-v3. An eligible original has a retained `.mov` suffix, QuickTime MIME and
-`qt  ` brand, a picture track, and local AAC samples. A QuickTime file whose
-retained name lacks the suffix is refused as `source_name_mismatch`, also when
-the name is withheld from the provider. Unlike v3 MP4, a MOV needs a picture
-track: the v4 qualification covered QuickTime movies, not audio-only QuickTime
-files, so those are refused; store audio-only recordings as M4A. The adapter admits the FFmpeg
+v3. An eligible original has QuickTime MIME and `qt  ` brand, a picture
+track, and local AAC samples. As with MP4, the suffix check applies to the
+name the provider receives. With `disclose_filename = true`, a QuickTime file
+whose name does not end in `.mov` (in any letter case) is refused as
+`malformed_input`. With the name withheld, the provider receives
+`document.mov`, so the retained name does not affect eligibility. Unlike v3
+MP4, v4 requires a picture track and refuses audio-only QuickTime files; store
+audio-only recordings as M4A. The adapter admits the FFmpeg
 version-1 AAC sound description with `wave`/`esds` and the version-zero AAC
 description with one `esds`, each optionally followed by one `chan` channel
 layout without channel descriptions. Each AAC packet must be timed as one frame:
 the legacy one-unit sample timing is refused because the provider would size
 packets differently. The adapter uploads the original bytes as
-`video/quicktime` and uses `document.mov` when withholding the name.
+`video/quicktime`.
 Fragmented, externally referenced, encrypted, and non-AAC MOV files are not
 admitted.
 

@@ -126,7 +126,7 @@ func TestInspectQuickTimeAudioTrackBoundedMemory(t *testing.T) {
 	policy := inspectionPolicy(mediatest.H264AACMOV(), "phone.mov", "video/quicktime")
 	policy.ExpectedBytes, policy.MaxSourceBytes = size, size
 	policy.ExpectedSHA256 = hex.EncodeToString(hash.Sum(nil))
-	policy.MaxDurationMS, policy.QuickTimeAudioTrack, policy.RetainedMOVName = 24*60*60*1000, true, true
+	policy.MaxDurationMS, policy.QuickTimeAudioTrack = 24*60*60*1000, true
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
