@@ -77,11 +77,11 @@ func TestCountPDFPagesPasswordPolicy(t *testing.T) {
 	objects[1] = "<< /Type /Pages /Kids [" + strings.Join(kids, " ") + "] /Count 1500 >>"
 	compressed := mediatest.PDFObjects("compressed page count", objects)
 	var packed, decrypted bytes.Buffer
-	require.NoError(t, api.Optimize(t.Context(), bytes.NewReader(compressed), &packed, model.NewDefaultConfiguration(), nil))
+	require.NoError(t, api.Optimize(t.Context(), bytes.NewReader(compressed), &packed, model.NewStatelessConfiguration(), nil))
 	encrypted, err := mediatest.EncryptPDF(t.Context(), packed.Bytes(), "", "owner", 128)
 	require.NoError(t, err)
 	require.Contains(t, string(encrypted), "/ObjStm")
-	configuration := model.NewDefaultConfiguration()
+	configuration := model.NewStatelessConfiguration()
 	configuration.WriteObjectStream = false
 	configuration.WriteXRefStream = false
 	require.NoError(t, api.Decrypt(t.Context(), bytes.NewReader(encrypted), &decrypted, configuration))
@@ -128,8 +128,12 @@ func TestUnlockPDFBoundsExpandedObjectOutput(t *testing.T) {
 	objects[2] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [" + annotations.String() + "] >>"
 	plain := mediatest.PDFObjects("compressed objects", objects)
 	var packed, encrypted bytes.Buffer
-	require.NoError(t, api.Optimize(t.Context(), bytes.NewReader(plain), &packed, model.NewDefaultConfiguration(), nil))
-	require.NoError(t, api.Encrypt(t.Context(), bytes.NewReader(packed.Bytes()), &encrypted, model.NewAESConfiguration("open", "owner", 128)))
+	require.NoError(t, api.Optimize(t.Context(), bytes.NewReader(plain), &packed, model.NewStatelessConfiguration(), nil))
+	configuration := model.NewStatelessConfiguration()
+	configuration.UserPW = "open"
+	configuration.OwnerPW = "owner"
+	configuration.EncryptKeyLength = 128
+	require.NoError(t, api.Encrypt(t.Context(), bytes.NewReader(packed.Bytes()), &encrypted, configuration))
 	require.Less(t, encrypted.Len(), 1<<20)
 	unlocked, _, err := formatdetect.UnlockPDF(t.Context(), encrypted.Bytes(), []string{"open"}, 1<<20)
 	require.ErrorIs(t, err, formatdetect.ErrPDFExpandedBytes)
