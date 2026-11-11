@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -479,4 +480,44 @@ func TestProcessingPlanSchemaAcceptsImageInputClass(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &value))
 	value["ttlMs"], value["cacheScope"] = 0, "private"
 	require.Error(t, validator.Validate(&value))
+}
+
+func TestProcessingPlanToolAcceptsAutomaticVideoPlan(t *testing.T) {
+	longest := "a" + strings.Repeat("z", 62)
+	disclosure := api.ProcessingRuntimeDisclosure{ImmediateProcessor: strings.Repeat("p", 1024),
+		UltimateProcessor: strings.Repeat("u", 1024), Endpoint: "https://embeddings.example.invalid", Deployment: "hosted",
+		MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/processing/plans" {
+			http.NotFound(response, request)
+			return
+		}
+		writeDaemonJSON(t, response, api.ProcessingPlan{
+			Fingerprint: strings.Repeat("a", 64), VaultUID: testVaultID,
+			Selector:           api.ProcessingSelector{NodeID: 7, ContentVersionID: testVersionID, Profile: "video"},
+			ProfileFingerprint: strings.Repeat("b", 64),
+			Flow: []api.ProcessingFlowHop{
+				{Capability: "embedding", ProviderID: "voyage", TrustBoundary: "hosted_provider",
+					InputClasses: []string{"original_file"}, RuntimeDisclosure: disclosure},
+				{Capability: "embedding", ProviderID: "voyage", TrustBoundary: "hosted_provider",
+					InputClasses: []string{"original_file_automatic"}, RuntimeDisclosure: disclosure},
+			},
+			DisclosedClasses: []string{"original_file", "original_file_automatic"},
+			RetainedClasses:  []string{"embedding_vector_set"}, ConsentRequired: true, ConsentState: "required",
+			Estimate: api.ProcessingEstimate{SourceBytes: 1, ProviderCalls: 1, VectorSpaces: 1,
+				Scope: "Granting consent automatically finds faces in eligible photos throughout this vault." +
+					" Granting consent automatically sends eligible MP4 originals throughout this vault to binding " +
+					strconv.Quote(longest) + "."},
+			BackupConsequence: "derivatives are backed up",
+		})
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	result, err := invokeReadTool(t.Context(), lease, "get_processing_plan", map[string]any{
+		"node_id": 7, "content_version_id": testVersionID, "profile": "video",
+	})
+	require.NoError(t, err)
+	require.Contains(t, structuredMap(t, result.StructuredContent)["disclosed_classes"], "original_file_automatic")
 }

@@ -356,6 +356,7 @@ type EmbeddingProfileConfig struct {
 	// Embedder is the preferred text-service configuration. The overlapping
 	// flat fields remain supported for legacy configurations.
 	Embedder                 *embedconfig.Embedder     `toml:"embedder" sensitive:"true"`
+	AutoDiscoverVideo        bool                      `toml:"auto_discover_video"`
 	Activation               string                    `toml:"activation"`
 	AuthorizationFingerprint string                    `toml:"authorization_fingerprint"`
 	Chunk                    EmbeddingChunkConfig      `toml:"chunk"`
@@ -1328,6 +1329,10 @@ func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (
 	return parsed, nil
 }
 
+// AutoDiscoverVideoMaxInputBytes is Voyage's per-video request limit. It is
+// below Docbank's 20 MiB MP4 inspection limit, so discovery follows it.
+const AutoDiscoverVideoMaxInputBytes = 20_000_000
+
 func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix string) error {
 	for field, value := range map[string]string{
 		"compatibility_id": profile.CompatibilityID, "descriptor_id": profile.DescriptorID,
@@ -1359,6 +1364,10 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	if profile.InputKind != string(document.EmbeddingInputOriginalFile) && profile.InputKind != string(document.EmbeddingInputRenditionChunk) && profile.InputKind != string(document.EmbeddingInputImage) {
 		return fmt.Errorf("%s input_kind must be original_file, image, or rendition_chunk", prefix)
 	}
+	if profile.AutoDiscoverVideo && (profile.InputKind != string(document.EmbeddingInputOriginalFile) ||
+		profile.Runtime == nil || profile.Runtime.AdapterContract != "docbank-voyage-embeddings/v1") {
+		return fmt.Errorf("%s auto_discover_video requires an original_file Voyage runtime", prefix)
+	}
 	if profile.Dimensions <= 0 || profile.Dimensions > 1_000_000 {
 		return fmt.Errorf("%s dimensions must be between 1 and 1000000", prefix)
 	}
@@ -1367,6 +1376,9 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	}
 	if profile.MaxInputBytes <= 0 || profile.MaxInputBytes > 1<<30 {
 		return fmt.Errorf("%s max input bytes must be between 1 and %d", prefix, int64(1<<30))
+	}
+	if profile.AutoDiscoverVideo && profile.MaxInputBytes > AutoDiscoverVideoMaxInputBytes {
+		return fmt.Errorf("%s auto_discover_video requires max_input_bytes at or below %d", prefix, int64(AutoDiscoverVideoMaxInputBytes))
 	}
 	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
 		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))

@@ -21,7 +21,24 @@ import (
 func TestHybridSearcherUsesRealStoreBindingAuthority(t *testing.T) {
 	t.Parallel()
 	fixture, fake, embedding, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile, "alternate")
-	_, err := embedding.ScanOnce(t.Context())
+	// Each original-file binding builds from its own derived generation.
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(request.Profile.CanonicalProfile, &portable))
+	_, fingerprints, err := document.CanonicalProfile(portable)
+	require.NoError(t, err)
+	version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+	require.NoError(t, err)
+	alternate := request
+	alternate.BindingID = "alternate"
+	for _, binding := range portable.Embeddings {
+		if binding.Name == alternate.BindingID {
+			alternate.InputGeneration = store.DirectEmbeddingGeneration(version, request.Profile.Fingerprint,
+				fingerprints.EmbeddingInput[binding.Name], binding)
+		}
+	}
+	_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), alternate)
+	require.NoError(t, err)
+	_, err = embedding.ScanOnce(t.Context())
 	require.NoError(t, err)
 	var metadata bytes.Buffer
 	require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &metadata))

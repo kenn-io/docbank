@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/docbank/document"
 )
 
 var (
@@ -165,13 +167,18 @@ func (s *Store) GrantConsent(
 	return grants[0], nil
 }
 
+// MaxProcessingConsentGrants bounds one consent set: rendition and reranking,
+// plus a source, automatic video and query grant for every embedding binding a
+// profile may declare.
+const MaxProcessingConsentGrants = 2 + 3*document.MaxProcessingEmbeddings
+
 // GrantConsentSet atomically records the independently scoped grants produced
 // by one reviewed processing plan and gives them one status association.
 func (s *Store) GrantConsentSet(ctx context.Context,
 	requests []ProcessingConsentGrantRequest,
 ) ([]ProcessingConsentGrant, error) {
-	if len(requests) == 0 || len(requests) > 100 {
-		return nil, errors.New("processing consent set must contain between 1 and 100 grants")
+	if len(requests) == 0 || len(requests) > MaxProcessingConsentGrants {
+		return nil, fmt.Errorf("processing consent set must contain between 1 and %d grants", MaxProcessingConsentGrants)
 	}
 	setID, err := newUUIDv4()
 	if err != nil {

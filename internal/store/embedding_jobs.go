@@ -72,6 +72,11 @@ type EmbeddingJobWork struct {
 	SourceMediaType           string
 }
 
+// Automatic reports whether watched-file discovery produced the exact input.
+func (work EmbeddingJobWork) Automatic() bool {
+	return directGenerationProducer(work.InputGeneration, work.Binding, work.EmbeddingInputFingerprint) == directProducerAutomatic
+}
+
 type EmbeddingAttemptReceipt struct {
 	AttemptID           string
 	ProviderFingerprint string
@@ -105,7 +110,7 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		return EmbeddingJob{}, errors.New("enqueueing embedding job: immutable authority does not match binding")
 	}
 	authority, err := normalizeConsentAuthority(request.Authorization)
-	if err != nil || authority.profile != profile.Fingerprint || authority.disclosure != binding.DisclosureFingerprint {
+	if err != nil || authority.profile != profile.Fingerprint || authority.disclosure != embeddingJobDisclosureFingerprint(binding, authority.inputs[0]) {
 		return EmbeddingJob{}, errors.New("enqueueing embedding job: consent does not match binding")
 	}
 	vectorID := request.VectorSpaceID
@@ -158,7 +163,7 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 		if err := insertVectorSpaceTx(ctx, tx, space); err != nil {
 			return err
 		}
-		if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, request.InputGeneration); err != nil {
+		if err := validateEmbeddingJobGenerationTx(ctx, tx, binding, fingerprints.EmbeddingInput[binding.Name], request.InputGeneration, authority.inputs); err != nil {
 			return err
 		}
 		if err := insertInputGenerationTx(ctx, tx, generationProjection); err != nil {
@@ -173,7 +178,7 @@ func (s *Store) EnqueueEmbeddingJob(ctx context.Context, request EmbeddingJobReq
 			binding.Name, binding.InputKind, request.InputGeneration.ID, authorization.GrantID,
 			authorization.ProcessingIncarnationID, authorization.RevocationFence)
 		satisfied, err := exactEmbeddingHeadExistsTx(ctx, tx, request.ContentVersionID,
-			profile.Fingerprint, binding, request.InputGeneration.ID, space.ID)
+			profile.Fingerprint, binding, request.InputGeneration, fingerprints.EmbeddingInput[binding.Name], space.ID)
 		if err != nil {
 			return err
 		}
@@ -377,13 +382,14 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 	var work EmbeddingJobWork
 	found := false
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		now := at.UTC().Format(timestampLayout)
 		var claimedID string
-		args := []any{jobID, jobID, at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), at.UTC().Format(timestampLayout), string(executable)}
+		args := []any{jobID, jobID, now, now, now, string(executable)}
 		for {
-			var state string
+			var state, inputKind string
 			var count int
 			var expiredEpoch int64
-			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch FROM embedding_jobs j
+			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch,j.input_kind FROM embedding_jobs j
 			WHERE ($1='' OR j.job_id=$2)
 			AND j.state IN ('queued','retry_wait','running') AND j.available_at<=$3
 			AND (j.state<>'running' OR j.lease_expires_at<=$4)
@@ -395,16 +401,31 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			      AND s.input_generation_id=j.generation_id AND s.vector_space_id=j.vector_space_id)
 			  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
 			    AND r.active=1 AND r.expires_at>$5)
+			  AND (j.input_kind<>'original_file' OR NOT EXISTS(
+			    SELECT 1 FROM embedding_jobs peer JOIN current_rendition_roots r ON r.root_id=peer.job_id
+			    WHERE peer.job_id<>j.job_id AND peer.content_version_id=j.content_version_id
+			      AND peer.profile_fingerprint=j.profile_fingerprint AND peer.binding_id=j.binding_id
+			      AND peer.input_kind=j.input_kind AND peer.vector_space_id=j.vector_space_id
+			      AND r.root_kind='worker_lease' AND r.active=1 AND r.expires_at>$5))
 			AND EXISTS(SELECT 1 FROM processing_profiles p, `+bindings+`
 			  WHERE p.profile_fingerprint=j.profile_fingerprint
 			    AND `+d.text("b.value", "name")+`=j.binding_id AND `+d.text("b.value", "input_kind")+`=j.input_kind
 			    AND `+d.text("b.value", "descriptor.fingerprint")+` IN (SELECT value FROM `+d.arrayValues("$6")+`))
-			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch)
+			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch, &inputKind)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
 			if err != nil {
 				return err
+			}
+			if inputKind == string(document.EmbeddingInputOriginalFile) {
+				settled, err := settleOriginalFileJobsTx(ctx, tx, s.vaultID, claimedID, now)
+				if err != nil {
+					return err
+				}
+				if settled {
+					continue
+				}
 			}
 			if state != "running" || count < embeddingJobMaxClaims {
 				break
@@ -453,6 +474,93 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 		return nil
 	})
 	return claim, work, found, err
+}
+
+// settleOriginalFileJobsTx completes the candidate's unfinished jobs for the
+// same version, profile, binding and vector space when the head already holds
+// their manual or automatic generation. It reports whether the candidate itself
+// was completed. Settling only the candidate's tuple keeps each claim bounded.
+func settleOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, vaultID, candidateID, now string) (bool, error) {
+	satisfied, err := satisfiedOriginalFileJobsTx(ctx, tx, vaultID, candidateID, now)
+	if err != nil {
+		return false, err
+	}
+	candidateSettled := false
+	for _, id := range satisfied {
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
+			SET state='completed',claim_owner=NULL,lease_expires_at=NULL,failure_code=NULL,updated_at=$1
+			WHERE job_id=$2`, now, id); err != nil {
+			return false, err
+		}
+		candidateSettled = candidateSettled || id == candidateID
+	}
+	return candidateSettled, nil
+}
+
+// satisfiedOriginalFileJobsTx checks the exact producer pair after looking up
+// heads by tuple. A head can still serve an older generation while a replacement
+// builds, so the tuple alone does not prove that a job is complete. A peer that
+// holds a live lease stays with its owner, and a peer completes only when its
+// own grant carries its consent class: original_file for a manual job and
+// original_file_automatic for an automatic one.
+func satisfiedOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, vaultID, candidateID, now string) ([]string, error) {
+	matched, err := equivalentOriginalFileJobsTx(ctx, tx, candidateID, now)
+	if err != nil {
+		return nil, err
+	}
+	var satisfied []string
+	for _, id := range matched {
+		work, err := loadEmbeddingJobWorkTx(ctx, tx, vaultID, id)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			// A peer whose authority cannot be loaded stays unfinished for
+			// its own claim; it never fails the caller's transaction.
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if embeddingJobConsentMatches(work.InputGeneration, work.Binding, work.EmbeddingInputFingerprint, work.Consent.InputClasses) &&
+			work.Consent.DisclosureFingerprint == embeddingJobDisclosureFingerprint(work.Binding, work.Consent.InputClasses[0]) {
+			satisfied = append(satisfied, id)
+		}
+	}
+	return satisfied, nil
+}
+
+// equivalentOriginalFileJobsTx lists the candidate tuple's unfinished jobs,
+// without a live lease, whose generation and head both carry the manual or
+// automatic ID derived for that tuple.
+func equivalentOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, candidateID, now string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT j.job_id,j.generation_id,j.content_version_id,j.profile_fingerprint,j.binding_id,
+		g.generation_checksum,g.chunk_policy_fingerprint,s.input_generation_id
+		FROM embedding_jobs c JOIN embedding_jobs j ON j.content_version_id=c.content_version_id
+		  AND j.profile_fingerprint=c.profile_fingerprint AND j.binding_id=c.binding_id
+		  AND j.input_kind=c.input_kind AND j.vector_space_id=c.vector_space_id
+		JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+		JOIN embedding_heads h ON h.content_version_id=j.content_version_id AND h.profile_fingerprint=j.profile_fingerprint
+		  AND h.binding_id=j.binding_id AND h.input_kind=j.input_kind
+		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
+		  AND s.profile_fingerprint=j.profile_fingerprint AND s.vector_space_id=j.vector_space_id
+		WHERE c.job_id=$1 AND j.input_kind='original_file'
+		  AND (j.state IN ('queued','retry_wait') OR (j.state='running' AND j.lease_expires_at<=$2))
+		  AND NOT EXISTS(SELECT 1 FROM current_rendition_roots r WHERE r.root_id=j.job_id
+		    AND r.root_kind='worker_lease' AND r.active=1 AND r.expires_at>$3)`, candidateID, now, now)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var matched []string
+	for rows.Next() {
+		var id, generationID, version, profile, binding, sourceHash, inputFP, headGenerationID string
+		if err := rows.Scan(&id, &generationID, &version, &profile, &binding, &sourceHash, &inputFP, &headGenerationID); err != nil {
+			return nil, err
+		}
+		manual, automatic := directGenerationIDs(version, sourceHash, profile, binding, inputFP)
+		if (generationID == manual || generationID == automatic) && (headGenerationID == manual || headGenerationID == automatic) {
+			matched = append(matched, id)
+		}
+	}
+	return matched, rows.Err()
 }
 
 func (s *Store) RenewEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time, lease time.Duration) (EmbeddingJobClaim, error) {
@@ -518,6 +626,10 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	if !reflect.DeepEqual(current, work) {
 		return ErrEmbeddingJobFenced
 	}
+	if !embeddingJobConsentMatches(work.InputGeneration, work.Binding, work.EmbeddingInputFingerprint, work.Consent.InputClasses) ||
+		work.Consent.DisclosureFingerprint != embeddingJobDisclosureFingerprint(work.Binding, work.Consent.InputClasses[0]) {
+		return ErrEmbeddingJobFenced
+	}
 	var eligible bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
@@ -526,6 +638,9 @@ func validateEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, cl
 	}
 	if !eligible {
 		return ErrEmbeddingJobFenced
+	}
+	if work.Automatic() {
+		return validateAutomaticVideoEligibilityTx(ctx, tx, work.ContentVersionID, work.Binding.MaxInputBytes)
 	}
 	eligible, err = embeddingGenerationCurrentTx(ctx, tx, work.InputGeneration, work.ProcessingProfile.Fingerprint)
 	if err != nil {
@@ -646,7 +761,16 @@ func (s *Store) PublishEmbeddingWork(ctx context.Context, claim EmbeddingJobClai
 		if _, err := publishEmbeddingHeadWithLeaseTx(ctx, tx, s.vaultID, head, work.Consent, prior, claim.AttemptID, claim.Epoch, at); err != nil {
 			return err
 		}
-		return finishEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, "completed", "", receipt, at, at)
+		if err := finishEmbeddingWorkTx(ctx, tx, s.vaultID, claim, work, "completed", "", receipt, at, at); err != nil {
+			return err
+		}
+		if work.Binding.InputKind != document.EmbeddingInputOriginalFile {
+			return nil
+		}
+		// Settle the manual or automatic peer of this exact tuple now, so a
+		// peer waiting on a provider retry does not wait for its timer.
+		_, err := settleOriginalFileJobsTx(ctx, tx, s.vaultID, claim.AttemptID, at.UTC().Format(timestampLayout))
+		return err
 	})
 }
 
@@ -707,14 +831,19 @@ func finishEmbeddingWorkTx(ctx context.Context, tx *sql.Tx, vaultID string, clai
 
 func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID string) (EmbeddingJobWork, error) {
 	var versionID, profileID, bindingID, generationID, spaceID, principal, scope string
-	var grantID, incarnationID string
+	var grantID, incarnationID, inputJSON, disclosure string
 	var revocationFence int64
-	err := tx.QueryRowContext(ctx, `SELECT content_version_id,profile_fingerprint,binding_id,generation_id,
-		vector_space_id,principal,scope,authorization_grant_id,authorization_incarnation_id,
-		authorization_revocation_fence FROM embedding_jobs WHERE job_id=$1`, jobID).Scan(
+	err := tx.QueryRowContext(ctx, `SELECT j.content_version_id,j.profile_fingerprint,j.binding_id,j.generation_id,
+		j.vector_space_id,j.principal,j.scope,j.authorization_grant_id,j.authorization_incarnation_id,
+		j.authorization_revocation_fence,g.input_classes_json,g.disclosure_fingerprint FROM embedding_jobs j
+		JOIN processing_consent_grants g ON g.grant_id=j.authorization_grant_id WHERE j.job_id=$1`, jobID).Scan(
 		&versionID, &profileID, &bindingID, &generationID, &spaceID, &principal, &scope,
-		&grantID, &incarnationID, &revocationFence)
+		&grantID, &incarnationID, &revocationFence, &inputJSON, &disclosure)
 	if err != nil {
+		return EmbeddingJobWork{}, err
+	}
+	var inputClasses []string
+	if err := json.Unmarshal([]byte(inputJSON), &inputClasses); err != nil {
 		return EmbeddingJobWork{}, err
 	}
 	profile, err := loadProcessingProfile(ctx, tx, profileID)
@@ -745,8 +874,8 @@ func loadEmbeddingJobWorkTx(ctx context.Context, tx *sql.Tx, vaultID, jobID stri
 		EmbeddingInputFingerprint: fingerprints.EmbeddingInput[binding.Name], InputGeneration: generation,
 		SourceBlobHash: sourceHash, SourceBytes: sourceBytes, SourceFilename: filename, SourceMediaType: mediaType,
 		Consent: ProviderOperationAuthorizationRequest{Principal: principal, Scope: scope,
-			ProfileFingerprint: profileID, DisclosureFingerprint: binding.DisclosureFingerprint,
-			InputClasses: []string{string(binding.InputKind)}, RetainedArtifactClasses: []string{"embedding_vector_set"},
+			ProfileFingerprint: profileID, DisclosureFingerprint: disclosure,
+			InputClasses: inputClasses, RetainedArtifactClasses: []string{"embedding_vector_set"},
 			PriorAuthorization: &ProviderOperationAuthorization{GrantID: grantID,
 				ProcessingIncarnationID: incarnationID, RevocationFence: revocationFence}}}, nil
 }
@@ -774,7 +903,12 @@ func embeddingBindingFromProfile(profile ProcessingProfileRecord, name string) (
 	return document.EmbeddingBindingV1{}, document.FingerprintSet{}, ErrNotFound
 }
 
-func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding document.EmbeddingBindingV1, generation EmbeddingInputGenerationRecord) error {
+func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding document.EmbeddingBindingV1,
+	inputFP string, generation EmbeddingInputGenerationRecord, inputClasses []string,
+) error {
+	if !embeddingJobConsentMatches(generation, binding, inputFP, inputClasses) {
+		return errors.New("embedding generation and consent class do not match binding")
+	}
 	var sourceHash string
 	if err := tx.QueryRowContext(ctx, `SELECT v.blob_hash FROM content_versions v
 		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id AND n.trashed_at IS NULL
@@ -788,9 +922,13 @@ func validateEmbeddingJobGenerationTx(ctx context.Context, tx *sql.Tx, binding d
 		return validateImageEmbeddingGenerationTx(ctx, tx, generation, binding.Name)
 	}
 	if binding.InputKind == document.EmbeddingInputOriginalFile {
-		if generation.GenerationChecksum != sourceHash || len(generation.Inputs) != 1 ||
+		if generation.AttachmentID != "" || generation.GenerationBlobHash != "" ||
+			generation.ChunkPolicyFingerprint != inputFP || generation.GenerationChecksum != sourceHash || len(generation.Inputs) != 1 ||
 			generation.Inputs[0] != (EmbeddingInputReference{ID: generation.SourceVersionID, RenderedChecksum: sourceHash}) {
 			return errors.New("direct embedding generation does not name exact source")
+		}
+		if directGenerationProducer(generation, binding, inputFP) == directProducerAutomatic {
+			return validateAutomaticVideoEligibilityTx(ctx, tx, generation.SourceVersionID, binding.MaxInputBytes)
 		}
 		return nil
 	}

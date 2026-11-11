@@ -77,6 +77,7 @@ type ProfileConfig struct {
 	RerankingDisclosure       RuntimeDisclosure
 	RerankingDeadline         time.Duration
 	RerankingFailurePolicy    retrieval.ProviderFailurePolicy
+	AutomaticVideoBindings    map[string]struct{}
 	EmbeddingProviders        map[string]document.EmbeddingProvider
 	EmbeddingSimilarityFloors map[string]float64
 	EmbeddingDisclosures      map[string]RuntimeDisclosure
@@ -104,6 +105,7 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
+	automaticVideoBindings    map[string]struct{}
 	vectorSpaces              map[string]string
 	mediaMaxBytes             int64
 	portable                  document.ProcessingProfileV1
@@ -479,7 +481,7 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 		if err := json.Unmarshal(canonical, &profile, json.RejectUnknownMembers(true)); err != nil {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
-		configured := configuredProfile{vectorSpaces: make(map[string]string), portable: profile, provider: supplied.RenditionProvider,
+		configured := configuredProfile{automaticVideoBindings: maps.Clone(supplied.AutomaticVideoBindings), vectorSpaces: make(map[string]string), portable: profile, provider: supplied.RenditionProvider,
 			embeddingSimilarityFloors: maps.Clone(supplied.EmbeddingSimilarityFloors),
 			mediaMaxBytes:             service.mediaMaxBytes,
 			rerankingProvider:         supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
@@ -586,6 +588,12 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 				return nil, err
 			}
 			runtime.catalog = config.Catalog
+			if _, automatic := configured.automaticVideoBindings[binding.Name]; automatic {
+				if binding.InputKind != document.EmbeddingInputOriginalFile {
+					return nil, fmt.Errorf("processing profile %q embedding %q automatic video requires original_file", name, binding.Name)
+				}
+				service.embeddings.automaticVideoBindings[configured.record.Fingerprint+"/"+binding.Name] = struct{}{}
+			}
 			service.embeddings.profiles[configured.record.Fingerprint] = configured.record
 			if existing, exists := registeredEmbeddings[descriptor.Fingerprint]; !exists {
 				if err := service.embeddings.Register(descriptor.Fingerprint, runtime); err != nil {
@@ -772,7 +780,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 			plan.BackupConsequence = "Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups."
 			if hop.ProviderID == document.FaceDetectionProviderID {
-				plan.Estimate.Scope = "Granting consent automatically finds faces in eligible photos throughout this vault."
+				plan.Estimate.Scope = faceScanScope
 				plan.BackupConsequence = "Face boxes, measurements, and your decisions are included in backups. Restoring a backup allows another scan and provider call for each eligible photo."
 			}
 			// Only the grid preview leaves the vault, not the original file.
@@ -801,12 +809,22 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			plan.RetainedClasses = append(plan.RetainedClasses, "typed_artifacts")
 		}
 	}
+	var automaticBindings []string
 	for _, binding := range profile.portable.Embeddings {
 		disclosure := profile.embedDisclosures[binding.Name]
 		plan.Flow = append(plan.Flow, FlowHop{Capability: "embedding", ProviderID: binding.Descriptor.ID,
 			TrustBoundary: binding.TrustBoundary, InputClasses: []string{string(binding.InputKind)},
 			RuntimeDisclosure: disclosure})
 		plan.DisclosedClasses = append(plan.DisclosedClasses, string(binding.InputKind))
+		if _, automatic := profile.automaticVideoBindings[binding.Name]; automatic {
+			// The input class, not the capability, marks the automatic hop.
+			// The hop already discloses the provider.
+			automaticBindings = append(automaticBindings, binding.Name)
+			plan.Flow = append(plan.Flow, FlowHop{Capability: "embedding",
+				ProviderID: binding.Descriptor.ID, TrustBoundary: binding.TrustBoundary,
+				InputClasses: []string{store.AutomaticOriginalFileConsentClass}, RuntimeDisclosure: disclosure})
+			plan.DisclosedClasses = append(plan.DisclosedClasses, store.AutomaticOriginalFileConsentClass)
+		}
 		plan.Estimate.ProviderCalls++
 		plan.RetainedClasses = append(plan.RetainedClasses, "embedding_vector_set")
 		if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
@@ -819,6 +837,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 			plan.DisclosedClasses = append(plan.DisclosedClasses, "query_text")
 		}
 	}
+	plan.Estimate.Scope = strings.TrimSpace(plan.Estimate.Scope + " " + automaticVideoScope(automaticBindings))
 	if profile.rerankingProvider != nil {
 		plan.Flow = append(plan.Flow, FlowHop{Capability: "reranking",
 			ProviderID:        profile.rerankingDisclosure.UltimateProcessor,
@@ -844,7 +863,7 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 // must call Shutdown before releasing the catalog, blob store, or upload lock.
 func (service *Service) StartWithProgress(ctx context.Context, request StartRequest,
 	onEnqueued func(Job),
-) (Job, error) {
+) (_ Job, retErr error) {
 	ctx, finish, err := service.beginRun(ctx)
 	if err != nil {
 		return Job{}, err
@@ -888,6 +907,13 @@ func (service *Service) StartWithProgress(ctx context.Context, request StartRequ
 	if request.Consent {
 		if err := service.grantProfileConsent(ctx, profile, nil); err != nil {
 			return Job{}, err
+		}
+		if len(profile.automaticVideoBindings) != 0 {
+			defer func() {
+				if retErr != nil && !errors.Is(retErr, ErrConsentSaved) {
+					retErr = fmt.Errorf("%w: %w", ErrConsentSaved, retErr)
+				}
+			}()
 		}
 	}
 	if photo {
@@ -1173,6 +1199,12 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 			RetainedArtifactClasses: []string{"embedding_vector_set"},
 		}
 		requests = append(requests, request)
+		if _, automatic := profile.automaticVideoBindings[binding.Name]; automatic {
+			automaticRequest := request
+			automaticRequest.DisclosureFingerprint = store.AutomaticOriginalFileDisclosureFingerprint(binding)
+			automaticRequest.InputClasses = []string{store.AutomaticOriginalFileConsentClass}
+			requests = append(requests, automaticRequest)
+		}
 		if profile.embedders[binding.Name].Descriptor().SupportsTextQuery {
 			request.InputClasses = []string{"query_text"}
 			request.RetainedArtifactClasses = nil
@@ -1374,6 +1406,7 @@ func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerp
 	if err := json.Unmarshal(record.CanonicalProfile, &profile, json.RejectUnknownMembers(true)); err != nil {
 		return Status{}, err
 	}
+	embeddings = oneJobPerOriginalFileBinding(embeddings, profile)
 	status := aggregateStatus(jobID, rendition, embeddings)
 	for _, binding := range profile.Embeddings {
 		if status.State == "completed" && binding.Activation == document.EmbeddingRequired &&
@@ -1383,6 +1416,51 @@ func (service *Service) profileStatus(ctx context.Context, jobID, profileFingerp
 		}
 	}
 	return status, nil
+}
+
+// oneJobPerOriginalFileBinding keeps one job for each original-file binding.
+// Its manual and automatic jobs settle one upload, so status reports the
+// binding once: a completed job first, then the most advanced live attempt,
+// then the lower job ID. Other bindings keep every job.
+func oneJobPerOriginalFileBinding(embeddings []store.EmbeddingJobStatus,
+	profile document.ProcessingProfileV1,
+) []store.EmbeddingJobStatus {
+	direct := make(map[string]bool, len(profile.Embeddings))
+	for _, binding := range profile.Embeddings {
+		direct[binding.Name] = binding.InputKind == document.EmbeddingInputOriginalFile
+	}
+	kept := make(map[string]int, len(embeddings))
+	result := make([]store.EmbeddingJobStatus, 0, len(embeddings))
+	for _, job := range embeddings {
+		index, seen := kept[job.BindingID]
+		switch {
+		case !direct[job.BindingID]:
+			result = append(result, job)
+		case !seen:
+			kept[job.BindingID] = len(result)
+			result = append(result, job)
+		case equivalentJobPrecedes(job, result[index]):
+			result[index] = job
+		}
+	}
+	return result
+}
+
+// Embedding jobs share the rendition job-state vocabulary.
+var equivalentJobStates = []string{string(store.RenditionJobCompleted), string(store.RenditionJobRunning),
+	string(store.RenditionJobRetryWait), string(store.RenditionJobQueued)}
+
+func equivalentJobPrecedes(left, right store.EmbeddingJobStatus) bool {
+	rank := func(state string) int {
+		if index := slices.Index(equivalentJobStates, state); index >= 0 {
+			return index
+		}
+		return len(equivalentJobStates)
+	}
+	if leftRank, rightRank := rank(left.State), rank(right.State); leftRank != rightRank {
+		return leftRank < rightRank
+	}
+	return left.ID < right.ID
 }
 
 func aggregateStatus(jobID string, rendition *store.RenditionJob,
@@ -1789,7 +1867,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 				return jobIDs, err
 			}
 		case document.EmbeddingInputOriginalFile:
-			generation = directEmbeddingGeneration(version, profile.record.Fingerprint,
+			generation = store.DirectEmbeddingGeneration(version, profile.record.Fingerprint,
 				fingerprints.EmbeddingInput[binding.Name], binding)
 		case document.EmbeddingInputRenditionChunk:
 			generation, err = service.chunkEmbeddingGeneration(ctx, version, profile, binding)
@@ -2042,22 +2120,6 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 		ChunkPolicyFingerprint: generated.PolicyFingerprint, FormatterFingerprint: sha256Text(binding.Chunk.Formatter),
 		AttachmentID: view.Attachment.ID, Inputs: inputs, CreatedAt: view.Attachment.AttachedAt,
 	}, nil
-}
-
-func directEmbeddingGeneration(version store.ContentVersion, profileFingerprint,
-	embeddingInputFingerprint string, binding document.EmbeddingBindingV1,
-) store.EmbeddingInputGenerationRecord {
-	id := store.LengthPrefixedSHA256("docbank/direct-file-input-generation/v1", version.ID, version.BlobHash,
-		profileFingerprint, binding.Name, embeddingInputFingerprint)
-	return store.EmbeddingInputGenerationRecord{ID: id, SourceVersionID: version.ID,
-		ProcessingProfileFingerprint: profileFingerprint,
-		EvidenceFingerprint:          store.LengthPrefixedSHA256("docbank/direct-file-evidence/v1", version.BlobHash),
-		TokenizerFingerprint:         store.LengthPrefixedSHA256("docbank/direct-file-tokenizer/v1", "none"),
-		ChunkPolicyFingerprint:       embeddingInputFingerprint,
-		FormatterFingerprint:         store.LengthPrefixedSHA256("docbank/direct-file-formatter/v1", binding.DocumentFormatter, binding.ModelInput.Fingerprint),
-		GenerationChecksum:           version.BlobHash,
-		Inputs:                       []store.EmbeddingInputReference{{ID: version.ID, RenderedChecksum: version.BlobHash}},
-		CreatedAt:                    version.RecordedAt}
 }
 
 func sha256Text(value string) string {

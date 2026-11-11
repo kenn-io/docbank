@@ -471,8 +471,11 @@ func TestProcessingServiceCoverageMissingClassesTakePrecedenceOverRebuilding(t *
 			if portable.Rendition != nil {
 				request.Profile.RenditionDisclosureFingerprint = portable.Rendition.DisclosureFingerprint
 			}
-			request.InputGeneration.ID = workerHash(test.name)
-			request.InputGeneration.ProcessingProfileFingerprint = fingerprints.Profile
+			// An original-file job names its binding's derived generation.
+			version, err := fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
+			require.NoError(t, err)
+			request.InputGeneration = store.DirectEmbeddingGeneration(version, fingerprints.Profile,
+				fingerprints.EmbeddingInput[request.BindingID], portable.Embeddings[0])
 			request.Authorization.ProfileFingerprint = fingerprints.Profile
 			// Enqueue registers the new profile before its consent check.
 			_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), request)

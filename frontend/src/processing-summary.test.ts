@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ProcessingFlowHop } from "./generated/docbank.js";
 import {
   consentLabel,
+  describeClasses,
   keptSentence,
   processingPurpose,
   purposeLabels,
@@ -25,6 +27,35 @@ describe("processing summary", () => {
     ]);
     expect(consentLabel("docling", hosted)).toBe(
       "Allow “docling” to send documents from this vault to Docling",
+    );
+  });
+
+  it("names the vault-wide scope of automatic MP4 uploads", () => {
+    const voyage = {
+      capability: "embedding",
+      provider_id: "voyage.multimodal-v1",
+      trust_boundary: "hosted_provider",
+      runtime_disclosure: {
+        immediate_processor: "voyage.multimodal-v1",
+        ultimate_processor: "voyage.multimodal-v1",
+        endpoint: "https://api.voyageai.com",
+        deployment: "9".repeat(64),
+        metadata_classes: ["byte_length"],
+        retained_artifact_roles: [],
+      },
+    } satisfies Partial<ProcessingFlowHop>;
+    const video = plan("video", {
+      flow: [
+        hop({ ...voyage, input_classes: ["original_file"] }),
+        hop({ ...voyage, input_classes: ["original_file_automatic"] }),
+      ],
+      disclosed_classes: ["original_file", "original_file_automatic"],
+    });
+    expect(whereSentences(video)).toEqual([
+      "Sends this file and eligible MP4 originals throughout this vault, automatically, to Voyage (api.voyageai.com).",
+    ]);
+    expect(describeClasses(video.disclosed_classes)).toBe(
+      "Original file, Eligible MP4 originals throughout this vault, sent automatically",
     );
   });
 

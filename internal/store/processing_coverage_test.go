@@ -24,6 +24,8 @@ func TestProcessingCoverageLargeFenceKeepsStatesDisjoint(t *testing.T) {
 	ids = append(ids, "00000000-0000-4000-8000-000000000001")
 	for _, id := range ids[:2] {
 		record := embeddingSetFixture(t.Context(), s, id, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+		// The serving head predates the rebuild input, so its job stays in flight.
+		record.InputGeneration.ID = testSHA256([]byte("previous-serving-input-" + id))
 		require.NoError(t, s.StageEmbeddingSet(t.Context(), record))
 		require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 			FencingToken: 1, Key: EmbeddingHeadKey{ContentVersionID: id, BindingID: record.BindingID, InputKind: record.InputKind},
@@ -124,6 +126,7 @@ func checkProcessingCoverageEmbeddingReplacementKeepsServingHead(t *testing.T, o
 	t.Parallel()
 	s, versionID, profile, _ := seedEmbeddingCatalog(t, open(t))
 	old := embeddingSetFixture(t.Context(), s, versionID, profile.Fingerprint, document.EmbeddingInputOriginalFile, "optional", "")
+	old.InputGeneration.ID = testSHA256([]byte("previous-serving-input"))
 	require.NoError(t, s.StageEmbeddingSet(t.Context(), old))
 	require.NoError(t, s.PublishEmbeddingHead(t.Context(), EmbeddingHeadRecord{
 		FencingToken: 1,

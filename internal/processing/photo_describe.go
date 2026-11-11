@@ -35,6 +35,13 @@ func profileRenditionInput(profile configuredProfile) document.RenditionInputKin
 	return document.RenditionInputOriginalFile
 }
 
+// Consent scope sentences shown in a plan. The face sentence replaces the
+// photo sentence, and the automatic video sentence follows either one.
+const (
+	photoQueueScope = "Granting consent automatically queues eligible photos throughout this vault."
+	faceScanScope   = "Granting consent automatically finds faces in eligible photos throughout this vault."
+)
+
 // photoDiscoveryScope discloses that consent for a photo description or image
 // embedding profile queues every eligible photo in the vault, not just the
 // planned one.
@@ -43,9 +50,24 @@ func photoDiscoveryScope(profile configuredProfile) string {
 		return binding.InputKind == document.EmbeddingInputImage
 	})
 	if images || profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
-		return "Granting consent automatically queues eligible photos throughout this vault."
+		return photoQueueScope
 	}
 	return ""
+}
+
+// automaticVideoScope names the bindings that discovery feeds eligible MP4
+// originals. A binding name has at most 63 characters, so the sentence stays
+// within the published 256-character scope bound after the longest photo
+// sentence.
+func automaticVideoScope(bindings []string) string {
+	switch len(bindings) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf("Granting consent automatically sends eligible MP4 originals throughout this vault to binding %q.", bindings[0])
+	default:
+		return fmt.Sprintf("Granting consent automatically sends eligible MP4 originals throughout this vault to %d bindings.", len(bindings))
+	}
 }
 
 func (service *Service) inspectPlannedRendition(ctx context.Context, node store.Node, version store.ContentVersion, profile configuredProfile) (media.CapabilityRecord, error) {

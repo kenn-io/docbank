@@ -1130,6 +1130,22 @@ Affected embedding jobs record an authorization failure and can recover later.
 Startup still fails for an undefined legacy credential binding, invalid runtime
 configuration, or mismatched descriptor.
 
+#### Automatic MP4 embeddings
+
+Set `auto_discover_video = true` in an `[embedding_profiles.<name>]` binding
+with `input_kind = "original_file"` and the Voyage runtime. The capability
+manifest must record a passing `video_mp4` probe. Configuration rejects a
+`max_input_bytes` above 20,000,000 bytes, [Voyage's per-video limit](https://docs.voyageai.com/reference/multimodal-embeddings-api),
+and discovery skips larger files. Allow for request encoding in the runtime's
+`max_request_bytes`.
+
+Docbank's MP4 byte inspection caps input at 20 MiB. The daemon wires Voyage
+for automatic video uploads. Gemini's adapter is available to Go applications.
+
+Vault-wide discovery requires its own consent for the binding. A grant for
+explicit builds covers only the files the operator selects. Follow the
+[automatic MP4 setup](usage/document-processing.md#embed-mp4s-automatically) to review it.
+
 #### Local text indexing
 
 Use `docbank processing local --server local` to approve Nomic indexing for the vault and future imports. Setup previews the profile and all provider disclosures, downloads any missing server and model files, and needs no confirmation. It starts the shared server, grants consent, saves the approved profile and server in version 1 of `local-text.json` beside the vault's `config.toml`, and restarts the daemon. Your TOML stays intact.

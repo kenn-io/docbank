@@ -264,6 +264,27 @@ func TestConfigureEmbeddingRuntimesConfiguresCapabilityAttestedVoyageOriginal(t 
 	require.NoError(t, err)
 	require.NotNil(t, bundle.providers["voyage"])
 	require.Equal(t, final, bundle.providers["voyage"].Descriptor())
+
+	profile.AutoDiscoverVideo = true
+	cfg.EmbeddingProfiles["voyage"] = profile
+	_, err = configureEmbeddingRuntimeBundle(cfg)
+	require.ErrorContains(t, err, voyage.CapabilityVideoMP4)
+
+	manifest, err = voyagetest.SyntheticManifest(policy, voyage.CapabilityImagePNG, voyage.CapabilityVideoMP4)
+	require.NoError(t, err)
+	encoded.Reset()
+	require.NoError(t, voyage.EncodeCapabilityManifest(&encoded, manifest))
+	require.NoError(t, os.WriteFile(manifestPath, encoded.Bytes(), 0o600))
+	profile.Runtime.ModelRevision, err = voyage.DirectFileModelRevision(policy, manifest)
+	require.NoError(t, err)
+	_, final, err = configuredVoyageProvider(profile, contract, secrets)
+	require.NoError(t, err)
+	profile.DescriptorFingerprint = final.Fingerprint
+	cfg.EmbeddingProfiles["voyage"] = profile
+	require.NoError(t, cfg.Validate())
+	bundle, err = configureEmbeddingRuntimeBundle(cfg)
+	require.NoError(t, err)
+	require.Equal(t, final, bundle.providers["voyage"].Descriptor())
 }
 
 func TestRecoverEmbeddingRuntimeSpoolRemovesOnlyAbandonedUploadState(t *testing.T) {

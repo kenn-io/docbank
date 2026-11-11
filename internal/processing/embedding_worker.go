@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sync"
@@ -98,10 +99,11 @@ type EmbeddingRuntime interface {
 // EmbeddingRuntimeRegistry resolves provider clients by immutable descriptor
 // and execution policy by the admitted profile and binding.
 type EmbeddingRuntimeRegistry struct {
-	mu       sync.RWMutex
-	runtimes map[string]EmbeddingRuntime
-	bindings map[embeddingRuntimeBinding]EmbeddingRuntime
-	profiles map[string]store.ProcessingProfileRecord
+	automaticVideoBindings map[string]struct{}
+	mu                     sync.RWMutex
+	runtimes               map[string]EmbeddingRuntime
+	bindings               map[embeddingRuntimeBinding]EmbeddingRuntime
+	profiles               map[string]store.ProcessingProfileRecord
 }
 
 type embeddingRuntimeBinding struct {
@@ -134,6 +136,19 @@ func (registry *EmbeddingRuntimeRegistry) VectorSpaces() map[string]store.Embedd
 	return spaces
 }
 
+func (registry *EmbeddingRuntimeRegistry) AutomaticVideoBindings() map[string]struct{} {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	return maps.Clone(registry.automaticVideoBindings)
+}
+
+func (registry *EmbeddingRuntimeRegistry) automaticVideoBinding(work EmbeddingWork) bool {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	_, allowed := registry.automaticVideoBindings[work.ProcessingProfile.Fingerprint+"/"+work.Binding.Name]
+	return allowed
+}
+
 func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
 	if registry == nil {
 		return nil
@@ -150,7 +165,8 @@ func (registry *EmbeddingRuntimeRegistry) Fingerprints() []string {
 
 func NewEmbeddingRuntimeRegistry() *EmbeddingRuntimeRegistry {
 	return &EmbeddingRuntimeRegistry{
-		profiles: make(map[string]store.ProcessingProfileRecord), runtimes: make(map[string]EmbeddingRuntime), bindings: make(map[embeddingRuntimeBinding]EmbeddingRuntime),
+		automaticVideoBindings: make(map[string]struct{}),
+		profiles:               make(map[string]store.ProcessingProfileRecord), runtimes: make(map[string]EmbeddingRuntime), bindings: make(map[embeddingRuntimeBinding]EmbeddingRuntime),
 	}
 }
 
@@ -443,8 +459,10 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 			}); ok {
 				spaces = runtime.VectorSpaces()
 			}
+			var automaticVideo map[string]struct{}
 			var imageProfiles []store.ProcessingProfileRecord
 			if registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry); ok {
+				automaticVideo = registry.AutomaticVideoBindings()
 				registry.mu.RLock()
 				for _, profile := range registry.profiles {
 					imageProfiles = append(imageProfiles, profile)
@@ -462,7 +480,7 @@ func (worker *EmbeddingWorker) ScanOnce(ctx context.Context) (int, error) {
 				}
 			}
 			result, err := worker.catalog.ReconcileEmbeddingJobs(ctx, store.EmbeddingReconcileRequest{
-				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
+				Mutate: worker.gate.MutateContext, ImageProfiles: imageProfiles, AutomaticVideoBindings: automaticVideo, ImageAfter: worker.imageAfter, PrepareImageGeneration: prepareImage,
 				After: worker.reconcileAfter, Limit: 100, At: worker.clock().UTC(),
 				SkipGenerations: worker.reconcileTextDone, SkipImages: worker.reconcileImageDone,
 				ImageRejections:        worker.imageRejections,
@@ -623,6 +641,13 @@ func (worker *EmbeddingWorker) processClaim(ctx context.Context, claim Embedding
 	}()
 	if err := validateEmbeddingWork(work, worker.maxRows, worker.maxDimensions); err != nil || int64(len(work.InputGeneration.Inputs))*int64(work.Descriptor.Dimension)*4 > worker.maxVectorBlobBytes {
 		return worker.failClaim(attemptCtx, claim, work, store.EmbeddingFailureStaleAuthority, &receipt, started)
+	}
+
+	if work.Automatic() {
+		registry, ok := worker.runtime.(*EmbeddingRuntimeRegistry)
+		if !ok || !registry.automaticVideoBinding(work) {
+			return ErrEmbeddingWorkFenced
+		}
 	}
 
 	materializedGeneration := work.InputGeneration

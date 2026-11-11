@@ -19,9 +19,10 @@ const (
 	ProcessingProfileContractV1 = "processing-profile/v1"
 	// MaxRetrievalCandidateLimit bounds each processing-profile retrieval lane.
 	MaxRetrievalCandidateLimit = 1_000
+	// MaxProcessingEmbeddings bounds the embedding bindings in one profile.
+	MaxProcessingEmbeddings = 64
 
 	maxProfileStringBytes     = 1 << 10
-	maxProcessingEmbeddings   = 64
 	maxRequestedArtifacts     = 4
 	maxRenditionDocumentBytes = int64(1 << 40)
 	maxRenditionResponseBytes = int64(1 << 30)
@@ -444,8 +445,8 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 	if profile.ContractVersion != ProcessingProfileContractV1 {
 		return fmt.Errorf("contract version must be %q", ProcessingProfileContractV1)
 	}
-	if len(profile.Embeddings) > maxProcessingEmbeddings {
-		return fmt.Errorf("too many embedding bindings: maximum is %d", maxProcessingEmbeddings)
+	if len(profile.Embeddings) > MaxProcessingEmbeddings {
+		return fmt.Errorf("too many embedding bindings: maximum is %d", MaxProcessingEmbeddings)
 	}
 	if profile.Rendition != nil {
 		if err := validateRenditionBinding(*profile.Rendition); err != nil {
