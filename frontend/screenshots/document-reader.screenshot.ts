@@ -487,6 +487,21 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     path: path.join(output!, "pdf-search-empty.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
   });
+  await page.getByRole("combobox", { name: "Search syntax: Plain words" }).click();
+  await page.getByRole("option", { name: "Query syntax" }).click();
+  await search.fill("unfindable frozen phrase");
+  await search.press("Enter");
+  const frozen = page.getByRole("region", { name: "Frozen query results" });
+  await expect(
+    frozen.getByText("Across the current vault, 2 PDFs have 4 pages without a text layer."),
+  ).toBeVisible();
+  await expect(frozen.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
+  await page.screenshot({
+    path: path.join(output!, "pdf-search-frozen.png"),
+    clip: { x: 231, y: 56, width: 746, height: 700 },
+  });
+  await page.getByRole("combobox", { name: "Search syntax: Query syntax" }).click();
+  await page.getByRole("option", { name: "Plain words" }).click();
   await page.route("**/api/v1/search/text-coverage*", (route) =>
     route.fulfill({
       json: {

@@ -2154,6 +2154,27 @@ it.each(["partial", "unavailable"])(
   },
 );
 
+it("shows current vault PDF gaps for an empty frozen query", async () => {
+  const { fetchMock } = renderEmptySearch(async () =>
+    json({ pdfs_without_text: 2, pages_without_text: 3 }),
+  );
+  await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
+  await submitSearch("missing");
+  const results = await screen.findByRole("region", { name: "Frozen query results" });
+  expect(
+    await within(results).findByText(
+      "Across the current vault, 2 PDFs have 3 pages without a text layer.",
+    ),
+  ).toBeTruthy();
+  expect(within(results).getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
+  const request = fetchMock.mock.calls
+    .map(([url]) => String(url))
+    .find((url) => url.startsWith("/api/v1/search/text-coverage"));
+  expect(new URL(request!, "https://example.com").search).toBe("");
+});
+
 it.each(["zero", "failure", "frozen"])(
   "keeps the empty search quiet when coverage is %s",
   async (state) => {
@@ -2169,12 +2190,9 @@ it.each(["zero", "failure", "frozen"])(
       await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
     }
     await submitSearch("missing");
-    if (state === "frozen") {
-      const results = await screen.findByRole("region", { name: "Frozen query results" });
-      expect(within(results).getByText("No matching documents")).toBeTruthy();
-      expect(coverage).not.toHaveBeenCalled();
-    } else await waitFor(() => expect(coverage).toHaveBeenCalled());
+    await waitFor(() => expect(coverage).toHaveBeenCalled());
     expect(screen.queryByText(/without a text layer/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
   },
 );
 

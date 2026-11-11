@@ -75,7 +75,11 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
   },
 );
 
-async function mockReadyText(source: SelectedSource, pages: number[] = []) {
+async function mockReadyText(
+  source: SelectedSource,
+  pages: number[] = [],
+  artifactFailure = false,
+) {
   const { createHash } = await import("node:crypto");
   const body = "Report one. Report two.";
   const envelope = {
@@ -131,22 +135,67 @@ async function mockReadyText(source: SelectedSource, pages: number[] = []) {
       }),
     )
     .mockResolvedValueOnce(
-      new Response(bytes, {
-        headers: {
-          "Content-Type": "text/markdown; charset=utf-8",
-          "Content-Length": String(bytes.length),
-          "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
-          "X-Docbank-Rendition-SHA256": hash,
-          "X-Docbank-Rendition-Size": String(bytes.length),
-          "X-Docbank-Rendition-Profile": "b".repeat(64),
-          "X-Docbank-Rendition-Generation": "c".repeat(64),
-          "X-Docbank-Rendition-Attachment": "d".repeat(64),
-          "X-Docbank-Rendition-Build": "e".repeat(64),
-          "X-Docbank-Rendition-Artifact": "f".repeat(64),
-        },
-      }),
+      artifactFailure
+        ? new Response("artifact unavailable", { status: 500 })
+        : new Response(bytes, {
+            headers: {
+              "Content-Type": "text/markdown; charset=utf-8",
+              "Content-Length": String(bytes.length),
+              "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
+              "X-Docbank-Rendition-SHA256": hash,
+              "X-Docbank-Rendition-Size": String(bytes.length),
+              "X-Docbank-Rendition-Profile": "b".repeat(64),
+              "X-Docbank-Rendition-Generation": "c".repeat(64),
+              "X-Docbank-Rendition-Attachment": "d".repeat(64),
+              "X-Docbank-Rendition-Build": "e".repeat(64),
+              "X-Docbank-Rendition-Artifact": "f".repeat(64),
+            },
+          }),
     );
 }
+
+it("keeps PDF page gaps when reading the text artifact fails", async () => {
+  const pdf = { ...source, name: "scan.pdf", mimeType: "application/pdf" };
+  await mockReadyText(pdf, [2], true);
+  render(VerifiedText, {
+    session: "session",
+    source: pdf,
+    authorizationRevision: 3,
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(screen.getByText(/Page 2 has no text layer/)).toBeTruthy();
+  expect(screen.getByRole("link", { name: /OCR can read it/ })).toBeTruthy();
+});
+
+it("reports unavailable PDF page coverage", async () => {
+  const pdf = { ...source, name: "scan.pdf", mimeType: "application/pdf" };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      state: "unprocessed",
+      source: {
+        node_id: 7,
+        revision: 3,
+        version_id: pdf.versionID,
+        blob_hash: pdf.blobHash,
+        size: pdf.size,
+        media_type: pdf.mimeType,
+      },
+      profile: { name: "archive", configuration: "configured", fingerprint: "b".repeat(64) },
+      generation_id: "",
+      attachment_id: "",
+      build_id: "",
+      page_coverage: "unavailable",
+    }),
+  );
+  render(VerifiedText, {
+    session: "session",
+    source: pdf,
+    authorizationRevision: 3,
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText("PDF page text coverage is unavailable.")).toBeTruthy();
+});
 
 it("finds text, wraps navigation, and clears the find query", async () => {
   await mockReadyText(source);

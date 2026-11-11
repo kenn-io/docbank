@@ -1244,6 +1244,13 @@
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const pdfCoverageDescription = $derived(
+    pdfCoverage?.pdfs_without_text
+      ? `${snapshotActive ? "Across the current vault, " : ""}${pdfCoverageIncomplete ? (snapshotActive ? "at least " : "At least ") : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
+      : pdfCoverageIncomplete
+        ? `${snapshotActive ? "Across the current vault, PDF" : "PDF"} text coverage is incomplete; some pages may not be searchable.`
+        : undefined,
+  );
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
   const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
@@ -2159,9 +2166,12 @@
 
   $effect(() => {
     const query = activeQuery;
-    const tag = activeTagID;
+    const frozen = snapshotActive;
+    const tag = frozen ? "" : activeTagID;
     const session = webSession;
-    const eligible = !!query && !loading && !searchPending && !snapshotActive && rows.length === 0;
+    const eligible = frozen
+      ? snapshot.state.status === "ready" && snapshot.state.firstPage?.total === 0
+      : !!query && !loading && !searchPending && rows.length === 0;
     pdfCoverage = null;
     if (!eligible) return;
     const controller = new AbortController();
@@ -4603,7 +4613,11 @@
                     data-member-hash={snapshotPage.member_hash}
                   >
                     {#if snapshotPage.rows.length === 0}
-                      <EmptyState title="No matching documents">
+                      <EmptyState
+                        title="No matching documents"
+                        description={pdfCoverageDescription}
+                        children={pdfCoverageDescription ? pdfOCRGuide : undefined}
+                      >
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
                     {:else}
@@ -4886,15 +4900,13 @@
                       : emptyRoot
                         ? "No documents yet"
                         : "Empty folder"}
-                  description={activeQuery && pdfCoverage?.pdfs_without_text
-                    ? `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
-                    : activeQuery && pdfCoverageIncomplete
-                      ? "PDF text coverage is incomplete; some pages may not be searchable."
-                      : tagBrowse && taggedTrashed > 0
-                        ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                        : emptyRoot
-                          ? "Add files or a folder to start your vault."
-                          : undefined}
+                  description={activeQuery && pdfCoverageDescription
+                    ? pdfCoverageDescription
+                    : tagBrowse && taggedTrashed > 0
+                      ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
+                      : emptyRoot
+                        ? "Add files or a folder to start your vault."
+                        : undefined}
                   children={activeQuery && (pdfCoverage?.pdfs_without_text || pdfCoverageIncomplete)
                     ? pdfOCRGuide
                     : emptyRoot
