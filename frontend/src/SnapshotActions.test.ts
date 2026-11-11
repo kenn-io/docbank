@@ -94,8 +94,10 @@ it("checks each document independently and keeps its path through retry", async 
       return Response.json(await receiptFor(request));
     }
     const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-    if (url.includes("/tags?"))
-      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.includes("/tags?")) {
+      const items = id === 9 && writes.length > 1 ? catalog : [];
+      return Response.json({ items, total: items.length, limit: 1000, offset: 0 });
+    }
     const revision = id === 7 && ++reads > 1 ? 11 : id === 7 ? 10 : 12;
     return Response.json({
       id,
@@ -120,7 +122,7 @@ it("checks each document independently and keeps its path through retry", async 
   await fireEvent.click(retry);
   await screen.findByText("Has “Review”");
   expect(
-    within(screen.getByText("/alpha/report.pdf").closest("tr")!).getByText("Couldn't check"),
+    within(screen.getByText("/alpha/report.pdf").closest("tr")!).getByText("Missing “Review”"),
   ).toBeTruthy();
   expect(
     within(screen.getByText("/beta/report.pdf").closest("tr")!).getByText("Has “Review”"),
@@ -276,8 +278,8 @@ it.each([true, false])(
       }
       if (url.includes("/tags?"))
         return Response.json({
-          items: assign ? [] : catalog,
-          total: assign ? 0 : 1,
+          items: assign === writes.length > 1 ? catalog : [],
+          total: assign === writes.length > 1 ? 1 : 0,
           limit: 1000,
           offset: 0,
         });
@@ -306,6 +308,46 @@ it.each([true, false])(
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
   },
 );
+
+it("reads membership after a retry receipt and allows another check", async () => {
+  const writes: BatchTagRequest[] = [];
+  let assigned = false;
+  let tagReads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST") {
+      const request = JSON.parse(String(init.body)) as BatchTagRequest;
+      writes.push(request);
+      if (writes.length === 1) throw new TypeError("Lost response");
+      // Another client removes the tag before the successful receipt arrives.
+      assigned = false;
+      return Response.json(await receiptFor(request));
+    }
+    if (url.includes("/tags?")) {
+      tagReads++;
+      return Response.json({
+        items: assigned ? catalog : [],
+        total: assigned ? 1 : 0,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    return Response.json({ id: 7, name: "report.pdf", revision: writes.length > 1 ? 5 : 4 });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]] }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  await waitFor(() => expect(tagReads).toBe(2));
+  await screen.findByText("The document doesn't have “Review” yet.");
+  await screen.findByRole("button", { name: "Check again" });
+  assigned = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+  await screen.findByText("The document has “Review”.");
+  expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+});
 
 it.each(["unknown", "rejected", "stale"])(
   "keeps the original selection after a %s retry",

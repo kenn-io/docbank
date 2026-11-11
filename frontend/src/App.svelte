@@ -5543,7 +5543,10 @@
         disabled={loading}
         onchanged={handleBatchTagsChanged}
         onunknown={handleUnknownTagging}
-        onchecked={reloadSelectedTags}
+        onchecked={() => {
+          refreshCurrentView();
+          reloadSelectedTags();
+        }}
         oncreated={() => void loadTagCatalog(false, true)}
         onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
@@ -5564,7 +5567,10 @@
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
         onunknown={() => (snapshotTagRefreshPending = true)}
-        onchecked={reloadSelectedTags}
+        onchecked={() => {
+          void loadTagCatalog();
+          reloadSelectedTags();
+        }}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
         onclose={() => {

@@ -1393,6 +1393,8 @@ it("reloads inspector tags after checking an uncertain change when folder refres
     });
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === "/api/v1/tags?limit=1000&offset=0" && applied)
+      return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/nodes/3") {
       nodeReads++;
       return json(selectionNode(3, "readme.txt", "file", 1, applied ? 2 : 1));
@@ -1433,6 +1435,11 @@ it("reloads inspector tags after checking an uncertain change when folder refres
     expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("tax"),
   );
   expect(writes).toBe(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "tax" },
+  });
+  expect(await screen.findByRole("option", { name: "tax (4)" })).toBeTruthy();
 });
 
 it("uses refreshed live metadata for the selected row and tag actions", async () => {

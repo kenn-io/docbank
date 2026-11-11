@@ -83,16 +83,10 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      if (recovering && results) {
-        const confirmedNodes = new Map(confirmed.nodes.map((node) => [node.node_id, node]));
-        results = results.map((row) => {
-          const node = confirmedNodes.get(row.node_id);
-          return node ? { ...row, revision: node.revision, status: "matched" } : row;
-        });
-      } else {
+      if (!recovering) {
         receipt = confirmed;
+        onchanged?.(confirmed);
       }
-      onchanged?.(confirmed);
     },
     onunknown: () => {
       recovering = true;
@@ -175,6 +169,10 @@
       operation_id: randomUUID(),
       nodes: remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! })),
     });
+    if (alive && outcome === "confirmed") {
+      await check();
+      return;
+    }
     if (alive && (outcome === "stale" || outcome === "unknown")) {
       results = results?.map((row) =>
         attempted.has(row.node_id)
@@ -349,7 +347,7 @@
     {#if receipt}
       <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
     {:else if recovering && request}
-      {#if results && (remaining.length || unavailable)}<span class="footer-start"
+      {#if results}<span class="footer-start"
           ><Button size="sm" surface="soft" disabled={busy} onclick={() => void check()}
             >Check again</Button
           ></span
