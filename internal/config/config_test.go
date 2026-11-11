@@ -1354,6 +1354,17 @@ func TestVisionRuntimeConfig(t *testing.T) {
 	cfg.ProcessingProfiles["archive"] = processingProfile
 	require.NoError(t, cfg.Validate())
 
+	t.Run("understanding task with photo adapter", func(t *testing.T) {
+		mismatch := cfg
+		mismatch.RenditionProfiles = map[string]RenditionProfileConfig{"primary": profile}
+		understanding, err := vision.Descriptor(vision.UnderstandingProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
+		require.NoError(t, err)
+		photo := mismatch.RenditionProfiles["primary"]
+		photo.DescriptorID, photo.DescriptorFingerprint = understanding.ID, understanding.Fingerprint
+		mismatch.RenditionProfiles["primary"] = photo
+		require.Error(t, mismatch.Validate(), "the photo adapter cannot run the understanding task")
+	})
+
 	t.Run("unrecognized task", func(t *testing.T) {
 		unknown := profile
 		unknown.DescriptorID = "unrecognized-task"

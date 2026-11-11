@@ -194,6 +194,21 @@ func TestCanonicalProfileModelInputRotatesInputAndVectorSpace(t *testing.T) {
 	assert.ElementsMatch(t, layers("profile", "input:semantic", "vector:semantic"), changedFingerprintLayers(before, after))
 }
 
+func TestCanonicalProfileRejectsUnderstandingTaskWithPhotoAdapter(t *testing.T) {
+	profile := syntheticProcessingProfileV1()
+	profile.Rendition.AdapterContract = vision.AdapterContract
+	profile.Rendition.Descriptor.ID = vision.ProviderID
+	profile.Embeddings = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.RetentionDisclosure.RetainProviderMarkdown = false
+	profile.RetentionDisclosure.RetainTypedArtifacts = false
+	_, _, err := document.CanonicalProfile(profile)
+	require.NoError(t, err)
+	profile.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+	_, _, err = document.CanonicalProfile(profile)
+	require.Error(t, err, "the photo adapter cannot run the understanding task")
+}
+
 func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
