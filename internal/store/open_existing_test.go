@@ -120,3 +120,13 @@ func (d *recordingScratchDriver) Open(path string, opts docsqlite.OpenOptions) (
 	}
 	return d.Driver.Open(path, opts)
 }
+
+func TestOpenExistingRejectsNonRegularDatabase(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := filepath.Join(root, "docbank.db")
+	require.NoError(t, os.Mkdir(path, 0o700))
+	_, err := OpenExisting(t.Context(), path, DefaultSQLiteDriver(), t.TempDir())
+	require.ErrorContains(t, err, "not a regular file")
+	require.NotErrorIs(t, err, ErrNeedsOwner)
+}

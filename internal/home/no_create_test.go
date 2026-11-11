@@ -1,6 +1,7 @@
 package home
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,4 +68,40 @@ func TestNoCreateRegistryParent(t *testing.T) {
 	require.Equal(t, canonical, registry)
 	require.NoError(t, lock.Release())
 	require.NoError(t, opened.Close())
+}
+
+func TestNoCreateHierarchyConflicts(t *testing.T) {
+	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+	parent := filepath.Join(t.TempDir(), "parent")
+	child := filepath.Join(parent, "child")
+	require.NoError(t, os.MkdirAll(child, 0o700))
+	for _, root := range []string{parent, child} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "vault.lock"), nil, 0o600))
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(parent, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	for _, pair := range [][2]string{{parent, parent}, {parent, child}, {child, parent}, {parent, alias}} {
+		for _, readerFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s_%s_readerFirst_%t", filepath.Base(pair[0]), filepath.Base(pair[1]), readerFirst), func(t *testing.T) {
+				owner := Layout{Root: pair[0]}
+				reader := Layout{Root: pair[1]}
+				if readerFirst {
+					root, lock, _, err := reader.OpenExistingAndLockExclusiveNoCreate()
+					require.NoError(t, err)
+					_, err = owner.TryLockExclusive()
+					require.ErrorIs(t, err, ErrVaultLocked)
+					require.NoError(t, lock.Release())
+					require.NoError(t, root.Close())
+				} else {
+					lock, err := owner.TryLockExclusive()
+					require.NoError(t, err)
+					_, _, _, err = reader.OpenExistingAndLockExclusiveNoCreate()
+					require.ErrorIs(t, err, ErrVaultLocked)
+					require.NoError(t, lock.Release())
+				}
+			})
+		}
+	}
 }
