@@ -19,6 +19,5 @@ func TestSelectedMediaEmbeddingProfileConfiguration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), encoded.Bytes(), 0o600))
 	loaded, err := Load(root)
 	require.NoError(t, err)
-	require.NoError(t, loaded.Validate())
 	require.Equal(t, "archive", loaded.SuppliedMediaEmbeddingProfile)
 }

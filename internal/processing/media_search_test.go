@@ -153,6 +153,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
 	require.Equal(t, 102, report.Coverage.ScopedDocuments)
 	require.Equal(t, 101, report.Coverage.CompleteDocuments)
+	// Image-only bindings cannot encode transcript chunks, so selected media falls back.
 	for _, mode := range []string{"semantic", "hybrid"} {
 		for _, binding := range []string{"", image.binding.Name} {
 			fallback, err := service.Search(t.Context(), SearchRequest{Query: "longer selected transcript", Mode: mode, Profile: "images",

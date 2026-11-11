@@ -49,7 +49,7 @@ func (q *searchHydrationCancelQuerier) QueryContext(ctx context.Context, query s
 	return q.metadataQuerier.QueryContext(ctx, query, args...)
 }
 
-func TestSimilarSharedRowsExpandMembershipBeforeSourceExclusion(t *testing.T) {
+func TestSharedRowsExpandSearchMembershipBeforeSourceExclusion(t *testing.T) {
 	t.Parallel()
 	s, sourceVersion, profile, sourceAttachment := newEmbeddingCatalogFixture(t)
 	var buildID string

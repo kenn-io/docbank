@@ -34,9 +34,9 @@ func TestMediaProcessingRequiresExplicitSelection(t *testing.T) {
 	require.Error(t, validateMediaProcessing(&MediaProcessingRequest{SuppliedInputID: "input"}))
 }
 
-// TestSuppliedMediaProfileAdmitsWAVAndMP3 catches the daemon advertising a
-// built-in transcript profile without executable codec bindings.
-func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
+// TestSuppliedMediaProfileAdmissionAndEmbeddingComposition checks the built-in
+// codec bindings and composition of a donor's embeddings.
+func TestSuppliedMediaProfileAdmissionAndEmbeddingComposition(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
 	name, profile, err := NewSuppliedMediaProfile(
