@@ -15,7 +15,7 @@ func TestPhotoImportCheckpointPersistsSelectionAndValidatesFormatAndHeaderSize(t
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "imports")
 	owner := photoCheckpointStore{dir: dir}
-	next := &photoImportCheckpoint{SourceID: uuid.New(), Revision: uuid.New(), Destination: "/", ManifestVersion: 2, ManifestHash: strings.Repeat("a", 64), PickerKind: "files"}
+	next := &photoImportCheckpoint{ProtocolVersion: 3, SourceID: uuid.New(), Revision: uuid.New(), Destination: "/", ManifestVersion: 2, ManifestHash: strings.Repeat("a", 64), PickerKind: "files"}
 	require.NoError(t, owner.replace("profile", photoCheckpointChange{Next: next}))
 	file := filepath.Join(dir, "profile.jsonl")
 	// A new owner after restart loads the original source and selection digest.
@@ -44,6 +44,7 @@ func TestPhotoImportCheckpointPersistsSelectionAndValidatesFormatAndHeaderSize(t
 		line + "\n{broken",
 		line + "\n" + strings.Replace(rest, `"manifestVersion":2`, `"manifestVersion":1`, 1),
 		line + "\n" + strings.Replace(rest, `"manifestVersion":2`, `"manifestVersion":99`, 1),
+		line + "\n" + strings.Replace(rest, `"protocolVersion":3`, `"protocolVersion":4`, 1),
 	} {
 		require.NoError(t, os.WriteFile(file, []byte(contents), 0600))
 		_, _, err = reopened.read("profile", true)

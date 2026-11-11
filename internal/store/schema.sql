@@ -2480,6 +2480,7 @@ CREATE INDEX IF NOT EXISTS photo_set_members_added ON photo_set_members(set_id,a
 CREATE TABLE IF NOT EXISTS browser_photo_imports (
     import_id TEXT PRIMARY KEY,
     vault_id TEXT NOT NULL,
+    format_version INTEGER NOT NULL,
     source_id TEXT NOT NULL,
     picker_kind TEXT NOT NULL,
     label TEXT NOT NULL,
@@ -2488,18 +2489,17 @@ CREATE TABLE IF NOT EXISTS browser_photo_imports (
     suffix_json TEXT NOT NULL,
     skipped_json TEXT NOT NULL,
     destination_id INTEGER,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    UNIQUE (vault_id, source_id)
 );
 
 CREATE TABLE IF NOT EXISTS browser_photo_import_groups (
     import_id TEXT NOT NULL REFERENCES browser_photo_imports(import_id),
-    group_key TEXT NOT NULL,
     ordinal INTEGER NOT NULL,
     members_json TEXT NOT NULL,
     hashes_json TEXT,
     receipt_json TEXT,
-    PRIMARY KEY (import_id, group_key),
-    UNIQUE (import_id, ordinal)
+    PRIMARY KEY (import_id, ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS photo_change_receipts (

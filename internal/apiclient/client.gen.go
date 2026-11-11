@@ -32039,6 +32039,7 @@ type PhotoImportCheckpoint struct {
 	ManifestHash    string    `json:"manifestHash"`
 	ManifestVersion int64     `json:"manifestVersion"`
 	PickerKind      string    `json:"pickerKind"`
+	ProtocolVersion *int64    `json:"protocolVersion,omitempty"`
 	Revision        uuid.UUID `json:"revision"`
 	SourceID        uuid.UUID `json:"sourceID"`
 }

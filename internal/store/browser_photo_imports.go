@@ -2,19 +2,14 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"hash"
 	"path"
 	"strings"
 	"uuid"
-
-	"golang.org/x/text/unicode/norm"
 )
 
 // BrowserPhotoGroupMember identifies one member of a saved browser group.
@@ -49,7 +44,6 @@ type BrowserPhotoSkippedFile struct {
 
 // BrowserPhotoImportGroup preserves the members and result of one group.
 type BrowserPhotoImportGroup struct {
-	Key     string
 	Members []BrowserPhotoGroupMember
 	Hashes  []string
 	Receipt *PhotoImportResult
@@ -58,7 +52,7 @@ type BrowserPhotoImportGroup struct {
 // BrowserPhotoGroupRef identifies the saved group committed by an upload.
 type BrowserPhotoGroupRef struct {
 	ImportID uuid.UUID
-	GroupKey string
+	Ordinal  int
 }
 
 type browserPhotoReceipt struct {
@@ -103,8 +97,8 @@ func (s *Store) BrowserPhotoGroupReceipt(ctx context.Context, ref BrowserPhotoGr
 	var receipt sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT g.receipt_json FROM browser_photo_import_groups g
 		JOIN browser_photo_imports i ON i.import_id=g.import_id
-		WHERE g.import_id=$1 AND g.group_key=$2 AND i.vault_id=$3`,
-		ref.ImportID.String(), ref.GroupKey, s.VaultID()).Scan(&receipt)
+		WHERE g.import_id=$1 AND g.ordinal=$2 AND i.vault_id=$3 AND i.format_version=1`,
+		ref.ImportID.String(), ref.Ordinal, s.VaultID()).Scan(&receipt)
 	if err != nil || !receipt.Valid {
 		return nil, err
 	}
@@ -144,6 +138,19 @@ func (s *Store) ListBrowserPhotoImports(ctx context.Context, offset, limit int) 
 	return imports, rows.Err()
 }
 
+// BrowserPhotoImportIDForSource resolves a checkpoint to its saved import.
+func (s *Store) BrowserPhotoImportIDForSource(ctx context.Context, source uuid.UUID) (uuid.UUID, error) {
+	var text string
+	err := s.db.QueryRowContext(ctx, `SELECT import_id FROM browser_photo_imports WHERE vault_id=$1 AND source_id=$2`, s.VaultID(), source.String()).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil(), ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil(), err
+	}
+	return uuid.Parse(text)
+}
+
 // InspectBrowserPhotoImport waits for admitted writers and reads saved facts.
 func (s *Store) InspectBrowserPhotoImport(ctx context.Context, id uuid.UUID) (BrowserPhotoImport, error) {
 	return s.readBrowserPhotoImport(ctx, id, true)
@@ -172,15 +179,18 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 	var item BrowserPhotoImport
 	read := func(tx *sql.Tx) error {
 		var source, suffix, skipped string
-		var anchor int64
+		var anchor, formatVersion int64
 		var destination sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT source_id,picker_kind,label,destination,created_at,anchor_id,suffix_json,destination_id,skipped_json
+		if err := tx.QueryRowContext(ctx, `SELECT source_id,picker_kind,label,destination,created_at,anchor_id,suffix_json,destination_id,skipped_json,format_version
 			FROM browser_photo_imports WHERE import_id=$1 AND vault_id=$2`, id.String(), s.VaultID()).Scan(
-			&source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination, &skipped); err != nil {
+			&source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination, &skipped, &formatVersion); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
+		}
+		if formatVersion != 1 {
+			return errors.New("unsupported browser photo import version")
 		}
 		var err error
 		item.ID = id
@@ -198,7 +208,7 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 		if destination.Valid {
 			item.Directory = IngestDirectoryPlan{anchorID: destination.Int64}
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT group_key,members_json,hashes_json,receipt_json
+		rows, err := tx.QueryContext(ctx, `SELECT members_json,hashes_json,receipt_json
 			FROM browser_photo_import_groups WHERE import_id=$1 ORDER BY ordinal`, id.String())
 		if err != nil {
 			return err
@@ -208,14 +218,11 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 			var group BrowserPhotoImportGroup
 			var members string
 			var hashes, receipt sql.NullString
-			if err := rows.Scan(&group.Key, &members, &hashes, &receipt); err != nil {
+			if err := rows.Scan(&members, &hashes, &receipt); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(members), &group.Members); err != nil {
 				return err
-			}
-			if group.Key != BrowserPhotoGroupKey(group.Members) {
-				return errors.New("invalid saved browser photo group")
 			}
 			if hashes.Valid {
 				if err := json.Unmarshal([]byte(hashes.String), &group.Hashes); err != nil || len(group.Hashes) != len(group.Members) {
@@ -253,8 +260,8 @@ func (s *Store) prepareBrowserPhotoGroupTx(
 	err := tx.QueryRowContext(ctx, `SELECT g.members_json,g.hashes_json,g.receipt_json,
 		i.anchor_id,i.suffix_json,i.destination_id FROM browser_photo_import_groups g
 		JOIN browser_photo_imports i ON i.import_id=g.import_id
-		WHERE g.import_id=$1 AND g.group_key=$2 AND i.vault_id=$3`,
-		ref.ImportID.String(), ref.GroupKey, s.VaultID()).Scan(
+		WHERE g.import_id=$1 AND g.ordinal=$2 AND i.vault_id=$3 AND i.format_version=1`,
+		ref.ImportID.String(), ref.Ordinal, s.VaultID()).Scan(
 		&membersJSON, &hashesJSON, &receiptJSON, &anchorID, &suffixJSON, &destinationID)
 	if err != nil {
 		return false, err
@@ -270,7 +277,7 @@ func (s *Store) prepareBrowserPhotoGroupTx(
 	if err := json.Unmarshal([]byte(hashesJSON.String), &hashes); err != nil {
 		return false, err
 	}
-	if ref.GroupKey != BrowserPhotoGroupKey(members) || len(members) != len(group.Members) || len(hashes) != len(members) {
+	if len(members) != len(group.Members) || len(hashes) != len(members) {
 		return false, errors.New("browser photo group declaration changed")
 	}
 	for i, member := range members {
@@ -313,7 +320,7 @@ func saveBrowserPhotoReceiptTx(ctx context.Context, tx *sql.Tx, ref BrowserPhoto
 		return err
 	}
 	updated, err := tx.ExecContext(ctx, `UPDATE browser_photo_import_groups SET receipt_json=$1
-		WHERE import_id=$2 AND group_key=$3 AND receipt_json IS NULL`, string(receipt), ref.ImportID.String(), ref.GroupKey)
+		WHERE import_id=$2 AND ordinal=$3 AND receipt_json IS NULL`, string(receipt), ref.ImportID.String(), ref.Ordinal)
 	if err != nil {
 		return err
 	}
@@ -345,15 +352,60 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 	}
 	id := uuid.New()
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_imports
-			(import_id, vault_id, source_id, picker_kind, label, destination, anchor_id, suffix_json, skipped_json, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id.String(), s.VaultID(), plan.SourceID.String(),
+		inserted, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_imports
+			(import_id, vault_id, source_id, picker_kind, label, destination, anchor_id, suffix_json, skipped_json, created_at, format_version)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1) ON CONFLICT (vault_id,source_id) DO NOTHING`, id.String(), s.VaultID(), plan.SourceID.String(),
 			plan.PickerKind, plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), string(skipped), nowRFC3339())
 		if err != nil {
 			return err
 		}
+		count, err := inserted.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			var existingID, picker, label, destination, existingSkipped string
+			var version int64
+			if err := tx.QueryRowContext(ctx, `SELECT import_id,picker_kind,label,destination,skipped_json,format_version FROM browser_photo_imports WHERE vault_id=$1 AND source_id=$2`, s.VaultID(), plan.SourceID.String()).Scan(&existingID, &picker, &label, &destination, &existingSkipped, &version); err != nil {
+				return err
+			}
+			if version != 1 || picker != plan.PickerKind || label != plan.Label || destination != plan.Destination || existingSkipped != string(skipped) {
+				return errors.New("browser photo import declaration changed")
+			}
+			rows, err := tx.QueryContext(ctx, `SELECT members_json FROM browser_photo_import_groups WHERE import_id=$1 ORDER BY ordinal`, existingID)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			index := 0
+			for rows.Next() {
+				var existing string
+				if err := rows.Scan(&existing); err != nil {
+					return err
+				}
+				if index >= len(plan.Groups) {
+					return errors.New("browser photo import declaration changed")
+				}
+				members, err := json.Marshal(plan.Groups[index].Members)
+				if err != nil {
+					return err
+				}
+				if existing != string(members) {
+					return errors.New("browser photo import declaration changed")
+				}
+				index++
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			if index != len(plan.Groups) {
+				return errors.New("browser photo import declaration changed")
+			}
+			id, err = uuid.Parse(existingID)
+			return err
+		}
 		for index, group := range plan.Groups {
-			if len(group.Members) == 0 || group.Key != BrowserPhotoGroupKey(group.Members) {
+			if len(group.Members) == 0 {
 				return errors.New("invalid browser photo group")
 			}
 			for _, member := range group.Members {
@@ -366,7 +418,7 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_import_groups
-				(import_id, group_key, ordinal, members_json) VALUES ($1,$2,$3,$4)`, id.String(), group.Key, index, string(members)); err != nil {
+				(import_id, ordinal, members_json) VALUES ($1,$2,$3)`, id.String(), index, string(members)); err != nil {
 				return err
 			}
 		}
@@ -379,12 +431,12 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 }
 
 // PinBrowserPhotoGroupHashes binds all members to their first attempted bytes.
-func (s *Store) PinBrowserPhotoGroupHashes(ctx context.Context, id uuid.UUID, key string, hashes []string) error {
+func (s *Store) PinBrowserPhotoGroupHashes(ctx context.Context, id uuid.UUID, ordinal int, hashes []string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var membersJSON string
 		var pinned sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT members_json, hashes_json FROM browser_photo_import_groups
-			WHERE import_id=$1 AND group_key=$2`, id.String(), key).Scan(&membersJSON, &pinned); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT g.members_json, g.hashes_json FROM browser_photo_import_groups g JOIN browser_photo_imports i ON i.import_id=g.import_id
+			WHERE g.import_id=$1 AND g.ordinal=$2 AND i.format_version=1`, id.String(), ordinal).Scan(&membersJSON, &pinned); err != nil {
 			return err
 		}
 		var members []BrowserPhotoGroupMember
@@ -416,26 +468,7 @@ func (s *Store) PinBrowserPhotoGroupHashes(ctx context.Context, id uuid.UUID, ke
 			return nil
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE browser_photo_import_groups SET hashes_json=$1
-			WHERE import_id=$2 AND group_key=$3 AND hashes_json IS NULL`, string(encoded), id.String(), key)
+			WHERE import_id=$2 AND ordinal=$3 AND hashes_json IS NULL`, string(encoded), id.String(), ordinal)
 		return err
 	})
-}
-
-// BrowserPhotoGroupKey identifies an ordered group independently of the
-// positions assigned to its files by a browser picker.
-func BrowserPhotoGroupKey(members []BrowserPhotoGroupMember) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte("docbank-browser-photo-group-v1\x00"))
-	for _, member := range members {
-		writeBrowserPhotoKeyPart(h, norm.NFC.String(member.Path))
-		writeBrowserPhotoKeyPart(h, member.Role)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-func writeBrowserPhotoKeyPart(h hash.Hash, value string) {
-	var length [8]byte
-	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
-	_, _ = h.Write(length[:])
-	_, _ = h.Write([]byte(value))
 }
