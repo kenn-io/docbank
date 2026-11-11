@@ -874,9 +874,10 @@ func (s *Store) SelectedSemanticRowsAvailable(ctx context.Context, profile, bind
 		if space == "" {
 			space = fingerprints.VectorSpace[binding]
 		}
-		rows, _, err := semanticANNRowsForSourceTx(ctx, tx, profile, binding, selected.InputKind, space, scope)
-		available = len(rows) > 0
-		return err
+		filterSQL, filterArgs := semanticSearchFilterSQL(scope)
+		return scanSemanticRows(ctx, tx, profile, binding, selected.InputKind, space,
+			filterSQL, filterArgs, nil, scope.SelectedBuilds, len(scope.ContentVersionIDs) != 0, false, true,
+			func(semanticEligibilityKey, int64, string) { available = true })
 	})
 	return available, err
 }
@@ -891,7 +892,7 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 	var lastHash string
 	var representative int64
 	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-		filterSQL, filterArgs, nil, opts.SelectedBuilds, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+		filterSQL, filterArgs, nil, opts.SelectedBuilds, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), false, func(key semanticEligibilityKey, nodeID int64, hash string) {
 			if opts.CollapsesPhotoDuplicates() {
 				if hash != lastHash {
 					lastHash, representative = hash, nodeID
@@ -1092,7 +1093,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 				}
 			}
 			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-				filterSQL, filterArgs, hashes, nil, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+				filterSQL, filterArgs, hashes, nil, false, true, false, func(_ semanticEligibilityKey, nodeID int64, hash string) {
 					if representatives[hash] == 0 {
 						representatives[hash] = nodeID
 					}
@@ -1189,7 +1190,7 @@ func semanticMembershipSQL(driver string) string {
 // scanSemanticRows uses content hashes or version fences to bound its scan.
 func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
-	blobHashes []string, selectedBuilds []SearchSelectedBuild, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
+	blobHashes []string, selectedBuilds []SearchSelectedBuild, versionFence, representativeOrder, firstOnly bool, visit func(semanticEligibilityKey, int64, string),
 ) (retErr error) {
 	driver := `FROM embedding_sets es`
 	prefix := ""
@@ -1228,6 +1229,9 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 	order := ""
 	if representativeOrder {
 		order = " ORDER BY cv.blob_hash," + DuplicateRepresentativeOrder
+	}
+	if firstOnly {
+		order += " LIMIT 1"
 	}
 	rows, err := tx.QueryContext(ctx, prefix+`SELECT evr.vector_set_id,evr.input_id,evr.checksum,n.id AS node_id,cv.blob_hash `+
 		semanticMembershipSQL(driver)+filterSQL+order, args...)

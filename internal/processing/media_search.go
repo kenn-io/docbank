@@ -77,11 +77,13 @@ func (service *Service) searchMediaSources(
 		if err != nil {
 			return retrieval.Report{}, err
 		}
-		defer closeEgress()
 		query := retrieval.Query{Text: request.Query, Mode: mode, Limit: max(profile.portable.Retrieval.LexicalLimit, profile.portable.Retrieval.VectorLimit),
 			LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit, Scope: scope, ContentFirst: true,
 			ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID, Authorization: prepared.authorization}
-		report, err = prepared.searcher.Search(ctx, query)
+		func() {
+			defer closeEgress()
+			report, err = prepared.searcher.Search(ctx, query)
+		}()
 		if errors.Is(err, retrieval.ErrSelectedEmbeddingsUnavailable) {
 			// Eligibility can disappear after the planning read.
 			query.Mode = retrieval.ModeLexical

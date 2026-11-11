@@ -27,9 +27,6 @@ func ComposeSuppliedMediaEmbeddings(supplied ProfileConfig, profiles map[string]
 // The composed profile has a new canonical identity and requires its own
 // reviewed consent, just like any other processing profile change.
 func WithSuppliedMediaEmbeddings(supplied, donor ProfileConfig) (ProfileConfig, error) {
-	if supplied.Profile.Rendition == nil || supplied.Profile.Rendition.Name != SuppliedMediaProfileName {
-		return ProfileConfig{}, errors.New("supplied media embeddings require the built-in transcript profile")
-	}
 	if len(donor.Profile.Embeddings) == 0 {
 		return ProfileConfig{}, errors.New("supplied media embedding donor has no bindings")
 	}
