@@ -137,11 +137,15 @@ export function sessionJSON<T>(url: string, options: SessionOptions): Promise<T>
   return counted(url, options.method, async () => {
     const response = await send(url, options, false);
     if (response.status === 204) return undefined as T;
-    return (
-      options.responseLimit === undefined
-        ? await response.json()
-        : await boundedJSON(response, options.responseLimit, options.signal)
-    ) as T;
+    if (options.responseLimit !== undefined)
+      return (await boundedJSON(response, options.responseLimit, options.signal)) as T;
+    try {
+      return (await response.json()) as T;
+    } catch (cause) {
+      if (cause instanceof TypeError && !options.signal?.aborted)
+        throw new NetworkError(cause.message, { cause });
+      throw cause;
+    }
   });
 }
 

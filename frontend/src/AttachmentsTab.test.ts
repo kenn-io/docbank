@@ -331,3 +331,38 @@ it("retries an interrupted attachment response stream", async () => {
   expect(await screen.findByText("No published attachments")).toBeTruthy();
   expect(outgoing).toBe(2);
 });
+
+it.each([403, 503])("replaces changed-page recovery after a %s reload failure", async (status) => {
+  let firstCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const route = String(input);
+    if (route.includes("child_version_id=")) return Response.json(empty);
+    if (route.includes("after_order="))
+      return Response.json({
+        items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
+        total: 52,
+        next_operation_id: "",
+        next_order: 0,
+      });
+    firstCalls++;
+    if (firstCalls > 1) return Response.json({ detail: "Reload failed" }, { status });
+    return Response.json({
+      items: Array.from({ length: 50 }, (_, i) => ({
+        relation: relation(i + 1),
+        state: "pending",
+        reason: "text_extraction",
+      })),
+      total: 51,
+      next_operation_id: "synthetic",
+      next_order: 50,
+    });
+  });
+  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
+  const group = await screen.findByRole("region", { name: "Attachments" });
+  await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
+  await fireEvent.click(await within(group).findByRole("button", { name: "Reload attachments" }));
+  expect(await within(group).findByText(/Reload failed/)).toBeTruthy();
+  expect(within(group).queryByRole("button", { name: "Reload attachments" })).toBeNull();
+  expect(Boolean(within(group).queryByRole("button", { name: "Try again" }))).toBe(status === 503);
+  expect(firstCalls).toBe(2);
+});

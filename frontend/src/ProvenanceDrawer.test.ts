@@ -228,3 +228,47 @@ it("does not retry a permission failure", async () => {
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("retries interrupted history bodies and recovers on a manual attempt", async () => {
+  const interrupted = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError("Connection lost"));
+        },
+      }),
+    );
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(interrupted())
+    .mockResolvedValueOnce(interrupted())
+    .mockResolvedValueOnce(
+      Response.json({ node, items: [active], total: 1, limit: 1000, offset: 0 }),
+    );
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await fireEvent.click(retry);
+  expect(await screen.findByText("Added from watched folder")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it("does not retry malformed source history JSON", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{"));
+  render(ProvenanceDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});

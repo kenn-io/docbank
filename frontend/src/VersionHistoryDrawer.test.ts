@@ -315,3 +315,52 @@ it("retries version history after a temporary failure", async () => {
   expect(await screen.findByText("No versions")).toBeTruthy();
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
+
+it("retries interrupted version bodies and recovers on a manual attempt", async () => {
+  const interrupted = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError("Connection lost"));
+        },
+      }),
+    );
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(interrupted())
+    .mockResolvedValueOnce(interrupted())
+    .mockResolvedValueOnce(
+      Response.json({
+        items: [version(createdVersionID, 1, "content_create", "a")],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      }),
+    );
+  render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await fireEvent.click(retry);
+  expect(await screen.findByText("1 version")).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it("does not retry malformed version history JSON", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{"));
+  render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});

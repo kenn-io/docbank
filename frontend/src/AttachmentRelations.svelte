@@ -84,6 +84,7 @@
       .catch((cause: unknown) => {
         if (request === epoch && !pending.signal.aborted) {
           retryable = retryableHistoryError(cause);
+          changed = cause instanceof RelationPageChanged;
           error = message(cause);
         }
       })
