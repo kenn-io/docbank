@@ -249,6 +249,16 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 		if unit.Text == "" {
 			continue
 		}
+		if isImageUnderstandingUnit(unit.HeadingPath) {
+			first := len(navigation.Entries) == 0
+			if !first {
+				cursor += len("\n\n---\n\n")
+			}
+			cursor += len(renditionPresentation(NormalizedEvidenceUnitV1{HeadingPath: unit.HeadingPath, Locator: unit.Locator}, first))
+			if cursor > len(rendition.Markdown) {
+				return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
+			}
+		}
 		relative := bytes.Index(rendition.Markdown[cursor:], []byte(unit.Text))
 		if relative < 0 {
 			return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")

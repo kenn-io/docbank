@@ -44,7 +44,7 @@ func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, maxLinkChars, maxSourc
 	}
 	var lines []string
 	var sourceTruncated, truncated bool
-	for _, line := range strings.Split(unit.Text, "\n") {
+	for line := range strings.SplitSeq(unit.Text, "\n") {
 		text, source, rendition, err := sanitizeRenditionMarkdown(EscapeRenditionText(line), maxLinkChars, maxSourceBytes, maxRunes)
 		if err != nil {
 			return "", false, false, err
