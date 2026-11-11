@@ -463,7 +463,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.fill("unfindable synthetic phrase");
   await search.press("Enter");
   await expect(page.getByText("No matching documents")).toBeVisible();
-  await expect(page.getByText(/PDFs have .* pages without a text layer/)).toBeVisible();
+  await expect(page.getByText("2 PDFs have 4 pages without a text layer.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Learn about OCR" })).toHaveAttribute(
     "href",
     "https://docbank.ai/docs/usage/document-processing/#ocr",

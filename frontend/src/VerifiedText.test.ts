@@ -33,7 +33,7 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
           version_id: source.versionID,
           blob_hash: source.blobHash,
           size: 50,
-          media_type: "image/png",
+          media_type: state === "failed" ? "application/pdf" : source.mimeType,
         },
         profile: {
           name: "",
@@ -43,12 +43,13 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
         generation_id: "",
         attachment_id: "",
         build_id: "",
+        pages_without_text: state === "failed" ? [2] : [],
       }),
     );
     const onprocess = vi.fn();
     render(VerifiedText, {
       session: "session",
-      source,
+      source: state === "failed" ? { ...source, mimeType: "application/pdf" } : source,
       authorizationRevision: 3,
       onauthfailure: vi.fn(),
       onprocess,
@@ -65,6 +66,7 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
       expect(
         await screen.findByText("Text processing failed for this selected version."),
       ).toBeTruthy();
+      expect(screen.queryByText(/no text layer/)).toBeNull();
     } else {
       expect(
         await screen.findByText("Processing verified that this document has no readable text."),
@@ -216,6 +218,5 @@ it.each([
   } else {
     expect(await screen.findByText(emptyMessage)).toBeTruthy();
     expect(screen.queryByText(/no text layer/)).toBeNull();
-    expect(screen.queryByRole("link", { name: /OCR can read/ })).toBeNull();
   }
 });
