@@ -367,9 +367,9 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer and backup recovery remain unqualified. Native multi-store catalog
-operations are qualified below; deployment adapters and filesystem workers
-remain separate from public PostgreSQL vault opening.
+PostgreSQL metadata import and physical backup recovery remain unqualified.
+Native multi-store catalog operations are qualified below; deployment adapters
+and filesystem workers remain separate from public PostgreSQL vault opening.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -866,6 +866,40 @@ remove expired plans between read statements, and recheck explicit photo inputs
 before publication. Runtime grants permit only inserts into members, chunks,
 planned documents and roots; source, plan and job updates are limited to their
 existing mutable columns. These grants do not replace Store lifecycle checks.
+
+#### Logical metadata snapshots and SQLite recovery
+
+The internal Store exports deterministic logical metadata on either backend
+through `ExportMetadata`. `BeginMetadataSnapshot` pins the database view before
+returning; its `Export`, `ExportBackup` and blob-authority queries keep that same
+view while writers continue. PostgreSQL uses a read-only `REPEATABLE READ`
+transaction from the runtime pool. Closing the snapshot releases its connection
+and leaves the pool open. SQLite keeps its dedicated deferred connection so a
+backup does not take its writer lock.
+
+Both streams use the existing metadata JSONL format, validators and dependency
+order. The header carries the vault UUID and transactional node allocation
+high-water mark, including IDs whose nodes were deleted. `ExportBackup` includes
+only the retained document and artifact blob closure; uncommitted provider
+staging is excluded. Full export keeps the complete logical blob catalog.
+Neither stream contains physical pack placements or rebuildable search indexes.
+An export validates the retained metadata before writing its header. Treat a
+destination error as a failed export and discard the partial output.
+
+PostgreSQL metadata can be imported through `ImportMetadata` into a fresh SQLite
+Store. The source stays unchanged. Logical identities, retained processing
+authority and canonical audit history survive this transfer; `VerifyAudit`
+replays the history and can compare previously recorded evidence on either
+backend. Copying the metadata stream alone does not recover blob bytes or
+physical pack authority. PostgreSQL import, filesystem backup/restore and public
+PostgreSQL vault opening remain separate boundaries.
+
+The `metadata-export` contracts cover native audited transfer, deterministic
+exports of retained catalogs, backup blob selection, snapshot isolation, canceled
+calls and failed destinations. They recover through the existing SQLite importer
+and re-export the restored metadata. Retained catalog fixtures qualify the
+exporter, not their producers. Existing runtime SELECT grants cover this path;
+no schema changes or extra write privileges are required.
 
 #### PostgreSQL reference implementations
 
