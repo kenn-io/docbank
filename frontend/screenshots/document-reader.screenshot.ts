@@ -1,6 +1,6 @@
 import { expect, test as base } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -78,6 +78,11 @@ const test = base.extend<{ readerURL: string }>({
       ]) {
         const file = path.join(workspace, name!);
         await writeFile(file, content!);
+        await docbank("add", file, "--dest", "/");
+      }
+      for (const name of ["mixed-below-ratio.pdf", "image-only.pdf"]) {
+        const file = path.join(workspace, name);
+        await copyFile(path.join(repository, "document/testdata/scanassessment", name), file);
         await docbank("add", file, "--dest", "/");
       }
       const webURL = await docbank("web", "--no-browser");
@@ -421,4 +426,37 @@ test("waits for live details before offering redaction", async ({ page, readerUR
   } finally {
     release();
   }
+});
+
+test("shows PDF text gaps in the inspector and empty search", async ({ page, readerURL }) => {
+  page.setDefaultTimeout(15000);
+  await page.goto(readerURL);
+  const inspector = page.getByRole("complementary", { name: "Document inspector" });
+  for (const [file, notice] of [
+    ["mixed-below-ratio.pdf", "Page 2 has no text layer."],
+    ["image-only.pdf", "Pages 1–3 have no text layer."],
+  ]) {
+    await page.getByRole("cell", { name: file, exact: true }).click();
+    await inspector.getByRole("tab", { name: "Text", exact: true }).click();
+    await inspector.getByRole("button", { name: "Extract text", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Extract text" });
+    await expect(dialog).not.toContainText("No processing profile handles this file type");
+    const extract = dialog.getByRole("button", { name: "Extract text", exact: true });
+    await expect(extract).toBeEnabled();
+    if (file.startsWith("mixed"))
+      await page.screenshot({ path: path.join(output!, "pdf-extraction.png") });
+    await extract.click();
+    await expect(dialog.getByText("Text extracted.")).toBeVisible({ timeout: 30000 });
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(inspector.getByText(notice, { exact: false })).toBeVisible({ timeout: 30000 });
+    if (file.startsWith("mixed")) await expect(inspector.locator("pre")).toBeVisible();
+    else await expect(inspector.locator("pre")).toHaveCount(0);
+    await page.screenshot({ path: path.join(output!, `${file}-text.png`) });
+  }
+  const search = page.getByRole("searchbox", { name: "Search documents" });
+  await search.fill("unfindable synthetic phrase");
+  await search.press("Enter");
+  await expect(page.getByText("No matching documents")).toBeVisible();
+  await expect(page.getByText(/PDFs have .* pages without a text layer/)).toBeVisible();
+  await page.screenshot({ path: path.join(output!, "pdf-search-empty.png") });
 });

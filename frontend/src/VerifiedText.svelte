@@ -167,6 +167,22 @@
     };
   });
 
+  const missingPages = $derived(
+    resolution && (resolution.state === "ready" || resolution.state === "verified_empty")
+      ? (resolution.pagesWithoutText ?? [])
+      : [],
+  );
+
+  function pageRanges(pages: number[]): string {
+    const ranges: string[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const start = pages[i];
+      while (i + 1 < pages.length && pages[i + 1] === pages[i] + 1) i++;
+      ranges.push(start === pages[i] ? String(start) : `${start}–${pages[i]}`);
+    }
+    return ranges.join(", ");
+  }
+
   function moveMatch(delta: number): void {
     if (findMatches.length === 0) return;
     activeMatch = (activeMatch + delta + findMatches.length) % findMatches.length;
@@ -187,6 +203,22 @@
     return "The rendition recorded for this historical selection is no longer available.";
   }
 </script>
+
+{#snippet pdfNotice()}
+  <p class="notice" role="status">
+    {missingPages.length === 1 ? "Page" : "Pages"}
+    {pageRanges(missingPages)}
+    {missingPages.length === 1 ? "has" : "have"} no text layer.
+    <a
+      href="https://docbank.ai/docs/usage/document-processing/#ocr"
+      target="_blank"
+      rel="noreferrer"
+      >If {missingPages.length === 1
+        ? "it is a scan, OCR can read it"
+        : "they are scans, OCR can read them"}.</a
+    >
+  </p>
+{/snippet}
 
 <div class="verified-text">
   {#if text || resolution?.state === "verified_empty"}
@@ -248,6 +280,9 @@
         {stateMessage(resolution.state as Exclude<RenditionTextResolution["state"], "ready">)}
       </p>
     {/if}
+    {#if missingPages.length}
+      {@render pdfNotice()}
+    {/if}
     <pre
       bind:this={textBox}
       aria-label={`Verified text of ${source.name}`}>{#each marked.segments as segment}{#if segment.match}<mark
@@ -270,6 +305,8 @@
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
       </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
+  {:else if resolution?.state === "verified_empty" && missingPages.length}
+    {@render pdfNotice()}
   {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}

@@ -313,6 +313,26 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	method, path := r.Method, r.URL.Path
+	if path == "/api/v1/search/text-coverage" {
+		if method != http.MethodGet {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			switch key {
+			case "pdf_filter", "source_present", "tag_id", "mime_type", "under_node_id", "modified_since", "modified_before":
+				if len(entries) != 1 {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+		return true
+	}
 	if path == "/api/v1/search-exports" && method == http.MethodGet {
 		query := r.URL.Query()
 		if len(query) > 2 {

@@ -156,3 +156,18 @@ func TestWebPages(t *testing.T) {
 		require.Equal(t, status, response.Code, tc.path)
 	}
 }
+
+func TestWebSessionTextCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&mime_type=application%2Fpdf", true},
+		{http.MethodGet, "/api/v1/search/text-coverage?source_present=true&under_node_id=1&pdf_filter=x&modified_since=x&modified_before=x", true},
+		{http.MethodPost, "/api/v1/search/text-coverage", false},
+		{http.MethodGet, "/api/v1/search/text-coverage?extra=1", false},
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&tag_id=y", false},
+	} {
+		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.path)
+	}
+}

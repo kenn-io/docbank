@@ -1107,6 +1107,7 @@
   let bulkSelection = $state<SelectionState>(clearSelection());
   let searchQuery = $state("");
   let activeQuery = $state("");
+  let pdfCoverage = $state<generated.SearchTextCoverage | null>(null);
   let submittedSearchQuery = $state("");
   let tagFilterID = $state("");
   let activeTagID = $state("");
@@ -2150,6 +2151,27 @@
       if (request === generation) loading = false;
     }
   }
+
+  $effect(() => {
+    const query = activeQuery;
+    const tag = activeTagID;
+    const session = webSession;
+    const eligible = !!query && !loading && !searchPending && !snapshotActive && rows.length === 0;
+    pdfCoverage = null;
+    if (!eligible) return;
+    const controller = new AbortController();
+    let current = true;
+    void generated
+      .searchTextCoverage(tag ? { tag_id: tag } : {}, { session, signal: controller.signal })
+      .then((coverage) => {
+        if (current) pdfCoverage = coverage;
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  });
 
   async function runSearch(
     preferredSelectedID = selectedID,
@@ -4853,11 +4875,13 @@
                       : emptyRoot
                         ? "No documents yet"
                         : "Empty folder"}
-                  description={tagBrowse && taggedTrashed > 0
-                    ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                    : emptyRoot
-                      ? "Add files or a folder to start your vault."
-                      : undefined}
+                  description={activeQuery && pdfCoverage?.pdfs_without_text
+                    ? `${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
+                    : tagBrowse && taggedTrashed > 0
+                      ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
+                      : emptyRoot
+                        ? "Add files or a folder to start your vault."
+                        : undefined}
                   children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}

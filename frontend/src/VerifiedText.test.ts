@@ -105,6 +105,7 @@ it("finds text, wraps navigation, and clears the find query", async () => {
     .mockResolvedValueOnce(
       Response.json({
         state: "ready",
+        pages_without_text: [3, 4, 7],
         source: {
           node_id: 7,
           revision: 3,
@@ -151,6 +152,7 @@ it("finds text, wraps navigation, and clears the find query", async () => {
     authorizationRevision: 3,
     onauthfailure: vi.fn(),
   });
+  expect(await screen.findByText(/Pages 3–4, 7 have no text layer/)).toBeTruthy();
   const input = await screen.findByLabelText("Find in verified text");
   await fireEvent.input(input, { target: { value: "report" } });
   expect(screen.getByText("1 of 2")).toBeTruthy();
@@ -166,4 +168,67 @@ it("finds text, wraps navigation, and clears the find query", async () => {
   await fireEvent.input(input, { target: { value: "" } });
   expect(document.querySelectorAll("mark")).toHaveLength(0);
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+});
+
+it("shows missing PDF pages instead of the empty text message", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      state: "verified_empty",
+      source: {
+        node_id: 7,
+        revision: 3,
+        version_id: source.versionID,
+        blob_hash: source.blobHash,
+        size: 50,
+        media_type: source.mimeType,
+      },
+      profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+      generation_id: "",
+      attachment_id: "",
+      build_id: "",
+      pages_without_text: [3, 4],
+    }),
+  );
+  render(VerifiedText, {
+    session: "session",
+    source,
+    authorizationRevision: 3,
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText(/Pages 3–4 have no text layer/)).toBeTruthy();
+  expect(screen.getByRole("link", { name: /OCR can read them/ }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  expect(
+    screen.queryByText("Processing verified that this document has no readable text."),
+  ).toBeNull();
+});
+
+it("uses singular wording for one missing page", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      state: "verified_empty",
+      source: {
+        node_id: 7,
+        revision: 3,
+        version_id: source.versionID,
+        blob_hash: source.blobHash,
+        size: 50,
+        media_type: source.mimeType,
+      },
+      profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
+      generation_id: "",
+      attachment_id: "",
+      build_id: "",
+      pages_without_text: [2],
+    }),
+  );
+  render(VerifiedText, {
+    session: "session",
+    source,
+    authorizationRevision: 3,
+    onauthfailure: vi.fn(),
+  });
+  expect(await screen.findByText(/Page 2 has no text layer/)).toBeTruthy();
+  expect(screen.getByRole("link", { name: /OCR can read it/ })).toBeTruthy();
 });

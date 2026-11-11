@@ -91,6 +91,7 @@ function report(
 }
 
 interface HarnessOptions {
+  coverage?: () => Promise<Response>;
   profiles: unknown[];
   profilesStatus?: number;
   profilesPending?: boolean;
@@ -265,6 +266,8 @@ function installHarness(options: HarnessOptions) {
       if (options.basePending && baseCalls === 1) return basePending;
       return json(options.baseReport);
     }
+    if (url.startsWith("/api/v1/search/text-coverage"))
+      return options.coverage?.() ?? json({ pdfs_without_text: 0 });
     if (url.startsWith("/api/v1/search?") && method === "GET") {
       legacyCalls += 1;
       if (options.legacyFailureAfter !== undefined && legacyCalls > options.legacyFailureAfter) {
@@ -2086,3 +2089,47 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
+
+it("shows PDF text gaps for an empty live search", async () => {
+  installHarness({
+    profiles: [],
+    files: [],
+    baseReport: report("lexical", []),
+    coverage: async () => json({ pdfs_without_text: 2, pages_without_text: 3 }),
+  });
+  render(App);
+  await submitSearch("missing");
+  expect(await screen.findByText("2 PDFs have 3 pages without a text layer.")).toBeTruthy();
+});
+
+it.each(["zero", "failure"])("keeps the empty search quiet when coverage is %s", async (state) => {
+  const coverage = vi.fn(async () =>
+    state === "zero"
+      ? json({ pdfs_without_text: 0, pages_without_text: 0 })
+      : new Response("failure", { status: 500 }),
+  );
+  installHarness({ profiles: [], files: [], baseReport: report("lexical", []), coverage });
+  render(App);
+  await submitSearch("missing");
+  await waitFor(() => expect(coverage).toHaveBeenCalled());
+  expect(screen.queryByText(/without a text layer/)).toBeNull();
+});
+
+it("ignores coverage from an older search", async () => {
+  let resolve!: (response: Response) => void;
+  const old = new Promise<Response>((done) => {
+    resolve = done;
+  });
+  const coverage = vi
+    .fn()
+    .mockReturnValueOnce(old)
+    .mockResolvedValue(json({ pdfs_without_text: 0, pages_without_text: 0 }));
+  installHarness({ profiles: [], files: [], baseReport: report("lexical", []), coverage });
+  render(App);
+  await submitSearch("first");
+  await waitFor(() => expect(coverage).toHaveBeenCalledTimes(1));
+  await submitSearch("second");
+  await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));
+  await act(async () => resolve(json({ pdfs_without_text: 1, pages_without_text: 1 })));
+  expect(screen.queryByText(/without a text layer/)).toBeNull();
+});
