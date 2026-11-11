@@ -108,13 +108,15 @@ func publishRenditionTextSourceFixture(
 	buildID := testHash("rendition-build")
 	attachmentID := testHash("rendition-attachment")
 	artifactID := "artifact_" + testHash("markdown-artifact")
+	providerReceipt, err := json.Marshal(document.RenditionReceipt{ProviderID: document.PDFTextProviderID, DescriptorFingerprint: testHash("descriptor"), PolicyFingerprint: testHash("policy"), RenditionRequestFingerprint: profile.RenditionRequestFingerprint, AuthorizationFingerprint: testHash("publication-authorization"), SourceSHA256: node.BlobHash, OperationID: "synthetic-pdf-operation", StartedAt: "2026-09-11T12:00:00.000000000Z", CompletedAt: "2026-09-11T12:00:00.000000000Z", Usage: document.RenditionUsage{Requests: 1, InputBytes: node.Size, Units: 1}})
+	require.NoError(t, err)
 	build := store.RenditionBuildRecord{
 		ID: buildID, VaultID: s.VaultID(), SourceSHA256: node.BlobHash,
 		RenditionRequestFingerprint:       profile.RenditionRequestFingerprint,
 		EvidenceLexicalFingerprint:        profile.EvidenceLexicalFingerprint,
 		CapturedArtifactPolicyFingerprint: testHash(string(policy)), CapturedArtifactPolicy: policy,
 		AuthorizationChecksum: testHash("publication-authorization"), ProviderOperationID: "synthetic-pdf-operation",
-		ProviderReceipt:  jsontext.Value(`{"provider_id":"pdftext.in-process-v1"}`),
+		ProviderReceipt:  jsontext.Value(providerReceipt),
 		EvidenceChecksum: evidenceHash, RenditionChecksum: rendition.Checksum,
 		MarkdownChecksum: rendition.MarkdownChecksum, Completeness: document.EvidenceComplete,
 		CompletedAt: "2026-09-11T12:00:00.000000000Z", DeclaredArtifactCount: 2,

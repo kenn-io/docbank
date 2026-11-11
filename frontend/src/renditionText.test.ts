@@ -213,14 +213,14 @@ it("shows the producer's image understanding text exactly as transcribed", async
     "## Possible meaning (interpretation)\n\nflames. C:\\dir \\a\n\t\tline (1)  \n\n---\n\n" +
     "## Uncertainty and missing context\n\n\n\n  indented\t\nends in a backslash\\\nand two\\\\\n``````\n\\# not a heading \\* \\` \\\\\n";
   await expect(
-    readArtifact(renditionArtifact(markdown), "compatible-vision.understand-v1"),
+    readArtifact(renditionArtifact(markdown, "degraded_provenance"), "compatible-vision.understand-v1"),
   ).resolves.toBe(expected);
 });
 
-it("keeps degraded text from another provider byte-for-byte", async () => {
+it("keeps text from another provider byte-for-byte", async () => {
   await expect(
     readArtifact(
-      renditionArtifact(escapedImageText, "degraded_provenance"),
+      renditionArtifact(escapedImageText),
       "compatible-ocr.extract-v1",
     ),
   ).resolves.toBe(escapedImageText);
