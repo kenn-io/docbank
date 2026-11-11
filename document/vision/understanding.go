@@ -44,8 +44,6 @@ func parseUnderstanding(raw []byte) (understanding, error) {
 	return value, nil
 }
 
-const understandingHeading = document.ImageUnderstandingHeading
-
 type understandingSection struct {
 	field string
 	title string
@@ -62,8 +60,7 @@ func (value understanding) sections() []understandingSection {
 }
 
 func (section understandingSection) text() string {
-	content := strings.ReplaceAll(strings.ReplaceAll(*section.value, "\r\n", "\n"), "\r", "\n")
-	return content
+	return strings.ReplaceAll(strings.ReplaceAll(*section.value, "\r\n", "\n"), "\r", "\n")
 }
 
 func (value understanding) evidence(model string) document.SourceEvidenceV1 {
@@ -78,7 +75,7 @@ func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 			continue
 		}
 		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
-			Order: len(evidence.Units), HeadingPath: []string{understandingHeading, section.title}, Text: section.text(), Speaker: model,
+			Order: len(evidence.Units), HeadingPath: []string{document.ImageUnderstandingHeading, section.title}, Text: section.text(), Speaker: model,
 			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone},
 		})
 	}
@@ -96,7 +93,7 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	raw, err := p.describeImage(ctx, data, meta.MediaType, p.prompt, p.tokens, authorization.ExpiresAt)
+	raw, err := p.describe(ctx, data, meta.MediaType, p.prompt, p.tokens, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}

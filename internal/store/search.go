@@ -314,7 +314,7 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 	result := make([]ExplainedLexicalCandidate, len(hits))
 	for index, hit := range hits {
 		result[index] = ExplainedLexicalCandidate{Node: hit.Node, Path: hit.Path,
-			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: boundedExplainedSearchExcerpt(hit.Node.Name)}
+			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: boundedExplainedSearchExcerpt(hit.Node.Name, maxExplainedSearchExcerptRunes)}
 	}
 	return result
 }
@@ -339,18 +339,14 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 			return Node{}, fmt.Errorf("decoding lexical evidence headings: %w", err)
 		}
 		prefix := document.FormatRenditionHeadingContext(headings, "")
-		candidate.Excerpt = prefix + boundedExplainedSearchExcerptLimit(document.UnescapeRenditionText(candidate.Excerpt), max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
+		candidate.Excerpt = prefix + boundedExplainedSearchExcerpt(document.UnescapeRenditionText(candidate.Excerpt), max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
 	} else {
-		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
+		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt, maxExplainedSearchExcerptRunes)
 	}
 	return node, nil
 }
 
-func boundedExplainedSearchExcerpt(value string) string {
-	return boundedExplainedSearchExcerptLimit(value, maxExplainedSearchExcerptRunes)
-}
-
-func boundedExplainedSearchExcerptLimit(value string, limit int) string {
+func boundedExplainedSearchExcerpt(value string, limit int) string {
 	runes := []rune(value)
 	if len(runes) > limit {
 		match := max(slices.Index(runes, rune(1)), 0)
@@ -1027,7 +1023,7 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 	if err != nil {
 		return "", err
 	}
-	return boundedExplainedSearchExcerpt(excerpt), nil
+	return boundedExplainedSearchExcerpt(excerpt, maxExplainedSearchExcerptRunes), nil
 }
 
 type semanticEligibilityKey struct {

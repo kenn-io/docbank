@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	// EmbeddingInputGenerationVersion identifies the original generation format.
 	EmbeddingInputGenerationVersion = 1
 	// EmbeddingInputGenerationHeadingsVersion identifies generations with heading context.
 	EmbeddingInputGenerationHeadingsVersion = 2

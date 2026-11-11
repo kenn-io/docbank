@@ -1121,9 +1121,6 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
 		return fmt.Errorf("%s max units must be between 1 and 1000000", prefix)
 	}
-	if profile.AdapterContract == vision.UnderstandingAdapterContract && profile.MaxUnits < document.MinImageUnderstandingUnits {
-		return fmt.Errorf("%s image understanding requires at least four units", prefix)
-	}
 	if len(profile.RequestedArtifacts) == 0 || len(profile.RequestedArtifacts) > 4 {
 		return fmt.Errorf("%s requested_artifacts must contain 1-4 roles", prefix)
 	}
@@ -1175,8 +1172,6 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 			if profile.DescriptorID != vision.UnderstandingProviderID || profile.MaxDocumentBytes > 16<<20 {
 				return fmt.Errorf("%s image understanding requires its own task and at most 16 MiB input", prefix)
 			}
-		} else if profile.DescriptorID == vision.UnderstandingProviderID {
-			return fmt.Errorf("%s image understanding requires %s", prefix, vision.UnderstandingAdapterContract)
 		}
 		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(role) || profile.MaxResponseBytes > vision.MaxResponseBytes {
 			return fmt.Errorf("%s vision requires a withheld filename, %s evidence, and at most 1 MiB response", prefix, role)

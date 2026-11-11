@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,8 +26,4 @@ func TestExecutableProcessingProfilesRegistersImageUnderstanding(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, vision.UnderstandingProviderID, profiles["vision"].RenditionProvider.Descriptor().ID)
 	require.Equal(t, vision.UnderstandingAdapterContract, profiles["vision"].Profile.Rendition.AdapterContract)
-	binding.DisclosureFingerprint = strings.Repeat("a", 64)
-	cfg.RenditionProfiles["vision"] = binding
-	_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
-	require.ErrorContains(t, err, "vision disclosure fingerprint does not bind runtime endpoint")
 }

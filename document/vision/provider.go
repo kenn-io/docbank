@@ -106,9 +106,7 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 	formats := []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}
 	roles := []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 	if id == UnderstandingProviderID {
-		contract, inputProfile = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v4"
-		roles = nil
-		formats = nil
+		contract, inputProfile, roles, formats = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v4", nil, nil
 		for _, mediaType := range []string{"image/jpeg", "image/png", "image/webp"} {
 			formats = append(formats, document.RenditionFormatCapability{MediaFamily: "image", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
 		}
@@ -186,11 +184,7 @@ type response struct {
 	} `json:"choices"`
 }
 
-func (p *Provider) describe(ctx context.Context, data []byte, text string, tokens int, expiresAt string) ([]byte, error) {
-	return p.describeImage(ctx, data, "image/jpeg", text, tokens, expiresAt)
-}
-
-func (p *Provider) describeImage(ctx context.Context, data []byte, mediaType, text string, tokens int, expiresAt string) ([]byte, error) {
+func (p *Provider) describe(ctx context.Context, data []byte, mediaType, text string, tokens int, expiresAt string) ([]byte, error) {
 	body, err := json.Marshal(request{Model: p.profile.Model, Messages: []message{{Role: "user", Content: []part{{Type: "text", Text: text}, {Type: "image_url", ImageURL: &imageURL{URL: "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)}}}}}, MaxCompletionTokens: tokens})
 	if err != nil {
 		return nil, err
@@ -320,7 +314,7 @@ func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload,
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	raw, err := p.describe(ctx, data, p.prompt, p.tokens, authorization.ExpiresAt)
+	raw, err := p.describe(ctx, data, "image/jpeg", p.prompt, p.tokens, authorization.ExpiresAt)
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
@@ -363,7 +357,7 @@ func (p *Provider) Probe(ctx context.Context) error {
 	if err := jpeg.Encode(&jpegData, probeImage, nil); err != nil {
 		return fmt.Errorf("encode probe JPEG: %w", err)
 	}
-	response, err := p.describe(ctx, jpegData.Bytes(), document.VisionProbePrompt, 2048, "")
+	response, err := p.describe(ctx, jpegData.Bytes(), "image/jpeg", document.VisionProbePrompt, 2048, "")
 	if err != nil {
 		// Synthetic probes can retry safely and retain the provider's delay.
 		if classified, ok := errors.AsType[*document.RenditionProviderError](err); ok && classified.Code() == document.RenditionErrorAmbiguousSubmission {

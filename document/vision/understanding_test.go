@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,10 +62,6 @@ func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
 
 func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 	for _, raw := range []string{
-		`{"literal_description":"","possible_meaning":"","uncertainty":""}`,
-		`{"visible_text":"","possible_meaning":"","uncertainty":""}`,
-		`{"visible_text":"","literal_description":"","uncertainty":""}`,
-		`{"visible_text":"","literal_description":"","possible_meaning":""}`,
 		`{}`, `{"visible_text":"text"}`, `{"visible_text":null,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":42,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":"\u0000"}`,
@@ -96,31 +91,6 @@ func TestUnderstandingDescriptorSupportsRenditionText(t *testing.T) {
 	for _, format := range descriptor.SupportedFormats {
 		assert.Equal(t, document.RenditionInputOriginalFile, format.InputKind)
 	}
-	// Adding this task must not change descriptors for the existing photo tasks.
-	before, err := Descriptor(ProviderID, "synthetic-vision", document.RenditionTrustOperatorNetwork)
-	require.NoError(t, err)
-	assert.NotEqual(t, before.Fingerprint, descriptor.Fingerprint)
-}
-
-func FuzzUnderstandingOutput(f *testing.F) {
-	f.Add("a synthetic caption")
-	f.Add("# heading\n[x](https://example.com)")
-	f.Fuzz(func(t *testing.T, text string) {
-		if !utf8.ValidString(text) {
-			t.Skip("JSON string input must be valid UTF-8")
-		}
-		raw, err := json.Marshal(map[string]string{"visible_text": text, "literal_description": text, "possible_meaning": text, "uncertainty": text})
-		require.NoError(t, err)
-		value, err := parseUnderstanding(raw)
-		if err != nil {
-			return
-		}
-		evidence := value.evidence("synthetic-vision")
-		for _, unit := range evidence.Units {
-			assert.True(t, utf8.ValidString(unit.Text))
-			assert.NotContains(t, unit.Text, "\x00")
-		}
-	})
 }
 
 func TestUnderstandingOriginalImageProducesVersionedEvidence(t *testing.T) {

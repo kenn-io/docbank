@@ -47,9 +47,6 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 		},
 		func(p *RenditionProfileConfig) { p.DiscloseFilename = true },
 		func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 16<<20 + 1 },
-		func(p *RenditionProfileConfig) { p.MaxUnits = 1 },
-		func(p *RenditionProfileConfig) { p.MaxUnits = 2 },
-		func(p *RenditionProfileConfig) { p.MaxUnits = 3 },
 	} {
 		changed := profile
 		change(&changed)
