@@ -59,6 +59,10 @@ func TestSelectedMediaEmbeddingBuildFence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, current.Coverage.ScopedDocuments)
 	require.Zero(t, current.Coverage.CompleteDocuments)
+	opts = SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: version, BuildID: build}}, ContentVersionIDs: []string{"123e4567-e89b-42d3-a456-426614174001"}}
+	available, err := s.SelectedSemanticRowsAvailable(t.Context(), profile.Fingerprint, record.BindingID, opts)
+	require.NoError(t, err)
+	require.False(t, available, "selected builds must still respect a separate version fence")
 }
 
 func TestSelectedSemanticRowsAvailableForUnpersistedProfile(t *testing.T) {

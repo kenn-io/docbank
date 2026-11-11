@@ -893,7 +893,7 @@ func semanticANNRowsTx(ctx context.Context, tx metadataQuerier, profileFingerpri
 	var lastHash string
 	var representative int64
 	err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-		filterSQL, filterArgs, nil, len(opts.ContentVersionIDs) != 0 && len(opts.SelectedBuilds) == 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
+		filterSQL, filterArgs, nil, opts.SelectedBuilds, len(opts.ContentVersionIDs) != 0, opts.CollapsesPhotoDuplicates(), func(key semanticEligibilityKey, nodeID int64, hash string) {
 			if opts.CollapsesPhotoDuplicates() {
 				if hash != lastHash {
 					lastHash, representative = hash, nodeID
@@ -1089,7 +1089,7 @@ func (s *Store) semanticCandidatesTx(ctx context.Context, tx metadataQuerier, pr
 				}
 			}
 			err := scanSemanticRows(ctx, tx, profileFingerprint, bindingID, inputKind, vectorSpaceID,
-				filterSQL, filterArgs, hashes, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
+				filterSQL, filterArgs, hashes, nil, false, true, func(_ semanticEligibilityKey, nodeID int64, hash string) {
 					if representatives[hash] == 0 {
 						representatives[hash] = nodeID
 					}
@@ -1183,11 +1183,10 @@ func semanticMembershipSQL(driver string) string {
  `
 }
 
-// scanSemanticRows reads the whole space when blobHashes is nil, else only
-// rows whose current content has one of those hashes.
+// scanSemanticRows uses content hashes or version fences to bound its scan.
 func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding string,
 	kind document.EmbeddingInputKind, space, filterSQL string, filterArgs []any,
-	blobHashes []string, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
+	blobHashes []string, selectedBuilds []SearchSelectedBuild, versionFence, representativeOrder bool, visit func(semanticEligibilityKey, int64, string),
 ) (retErr error) {
 	driver := `FROM embedding_sets es`
 	prefix := ""
@@ -1200,6 +1199,16 @@ func scanSemanticRows(ctx context.Context, tx metadataQuerier, profile, binding 
 		args = append(args, string(encoded))
 		driver = `FROM json_each(?) k CROSS JOIN content_versions cv_key INDEXED BY content_versions_blob ON cv_key.blob_hash=k.value
    CROSS JOIN embedding_sets es ON es.content_version_id=cv_key.version_id`
+	} else if len(selectedBuilds) != 0 {
+		encoded, err := json.Marshal(selectedBuilds)
+		if err != nil {
+			return err
+		}
+		prefix = `WITH scoped_versions AS MATERIALIZED (
+   SELECT DISTINCT json_extract(value,'$.content_version_id') AS version_id FROM json_each(?)) `
+		driver = `FROM scoped_versions scope CROSS JOIN embedding_sets es INDEXED BY embedding_sets_content_version
+   ON es.content_version_id=scope.version_id`
+		args = append(args, string(encoded))
 	} else if versionFence {
 		// Explicit version fences are bounded to 4096 IDs. Other filters keep
 		// the embedding scan so unembedded files do not drive their cost.
