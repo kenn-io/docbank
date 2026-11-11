@@ -161,9 +161,10 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	require.NoError(t, os.Rename(path, filepath.Join(dir, "wrong.json")))
 	_, err = loadSchemaContracts(dir)
 	require.ErrorContains(t, err, "does not match its record")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "wrong.json"), []byte(`{"digest":"abc","format":1,"indexes":{},"version":49}`), 0600))
+	require.NoError(t, os.Rename(filepath.Join(dir, "wrong.json"), path))
+	require.NoError(t, os.WriteFile(path, []byte(`{"digest":"abc","format":1,"indexes":{"idx":"CREATE INDEX idx ON nodes(id)"},"version":49}`), 0600))
 	_, err = loadSchemaContracts(dir)
-	require.Error(t, err)
+	require.ErrorContains(t, err, `unknown object member name "format"`)
 }
 
 func TestStorageSchemaContractChanges(t *testing.T) {
