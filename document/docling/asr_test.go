@@ -283,7 +283,7 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 					assertDoclingASRSubmission(t, request, submittedMetadata, fixture.source)
 					writeJSON(t, response, doclingTask(testCase.taskID, "success"))
 				case resultPath + testCase.taskID:
-					writeJSON(t, response, asrResultResponse(submittedMetadata.Filename, "1.10.0", testCase.providerEnd))
+					writeJSON(t, response, asrResultResponse(t, submittedMetadata.Filename, fixture.metadata.SHA256, "1.10.0", testCase.providerEnd))
 				default:
 					http.NotFound(response, request)
 				}
@@ -350,7 +350,7 @@ func TestDoclingASRClientRejectsUnpinnedResponseSchema(t *testing.T) {
 		case convertPath:
 			writeJSON(t, response, doclingTask("asr-mp3", "success"))
 		case resultPath + "asr-mp3":
-			writeJSON(t, response, asrResultResponse(fixture.metadata.Filename, "1.11.0", 3.08))
+			writeJSON(t, response, asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.11.0", 3.08))
 		default:
 			http.NotFound(response, request)
 		}
@@ -382,7 +382,7 @@ func TestDoclingASRRejectsUnqualifiedAudioBeforeSubmission(t *testing.T) {
 				case convertPath:
 					writeJSON(t, response, doclingTask("unqualified", "success"))
 				case resultPath + "unqualified":
-					writeJSON(t, response, asrResultResponse(fixture.metadata.Filename, "1.10.0", 1))
+					writeJSON(t, response, asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 1))
 				default:
 					http.NotFound(response, request)
 				}
@@ -542,14 +542,18 @@ func assertDoclingASRSubmission(
 	assert.NotContains(t, fields, "asr_model")
 }
 
-func asrResultResponse(filename, schemaVersion string, end float64) map[string]any {
+// asrResultResponse records the upload's origin hash as Docling's VideoPipeline does.
+func asrResultResponse(tb testing.TB, filename, sourceSHA256, schemaVersion string, end float64) map[string]any {
+	tb.Helper()
+	binaryHash, err := strconv.ParseUint(sourceSHA256[48:], 16, 64)
+	require.NoError(tb, err)
 	return map[string]any{
 		"status": "success", "errors": []string{},
 		"document": map[string]any{
 			"filename": filename, "md_content": nil,
 			"json_content": map[string]any{
 				"schema_name": "DoclingDocument", "version": schemaVersion,
-				"origin": map[string]any{"filename": filename},
+				"origin": map[string]any{"filename": filename, "binary_hash": binaryHash},
 				"pages":  map[string]any{},
 				"texts": []any{map[string]any{
 					"text": "Telescope delivery arrives Friday at 3.",
@@ -613,7 +617,7 @@ func TestDoclingASRVideoPolicyAndResponseBounds(t *testing.T) {
 					writeJSON(t, w, doclingTask("video", "success"))
 					return
 				}
-				result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 2.42)
+				result := asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 2.42)
 				body := asrJSONContent(t, result)
 				body["pictures"] = []any{map[string]any{"image": strings.Repeat("A", frameBytes)}}
 				w.Header().Set("Content-Type", "application/json")
@@ -650,7 +654,7 @@ func TestDoclingASRVideoPreservesTrackSegments(t *testing.T) {
 			writeJSON(t, w, doclingTask("video", "success"))
 			return
 		}
-		result := asrResultResponse(fixture.metadata.Filename, "1.10.0", 1.0001)
+		result := asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 1.0001)
 		body := asrJSONContent(t, result)
 		body["texts"] = append(asrAssertType[[]any](t, body["texts"]), map[string]any{
 			"text": "second cue", "source": []any{map[string]any{"kind": "track", "start_time": 0.75, "end_time": 2.0}}})
@@ -716,4 +720,63 @@ func TestDoclingASRRejectsDelayedMP4SoundBeforeUpload(t *testing.T) {
 	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.M4AWithSoundEdits("mp4a", mediatest.SoundEdit{Duration: 1000, MediaTime: 2112}))
 	facts, local := fixture.capability.Facts()
 	require.True(t, local && facts.VideoAudioTrack, "ordinary AAC priming stays eligible")
+}
+
+// A video result must name the exact upload: filenames repeat, so only
+// Docling's origin hash binds the transcript to the authorized bytes.
+func TestDoclingASRVideoRequiresUploadOriginHash(t *testing.T) {
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.H264AACMP4())
+	matching, err := strconv.ParseUint(fixture.metadata.SHA256[48:], 16, 64)
+	require.NoError(t, err)
+	for name, testCase := range map[string]struct {
+		edit   func(origin map[string]any)
+		accept bool
+	}{
+		"matching":  {edit: func(map[string]any) {}, accept: true},
+		"different": {edit: func(origin map[string]any) { origin["binary_hash"] = matching ^ 1 }},
+		"absent":    {edit: func(origin map[string]any) { delete(origin, "binary_hash") }},
+		"null":      {edit: func(origin map[string]any) { origin["binary_hash"] = nil }},
+		"string":    {edit: func(origin map[string]any) { origin["binary_hash"] = strconv.FormatUint(matching, 10) }},
+		"negative":  {edit: func(origin map[string]any) { origin["binary_hash"] = -1 }},
+		"fraction":  {edit: func(origin map[string]any) { origin["binary_hash"] = 1.5 }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == convertPath {
+					writeJSON(t, w, doclingTask("video", "success"))
+					return
+				}
+				result := asrResultResponse(t, fixture.metadata.Filename, fixture.metadata.SHA256, "1.10.0", 2.42)
+				testCase.edit(asrAssertType[map[string]any](t, asrJSONContent(t, result)["origin"]))
+				writeJSON(t, w, result)
+			}))
+			t.Cleanup(server.Close)
+			client := newASRClient(t, server.URL, fixture.descriptor)
+			result, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			if testCase.accept {
+				require.NoError(t, err)
+				require.Len(t, result.Artifacts, 1)
+				return
+			}
+			require.Error(t, err)
+			require.Empty(t, result.Artifacts)
+			providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
+			require.True(t, ok)
+			assert.Equal(t, document.RenditionErrorPolicyRejected, providerErr.Code())
+		})
+	}
+}
+
+func TestDoclingASROriginHashUsesUnsignedLowBits(t *testing.T) {
+	sha := strings.Repeat("0", 48) + "ffffffffffffff01"
+	require.NoError(t, requireOriginBinaryHash([]byte(`{"origin":{"binary_hash":18446744073709551361}}`), sha))
+	for _, raw := range []string{
+		`{"origin":{"binary_hash":-255}}`,
+		`{"origin":{"binary_hash":18446744073709551617}}`,
+		`{"origin":{"binary_hash":1.8446744073709552e19}}`,
+		`{"origin":null}`,
+		`{}`,
+	} {
+		require.Error(t, requireOriginBinaryHash([]byte(raw), sha), raw)
+	}
 }

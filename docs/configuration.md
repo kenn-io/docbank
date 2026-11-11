@@ -850,7 +850,11 @@ The v3 deployment requires Docling Serve 1.32.0, `docling-slim` 2.124.0,
 `docling-core` 2.105.0, `docling-jobkit` 3.5.0, and ASR dependencies such as
 `openai-whisper` 20250625. FFmpeg must be on the
 provider host's `PATH`; Docbank hosts need no FFmpeg. The adapter sends
-`from_formats=video` for MP4 and maps only timed transcript text. Like v2, the
+`from_formats=video` for MP4 and maps only timed transcript text. The response
+must name the exact upload: its `origin.binary_hash` must equal the low 64 bits
+of the upload's SHA-256, as Docling's video pipeline records it. A missing or
+different hash refuses the result as a policy rejection, and no transcript is
+kept. Filenames are not enough, because they can repeat. Like v2, the
 v3 artifact omits `provider_version` because the response does not identify
 the deployment's installed version.
 

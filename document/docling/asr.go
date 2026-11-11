@@ -1,11 +1,13 @@
 package docling
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -272,6 +274,35 @@ func mapASRTracks(raw []byte, durationMS int64) ([]mediatranscript.Segment, erro
 	return out, nil
 }
 
+// requireOriginBinaryHash binds a video result to the exact uploaded bytes.
+// Filenames can repeat, so they cannot identify the source. Docling's
+// VideoPipeline records origin.binary_hash as an unsigned JSON integer holding
+// the low 64 bits of the upload's SHA-256, which are its last 16 hex digits.
+func requireOriginBinaryHash(raw []byte, sourceSHA256 string) error {
+	if len(sourceSHA256) != 64 {
+		return errors.New("upload SHA-256 is invalid")
+	}
+	want, err := strconv.ParseUint(sourceSHA256[48:], 16, 64)
+	if err != nil {
+		return errors.New("upload SHA-256 is invalid")
+	}
+	var body struct {
+		Origin *struct {
+			BinaryHash *uint64 `json:"binary_hash"`
+		} `json:"origin"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return errors.New("origin binary hash is not an unsigned 64-bit integer")
+	}
+	if body.Origin == nil || body.Origin.BinaryHash == nil {
+		return errors.New("origin binary hash is missing")
+	}
+	if *body.Origin.BinaryHash != want {
+		return errors.New("origin binary hash names another upload")
+	}
+	return nil
+}
+
 func asrDocumentVersion(raw []byte) (string, error) {
 	var identity struct {
 		SchemaName string `json:"schema_name"`
@@ -305,6 +336,12 @@ func (client *ASRClient) buildResult(
 	version, err := asrDocumentVersion(result.document)
 	if err != nil || version != qualifiedASRSchemaVersion {
 		return document.RenditionResult{}, provider.Malformed("Docling ASR response schema is not qualified", err)
+	}
+	if run.metadata.MediaFamily == "video" {
+		if err := requireOriginBinaryHash(result.document, cmp.Or(run.uploadSHA256, run.metadata.SHA256)); err != nil {
+			return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
+				"Docling result source identity does not match upload", err)
+		}
 	}
 	segments, err := mapASRTracks(result.document, durationMS)
 	if err != nil {
