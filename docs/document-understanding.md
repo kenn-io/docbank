@@ -300,8 +300,9 @@ for service and decoder requirements. Gemini audio qualification remains
 limited to WAV and MP3.
 
 The opt-in Docling ASR v3 contract adds `video/mp4` with `.mp4`. Its sealed
-`video_audio_track` inspection policy streams the original, proves at least
-one qualified AAC/ALAC sound track and local sound-sample ranges, and admits
+`video_audio_track` inspection policy streams the original, proves exactly
+one qualified AAC/ALAC sound track (movies with more than one sound track are
+refused) and local sound-sample ranges, and admits
 non-visual metadata/timecode tracks. It keeps the 16 MiB movie-metadata bound
 and 1 GiB source ceiling while avoiding the visual 20 MiB and 10,000-frame
 limits. It rejects fragmented containers, videos without qualified sound,
