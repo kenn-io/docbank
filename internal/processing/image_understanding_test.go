@@ -32,7 +32,10 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 			fields = map[string]string{"visible_text": "Only visible words", "literal_description": "", "possible_meaning": " ", "uncertainty": ""}
 		}
 		raw, err := json.Marshal(fields)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			http.Error(w, "invalid response", http.StatusInternalServerError)
+			return
+		}
 		_, _ = w.Write(visiontest.Completion(string(raw)))
 	}))
 	defer server.Close()
@@ -126,7 +129,6 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "endorsement", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{partialNode.CurrentVersionID}}})
 	require.NoError(t, err)
 	assert.Empty(t, report.Results)
-
 }
 
 type understandingEmbeddingCapture struct {
@@ -156,6 +158,7 @@ func (p *understandingEmbeddingCapture) Embed(ctx context.Context, inputs []docu
 }
 
 func TestImageUnderstandingInvalidRepliesStopAfterAllowedAttempts(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		raw      string
