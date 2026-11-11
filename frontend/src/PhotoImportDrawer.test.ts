@@ -486,6 +486,8 @@ it.each(["open", "closed", "competing"] as const)(
     await fireEvent.change(screen.getByLabelText("Choose photo files"), {
       target: { files: [files()[3]] },
     });
+    if (screen.queryByRole("button", { name: "Replace import" }))
+      await fireEvent.click(screen.getByRole("button", { name: "Replace import" }));
     await waitFor(() => expect(finishPlan).toBeDefined());
 
     if (state !== "open") await view.unmount();
@@ -1481,6 +1483,8 @@ it.each([
     await fireEvent.change(screen.getByLabelText("Choose photo files"), {
       target: { files: selected },
     });
+    if (screen.queryByRole("button", { name: "Replace import" }))
+      await fireEvent.click(screen.getByRole("button", { name: "Replace import" }));
     await screen.findByRole("button", { name: "Add 1 group" });
     expect(channel.planPhotoImport).toHaveBeenCalledWith(
       selected,
@@ -1533,6 +1537,8 @@ it.each([false, true])(
     await fireEvent.change(screen.getByLabelText("Choose photo files"), {
       target: { files: [files()[0]] },
     });
+    if (screen.queryByRole("button", { name: "Replace import" }))
+      await fireEvent.click(screen.getByRole("button", { name: "Replace import" }));
     await screen.findByText("not a directory");
     await view.unmount();
     render(PhotoImportDrawer, props);
@@ -1561,6 +1567,9 @@ it.each(["cancel", "confirm", "stale"])(
     };
     await storage.replace(checkpoint);
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(),
       planPhotoImport: vi
         .fn()
         .mockResolvedValue({ import_id: "replacement", groups: [[0]], unsupported: [] }),
@@ -1615,10 +1624,16 @@ it.each(["cancel", "confirm", "stale"])(
 
 it("replans a selection interrupted during its first plan without sending it", async () => {
   const original: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi.fn().mockRejectedValue(new UploadChannelError("Disconnected")),
     uploadPhotoGroup: vi.fn(),
   };
   const replacement: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "second", groups: [[0]], unsupported: [] }),
@@ -1648,6 +1663,9 @@ it("replans a selection interrupted during its first plan without sending it", a
 
 it("replans on a replacement channel and retains an unconfirmed group", async () => {
   const original: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi.fn(async (files: File[]) => ({
       import_id: "first",
       groups: [[0], [1]],
@@ -1724,12 +1742,18 @@ it("retains a selection when the channel changes during checkpoint save", async 
     }),
   );
   const original: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "first", groups: [[0]], unsupported: [] }),
     uploadPhotoGroup: vi.fn(),
   };
   const replacement: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "second", groups: [[0]], unsupported: [] }),

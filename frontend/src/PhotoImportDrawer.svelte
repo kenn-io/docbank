@@ -17,6 +17,7 @@
   } from "./upload.js";
 
   import LocalFilePicker from "./LocalFilePicker.svelte";
+  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import { localFilePath, type PickerKind } from "./localFiles.js";
 
   import { randomUUID } from "./crypto.js";
@@ -69,6 +70,7 @@
   };
   let checkpoint = $state<PhotoImportCheckpoint>();
   let resuming = false;
+  let replacingConfirmed = false;
   let savedImports = $state<SavedPhotoImport[]>([]);
   let selectedImport = $state("");
   let savedImport = $state<SavedPhotoImport>();
@@ -118,6 +120,7 @@
     };
   });
 
+  let confirmation = $state<PhotoCullConfirmation>();
   let picker: LocalFilePicker;
   let destination = $state("/");
   let items = $state<Item[]>([]);
@@ -131,22 +134,16 @@
   $effect(() => {
     const current = channel;
     if (
+      plannedChannel &&
       current !== plannedChannel &&
+      registered &&
       !savedImport &&
-      selectedFiles.length &&
-      !disabledReason &&
       !running &&
-      !planning &&
-      checkpointReady
+      !planning
     ) {
-      plannedChannel = current;
       reconnectPlanNeeded = true;
-      if (registered || registrationUncertain) {
-        for (const item of items) {
-          if (item.state === "ready" || item.state === "failed") setState(item, "unconfirmed");
-        }
-      } else {
-        void plan(false, Boolean(sourceID));
+      for (const item of items) {
+        if (item.state === "ready" || item.state === "failed") setState(item, "unconfirmed");
       }
     }
   });
@@ -221,6 +218,18 @@
       showError(cause);
       return;
     }
+    const expected = checkpoint;
+    if (expected && !resuming && !replacingConfirmed) {
+      planning = true;
+      const confirmed = await confirmation?.confirm(
+        "Replace the unfinished import?",
+        "Replace import",
+        "The current selection and its progress will be discarded.",
+      );
+      planning = false;
+      if (!confirmed || destroyed || checkpoint !== expected) return;
+    }
+    replacingConfirmed = false;
     pickerKind = kind;
     interruptedPlan = undefined;
     registered = false;
@@ -265,6 +274,7 @@
       reconnectPlanNeeded = false;
       destination = saved.destination;
       plannedDestination = destination;
+      plannedChannel = channel;
       selectedFiles = [];
       extraFiles = [];
       unsupported = (saved.skipped ?? []).map((file) => ({ name: file.path, reason: file.reason }));
@@ -321,12 +331,6 @@
             changed = true;
           if (group.hashes?.[i] && (await hashFile(file, signal, () => {})) !== group.hashes[i])
             changed = true;
-        }
-        if (group.status === "committed") {
-          item.error = changed
-            ? "Files changed since this group was imported."
-            : receiptReason(group.receipt?.reason);
-          continue;
         }
         if (group.status !== "remaining") continue;
         if (changed) setState(item, "changed");
@@ -477,7 +481,16 @@
   }
 
   async function start(): Promise<void> {
-    if (running || planning || disabledReason || !checkpointReady || !pending || reconnectPlanNeeded || registrationUncertain) return;
+    if (
+      running ||
+      planning ||
+      disabledReason ||
+      !checkpointReady ||
+      !pending ||
+      reconnectPlanNeeded ||
+      registrationUncertain
+    )
+      return;
     const runChannel = channel;
     if (!savedImport && (plannedDestination !== destination || plannedChannel !== runChannel)) {
       await plan(false, plannedDestination === destination && Boolean(sourceID));
@@ -494,7 +507,6 @@
       channel !== runChannel
     )
       return;
-    const runImportID = importID;
     running = true;
     stopping = false;
     controller = new AbortController();
@@ -544,7 +556,7 @@
         let transmissionStarted = false;
         try {
           const receipt = await runChannel.uploadPhotoGroup(
-            runImportID,
+            importID,
             item.group,
             item.files,
             controller.signal,
@@ -678,6 +690,7 @@
           disabled={running || planning}
           onclick={() => {
             savedImport = undefined;
+            replacingConfirmed = true;
             selectedImport = "";
             selectedFiles = [];
             items = [];
@@ -693,7 +706,7 @@
           onclick={() => {
             resuming = true;
             destination = checkpoint!.destination;
-            picker.choose(checkpoint!.pickerKind);
+            picker.choose(checkpoint!.pickerKind === "folder" ? "folder" : "files");
           }}>Resume import</Button
         >
       {/if}
@@ -776,6 +789,8 @@
     {/if}
   </div>
 </DrawerShell>
+
+<PhotoCullConfirmation bind:this={confirmation} />
 
 <style>
   .controls,
