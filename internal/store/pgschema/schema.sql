@@ -317,6 +317,7 @@ CREATE TABLE {{schema}}.browser_photo_imports (
     destination TEXT COLLATE "C" NOT NULL,
     anchor_id BIGINT NOT NULL,
     suffix_json TEXT COLLATE "C" NOT NULL,
+    skipped_json TEXT COLLATE "C" NOT NULL,
     destination_id BIGINT,
     created_at TEXT COLLATE "C" NOT NULL
 );

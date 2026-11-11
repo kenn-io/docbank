@@ -67,6 +67,7 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 2,
+    skipped: [{ path: "notes.txt", reason: "Unsupported type" }],
     groups: [
       {
         status: "committed" as const,
@@ -97,6 +98,8 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("done.JPG");
+  expect(screen.getByText("notes.txt")).toBeTruthy();
+  expect(screen.getByText("Unsupported type")).toBeTruthy();
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: [new File(["x"], "left.JPG")] },
   });

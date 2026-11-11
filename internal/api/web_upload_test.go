@@ -237,7 +237,8 @@ type photoSocketResponse struct {
 	Code        string         `json:"code"`
 	Detail      string         `json:"detail"`
 	SavedImport struct {
-		ImportID string `json:"import_id"`
+		ImportID string                          `json:"import_id"`
+		Skipped  []store.BrowserPhotoSkippedFile `json:"skipped"`
 		Groups   []struct {
 			Status string `json:"status"`
 			Files  []struct {
@@ -250,6 +251,20 @@ type photoSocketResponse struct {
 		AssetID string `json:"asset_id"`
 		Reason  string `json:"reason"`
 	} `json:"photo_group_receipt"`
+}
+
+func TestBrowserPhotoImportRetainsPlanningSkips(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	files := photoGroupDeclaration([]string{"capture.xmp", "notes.txt"}, false)
+	id := planBrowserPhotos(t, conn, files)
+	require.NoError(t, conn.Close(websocket.StatusNormalClosure, ""))
+	conn = browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "inspect_photo_import", "request_id": "inspect", "import_id": id}))
+	inspection := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_inspection", inspection.Type)
+	assert.Equal(t, []store.BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}}, inspection.SavedImport.Skipped)
 }
 
 func TestBrowserPhotoImportReceiptAfterReconnect(t *testing.T) {

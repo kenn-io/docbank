@@ -2486,6 +2486,7 @@ CREATE TABLE IF NOT EXISTS browser_photo_imports (
     destination TEXT NOT NULL,
     anchor_id INTEGER NOT NULL,
     suffix_json TEXT NOT NULL,
+    skipped_json TEXT NOT NULL,
     destination_id INTEGER,
     created_at TEXT NOT NULL
 );

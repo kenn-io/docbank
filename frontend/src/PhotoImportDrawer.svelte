@@ -121,7 +121,7 @@
   let destination = $state("/");
   let items = $state<Item[]>([]);
   let selectedFiles: File[] = [];
-  let unsupported = $state<{ file: File; reason: string }[]>([]);
+  let unsupported = $state<{ name: string; reason: string }[]>([]);
   let importID = $state("");
   let sourceID = "";
   let plannedChannel: PhotoImportTransport | undefined;
@@ -260,6 +260,7 @@
       plannedDestination = destination;
       selectedFiles = [];
       extraFiles = [];
+      unsupported = (saved.skipped ?? []).map((file) => ({ name: file.path, reason: file.reason }));
       items = (saved.groups ?? []).map((group, index) => ({
         group: index,
         files: [],
@@ -287,11 +288,12 @@
     planning = true;
     try {
       const byPath = new Map(files.map((file) => [localFilePath(file), file]));
-      const known = new Set(
-        (savedImport.groups ?? []).flatMap((group) =>
+      const known = new Set([
+        ...(savedImport.groups ?? []).flatMap((group) =>
           group.files.map((file) => file.relative_path),
         ),
-      );
+        ...(savedImport.skipped ?? []).map((file) => file.path),
+      ]);
       extraFiles = files.map(localFilePath).filter((name) => !known.has(name));
       const signal = new AbortController().signal;
       for (const [index, group] of (savedImport.groups ?? []).entries()) {
@@ -436,7 +438,7 @@
         counts[state] = items.filter((item) => item.state === state).length;
       importID = plan.import_id;
       unsupported = plan.unsupported.map((index) => ({
-        file: files[index],
+        name: localFilePath(files[index]),
         reason: plan.skip_reasons?.[index] ?? "Skipped",
       }));
     } catch (cause) {
@@ -723,8 +725,8 @@
             {#if item.error}<p role="alert">{item.error}</p>{/if}
           </li>
         {/each}
-        {#each unsupported as { file, reason }}<li>
-            <strong>{localFilePath(file)}</strong><span>{reason}</span>
+        {#each unsupported as { name, reason }}<li>
+            <strong>{name}</strong><span>{reason}</span>
           </li>{/each}
         {#each extraFiles as name}<li>
             <strong>{name}</strong><span>Outside this import</span>

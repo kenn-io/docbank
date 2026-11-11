@@ -90,14 +90,15 @@ type webSavedPhotoGroup struct {
 }
 
 type webSavedPhotoImport struct {
-	ImportID    string               `json:"import_id"`
-	SourceID    string               `json:"source_id"`
-	Label       string               `json:"label"`
-	Destination string               `json:"destination"`
-	PickerKind  string               `json:"picker_kind"`
-	CreatedAt   string               `json:"created_at"`
-	GroupCount  int                  `json:"group_count"`
-	Groups      []webSavedPhotoGroup `json:"groups,omitzero"`
+	ImportID    string                          `json:"import_id"`
+	SourceID    string                          `json:"source_id"`
+	Label       string                          `json:"label"`
+	Destination string                          `json:"destination"`
+	PickerKind  string                          `json:"picker_kind"`
+	CreatedAt   string                          `json:"created_at"`
+	GroupCount  int                             `json:"group_count"`
+	Groups      []webSavedPhotoGroup            `json:"groups,omitzero"`
+	Skipped     []store.BrowserPhotoSkippedFile `json:"skipped,omitzero"`
 }
 
 type webUploadMessage struct {
@@ -838,6 +839,7 @@ type webPhotoImport struct {
 	destinationPath string
 	sourceID        uuid.UUID
 	groupKeys       []string
+	skipped         []store.BrowserPhotoSkippedFile
 }
 
 func (p *webPhotoImport) sourceDescription() string {
@@ -875,7 +877,7 @@ func handleWebPhotoRegistration(
 	}
 	id, err := d.Store.RegisterBrowserPhotoImport(ctx, store.BrowserPhotoImport{
 		SourceID: plan.sourceID, PickerKind: begin.PickerKind, Label: plan.sourceDescription(),
-		Destination: plan.destinationPath, Directory: plan.destination, Groups: groups,
+		Destination: plan.destinationPath, Directory: plan.destination, Groups: groups, Skipped: plan.skipped,
 	})
 	if err != nil {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
@@ -935,6 +937,7 @@ func handleInspectWebPhotoImport(
 		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, uploadError(err)) == nil
 	}
 	view := savedPhotoImportHeader(saved)
+	view.Skipped = saved.Skipped
 	plan := &webPhotoImport{id: id.String(), sourceID: saved.SourceID, destination: saved.Directory, destinationPath: saved.Destination}
 	for _, group := range saved.Groups {
 		entry := webSavedPhotoGroup{Status: "remaining", Hashes: group.Hashes}
@@ -1072,6 +1075,9 @@ func handleWebPhotoPlan(
 		paths: paths,
 		id:    rand.Text(), files: begin.Files, groups: groups, destination: destination,
 		destinationPath: begin.Destination, sourceID: sourceID,
+	}
+	for _, index := range unsupported {
+		photoImport.skipped = append(photoImport.skipped, store.BrowserPhotoSkippedFile{Path: begin.Files[index].RelativePath, Reason: skipReasons[index]})
 	}
 	err := wsjson.Write(ctx, conn, webUploadMessage{
 		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,

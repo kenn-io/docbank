@@ -77,9 +77,12 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 		key := BrowserPhotoGroupKey(declarations)
 		id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
 			SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-			Groups: []BrowserPhotoImportGroup{{Key: key, Members: declarations}},
+			Groups: []BrowserPhotoImportGroup{{Key: key, Members: declarations}}, Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
 		})
 		require.NoError(t, err)
+		saved, err := s.InspectBrowserPhotoImport(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}}, saved.Skipped)
 		hashes := make([]string, len(inputs))
 		for i, input := range inputs {
 			hashes[i] = input.BlobHash
@@ -155,7 +158,8 @@ func TestBrowserPhotoRecoveryStateCopy(t *testing.T) {
 	firstKey, secondKey := BrowserPhotoGroupKey(first), BrowserPhotoGroupKey(second)
 	id, err := source.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
 		SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-		Groups: []BrowserPhotoImportGroup{{Key: firstKey, Members: first}, {Key: secondKey, Members: second}},
+		Groups:  []BrowserPhotoImportGroup{{Key: firstKey, Members: first}, {Key: secondKey, Members: second}},
+		Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
 	})
 	require.NoError(t, err)
 	digest := fakeHash("a1")
@@ -170,6 +174,10 @@ func TestBrowserPhotoRecoveryStateCopy(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, restoreBrowserPhotoImportState(ctx, source.db, target))
+	var sourceSkipped, targetSkipped string
+	require.NoError(t, source.db.QueryRowContext(ctx, `SELECT skipped_json FROM browser_photo_imports WHERE import_id=$1`, id.String()).Scan(&sourceSkipped))
+	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT skipped_json FROM browser_photo_imports WHERE import_id=$1`, id.String()).Scan(&targetSkipped))
+	assert.Equal(t, sourceSkipped, targetSkipped)
 	for _, key := range []string{firstKey, secondKey} {
 		var sourceHashes, targetHashes string
 		var sourceReceipt, targetReceipt sql.NullString
