@@ -196,7 +196,7 @@ func TestRenditionTextHTTPResolvesAndStreamsOneVerifiedExactArtifact(t *testing.
 	contentResp, content := get(t, ts, "/api/v1/renditions/text/content?"+params.Encode(), nil)
 	require.Equal(t, http.StatusOK, contentResp.StatusCode, content)
 	require.Equal(t, fixture.markdown, []byte(content))
-	assert.Equal(t, document.ImageUnderstandingProviderID, contentResp.Header.Get("X-Docbank-Rendition-Provider-ID"))
+	assert.Equal(t, document.ImageUnderstandingProviderID, contentResp.Header.Get("X-Docbank-Rendition-Provider-Id"))
 	require.Equal(t, receipt.Artifact.SHA256, contentResp.Header.Get("X-Docbank-Rendition-Sha256"))
 	require.Equal(t, base64.StdEncoding.EncodeToString(mustDecodeTestHash(t, receipt.Artifact.SHA256)),
 		strings.TrimSuffix(strings.TrimPrefix(contentResp.Header.Get("Content-Digest"), "sha-256=:"), ":"))
