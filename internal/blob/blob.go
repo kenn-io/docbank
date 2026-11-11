@@ -282,17 +282,30 @@ func New(catalog packstore.Catalog, blobsDir string) (*Store, error) {
 // handoff has been prepared without consuming the marker that makes a crash
 // before database publication recoverable.
 func NewPreparedRestoreReader(catalog packstore.Catalog, blobsDir string) (*Store, error) {
-	return newWithOptions(catalog, blobsDir, Options{}, false)
+	return newWithOptions(catalog, blobsDir, Options{}, readerPrepared)
 }
 
 // NewWithOptions constructs the daemon-owned store with explicit physical
 // loose-storage policy.
 func NewWithOptions(catalog packstore.Catalog, blobsDir string, opts Options) (*Store, error) {
-	return newWithOptions(catalog, blobsDir, opts, true)
+	return newWithOptions(catalog, blobsDir, opts, readerOwner)
+}
+
+type readerMode uint8
+
+const (
+	readerOwner readerMode = iota
+	readerPrepared
+	readerExisting
+)
+
+// NewExistingReader opens existing primary authority without recovery or marker creation.
+func NewExistingReader(catalog packstore.Catalog, blobsDir string, registry *Registry) (*Store, error) {
+	return newWithOptions(catalog, blobsDir, Options{Registry: registry}, readerExisting)
 }
 
 func newWithOptions(
-	catalog packstore.Catalog, blobsDir string, opts Options, recoverRestoreHandoff bool,
+	catalog packstore.Catalog, blobsDir string, opts Options, mode readerMode,
 ) (*Store, error) {
 	if err := ValidateOptions(opts); err != nil {
 		return nil, err
@@ -308,7 +321,7 @@ func newWithOptions(
 		if err := ownership.Validate(); err != nil {
 			return nil, fmt.Errorf("reading primary filesystem ownership: %w", err)
 		}
-		if recoverRestoreHandoff {
+		if mode == readerOwner {
 			if err := RecoverPrimaryRestoreHandoff(
 				context.Background(), blobsDir, &ownership, nil, nil,
 			); err != nil {
@@ -344,7 +357,7 @@ func newWithOptions(
 		}
 		actual, ownershipErr := readBackend.Ownership(context.Background())
 		switch {
-		case errors.Is(ownershipErr, fs.ErrNotExist):
+		case errors.Is(ownershipErr, fs.ErrNotExist) && mode != readerExisting:
 			ownershipErr = readBackend.ReplaceOwnership(
 				context.Background(), ownership, nil,
 			)

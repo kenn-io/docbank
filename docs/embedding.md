@@ -732,6 +732,33 @@ split between raw and compressed object counts. Applications can therefore
 schedule packing from physical storage growth without walking loose objects.
 The report does not make packing automatic.
 
+## Read an existing vault without owning it
+
+Use `OpenContentReader` to read verified originals from an existing, checkpointed
+SQLite vault without initializing, migrating, recovering, or changing its files:
+
+```go
+reader, err := docbank.OpenContentReader(ctx, docbank.ContentReaderConfig{Root: root})
+if err != nil {
+    return err
+}
+defer reader.Close()
+content, err := reader.OpenContent(ctx, "/sessions/example.jsonl")
+if err != nil {
+    return err
+}
+defer content.Reader.Close()
+// Read to EOF or call content.Reader.Verify before trusting the bytes.
+```
+
+`reader.ID()` returns the vault identity. The reader holds the same exclusive
+hierarchy lock as an owner and returns `ErrVaultLocked` when the tree is busy.
+`ErrVaultNeedsOwner` means an owner must initialize, upgrade, or recover the
+vault first, including when SQLite sidecars or a restore handoff are present.
+Newer, unsupported, or unreadable schemas retain their own errors. Only the
+primary blob store is attached; content available only on a secondary store
+returns `ErrContentUnavailable`. Close every stream before closing the reader.
+
 ## Identify a vault and verify reads
 
 `vault.ID()` returns the archive's UUID. JSONL backup and restore preserve
@@ -1186,6 +1213,8 @@ SQLite implementations.
 Do not point a daemon and an embedded application at the same root. `New` holds
 the same exclusive hierarchy lock as the daemon for the entire vault lifetime
 and fails if the requested root overlaps another active vault or restore target.
+
+`OpenContentReader` also takes this exclusive lock, even though it does not change the vault.
 
 The standalone CLI remains daemon-first and never opens storage directly.
 Embedding is a distinct application ownership mode, not a second privileged path

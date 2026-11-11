@@ -284,7 +284,10 @@ func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 // Close closes both database pools.
 func (s *Store) Close() error {
 	s.closePhotoEvents()
-	err := errors.Join(s.db.Close(), s.writeDB.Close())
+	err := s.db.Close()
+	if s.writeDB != nil {
+		err = errors.Join(err, s.writeDB.Close())
+	}
 	s.photoStackVectorsMu.Lock()
 	s.photoStackVectors = nil
 	s.photoStackVectorsMu.Unlock()
