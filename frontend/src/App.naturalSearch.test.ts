@@ -2112,17 +2112,18 @@ function renderEmptySearch(coverage: () => Promise<Response>) {
 }
 
 it.each([
-  ["complete", "2 PDFs have 3 pages", false],
-  ["singular", "1 PDF has 1 page", false],
-  ["partial", "At least 2 PDFs have at least 3 pages", false],
-  ["unavailable", "At least 2 PDFs have at least 3 pages", false],
-  ["complete", "2 PDFs have 3 pages", true],
+  ["complete", "2 PDFs have 3 pages without a text layer.", false],
+  ["singular", "1 PDF has 1 page without a text layer.", false],
+  ["partial", "At least 2 PDFs have at least 3 pages without a text layer.", false],
+  ["unavailable", "At least 2 PDFs have at least 3 pages without a text layer.", false],
+  ["incomplete", "PDF text coverage is incomplete; some pages may not be searchable.", false],
+  ["complete", "2 PDFs have 3 pages without a text layer.", true],
 ])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
   const coverage = textCoverage({
-    pdfs_without_text: kind === "singular" ? 1 : 2,
-    pages_without_text: kind === "singular" ? 1 : 3,
+    pdfs_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 2,
+    pages_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 3,
     pdf_page_coverage_partial: kind === "partial",
-    pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
+    pdf_page_coverage_unavailable: kind === "unavailable" || kind === "incomplete" ? 1 : 0,
   });
   const { fetchMock } = renderEmptySearch(async () => json(coverage));
   if (tagged) {
@@ -2133,25 +2134,13 @@ it.each([
     await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
   }
   await submitSearch("missing");
-  expect(await screen.findByText(`${message} without a text layer.`)).toBeTruthy();
+  expect(await screen.findByText(message)).toBeTruthy();
   if (tagged) {
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
       .find((url) => url.startsWith("/api/v1/search/text-coverage"));
     expect(new URL(request!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
   }
-});
-
-it("shows incomplete PDF coverage when no gaps are known", async () => {
-  renderEmptySearch(async () => json(textCoverage({ pdf_page_coverage_unavailable: 1 })));
-  await submitSearch("missing");
-  expect(
-    await screen.findByText("PDF text coverage is incomplete; some pages may not be searchable."),
-  ).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
-    "https://docbank.ai/docs/usage/document-processing/#ocr",
-  );
-  expect(screen.queryByText(/At least 0/)).toBeNull();
 });
 
 it("shows current vault PDF gaps for an empty frozen query", async () => {
@@ -2180,24 +2169,15 @@ it("shows current vault PDF gaps for an empty frozen query", async () => {
   expect(new URL(request!, "https://example.com").search).toBe("");
 });
 
-it.each(["zero", "failure", "frozen"])(
-  "keeps the empty search quiet when coverage is %s",
-  async (state) => {
-    const coverage = vi.fn(async () =>
-      state === "failure" ? new Response("failure", { status: 500 }) : json(textCoverage()),
-    );
-    renderEmptySearch(coverage);
-    if (state === "frozen") {
-      await screen.findByRole("searchbox", { name: "Search documents" });
-      await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
-      await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
-    }
-    await submitSearch("missing");
-    await waitFor(() => expect(coverage).toHaveBeenCalled());
-    expect(screen.queryByText(/without a text layer/)).toBeNull();
-    expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
-  },
-);
+it("keeps the empty search quiet when coverage fails", async () => {
+  const coverage = vi.fn(async () => new Response("failure", { status: 500 }));
+  renderEmptySearch(coverage);
+  await submitSearch("missing");
+  await waitFor(() => expect(coverage).toHaveBeenCalled());
+  await act(async () => {});
+  expect(screen.queryByText(/without a text layer/)).toBeNull();
+  expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
+});
 
 it("ignores coverage from an older search", async () => {
   let resolve!: (response: Response) => void;

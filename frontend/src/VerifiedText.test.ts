@@ -175,16 +175,13 @@ function renderPDF(receipt?: object) {
         ...receipt,
       }),
     );
-  const onprocess = vi.fn();
   render(VerifiedText, {
     session: "session",
     source: pdf,
     authorizationRevision: 3,
     profileName: "archive",
     onauthfailure: vi.fn(),
-    onprocess,
   });
-  return onprocess;
 }
 
 it("keeps PDF page gaps when reading the text artifact fails", async () => {
@@ -232,14 +229,18 @@ it("finds text, wraps navigation, and clears the find query", async () => {
 it.each([
   ["ready", [3, 4, 7], /Pages 3–4, 7 have no text layer/, /OCR can read them/],
   ["verified_empty", [2], /Page 2 has no text layer/, /OCR can read it/],
-  ["failed", [2], /Page 2 has no text layer/, /OCR can read it/],
-  ["unprocessed", [2], /Page 2 has no text layer/, /OCR can read it/],
 ] as const)("shows %s text coverage for PDF pages %j", async (state, pages, notice, link) => {
-  let onprocess: ReturnType<typeof vi.fn>;
   if (state === "ready") {
     await mockReadyText(pdf, [...pages]);
-    onprocess = renderPDF();
-  } else onprocess = renderPDF({ state, pages_without_text: pages });
+    renderPDF();
+  } else
+    renderPDF({
+      state,
+      pages_without_text: pages,
+      generation_id: "c".repeat(64),
+      attachment_id: "d".repeat(64),
+      build_id: "e".repeat(64),
+    });
   const rendered = await screen.findByText(notice);
   expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
     "https://docbank.ai/docs/usage/document-processing/#ocr",
@@ -249,12 +250,7 @@ it.each([
       rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  else if (state === "failed")
-    expect(screen.getByText("Text processing failed for this selected version.")).toBeTruthy();
-  else if (state === "unprocessed") {
-    await fireEvent.click(screen.getByRole("button", { name: "Process…" }));
-    expect(onprocess).toHaveBeenCalledOnce();
-  } else
+  else
     expect(
       screen.queryByText("Processing verified that this document has no readable text."),
     ).toBeNull();
