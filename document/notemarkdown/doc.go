@@ -42,11 +42,14 @@
 // 32 diagnostics. Positive limits narrow; negative/above-hard limits are invalid.
 // Value/sequence limits apply to nested Raw values too, but not mapping keys.
 // Internal bounds also apply: YAML depth 32/8192 expanded nodes, AST depth
-// 128/262144 metered nodes, 4096-byte targets, 16 MiB derived strings and 64 Mi
+// 128/262144 metered nodes, 4096-byte targets, 32 MiB derived strings and 64 Mi
 // work steps. Syntax input and the line index are bounded by MaxBytes, without
 // separate frontmatter-byte/line-count caps. YAML syntax reads metered chunks;
 // alias expansion and Markdown scans check cancellation at work checkpoints.
-// Any error returns a zero Note: invalid UTF-8/NUL/limits use ErrInvalidInput,
-// resource failures use LimitError wrapping ErrLimit, cancellation preserves
-// the context error. Oversize YAML values are errors, never diagnostics.
+// The derived allowance covers one full-size heading's source copies, raw text,
+// conservative NFC admission and Path; amplified output still has a hard bound.
+// Every error returns a zero Note. Invalid UTF-8, NUL and invalid limit
+// configuration use ErrInvalidInput; resource failures use LimitError wrapping
+// ErrLimit; cancellation preserves the context error. Oversize YAML values
+// are errors, never diagnostics.
 package notemarkdown

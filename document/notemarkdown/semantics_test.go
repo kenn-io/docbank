@@ -125,6 +125,28 @@ func TestMappingKeysDoNotUseValueByteLimit(t *testing.T) {
 	require.Equal(t, Note{}, n)
 }
 
+func TestSingleHeadingWithinDefaultByteEnvelope(t *testing.T) {
+	// Clone + compact view + raw text + conservative 3x NFC admission + Path
+	// require about 7x input, even though there is only one ordinary heading.
+	text := strings.Repeat("a", maxInput-len("# "))
+	src := []byte("# " + text)
+	n, err := Parse(t.Context(), src, Limits{})
+	require.NoError(t, err)
+	require.Equal(t, maxInput, len(src))
+	require.Equal(t, text, n.Title)
+	require.Equal(t, "h1", n.TitleSource)
+	require.Len(t, n.Headings, 1)
+	h := n.Headings[0]
+	require.Equal(t, text, h.Text)
+	require.Equal(t, text, h.Slug)
+	require.Equal(t, text, h.Path)
+	require.Equal(t, Span{0, maxInput}, Span{h.Start, h.LineEnd})
+	require.Equal(t, maxInput, h.SectionEnd)
+	require.Equal(t, 1, n.Lines)
+	require.Empty(t, n.Links)
+	require.Empty(t, n.Diagnostics)
+}
+
 func TestMalformedClosedFrontmatterDoesNotBecomeMarkdown(t *testing.T) {
 	src := "---\n# Hidden\nbad: [unclosed\n[[Hidden]]\n---\n# Body\n[[Visible]]\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{MaxDiagnostics: 1})

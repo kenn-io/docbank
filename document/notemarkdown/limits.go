@@ -15,9 +15,12 @@ const (
 	maxDepth       = 128
 	maxNodes       = 262144
 	maxWork        = 64 << 20
-	maxDerived     = 16 << 20
 	maxDiagnostics = 32
 )
+
+// One MaxBytes-sized heading admits clone, view, raw text, a conservative
+// 3x NFC output bound and Path: about 7x input. Keep bounded headroom.
+const maxDerived = 32 << 20
 
 type budget struct {
 	work, derived, nodes int
