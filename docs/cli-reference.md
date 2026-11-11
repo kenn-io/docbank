@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-02
+last_edited: 2026-11-04
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -13,6 +13,32 @@ Run `docbank --help` for commands grouped by outcome, a numbered agent workflow,
 selectors, output modes, environment settings, and exit codes. Follow with `docbank <command> --help`
 for its workflow and flags. Runnable commands include examples; prerequisite
 examples show where version, job, and snapshot IDs come from.
+
+## Find a command by task
+
+```text
+docbank cli search "import a folder of PDFs"
+docbank cli search pack loose blobs --json --limit 3
+```
+
+Describe a task to get up to five matching commands, then run the suggested
+`--help` command for flags and examples. Quoting the task is optional.
+`--limit` accepts 1–20; its default is 5. Discovery reads the current command
+tree without loading configuration, opening a vault, contacting the network,
+or starting a daemon.
+
+Text output gives a command and summary per line, followed by a help hint.
+`--json` prints one object with `query` and `results`. Each result contains
+`command`, `summary`, and `usage`; no matches produces `"results": []` and
+exit 0. Blank queries and invalid limits fail with exit 2. Errors go to stderr,
+using the existing JSON error envelope when `--json` has been parsed.
+
+Results omit hidden and deprecated commands, help-only groups, completion,
+discovery itself, `tui`, the `web` launcher, the `mcp` server, and
+`daemon run`. Finite children such as `web sessions revoke` and `mcp config`
+remain searchable. Results describe available commands; check their help for
+prerequisites before executing them. To search stored documents, use
+`docbank search <query>`.
 
 ## Command groups and older spellings
 

@@ -2491,3 +2491,6 @@ CREATE INDEX bates_artifacts_history ON {{schema}}.bates_artifacts(created_at,ar
 CREATE INDEX collection_snapshot_representations_version ON {{schema}}.collection_snapshot_representations(content_version_id);
 CREATE INDEX package_preflights_expiry ON {{schema}}.package_preflights(expires_at);
 CREATE INDEX packages_history ON {{schema}}.packages(predecessor_package_id,created_at,package_id);
+
+CREATE INDEX package_import_jobs_pending ON {{schema}}.package_import_jobs(state,id);
+CREATE INDEX package_labels_lookup ON {{schema}}.package_labels(label,provenance,package_id);

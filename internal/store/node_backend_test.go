@@ -63,6 +63,11 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,DELETE ON "+schema+".package_preflights TO "+quotedRole)
 	require.NoError(t, err)
 
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".package_records,"+schema+".package_labels,"+schema+".package_import_receipts,"+schema+".package_import_jobs TO "+quotedRole+
+		"; GRANT UPDATE(state,snapshot_id,completed_at) ON "+schema+".packages TO "+quotedRole+
+		"; GRANT UPDATE(state,epoch,token,claim_owner,lease_expires_at,updated_at) ON "+schema+".package_import_jobs TO "+quotedRole)
+	require.NoError(t, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(display_name,display_name_folded,state,revision,updated_at,key_face_id) ON "+schema+".persons TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(person_id) ON "+schema+".person_identities TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(person_id,uid_kind,uid_state,last_seen_revision,display_name_snapshot,updated_at) ON "+schema+".person_external_identities TO "+quotedRole+

@@ -64,9 +64,8 @@
   let textSelection = $state<TextSelectionStatus>({ busy: false, error: "" });
   let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
-  let numberingInputs = $state<NumberingInputs>();
-  let publishedInputs = $state<NumberingInputs>();
-  const displayedNumberingInputs = $derived(publishedInputs ?? numberingInputs);
+  let numberingReviews = $state<{ inputs: NumberingInputs; published: boolean }[]>([]);
+  const latestNumbering = $derived(numberingReviews.at(-1));
   let numberingLocked = $state(false);
   let preview = $state<RedactionPreview>();
   let expansion = $state<RedactionMask>();
@@ -214,7 +213,7 @@
     void showPage();
   }
   function changed() {
-    if (!numberingLocked) numberingInputs = undefined;
+    if (!numberingLocked) numberingReviews = numberingReviews.filter((item) => item.published);
     review = undefined;
     expansion = undefined;
     error = "";
@@ -306,11 +305,16 @@
       creationAttempted = true;
       const result = await createRedactionPreview(session, prep, selectedMasks, resolved, signal);
       if (signal.aborted || disposed) return;
-      numberingInputs = structuredClone({
-        preparation: $state.snapshot(prep),
-        masks: selectedMasks,
-        review: resolved,
-      });
+      if (!numberingReviews.some((item) => item.inputs.review.sha256 === resolved.sha256)) {
+        numberingReviews.push({
+          inputs: structuredClone({
+            preparation: $state.snapshot(prep),
+            masks: selectedMasks,
+            review: resolved,
+          }),
+          published: false,
+        });
+      }
       preview = result;
       phase = "ready";
       tab = "redacted";
@@ -399,7 +403,7 @@
     }
   }
   function savePrivate(kind: "preparation" | "masks" | "review") {
-    const saved = review && preparation ? { preparation, masks, review } : displayedNumberingInputs;
+    const saved = review && preparation ? { preparation, masks, review } : latestNumbering?.inputs;
     if (!saved) return;
     const value = saved[kind];
     const url = URL.createObjectURL(
@@ -424,8 +428,7 @@
     textSelection = { busy: false, error: "" };
     selectionAnnouncement = "";
     preparation = undefined;
-    numberingInputs = undefined;
-    publishedInputs = undefined;
+    numberingReviews = [];
     numberingLocked = false;
     review = undefined;
     preview = undefined;
@@ -654,10 +657,7 @@
               </section>{/if}
           </aside>
         </div>
-        {#if review || displayedNumberingInputs}<Disclosure
-            variant="plain"
-            title="Private review files"
-          >
+        {#if review || latestNumbering}<Disclosure variant="plain" title="Private review files">
             <p>
               Keep these for offline verification. Preparation contains unredacted evidence; do not
               include it with the delivery.
@@ -668,24 +668,26 @@
                   onclick={() => savePrivate(kind as "preparation" | "masks" | "review")}
                   >Save {kind}</Button
                 >{/each}
-              {#if !publishedInputs}<p class="notice">
+              {#if !latestNumbering?.published}<p class="notice">
                   Save all three before numbering to finish through the CLI if this tab closes.
                 </p>{/if}
             </div>
           </Disclosure>{/if}
-        {#if displayedNumberingInputs}{#key displayedNumberingInputs.review.sha256}<RedactionNumbering
-              {session}
-              inputs={displayedNumberingInputs}
-              {title}
-              bind:locked={numberingLocked}
-              {onauthfailure}
-              onpublished={() => {
-                publishedInputs = numberingInputs;
-                onpublished();
-              }}
-              onnotice={(message) => (notice = message)}
-              {onproductions}
-            />{/key}{/if}
+        {#each numberingReviews as item (item.inputs.review.sha256)}
+          <RedactionNumbering
+            {session}
+            inputs={item.inputs}
+            {title}
+            bind:locked={numberingLocked}
+            {onauthfailure}
+            onpublished={() => {
+              item.published = true;
+              onpublished();
+            }}
+            onnotice={(message) => (notice = message)}
+            {onproductions}
+          />
+        {/each}
         {#if preview}<p class="notice">
             Preview expires {new Date(preview.expires_at).toLocaleTimeString()}. It is removed on
             tab close, reload or daemon restart.

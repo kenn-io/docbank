@@ -838,6 +838,51 @@ func TestLoadParsesWatchedInboxesAndAppliesDefaults(t *testing.T) {
 	require.NoError(t, c.Validate())
 }
 
+func TestWatchDefaultExcludes(t *testing.T) {
+	for _, tc := range []struct {
+		name, setting string
+		patterns      []string
+		flag          *bool
+		want          []string
+	}{
+		{
+			name: "unset",
+			want: []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"},
+		},
+		{
+			name: "enabled", setting: "default_excludes = true\nexclude_patterns = ['*.swp']\n",
+			patterns: []string{"*.swp"}, flag: new(true),
+			want: []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload", "*.swp"},
+		},
+		{
+			name: "disabled", setting: "default_excludes = false\nexclude_patterns = ['*.swp']\n",
+			patterns: []string{"*.swp"}, flag: new(false),
+			want: []string{"*.swp"},
+		},
+		{
+			name: "old docs example", setting: "exclude_patterns = ['.syncthing.*.tmp', '*.sync-conflict-*']\n",
+			patterns: []string{".syncthing.*.tmp", "*.sync-conflict-*"},
+			want:     []string{".syncthing.*.tmp", "~syncthing~*.tmp", "*.sync-conflict-*", "*.crdownload"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := privateTestConfigDir(t)
+			body := "[[watch]]\nname = 'inbox'\nsource = '" + filepath.ToSlash(t.TempDir()) + "'\ndestination = '/inbox'\n" + tc.setting
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600))
+			cfg, err := Load(dir)
+			require.NoError(t, err)
+			require.Len(t, cfg.Watches, 1)
+			watch := cfg.Watches[0]
+			assert.Equal(t, tc.flag, watch.DefaultExcludes)
+			patterns := watch.EffectiveExcludePatterns()
+			require.Equal(t, tc.want, patterns)
+			patterns[len(patterns)-1] = "changed"
+			assert.Equal(t, tc.want, watch.EffectiveExcludePatterns())
+			assert.Equal(t, tc.patterns, watch.ExcludePatterns)
+		})
+	}
+}
+
 func TestWatchedInboxConfigRejectsAmbiguousOrUnsafeValues(t *testing.T) {
 	dir := privateTestConfigDir(t)
 	source := filepath.ToSlash(t.TempDir())

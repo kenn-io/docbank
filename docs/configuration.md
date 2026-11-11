@@ -173,7 +173,8 @@ minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
 capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
+default_excludes = true # skip known partial files and sync conflicts
+exclude_patterns = ["*.swp"]
 ```
 
 - **`bind_addr`** — the interface the API listens on. Defaults to loopback.
@@ -332,6 +333,16 @@ Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
 recursive. A match in either list skips the entry. Matching directories are
 pruned during both startup checks and scanning.
 
+`default_excludes` defaults to `true`. Every watch skips Syncthing partial
+files (`.syncthing.*.tmp` and `~syncthing~*.tmp`), Syncthing conflict copies
+(`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`). These
+patterns add to configured rules and use the existing exclusion matcher and
+directory pruning, like `exclude_patterns`.
+Conflict copies (`*.sync-conflict-*`) are finished files that are not archived
+unless `default_excludes = false`. Set that option to use only configured
+exclusions when these names are intentional. Exclusions do not remove documents
+already archived.
+
 For a Syncthing inbox, for example:
 
 ```toml
@@ -340,7 +351,6 @@ name = "synced-notes"
 source = "~/synced-notes"
 destination = "/notes"
 exclude = [".stversions", ".git"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
 First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
@@ -464,7 +474,8 @@ destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
-and glob rules. Use `--json` when an agent needs the separate `exclude` and
+and glob rules, including the default patterns unless `default_excludes = false`.
+Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
 all-task view. A permanent source, destination, or read failure leaves the named
 job in the failed state and records the reason.

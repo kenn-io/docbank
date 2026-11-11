@@ -16,9 +16,10 @@ func seededPackageImportJob(t *testing.T, s *Store) (IngestRun, PackageRequest, 
 	return run, pkg, packageImportJobRequest(t, s, pkg)
 }
 
-func TestPackageImportJobAdmissionReplaysExactOperation(t *testing.T) {
+func checkPackageImportJobAdmissionReplaysExactOperation(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	first, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -38,9 +39,10 @@ func TestPackageImportJobAdmissionReplaysExactOperation(t *testing.T) {
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
 
-func TestPackageImportJobAdmissionRejectsSecondOperationForPackage(t *testing.T) {
+func checkPackageImportJobAdmissionRejectsSecondOperationForPackage(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	first, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -56,9 +58,10 @@ func TestPackageImportJobAdmissionRejectsSecondOperationForPackage(t *testing.T)
 	require.Equal(t, first, got)
 }
 
-func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) {
+func checkAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	request := validPackageRequest(t, s)
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "synthetic-package")
 	require.NoError(t, err)
@@ -91,7 +94,7 @@ func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) 
 	_, err = s.AdmitPackageImport(t.Context(), run, request, bad)
 	require.ErrorIs(t, err, ErrPackageConflict)
 	var retained int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=?`, run.ID()).Scan(&retained))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=$1`, run.ID()).Scan(&retained))
 	require.Zero(t, retained, "failed admission must not retain a source collection")
 	_, err = s.Package(t.Context(), request.PackageID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -99,7 +102,7 @@ func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) 
 	first, err := s.AdmitPackageImport(t.Context(), run, request, jobRequest)
 	require.NoError(t, err)
 	require.Equal(t, packageJobQueued, first.State)
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=? AND source_kind='package:loadfile'`, run.ID()).Scan(&retained))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=$1 AND source_kind='package:loadfile'`, run.ID()).Scan(&retained))
 	require.Equal(t, 1, retained)
 	pkg, err := s.Package(t.Context(), request.PackageID)
 	require.NoError(t, err)
@@ -128,7 +131,7 @@ func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) 
 	replayed, err := s.AdmitPackageImport(t.Context(), retryRun, retryPackage, retryJob)
 	require.NoError(t, err)
 	require.Equal(t, first, replayed)
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=?`, retryRun.ID()).Scan(&retained))
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM ingests WHERE id=$1`, retryRun.ID()).Scan(&retained))
 	require.Zero(t, retained, "replay must not create a second source collection")
 
 	changed := retryJob
@@ -146,9 +149,10 @@ func TestAdmitPackageImportPublishesIngestPackageAndJobAtomically(t *testing.T) 
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
 
-func TestPackageImportJobCancelFencesStaleFinalization(t *testing.T) {
+func checkPackageImportJobCancelFencesStaleFinalization(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -168,15 +172,16 @@ func TestPackageImportJobCancelFencesStaleFinalization(t *testing.T) {
 	require.Equal(t, "cancelled", pkg.State)
 }
 
-func TestPackageImportLeaseReclaimInvalidatesEarlierToken(t *testing.T) {
+func checkPackageImportLeaseReclaimInvalidatesEarlierToken(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
 	first, err := s.ClaimPackageImportJob(t.Context(), "worker-one", time.Minute)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE package_import_jobs SET lease_expires_at=? WHERE id=?`,
+	_, err = s.db.ExecContext(t.Context(), `UPDATE package_import_jobs SET lease_expires_at=$1 WHERE id=$2`,
 		"2000-01-01T00:00:00Z", first.ID)
 	require.NoError(t, err)
 	second, err := s.ClaimPackageImportJob(t.Context(), "worker-two", time.Minute)
@@ -193,9 +198,10 @@ func TestPackageImportLeaseReclaimInvalidatesEarlierToken(t *testing.T) {
 	require.Equal(t, "failed", finished.State)
 }
 
-func TestPackageImportGapReceiptIsFencedAndIdempotent(t *testing.T) {
+func checkPackageImportGapReceiptIsFencedAndIdempotent(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -229,9 +235,10 @@ func TestPackageImportGapReceiptIsFencedAndIdempotent(t *testing.T) {
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
 
-func TestPackageImportProgressIncludesGapsOnCommittedRecords(t *testing.T) {
+func checkPackageImportProgressIncludesGapsOnCommittedRecords(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -240,7 +247,7 @@ func TestPackageImportProgressIncludesGapsOnCommittedRecords(t *testing.T) {
 	var versionID string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT b.content_version_id
 		FROM provenance_version_bindings b JOIN provenance p ON p.identity=b.provenance_identity
-		JOIN packages k ON k.ingest_id=p.ingest_id WHERE k.package_id=? LIMIT 1`, request.PackageID).Scan(&versionID))
+		JOIN packages k ON k.ingest_id=p.ingest_id WHERE k.package_id=$1 LIMIT 1`, request.PackageID).Scan(&versionID))
 	key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
 	require.NoError(t, err)
 	occurrence := PackageOccurrenceID(request.PackageID, key)
@@ -264,9 +271,10 @@ func TestPackageImportProgressIncludesGapsOnCommittedRecords(t *testing.T) {
 	require.Equal(t, []string{"VOL001/TEXT/A.txt"}, progress.Gaps)
 }
 
-func TestPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t *testing.T) {
+func checkPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -295,9 +303,10 @@ func TestPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t *testing.T)
 	require.Equal(t, []string{key}, progress.Gaps)
 }
 
-func TestPackageImportLeaseMayBeReleasedForImmediateRetry(t *testing.T) {
+func checkPackageImportLeaseMayBeReleasedForImmediateRetry(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -315,9 +324,10 @@ func TestPackageImportLeaseMayBeReleasedForImmediateRetry(t *testing.T) {
 	require.Greater(t, reclaimed.Epoch, claimed.Epoch)
 }
 
-func TestStalePackageWorkerCannotCommitARecordAfterCancel(t *testing.T) {
+func checkStalePackageWorkerCannotCommitARecordAfterCancel(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -328,7 +338,7 @@ func TestStalePackageWorkerCannotCommitARecordAfterCancel(t *testing.T) {
 	var versionID string
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT b.content_version_id
 		FROM provenance_version_bindings b JOIN provenance p ON p.identity=b.provenance_identity
-		JOIN packages k ON k.ingest_id=p.ingest_id WHERE k.package_id=? LIMIT 1`, request.PackageID).Scan(&versionID))
+		JOIN packages k ON k.ingest_id=p.ingest_id WHERE k.package_id=$1 LIMIT 1`, request.PackageID).Scan(&versionID))
 	_, err = s.CancelPackageImportJob(t.Context(), request.Owner, request.OperationID)
 	require.NoError(t, err)
 	occurrence := PackageOccurrenceID(request.PackageID, key)
@@ -347,9 +357,10 @@ func TestStalePackageWorkerCannotCommitARecordAfterCancel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPackageImportFinishRejectsUnrelatedSnapshot(t *testing.T) {
+func checkPackageImportFinishRejectsUnrelatedSnapshot(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -368,9 +379,10 @@ func TestPackageImportFinishRejectsUnrelatedSnapshot(t *testing.T) {
 	require.Equal(t, "importing", pkg.State)
 }
 
-func TestPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t *testing.T) {
+func checkPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -384,7 +396,7 @@ func TestPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT n.id,v.version_id,v.blob_hash,v.size,n.name
 		FROM provenance p JOIN nodes n ON n.id=p.node_id
 		JOIN content_versions v ON v.version_id=n.current_version_id
-		WHERE p.ingest_id=? LIMIT 1`, pkg.IngestID).Scan(&nodeID, &versionID, &blobSHA, &size, &name))
+		WHERE p.ingest_id=$1 LIMIT 1`, pkg.IngestID).Scan(&nodeID, &versionID, &blobSHA, &size, &name))
 	key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
 	require.NoError(t, err)
 	occurrence := PackageOccurrenceID(pkg.PackageID, key)
@@ -450,9 +462,10 @@ func TestPackageImportJobSurvivesMetadataRestoreWithoutLease(t *testing.T) {
 	require.Equal(t, job.ID, reclaimed.ID)
 }
 
-func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
+func checkRevokePackageImportOwnerCancelsQueuedWork(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	run, packageRequest, request := seededPackageImportJob(t, s)
 	_, err := s.AdmitPackageImport(t.Context(), run, packageRequest, request)
 	require.NoError(t, err)
@@ -468,11 +481,12 @@ func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
 	require.Equal(t, "cancelled", revoked.State)
 }
 
-func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
+func checkPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, outcome := range []string{"cancelled", "failed", "checkout-pinned"} {
 		t.Run(outcome, func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			request, run, original := prepareReceivedPackage(t, s, "photo-"+outcome)
 			image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg",
 				fakeHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
@@ -516,7 +530,7 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			require.Equal(t, original.ID, changes[0].NodeID)
 			var purges int
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
-				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))
+				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=$1 AND operation='purge'`, asset.ID).Scan(&purges))
 			repaired, err := s.PhotoAssetByID(t.Context(), asset.ID)
 			require.NoError(t, err)
 			if outcome == "checkout-pinned" {
@@ -529,7 +543,7 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			require.Empty(t, repaired.Files)
 			require.Equal(t, asset.Revision+1, repaired.Revision)
 			require.Equal(t, 1, purges)
-			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion, false))
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion, s.postgresSchema != ""))
 		})
 	}
 }
