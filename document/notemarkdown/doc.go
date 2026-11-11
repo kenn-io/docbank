@@ -32,8 +32,8 @@
 // wins, else the first H1 even when empty; callers use the filename for empty Title.
 //
 // Forms are markdown (including autolinks), reference, image, wikilink and embed.
-// Parenthesized link titles balance unescaped parentheses in both inline and
-// reference forms; escaped punctuation remains literal.
+// Parenthesized link titles reject unescaped opening parentheses in inline and
+// reference forms; backslash-escaped punctuation remains literal.
 // Raw spans the whole occurrence. Targets decode Markdown syntax where allowed,
 // split at the first structural #, then percent-decode each component once.
 // Autolinks retain literal entity/backslash spelling. Invalid escapes, decoded

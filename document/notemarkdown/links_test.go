@@ -31,16 +31,15 @@ func TestParenthesizedLinkTitles(t *testing.T) {
 		name, inline, reference string
 		valid                   bool
 	}{
-		{"nested", `[x](foo (a(b)))`, `[r]: foo (a(b))`, true},
-		{"deeper", `[x](foo (a(b(c))))`, `[r]: foo (a(b(c)))`, true},
+		{"unescaped opener", `[x](foo (a(b)))`, `[r]: foo (a(b))`, false},
+		{"unclosed nested", `[x](foo (a(b))`, `[r]: foo (a(b)`, false},
 		{"empty", `[x](foo ())`, `[r]: foo ()`, true},
 		{"escaped opener", `[x](foo (a\(b))`, `[r]: foo (a\(b)`, true},
 		{"escaped closer", `[x](foo (a\)b))`, `[r]: foo (a\)b)`, true},
-		{"escaped backslash", `[x](foo (a\\(b)))`, `[r]: foo (a\\(b))`, true},
-		{"multiline", "[x](foo (a\n(b)))", "[r]: foo (a\n(b))", true},
+		{"escaped backslash", `[x](foo (a\\b))`, `[r]: foo (a\\b)`, true},
+		{"multiline", "[x](foo (a\nb))", "[r]: foo (a\nb)", true},
 		{"quoted parentheses", `[x](foo "a(b")`, `[r]: foo "a(b"`, true},
-		{"missing close", `[x](foo (a(b))`, `[r]: foo (a(b)`, false},
-		{"unclosed nested", `[x](foo (a(b)`, `[r]: foo (a(b`, false},
+		{"missing close", `[x](foo (a)`, `[r]: foo (a`, false},
 	} {
 		for _, form := range []struct{ name, source, raw string }{
 			{"inline", tc.inline, tc.inline},
