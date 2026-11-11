@@ -2150,7 +2150,7 @@ func (service *Service) prepareExecutableRendition(ctx context.Context, node sto
 	if profileRenditionInput(profile) == document.RenditionInputDerivedUpload {
 		return service.prepareExecutablePhotoDescription(ctx, version, profile, inputBinding)
 	}
-	prepared, err := service.prepareRendition(ctx, node, version, profile)
+	prepared, err := service.prepareRendition(ctx, node, version, profile, false)
 	if err != nil {
 		return preparedRendition{}, err
 	}
@@ -2226,10 +2226,10 @@ func (service *Service) prepareExecutablePhotoDescription(ctx context.Context, v
 }
 
 func (service *Service) prepareRendition(ctx context.Context, node store.Node, version store.ContentVersion,
-	profile configuredProfile,
+	profile configuredProfile, withUpload bool,
 ) (preparedRendition, error) {
 	execution, err := prepareProviderExecution(ctx, service.catalog, service.blobs, service.spoolDirectory,
-		node, version, profile, service.clock, false)
+		node, version, profile, service.clock, withUpload)
 	if err != nil {
 		return preparedRendition{}, err
 	}

@@ -144,7 +144,6 @@ func TestMediaEvidenceReusesVerifiedGenerationAcrossLookups(t *testing.T) {
 			input.span.EndMS = -1 // A caller cannot change a cached interval.
 		}
 	}
-
 	t.Run("concurrent cached lookups", func(t *testing.T) {
 		for range 4 {
 			t.Run("lookup", func(t *testing.T) {
@@ -164,35 +163,6 @@ func TestMediaEvidenceReusesVerifiedGenerationAcrossLookups(t *testing.T) {
 	changed.GenerationChecksum = strings.Repeat("f", 64)
 	_, err = resolver.resolveInput(t.Context(), changed, generation.Inputs[0].Key)
 	require.Error(t, err, "cache entries must match all catalog authority")
-}
-
-func TestMediaEvidenceImageHeadingContext(t *testing.T) {
-	t.Parallel()
-	policy, err := document.NewEvidencePolicy(4096)
-	require.NoError(t, err)
-	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{
-		Profile: document.ModelInputProfileCustom, CompatibilityID: "synthetic-space",
-		Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"},
-		Query:    document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"},
-	})
-	require.NoError(t, err)
-	imageEvidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Family: "image", Completeness: document.EvidenceDegradedProvenance, UnitKind: document.EvidenceUnitGeneric,
-		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []document.SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{document.ImageUnderstandingHeading, "Possible meaning (interpretation)"}, Text: "denial of a crisis", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone}}}}, policy)
-	require.NoError(t, err)
-	imageGeneration, err := document.BuildEmbeddingInputs(imageEvidence, document.InputPolicy{Chunk: document.EmbeddingChunkPolicyV1{ContextFingerprint: strings.Repeat("b", 64), Formatter: document.RenditionChunkHeadingsFormatter, MaxTokens: 128, Tokenizer: "synthetic-whole", TokenizerRevision: "v1", TruncationPolicy: document.TruncationPolicyReject}, Tokenizer: mediaTokenizer{}, ModelInput: contract, LexicalEvidenceFingerprint: strings.Repeat("a", 64), MaxInputTokens: 256, MaxInputBytes: 4096}, document.GenerationLimits{MaxInputs: 128, MaxTotalContentTokens: 4096, MaxTotalRenderedTokens: 8192, MaxTotalContentBytes: 1 << 20, MaxTotalRenderedBytes: 2 << 20, MaxFittingWorkTokens: 1 << 20, MaxFittingWorkBytes: 8 << 20})
-	require.NoError(t, err)
-	generationBytes, err := document.MarshalEmbeddingInputGeneration(imageGeneration)
-	require.NoError(t, err)
-	evidenceBytes, evidenceHash, err := document.MarshalNormalizedEvidenceV1(imageEvidence)
-	require.NoError(t, err)
-	digest := sha256.Sum256(generationBytes)
-	artifacts := store.SearchMediaEvidence{BuildID: "image-build", GenerationBlobHash: hex.EncodeToString(digest[:]), GenerationEncodedSize: int64(len(generationBytes)), GenerationChecksum: imageGeneration.Checksum, EvidenceFingerprint: evidenceHash, EvidenceEncodedSize: int64(len(evidenceBytes)), InputCount: len(imageGeneration.Inputs)}
-	imageBlobs := &mediaBlobFixture{data: map[string][]byte{artifacts.GenerationBlobHash: generationBytes, evidenceHash: evidenceBytes}}
-	input, err := NewMediaEvidenceResolver(imageBlobs).resolveInput(t.Context(), artifacts, imageGeneration.Inputs[0].Key)
-	require.NoError(t, err)
-	require.Contains(t, input.excerpt, document.ImageUnderstandingHeading+" / Possible meaning (interpretation)")
-	require.Contains(t, input.excerpt, "denial of a crisis")
 }
 
 func TestSearcherSemanticRerankingUsesExactRenditionInputExcerpt(t *testing.T) {

@@ -63,7 +63,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.Empty(t, plan.RenditionIneligibleReason)
 	version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
-	prepared, err := service.prepareRendition(t.Context(), node, version, service.profiles["images"])
+	prepared, err := service.prepareRendition(t.Context(), node, version, service.profiles["images"], false)
 	require.NoError(t, err)
 	work := store.RenditionJobWork{Profile: service.profiles["images"].record, Job: store.RenditionJob{SourceSHA256: written.Hash}, Waiter: store.RenditionJobWaiter{ContentVersionID: node.CurrentVersionID}, ExecutionIdentity: prepared.identity}
 	execution, err := service.renditions.Prepare(t.Context(), renditionProviderRuntimeWork(work), service.clock())
