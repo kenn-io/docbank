@@ -316,7 +316,7 @@ func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state str
 		return invalid()
 	}
 	if state != "ok" {
-		if len(target.VersionID) > 2048 {
+		if len(target.VersionID) > maxNoteIndexTextBytes {
 			return nil, nil, ErrNoteIndexLimit
 		}
 		if note.Frontmatter != nil || len(note.Headings) > 0 || len(note.Links) > 0 || len(note.Diagnostics) > 0 || note.Title != "" || note.TitleSource != "" || note.BodyStart != 0 || note.Lines != 0 {
@@ -384,6 +384,8 @@ func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state str
 	return raw, diagnostic, validateNoteIndexes(ctx, target, note)
 }
 
+const maxNoteIndexTextBytes = 2048
+
 // ErrNoteIndexLimit identifies deterministic indexed-text overflow, before SQL.
 var ErrNoteIndexLimit = errors.New("note indexed text exceeds 2048 bytes")
 
@@ -397,9 +399,8 @@ func validateNoteIndexes(ctx context.Context, target NoteTarget, note notemarkdo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	const budget = 2048
 	versionBytes := len(target.VersionID)
-	if versionBytes > budget {
+	if versionBytes > maxNoteIndexTextBytes {
 		return ErrNoteIndexLimit
 	}
 	if f := note.Frontmatter; f != nil {
@@ -407,7 +408,7 @@ func validateNoteIndexes(ctx context.Context, target NoteTarget, note notemarkdo
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if len(field.Key) > budget-versionBytes || len(field.Value) > budget-versionBytes-len(field.Key) {
+			if len(field.Key) > maxNoteIndexTextBytes-versionBytes || len(field.Value) > maxNoteIndexTextBytes-versionBytes-len(field.Key) {
 				return ErrNoteIndexLimit
 			}
 		}
@@ -415,7 +416,7 @@ func validateNoteIndexes(ctx context.Context, target NoteTarget, note notemarkdo
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if len(strings.ToLower(norm.NFC.String(alias))) > budget-versionBytes {
+			if len(strings.ToLower(norm.NFC.String(alias))) > maxNoteIndexTextBytes-versionBytes {
 				return ErrNoteIndexLimit
 			}
 		}
@@ -425,7 +426,7 @@ func validateNoteIndexes(ctx context.Context, target NoteTarget, note notemarkdo
 			return err
 		}
 		p, key := noteLinkIdentity(target.Path, link.Form, link.Target)
-		if (p != nil && len(*p) > budget) || (key != nil && len(*key) > budget) {
+		if (p != nil && len(*p) > maxNoteIndexTextBytes) || (key != nil && len(*key) > maxNoteIndexTextBytes) {
 			return ErrNoteIndexLimit
 		}
 	}
