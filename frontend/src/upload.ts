@@ -210,6 +210,8 @@ export class UploadChannelError extends Error {
   override readonly name = "UploadChannelError";
 }
 
+export class UploadProofError extends Error {}
+
 type SocketFactory = (url: string) => WebSocket;
 
 function base64URLBytes(value: string): Uint8Array {
@@ -272,8 +274,8 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     const authenticated = await this.nextMessage(undefined, uploadHandshakeTimeoutMs);
     const proof = expectedProof(this.session.uploadSecret, this.session.token, nonce);
     if (authenticated.type !== "authenticated" || authenticated.proof !== proof) {
-      this.fail();
-      throw new Error(
+      this.retire(false);
+      throw new UploadProofError(
         "The upload endpoint could not prove it is the current Docbank daemon. No file bytes were sent.",
       );
     }
@@ -784,9 +786,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
   }
 
   private channelError(): Error {
-    return new UploadChannelError(
-      "The verified upload channel ended. Run `docbank web` again before selecting files.",
-    );
+    return new UploadChannelError("The verified upload channel ended.");
   }
 
   private fail(): void {

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import type { UploadConnectionState } from "./uploadReconnect.js";
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import FileUpIcon from "@lucide/svelte/icons/file-up";
@@ -42,6 +44,8 @@
     channel: UploadTransport;
     directory: Node;
     disabledReason?: string;
+    connectionState?: UploadConnectionState;
+    onreconnect?: () => void;
     initialPicker?: PickerKind;
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
@@ -53,6 +57,8 @@
     channel,
     directory,
     disabledReason = "",
+    connectionState = "fatal",
+    onreconnect = () => {},
     initialPicker,
     onclose,
     oncomplete,
@@ -179,7 +185,7 @@
         if (transmissionStarted && !(cause instanceof APIError)) {
           updateItem(queued.id, {
             state: "unconfirmed",
-            error: "Upload could not be confirmed. Run `docbank web` again, then retry this file.",
+            error: "Upload could not be confirmed. Retry this file to check whether it was added.",
           });
           failedCause ??= cause;
           break;
@@ -266,7 +272,7 @@
 >
   <div class="tool-body">
     {#if disabledReason}
-      <p class="tool-error" role="alert">{disabledReason}</p>
+      <UploadChannelNotice state={connectionState} message={disabledReason} {onreconnect} />
     {/if}
 
     <div class="picker" class:picker-empty={items.length === 0}>

@@ -284,7 +284,7 @@ describe("upload documents drawer", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Upload 2 files" }));
 
     expect(await screen.findByText("Unconfirmed")).toBeTruthy();
-    expect(screen.getByText(/Run `docbank web` again, then retry this file/)).toBeTruthy();
+    expect(screen.getByText(/Retry this file to check whether it was added/)).toBeTruthy();
     expect(channel.uploadFile).toHaveBeenCalledOnce();
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
   });

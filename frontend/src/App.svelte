@@ -193,6 +193,8 @@
     type TagHotkeyBindings,
   } from "./tag-hotkeys.js";
   import { VerifiedUploadChannel } from "./upload.js";
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import { UploadReconnect, type UploadConnectionState } from "./uploadReconnect.js";
   import {
     evidenceKindLabels,
     naturalSearchFallbackNote,
@@ -1100,6 +1102,16 @@
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
+  let uploadConnectionState = $state<UploadConnectionState>("connecting");
+  let uploadReconnect: UploadReconnect | undefined;
+  let reconnectFocus: Element | null = null;
+  let reconnectFocusPending = false;
+  let stopReconnectFocus: (() => void) | undefined;
+  const reconnectUpload = (): void => {
+    reconnectFocus = document.activeElement?.closest('[role="dialog"]') ?? null;
+    reconnectFocusPending = true;
+    uploadReconnect?.retry();
+  };
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -1596,28 +1608,70 @@
     const reporter = startTelemetryReporting(session.token);
     telemetryReporting = reporter;
     sessionReporting = startSessionReporting(reporter);
-    const channel = new VerifiedUploadChannel(session, undefined, () => {
-      if (uploadChannel !== channel) return;
-      uploadChannelError = keyLogin
-        ? "The verified upload channel ended. Reload and sign in again before selecting more files."
-        : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+    uploadConnectionState = "connecting";
+    reconnectFocusPending = false;
+    reconnectFocus = null;
+    const reconnect = new UploadReconnect(session, (state, channel, cause) => {
+      if (!mounted || webSession !== session.token) return;
+      uploadConnectionState = state;
+      if (state === "connected" && channel) {
+        uploadChannel = channel;
+        uploadChannelError = "";
+        if (reconnectFocusPending) {
+          const target = reconnectFocus;
+          reconnectFocus = null;
+          reconnectFocusPending = false;
+          void tick().then(() => {
+            if (!mounted || webSession !== session.token) return;
+            stopReconnectFocus?.();
+            if (!target) {
+              document.querySelector<HTMLElement>(".document-add-trigger")?.focus();
+              return;
+            }
+            const focusPicker = (): boolean => {
+              const picker = target.querySelector<HTMLElement>(
+                ".chooser button:not(:disabled), .controls button:not(:disabled), .tool-body button:not(:disabled)",
+              );
+              if (!picker) return false;
+              picker.focus();
+              return true;
+            };
+            if (focusPicker()) return;
+            const observer = new MutationObserver(() => {
+              if (!target.isConnected || focusPicker()) stopReconnectFocus?.();
+            });
+            const timeout = window.setTimeout(() => stopReconnectFocus?.(), 30_000);
+            stopReconnectFocus = () => {
+              observer.disconnect();
+              window.clearTimeout(timeout);
+              stopReconnectFocus = undefined;
+            };
+            observer.observe(target, {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              attributeFilter: ["disabled"],
+            });
+          });
+        }
+      } else if (state === "fatal") {
+        if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) {
+          handleFailure(new APIError("Browser session rejected", 401, ""));
+        } else uploadChannelError = cause instanceof Error ? cause.message : String(cause);
+      } else if (state === "failed" || state === "manual") {
+        uploadChannelError = "Upload channel disconnected. Choose Reconnect.";
+      } else if (state === "reconnecting") uploadChannelError = "Reconnecting upload channel";
     });
-    void channel.connect().then(
-      () => {
-        if (mounted && webSession === session.token) uploadChannel = channel;
-        else channel.close();
-      },
-      (cause) => {
-        if (mounted && webSession === session.token)
-          uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-      },
-    );
+    uploadReconnect = reconnect;
+    reconnect.start();
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
       reporting.stop();
       reporter.stop();
       telemetryReporting = undefined;
-      channel.close();
+      reconnect.close();
+      stopReconnectFocus?.();
+      if (uploadReconnect === reconnect) uploadReconnect = undefined;
     };
   }
 
@@ -4233,6 +4287,15 @@
         {/snippet}
       </TopBar>
 
+      {#if photoMode && (uploadConnectionState === "failed" || uploadConnectionState === "manual" || uploadConnectionState === "fatal")}
+        <div class="banner error">
+          <UploadChannelNotice
+            state={uploadConnectionState}
+            message={uploadChannelError}
+            onreconnect={reconnectUpload}
+          />
+        </div>
+      {/if}
       {#if hiddenAccess?.lockError}<div class="photo-access-error">
           <p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p>
           <Button
@@ -4806,6 +4869,15 @@
 
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
+              {/if}
+              {#if uploadConnectionState === "failed" || uploadConnectionState === "manual" || uploadConnectionState === "fatal"}
+                <div class="banner error">
+                  <UploadChannelNotice
+                    state={uploadConnectionState}
+                    message={uploadChannelError}
+                    onreconnect={reconnectUpload}
+                  />
+                </div>
               {/if}
               {#if naturalSearchNote === searchByMeaningOff}
                 <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
@@ -5434,6 +5506,8 @@
           session={webSession}
           channel={uploadChannel}
           disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             await Promise.all([
@@ -5458,6 +5532,8 @@
           directory={panel.target}
           initialPicker={panel.picker}
           disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
@@ -5470,6 +5546,9 @@
           session={webSession}
           channel={uploadChannel}
           directory={panel.target}
+          disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
@@ -5484,6 +5563,9 @@
           session={webSession}
           channel={uploadChannel}
           destination={panel.target.path ?? "/"}
+          disabledReason={uploadChannelError}
+          connectionState={uploadConnectionState}
+          onreconnect={reconnectUpload}
           onclose={closePanel(panel)}
           oncomplete={async () => {
             hasProductions = true;

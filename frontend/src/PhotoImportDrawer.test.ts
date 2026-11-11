@@ -723,9 +723,7 @@ it.each([
     expect(screen.getByText("The verified upload channel ended.")).toBeTruthy();
     const guidance = screen.getByText(/Import outcome is unconfirmed\./).textContent;
     if (sessionOnly) {
-      expect(guidance).toContain(
-        "Run docbank web again, then choose the same files or folder again.",
-      );
+      expect(guidance).toContain("Choose the same files or folder again.");
       expect(guidance).toContain("Photos and videos already in the vault are skipped.");
       expect(guidance).toContain(
         "Other files, including standalone XMP sidecars, may be added again.",
@@ -1473,3 +1471,51 @@ it.each(["cancel", "confirm", "stale"])(
     }
   },
 );
+
+it("replans on a replacement channel and retains an unconfirmed group", async () => {
+  const original: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "first", groups: [[0], [1]], unsupported: [] }),
+    uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress) => {
+      progress("uploading", { processed: 1, total: 1 });
+      throw new UploadChannelError("Disconnected");
+    }),
+  };
+  const replacement: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "second", groups: [[0], [1]], unsupported: [] }),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "photo" }),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel: original,
+    vaultID: "reconnect",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: files().slice(0, 2) },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
+  await screen.findByText("Unconfirmed: 1");
+  await view.rerender({ channel: replacement });
+  await waitFor(() => expect(replacement.planPhotoImport).toHaveBeenCalledOnce());
+  await screen.findByText("Unconfirmed: 1");
+  expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+    "second",
+    1,
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+  );
+});

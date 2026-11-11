@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import type { UploadConnectionState } from "./uploadReconnect.js";
   import { onDestroy } from "svelte";
   import FileArchiveIcon from "@lucide/svelte/icons/file-archive";
   import { Button, Checkbox, Chip, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
@@ -19,13 +21,26 @@
 
   interface Props {
     session: string;
+    disabledReason?: string;
+    connectionState?: UploadConnectionState;
+    onreconnect?: () => void;
     channel: PackageChannel;
     destination: string;
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
   }
-  let { session, channel, destination, onclose, oncomplete, onauthfailure }: Props = $props();
+  let {
+    session,
+    channel,
+    destination,
+    onclose,
+    oncomplete,
+    onauthfailure,
+    disabledReason = "",
+    connectionState = "fatal",
+    onreconnect = () => {},
+  }: Props = $props();
   let file = $state<File | null>(null),
     profile = $state("dat-concordance-v1"),
     pageMapProfile = $state(""),
@@ -70,7 +85,7 @@
     sourceSealed = false;
   }
   async function previewPackage(): Promise<void> {
-    if (!file || busy) return;
+    if (!file || busy || disabledReason) return;
     busy = true;
     error = "";
     controller = new AbortController();
@@ -161,12 +176,17 @@
   {onclose}
 >
   <div class="tool-body">
+    {#if disabledReason}<UploadChannelNotice
+        state={connectionState}
+        message={disabledReason}
+        {onreconnect}
+      />{/if}
     <section class="tool-section" aria-label="Package source">
       <FileChooser
         accept=".zip,application/zip"
         label="Choose load-file ZIP"
         {file}
-        disabled={busy}
+        disabled={busy || Boolean(disabledReason)}
         icon={FileArchiveIcon}
         onchange={choose}
       />
@@ -230,7 +250,7 @@
           <Button
             tone="info"
             surface="solid"
-            disabled={busy || !file}
+            disabled={busy || !file || Boolean(disabledReason)}
             onclick={() => void previewPackage()}
             >{preview ? "Refresh preview" : "Upload and preview"}</Button
           >
