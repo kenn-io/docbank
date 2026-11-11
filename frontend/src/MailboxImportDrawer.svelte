@@ -225,19 +225,18 @@
   }
 </script>
 
+{#snippet channelFooter()}
+  <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+{/snippet}
+
 <DrawerShell
   title={`Import mailbox to ${directory.path ?? "current folder"}`}
   ariaLabel="Import mailbox archive"
   closeLabel="Close mailbox import"
   {onclose}
+  footer={disabledReason ? channelFooter : undefined}
 >
   <div class="tool-body">
-    <UploadChannelNotice
-      visible={Boolean(disabledReason)}
-      state={connectionState}
-      message={disabledReason}
-      {onreconnect}
-    />
     <section class="tool-section" aria-label="Mailbox source">
       <div class="tool-grid">
         <div class="tool-field tool-span-4">

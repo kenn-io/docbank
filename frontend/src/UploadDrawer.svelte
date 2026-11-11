@@ -245,12 +245,15 @@
 </script>
 
 {#snippet uploadFooter()}
+  {#if disabledReason}
+    <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+  {/if}
   {#if running}
     <Button tone="danger" surface="soft" onclick={cancel}>
       <XIcon size="14" aria-hidden="true" />
       Cancel current upload
     </Button>
-  {:else}
+  {:else if items.length}
     <Button
       tone="info"
       surface="solid"
@@ -268,16 +271,9 @@
   ariaLabel="Upload documents"
   closeLabel="Close upload documents"
   onclose={close}
-  footer={items.length ? uploadFooter : undefined}
+  footer={items.length || disabledReason ? uploadFooter : undefined}
 >
   <div class="tool-body">
-    <UploadChannelNotice
-      visible={Boolean(disabledReason)}
-      state={connectionState}
-      message={disabledReason}
-      {onreconnect}
-    />
-
     <div class="picker" class:picker-empty={items.length === 0}>
       {#if items.length > 0}
         <span

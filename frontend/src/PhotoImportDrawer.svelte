@@ -453,14 +453,17 @@
   }
 </script>
 
-<DrawerShell title="Add photos" closeLabel="Close add photos" {onclose}>
+{#snippet channelFooter()}
+  <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+{/snippet}
+
+<DrawerShell
+  title="Add photos"
+  closeLabel="Close add photos"
+  {onclose}
+  footer={disabledReason ? channelFooter : undefined}
+>
   <div class="photo-import">
-    <UploadChannelNotice
-      visible={Boolean(disabledReason)}
-      state={connectionState}
-      message={disabledReason}
-      {onreconnect}
-    />
     {#if !disabledReason && error}
       <p role="alert">{error}</p>
     {:else if !disabledReason && !checkpointReady}

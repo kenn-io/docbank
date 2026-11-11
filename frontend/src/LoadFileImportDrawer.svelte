@@ -169,19 +169,18 @@
   }
 </script>
 
+{#snippet channelFooter()}
+  <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+{/snippet}
+
 <DrawerShell
   title={`Import load files to ${destination}`}
   ariaLabel="Import load-file package"
   closeLabel="Close load-file import"
   {onclose}
+  footer={disabledReason ? channelFooter : undefined}
 >
   <div class="tool-body">
-    <UploadChannelNotice
-      visible={Boolean(disabledReason)}
-      state={connectionState}
-      message={disabledReason}
-      {onreconnect}
-    />
     <section class="tool-section" aria-label="Package source">
       <FileChooser
         accept=".zip,application/zip"
