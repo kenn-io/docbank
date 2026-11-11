@@ -25,6 +25,12 @@ export class APIError extends Error {
 
 export class NetworkError extends TypeError {}
 
+export function networkError(cause: unknown, signal?: AbortSignal | null): unknown {
+  return cause instanceof TypeError && !signal?.aborted
+    ? new NetworkError(cause.message, { cause })
+    : cause;
+}
+
 const requestSessionByError = new WeakMap<APIError, string>();
 
 // API failures from browser requests are tied to the tab credential that
@@ -95,9 +101,7 @@ async function send(
       redirect: "error",
     });
   } catch (cause) {
-    if (cause instanceof TypeError && !init.signal?.aborted)
-      throw new NetworkError(cause.message, { cause });
-    throw cause;
+    throw networkError(cause, init.signal);
   }
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
@@ -142,9 +146,7 @@ export function sessionJSON<T>(url: string, options: SessionOptions): Promise<T>
     try {
       return (await response.json()) as T;
     } catch (cause) {
-      if (cause instanceof TypeError && !options.signal?.aborted)
-        throw new NetworkError(cause.message, { cause });
-      throw cause;
+      throw networkError(cause, options.signal);
     }
   });
 }

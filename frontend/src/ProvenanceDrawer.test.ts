@@ -272,3 +272,37 @@ it("does not retry malformed source history JSON", async () => {
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("shows the current document while its history loads and after a failure", async () => {
+  let finish!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(
+      Response.json({ node: { ...node, path: "/old.txt" }, items: [], total: 0 }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+  const props = {
+    session: "session",
+    node,
+    path: "/old.txt",
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  };
+  const view = render(ProvenanceDrawer, props);
+  await screen.findByText("/old.txt");
+  await view.rerender({ ...props, node: { ...node, id: 43, name: "new.txt" }, path: "/new.txt" });
+  expect(screen.getByText("/new.txt")).toBeTruthy();
+  expect(screen.getByText("new.txt")).toBeTruthy();
+  expect(screen.queryByText("/old.txt")).toBeNull();
+  expect(screen.queryByText("old.txt")).toBeNull();
+  finish(Response.json({ detail: "Denied" }, { status: 403 }));
+  await screen.findByText(/Denied/);
+  expect(screen.getByText("/new.txt")).toBeTruthy();
+  expect(screen.getByText("new.txt")).toBeTruthy();
+  expect(screen.queryByText("/old.txt")).toBeNull();
+  expect(screen.queryByText("old.txt")).toBeNull();
+});

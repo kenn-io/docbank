@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from "@kenn-io/kit-ui";
+  import { untrack } from "svelte";
   import { APIError } from "./api-transport.js";
   import { readHistory, retryableHistoryError } from "./historyRead.js";
   import {
@@ -8,7 +9,6 @@
     readRelationPage,
     relationDisplayLimit,
     relationKey,
-    RelationPageChanged,
     type AttachmentIdentity,
     type RelationDirection,
     type RelationPage,
@@ -37,12 +37,9 @@
   let loading = $state(false);
   let error = $state("");
   let retryable = $state(false);
-  let retry = $state(0);
-  let changed = $state(false);
   let names = $state<Record<number, string>>({});
   let controller: AbortController | undefined;
   let epoch = 0;
-  let lastAttempt = 0;
   const outgoing = $derived(direction === "outgoing");
   $effect(() => {
     total = page?.total;
@@ -54,48 +51,44 @@
     return cause instanceof Error ? cause.message : String(cause);
   }
   $effect(() => {
-    const attempt = retry;
     const selected = attachmentIdentity(source);
-    const identity = `${session}:${source.key}:${direction}`;
-    void identity;
-    const manual = attempt !== lastAttempt;
-    lastAttempt = attempt;
-    if (!manual) changed = false;
+    void session;
+    void source.key;
+    void direction;
+    page = undefined;
+    names = {};
+    untrack(() => void load(selected));
+    return () => {
+      ++epoch;
+      controller?.abort();
+    };
+  });
+  async function load(selected = attachmentIdentity(source), automatic = true): Promise<void> {
+    controller?.abort();
     const request = ++epoch;
     const pending = new AbortController();
     controller = pending;
-    page = undefined;
-    if (!manual) error = "";
-    names = {};
     loading = true;
-    void readHistory(
-      () => readRelationPage(session, selected, direction, pending.signal),
-      pending.signal,
-      !manual,
-    )
-      .then((next) => {
-        if (request === epoch) {
-          page = next;
-          error = "";
-          changed = false;
-          void loadNames(next, pending.signal);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (request === epoch && !pending.signal.aborted) {
-          retryable = retryableHistoryError(cause);
-          changed = cause instanceof RelationPageChanged;
-          error = message(cause);
-        }
-      })
-      .finally(() => {
-        if (request === epoch) loading = false;
-      });
-    return () => {
-      ++epoch;
-      pending.abort();
-    };
-  });
+    error = "";
+    try {
+      const next = await readHistory(
+        () => readRelationPage(session, selected, direction, pending.signal),
+        pending.signal,
+        automatic,
+      );
+      if (request === epoch) {
+        page = next;
+        void loadNames(next, pending.signal);
+      }
+    } catch (cause) {
+      if (request === epoch && !pending.signal.aborted) {
+        retryable = retryableHistoryError(cause);
+        error = message(cause);
+      }
+    } finally {
+      if (request === epoch) loading = false;
+    }
+  }
   async function loadMore(automatic = true): Promise<void> {
     if (!page?.next || loading || !controller) return;
     const before = page,
@@ -115,7 +108,6 @@
     } catch (cause) {
       if (request === epoch && !signal.aborted) {
         retryable = retryableHistoryError(cause);
-        changed = cause instanceof RelationPageChanged;
         error = message(cause);
       }
     } finally {
@@ -155,15 +147,12 @@
           </li>
         {/each}
       </ul>
-      {#if page.next && !(error && (retryable || changed))}
+      {#if page.next && !error}
         {#if page.items.length >= relationDisplayLimit}<p role="status">
             Showing the first {relationDisplayLimit}.
           </p>
-        {:else}<Button
-            size="sm"
-            surface="soft"
-            disabled={loading}
-            onclick={() => void loadMore(!error)}>Show more</Button
+        {:else}<Button size="sm" surface="soft" disabled={loading} onclick={() => void loadMore()}
+            >Show more</Button
           >{/if}
       {/if}
     {/if}
@@ -174,14 +163,12 @@
             ? "Couldn't load attachments"
             : "Couldn't load the document this file is attached to"}: {error}
         </p>
-        {#if changed}<Button size="sm" surface="soft" disabled={loading} onclick={() => retry++}
-            >Reload attachments</Button
-          >
-        {:else if retryable}<Button
+        {#if retryable}<Button
             size="sm"
             surface="soft"
             disabled={loading}
-            onclick={() => (page ? void loadMore(false) : retry++)}>Try again</Button
+            onclick={() => (page ? void loadMore(false) : void load(undefined, false))}
+            >Try again</Button
           >{/if}
       </div>
     {/if}

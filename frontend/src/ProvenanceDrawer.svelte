@@ -38,6 +38,7 @@
   $effect(() => {
     void session;
     void node.id;
+    page = null;
     untrack(() => void load());
     return () => {
       generation += 1;

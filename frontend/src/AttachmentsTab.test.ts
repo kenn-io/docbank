@@ -211,42 +211,43 @@ it("keeps the first page while retrying a failed next page", async () => {
   expect(laterCalls).toBe(3);
 });
 
-it.each([404, 401])("keeps the next page available after a %s response", async (status) => {
-  let laterCalls = 0;
-  const onauthfailure = vi.fn();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const route = String(input);
-    if (route.includes("child_version_id=")) return Response.json(empty);
-    if (route.includes("after_order=")) {
-      laterCalls++;
-      if (laterCalls === 1) return Response.json({ detail: "Unavailable" }, { status });
+it.each([401, 403, 404, 400, 0])(
+  "retains rows after a permanent pagination failure %s",
+  async (status) => {
+    let laterCalls = 0;
+    const onauthfailure = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const route = String(input);
+      if (route.includes("child_version_id=")) return Response.json(empty);
+      if (route.includes("after_order=")) {
+        laterCalls++;
+        if (status === 0) return Response.json({ invalid: true });
+        return Response.json({ detail: "Unavailable" }, { status });
+      }
       return Response.json({
-        items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
+        items: Array.from({ length: 50 }, (_, i) => ({
+          relation: relation(i + 1),
+          state: "pending",
+          reason: "text_extraction",
+        })),
         total: 51,
-        next_operation_id: "",
-        next_order: 0,
+        next_operation_id: "synthetic",
+        next_order: 50,
       });
-    }
-    return Response.json({
-      items: Array.from({ length: 50 }, (_, i) => ({
-        relation: relation(i + 1),
-        state: "pending",
-        reason: "text_extraction",
-      })),
-      total: 51,
-      next_operation_id: "synthetic",
-      next_order: 50,
     });
-  });
-  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure });
-  const group = await screen.findByRole("region", { name: "Attachments" });
-  await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
-  expect(await within(group).findByText(/Unavailable/)).toBeTruthy();
-  expect(laterCalls).toBe(1);
-  expect(onauthfailure).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
-  await fireEvent.click(within(group).getByRole("button", { name: "Show more" }));
-  await waitFor(() => expect(within(group).getAllByRole("listitem")).toHaveLength(51));
-});
+    render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure });
+    const group = await screen.findByRole("region", { name: "Attachments" });
+    await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
+    expect(
+      await within(group).findByText(status === 0 ? /Invalid attachment response/ : /Unavailable/),
+    ).toBeTruthy();
+    expect(laterCalls).toBe(1);
+    expect(onauthfailure).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+    expect(within(group).getAllByRole("listitem")).toHaveLength(50);
+    expect(within(group).queryByRole("button", { name: "Show more" })).toBeNull();
+    expect(within(group).queryByRole("button", { name: "Try again" })).toBeNull();
+  },
+);
 
 it("does not retry invalid UTF-8 in an attachment response", async () => {
   let outgoing = 0;
@@ -262,7 +263,7 @@ it("does not retry invalid UTF-8 in an attachment response", async () => {
   expect(outgoing).toBe(1);
 });
 
-it("reloads the first page when relations change between pages", async () => {
+it("retains rows when relations change between pages", async () => {
   let firstCalls = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const route = String(input);
@@ -289,9 +290,11 @@ it("reloads the first page when relations change between pages", async () => {
   render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
   const group = await screen.findByRole("region", { name: "Attachments" });
   await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
-  await fireEvent.click(await within(group).findByRole("button", { name: "Reload attachments" }));
-  await waitFor(() => expect(firstCalls).toBe(2));
-  expect(await within(group).findByRole("button", { name: "Show more" })).toBeTruthy();
+  expect(await within(group).findByText(/relations changed/i)).toBeTruthy();
+  expect(within(group).getAllByRole("listitem")).toHaveLength(50);
+  expect(within(group).queryByRole("button", { name: "Show more" })).toBeNull();
+  expect(within(group).queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(firstCalls).toBe(1);
 });
 
 it("automatically retries a refreshed source after a manual retry", async () => {
@@ -330,39 +333,4 @@ it("retries an interrupted attachment response stream", async () => {
   render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
   expect(await screen.findByText("No published attachments")).toBeTruthy();
   expect(outgoing).toBe(2);
-});
-
-it.each([403, 503])("replaces changed-page recovery after a %s reload failure", async (status) => {
-  let firstCalls = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const route = String(input);
-    if (route.includes("child_version_id=")) return Response.json(empty);
-    if (route.includes("after_order="))
-      return Response.json({
-        items: [{ relation: relation(51), state: "pending", reason: "text_extraction" }],
-        total: 52,
-        next_operation_id: "",
-        next_order: 0,
-      });
-    firstCalls++;
-    if (firstCalls > 1) return Response.json({ detail: "Reload failed" }, { status });
-    return Response.json({
-      items: Array.from({ length: 50 }, (_, i) => ({
-        relation: relation(i + 1),
-        state: "pending",
-        reason: "text_extraction",
-      })),
-      total: 51,
-      next_operation_id: "synthetic",
-      next_order: 50,
-    });
-  });
-  render(AttachmentsTab, { session: "session", source, onopen: vi.fn(), onauthfailure: vi.fn() });
-  const group = await screen.findByRole("region", { name: "Attachments" });
-  await fireEvent.click(await within(group).findByRole("button", { name: "Show more" }));
-  await fireEvent.click(await within(group).findByRole("button", { name: "Reload attachments" }));
-  expect(await within(group).findByText(/Reload failed/)).toBeTruthy();
-  expect(within(group).queryByRole("button", { name: "Reload attachments" })).toBeNull();
-  expect(Boolean(within(group).queryByRole("button", { name: "Try again" }))).toBe(status === 503);
-  expect(firstCalls).toBe(2);
 });
