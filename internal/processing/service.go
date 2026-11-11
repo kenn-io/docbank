@@ -1446,7 +1446,9 @@ func oneJobPerOriginalFileBinding(embeddings []store.EmbeddingJobStatus,
 	return result
 }
 
-var equivalentJobStates = []string{"completed", "running", "retry_wait", "queued"}
+// Embedding jobs share the rendition job-state vocabulary.
+var equivalentJobStates = []string{string(store.RenditionJobCompleted), string(store.RenditionJobRunning),
+	string(store.RenditionJobRetryWait), string(store.RenditionJobQueued)}
 
 func equivalentJobPrecedes(left, right store.EmbeddingJobStatus) bool {
 	rank := func(state string) int {

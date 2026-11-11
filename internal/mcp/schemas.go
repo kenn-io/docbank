@@ -844,9 +844,8 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"vault_uid":           uuidSchema(),
 		"selector":            objectSchema(processingSelectorProperties(), "node_id", "content_version_id", "profile"),
 		"profile_fingerprint": sha256Schema(),
-		// Rendition and reranking, plus embedding, automatic video and query
-		// hops for each of at most 64 bindings.
-		"flow": arraySchema(flowHop, 2+3*64),
+		// One hop per consent grant the plan can require.
+		"flow": arraySchema(flowHop, store.MaxProcessingConsentGrants),
 		"disclosed_classes": schema{
 			"type": "array", "items": stringSchema(128), "maxItems": 129, "uniqueItems": true,
 		},

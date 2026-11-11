@@ -985,3 +985,97 @@ func TestWatchedMP4WaitingPeerCompletesWhenOtherPublishes(t *testing.T) {
 		})
 	}
 }
+
+// The largest profile the configuration accepts fits in one consent set, with
+// query-capable and export-only automatic video bindings alike.
+func TestAutomaticVideoConsentFitsMaximumProfile(t *testing.T) {
+	t.Parallel()
+	for _, queryCapable := range []bool{true, false} {
+		t.Run("query capable "+strconv.FormatBool(queryCapable), func(t *testing.T) {
+			t.Parallel()
+			f := newWatchedMP4Fixture(t)
+			video := f.config.Profiles["video"]
+			base := video.Profile.Embeddings[0]
+			provider, ok := video.EmbeddingProviders["direct"].(*embeddingWorkerProvider)
+			require.True(t, ok)
+			descriptor := provider.descriptor
+			if !queryCapable {
+				descriptor.SupportsTextQuery = false
+				descriptor.Fingerprint = ""
+				var err error
+				descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+				require.NoError(t, err)
+				base.Descriptor.Fingerprint = descriptor.Fingerprint
+			}
+			// One provider serves every binding that shares its descriptor.
+			shared := &embeddingWorkerProvider{runtime: provider.runtime, binding: "direct", descriptor: descriptor}
+			video.Profile.Embeddings = make([]document.EmbeddingBindingV1, document.MaxProcessingEmbeddings)
+			video.EmbeddingProviders = make(map[string]document.EmbeddingProvider, document.MaxProcessingEmbeddings)
+			video.AutomaticVideoBindings = make(map[string]struct{}, document.MaxProcessingEmbeddings)
+			for index := range video.Profile.Embeddings {
+				binding := base
+				binding.Name = "direct-" + strconv.Itoa(100+index)
+				video.Profile.Embeddings[index] = binding
+				video.EmbeddingProviders[binding.Name] = shared
+				video.AutomaticVideoBindings[binding.Name] = struct{}{}
+			}
+			f.config.Profiles["video"] = video
+			f.open(t)
+
+			perBinding := 2
+			if queryCapable {
+				perBinding = 3
+			}
+			requests := f.service.profileConsentRequests(f.profile)
+			require.Len(t, requests, perBinding*document.MaxProcessingEmbeddings)
+			require.LessOrEqual(t, len(requests), store.MaxProcessingConsentGrants)
+			selector := f.add(t, "maximum.mp4", mediatest.H265MP4())
+			plan, err := f.service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			require.True(t, plan.ConsentRequired)
+			require.LessOrEqual(t, len(plan.Flow), store.MaxProcessingConsentGrants)
+			_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{
+				Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			plan, err = f.service.Plan(t.Context(), selector)
+			require.NoError(t, err)
+			require.False(t, plan.ConsentRequired)
+		})
+	}
+}
+
+// Coverage counts one MP4 version once while a manual and an automatic job for
+// it are queued together, and once after either publishes.
+func TestWatchedMP4CoverageCountsEachVersionOnce(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	both := f.add(t, "both.mp4", mediatest.H265MP4())
+	untouched := f.add(t, "untouched.mp4", mediatest.VP9MP4())
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	f.enqueue(t, both, false)
+	automatic := f.enqueue(t, both, true)
+	fence := SourceFence{VaultUID: f.config.Catalog.VaultID(),
+		ContentVersionIDs: []string{both.ContentVersionID, untouched.ContentVersionID}}
+	coverage := func() CoverageClass {
+		t.Helper()
+		report, err := f.service.Coverage(t.Context(), "video", fence)
+		require.NoError(t, err)
+		require.Len(t, report.Embeddings, 1)
+		return report.Embeddings[0]
+	}
+
+	queued := coverage()
+	require.Equal(t, 2, queued.Total)
+	require.Equal(t, 1, queued.Rebuilding, "two jobs for one version count once")
+	require.Zero(t, queued.Complete)
+	require.Equal(t, 1, queued.Unavailable)
+
+	processed, err := f.worker.RunJob(t.Context(), automatic)
+	require.NoError(t, err)
+	require.True(t, processed)
+	published := coverage()
+	require.Equal(t, 2, published.Total)
+	require.Equal(t, 1, published.Complete)
+	require.Zero(t, published.Rebuilding)
+	require.Equal(t, 1, published.Unavailable)
+}
