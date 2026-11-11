@@ -46,8 +46,7 @@ func (s *Service) BuildRecipientPackage(ctx context.Context, owner string, reque
 		if !e.ready {
 			e.retired = true
 		}
-		e.pins--
-		resultErr = errors.Join(resultErr, s.cleanRecipientPackageLocked())
+		resultErr = errors.Join(resultErr, s.unpinRecipientPackageLocked(e))
 		if resultErr != nil && s.lifecycle.Err() != nil {
 			resultErr = errors.Join(resultErr, ErrRedactionPreparationUnavailable)
 		}

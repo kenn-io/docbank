@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -34,6 +35,8 @@ type PreparedRecipientPackage struct {
 type recipientPackageStore struct {
 	mu    sync.Mutex
 	entry *recipientPackageEntry
+	// released is closed when a pin drops, so explicit release can wait for drain.
+	released chan struct{}
 }
 
 type recipientPackageEntry struct {
@@ -71,6 +74,16 @@ func (s *Service) reserveRecipientPackage(owner string) (*recipientPackageEntry,
 	return e, nil
 }
 
+// unpinRecipientPackageLocked drops one creation or reader pin and wakes waiters.
+func (s *Service) unpinRecipientPackageLocked(e *recipientPackageEntry) error {
+	e.pins--
+	if s.recipientPackages.released != nil {
+		close(s.recipientPackages.released)
+		s.recipientPackages.released = nil
+	}
+	return s.cleanRecipientPackageLocked()
+}
+
 func (s *Service) cleanRecipientPackageLocked() error {
 	e := s.recipientPackages.entry
 	if e == nil || !e.retired || e.pins != 0 {
@@ -106,38 +119,71 @@ func (s *Service) expireRecipientPackageLocked() error {
 	return s.cleanRecipientPackageLocked()
 }
 
-// DiscardRecipientPackages cancels only this owner's creation and transfers.
-// Empty owner is reserved for service shutdown, never an HTTP-supplied value.
-func (s *Service) DiscardRecipientPackages(owner string) error {
-	return s.discardRecipientPackage(owner, "")
+// DiscardRecipientPackages cancels only this owner's creation and transfers. It
+// returns after that work has stopped and its files are removed, or ctx ends.
+func (s *Service) DiscardRecipientPackages(ctx context.Context, owner string) error {
+	if owner == "" {
+		return ErrRecipientPackageUnavailable
+	}
+	return s.discardRecipientPackage(ctx, owner, "")
 }
 
 // DiscardRecipientPackage releases only the named entry after ticket failure.
-func (s *Service) DiscardRecipientPackage(owner, id string) error {
+func (s *Service) DiscardRecipientPackage(ctx context.Context, owner, id string) error {
 	if id == "" {
 		return ErrRecipientPackageUnavailable
 	}
-	return s.discardRecipientPackage(owner, id)
+	return s.discardRecipientPackage(ctx, owner, id)
 }
 
-func (s *Service) discardRecipientPackage(owner, id string) error {
+func (s *Service) discardRecipientPackage(ctx context.Context, owner, id string) error {
 	if s == nil {
 		return nil
 	}
 	s.recipientPackages.mu.Lock()
 	defer s.recipientPackages.mu.Unlock()
 	e := s.recipientPackages.entry
-	if e == nil || owner != "" && e.owner != owner || id != "" && e.result.ID != id {
+	if e == nil || e.owner != owner || id != "" && e.result.ID != id {
 		return nil
 	}
 	e.retired = true
 	e.cancel()
+	for s.recipientPackages.entry == e && e.pins != 0 {
+		if s.recipientPackages.released == nil {
+			s.recipientPackages.released = make(chan struct{})
+		}
+		released := s.recipientPackages.released
+		s.recipientPackages.mu.Unlock()
+		select {
+		case <-released:
+		case <-ctx.Done():
+			s.recipientPackages.mu.Lock()
+			return fmt.Errorf("recipient package release is still in progress: %w", ctx.Err())
+		}
+		s.recipientPackages.mu.Lock()
+	}
+	if s.recipientPackages.entry != e {
+		return nil
+	}
 	return s.cleanRecipientPackageLocked()
 }
 
 // RevokeRecipientPackages is best-effort cleanup for owner revocation and stop.
+// It never waits: revocation callbacks and shutdown must not block on a transfer.
+// Empty owner is reserved for service shutdown, never an HTTP-supplied value.
 func (s *Service) RevokeRecipientPackages(owner string) {
-	if err := s.DiscardRecipientPackages(owner); err != nil {
+	if s == nil {
+		return
+	}
+	s.recipientPackages.mu.Lock()
+	defer s.recipientPackages.mu.Unlock()
+	e := s.recipientPackages.entry
+	if e == nil || owner != "" && e.owner != owner {
+		return
+	}
+	e.retired = true
+	e.cancel()
+	if err := s.cleanRecipientPackageLocked(); err != nil {
 		slog.Error("removing revoked recipient package", "error", err)
 	}
 }
@@ -185,8 +231,7 @@ func (s *Service) AcquireRecipientPackage(ctx context.Context, owner, id string)
 		cancel()
 		s.recipientPackages.mu.Lock()
 		defer s.recipientPackages.mu.Unlock()
-		e.pins--
-		return s.cleanRecipientPackageLocked()
+		return s.unpinRecipientPackageLocked(e)
 	})
 	return r, nil
 }

@@ -27,7 +27,7 @@ func readyRecipientPackage(t *testing.T) (*Service, *recipientPackageEntry) {
 			}
 		}
 		e.pins = 0
-		require.NoError(t, f.service.DiscardRecipientPackages("alice"))
+		require.NoError(t, f.service.DiscardRecipientPackages(t.Context(), "alice"))
 	})
 	//nolint:usetesting // Exercise cleanup under the configured spool, as in production.
 	e.directory, err = os.MkdirTemp(f.service.spoolDirectory, "native-pdf-")
@@ -69,6 +69,26 @@ func TestRecipientPackageExpiry(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestRecipientPackageReleaseStopsWaitingWhenCanceled(t *testing.T) {
+	t.Parallel()
+	s, e := readyRecipientPackage(t)
+	reader, err := s.AcquireRecipientPackage(t.Context(), "alice", e.result.ID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	released := make(chan error, 1)
+	go func() { released <- s.DiscardRecipientPackages(ctx, "alice") }()
+	// Release cancels the reader first; a reader that has not closed keeps it waiting.
+	<-reader.Context().Done()
+	cancel()
+	require.ErrorIs(t, <-released, context.Canceled, "an unfinished release is uncertain, not successful")
+	_, err = os.Stat(e.directory)
+	require.NoError(t, err, "files stay while the reader still holds them")
+	require.NoError(t, reader.Close())
+	_, err = os.Stat(e.directory)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestRecipientPackageRemovalFailure(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
@@ -84,9 +104,12 @@ func TestRecipientPackageRemovalFailure(t *testing.T) {
 		require.NoError(t, os.Remove(probe))
 		t.Skip("platform does not enforce Unix directory permissions")
 	}
-	require.NoError(t, s.DiscardRecipientPackages("alice"))
+	released := make(chan error, 1)
+	go func() { released <- s.DiscardRecipientPackages(t.Context(), "alice") }()
+	<-reader.Context().Done()
 	require.ErrorIs(t, reader.Close(), fs.ErrPermission)
-	require.ErrorIs(t, s.DiscardRecipientPackages("alice"), fs.ErrPermission)
+	require.ErrorIs(t, <-released, fs.ErrPermission, "release waits for the reader and reports its failed removal")
+	require.ErrorIs(t, s.DiscardRecipientPackages(t.Context(), "alice"), fs.ErrPermission)
 	files, err := os.ReadDir(e.directory)
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
@@ -96,7 +119,7 @@ func TestRecipientPackageRemovalFailure(t *testing.T) {
 	defer cancel()
 	require.NoError(t, s.Shutdown(shutdown), "failed deletion must not retain lifecycle registration")
 	require.NoError(t, os.Chmod(e.directory, 0o700))
-	require.NoError(t, s.DiscardRecipientPackages("alice"))
+	require.NoError(t, s.DiscardRecipientPackages(t.Context(), "alice"))
 	_, err = os.Stat(e.directory)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }

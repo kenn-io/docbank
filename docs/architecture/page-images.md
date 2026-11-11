@@ -549,8 +549,10 @@ handle. The native-operation slot is released when building finishes; the entry
 expires after two minutes if unused. An admitted transfer pins that handle and
 cancels expiry, with request, owner and service cancellation interrupting blocked
 socket writes. Only the ZIP remains when ready. `DELETE` on the build path
-cancels this owner's build or transfer and retires its package. It reports
-immediate removal failures; the browser keeps a release-retry state. Lost or
+cancels this owner's build or transfer, waits for it to stop, then removes its
+files. It answers 204 only after removal. Removal failure, or the 60-second
+request deadline expiring first, is reported as an error, and the browser keeps
+a release-retry state. Logout and shutdown revoke without waiting. Lost or
 ambiguous POST responses use a fresh owner-scoped DELETE before another attempt.
 There is no admission fence for a POST that has not reached the service yet;
 the single entry and expiry bound that race. Closing the review releases only

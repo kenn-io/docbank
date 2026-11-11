@@ -47,7 +47,7 @@ func (s *Server) serveRecipientPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodDelete {
-		if err := s.deps.Processing.DiscardRecipientPackages(owner); err != nil {
+		if err := s.deps.Processing.DiscardRecipientPackages(r.Context(), owner); err != nil {
 			writeError(w, recipientPackageProblem(r.Context(), err))
 			return
 		}
@@ -123,7 +123,7 @@ func (s *Server) serveRecipientPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.webDownloads.cancel(owner, token)
-		cleanup := s.deps.Processing.DiscardRecipientPackage(owner, result.ID)
+		cleanup := s.deps.Processing.DiscardRecipientPackage(ctx, owner, result.ID)
 		writeError(w, recipientPackageProblem(ctx, errors.Join(err, cleanup)))
 		return
 	}
@@ -131,7 +131,7 @@ func (s *Server) serveRecipientPackage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write(encoded); err != nil {
 		s.webDownloads.cancel(owner, token)
-		if err := s.deps.Processing.DiscardRecipientPackage(owner, result.ID); err != nil {
+		if err := s.deps.Processing.DiscardRecipientPackage(ctx, owner, result.ID); err != nil {
 			slog.WarnContext(ctx, "removing undelivered recipient package", "error", err)
 		}
 	}

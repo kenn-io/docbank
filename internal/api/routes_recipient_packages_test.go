@@ -324,7 +324,7 @@ func TestRecipientPackageClearsBodyDeadline(t *testing.T) {
 		got := <-done
 		require.NoError(t, got.err)
 		require.Equal(t, 201, got.status, string(got.body))
-		require.NoError(t, f.service.DiscardRecipientPackages(""))
+		f.service.RevokeRecipientPackages("")
 		// Stop the ticket timer in the virtual-time network that created it.
 		require.NoError(t, f.vault.Server.Shutdown(t.Context()))
 	})

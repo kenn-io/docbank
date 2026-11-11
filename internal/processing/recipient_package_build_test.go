@@ -103,7 +103,7 @@ func TestBuildRecipientPackage(t *testing.T) {
 	require.NoError(t, op.Close())
 	_, err = f.service.AcquireRecipientPackage(ctx, "bob", result.ID)
 	require.ErrorIs(t, err, ErrRecipientPackageUnavailable)
-	require.NoError(t, f.service.DiscardRecipientPackages("bob"))
+	require.NoError(t, f.service.DiscardRecipientPackages(t.Context(), "bob"))
 	reader, err := f.service.AcquireRecipientPackage(ctx, "alice", result.ID)
 	require.NoError(t, err)
 	data, err := io.ReadAll(reader)
@@ -127,7 +127,8 @@ func TestBuildRecipientPackage(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(f.service.spoolDirectory, "native-pdf-*", "*"))
 	require.NoError(t, err)
 	require.Len(t, files, 1, "ready entry retains only its ZIP")
-	require.NoError(t, f.service.DiscardRecipientPackages("alice"))
+	released := make(chan error, 1)
+	go func() { released <- f.service.DiscardRecipientPackages(t.Context(), "alice") }()
 	deadline, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	select {
@@ -136,7 +137,13 @@ func TestBuildRecipientPackage(t *testing.T) {
 		t.Fatal("owner release did not cancel the active delivery")
 	}
 	require.ErrorIs(t, reader.Context().Err(), context.Canceled)
+	select {
+	case err := <-released:
+		t.Fatalf("release returned before the active delivery closed: %v", err)
+	default:
+	}
 	require.NoError(t, reader.Close())
+	require.NoError(t, <-released)
 	_, err = os.Stat(filepath.Dir(files[0]))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = f.service.AcquireRecipientPackage(ctx, "alice", result.ID)
@@ -158,7 +165,7 @@ func TestBuildRecipientPackageCanceledPublication(t *testing.T) {
 		if directory != "" {
 			require.NoError(t, os.Chmod(directory, 0o700))
 		}
-		require.NoError(t, f.service.DiscardRecipientPackages("alice"))
+		require.NoError(t, f.service.DiscardRecipientPackages(t.Context(), "alice"))
 	})
 	_, err = f.service.BuildRecipientPackage(ctx, "alice", request, func(commit func() error) error {
 		dirs, err := filepath.Glob(filepath.Join(f.service.spoolDirectory, "native-pdf-*"))
@@ -177,7 +184,7 @@ func TestBuildRecipientPackageCanceledPublication(t *testing.T) {
 	})
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorIs(t, err, fs.ErrPermission)
-	require.ErrorIs(t, f.service.DiscardRecipientPackages("alice"), fs.ErrPermission)
+	require.ErrorIs(t, f.service.DiscardRecipientPackages(t.Context(), "alice"), fs.ErrPermission)
 	op, err := f.service.beginNativePDFOperation(t.Context(), "another operation")
 	require.NoError(t, err, "failed cleanup retains package capacity, not the native slot")
 	require.NoError(t, op.Close())
@@ -185,6 +192,6 @@ func TestBuildRecipientPackageCanceledPublication(t *testing.T) {
 	defer stop()
 	require.NoError(t, f.service.Shutdown(shutdown))
 	require.NoError(t, os.Chmod(directory, 0o700))
-	require.NoError(t, f.service.DiscardRecipientPackages("alice"))
+	require.NoError(t, f.service.DiscardRecipientPackages(t.Context(), "alice"))
 	directory = ""
 }
