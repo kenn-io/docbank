@@ -468,5 +468,8 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     "href",
     "https://docbank.ai/docs/usage/document-processing/#ocr",
   );
-  await page.screenshot({ path: path.join(output!, "pdf-search-empty.png") });
+  await page.screenshot({
+    path: path.join(output!, "pdf-search-empty.png"),
+    clip: { x: 231, y: 56, width: 746, height: 700 },
+  });
 });

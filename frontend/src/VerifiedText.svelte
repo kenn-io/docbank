@@ -209,14 +209,13 @@
     {missingPages.length === 1 ? "Page" : "Pages"}
     {pageRanges(missingPages)}
     {missingPages.length === 1 ? "has" : "have"} no text layer.
+    If {missingPages.length === 1 ? "it is a scan" : "they are scans"},
     <a
       href="https://docbank.ai/docs/usage/document-processing/#ocr"
       target="_blank"
       rel="noreferrer"
-      >If {missingPages.length === 1
-        ? "it is a scan, OCR can read it"
-        : "they are scans, OCR can read them"}.</a
-    >
+      >OCR can read {missingPages.length === 1 ? "it" : "them"}</a
+    >.
   </p>
 {/snippet}
 

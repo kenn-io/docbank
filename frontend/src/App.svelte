@@ -5631,6 +5631,11 @@
   .pdf-ocr-link,
   .pdf-ocr-link:visited {
     color: var(--accent-blue);
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+  }
+  .pdf-ocr-link:hover {
+    text-decoration: underline;
   }
 
   .vault-nav {
