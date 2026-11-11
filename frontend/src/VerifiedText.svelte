@@ -378,6 +378,7 @@
   .notice a:visited {
     color: var(--accent-blue);
     text-decoration: none;
+    white-space: nowrap;
   }
   .notice a:hover {
     text-decoration: underline;
