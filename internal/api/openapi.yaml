@@ -21035,8 +21035,12 @@ components:
           type: string
         name:
           type: string
+        path:
+          type: string
         selected:
           $ref: "#/components/schemas/Identity"
+        selected_recorded:
+          type: string
         status:
           type: string
       required:

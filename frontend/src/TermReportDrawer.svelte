@@ -266,6 +266,33 @@
         !selectionConflict
       )
         return;
+      const expected = new Map(
+        draft.selected_documents.documents?.map((item) => [item.node_id, item]),
+      );
+      if (
+        result.length !== expected.size ||
+        result.some((item) => {
+          const selected = expected.get(item.selected.node_id);
+          const valid =
+            selected &&
+            item.selected.version_id === selected.version_id &&
+            item.selected.sha256 === selected.sha256 &&
+            ["current", "changed", "missing", "trashed"].includes(item.status) &&
+            (item.status === "current" || item.status === "changed"
+              ? !!item.current &&
+                item.current.node_id === selected.node_id &&
+                !!item.current.version_id &&
+                !!item.current.sha256 &&
+                (item.status !== "current" ||
+                  (item.current.version_id === selected.version_id &&
+                    item.current.sha256 === selected.sha256))
+              : !item.current);
+          expected.delete(item.selected.node_id);
+          return !valid;
+        }) ||
+        expected.size
+      )
+        throw new Error("The selection response was incomplete or invalid.");
       if (result.every((item) => item.status === "current")) {
         clearSelectionConflict();
         notice = "All selected documents are current. Create the report again.";
@@ -312,7 +339,8 @@
     };
     draft.date_choices = [];
     clearSelectionConflict();
-    notice = `Selection updated: ${changed} using current versions, ${leftOut} left out. Create the report again.`;
+    const accepted = `${changed} current version${changed === 1 ? "" : "s"}`;
+    notice = `Selection updated: ${accepted}${leftOut ? `, ${leftOut} left out` : ""}. Create the report again.`;
     onselectionchanged?.();
   }
 
@@ -376,6 +404,7 @@
     }
     busy = true;
     const submittedFingerprint = JSON.stringify(draft);
+    const submittedSelection = JSON.stringify(draft.selected_documents);
     const currentSession = session;
     const epoch = generation;
     try {
@@ -387,6 +416,7 @@
       };
       const summary = await api.createTermReport(request, { session: currentSession });
       if (epoch !== generation || currentSession !== session) return;
+      if (submittedSelection === JSON.stringify(draft.selected_documents)) clearSelectionConflict();
       review = [];
       reviewCursor = "";
       reviewLoaded = false;
@@ -402,13 +432,15 @@
       }
       await loadHistory(currentSession, true);
     } catch (cause) {
-      if (
-        epoch === generation &&
-        currentSession === session &&
-        ((cause instanceof APIError && cause.status === 401) ||
-          JSON.stringify(draft) === submittedFingerprint)
-      )
-        fail(cause);
+      if (epoch === generation && currentSession === session) {
+        if (
+          (cause instanceof APIError && cause.status === 401) ||
+          submittedSelection === JSON.stringify(draft.selected_documents) ||
+          JSON.stringify(draft) === submittedFingerprint
+        )
+          fail(cause);
+        else error = "A report from an earlier draft didn't run. Create the report again.";
+      }
     } finally {
       busy = false;
     }
@@ -720,7 +752,7 @@
       <section class="tool-section">
         <h3>Selected documents changed</h3>
         <p role="alert">
-          The report didn't run. Some selected documents have a newer version or are no longer
+          The report didn't run. Some selected documents have a different version or are no longer
           available.
         </p>
         {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
@@ -729,9 +761,11 @@
             {#each selectionResult.filter((item) => item.status !== "current") as item (item.selected.node_id)}
               <li>
                 <div class="tool-row-main">
-                  <strong>{item.name || `Document ${item.selected.node_id}`}</strong><span
+                  <strong title={item.path || item.name}
+                    >{item.path || item.name || `Document ${item.selected.node_id}`}</strong
+                  ><span
                     >{item.status === "changed"
-                      ? `Newer version · modified ${formatDate(item.modified ?? "")}`
+                      ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${formatDate(item.modified ?? "")}`
                       : item.status === "trashed"
                         ? "In trash"
                         : "No longer available"}</span

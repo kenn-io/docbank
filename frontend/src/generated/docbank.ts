@@ -8791,7 +8791,9 @@ export interface TermReportSelectionItem {
   current?: Identity;
   modified?: string;
   name?: string;
+  path?: string;
   selected: Identity;
+  selected_recorded?: string;
   status: string;
 }
 

@@ -53,7 +53,7 @@ func termReportError(err error) *Error {
 	case errors.Is(err, store.ErrInvalidCoverageSelection):
 		return NewError(http.StatusUnprocessableEntity, "invalid_profile", "Select a configured processing profile.")
 	case errors.Is(err, store.ErrReportSelectionChanged):
-		return NewError(http.StatusConflict, "report_selection_changed", "Selected documents changed. Refresh the workspace and select the intended current versions.")
+		return NewError(http.StatusConflict, "report_selection_changed", "Selected documents changed. Compare the selection before choosing current versions.")
 	case errors.Is(err, report.ErrInvalidSelection):
 		return NewError(http.StatusUnprocessableEntity, "invalid_report_request", err.Error())
 	case errors.Is(err, store.ErrUnknownReportCollection):

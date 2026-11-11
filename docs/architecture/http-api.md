@@ -1043,6 +1043,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | Method and suffix | Request and response |
 | --- | --- |
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
+| `POST /selection` | Read-only comparison of exact document identities in one snapshot. Returns each selected identity with status `current`, `changed`, `trashed`, or `missing`, and current identity, path, and version dates when available. The request uses `{"documents":[...]}` and the same selection limits as report creation. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
 | `DELETE /{id}` | API-key release of an owned live handle; returns 204 without a body. ID must be 48 lowercase hexadecimal characters. |
@@ -1054,7 +1055,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 
 Create accepts all-document, collection, or exact current-document scope. The
 selected identities are admitted together in the same read observation as the
-report. Stale selection returns `409 report_selection_changed`. Malformed
+report. Stale selection returns `409 report_selection_changed`. Use `/selection` to compare the full set before choosing replacements. Malformed
 selection or a wrong hash for a current version returns
 `422 invalid_report_request`. Selected-member overflow returns `413 report_limit`,
 while collection-count overflow still returns 422. See the guide for null/empty

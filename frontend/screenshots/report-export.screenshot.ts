@@ -494,11 +494,11 @@ print('Verified report evidence, CSV and all three original byte streams')
       expect(response.status()).toBe(409);
       expect(await response.json()).toMatchObject({ code: "report_selection_changed" });
       await expect(drawer.getByRole("alert")).toHaveText(
-        "The report didn't run. Some selected documents have a newer version or are no longer available.",
+        "The report didn't run. Some selected documents have a different version or are no longer available.",
       );
       await page.screenshot({ path: path.join(captures!, "selection-before.png") });
       await drawer.getByRole("button", { name: "Refresh selection" }).click();
-      await expect(drawer.getByText(/^Newer version · modified/)).toBeVisible();
+      await expect(drawer.getByText(/^Selected:/)).toBeVisible();
       await page.screenshot({ path: path.join(captures!, "selection-after.png") });
       const include = drawer.getByRole("checkbox", { name: "Include current version" });
       await expect(include).not.toBeChecked();

@@ -472,7 +472,7 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
   );
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   expect((await screen.findByRole("alert")).textContent?.replace(/\s+/g, " ").trim()).toBe(
-    "The report didn't run. Some selected documents have a newer version or are no longer available.",
+    "The report didn't run. Some selected documents have a different version or are no longer available.",
   );
   expect(submitted).toHaveLength(2);
 });
@@ -667,13 +667,13 @@ it("requires acceptance before using current document versions", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Use this selection" }));
   expect(onselectionchanged).toHaveBeenCalledOnce();
   expect(submissions).toHaveLength(1);
-  expect(screen.getByText(/Selection updated: 1 using current versions, 2 left out/)).toBeTruthy();
+  expect(screen.getByText(/Selection updated: 1 current version, 2 left out/)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   await waitFor(() => expect(submissions).toHaveLength(2));
   expect(submissions[1].selected_documents.documents).toEqual([current]);
 });
 
-it("ignores a conflict from an earlier draft", async () => {
+it("shows a selection conflict after editing a term", async () => {
   const document = {
     node_id: 1,
     version_id: "20000000-0000-4000-8000-000000000001",
@@ -706,5 +706,105 @@ it("ignores a conflict from an earlier draft", async () => {
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Create report" })).toHaveProperty("disabled", false),
   );
+  expect(screen.getByRole("button", { name: "Refresh selection" })).toBeTruthy();
+});
+
+it("rejects an unknown refresh status without changing the selection", async () => {
+  const document = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (String(url).endsWith("/selection")) return json([{ selected: document, status: "future" }]);
+    return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+      status: 409,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [document],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
+  expect(await screen.findByText(/selection response was incomplete or invalid/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Use this selection" })).toBeNull();
+});
+
+it("shows paths and both version dates for matching document names", async () => {
+  const one = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  const two = { ...one, node_id: 2 };
+  const current = { ...one, version_id: "20000000-0000-4000-8000-000000000002" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (String(url).endsWith("/selection"))
+      return json(
+        [one, two].map((selected, index) => ({
+          selected,
+          current: { ...current, node_id: selected.node_id },
+          name: "file.txt",
+          path: index ? "/two/file.txt" : "/one/file.txt",
+          selected_recorded: "2026-01-01T00:00:00Z",
+          modified: "2025-01-01T00:00:00Z",
+          status: "changed",
+        })),
+      );
+    return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+      status: 409,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [one, two],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
+  expect(await screen.findByText("/one/file.txt")).toBeTruthy();
+  expect(screen.getByText("/two/file.txt")).toBeTruthy();
+  expect(screen.getAllByText(/^Selected: .*Current:/)).toHaveLength(2);
+});
+
+it("clears the conflict after a successful rerun", async () => {
+  const document = {
+    node_id: 1,
+    version_id: "20000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+  };
+  let attempts = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "GET") return json({ items: [], total: 0 });
+    if (++attempts > 1) return json(oldSummary);
+    return new Response(JSON.stringify({ code: "report_selection_changed" }), {
+      status: 409,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+  });
+  render(TermReportDrawer, {
+    session: "session",
+    initialExpression: "alpha",
+    initialDocuments: [document],
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await screen.findByRole("button", { name: "Refresh selection" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Create report" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
+  await screen.findByText("Counts ready", { exact: false });
   expect(screen.queryByRole("button", { name: "Refresh selection" })).toBeNull();
 });
