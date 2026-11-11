@@ -125,6 +125,53 @@ func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 	}
 }
 
+func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
+	const text = "    ALPHA\n    BETA"
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: 100, MaxSegmentRunes: 100})
+	require.NoError(t, err)
+	rendered, err := BuildRenditionV1(evidence, policy)
+	require.NoError(t, err)
+	require.Len(t, rendered.Units, 1)
+	assert.Equal(t, text, rendered.Units[0].Text)
+	assert.Contains(t, string(rendered.Markdown), text)
+	assert.NotContains(t, string(rendered.Markdown), "```")
+	require.Len(t, rendered.LexicalSegments, 1)
+	assert.Equal(t, text, rendered.LexicalSegments[0].Text)
+}
+
+func TestImageUnderstandingReportsActualTruncation(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, want string
+		limit            int
+		truncated        bool
+	}{
+		{"single exact fit", "hello", "hello", 5, false},
+		{"single over limit", "hello!", "hello", 5, true},
+		{"multiline exact fit", "a\nb", "a\nb", 3, false},
+		{"multiline over limit", "a\nbc", "a\nb", 3, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+				Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
+			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: tc.limit, MaxSegmentRunes: 100})
+			require.NoError(t, err)
+			rendered, err := BuildRenditionV1(evidence, policy)
+			require.NoError(t, err)
+			require.Len(t, rendered.Units, 1)
+			assert.Equal(t, tc.want, rendered.Units[0].Text)
+			if tc.truncated {
+				assert.Contains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
+			} else {
+				assert.NotContains(t, rendered.Warnings, RenditionWarningV1{Code: "truncated"})
+			}
+		})
+	}
+}
+
 func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) {
 	evidenceUnit := NormalizedEvidenceUnitV1{
 		ID: "evidence_unit_test",
