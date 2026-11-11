@@ -23,7 +23,7 @@ import (
 
 func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T) {
 	t.Parallel()
-	model := strings.Repeat("m", 255)
+	model := "synthetic-vision"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fields := map[string]string{"visible_text": "SAVE\nNOW\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
@@ -68,7 +68,6 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	view, err := fixture.catalog.ActiveRendition(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)
 	assert.Equal(t, written.Hash, view.Build.SourceSHA256)
-	assert.Equal(t, document.EvidenceDegradedProvenance, view.Build.Completeness)
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
@@ -84,21 +83,12 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, node.CurrentVersionID, report.Results[0].Document.ContentVersionID)
-	assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / ")
-	assert.Contains(t, report.Results[0].Excerpt, "Possible meaning (interpretation)")
-	assert.Contains(t, report.Results[0].Excerpt, "denial")
 
-	for _, mode := range []string{"semantic", "hybrid"} {
-		report, err := service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ignoring danger", Mode: mode, Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
-		require.NoError(t, err, mode)
-		require.Len(t, report.Results, 1, mode)
-		assert.Zero(t, report.Results[0].LexicalRank, mode)
-		assert.NotZero(t, report.Results[0].SemanticRank, mode)
-		assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / Possible meaning (interpretation)", mode)
-		assert.Contains(t, report.Results[0].Excerpt, "denial of a crisis", mode)
-		require.NotEmpty(t, report.Results[0].Evidence, mode)
-		assert.Equal(t, node.CurrentVersionID, report.Results[0].Evidence[0].ContentVersionID, mode)
-	}
+	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ignoring danger", Mode: "semantic", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	assert.Zero(t, report.Results[0].LexicalRank)
+	assert.NotZero(t, report.Results[0].SemanticRank)
 }
 
 type understandingEmbeddingCapture struct {

@@ -53,7 +53,7 @@ func TestEnvelopeRenditionV1KeepsNavigationBodyRelative(t *testing.T) {
 	t.Run("image text matching its notice", func(t *testing.T) {
 		evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
 			Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-			Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Text: "image", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
+			Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "image", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
 		policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1000})
 		require.NoError(t, err)
 		imageRendition, err := BuildRenditionV1(evidence, policy)

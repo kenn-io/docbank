@@ -272,6 +272,17 @@ func TestBuildEmbeddingInputsFitsRenderedHeadingContext(t *testing.T) {
 				assert.LessOrEqual(t, input.RenderedTokens, policy.MaxInputTokens)
 				assert.Contains(t, input.Rendered, "Section\n\n")
 			}
+			if tc.name == "bytes" {
+				encoded, err := MarshalEmbeddingInputGeneration(generation)
+				require.NoError(t, err)
+				decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
+				require.NoError(t, err)
+				inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
+				require.NoError(t, err)
+				for index, input := range inputs {
+					assert.Equal(t, generation.Inputs[index].Rendered, policy.ModelInput.EncodeDocument(input.Text))
+				}
+			}
 		})
 	}
 }
@@ -775,22 +786,6 @@ func TestEmbeddingInputGenerationValidatesEvidenceSpans(t *testing.T) {
 }
 
 func TestEmbeddingInputGenerationMapsContextIntoE1ExactlyOnce(t *testing.T) {
-	t.Run("heading generation round trip", func(t *testing.T) {
-		evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABBCCDDEEFF", heading: []string{"Section"}}})
-		policy := testInputPolicy(t, 6, 0)
-		policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
-		policy.MaxInputBytes = int64(len("document: Section\n\nAABB"))
-		generation := build(t, evidence, policy)
-		encoded, err := MarshalEmbeddingInputGeneration(generation)
-		require.NoError(t, err)
-		decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
-		require.NoError(t, err)
-		inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
-		require.NoError(t, err)
-		for index, input := range inputs {
-			assert.Equal(t, generation.Inputs[index].Rendered, policy.ModelInput.EncodeDocument(input.Text))
-		}
-	})
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Evidence"}}})
 	attachment, err := NewAttachmentContextSnapshot("Human title", "Human context")
 	require.NoError(t, err)

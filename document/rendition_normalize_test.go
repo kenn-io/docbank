@@ -90,7 +90,7 @@ func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
 		Family: "image", UnitKind: EvidenceUnitGeneric,
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}},
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}},
 	})
 	// The labels fit, leaving too little room for all of the text.
 	limit := utf8.RuneCountInString(renditionPresentation(evidence.Units[0], true)) + len("hello") - 1
@@ -109,7 +109,7 @@ func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
 				Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: tc.model}}}}
+				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: tc.model}}}}
 			evidence := normalizeRenditionEvidence(t, source)
 			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
 			require.NoError(t, err)
