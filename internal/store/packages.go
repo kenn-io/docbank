@@ -425,7 +425,7 @@ func insertCollectionSnapshotHeaderTx(ctx context.Context, tx *sql.Tx, vaultID s
 	_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshots(
 		snapshot_id,vault_uid,predecessor_id,source_collection_ids_json,
 		member_count,page_count,member_hash,manifest_sha256,canonical_json,checksum,sealed_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, snapshot.SnapshotID, vaultID, predecessor,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, snapshot.SnapshotID, vaultID, predecessor,
 		sourceJSON, snapshot.MemberCount, snapshot.PageCount, snapshot.MemberHash,
 		snapshot.ManifestSHA256, header, snapshot.Checksum, snapshot.SealedAt)
 	if err != nil {
@@ -455,7 +455,7 @@ func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshot
 			family_id,parent_occurrence_id,family_order,display_name,frozen_fields_json,
 			document_kind,selected_source_pages_json,selected_pdf_sha256,source_page_count,
 			canonical_json,checksum
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, snapshotID, member.Ordinal,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, snapshotID, member.Ordinal,
 			member.OccurrenceID, member.NodeID, member.ContentVersionID, member.BlobSHA256,
 			member.Size, member.FamilyID, member.ParentOccurrenceID, member.FamilyOrder,
 			member.DisplayName, member.FrozenFieldsJSON, member.DocumentKind, selected,
@@ -472,7 +472,7 @@ func insertCollectionSnapshotMembersTx(ctx context.Context, tx *sql.Tx, snapshot
 				snapshot_id,occurrence_id,role,ordinal,status,text_authority,content_version_id,
 				blob_sha256,size,media_type,page_number,verified_page_count,rendition_build_id,
 				lexical_generation_id,recipe_sha256,canonical_json,checksum
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, snapshotID, rep.OccurrenceID,
+			) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, snapshotID, rep.OccurrenceID,
 				rep.Role, rep.Ordinal, rep.Status, rep.TextAuthority, rep.ContentVersionID,
 				rep.BlobSHA256, rep.Size, rep.MediaType, rep.PageNumber, rep.VerifiedPageCount,
 				rep.RenditionBuildID, rep.LexicalGenerationID, rep.RecipeSHA256, encoded, checksum)
@@ -510,7 +510,7 @@ func (s *Store) CollectionSnapshot(ctx context.Context, id string) (CollectionSn
 	if validateUUIDv4(id) != nil {
 		return CollectionSnapshot{}, ErrNotFound
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return CollectionSnapshot{}, err
 	}
@@ -526,11 +526,19 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 	if validateUUIDv4(id) != nil || afterOrdinal < 0 || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	members, err := loadSnapshotMembersTx(ctx, tx, id, afterOrdinal, limit)
+	if err != nil {
+		return nil, err
+	}
+	return members, tx.Commit()
+}
+
+func loadSnapshotMembersTx(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int) ([]CollectionSnapshotMember, error) {
 	members, err := loadSnapshotMemberRows(ctx, tx, id, afterOrdinal, limit)
 	if err != nil {
 		return nil, err
@@ -541,7 +549,7 @@ func (s *Store) SnapshotMembers(ctx context.Context, id string, afterOrdinal, li
 			return nil, err
 		}
 	}
-	return members, tx.Commit()
+	return members, nil
 }
 
 func loadSnapshotMemberRows(ctx context.Context, tx metadataQuerier, id string, afterOrdinal, limit int) ([]CollectionSnapshotMember, error) {

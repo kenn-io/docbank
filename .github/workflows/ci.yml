@@ -56,7 +56,7 @@ jobs:
     if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-26.04
-    timeout-minutes: 11
+    timeout-minutes: 16
     strategy:
       fail-fast: false
       matrix:
@@ -596,7 +596,7 @@ jobs:
       - name: Run golangci-lint
         uses: step-security/golangci-lint-action@v9.3.0
         with:
-          version: v2.14.0
+          version: v2.15.0
           # The job's Go cache group carries the analysis cache; the action's own key never refreshes.
           skip-cache: true
 

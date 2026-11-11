@@ -193,8 +193,15 @@ Instructions for autonomous coding agents working in this repository.
    the user explicitly asks you to monitor them. A request to open, update, or
    make a pull request merge-ready does not authorize ongoing CI monitoring.
 9. Pull requests must have a user-facing benefit or improve the developer
-   experience, and the body must say which one.
+   experience, and the body must say which one. A pull request must be useful
+   if nothing after it merges: put groundwork in the first PR that uses it, and
+   open a stack's PRs one at a time, each after the one below has been reviewed.
 10. Write issues and pull requests in English.
+11. End every commit message with a `Co-authored-by:` trailer naming the agent
+    that wrote the change.
+12. End the pull request description with a `Model used:` line naming the model,
+    such as `Model used: Opus 5.5` or `Model used: GPT-6.1 Sol`. Squash-merge
+    keeps only the description, so put the `Co-authored-by:` trailer there too.
 
 ## Commit Messages
 

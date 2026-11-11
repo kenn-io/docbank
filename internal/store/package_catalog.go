@@ -166,7 +166,7 @@ func (s *Store) CreatePackage(ctx context.Context, request PackageRequest) (Pack
 			return err
 		}
 		var manifestCount int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blobs WHERE hash=?`, request.ManifestBlobSHA256).Scan(&manifestCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blobs WHERE hash=$1`, request.ManifestBlobSHA256).Scan(&manifestCount); err != nil {
 			return err
 		}
 		if manifestCount != 1 {
@@ -182,7 +182,7 @@ func (s *Store) CreatePackage(ctx context.Context, request PackageRequest) (Pack
 			package_id,snapshot_id,direction,package_name,party_label,profile_sha256,profile_json,
 			mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 			predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, request.PackageID,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, request.PackageID,
 			nullableString(request.SnapshotID), request.Direction, request.PackageName, request.PartyLabel,
 			request.ProfileSHA256, request.ProfileJSON, request.MappingSHA256, request.MappingJSON,
 			request.ManifestSHA256, request.ManifestBlobSHA256,
@@ -195,7 +195,7 @@ func (s *Store) CreatePackage(ctx context.Context, request PackageRequest) (Pack
 		for _, volume := range request.Volumes {
 			_, err := tx.ExecContext(ctx, `INSERT INTO package_volumes(
 				package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-			) VALUES(?,?,?,?,?,?)`, request.PackageID, volume.Ordinal, volume.VolumeName,
+			) VALUES($1,$2,$3,$4,$5,$6)`, request.PackageID, volume.Ordinal, volume.VolumeName,
 				volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
 			if err != nil {
 				return err
@@ -251,7 +251,7 @@ func (s *Store) Package(ctx context.Context, id string) (Package, error) {
 	if validateUUIDv4(id) != nil {
 		return Package{}, ErrNotFound
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return Package{}, err
 	}
@@ -269,13 +269,13 @@ func (s *Store) Packages(ctx context.Context, direction, after string, limit int
 		after != "" && validateUUIDv4(after) != nil || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `SELECT package_id FROM packages
-		WHERE package_id>? AND (?='' OR direction=?) ORDER BY package_id LIMIT ?`,
+		WHERE package_id>$1 AND ($2='' OR direction=$3) ORDER BY package_id LIMIT $4`,
 		after, direction, direction, limit)
 	if err != nil {
 		return nil, err

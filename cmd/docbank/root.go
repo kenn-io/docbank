@@ -22,7 +22,9 @@ const (
 var rootCmd = &cobra.Command{
 	Use:   "docbank",
 	Short: "Keep, find, and verify documents in a local vault",
-	Long: `Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
+	Long: `Agents: find the right command with: docbank cli search "<task>"
+
+Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
 over immutable, hash-verified content versions. A daemon owns the vault;
 data commands start it ("docbank daemon stop" ends it).
 
@@ -128,6 +130,10 @@ func configureCommandGroups(cmd *cobra.Command) {
 		if child.HasSubCommands() && !child.Runnable() {
 			child.Args = cobra.NoArgs
 			child.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+			if child.Annotations == nil {
+				child.Annotations = make(map[string]string)
+			}
+			child.Annotations[helpOnlyAnnotation] = helpOnlyMarker
 		}
 		configureCommandGroups(child)
 	}

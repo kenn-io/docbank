@@ -1,7 +1,7 @@
 <h1 align="center">docbank</h1>
 
 <p align="center">
-  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.27.3+-00ADD8?logo=go" alt="Go 1.27.3+"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.27.4+-00ADD8?logo=go" alt="Go 1.27.4+"></a>
   <a href="https://github.com/kenn-io/docbank/actions/workflows/ci.yml"><img src="https://github.com/kenn-io/docbank/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/kenn-io/docbank/releases"><img src="https://img.shields.io/github/v/release/kenn-io/docbank?include_prereleases" alt="Release"></a>
   <a href="https://docbank.ai"><img src="https://img.shields.io/badge/Docs-docbank.ai-blue" alt="Docs"></a>
@@ -109,6 +109,11 @@ docbank document put revised-receipt.pdf /archive/Documents/receipt.pdf
 docbank document move /archive/Documents/receipt.pdf /archive/Documents/receipt-2026.pdf
 docbank vault verify
 ```
+
+PDF text is indexed locally on import, with no setup. With no configured
+profile, the Text tab shows retained PDF page text. Configured profiles keep
+their own text and processing state. Office text and OCR use [configured
+processing profiles](docs/usage/document-processing.md).
 
 Create a backup, verify it, and restore it into a separate directory to check:
 

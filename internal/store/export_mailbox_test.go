@@ -65,9 +65,10 @@ func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestExportPublicationReleasedOnlyAfterRetentionCleanup(t *testing.T) {
+func checkExportPublicationReleasedOnlyAfterRetentionCleanup(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	f := newEmailFixture(t, s, "source.eml")
 	view, err := s.PublishEmailGeneration(t.Context(), f.publication)
 	require.NoError(t, err)
@@ -78,7 +79,7 @@ func TestExportPublicationReleasedOnlyAfterRetentionCleanup(t *testing.T) {
 	plan, err := s.CreateExportPlan(t.Context(), "owner", bundle.PlanRequest{OperationID: uuid.NewString(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "attachment_original"}}})
 	require.NoError(t, err)
 	require.ErrorIs(t, s.RemoveEmailDocumentPublication(t.Context(), p.OperationID, p.RequestDigest), bundle.ErrRetained)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE export_plans SET expires_at='2000-01-01T00:00:00.000000000Z' WHERE id=?`, plan.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE export_plans SET expires_at='2000-01-01T00:00:00.000000000Z' WHERE id=$1`, plan.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.CleanupExportAuthority(t.Context()))
 	require.NoError(t, s.RemoveEmailDocumentPublication(t.Context(), p.OperationID, p.RequestDigest))

@@ -102,7 +102,7 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 	for _, row := range page.Items {
 		delete(selected, row.AssetID)
 		m := bundle.Member{NodeID: row.NodeID, VersionID: row.ContentVersionID}
-		if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=$1 AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, "", fmt.Errorf("%w: photo %d is no longer exportable", bundle.ErrConflict, m.NodeID)
 			}
@@ -117,7 +117,7 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 			}
 			var nodeID int64
 			var name string
-			err := s.db.QueryRowContext(ctx, `SELECT n.id,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE f.asset_id=? AND `+photoVisibilityPredicate(selection.Hidden)+` ORDER BY f.file_id=a.display_file_id DESC,f.file_id LIMIT 1`, id).Scan(&nodeID, &name)
+			err := s.db.QueryRowContext(ctx, `SELECT n.id,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE f.asset_id=$1 AND `+photoVisibilityPredicate(selection.Hidden)+` ORDER BY f.file_id=a.display_file_id DESC,f.file_id LIMIT 1`, id).Scan(&nodeID, &name)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, "", fmt.Errorf("photo %s: %w: no longer exportable", id, bundle.ErrConflict)
 			}
@@ -138,7 +138,7 @@ func photoExportSourceRequest(ctx context.Context, q metadataQuerier, source bun
 		return bundle.SourceRequest{}, nil
 	}
 	var raw []byte
-	if err := q.QueryRowContext(ctx, `SELECT request_json FROM export_sources WHERE id=?`, source.ID).Scan(&raw); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT request_json FROM export_sources WHERE id=$1`, source.ID).Scan(&raw); err != nil {
 		return bundle.SourceRequest{}, err
 	}
 	var request bundle.SourceRequest
@@ -166,7 +166,7 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 	var display sql.NullBool
 	var name string
 	var current bundle.Member
-	err = q.QueryRowContext(ctx, `SELECT f.file_id,a.revision,n.revision,v.mime_type,a.hidden_at,n.name,a.display_file_id=f.file_id,v.version_id,v.blob_hash,v.size FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID).Scan(&i.FileID, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &name, &display, &current.VersionID, &current.SHA256, &current.Size)
+	err = q.QueryRowContext(ctx, `SELECT f.file_id,a.revision,n.revision,v.mime_type,a.hidden_at,n.name,a.display_file_id=f.file_id,v.version_id,v.blob_hash,v.size FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=$1 AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID).Scan(&i.FileID, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &name, &display, &current.VersionID, &current.SHA256, &current.Size)
 	if err != nil {
 		return i, err
 	}
@@ -198,18 +198,21 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 }
 
 func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.PlanRequest) ([]PhotoExportInput, error) {
-	source, err := s.ExportSource(ctx, owner, r.SourceID)
-	if err != nil {
-		return nil, err
-	}
-	if source.Total > bundle.MaxPhotoExportMembers {
-		return nil, fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
-	}
-	if source.State != "sealed" || source.MemberHash != r.MemberHash {
-		return nil, bundle.ErrConflict
-	}
 	var inputs []PhotoExportInput
-	err = s.withReadTx(ctx, func(tx *sql.Tx) error {
+	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
+		source, err := loadExportSource(ctx, tx, owner, r.SourceID)
+		if err != nil {
+			return err
+		}
+		if exportExpired(source.ExpiresAt) {
+			return bundle.ErrExpired
+		}
+		if source.Total > bundle.MaxPhotoExportMembers {
+			return fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
+		}
+		if source.State != "sealed" || source.MemberHash != r.MemberHash {
+			return bundle.ErrConflict
+		}
 		request, err := photoExportSourceRequest(ctx, tx, source)
 		if err != nil {
 			return err

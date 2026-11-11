@@ -367,8 +367,9 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer, backup recovery, multi-store placement and their storage-operation jobs
-remain unqualified.
+transfer and backup recovery remain unqualified. Native multi-store catalog
+operations are qualified below; deployment adapters and filesystem workers
+remain separate from public PostgreSQL vault opening.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -435,6 +436,9 @@ grant the following privileges after setup. This example uses schema
 ```sql
 GRANT USAGE ON SCHEMA documents TO docbank_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA documents TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(lifecycle) ON documents.blob_stores TO docbank_runtime;
+GRANT INSERT ON documents.storage_operation_stores TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.storage_operation_cleanup TO docbank_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON documents.nodes, documents.blobs, documents.content_versions
     TO docbank_runtime;
@@ -450,6 +454,28 @@ GRANT UPDATE(operation_sequence_high_water, allocation_entry_count, allocation_h
 GRANT UPDATE(entry_count, chain_head) ON documents.audit_scopes TO docbank_runtime;
 GRANT SELECT, UPDATE(high_water) ON documents.node_allocation TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.vault_changes TO docbank_runtime;
+GRANT INSERT ON documents.collection_snapshots,
+    documents.collection_snapshot_members, documents.collection_snapshot_representations,
+    documents.packages, documents.package_volumes, documents.bates_namespaces,
+    documents.bates_namespace_cursors, documents.bates_allocations,
+    documents.bates_page_labels, documents.bates_artifacts, documents.bates_artifact_pages
+    TO docbank_runtime;
+GRANT UPDATE(next_sequence) ON documents.bates_namespace_cursors TO docbank_runtime;
+GRANT UPDATE(state, committed_at) ON documents.bates_allocations TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.package_preflights TO docbank_runtime;
+GRANT INSERT ON documents.package_records, documents.package_labels,
+    documents.package_import_receipts, documents.package_import_jobs TO docbank_runtime;
+GRANT UPDATE(state, snapshot_id, completed_at) ON documents.packages TO docbank_runtime;
+GRANT UPDATE(state, epoch, token, claim_owner, lease_expires_at, updated_at)
+    ON documents.package_import_jobs TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at)
+    ON documents.export_sources TO docbank_runtime;
+GRANT INSERT ON documents.export_chunks, documents.export_members,
+    documents.export_documents, documents.export_role_roots TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, expires_at)
+    ON documents.export_plans TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(canonical_json, state, expires_at, epoch, token, archive_name)
+    ON documents.export_jobs TO docbank_runtime;
 GRANT SELECT, INSERT, DELETE ON documents.photo_xmp_unsettled TO docbank_runtime;
 GRANT INSERT, UPDATE, DELETE ON documents.blob_locations TO docbank_runtime;
 GRANT INSERT, UPDATE ON documents.blob_pack_entries TO docbank_runtime;
@@ -699,9 +725,9 @@ record per genesis kind, matching SQLite; it does not reject other kinds.
 Go still owns which record kinds are valid. Conditional unique indexes also
 preserve alias, current external identity and active custodian relationships.
 These predicates enforce uniqueness; they do not reject unknown kind or state
-values. Go validators own those values. Multi-store operations are read-only
-inputs to validation here; their active-evacuation uniqueness rule remains part
-of the future write port rather than a closed state list in the new schema.
+values. Go validators own those values. Multi-store operations have native
+contracts below; their active-evacuation uniqueness rule is enforced by the shared Go admission
+check under writer serialization, without a closed state list in PostgreSQL.
 
 Secondary access indexes on the added read-only catalogs are intentionally
 deferred. Port them with the operations that need them, including indexes on
@@ -709,6 +735,137 @@ foreign-key columns used by cascading deletes; PostgreSQL does not add those
 automatically. Keep structural uniqueness in the canonical schema. Enrollment
 qualification establishes correctness, not validation or cascade performance
 on large vaults; those paths need representative query-plan and workload checks.
+
+#### Sealed delivery catalogs
+
+The native Store seals inline and streaming collection snapshots, records package
+identity and volumes, retains preflight results, reserves Bates page numbers,
+and publishes verified numbered PDF artifacts on both backends. These operations
+start with explicit, already-selected versions. Received-package intake is
+qualified below. Query-driven selection, filesystem delivery workers,
+transfer/recovery and public PostgreSQL vault opening remain separate.
+
+A sealed snapshot keeps its exact versions, source collections, page selections,
+representations and canonical bytes. Replaying the same request returns the
+original header; a different request cannot overwrite it. Streaming writes bounded
+member batches and writes the immutable header last. SQLite uses its existing
+foreign-key deferral pragma. PostgreSQL makes the member-to-header reference
+`DEFERRABLE INITIALLY IMMEDIATE` and defers it for the streaming transaction.
+Failure leaves neither a partial header nor member rows. The canonical JSON stays
+byte storage so hashing and readback preserve the exact bytes; PostgreSQL decodes
+UTF-8 only where a query reads frozen source-collection evidence.
+
+Bates previews allocate nothing. Reservations serialize under the existing writer
+lock, preserve namespace cursors and globally unique labels, and commit the sealed
+snapshot and range together. Semantic replay can reuse the original reservation
+after its live source changes. Publication commits the output blob, immutable
+artifact and page receipts, and allocation transition together. The first verified
+publisher wins an exact retry, including when a later render has different PDF
+container bytes. Runtime roles can insert identities, advance `next_sequence`,
+and change only `state` and `committed_at` on allocations; they cannot rewrite
+snapshot, namespace, label, artifact or volume identities. Store methods enforce
+cursor monotonicity and one-way allocation publication under writer admission.
+The PostgreSQL column grants do not enforce those transitions against direct SQL.
+
+Package and artifact pages, member representations, publication plans and custodian
+evidence use repeatable-read transactions. A concurrent custodian change affects
+the next request, including its binding epoch. Custodian evidence follows the
+snapshot's frozen source membership after the source leaves the live library.
+Preflight reads enforce their deadline even before the expiry sweep removes rows.
+
+The `sealed-delivery` contracts run existing snapshot, streaming, package and Bates
+scenarios on both backends. PostgreSQL cases exercise late-write rollback during
+reservation and publication, concurrent connections sharing one namespace, and
+custodian changes committed between statements in a read. Access indexes cover
+artifact history and labels, namespace ranges, package predecessors, preflight
+expiry and retained representation versions.
+
+#### Received-package intake
+
+The native Store admits received packages and their source collections, stages
+files under worker leases, publishes immutable source rows and scoped labels,
+and completes or cancels imports on both backends. Filesystem parsing, import
+workers, portable metadata recovery and public PostgreSQL opening
+remain separate qualification boundaries.
+
+Admission commits the source collection, package identity, volume mappings and
+queued job together. An exact owner/operation retry returns the original job,
+including when the caller allocated new internal IDs. A worker claim, renewal,
+release or reclaim uses the existing writer transaction. Replacement advances
+the epoch; an expired, cancelled or superseded worker cannot stage files,
+publish receipts or finalize the package.
+
+Record publication binds the retained version to that package's source collection.
+The original row bytes, sensitivity flag, received labels and receipt commit
+together. Exact replay preserves the original receipt; changed rows or received
+labels conflict. Assigned labels have their own immutable identity and do not
+alter received evidence. Label lookup preserves ambiguity across packages;
+label, record and timeline pages retain their existing ordering and cursors.
+Timeline pages and progress counts with their bounded gap list share one read
+snapshot.
+
+Completion seals the member stream and advances the package and job together.
+Only members matching committed record receipts may enter the final snapshot.
+Cancellation, terminal failure and owner revocation remove unreceipted staging,
+while preserving primary versions, supplied representations retained by receipts,
+and checkout-held versions. Cleanup updates tag counts, photo membership and
+export work, version-dependent epochs and the vault change stream in the same
+transaction. Released SQLite triggers keep their existing effects; PostgreSQL
+uses the shared maintenance helpers.
+
+The `received-packages` contracts exercise native intake, lease replacement,
+record replay, gap reporting, completion, label browsing and cleanup on both
+engines. PostgreSQL cases fail the final admission, receipt or job write to
+verify rollback, and commit new receipts during reads to verify snapshot
+isolation. The PostgreSQL runtime grants are insert-only for records, labels
+and receipts. Updates are limited to job lifecycle columns and package state,
+snapshot and completion columns. Store methods enforce one-time snapshot and
+completion values under writer admission; the PostgreSQL grants do not prevent
+direct SQL from rewriting those columns. SQLite's released receipt trigger
+prevents updates but does not prevent deletion. These database-level differences
+do not change the qualified Store operations.
+
+#### Document export plans and jobs
+
+The native Store supports explicit members, current node IDs and chunked uploads
+as export sources on both backends. It seals exact retained versions, plans
+originals and available retained text, page images, email PDFs and attachment
+outputs, and provides frozen previews and output-problem pages. Explicit photo
+members can capture authored metadata and publish an already-prepared render.
+Query-driven and mailbox source discovery, rendering and filesystem workers,
+portable recovery and public PostgreSQL opening remain separate boundaries.
+
+Source admission reserves the owner and operation before invoking a resolver.
+A failed or cancelled resolution keeps that reservation, so retry cannot silently
+select newer documents. Chunk retries must match the original bytes; sealing
+requires every chunk and the promised member digest. Plans pin exact output
+receipts, paths, optional-role failures, volume choices and retention roots.
+A failed plan commits no quota reservation, document rows or roots.
+
+Job claims and progress use the existing writer admission. Restart and cancellation
+advance the claim epoch and clear its token; old attempts cannot publish. A
+successful finish stores the terminal receipt and archive name together and
+extends source and plan retention. Cancellation and failure reduce the extension.
+Expired authority keeps its versions and blobs until cleanup removes its rows.
+Archive release checks the owner and terminal state before calling the existing
+removal callback; a callback failure keeps the job. Archive removal must tolerate
+retries because SQL rollback cannot restore a removed file.
+
+Plans, frozen previews, problem pages, photo inputs and live output/attachment
+discovery use read snapshots where multiple rows must agree. Archive document
+walks release each page before callbacks so blob reads and claim checks can
+re-enter the Store. Cleanup during a read affects the next request. PostgreSQL decodes stored
+JSON bytes only for concrete JSON predicates and uses `GREATEST` for scalar
+retention comparisons; SQLite keeps its existing expressions. Both retain the
+same canonical bytes and fingerprints.
+
+The `exports` contracts cover native source sealing, chunk replay, pinned roles,
+plan rollback, job completion and release, restart/revocation, cleanup and output
+inspection. PostgreSQL-specific cases revoke a final write to verify rollback,
+remove expired plans between read statements, and recheck explicit photo inputs
+before publication. Runtime grants permit only inserts into members, chunks,
+planned documents and roots; source, plan and job updates are limited to their
+existing mutable columns. These grants do not replace Store lifecycle checks.
 
 #### PostgreSQL reference implementations
 
@@ -1153,7 +1310,8 @@ changes, inside the same transaction. SQLite retains its released triggers. A
 failed receipt write rolls back the documents, memberships, derived rows and node
 allocation together. Photo import's progress, cancellation and finalization use
 the shared operation records under writer admission. Expired receipts stay until
-pending physical cleanup is gone; this does not qualify multi-store operations.
+pending physical cleanup is gone. Multi-store operations have their own contracts
+below.
 
 The `photo-import` suite covers these native Store workflows. Retained XMP
 receipts used by import are produced by SQLite's publisher. Native XMP publication
@@ -1557,7 +1715,8 @@ transaction retains the original authority and mappings.
 
 PostgreSQL mutation helpers refresh affected pack summaries once per pack inside
 the writer transaction. This includes adoption, replacement, index removal,
-loose repair, logical collection and re-ingest. SQLite keeps its released
+loose repair, placement retirement, storage repair, logical collection and
+re-ingest. SQLite keeps its released
 summary triggers. Counts, totals and maxima describe only live members; dead
 mappings remain until physical retirement. A pack's scan key stays stable after
 publication, even when its lowest member disappears. Bounded GC and repack scans
@@ -1578,7 +1737,50 @@ a separate runtime role. A real-file lifecycle packs documents, revokes collecte
 members, repacks the survivor and reads its original bytes. Additional cases
 cover bounded scans, summary changes, rollback and cleanup replay after content
 is reauthorized. This qualifies the primary catalog and cleanup protocol, not
-public PostgreSQL vault opening, multi-store placement, storage jobs or recovery.
+public PostgreSQL vault opening, deployment workers or metadata recovery.
+
+#### Secondary stores, placement and evacuation
+
+The native Store registers secondary filesystem or S3 identities, reports their
+inventory and availability impact, plans placements and evacuations, and commits
+verified destination receipts on both backends. Store plans contain stable
+identities and physical receipts; deployment paths and credentials stay with the
+caller. Public PostgreSQL opening and deployment-specific workers are separate.
+
+Placement previews and repair plans use one read snapshot. Previews account for retained
+versions and all references, report shared or audit-pinned content,
+and account for container reads, verification and scratch space. PostgreSQL uses
+plain joins and scalar `GREATEST`; SQLite keeps its forced inventory join order.
+
+The caller copies and verifies bytes before entering the short writer transaction.
+Commit rechecks the destination receipt and reference closure, authorizes the
+verified destination and retires only the exact reviewed source generation.
+Reference drift, audit pins or changed source authority keep the source. Packed
+source retirement and repair refresh pack summaries inside the same transaction.
+Failed catalog publication leaves the prior authority, mappings and summaries.
+
+Evacuation admits one active operation per source under writer serialization.
+Active source or destination references prevent detachment and unregistering.
+Finalization requires complete destination coverage, records exact physical
+cleanup, and leaves the source draining until that cleanup finishes. Cancellation
+cannot interrupt already-finalizing publication. Recovery records retain the
+reviewed source candidates and prior destination generation; repair or salvage
+cannot overwrite a destination changed after review.
+
+Cleanup receipts survive process interruption and block expired-operation pruning.
+Before removing an object, the caller rechecks the receipt: a reauthorized object
+consumes its stale receipt without authorizing deletion. Successful physical
+removal consumes only that exact receipt under writer admission. The SQL writer
+lock does not replace exclusive ownership of physical storage during publication.
+
+The `multi-store` contracts run the existing registry, placement, cleanup and
+operation-lifecycle scenarios on both backends. PostgreSQL cases move real bytes
+from a primary pack to a secondary and back, test late-write rollback during
+placement and repair, and commit location changes between preview statements.
+The runtime role may insert store identities, change their lifecycle and remove
+detached identities; it may insert operation-store references and insert/delete
+cleanup receipts. Other lifecycle rules are enforced by Store methods, rather
+than by PostgreSQL grants or a closed state index.
 
 #### Imports and source history
 
@@ -1857,6 +2059,8 @@ node and content-history query tests. `make test-pg` requires the DSN, bypasses
 cached test results, and runs these groups under the race detector. It limits
 parallel tests to four: each schema installation locks hundreds of catalog
 objects, so CPU-count concurrency can exhaust the default server lock table.
+The Store suite has an eight-minute timeout for the full contract inventory
+at that concurrency; the schema lifecycle suite has a separate three-minute limit.
 Without that variable, ordinary `make test` skips PostgreSQL tests.
 A supplied but invalid connection fails rather than skipping.
 

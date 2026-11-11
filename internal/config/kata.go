@@ -2,12 +2,12 @@ package config
 
 import (
 	"errors"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/secretref"
 )
 
@@ -89,8 +89,10 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 		u.Scheme != "https" && u.Scheme != "http" {
 		return KataConnection{}, errors.New("integrations.kata: invalid endpoint; use HTTPS or loopback HTTP")
 	}
-	if u.Scheme == "http" && !kataPlaintextAllowed(u.Hostname(), k.TrustPrivateNetwork) {
-		return KataConnection{}, errors.New("integrations.kata: HTTP endpoint requires loopback or trust_private_network = true for a trusted private network; use HTTPS otherwise")
+	if u.Scheme == "http" {
+		if _, err := embedconfig.CanonicalEndpoint(u.String(), k.TrustPrivateNetwork); err != nil {
+			return KataConnection{}, errors.New("integrations.kata: HTTP endpoint requires loopback or trust_private_network = true for a trusted private network; use HTTPS otherwise")
+		}
 	}
 	if (k.APIKeyEnv == "") == (k.APIKeyFile == "") {
 		return KataConnection{}, errors.New("integrations.kata: select exactly one of api_key_env or api_key_file")
@@ -127,33 +129,6 @@ func (k KataConfig) Resolve(root string) (KataConnection, error) {
 		return KataConnection{}, errors.New("integrations.kata: invalid default_project")
 	}
 	return KataConnection{Endpoint: strings.TrimRight(u.String(), "/"), APIKey: key, Project: project}, nil
-}
-
-// kataPlaintextAllowed follows kit's embedconfig.CanonicalEndpoint address policy
-// without changing this integration's URL normalization or endpoint restrictions.
-func kataPlaintextAllowed(host string, trustPrivateNetwork bool) bool {
-	if host == "" {
-		return false
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	if strings.Contains(host, ":") {
-		host, _, _ = strings.Cut(host, "%") // Classify the address without its IPv6 zone.
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return trustPrivateNetwork // The operator vouches for DNS names; do not resolve them.
-	}
-	if ip.IsLoopback() {
-		return true
-	}
-	if !trustPrivateNetwork {
-		return false
-	}
-	ipv4 := ip.To4()
-	cgnat := ipv4 != nil && ipv4[0] == 100 && ipv4[1]&0xc0 == 0x40
-	return ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || cgnat
 }
 
 // ValidKataProject is shared by configuration and the native Kata client.

@@ -20,7 +20,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"provenance", "ingest.go, provenance.go and provenance_bindings.go", "imports/sources contracts; immutable inserts and same-node predecessor validation", `
  ingests_immutable_update provenance_immutable_update provenance_same_node_insert
  provenance_version_bindings_immutable_update`},
-	{"pack summaries", "pack_maintenance.go: refreshPackSummariesTx", "documents/physical-storage contracts", `
+	{"pack summaries", "pack_maintenance.go: refreshPackSummariesTx", "documents/physical-storage/multi-store contracts", `
  blob_pack_summary_mapping_insert blob_pack_summary_mapping_delete
  blob_pack_summary_mapping_update blob_pack_summary_blob_delete blob_pack_summary_blob_insert`},
 	{"content promotion", "document_maintenance.go: promoteContentBlobTx", "documents contracts", `
@@ -86,13 +86,15 @@ var backendMaintenanceEffects = []backendMaintenance{
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update
  rendition_lexical_segments_immutable_update rendition_attachments_immutable_update`},
-	{"transfer and batch records", "unported: collection snapshots, Bates and packages", "retained validation does not qualify immutable-record or state-transition writes", `
+	{"sealed snapshots and Bates publication", "packages.go, packages_stream.go and bates*.go; INSERT-only identity grants", "sealed-delivery contracts; Store enforces monotone ranges and one-way publication; PostgreSQL column grants alone do not enforce transitions", `
  collection_snapshots_immutable_update collection_snapshot_members_immutable_update
  collection_snapshot_representations_immutable_update
  bates_artifacts_immutable_update bates_artifact_pages_immutable_update
  bates_namespaces_immutable_update bates_namespace_cursors_monotone
  bates_allocations_transition_guard bates_page_labels_immutable_update
- package_volumes_immutable_update packages_transition_guard package_records_immutable_update
+ package_volumes_immutable_update`},
+	{"received package transitions", "package_import*.go; INSERT-only record, label and receipt grants; column-specific package/job updates", "received-packages contracts; Store fences leases and fills snapshot/completion once; PostgreSQL permits direct SQL rewrites of those columns; SQLite receipts block updates, not deletion", `
+ packages_transition_guard package_records_immutable_update
  package_labels_immutable_update package_import_receipts_immutable_update`},
 	{"batch tag receipts", "batch_tag.go; runtime INSERT-only grants", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
 }

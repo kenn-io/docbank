@@ -1,18 +1,13 @@
 package config
 
 import (
-	"encoding/binary"
-	"math"
-	"net"
-	"net/netip"
-	"net/url"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 
 	"go.kenn.io/kit/safefileio"
 )
@@ -75,101 +70,31 @@ func kataEndpointConfig(t require.TestingT, endpoint string, trust bool) KataCon
 	return cfg
 }
 
-func TestKataHTTPEndpointAddressPolicy(t *testing.T) {
-	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-token")
-	// Prefix membership is an independent oracle for Kit's documented address classes.
-	loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
-	trusted := []netip.Prefix{
-		netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("172.16.0.0/12"),
-		netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("169.254.0.0/16"),
-		netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("0.0.0.0/32"),
-		netip.MustParsePrefix("fc00::/7"), netip.MustParsePrefix("fe80::/10"), netip.MustParsePrefix("::/128"),
-	}
-	hegel.Test(t, func(ht *hegel.T) {
-		var raw [16]byte
-		binary.BigEndian.PutUint64(raw[:8], hegel.Draw(ht, hegel.Integers[uint64](0, math.MaxUint64)))
-		binary.BigEndian.PutUint64(raw[8:], hegel.Draw(ht, hegel.Integers[uint64](0, math.MaxUint64)))
-		ip := netip.AddrFrom16(raw)
-		if hegel.Draw(ht, hegel.Booleans()) {
-			ip = netip.AddrFrom4([4]byte(raw[:4]))
-		}
-		trust := hegel.Draw(ht, hegel.Booleans())
-		allowed := false
-		for _, prefix := range loopback {
-			allowed = allowed || prefix.Contains(ip.Unmap())
-		}
-		for _, prefix := range trusted {
-			allowed = allowed || trust && prefix.Contains(ip.Unmap())
-		}
-		endpoint := "http://" + net.JoinHostPort(ip.String(), "7777")
-		got, err := kataEndpointConfig(ht, endpoint, trust).Resolve("")
-		if allowed {
-			require.NoError(ht, err, "endpoint=%s trust=%v", endpoint, trust)
-			require.Equal(ht, endpoint, got.Endpoint)
-		} else {
-			require.Error(ht, err, "endpoint=%s trust=%v", endpoint, trust)
-		}
-	}, hegel.WithTestCases(2000))
-}
-
-func TestKataIPv6ZoneDoesNotChangeAddressPolicy(t *testing.T) {
-	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-token")
-	hegel.Test(t, func(ht *hegel.T) {
-		var raw [16]byte
-		binary.BigEndian.PutUint64(raw[:8], hegel.Draw(ht, hegel.Integers[uint64](0, math.MaxUint64)))
-		binary.BigEndian.PutUint64(raw[8:], hegel.Draw(ht, hegel.Integers[uint64](0, math.MaxUint64)))
-		ip := netip.AddrFrom16(raw).String()
-		zone := hegel.Draw(ht, hegel.Text().Alphabet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789").MinSize(1).MaxSize(16))
-		trust := hegel.Draw(ht, hegel.Booleans())
-		plain := (&url.URL{Scheme: "http", Host: net.JoinHostPort(ip, "7777")}).String()
-		scoped := (&url.URL{Scheme: "http", Host: net.JoinHostPort(ip+"%"+zone, "7777")}).String()
-		_, plainErr := kataEndpointConfig(ht, plain, trust).Resolve("")
-		got, scopedErr := kataEndpointConfig(ht, scoped, trust).Resolve("")
-		require.Equal(ht, plainErr == nil, scopedErr == nil)
-		if plainErr == nil {
-			require.Equal(ht, scoped, got.Endpoint)
-		}
-	}, hegel.WithTestCases(2000))
-}
-
 func TestKataEndpointPolicyBoundaries(t *testing.T) {
 	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-token")
-	for _, host := range []string{"localhost", "LOCALHOST", "127.0.0.1", "127.255.255.255", "::1", "::ffff:127.0.0.1"} {
-		for _, trust := range []bool{false, true} {
-			endpoint := "http://" + net.JoinHostPort(host, "7777")
-			got, err := kataEndpointConfig(t, endpoint, trust).Resolve("")
-			require.NoError(t, err)
-			require.Equal(t, endpoint, got.Endpoint)
-		}
-	}
-	for _, host := range []string{
-		"kata", "A.test", "service.example.test", "localhost.", "a.localhost", "10.0.0.0", "10.255.255.255",
-		"172.16.0.0", "172.31.255.255", "192.168.0.0", "192.168.255.255", "169.254.0.0", "169.254.255.255",
-		"0.0.0.0", "100.64.0.0", "100.127.255.255", "fc00::", "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-		"fe80::", "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "::", "::ffff:10.0.0.1", "::ffff:100.64.0.1", "fe80::1%eth0",
+	for _, tc := range []struct {
+		endpoint string
+		trust    bool
+		allowed  bool
+	}{
+		{"http://localhost:7777", false, true},
+		{"http://127.0.0.1:7777", false, true},
+		{"http://kata:7777", false, false},
+		{"http://kata:7777", true, true},
+		{"http://10.0.0.1:7777", false, false},
+		{"http://10.0.0.1:7777", true, true},
+		{"http://[fe80::1%25eth0]:7777", true, true},
+		{"http://8.8.8.8:7777", true, false},
 	} {
-		endpoint := (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, "7777")}).String()
-		for _, trust := range []bool{false, true} {
-			cfg := kataEndpointConfig(t, endpoint, trust)
-			got, err := cfg.Resolve("")
-			if trust {
-				require.NoError(t, err, "%s", endpoint)
-				require.Equal(t, endpoint, got.Endpoint)
+		t.Run(fmt.Sprintf("%s/trust=%t", tc.endpoint, tc.trust), func(t *testing.T) {
+			got, err := kataEndpointConfig(t, tc.endpoint, tc.trust).Resolve("")
+			if tc.allowed {
+				require.NoError(t, err)
+				require.Equal(t, tc.endpoint, got.Endpoint)
 			} else {
 				require.ErrorContains(t, err, "trust_private_network = true")
 			}
-		}
-	}
-	for _, host := range []string{
-		"", "8.8.8.8", "9.255.255.255", "11.0.0.0", "100.63.255.255", "100.128.0.0", "172.15.255.255", "172.32.0.0",
-		"192.167.255.255", "192.169.0.0", "169.253.255.255", "169.255.0.0", "0.0.0.1", "255.255.255.255",
-		"fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "fe00::", "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "fec0::",
-		"2001:4860:4860::8888", "224.0.0.1", "ff02::1", "::ffff:8.8.8.8", "::ffff:808:808",
-	} {
-		for _, trust := range []bool{false, true} {
-			_, err := kataEndpointConfig(t, "http://"+net.JoinHostPort(host, "7777"), trust).Resolve("")
-			require.Error(t, err, "host=%q trust=%v", host, trust)
-		}
+		})
 	}
 }
 

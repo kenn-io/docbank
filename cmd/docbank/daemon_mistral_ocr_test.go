@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -91,7 +92,7 @@ func TestMistralOCRRuntimeManifest(t *testing.T) {
 	require.Empty(t, profiles)
 }
 
-func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig, terminalFailure bool) (*daemonconn.Connection, *atomic.Int64) {
+func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig, terminalFailure bool) (*daemonconn.Connection, *atomic.Int64, func()) {
 	t.Helper()
 	var attempts atomic.Int64
 	var heldClock atomic.Int64
@@ -137,15 +138,15 @@ func startMistralOCRDaemon(t *testing.T, watches []config.WatchConfig, terminalF
 	cfg.Watches = watches
 	require.NoError(t, writeDaemonASRConfig(root, cfg))
 	t.Setenv("DOCBANK_HOME", root)
-	startServe(t)
+	stop := startServe(t)
 	runtime := waitForDaemon(t, root)
 	daemon := daemonconn.New("http://"+runtime.Address, cfg.Server.APIKey)
 	t.Cleanup(func() { require.NoError(t, daemon.Close()) })
-	return daemon, &attempts
+	return daemon, &attempts, stop
 }
 
 func TestDaemonMistralOCRProcessing(t *testing.T) {
-	daemon, attempts := startMistralOCRDaemon(t, nil, true)
+	daemon, attempts, _ := startMistralOCRDaemon(t, nil, true)
 	source := mistraltest.MinimalPDF("synthetic daemon OCR")
 	output, err := runCLI(t, "processing", "profiles", "--json")
 	require.NoError(t, err)
@@ -180,7 +181,7 @@ func TestDaemonMistralOCRProcessing(t *testing.T) {
 
 func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	inbox := t.TempDir()
-	daemon, attempts := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(time.Hour)}}, false)
+	daemon, attempts, stop := startMistralOCRDaemon(t, []config.WatchConfig{{Name: "inbox", Source: inbox, Destination: "/inbox", Profile: "documents", CaptureOnChange: true, ScanInterval: config.Duration(time.Hour)}}, false)
 	path := filepath.Join(t.TempDir(), "consent.pdf")
 	require.NoError(t, os.WriteFile(path, mistraltest.MinimalPDF("consent source"), 0600))
 	_, err := runCLI(t, "add", path, "--dest", "/documents")
@@ -197,16 +198,21 @@ func TestDaemonWatchProfileAdmitsImports(t *testing.T) {
 	settleDaemon(t)
 	watched, err := daemon.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/watched.pdf"}})
 	require.NoError(t, err)
-	items, err := daemon.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: []api.DocumentIdentity{
-		{NodeID: watched.ID, ContentVersionID: watched.CurrentVersionID, Path: "/inbox/watched.pdf"},
-	}})
+	stop()
+	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(os.Getenv("DOCBANK_HOME"), "docbank.db"),
+		sqlite.OpenOptions{Access: sqlite.ReadOnlyImmutable, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
-	require.Len(t, items, 1)
+	defer func() { require.NoError(t, db.Close()) }()
 	// The daemon watch callback queues the exact imported version. The
 	// synthetic provider fails, so after the client's HTTP retries the worker
 	// records a transient failure that waits to retry; the held worker clock
 	// keeps that retry from coming due.
-	require.Equal(t, "retry_wait", items[0].LatestProcessingState)
+	// The latest document-wide status may belong to automatic PDF extraction.
+	var state string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT j.state FROM rendition_jobs j
+		JOIN rendition_job_waiters w ON w.job_id=j.job_id
+		WHERE w.content_version_id=? AND w.profile_fingerprint=?`, watched.CurrentVersionID, plan.ProfileFingerprint).Scan(&state))
+	require.Equal(t, "retry_wait", state)
 	require.Positive(t, attempts.Load(), "the Mistral provider must be attempted")
 }
 
