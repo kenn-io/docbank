@@ -129,8 +129,14 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			t.Helper()
 			require.NoError(t, os.Remove(filepath.Join(root, "blobs", ".packstore-owner.json")))
 		}},
-		{"missing lock", func(t *testing.T, root string) { require.NoError(t, os.Remove(filepath.Join(root, "vault.lock"))) }},
-		{"missing database", func(t *testing.T, root string) { require.NoError(t, os.Remove(filepath.Join(root, "docbank.db"))) }},
+		{"missing lock", func(t *testing.T, root string) {
+			t.Helper()
+			require.NoError(t, os.Remove(filepath.Join(root, "vault.lock")))
+		}},
+		{"missing database", func(t *testing.T, root string) {
+			t.Helper()
+			require.NoError(t, os.Remove(filepath.Join(root, "docbank.db")))
+		}},
 		{"empty database", func(t *testing.T, root string) {
 			t.Helper()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "docbank.db"), nil, 0o600))
