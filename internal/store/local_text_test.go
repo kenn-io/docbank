@@ -121,8 +121,8 @@ func checkLocalTextEmbeddingHeads(t *testing.T, open func(*testing.T) *Store) {
 	node, err := s.NodeByID(t.Context(), content.NodeID)
 	require.NoError(t, err)
 	require.Equal(t, []WatchedRenditionTarget{{
-		DocumentSummary: DocumentSummary{NodeID: node.ID, ContentVersionID: version, Name: node.Name},
-		WatchName:       "inbox", SourceRef: "nested/report.pdf", MediaType: content.MimeType,
+		NodeID: node.ID, ContentVersionID: version, Name: node.Name,
+		WatchName: "inbox", SourceRef: "nested/report.pdf", MediaType: content.MimeType,
 	}}, watched("other", "inbox"), "a whole-file head does not settle chunk work")
 	_, err = s.db.ExecContext(t.Context(), `UPDATE watch_sources SET size=size+1 WHERE node_id=$1`, content.NodeID)
 	require.NoError(t, err)

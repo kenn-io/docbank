@@ -49,6 +49,7 @@ func (s *Store) MissingProcessingTargetsAfter(ctx context.Context, profile, afte
 // resolve the watch's route the same way import admission does.
 type WatchedRenditionTarget struct {
 	DocumentSummary
+
 	WatchName string
 	SourceRef string
 	MediaType string
