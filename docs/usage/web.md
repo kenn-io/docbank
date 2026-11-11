@@ -1242,8 +1242,9 @@ caller-declared hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than
 the revision-checked tag workflows above, audit enrollment, backup creation,
-restore, maintenance, configuration changes, or access to general API
-endpoints. A browser session never receives the master API key. See the
+restore, maintenance other than the confirmed restart for local text setup,
+configuration changes, or access to general API endpoints. A browser session never
+receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
 
 The lock button revokes the session in daemon memory and clears the page.

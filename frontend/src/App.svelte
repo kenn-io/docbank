@@ -1611,17 +1611,17 @@
     sessionReporting = startSessionReporting(reporter);
     const recoveryAbort = new AbortController();
     let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
-    let checkingRecovery = false;
-    let restarting = false;
+    let [checkingRecovery, restarting] = [0, false]; // requests since the check began
     const checkRecovery = async (): Promise<void> => {
-      if (checkingRecovery || recoveryTimer !== undefined || recoveryAbort.signal.aborted) return;
-      checkingRecovery = true;
+      if (recoveryTimer !== undefined || recoveryAbort.signal.aborted || checkingRecovery++) return;
       const retry = await checkDisconnectedSession(
         session.token,
         sameAddress,
         recoveryAbort.signal,
       );
-      checkingRecovery = false;
+      const missed = checkingRecovery > 1;
+      checkingRecovery = 0;
+      if (missed) return void checkRecovery();
       if ((retry || restarting) && sameAddress && !recoveryAbort.signal.aborted)
         recoveryTimer = setTimeout(() => {
           recoveryTimer = undefined;

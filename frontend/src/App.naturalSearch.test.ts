@@ -2216,3 +2216,51 @@ it("shows the owner step when the daemon cannot restart itself", async () => {
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
   expect(await within(drawer).findByText(/If you started Docbank in a terminal/)).toBeTruthy();
 });
+
+it("checks again when the upload channel ends during a restart check", async () => {
+  let socket: EventTarget;
+  vi.stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        socket = this;
+      }
+      close() {}
+    },
+  );
+  const harness = searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    apply: async () => json(localPlan),
+    restart: async () => new Response(null, { status: 202 }),
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  const original = harness.fetchMock.getMockImplementation()!;
+  let release!: (response: Response) => void;
+  let checks = 0;
+  harness.fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/v1/vault") {
+      checks++;
+      if (checks === 1)
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      throw new Error("offline");
+    }
+    return original(input, init);
+  });
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+      name: "Restart Docbank",
+    }),
+  );
+  await waitFor(() => expect(checks).toBe(1));
+  await act(async () => {
+    socket!.dispatchEvent(new Event("error"));
+    await Promise.resolve();
+  });
+  await act(async () => release(json({ vault_uid: "synthetic-vault" })));
+  expect(await screen.findByText(/Lost connection to Docbank/)).toBeTruthy();
+});
