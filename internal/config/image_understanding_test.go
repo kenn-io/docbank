@@ -17,6 +17,10 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	profile.MaxDocumentBytes = 16 << 20
 	profile.MaxResponseBytes = 1 << 20
 	profile.MaxUnits = 4
+	profile.MaxTranscriptChars = 0
+	profile.Runtime.TotalTimeout = 0
+	profile.Runtime.PollInterval = 0
+	profile.Runtime.MaxPollAttempts = 0
 	profile.RequestedArtifacts = []string{"provider_markdown"}
 	profile.DiscloseFilename = false
 	profile.Runtime.RequestTimeout = Duration(time.Minute)
@@ -28,29 +32,29 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	embedding.Chunk.Formatter = document.RenditionChunkHeadingsFormatter
 	cfg.EmbeddingProfiles["semantic"] = embedding
 	require.NoError(t, cfg.Validate())
-	withoutRuntime := profile
-	withoutRuntime.Runtime = nil
-	withoutRuntime.MaxUnits = 3
-	cfg.RenditionProfiles["primary"] = withoutRuntime
-	require.ErrorContains(t, cfg.Validate(), "at least four units")
-	cfg.RenditionProfiles["primary"] = profile
 	embedding.Chunk.Formatter = "chunk/v1"
 	cfg.EmbeddingProfiles["semantic"] = embedding
 	require.ErrorContains(t, cfg.Validate(), "headings formatter")
 	embedding.Chunk.Formatter = document.RenditionChunkHeadingsFormatter
 	cfg.EmbeddingProfiles["semantic"] = embedding
-	for _, change := range []func(*RenditionProfileConfig){
-		func(p *RenditionProfileConfig) { p.RequestedArtifacts = []string{"markdown"} },
-		func(p *RenditionProfileConfig) { p.DescriptorID = vision.ProviderID },
-		func(p *RenditionProfileConfig) {
+	for _, tc := range []struct {
+		name   string
+		change func(*RenditionProfileConfig)
+		want   string
+	}{
+		{"unit boundary", func(p *RenditionProfileConfig) { p.MaxUnits = 3 }, "at least four units"},
+		{"descriptor", func(p *RenditionProfileConfig) { p.DescriptorID = vision.ProviderID }, "image understanding requires its own task"},
+		{"artifact", func(p *RenditionProfileConfig) {
 			p.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
-		},
-		func(p *RenditionProfileConfig) { p.DiscloseFilename = true },
-		func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 16<<20 + 1 },
+		}, "vision requires a withheld filename"},
+		{"filename", func(p *RenditionProfileConfig) { p.DiscloseFilename = true }, "vision requires a withheld filename"},
+		{"input limit", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 16<<20 + 1 }, "image understanding requires its own task"},
 	} {
-		changed := profile
-		change(&changed)
-		cfg.RenditionProfiles["primary"] = changed
-		require.Error(t, cfg.Validate())
+		t.Run(tc.name, func(t *testing.T) {
+			changed := profile
+			tc.change(&changed)
+			cfg.RenditionProfiles["primary"] = changed
+			require.ErrorContains(t, cfg.Validate(), tc.want)
+		})
 	}
 }

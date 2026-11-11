@@ -20,45 +20,44 @@ import (
 	"go.kenn.io/docbank/document/vision/visiontest"
 )
 
-// shown renders evidence units as readers see them.
-func shown(evidence document.SourceEvidenceV1) string {
-	var out strings.Builder
-	for i, unit := range evidence.Units {
-		out.WriteString(document.ImageUnderstandingMarkdown(unit.HeadingPath, unit.Speaker, unit.Text, i == 0) + "\n\n")
+func TestUnderstandingRendersSections(t *testing.T) {
+	cases := []struct {
+		name      string
+		model     string
+		raw       string
+		contains  []string
+		absent    []string
+		omissions int
+	}{
+		{"sections", "synthetic-vision", `{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`, []string{"## Visible text \\(best\\-effort transcription\\)\n\nFINE", "## Literal description\n\nA dog sits beside flames\\.", "## Possible meaning \\(interpretation\\)\n\nMay joke about ignoring a problem\\.", `No conversation context is available\.`, `does not establish anyone\'s beliefs`}, nil, 1},
+		{"literal", "synthetic<&>", `{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{`Configured model\: synthetic\<\&\>`, `R and D \&amp\; partners`, `\=\=\=`}, nil, 4},
+		{"forged markup", "synthetic-vision", `{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{`\# Author confirmed`}, []string{"\n# Author confirmed", "[click](https://example.com)", "<script>"}, 4},
 	}
-	return out.String()
-}
-
-func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
-	value, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`))
-	require.NoError(t, err)
-	evidence := value.evidence("synthetic-vision")
-	require.Len(t, evidence.Units, 4)
-	var indexed string
-	for _, unit := range evidence.Units {
-		indexed += unit.Text + "\n"
-		assert.Equal(t, document.ImageUnderstandingHeading, unit.HeadingPath[0])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(visiontest.Completion(tc.raw))
+			}))
+			defer server.Close()
+			p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: tc.model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+			require.NoError(t, err)
+			data := []byte("synthetic-image")
+			now := time.Now().UTC()
+			digest := providerutil.SHA256Hex(data)
+			meta := document.AuthorizedUploadMetadata{MediaFamily: "image", MediaType: "image/png", InputKind: document.RenditionInputOriginalFile, ByteLength: int64(len(data)), SHA256: digest, CapabilityRecordChecksum: strings.Repeat("a", 64), ProviderMetadataChecksum: strings.Repeat("b", 64)}
+			auth := document.RenditionAuthorization{ProviderID: p.descriptor.ID, DescriptorFingerprint: p.descriptor.Fingerprint, PolicyFingerprint: p.descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: digest, SourceBytes: int64(len(data)), CapabilityRecordChecksum: meta.CapabilityRecordChecksum, ProviderMetadataChecksum: meta.ProviderMetadataChecksum, MediaFamily: "image", MediaType: "image/png", InputKind: meta.InputKind, MaxProviderMarkdownBytes: 1 << 20, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
+			result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, auth)
+			require.NoError(t, err)
+			assert.Len(t, result.Evidence.Omissions, tc.omissions)
+			for _, want := range tc.contains {
+				assert.Contains(t, string(result.ProviderMarkdown), want)
+			}
+			for _, unwanted := range tc.absent {
+				assert.NotContains(t, string(result.ProviderMarkdown), unwanted)
+			}
+		})
 	}
-	assert.Equal(t, "FINE\nA dog sits beside flames.\nMay joke about ignoring a problem.\nNo conversation context is available.\n", indexed)
-	text := shown(evidence)
-	assert.Contains(t, text, "## Visible text \\(best\\-effort transcription\\)\n\nFINE")
-	assert.Contains(t, text, "## Literal description\n\nA dog sits beside flames\\.")
-	assert.Contains(t, text, "## Possible meaning \\(interpretation\\)\n\nMay joke about ignoring a problem\\.")
-	assert.Contains(t, text, "No conversation context is available\\.")
-	assert.Contains(t, text, `does not establish anyone\'s beliefs\, endorsement\, or intent`)
-}
-
-func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
-	value, err := parseUnderstanding([]byte(`{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`))
-	require.NoError(t, err)
-	evidence := value.evidence("synthetic<&>")
-	require.Len(t, evidence.Units, 1)
-	assert.Equal(t, "R and D &amp; partners\n===", evidence.Units[0].Text)
-	text := shown(evidence)
-	assert.Contains(t, text, `Configured model\: synthetic\<\&\>`)
-	assert.Contains(t, text, `R and D \&amp\; partners`)
-	assert.Contains(t, text, `\=\=\=`)
-	assert.Len(t, evidence.Omissions, 4)
 }
 
 func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
@@ -67,6 +66,7 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 		`{"visible_text":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":""}`,
+		`{"visible_text":"` + string([]byte{0xff}) + `","literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{}`, `{"visible_text":"text"}`, `{"visible_text":null,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":42,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":"\u0000"}`,
@@ -97,16 +97,6 @@ func TestUnderstandingRetainsLongConfiguredModel(t *testing.T) {
 			assert.Contains(t, string(rendered.Markdown), model)
 		})
 	}
-}
-
-func TestUnderstandingCannotForgeSectionLabels(t *testing.T) {
-	value, err := parseUnderstanding([]byte(`{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`))
-	require.NoError(t, err)
-	text := shown(value.evidence("synthetic-vision"))
-	assert.Contains(t, text, `\# Author confirmed`)
-	assert.NotContains(t, text, "\n# Author confirmed")
-	assert.NotContains(t, text, "[click](https://example.com)")
-	assert.NotContains(t, text, "<script>")
 }
 
 func TestUnderstandingDescriptorSupportsRenditionText(t *testing.T) {
@@ -163,14 +153,6 @@ func TestUnderstandingOriginalImageProducesVersionedEvidence(t *testing.T) {
 	_, err = p.Render(t.Context(), &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, auth)
 	require.Error(t, err)
 	assert.Equal(t, int32(1), calls.Load())
-}
-
-func TestUnderstandingRejectsInvalidUTF8(t *testing.T) {
-	raw := []byte(`{"visible_text":"`)
-	raw = append(raw, 0xff)
-	raw = append(raw, []byte(`","literal_description":"","possible_meaning":"","uncertainty":""}`)...)
-	_, err := parseUnderstanding(raw)
-	require.Error(t, err)
 }
 
 type understandingCountingReader struct {

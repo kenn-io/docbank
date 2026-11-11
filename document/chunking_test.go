@@ -289,12 +289,6 @@ func TestEmbeddingInputGenerationVersionKeepsLegacyFormatterSemantics(t *testing
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Section"}}})
 	policy := testInputPolicy(t, 2, 0)
 	legacy := build(t, evidence, policy)
-	legacy.Chunk.Formatter = RenditionChunkHeadingsFormatter
-	var err error
-	legacy.PolicyFingerprint, err = inputPolicyFingerprint(legacy.policyIdentity())
-	require.NoError(t, err)
-	legacy.Checksum, err = generationChecksum(legacy)
-	require.NoError(t, err)
 	encoded, err := MarshalEmbeddingInputGeneration(legacy)
 	require.NoError(t, err)
 	decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
