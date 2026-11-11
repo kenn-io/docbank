@@ -60,10 +60,12 @@ func TestContentReaderPackedAndSidecars(t *testing.T) {
 	root := t.TempDir()
 	v, err := docbank.New(t.Context(), docbank.Config{Root: root})
 	require.NoError(t, err)
-	_, err = v.Put(t.Context(), "/packed", strings.NewReader("packed synthetic data"), docbank.PutOptions{})
+	receipt, err := v.Put(t.Context(), "/packed", strings.NewReader("packed synthetic data"), docbank.PutOptions{})
 	require.NoError(t, err)
-	_, err = v.Pack(t.Context(), docbank.PackOptions{})
+	report, err := v.Pack(t.Context(), docbank.PackOptions{})
 	require.NoError(t, err)
+	require.GreaterOrEqual(t, report.BlobsPacked, 1)
+	require.NoFileExists(t, looseBlobPath(root, receipt.Computed.SHA256))
 	require.NoError(t, v.Close())
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		path := filepath.Join(root, "docbank.db") + suffix
@@ -104,6 +106,13 @@ func snapshotReaderTree(t *testing.T, root string) []string {
 			return err
 		}
 		var hash [32]byte
+		target := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
 		if info.Mode().IsRegular() {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -111,7 +120,7 @@ func snapshotReaderTree(t *testing.T, root string) []string {
 			}
 			hash = sha256.Sum256(data)
 		}
-		entries = append(entries, fmt.Sprintf("%s %s %d %d %x", relative, info.Mode(), info.Size(), info.ModTime().UnixNano(), hash))
+		entries = append(entries, fmt.Sprintf("%s %s %d %d %x %s", relative, info.Mode(), info.Size(), info.ModTime().UnixNano(), hash, target))
 		return nil
 	})
 	require.NoError(t, err)
@@ -185,4 +194,82 @@ func TestContentReaderCloseWaitsForStream(t *testing.T) {
 		require.NoError(t, <-done)
 		require.NoError(t, reader.Close())
 	})
+}
+
+func TestContentReaderTempInsideVault(t *testing.T) {
+	root := t.TempDir()
+	registry := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", registry)
+	v, err := docbank.New(t.Context(), docbank.Config{Root: root})
+	require.NoError(t, err)
+	_, err = v.Put(t.Context(), "/source", strings.NewReader("synthetic content"), docbank.PutOptions{})
+	require.NoError(t, err)
+	require.NoError(t, v.Close())
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		_, err = os.Lstat(filepath.Join(root, "docbank.db") + suffix)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	tmp := filepath.Join(root, "tmp")
+	require.NoError(t, os.Mkdir(tmp, 0o700))
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, tmp)
+	}
+	before := snapshotReaderTree(t, root)
+	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+	require.NoError(t, err)
+	content, err := reader.OpenContent(t.Context(), "/source")
+	require.NoError(t, err)
+	data, err := io.ReadAll(content.Reader)
+	require.NoError(t, err)
+	require.Equal(t, "synthetic content", string(data))
+	require.NoError(t, content.Reader.Verify())
+	require.NoError(t, content.Reader.Close())
+	require.NoError(t, reader.Close())
+	require.Equal(t, before, snapshotReaderTree(t, root))
+}
+
+func TestNilContentReader(t *testing.T) {
+	t.Parallel()
+	var reader *docbank.ContentReader
+	require.Empty(t, reader.ID())
+	_, err := reader.OpenContent(t.Context(), "/source")
+	require.ErrorIs(t, err, docbank.ErrClosed)
+	require.NoError(t, reader.Close())
+}
+
+func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "missing", "locks"))
+	before := snapshotReaderTree(t, root)
+	for range 2 {
+		_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "DOCBANK_LOCK_DIR")
+		require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		require.Equal(t, before, snapshotReaderTree(t, root))
+	}
+}
+
+func TestContentReaderCompressedLoose(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root, LooseCompression: docbank.LooseCompressionOptions{Enabled: true, MinBytes: 1, MinSavingsPercent: 0}})
+	require.NoError(t, err)
+	data := strings.Repeat("synthetic compressed data ", 256)
+	receipt, err := vault.Put(t.Context(), "/compressed", strings.NewReader(data), docbank.PutOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "zstd", receipt.Physical.Encoding)
+	require.NoError(t, vault.Close())
+	before := snapshotReaderTree(t, root)
+	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+	require.NoError(t, err)
+	content, err := reader.OpenContent(t.Context(), "/compressed")
+	require.NoError(t, err)
+	got, err := io.ReadAll(content.Reader)
+	require.NoError(t, err)
+	require.Equal(t, data, string(got))
+	require.NoError(t, content.Reader.Verify())
+	require.NoError(t, content.Reader.Close())
+	require.NoError(t, reader.Close())
+	require.Equal(t, before, snapshotReaderTree(t, root))
 }

@@ -314,6 +314,9 @@ func newWithOptions(
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := catalog.(primaryLocationCatalog); mode == readerExisting && !ok {
+		return nil, errors.New("existing reader requires a primary location catalog")
+	}
 	var locations primaryLocationCatalog
 	if catalogLocations, ok := catalog.(primaryLocationCatalog); ok {
 		locations = catalogLocations

@@ -42,3 +42,8 @@ func TestExistingReaderOwnership(t *testing.T) {
 		require.Equal(t, "pending", string(data))
 	})
 }
+
+func TestExistingReaderRejectsNonPrimaryCatalog(t *testing.T) {
+	_, err := NewExistingReader(nil, t.TempDir(), nil)
+	require.ErrorContains(t, err, "primary location catalog")
+}

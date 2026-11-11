@@ -211,7 +211,7 @@ func prepareReleasedSchemaUpgrade(ctx context.Context, path string, driver docsq
 	if err != nil {
 		return fmt.Errorf("inspecting database schema with %s: %w", driver.Name(), err)
 	}
-	kind, classifyErr := classifyDatabaseSchema(ctx, driver, db)
+	kind, classifyErr := classifyDatabaseSchema(ctx, driver, db, "")
 	closeErr := db.Close()
 	if classifyErr != nil || closeErr != nil {
 		return errors.Join(classifyErr, closeErr)
@@ -259,7 +259,7 @@ func validateReleasedStorageSchemas() error {
 	return nil
 }
 
-func classifyDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB) (databaseSchema, error) {
+func classifyDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB, scratchDir string) (databaseSchema, error) {
 	blobs, err := queryTableColumns(ctx, db, "blobs")
 	if err != nil {
 		return databaseSchema{}, err
@@ -276,7 +276,7 @@ func classifyDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sq
 		return databaseSchema{}, err
 	}
 	if slices.Contains(vaultMetadata, "schema_version") {
-		return classifyVersionedDatabaseSchema(ctx, driver, db, blobs, packs, vaultMetadata)
+		return classifyVersionedDatabaseSchema(ctx, driver, db, blobs, packs, vaultMetadata, scratchDir)
 	}
 
 	// v0.9.0 predates the explicit version marker. Match its complete released
@@ -297,7 +297,7 @@ func classifyDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sq
 }
 
 // classifyVersionedDatabaseSchema accepts only current or supported released layouts.
-func classifyVersionedDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB, blobs, packs, vaultMetadata []string) (databaseSchema, error) {
+func classifyVersionedDatabaseSchema(ctx context.Context, driver docsqlite.Driver, db *sql.DB, blobs, packs, vaultMetadata []string, scratchDir string) (databaseSchema, error) {
 	var version int
 	if err := db.QueryRowContext(ctx, `
 		SELECT schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&version); err != nil {
@@ -310,7 +310,7 @@ func classifyVersionedDatabaseSchema(ctx context.Context, driver docsqlite.Drive
 		)
 	}
 	if version == currentStorageSchemaVersion {
-		if err := validateCurrentSchemaColumns(ctx, driver, db, blobs, packs, vaultMetadata); err != nil {
+		if err := validateCurrentSchemaColumns(ctx, driver, db, blobs, packs, vaultMetadata, scratchDir); err != nil {
 			return databaseSchema{}, err
 		}
 		return databaseSchema{version: version, current: true}, nil
@@ -334,9 +334,9 @@ func classifyVersionedDatabaseSchema(ctx context.Context, driver docsqlite.Drive
 func validateCurrentSchemaColumns(
 	ctx context.Context,
 	driver docsqlite.Driver, db *sql.DB,
-	blobs, packs, vaultMetadata []string,
+	blobs, packs, vaultMetadata []string, scratchDir string,
 ) error {
-	wantTables, err := canonicalCurrentSchemaColumns(ctx, driver)
+	wantTables, err := canonicalCurrentSchemaColumns(ctx, driver, scratchDir)
 	if err != nil {
 		return fmt.Errorf("deriving current schema columns: %w", err)
 	}
@@ -363,12 +363,12 @@ func validateCurrentSchemaColumns(
 	return validateEmbeddingCatalogSchema(ctx, db)
 }
 
-func canonicalCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver) (map[string][]string, error) {
-	return deriveCurrentSchemaColumns(ctx, driver)
+func canonicalCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver, scratchDir string) (map[string][]string, error) {
+	return deriveCurrentSchemaColumns(ctx, driver, scratchDir)
 }
 
-func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver) (columns map[string][]string, err error) {
-	tempFile, err := os.CreateTemp("", "docbank-current-schema-*.db")
+func deriveCurrentSchemaColumns(ctx context.Context, driver docsqlite.Driver, scratchDir string) (columns map[string][]string, err error) {
+	tempFile, err := os.CreateTemp(scratchDir, "docbank-current-schema-*.db")
 	if err != nil {
 		return nil, fmt.Errorf("creating temporary database: %w", err)
 	}
@@ -1400,7 +1400,7 @@ func validateUpgradeStage(ctx context.Context, path string, driver docsqlite.Dri
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging database: %w", err)
 	}
-	kind, classifyErr := classifyDatabaseSchema(ctx, driver, db)
+	kind, classifyErr := classifyDatabaseSchema(ctx, driver, db, "")
 	closeErr := db.Close()
 	if classifyErr != nil || closeErr != nil {
 		return errors.Join(classifyErr, closeErr)

@@ -5,12 +5,29 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"go.kenn.io/docbank/internal/home"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-// OpenExisting opens a checkpointed current database without changing it.
-func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver) (_ *Store, retErr error) {
+// OpenExisting opens a checkpointed current database for identity, path and blob reads only.
+func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver, scratchDir string) (_ *Store, retErr error) {
+	if scratchDir == "" {
+		return nil, errors.New("schema scratch directory must not be empty")
+	}
+	scratchDir, err := home.CanonicalRoot(scratchDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving schema scratch directory: %w", err)
+	}
+	inside, err := home.PathWithin(filepath.Dir(path), scratchDir)
+	if err != nil {
+		return nil, err
+	}
+	if inside {
+		return nil, fmt.Errorf("schema scratch directory is inside vault: %s", scratchDir)
+	}
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, err
 	}
@@ -21,8 +38,11 @@ func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver) (_ 
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return nil, fmt.Errorf("database is not a nonempty regular file: %w", ErrNeedsOwner)
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("database %s is not a regular file; repair it before opening", path)
+	}
+	if info.Size() == 0 {
+		return nil, fmt.Errorf("database is empty: %w", ErrNeedsOwner)
 	}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		_, err := os.Lstat(path + suffix)
@@ -42,7 +62,7 @@ func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver) (_ 
 			retErr = errors.Join(retErr, db.Close())
 		}
 	}()
-	schema, err := classifyDatabaseSchema(ctx, driver, db)
+	schema, err := classifyDatabaseSchema(ctx, driver, db, scratchDir)
 	if err != nil {
 		return nil, err
 	}

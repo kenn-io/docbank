@@ -91,34 +91,50 @@ func (l Layout) TryLockExclusive() (*Lock, error) {
 	return lock, err
 }
 
-// OpenExistingAndLockExclusive opens and exclusively owns an existing vault
-// root without creating any missing path component.
+// OpenExistingAndLockExclusive opens and exclusively owns an existing vault root.
 func (l Layout) OpenExistingAndLockExclusive() (*os.Root, *Lock, error) {
-	acquisition, err := l.tryLockOwnershipAcquisition()
-	if err != nil {
-		return nil, nil, err
-	}
-	root, lock, openErr := l.openExistingAndLockExclusive(true)
-	releaseErr := acquisition.Release()
-	if releaseErr != nil {
-		if lock != nil {
-			releaseErr = errors.Join(releaseErr, lock.Release())
-		}
-		if root != nil {
-			releaseErr = errors.Join(releaseErr, root.Close())
-		}
-		return nil, nil, errors.Join(openErr, releaseErr)
-	}
-	return root, lock, openErr
+	return l.lockExisting(true, "")
 }
 
-// OpenExistingAndLockExclusiveNoCreate takes the hierarchy lock without creating vault.lock.
-func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, error) {
-	acquisition, err := l.tryLockOwnershipAcquisition()
+// ErrRegistryInsideVault identifies an unsafe reader registry configuration.
+var ErrRegistryInsideVault = errors.New("DOCBANK_LOCK_DIR registry is inside vault")
+
+// ErrExistingVaultMissing identifies a missing root or lock leaf.
+var ErrExistingVaultMissing = errors.New("existing vault root or lock is missing")
+
+// OpenExistingAndLockExclusiveNoCreate returns the validated registry used for locking.
+func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, string, error) {
+	registry, err := targetLockRegistryPath()
+	if err != nil {
+		return nil, nil, "", err
+	}
+	registry, err = CanonicalRoot(registry)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	inside, err := PathWithin(l.Root, registry)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if inside {
+		return nil, nil, "", fmt.Errorf("%w: %s", ErrRegistryInsideVault, registry)
+	}
+	if err := ensureTargetLockRegistryDir(registry); err != nil {
+		return nil, nil, "", err
+	}
+	root, lock, err := l.lockExisting(false, registry)
+	return root, lock, registry, err
+}
+
+func (l Layout) lockExisting(createLeaf bool, registry string) (*os.Root, *Lock, error) {
+	acquisition, err := l.tryLockOwnershipAcquisitionWithRegistry(registry)
 	if err != nil {
 		return nil, nil, err
 	}
-	root, lock, openErr := l.openExistingAndLockExclusive(false)
+	root, lock, openErr := l.openExistingAndLockExclusiveWithRegistry(createLeaf, registry)
+	if !createLeaf && errors.Is(openErr, os.ErrNotExist) {
+		openErr = fmt.Errorf("%w: %w", ErrExistingVaultMissing, openErr)
+	}
 	if releaseErr := acquisition.Release(); releaseErr != nil {
 		if lock != nil {
 			releaseErr = errors.Join(releaseErr, lock.Release())
@@ -132,11 +148,15 @@ func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, error) 
 }
 
 func (l Layout) openExistingAndLockExclusive(createLeaf bool) (*os.Root, *Lock, error) {
+	return l.openExistingAndLockExclusiveWithRegistry(createLeaf, "")
+}
+
+func (l Layout) openExistingAndLockExclusiveWithRegistry(createLeaf bool, registry string) (*os.Root, *Lock, error) {
 	root, err := os.OpenRoot(l.Root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
 	}
-	lock, err := l.tryLockExclusiveRoot(root, createLeaf)
+	lock, err := l.tryLockExclusiveRootWithRegistry(root, createLeaf, registry)
 	if err != nil {
 		_ = root.Close()
 		return nil, nil, err
@@ -193,35 +213,53 @@ func (l Layout) TryLockOwnershipTransition() (*OwnershipTransition, error) {
 }
 
 func validateTransitionRootOutsideRegistry(target, registry string) error {
-	canonicalRegistry, err := CanonicalRoot(registry)
-	if err != nil {
-		return fmt.Errorf("resolving target-lock registry: %w", err)
-	}
-	if pathContains(target, canonicalRegistry) {
-		return fmt.Errorf("vault transition root %s contains the target-lock registry", target)
-	}
-	targetInfo, err := os.Stat(target)
-	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("vault transition root %s no longer exists", target)
-	}
-	if err != nil {
+	if _, err := os.Stat(target); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("vault transition root %s no longer exists", target)
+		}
 		return fmt.Errorf("checking vault transition root: %w", err)
 	}
-	current := canonicalRegistry
-	for {
+	inside, err := PathWithin(target, registry)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return fmt.Errorf("vault transition root %s contains the target-lock registry", target)
+	}
+	return nil
+}
+
+// PathWithin reports whether child is equal to or beneath parent, including aliases.
+func PathWithin(parent, child string) (bool, error) {
+	parent, err := CanonicalRoot(parent)
+	if err != nil {
+		return false, err
+	}
+	child, err = CanonicalRoot(child)
+	if err != nil {
+		return false, err
+	}
+	if pathContains(parent, child) {
+		return true, nil
+	}
+	parentInfo, err := os.Stat(parent)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking parent path: %w", err)
+	}
+	for current := child; ; current = filepath.Dir(current) {
 		info, statErr := os.Stat(current)
-		if statErr == nil && os.SameFile(info, targetInfo) {
-			return fmt.Errorf(
-				"vault transition root %s contains the target-lock registry", target)
+		if statErr == nil && os.SameFile(info, parentInfo) {
+			return true, nil
 		}
 		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-			return fmt.Errorf("checking target-lock registry ancestor %s: %w", current, statErr)
+			return false, fmt.Errorf("checking path ancestor %s: %w", current, statErr)
 		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return nil
+		if filepath.Dir(current) == current {
+			return false, nil
 		}
-		current = parent
 	}
 }
 
@@ -570,6 +608,10 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 }
 
 func (l Layout) tryLockExclusiveRoot(root *os.Root, createLeaf bool) (*Lock, error) {
+	return l.tryLockExclusiveRootWithRegistry(root, createLeaf, "")
+}
+
+func (l Layout) tryLockExclusiveRootWithRegistry(root *os.Root, createLeaf bool, registry string) (*Lock, error) {
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -585,9 +627,11 @@ func (l Layout) tryLockExclusiveRoot(root *os.Root, createLeaf bool) (*Lock, err
 	if err != nil {
 		return nil, err
 	}
-	registry, err := targetLockRegistryDir()
-	if err != nil {
-		return nil, err
+	if registry == "" {
+		registry, err = targetLockRegistryDir()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	lk := &Lock{}
@@ -762,6 +806,10 @@ func (lk *Lock) lockIdentities(
 }
 
 func (l Layout) tryLockOwnershipAcquisition() (*Lock, error) {
+	return l.tryLockOwnershipAcquisitionWithRegistry("")
+}
+
+func (l Layout) tryLockOwnershipAcquisitionWithRegistry(registry string) (*Lock, error) {
 	target, err := CanonicalRoot(l.Root)
 	if err != nil {
 		return nil, err
@@ -789,9 +837,11 @@ func (l Layout) tryLockOwnershipAcquisition() (*Lock, error) {
 	if err != nil {
 		return nil, err
 	}
-	registry, err := targetLockRegistryDir()
-	if err != nil {
-		return nil, err
+	if registry == "" {
+		registry, err = targetLockRegistryDir()
+		if err != nil {
+			return nil, err
+		}
 	}
 	lock := &Lock{}
 	if err := lock.lockAcquisitionIdentities(

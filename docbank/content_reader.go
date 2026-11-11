@@ -36,9 +36,9 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 		return nil, err
 	}
 	layout := home.Layout{Root: normalized.Root}
-	root, lock, err := layout.OpenExistingAndLockExclusiveNoCreate()
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("opening existing vault: %w", ErrVaultNeedsOwner)
+	root, lock, scratchDir, err := layout.OpenExistingAndLockExclusiveNoCreate()
+	if errors.Is(err, home.ErrExistingVaultMissing) {
+		return nil, fmt.Errorf("opening existing vault: %w: %w", ErrVaultNeedsOwner, err)
 	}
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 	if pending {
 		return nil, fmt.Errorf("pending restore handoff: %w", ErrVaultNeedsOwner)
 	}
-	metadata, err := store.OpenExisting(ctx, layout.DBPath(), normalized.SQLite)
+	metadata, err := store.OpenExisting(ctx, layout.DBPath(), normalized.SQLite, scratchDir)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 	if err != nil {
 		err = errors.Join(err, registry.Close())
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("missing primary ownership marker: %w", ErrVaultNeedsOwner)
+			return nil, fmt.Errorf("missing primary ownership marker: %w: %w", ErrVaultNeedsOwner, err)
 		}
 		return nil, err
 	}
@@ -77,16 +77,24 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 }
 
 // ID returns the stable vault identity.
-func (r *ContentReader) ID() string { return r.vault.ID() }
+func (r *ContentReader) ID() string {
+	if r == nil || r.vault == nil {
+		return ""
+	}
+	return r.vault.ID()
+}
 
 // OpenContent opens a verified stream for a live logical path.
 func (r *ContentReader) OpenContent(ctx context.Context, path string) (*Content, error) {
+	if r == nil || r.vault == nil {
+		return nil, ErrClosed
+	}
 	return r.vault.OpenContent(ctx, path)
 }
 
 // Close waits for open streams and releases the hierarchy lock.
 func (r *ContentReader) Close() error {
-	if r == nil {
+	if r == nil || r.vault == nil {
 		return nil
 	}
 	return r.vault.Close()

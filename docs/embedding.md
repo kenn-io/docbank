@@ -755,9 +755,16 @@ defer content.Reader.Close()
 hierarchy lock as an owner and returns `ErrVaultLocked` when the tree is busy.
 `ErrVaultNeedsOwner` means an owner must initialize, upgrade, or recover the
 vault first, including when SQLite sidecars or a restore handoff are present.
-Newer, unsupported, or unreadable schemas retain their own errors. Only the
+Sidecars are checked before the schema, so a sidecar also takes precedence over a newer schema.
+Newer, unsupported, or unreadable schemas, invalid identity, wrong ownership markers,
+and non-regular database or handoff files retain their own errors. The existing
+`vault.lock` must be writable. The lock registry (`DOCBANK_LOCK_DIR` when set)
+must be writable and outside the vault; a registry inside it is a configuration
+error. Docbank code on this reader path does not use the OS temp directory;
+SQLite may use temporary files of its own. Only the
 primary blob store is attached; content available only on a secondary store
-returns `ErrContentUnavailable`. Close every stream before closing the reader.
+returns `ErrContentUnavailable`. Close every stream before closing the reader;
+reader close waits for all streams to close.
 
 ## Identify a vault and verify reads
 
