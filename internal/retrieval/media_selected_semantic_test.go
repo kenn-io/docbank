@@ -32,6 +32,7 @@ func FuzzSelectedMediaFusionKeepsBuildIdentity(f *testing.F) {
 		results, _, err := FuseReciprocalRank([]Candidate{one}, []Candidate{two}, 2)
 		require.NoError(t, err)
 		require.Len(t, results, 2)
+		require.ElementsMatch(t, []string{first, second}, []string{results[0].Document.BuildID, results[1].Document.BuildID})
 		for _, result := range results {
 			require.Len(t, result.Evidence, 1)
 			require.Equal(t, result.Document.BuildID, result.Evidence[0].BuildID)

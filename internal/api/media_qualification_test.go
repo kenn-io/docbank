@@ -27,30 +27,21 @@ import (
 // Admission, retained evidence, embeddings, vector publication and search use
 // the production service, workers, store and HTTP handler.
 type mediaQualificationRecord struct {
-	SourceSHA256     string `json:"source_sha256"`
-	ByteLength       int64  `json:"byte_length"`
-	ID               string `json:"id"`
-	Profile          string `json:"profile"`
-	SourceID         string `json:"source_id"`
-	SourceVersionID  string `json:"source_version_id"`
-	ContentVersionID string `json:"content_version_id"`
-	SuppliedInputID  string `json:"supplied_input_id"`
-	Origin           string `json:"origin"`
-	Text             string `json:"text"`
-	StartMS          *int64 `json:"start_ms"`
-	EndMS            *int64 `json:"end_ms"`
+	ID               string
+	Profile          string
+	SourceID         string
+	SourceVersionID  string
+	ContentVersionID string
+	SuppliedInputID  string
+	Origin           string
 	occurrenceID     string
 	nodeID           int64
 }
 
 type mediaQualificationManifest struct {
-	Quality       string                     `json:"quality"`
-	ModelMetadata map[string]any             `json:"model_metadata,omitempty"`
-	URL           string                     `json:"url"`
-	APIKey        string                     `json:"api_key"`
-	Profile       string                     `json:"profile"`
-	VaultUID      string                     `json:"vault_uid"`
-	Records       []mediaQualificationRecord `json:"records"`
+	APIKey   string
+	VaultUID string
+	Records  []mediaQualificationRecord
 }
 
 type mediaQualificationFixture struct {
@@ -205,7 +196,6 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 	require.NoError(t, err)
 	encoder.descriptor, err = document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic.media-qualification", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: processingTestHash("qualification-policy"), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "deterministic-contract-only", ModelRevision: "v1", Dimension: 3, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone, ScalarEncoding: "float32", DocumentFormatter: "qualification/document-v1", QueryFormatter: "qualification/query-v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}, CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}})
 	require.NoError(t, err)
-	f.manifest.Quality = "deterministic-contract"
 	f.encoder = encoder
 	f.manifest.APIKey = uuid.New().String() // Fixture-only key; never a daemon runtime record.
 	f.server, f.catalog = newTestServer(t, func(deps *api.Deps) {
@@ -258,7 +248,7 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		deps.Processing = service
 		worker.bind(t, deps, service, gate, "media-qualification")
 	})
-	f.manifest.URL, f.manifest.Profile, f.manifest.VaultUID = f.server.URL, processing.SuppliedMediaProfileName, f.catalog.VaultID()
+	f.manifest.VaultUID = f.catalog.VaultID()
 	client := daemonconn.New(f.server.URL, f.manifest.APIKey)
 	records := []struct {
 		id, text  string
@@ -283,10 +273,9 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		raw[len(raw)-1] = byte(i + 1)
 		receipt, err := client.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{OperationID: uuid.New().String(), Filename: item.id + ".wav", MediaType: "audio/wav", SHA256: processingTestHash(string(raw)), ByteLength: int64(len(raw)), Occurrence: api.MediaOccurrenceBody{Ref: item.id, Revision: "1"}}, bytes.NewReader(raw))
 		require.NoError(t, err)
-		record := mediaQualificationRecord{SourceSHA256: processingTestHash(string(raw)), ByteLength: int64(len(raw)), ID: item.id, Profile: processing.SuppliedMediaProfileName, SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID, Origin: "supplied", Text: item.text, occurrenceID: receipt.OccurrenceID}
+		record := mediaQualificationRecord{ID: item.id, Profile: processing.SuppliedMediaProfileName, SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID, Origin: "supplied", occurrenceID: receipt.OccurrenceID}
 		if item.generated {
 			record.Profile, record.Origin = "qualification-generated", "generated"
-			record.StartMS, record.EndMS = new(int64(1000)), new(int64(4000))
 		} else {
 			artifact, err := client.ImportMediaArtifact(t.Context(), receipt.SourceID, api.MediaArtifactMetadata{OperationID: uuid.New().String(), OccurrenceID: receipt.OccurrenceID, Kind: "transcript", Filename: item.id + ".txt", MediaType: "text/plain", SHA256: processingTestHash(item.text), ByteLength: int64(len(item.text))}, strings.NewReader(item.text))
 			require.NoError(t, err)

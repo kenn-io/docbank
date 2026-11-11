@@ -7,6 +7,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func (f *mediaQualificationFixture) request(profile, mode string, records ...mediaQualificationRecord) api.DocumentSearchRequest {
@@ -44,16 +45,21 @@ func TestSelectedMediaSearchRealProcessing(t *testing.T) {
 				require.NotEmpty(t, report.Results[0].Excerpt)
 				require.Len(t, report.MediaSelections, 1)
 				require.Equal(t, record.Origin, report.MediaSelections[0].Origin)
+				foundEmbedding := false
 				for _, evidence := range report.Results[0].Evidence {
 					require.NotEmpty(t, evidence.BuildID)
 					require.Len(t, evidence.MediaSources, 1)
 					require.Equal(t, record.SourceID, evidence.MediaSources[0].SourceID)
 					if evidence.Kind == "embedding" {
+						foundEmbedding = true
 						require.NotEmpty(t, evidence.InputID)
 						require.NotEmpty(t, evidence.InputGenerationID)
 						require.NotEmpty(t, evidence.EmbeddingSetID)
 						require.Empty(t, evidence.SegmentID)
 					}
+				}
+				if mode != "lexical" {
+					require.True(t, foundEmbedding, "semantic lane must contribute evidence")
 				}
 			})
 		}
@@ -71,13 +77,16 @@ func TestSelectedMediaSearchProfileGapAndInputFence(t *testing.T) {
 		require.Equal(t, "incomplete", report.Coverage.State)
 		require.Equal(t, 2, report.Coverage.ScopedDocuments)
 		require.Equal(t, 1, report.Coverage.CompleteDocuments)
+		foundEmbedding := false
 		for _, hit := range report.Results {
 			for _, evidence := range hit.Evidence {
 				if evidence.Kind == "embedding" {
+					foundEmbedding = true
 					require.Equal(t, supplied.ContentVersionID, evidence.MediaSources[0].ContentVersionID)
 				}
 			}
 		}
+		require.True(t, foundEmbedding, "the covered build must contribute semantic evidence")
 		request := f.request(supplied.Profile, mode, supplied)
 		request.MediaSources[0].SuppliedInputIDs = []string{}
 		f.encoder.mu.Lock()
@@ -134,11 +143,8 @@ func TestSelectedMediaSearchReselectsDuringEncoding(t *testing.T) {
 				require.Equal(t, 2, result.report.Coverage.ScopedDocuments)
 				require.Zero(t, result.report.Coverage.CompleteDocuments, "the surviving transcript and the embedded build belong to different sources")
 				require.Equal(t, "incomplete", result.report.Coverage.State)
-			} else if result.err != nil {
-				require.ErrorContains(t, result.err, "stale_index")
 			} else {
-				require.Equal(t, "incomplete", result.report.Coverage.State)
-				require.Zero(t, result.report.Coverage.CompleteDocuments)
+				require.ErrorContains(t, result.err, "stale_index")
 			}
 		})
 	}
@@ -156,6 +162,9 @@ func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
 		require.Len(t, report.Results, 1)
 		excerpt := report.Results[0].Excerpt
 		require.NotEmpty(t, excerpt)
+		require.True(t, utf8.ValidString(excerpt))
+		require.Equal(t, 512, utf8.RuneCountInString(excerpt))
+		require.LessOrEqual(t, len(excerpt), 2048)
 		require.True(t, strings.HasPrefix(text, excerpt))
 		require.Equal(t, "embedding", report.Results[0].Evidence[0].Kind)
 		require.NotEmpty(t, report.Results[0].Evidence[0].BuildID)
