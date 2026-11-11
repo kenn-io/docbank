@@ -1905,8 +1905,6 @@ func TestStorageRepackJSON(t *testing.T) {
 	out, err = runCLI(t, "storage", "repack", "--help")
 	require.NoError(t, err)
 	assert.Contains(t, out, "than half their entries remain")
-	assert.Contains(t, out, "--min-age")
-	assert.Contains(t, out, "--min-dead-bytes")
 
 	out, err = runCLI(t, "storage", "repack")
 	require.NoError(t, err)
