@@ -2132,6 +2132,25 @@ it.each([
   }
 });
 
+it.each(["partial", "unavailable"])(
+  "shows incomplete PDF coverage when no gaps are known (%s)",
+  async (kind) => {
+    renderEmptySearch(async () =>
+      json({
+        pdfs_without_text: 0,
+        pages_without_text: 0,
+        pdf_page_coverage_partial: kind === "partial",
+        pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
+      }),
+    );
+    await submitSearch("missing");
+    expect(
+      await screen.findByText("PDF text coverage is incomplete; some pages may not be searchable."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/At least 0/)).toBeNull();
+  },
+);
+
 it.each(["zero", "failure", "frozen"])(
   "keeps the empty search quiet when coverage is %s",
   async (state) => {

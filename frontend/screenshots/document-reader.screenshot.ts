@@ -430,7 +430,27 @@ test("waits for live details before offering redaction", async ({ page, readerUR
 
 test("shows PDF text gaps in the inspector and empty search", async ({ page, readerURL }) => {
   page.setDefaultTimeout(15000);
+  const authenticated = page.waitForRequest((request) =>
+    Boolean(request.headers()["x-docbank-web-session"]),
+  );
   await page.goto(readerURL);
+  const session = (await authenticated).headers()["x-docbank-web-session"]!;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          new URL("/api/v1/search/text-coverage", readerURL).href,
+          {
+            headers: { "X-Docbank-Web-Session": session },
+          },
+        );
+        if (!response.ok()) return null;
+        const coverage = await response.json();
+        return [coverage.pdfs_without_text, coverage.pages_without_text];
+      },
+      { timeout: 30000 },
+    )
+    .toEqual([2, 4]);
   const inspector = page.getByRole("complementary", { name: "Document inspector" });
   for (const [file, notice] of [
     ["mixed-below-ratio.pdf", "Page 2 has no text layer."],
@@ -438,6 +458,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   ]) {
     await page.getByRole("cell", { name: file, exact: true }).click();
     await inspector.getByRole("tab", { name: "Text", exact: true }).click();
+    await expect(inspector.getByText(notice)).toBeVisible({ timeout: 30000 });
     await inspector.getByRole("button", { name: "Extract text", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Extract text" });
     const extract = dialog.getByRole("button", { name: "Extract text", exact: true });
@@ -464,6 +485,25 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await expect(page.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
+    clip: { x: 231, y: 56, width: 746, height: 700 },
+  });
+  await page.route("**/api/v1/search/text-coverage*", (route) =>
+    route.fulfill({
+      json: {
+        pdfs_without_text: 0,
+        pages_without_text: 0,
+        pdf_page_coverage_partial: true,
+        pdf_page_coverage_unavailable: 0,
+      },
+    }),
+  );
+  await search.fill("another unfindable phrase");
+  await search.press("Enter");
+  await expect(
+    page.getByText("PDF text coverage is incomplete; some pages may not be searchable."),
+  ).toBeVisible();
+  await page.screenshot({
+    path: path.join(output!, "pdf-search-incomplete.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
   });
 });

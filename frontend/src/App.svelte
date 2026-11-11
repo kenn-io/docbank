@@ -4888,11 +4888,13 @@
                         : "Empty folder"}
                   description={activeQuery && pdfCoverage?.pdfs_without_text
                     ? `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
-                    : tagBrowse && taggedTrashed > 0
-                      ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
-                      : emptyRoot
-                        ? "Add files or a folder to start your vault."
-                        : undefined}
+                    : activeQuery && pdfCoverageIncomplete
+                      ? "PDF text coverage is incomplete; some pages may not be searchable."
+                      : tagBrowse && taggedTrashed > 0
+                        ? `${taggedTrashed} trashed assignment${taggedTrashed === 1 ? " is" : "s are"} omitted.`
+                        : emptyRoot
+                          ? "Add files or a folder to start your vault."
+                          : undefined}
                   children={activeQuery && pdfCoverage?.pdfs_without_text
                     ? pdfOCRGuide
                     : emptyRoot
