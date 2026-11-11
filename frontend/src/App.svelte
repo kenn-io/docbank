@@ -388,6 +388,7 @@
   let keySession = $state(false);
   let recovery = $state<"" | "same" | "per-run">("");
   let restartAttempt: object | undefined;
+  let watchRestart: (() => void) | undefined;
   let apiKey = $state("");
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
@@ -1611,7 +1612,8 @@
     const recoveryAbort = new AbortController();
     let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
     let checkingRecovery = false;
-    const checkRecovery = async (remaining: number): Promise<void> => {
+    let restarting = false;
+    const checkRecovery = async (): Promise<void> => {
       if (checkingRecovery || recoveryTimer !== undefined || recoveryAbort.signal.aborted) return;
       checkingRecovery = true;
       const retry = await checkDisconnectedSession(
@@ -1620,18 +1622,22 @@
         recoveryAbort.signal,
       );
       checkingRecovery = false;
-      if (retry && sameAddress && remaining > 1 && !recoveryAbort.signal.aborted)
+      if ((retry || restarting) && sameAddress && !recoveryAbort.signal.aborted)
         recoveryTimer = setTimeout(() => {
           recoveryTimer = undefined;
-          void checkRecovery(remaining - 1);
+          void checkRecovery();
         }, 1000);
+    };
+    watchRestart = () => {
+      restarting = true;
+      void checkRecovery();
     };
     const channel = new VerifiedUploadChannel(session, undefined, () => {
       if (uploadChannel !== channel) return;
       uploadChannelError = keyLogin
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
         : "The verified upload channel ended. Run `docbank web --no-browser` again before selecting more files.";
-      void checkRecovery(10);
+      void checkRecovery();
     });
     void channel.connect().then(
       () => {
@@ -1641,12 +1647,13 @@
       (cause) => {
         if (mounted && webSession === session.token) {
           uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-          void checkRecovery(10);
+          void checkRecovery();
         }
       },
     );
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
+      watchRestart = undefined;
       recoveryAbort.abort();
       clearTimeout(recoveryTimer);
       reporting.stop();
@@ -1666,6 +1673,7 @@
         session,
         signal: AbortSignal.any([signal, AbortSignal.timeout(3000)]),
       });
+      connectionRecovery = "";
       return false;
     } catch (cause) {
       if (signal.aborted || !mounted || webSession !== session) return false;
@@ -2122,7 +2130,10 @@
     }
     if (!mounted || restartAttempt !== attempt) return;
     restartAttempt = undefined;
-    if (webSession === session) localText.notice = notice;
+    if (webSession === session) {
+      localText.notice = notice;
+      watchRestart?.();
+    }
   }
 
   async function loadRoot(): Promise<void> {

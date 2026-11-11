@@ -686,7 +686,7 @@ it.each([false, true])(
       if (url === "/api/v1/processing/local/restart") return new Response(null, { status: 202 });
       if (url === "/api/v1/vault") {
         identityChecks++;
-        if (rejectSession && identityChecks > 1)
+        if (rejectSession && identityChecks > 12)
           return Response.json({ detail: "session rejected" }, { status: 401 });
         throw new Error("offline");
       }
@@ -715,7 +715,7 @@ it.each([false, true])(
     await act(async () => vi.advanceTimersByTimeAsync(20000));
     if (rejectSession) expect(screen.getByLabelText("API key")).toBeTruthy();
     else {
-      expect(identityChecks).toBe(10);
+      expect(identityChecks).toBeGreaterThan(10);
       expect(screen.getByRole("dialog", { name: "System" })).toBeTruthy();
     }
   },
