@@ -451,7 +451,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     await extract.click();
     await expect(dialog.getByText("Text extracted.")).toBeVisible({ timeout: 30000 });
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(inspector.getByText(notice, { exact: false })).toBeVisible({ timeout: 30000 });
+    await expect(inspector.getByText(notice)).toBeVisible({ timeout: 30000 });
     if (file.startsWith("mixed")) await expect(inspector.locator("pre")).toBeVisible();
     else await expect(inspector.locator("pre")).toHaveCount(0);
     await page.screenshot({
