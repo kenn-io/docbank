@@ -143,7 +143,7 @@ func checkMultiStorePhysicalRoundTripPostgres(t *testing.T) {
 func checkMultiStoreReadSnapshotsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
-	for _, operation := range []string{"placement", "repair"} {
+	for _, operation := range []string{"placement", "repair", "salvage"} {
 		t.Run(operation, func(t *testing.T) {
 			s := newPostgresQueryStore(t)
 			ctx := t.Context()
@@ -172,24 +172,25 @@ func checkMultiStoreReadSnapshotsPostgres(t *testing.T) {
 			} else {
 				_, err = s.CommitPlacement(ctx, op.ID, request, before.Hashes[0], destination)
 				require.NoError(t, err)
-				original, err := s.PlanStorageRecovery(ctx, "repair", node.BlobHash, secondary.ID)
+				original, err := s.PlanStorageRecovery(ctx, operation, node.BlobHash, secondary.ID)
 				require.NoError(t, err)
 				raw, err := json.Marshal(original)
 				require.NoError(t, err)
-				recovery, err := s.CreateStorageOperation(ctx, StorageOperationCreate{Kind: "repair", RequestDigest: original.Digest, RequestJSON: string(raw), PlanJSON: string(raw), TotalObjects: 1})
+				recovery, err := s.CreateStorageOperation(ctx, StorageOperationCreate{Kind: operation, RequestDigest: original.Digest, RequestJSON: string(raw), PlanJSON: string(raw), TotalObjects: 1})
 				require.NoError(t, err)
 				_, err = s.ClaimStorageOperation(ctx, recovery.ID)
 				require.NoError(t, err)
 				require.NoError(t, s.BeginStorageRecoveryPublication(ctx, recovery.ID, original))
 				replacement := destination
+				replacement.StoreID = packstore.StoreID(original.Destination)
 				replacement.Generation = "50000000-0000-4000-8000-000000000002"
 				reader := sealedDeliveryReaderAfterSelect(t, s, func() {
 					mutationErr = s.CommitStorageRecovery(ctx, recovery.ID, original, replacement, `{"repaired":true}`, time.Now().Add(24*time.Hour))
 				})
-				got, err := reader.PlanStorageRecovery(ctx, "repair", node.BlobHash, secondary.ID)
+				got, err := reader.PlanStorageRecovery(ctx, operation, node.BlobHash, secondary.ID)
 				require.NoError(t, err)
 				require.Equal(t, original, got)
-				next, err := s.PlanStorageRecovery(ctx, "repair", node.BlobHash, secondary.ID)
+				next, err := s.PlanStorageRecovery(ctx, operation, node.BlobHash, secondary.ID)
 				require.NoError(t, err)
 				require.Equal(t, &replacement, next.Prior)
 				require.NotEqual(t, original.Digest, next.Digest)
