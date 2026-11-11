@@ -58,9 +58,6 @@ func TestUnderstandingRendersSections(t *testing.T) {
 	assert.Equal(t, int64(4), result.Receipt.Usage.Units)
 	assert.Equal(t, meta.SHA256, result.Receipt.SourceSHA256)
 	assert.Equal(t, p.descriptor.Fingerprint, result.Receipt.DescriptorFingerprint)
-	partial, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`))
-	require.NoError(t, err)
-	assert.Len(t, partial.evidence("synthetic-vision").Omissions, 4)
 
 	t.Run("all empty", func(t *testing.T) {
 		empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -77,16 +74,16 @@ func TestUnderstandingRendersSections(t *testing.T) {
 	})
 }
 
-func TestUnderstandingAcceptsWrappedReplies(t *testing.T) {
+func TestUnderstandingParsesBoundedReplies(t *testing.T) {
 	payload := `{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`
 	for _, raw := range []string{"```json\n" + payload + "\n```", "Here is the result:\n" + payload} {
 		value, err := parseUnderstanding([]byte(raw))
 		require.NoError(t, err, raw)
 		assert.Equal(t, "FINE", *value.VisibleText)
 	}
-}
-
-func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
+	partial, err := parseUnderstanding([]byte(payload))
+	require.NoError(t, err)
+	assert.Len(t, partial.evidence("synthetic-vision").Omissions, 4)
 	for _, raw := range []string{
 		`{"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","possible_meaning":"","uncertainty":""}`,

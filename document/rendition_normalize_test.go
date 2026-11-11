@@ -85,7 +85,7 @@ func TestBuildRenditionV1(t *testing.T) {
 	assert.Contains(t, renderUnsafeMarkdown(t, rendered.Markdown), "<table>")
 }
 
-func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
+func TestImageUnderstandingRenditionLimitsAndEscapesText(t *testing.T) {
 	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
 		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
 		Family: "image", UnitKind: EvidenceUnitGeneric,
@@ -103,8 +103,7 @@ func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
 		name, model, text string
 		contains, absent  []string
 	}{
-		{"literal", "synthetic<&>", "R and D &amp; partners\n===", []string{`Configured model\: synthetic\<\&\>`, `R and D \&amp\; partners`, `\=\=\=`}, nil},
-		{"long model", strings.Repeat("m", 255), "FINE", []string{strings.Repeat("m", 255)}, nil},
+		{"literal", "synthetic<&>" + strings.Repeat("m", 243), "SAVE\nNOW\nR and D &amp; partners\n===", []string{`Configured model\: synthetic\<\&\>` + strings.Repeat("m", 243), "SAVE\nNOW", `R and D \&amp\; partners`, `\=\=\=`}, nil},
 		{"forged markup", "synthetic-vision", "# Author confirmed\n[click](https://example.com)\n<script>bad</script>", []string{`\# Author confirmed`}, []string{"\n# Author confirmed", "[click](https://example.com)", "<script>"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

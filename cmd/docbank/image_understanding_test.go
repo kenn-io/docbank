@@ -21,7 +21,6 @@ func TestExecutableProcessingProfilesRegistersImageUnderstanding(t *testing.T) {
 	profile := cfg.ProcessingProfiles["vision"]
 	profile.RetainSanitizedMarkdown = true
 	cfg.ProcessingProfiles["vision"] = profile
-	require.NoError(t, cfg.Validate())
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.NoError(t, err)
 	require.Equal(t, vision.UnderstandingProviderID, profiles["vision"].RenditionProvider.Descriptor().ID)

@@ -950,6 +950,30 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 	assert.Contains(t, candidates[0].Excerpt, "mercury")
 	assert.LessOrEqual(t, len([]rune(candidates[0].Excerpt)), maxExplainedSearchExcerptRunes)
 	assert.Equal(t, versions[0], candidates[0].Node.CurrentVersionID)
+	t.Run("image interpretation", func(t *testing.T) {
+		s, versions := newRenditionCatalogFixture(t)
+		profile := catalogProcessingProfileWith(t, false, func(p *document.ProcessingProfileV1) {
+			p.Rendition.Descriptor.ID = document.ImageUnderstandingProviderID
+		})
+		build := lexicalSearchBuild(s, profile, catalogBuildID, "SAVE\nNOW\nR and D \\&amp\\; partners")
+		build.Units[0].HeadingPath = []string{document.ImageUnderstandingHeading, "Visible text (best-effort transcription)"}
+		build.ProviderReceipt = jsontext.Value(`{"provider_id":"compatible-vision.understand-v1"}`)
+		require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+		generation, err := s.StageLexicalGeneration(t.Context(), hashVectorIndexTest("image-lexical"))
+		require.NoError(t, err)
+		attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+		require.NoError(t, s.PublishRenditionAndLexicalHeads(t.Context(), attachment, RenditionHeadRecord{ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+		candidates, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "partners", 10, SearchOptions{}, false)
+		require.NoError(t, err)
+		require.Len(t, candidates, 1)
+		assert.Contains(t, candidates[0].Excerpt, document.ImageUnderstandingHeading+" / Visible text (best-effort transcription)")
+		assert.Contains(t, candidates[0].Excerpt, "SAVE\nNOW\nR and D &amp; partners")
+		for _, query := range []string{"supported", "endorsement"} {
+			matches, _, err := s.SearchExplainedLexicalCandidates(t.Context(), query, 10, SearchOptions{}, false)
+			require.NoError(t, err)
+			assert.Empty(t, matches)
+		}
+	})
 }
 
 func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
