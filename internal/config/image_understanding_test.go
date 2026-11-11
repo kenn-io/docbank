@@ -32,6 +32,13 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	embedding.Chunk.Formatter = document.RenditionChunkHeadingsFormatter
 	cfg.EmbeddingProfiles["semantic"] = embedding
 	require.NoError(t, cfg.Validate())
+	t.Run("image larger than provider limit", func(t *testing.T) {
+		tooLarge := profile
+		tooLarge.MaxDocumentBytes = 16<<20 + 1
+		cfg.RenditionProfiles["primary"] = tooLarge
+		require.Error(t, cfg.Validate())
+		cfg.RenditionProfiles["primary"] = profile
+	})
 	profile.DescriptorID = vision.ProviderID
 	cfg.RenditionProfiles["primary"] = profile
 	require.ErrorContains(t, cfg.Validate(), "image understanding requires its own task")

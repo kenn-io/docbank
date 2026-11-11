@@ -133,11 +133,28 @@ func TestUnderstandingRejectsInvalidImageBounds(t *testing.T) {
 	defer server.Close()
 	p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
 	require.NoError(t, err)
-	data := bytes.Repeat([]byte("x"), 16<<20+1)
-	meta := understandingMetadata(data)
-	_, err = p.Render(t.Context(), &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
-	classified, ok := errors.AsType[*document.RenditionProviderError](err)
-	require.True(t, ok)
-	assert.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
-	assert.Zero(t, calls.Load())
+	data := []byte("synthetic-image")
+	for _, tc := range []struct {
+		name   string
+		data   []byte
+		mutate func(*document.AuthorizedUploadMetadata)
+		want   string
+	}{
+		{"oversized", bytes.Repeat([]byte("x"), 16<<20+1), func(meta *document.AuthorizedUploadMetadata) {}, ""},
+		{"unsupported format", data, func(meta *document.AuthorizedUploadMetadata) { meta.MediaType = "image/gif" }, "unsupported format"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := understandingMetadata(tc.data)
+			tc.mutate(&meta)
+			_, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(tc.data)), metadata: meta}, understandingAuthorization(p, meta))
+			if tc.want == "" {
+				classified, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
+			assert.Zero(t, calls.Load())
+		})
+	}
 }

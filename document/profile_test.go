@@ -194,6 +194,21 @@ func TestCanonicalProfileModelInputRotatesInputAndVectorSpace(t *testing.T) {
 	assert.ElementsMatch(t, layers("profile", "input:semantic", "vector:semantic"), changedFingerprintLayers(before, after))
 }
 
+func TestCanonicalProfileRejectsUnderstandingTaskWithPhotoAdapter(t *testing.T) {
+	profile := syntheticProcessingProfileV1()
+	profile.Rendition.AdapterContract = vision.AdapterContract
+	profile.Rendition.Descriptor.ID = vision.ProviderID
+	profile.Embeddings = nil
+	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+	profile.RetentionDisclosure.RetainProviderMarkdown = false
+	profile.RetentionDisclosure.RetainTypedArtifacts = false
+	_, _, err := document.CanonicalProfile(profile)
+	require.NoError(t, err)
+	profile.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+	_, _, err = document.CanonicalProfile(profile)
+	require.Error(t, err, "the photo adapter cannot run the understanding task")
+}
+
 func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -228,10 +243,19 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 		}, "photo vision profiles do not retain Markdown or typed artifacts"},
 		{"image understanding unit boundary", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
 			p.Rendition.MaxUnits = 3
 		}, "at least four units"},
+		{"image understanding source size", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Rendition.MaxDocumentBytes = 16<<20 + 1
+			p.Rendition.MaxUnits = 4
+			p.Embeddings[1].Chunk.Formatter = document.RenditionChunkHeadingsFormatter
+		}, "16"},
 		{"image understanding chunk formatter", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
 			p.Rendition.MaxUnits = 4
 		}, "headings formatter"},
 		{"headings formatter without image understanding", func(p *document.ProcessingProfileV1) {

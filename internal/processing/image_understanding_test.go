@@ -124,8 +124,11 @@ func (p *understandingEmbeddingCapture) Embed(ctx context.Context, inputs []docu
 
 func imageUnderstandingTestProfile(t *testing.T, renderer *vision.Provider) document.ProcessingProfileV1 {
 	t.Helper()
+	photo, err := vision.Descriptor(vision.ProviderID, "synthetic-vision", renderer.Descriptor().TrustBoundary)
+	require.NoError(t, err)
 	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(workerProcessingProfile(t, renderer.Descriptor()).CanonicalProfile, &portable))
+	require.NoError(t, json.Unmarshal(workerProcessingProfile(t, photo).CanonicalProfile, &portable))
+	portable.Rendition.Descriptor = document.ProviderDescriptorV1{ID: renderer.Descriptor().ID, Fingerprint: renderer.Descriptor().Fingerprint}
 	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
 	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
 	portable.Rendition.DiscloseFilename = false
