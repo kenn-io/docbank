@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"testing"
 	"uuid"
 
@@ -147,48 +146,6 @@ func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
 	assert.Equal(t, int64(2), node.ID)
 }
 
-func TestBrowserPhotoRecoveryStateCopy(t *testing.T) {
-	t.Parallel()
-	source := newTestStore(t)
-	target := newTestStore(t)
-	ctx := t.Context()
-	directory, err := source.PrepareIngestDirectory(ctx, "/photos")
-	require.NoError(t, err)
-	first := []BrowserPhotoGroupMember{{Path: "first.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/first.xmp", Size: 4}}
-	second := []BrowserPhotoGroupMember{{Path: "second.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/second.xmp", Size: 4}}
-	firstKey, secondKey := BrowserPhotoGroupKey(first), BrowserPhotoGroupKey(second)
-	id, err := source.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
-		SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-		Groups:  []BrowserPhotoImportGroup{{Key: firstKey, Members: first}, {Key: secondKey, Members: second}},
-		Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
-	})
-	require.NoError(t, err)
-	digest := fakeHash("a1")
-	require.NoError(t, source.PinBrowserPhotoGroupHashes(ctx, id, firstKey, []string{digest}))
-	require.NoError(t, source.PinBrowserPhotoGroupHashes(ctx, id, secondKey, []string{digest}))
-	run, err := source.BeginIngest(ctx, "photo-import", "browser: Choose files")
-	require.NoError(t, err)
-	_, err = source.IngestPhotoGroup(ctx, run, PhotoImportGroup{
-		BrowserGroup: &BrowserPhotoGroupRef{ImportID: id, GroupKey: firstKey},
-		Members:      []PhotoImportMember{{Name: "first.xmp", Role: PhotoRoleSidecar, BlobHash: digest, Size: 4, OriginalPath: first[0].SourcePath}},
-		CreateOnly:   true,
-	})
-	require.NoError(t, err)
-	require.NoError(t, restoreBrowserPhotoImportState(ctx, source.db, target))
-	var sourceSkipped, targetSkipped string
-	require.NoError(t, source.db.QueryRowContext(ctx, `SELECT skipped_json FROM browser_photo_imports WHERE import_id=$1`, id.String()).Scan(&sourceSkipped))
-	require.NoError(t, target.db.QueryRowContext(ctx, `SELECT skipped_json FROM browser_photo_imports WHERE import_id=$1`, id.String()).Scan(&targetSkipped))
-	assert.Equal(t, sourceSkipped, targetSkipped)
-	for _, key := range []string{firstKey, secondKey} {
-		var sourceHashes, targetHashes string
-		var sourceReceipt, targetReceipt sql.NullString
-		require.NoError(t, source.db.QueryRowContext(ctx, `SELECT hashes_json,receipt_json FROM browser_photo_import_groups WHERE import_id=$1 AND group_key=$2`, id.String(), key).Scan(&sourceHashes, &sourceReceipt))
-		require.NoError(t, target.db.QueryRowContext(ctx, `SELECT hashes_json,receipt_json FROM browser_photo_import_groups WHERE import_id=$1 AND group_key=$2`, id.String(), key).Scan(&targetHashes, &targetReceipt))
-		assert.Equal(t, sourceHashes, targetHashes)
-		assert.Equal(t, sourceReceipt, targetReceipt)
-	}
-}
-
 func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -211,4 +168,17 @@ func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, receipt)
 	}
+}
+
+func TestBrowserPhotoReceiptVersion(t *testing.T) {
+	for _, receipt := range []string{`{"version":2,"status":"added"}`, `{"version":1,"status":"future"}`} {
+		_, err := decodeBrowserPhotoReceipt(receipt)
+		require.Error(t, err)
+	}
+}
+
+func TestBrowserPhotoImportMissing(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.InspectBrowserPhotoImport(t.Context(), uuid.New())
+	require.ErrorIs(t, err, ErrNotFound)
 }

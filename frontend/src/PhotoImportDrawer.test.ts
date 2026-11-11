@@ -259,6 +259,39 @@ it("requires an explicit choice after a lost registration reply", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("allows retry after a rejected registration", async () => {
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi
+      .fn()
+      .mockRejectedValueOnce(new APIError("Storage unavailable", 500, "internal"))
+      .mockResolvedValue("preview"),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "rejected-registration",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await screen.findByText("Storage unavailable");
+  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+});
+
 it.each(["conflict", "auth", "abort", "after item failure"])(
   "reports outer Add failures once with exclusions: %s",
   async (outcome) => {
