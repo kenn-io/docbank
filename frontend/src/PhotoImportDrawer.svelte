@@ -295,6 +295,7 @@
       }));
       for (const state of Object.keys(counts) as Item["state"][])
         counts[state] = items.filter((item) => item.state === state).length;
+      if (saved.groups?.some((group) => group.status === "committed")) await oncomplete();
     } catch (cause) {
       showError(cause);
     } finally {
@@ -317,7 +318,6 @@
       const signal = new AbortController().signal;
       for (const [index, group] of (savedImport.groups ?? []).entries()) {
         const item = items[index];
-        if (group.status === "committed") continue;
         const matched = group.files.map((file) => byPath.get(file.relative_path));
         let changed = false;
         for (const [i, file] of matched.entries()) {
@@ -331,6 +331,12 @@
             changed = true;
           if (group.hashes?.[i] && (await hashFile(file, signal, () => {})) !== group.hashes[i])
             changed = true;
+        }
+        if (group.status === "committed") {
+          item.error = changed
+            ? "Files changed since this group was imported."
+            : receiptReason(group.receipt?.reason);
+          continue;
         }
         if (group.status !== "remaining") continue;
         if (changed) setState(item, "changed");
@@ -503,7 +509,7 @@
       !pending ||
       disabledReason ||
       plannedDestination !== destination ||
-      plannedChannel !== runChannel ||
+      (!savedImport && plannedChannel !== runChannel) ||
       channel !== runChannel
     )
       return;

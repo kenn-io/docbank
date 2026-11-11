@@ -95,12 +95,13 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     inspectPhotoImport: vi.fn().mockResolvedValue(saved),
     uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset-2" }),
   };
-  render(PhotoImportDrawer, {
+  const refresh = vi.fn();
+  const view = render(PhotoImportDrawer, {
     channel,
     vaultID: "saved",
     session: "session",
     onclose: vi.fn(),
-    oncomplete: vi.fn(),
+    oncomplete: refresh,
     onauthfailure: vi.fn(),
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
@@ -109,6 +110,13 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("done.JPG");
+  expect(refresh).toHaveBeenCalledOnce();
+  const replacement = {
+    ...channel,
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset-2" }),
+  };
+  await view.rerender({ channel: replacement });
   expect(screen.getByText("Multiple RAW files share this name.")).toBeTruthy();
   expect(screen.getByText("notes.txt")).toBeTruthy();
   expect(screen.getByText("Unsupported type")).toBeTruthy();
@@ -116,8 +124,8 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     target: { files: [new File(["x"], "left.JPG")] },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
-  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
-  expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+  await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
     "saved-import",
     1,
     expect.any(Array),
@@ -144,8 +152,14 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
     destination: "/photos",
     picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
-    group_count: 1,
+    group_count: 2,
     groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: "done.JPG", size: 1 }],
+        hashes: ["ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"],
+        receipt: { status: "added" as const },
+      },
       {
         status: "remaining" as const,
         files: [{ relative_path: "left.JPG", size: 1, modified_time: 1000 }],
@@ -176,11 +190,16 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
   await screen.findByText("Files missing");
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: {
-      files: [new File(["b"], "left.JPG", { lastModified: 1000 }), new File(["x"], "extra.JPG")],
+      files: [
+        new File(["b"], "left.JPG", { lastModified: 1000 }),
+        new File(["b"], "done.JPG"),
+        new File(["x"], "extra.JPG"),
+      ],
     },
   });
   await screen.findByText("Files changed");
   await screen.findByText("Outside this import");
+  await screen.findByText("Files changed since this group was imported.");
   expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
