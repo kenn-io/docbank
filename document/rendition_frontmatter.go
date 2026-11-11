@@ -249,26 +249,17 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 		if unit.Text == "" {
 			continue
 		}
+		// An image unit is found by its whole fenced block, which its escaped
+		// labels cannot contain; its entry starts after the opening fence.
+		needle, opening := unit.Text, 0
 		if isImageUnderstandingUnit(unit.HeadingPath) {
-			first := len(navigation.Entries) == 0
-			if !first {
-				cursor += len("\n\n---\n\n")
-			}
-			cursor += len(renditionPresentation(NormalizedEvidenceUnitV1{HeadingPath: unit.HeadingPath, Locator: unit.Locator}, first))
-			block, opening := imageRenditionBlock(unit.Text)
-			if !bytes.HasPrefix(rendition.Markdown[min(cursor, len(rendition.Markdown)):], []byte(block)) {
-				return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
-			}
-			offset := cursor + opening
-			navigation.Entries = append(navigation.Entries, RenditionNavigationEntryV1{Key: unit.EvidenceUnitID, Kind: unit.Locator.Kind, Title: unit.HeadingPath[len(unit.HeadingPath)-1], Line: 1 + bytes.Count(rendition.Markdown[:offset], []byte{'\n'}), Byte: offset})
-			cursor += len(block)
-			continue
+			needle, opening = imageRenditionBlock(unit.Text)
 		}
-		relative := bytes.Index(rendition.Markdown[min(cursor, len(rendition.Markdown)):], []byte(unit.Text))
+		relative := bytes.Index(rendition.Markdown[cursor:], []byte(needle))
 		if relative < 0 {
 			return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
 		}
-		offset := cursor + relative
+		offset := cursor + relative + opening
 		title := unit.Locator.Name
 		if len(unit.HeadingPath) != 0 {
 			title = unit.HeadingPath[len(unit.HeadingPath)-1]
@@ -276,7 +267,7 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 		navigation.Entries = append(navigation.Entries, RenditionNavigationEntryV1{
 			Key: unit.EvidenceUnitID, Kind: unit.Locator.Kind, Title: title,
 			Line: 1 + bytes.Count(rendition.Markdown[:offset], []byte{'\n'}), Byte: offset})
-		cursor = offset + len(unit.Text)
+		cursor += relative + len(needle)
 	}
 	return navigation, nil
 }

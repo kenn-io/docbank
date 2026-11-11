@@ -37,9 +37,6 @@ func BuildRenditionV1(evidence NormalizedEvidenceV1, policy RenditionPolicy) (Re
 		presentation := renditionPresentation(evidenceUnit, len(markdownUnits) == 0)
 		overhead := utf8.RuneCountInString(presentation + strings.Repeat("\n\n---\n\n", min(len(markdownUnits), 1)))
 		unitBudget := min(policy.maxUnitRunes, max(remaining-overhead, 0))
-		if isImageUnderstandingUnit(evidenceUnit.HeadingPath) {
-			unitBudget = policy.maxUnitRunes
-		}
 		text, sourceTruncated, renditionTruncated, err := sanitizeRenditionUnit(
 			evidenceUnit, policy.maxLinkChars, policy.maxSourceUnitBytes, unitBudget,
 		)
