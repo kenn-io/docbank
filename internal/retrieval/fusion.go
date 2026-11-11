@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/document/embedding"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func FuseReciprocalRank(lexical, semantic []Candidate, limit int) ([]Result, bool, error) {
@@ -141,7 +142,7 @@ func addCandidateContribution(result *Result, candidate Candidate, lane Lane) {
 	} else {
 		result.SemanticRank = cmp.Or(result.SemanticRank, candidate.Rank)
 		if result.Excerpt == "" && candidate.Document.BuildID != "" {
-			result.Excerpt = boundedMediaExcerpt(candidate.Excerpt)
+			result.Excerpt = store.BoundedSearchExcerpt(candidate.Excerpt)
 		}
 		nameOnly := len(result.Evidence) == 1 && result.Evidence[0].Kind == "node_name"
 		if result.rerankExcerpt == "" || nameOnly && strings.TrimSpace(candidate.Excerpt) != "" {

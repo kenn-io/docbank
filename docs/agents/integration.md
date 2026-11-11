@@ -138,7 +138,6 @@ If vector-index authority changes while a query runs, Docbank returns
 `409 stale_index` and no results. Retry after the ordinary index worker has
 published current authority; do not relax the selector or substitute a build.
 
-
 ## Read an exact media transcript
 
 Supply all three media IDs (source, source version, and content version) when

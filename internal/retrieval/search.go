@@ -609,19 +609,6 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 	return candidates, truncated, nil
 }
 
-// boundedMediaExcerpt projects a prefix of authenticated input without
-// changing the retained text, evidence identity or source time interval.
-func boundedMediaExcerpt(value string) string {
-	count := 0
-	for index := range value {
-		if count == store.SearchExcerptRuneLimit {
-			return value[:index]
-		}
-		count++
-	}
-	return value
-}
-
 func laneReport(requested, actual Mode, coverage Coverage,
 	candidates []Candidate, truncated bool,
 ) Report {
@@ -633,7 +620,7 @@ func laneReport(requested, actual Mode, coverage Coverage,
 			Explanation: []Contribution{{Lane: candidate.Lane, Rank: candidate.Rank,
 				Contribution: contribution}}}
 		if candidate.Document.BuildID != "" {
-			result.Excerpt = boundedMediaExcerpt(candidate.Excerpt)
+			result.Excerpt = store.BoundedSearchExcerpt(candidate.Excerpt)
 		}
 		if candidate.Lane == LaneLexical {
 			result.Excerpt = candidate.Excerpt

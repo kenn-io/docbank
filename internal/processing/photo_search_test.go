@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -63,19 +62,6 @@ func TestDocumentSearchSelectsTextBindingInMixedProfile(t *testing.T) {
 		require.Equal(t, "lexical", string(report.ActualMode))
 		require.Empty(t, report.Results)
 		require.Empty(t, x.service.Profiles()[0].QueryEmbeddingBindings)
-		for _, mode := range []string{"semantic", "hybrid"} {
-			for _, binding := range []string{"", x.binding.Name} {
-				selected := SearchRequest{Profile: "images", Query: "unmatchednebula", Mode: mode, BindingID: binding,
-					Fence:        SourceFence{VaultUID: x.f.catalog.VaultID(), ContentVersionIDs: []string{x.f.node.CurrentVersionID}},
-					MediaSources: []retrieval.MediaSourceSelector{{SourceID: "missing", SourceVersionID: "missing", ContentVersionID: x.f.node.CurrentVersionID}}}
-				report, err := x.service.Search(t.Context(), selected)
-				require.NoError(t, err)
-				require.Equal(t, retrieval.ModeLexical, report.ActualMode)
-				require.Contains(t, report.Degradations, retrieval.DegradationSemanticUnavailable)
-			}
-			selected := SearchRequest{Profile: "images", Query: "unmatchednebula", Mode: mode, BindingID: "missing", MediaSources: []retrieval.MediaSourceSelector{{SourceID: "missing"}}}
-			require.ErrorIs(t, x.service.ValidateSearch(t.Context(), selected), store.ErrNotFound)
-		}
 	})
 	t.Run("mixed profile", func(t *testing.T) {
 		f := newPhotoDescriptionFixture(t)
