@@ -255,3 +255,23 @@ it("does not cancel an existing transfer when another package reports busy", asy
   );
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it("keeps one download status line without hiding a package that is still building", async () => {
+  let created!: (r: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        created = resolve;
+      }),
+  );
+  const controller = new RecipientPackageController(() => "tab", vi.fn());
+  expect(controller.note("first", "PDF started")).toBe(true);
+  expect([controller.allocation, controller.message]).toEqual(["first", "PDF started"]);
+  const build = controller.start(inputs, artifact);
+  expect(controller.note("first", "PDF started")).toBe(false);
+  expect(controller.allocation).toBe(artifact.allocation_id);
+  created(new Response(JSON.stringify({ code: "recipient_package_busy" }), { status: 503 }));
+  await build;
+  expect(controller.note("first", "PDF started")).toBe(true);
+  expect(controller.error).toBe("");
+});

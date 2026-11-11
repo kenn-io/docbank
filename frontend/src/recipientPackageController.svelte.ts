@@ -124,6 +124,15 @@ export class RecipientPackageController {
     return this.cleanup;
   }
 
+  /** Shows another download's status in the same single line, unless a package is busy. */
+  note(allocation: string, message: string): boolean {
+    if (this.phase !== "idle") return false;
+    this.allocation = allocation;
+    this.message = message;
+    this.error = "";
+    return true;
+  }
+
   stop() {
     this.generation++;
     this.request?.abort();

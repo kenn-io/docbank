@@ -213,7 +213,10 @@
     deliveryNotice = "";
     try {
       await downloadBatesExport(session, artifact, controller.signal);
-      if (!disposed) deliveryNotice = "Download started. Keep this review open until it finishes.";
+      if (disposed) return;
+      // One status line follows the latest download, instead of stacking per button.
+      const message = "Download started. Keep this review open until it finishes.";
+      deliveryNotice = packageController?.note(artifact.allocation_id, message) ? "" : message;
     } catch (cause) {
       if (!controller.signal.aborted) fail(cause);
     }
@@ -266,7 +269,12 @@
             inputs={frozen}
             {artifact}
           />{/if}
-        {#if deliveryNotice}<p class="delivery-status muted" role="status">{deliveryNotice}</p>{/if}
+        {#if deliveryNotice && packageController?.allocation !== artifact.allocation_id}<p
+            class="delivery-status muted"
+            role="status"
+          >
+            {deliveryNotice}
+          </p>{/if}
       </div>
     {:else if frozen}
       <h3>Keep a numbered PDF</h3>
