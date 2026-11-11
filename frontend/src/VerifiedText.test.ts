@@ -170,7 +170,11 @@ it("finds text, wraps navigation, and clears the find query", async () => {
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
-it("shows missing PDF pages instead of the empty text message", async () => {
+it.each([
+  [[3, 4], /Pages 3–4 have no text layer/, /OCR can read them/],
+  [[2], /Page 2 has no text layer/, /OCR can read it/],
+  [[], null, null],
+])("shows text coverage for PDF pages %j", async (pages, notice, link) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     Response.json({
       state: "verified_empty",
@@ -186,7 +190,7 @@ it("shows missing PDF pages instead of the empty text message", async () => {
       generation_id: "",
       attachment_id: "",
       build_id: "",
-      pages_without_text: [3, 4],
+      pages_without_text: pages,
     }),
   );
   render(VerifiedText, {
@@ -195,40 +199,16 @@ it("shows missing PDF pages instead of the empty text message", async () => {
     authorizationRevision: 3,
     onauthfailure: vi.fn(),
   });
-  expect(await screen.findByText(/Pages 3–4 have no text layer/)).toBeTruthy();
-  expect(screen.getByRole("link", { name: /OCR can read them/ }).getAttribute("href")).toBe(
-    "https://docbank.ai/docs/usage/document-processing/#ocr",
-  );
-  expect(
-    screen.queryByText("Processing verified that this document has no readable text."),
-  ).toBeNull();
-});
-
-it("uses singular wording for one missing page", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({
-      state: "verified_empty",
-      source: {
-        node_id: 7,
-        revision: 3,
-        version_id: source.versionID,
-        blob_hash: source.blobHash,
-        size: 50,
-        media_type: source.mimeType,
-      },
-      profile: { name: "", configuration: "configured", fingerprint: "b".repeat(64) },
-      generation_id: "",
-      attachment_id: "",
-      build_id: "",
-      pages_without_text: [2],
-    }),
-  );
-  render(VerifiedText, {
-    session: "session",
-    source,
-    authorizationRevision: 3,
-    onauthfailure: vi.fn(),
-  });
-  expect(await screen.findByText(/Page 2 has no text layer/)).toBeTruthy();
-  expect(screen.getByRole("link", { name: /OCR can read it/ })).toBeTruthy();
+  const emptyMessage = "Processing verified that this document has no readable text.";
+  if (notice && link) {
+    expect(await screen.findByText(notice)).toBeTruthy();
+    expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
+      "https://docbank.ai/docs/usage/document-processing/#ocr",
+    );
+    expect(screen.queryByText(emptyMessage)).toBeNull();
+  } else {
+    expect(await screen.findByText(emptyMessage)).toBeTruthy();
+    expect(screen.queryByText(/no text layer/)).toBeNull();
+    expect(screen.queryByRole("link", { name: /OCR can read/ })).toBeNull();
+  }
 });
