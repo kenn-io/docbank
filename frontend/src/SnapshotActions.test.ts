@@ -139,7 +139,7 @@ it("refreshes observations and locks an unknown selection result", async () => {
   );
   expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-  expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Check tag results" })).toBeTruthy();
   expect(fetch).toHaveBeenCalledOnce();
   expect(onunknown).toHaveBeenCalledOnce();
 });
@@ -199,3 +199,52 @@ it("rejects an oversized recovery file before reading it", async () => {
   expect(onimport).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("128 MiB"));
 });
+
+it.each([true, false])(
+  "checks current tag state before an explicit retry (assign=%s)",
+  async (assign) => {
+    const writes: BatchTagRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.includes("preview")) {
+        const body = JSON.parse(String(init.body));
+        expect(body.nodes).toEqual([{ node_id: 9, revision: 12 }]);
+        return Response.json({
+          tag_id: catalog[0].id,
+          tag_revision: 2,
+          nodes: [{ node_id: 9, revision: 12, assigned: !assign }],
+        });
+      }
+      if (init?.method === "POST") {
+        const request = JSON.parse(String(init.body)) as BatchTagRequest;
+        writes.push(request);
+        if (writes.length === 1) throw new TypeError("Lost response");
+        return Response.json(await receiptFor(request));
+      }
+      const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+      if (url.includes("/tags")) {
+        const hasTag = id === 7 ? assign : !assign;
+        return Response.json({
+          items: hasTag ? [catalog[0]] : [],
+          total: hasTag ? 1 : 0,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      return Response.json({ id, name: `Document ${id}`, revision: id === 7 ? 10 : 12 });
+    });
+    render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+    await chooseReview();
+    if (!assign) await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+    const retry = await screen.findByRole("button", {
+      name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
+    });
+    expect(writes).toHaveLength(1);
+    await fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Done" });
+    expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
+    expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
+  },
+);

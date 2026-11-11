@@ -16,6 +16,7 @@ export interface TagChangeRunOptions {
 export class TagChangeRun {
   pending = $state(false);
   stale = $state(false);
+  unknown = $state(false);
   failure = $state("");
   private alive = true;
 
@@ -28,6 +29,7 @@ export class TagChangeRun {
   async submit(request: BatchTagRequest): Promise<void> {
     this.pending = true;
     this.failure = "";
+    this.unknown = false;
     const outcome = await runBatchTagChange(this.options.session, request);
     if (!this.alive) return;
     this.pending = false;
@@ -35,7 +37,10 @@ export class TagChangeRun {
       this.options.onconfirmed(outcome.receipt);
       return;
     }
-    if (outcome.kind === "unknown") this.stale = true;
+    if (outcome.kind === "unknown") {
+      this.stale = true;
+      this.unknown = true;
+    }
     if (outcome.kind === "unknown") this.options.onunknown?.();
     if (outcome.kind === "auth") {
       this.options.onauthfailure(outcome.cause);

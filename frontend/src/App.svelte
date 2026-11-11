@@ -1892,7 +1892,6 @@
     readerRequest++;
     reader = undefined;
     clearToasts();
-    taggingOutcomeUnknown = false;
     leaveSnapshotMode();
     activePanel = null;
     savedQueryDraft = null;
@@ -3356,9 +3355,7 @@
     refreshDocumentsView();
   }
 
-  let taggingOutcomeUnknown = $state(false);
   function handleUnknownTagging(): void {
-    taggingOutcomeUnknown = true;
     refreshCurrentView();
   }
 
@@ -5576,16 +5573,6 @@
         onclose={() => snapshot.dismissRecovery()}
         onauthfailure={handleFailure}
       />
-    {/if}
-    {#if taggingOutcomeUnknown}
-      <Modal title="Tag change unconfirmed" onclose={() => (taggingOutcomeUnknown = false)}>
-        <p role="alert">
-          Docbank couldn't confirm the tag change. Check the documents' tags before trying again.
-        </p>
-        {#snippet footer()}
-          <Button onclick={() => (taggingOutcomeUnknown = false)}>Dismiss</Button>
-        {/snippet}
-      </Modal>
     {/if}
   </div>
 {/if}
