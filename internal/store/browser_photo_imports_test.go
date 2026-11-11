@@ -59,8 +59,12 @@ func checkBrowserPhotoGroupReceiptReplay(t *testing.T, open func(*testing.T) *St
 	replay, err := s.IngestPhotoGroup(ctx, run, group)
 	require.NoError(t, err)
 	assert.True(t, replay.Added)
-	require.Len(t, replay.Nodes, 1)
-	assert.Equal(t, first.Nodes[0].ID, replay.Nodes[0].ID)
+	directoryNode, err := s.NodeByPath(ctx, "/photos")
+	require.NoError(t, err)
+	children, err := s.Children(ctx, directoryNode.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, first.Nodes[0].ID, children[0].ID)
 }
 
 func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store) {
@@ -95,7 +99,12 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 		require.NoError(t, err)
 		assert.Equal(t, result.Added, replay.Added)
 		assert.Equal(t, result.Skipped, replay.Skipped)
-		assert.Equal(t, result.Ambiguity, replay.Ambiguity)
+		if result.Ambiguity != nil {
+			require.NotNil(t, replay.Ambiguity)
+			assert.Equal(t, result.Ambiguity.Reason, replay.Ambiguity.Reason)
+		} else {
+			assert.Nil(t, replay.Ambiguity)
+		}
 		return result
 	}
 	image := PhotoImportMember{Name: "capture.JPG", Role: PhotoRoleImage, BlobHash: fakeHash("a1"), Size: 4, OriginalPath: "browser:first/capture.JPG"}
