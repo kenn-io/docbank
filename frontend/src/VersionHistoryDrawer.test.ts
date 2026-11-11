@@ -367,3 +367,21 @@ it("does not retry malformed version history JSON", async () => {
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("hides the previous total when refreshing history fails without a message", async () => {
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ items: [], total: 2, limit: 1000, offset: 0 }))
+    .mockRejectedValue(new TypeError(""));
+  const drawer = render(VersionHistoryDrawer, {
+    session: "session",
+    node,
+    path: "/report.txt",
+    onselect: vi.fn(),
+    onclose: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("2 versions");
+  await drawer.rerender({ node: { ...node, current_version_id: createdVersionID } });
+  await screen.findByRole("button", { name: "Try again" });
+  expect(screen.queryByText("2 versions")).toBeNull();
+});

@@ -155,7 +155,7 @@
   <div class="versions">
     <p class="summary">
       <span class="path">{path}</span>
-      {#if page && !error}<span>{page.total} version{page.total === 1 ? "" : "s"}</span>{/if}
+      {#if page && error === null}<span>{page.total} version{page.total === 1 ? "" : "s"}</span>{/if}
       {#if node.trashed_at}<Chip size="xs" tone="warning">Trash</Chip>{/if}
     </p>
     {#if node.trashed_at}
