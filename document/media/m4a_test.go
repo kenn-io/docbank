@@ -375,8 +375,11 @@ func TestInspectQuickTimeAudioTrack(t *testing.T) {
 		{"empty sound edit", "phone.mov", "video/quicktime", func(b []byte) {
 			binary.BigEndian.PutUint32(b[bytes.LastIndex(b, []byte("elst"))+16:], 0xffffffff)
 		}, false},
-		{"sound edit beyond priming", "phone.mov", "video/quicktime", func(b []byte) {
-			binary.BigEndian.PutUint32(b[bytes.LastIndex(b, []byte("elst"))+16:], 2048)
+		{"sound edit within AAC priming", "phone.mov", "video/quicktime", func(b []byte) {
+			binary.BigEndian.PutUint32(b[bytes.LastIndex(b, []byte("elst"))+16:], 2112)
+		}, true},
+		{"sound edit beyond AAC priming", "phone.mov", "video/quicktime", func(b []byte) {
+			binary.BigEndian.PutUint32(b[bytes.LastIndex(b, []byte("elst"))+16:], 4096)
 		}, false},
 		{"discontinuous sound timing", "phone.mov", "video/quicktime", func(b []byte) {
 			binary.BigEndian.PutUint32(b[bytes.LastIndex(b, []byte("stts"))+16:], 2048)
@@ -399,6 +402,39 @@ func TestInspectQuickTimeAudioTrack(t *testing.T) {
 				require.Equal(t, "mov", record.Format)
 				require.Equal(t, "video/quicktime", record.MediaType)
 				require.GreaterOrEqual(t, record.Measurements.DurationMS, int64(1000))
+			}
+		})
+	}
+}
+
+func TestInspectMP4AudioTimeline(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		codec    string
+		edits    []mediatest.SoundEdit
+		eligible bool
+	}{
+		{name: "no edit list", codec: "mp4a", eligible: true},
+		{name: "AAC priming 1024", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 1024}}, eligible: true},
+		{name: "AAC priming 2112", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 2112}}, eligible: true},
+		{name: "ALAC from zero", codec: "alac", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 0}}, eligible: true},
+		{name: "delayed media start", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 94976}}},
+		{name: "empty edit delays sound", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1979, MediaTime: -1}, {Duration: 1000, MediaTime: 1024}}},
+		{name: "multiple edits", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 500, MediaTime: 1024}, {Duration: 500, MediaTime: 24000}}},
+		{name: "ALAC media offset", codec: "alac", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 1024}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			data := mediatest.M4AWithSoundEdits(testCase.codec, testCase.edits...)
+			if testCase.edits == nil {
+				data = mediatest.M4A(testCase.codec)
+			}
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.Equal(t, testCase.eligible, record.Eligible, record.Reason)
+			if !testCase.eligible {
+				require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
 			}
 		})
 	}
@@ -437,6 +473,7 @@ func TestInspectQuickTimeRejectsDelayedSound(t *testing.T) {
 	}
 	binary.BigEndian.PutUint32(data[elst+8:], 2)
 	// Insert a half-second empty edit before the native AAC priming edit.
+	// v4 applies the shared MP4 sound-timeline rule to QuickTime.
 	empty := []byte{0, 0, 0x56, 0x22, 0xff, 0xff, 0xff, 0xff, 0, 1, 0, 0}
 	data = slices.Insert(data, elst+12, empty...)
 	policy := inspectionPolicy(data, "phone.mov", "video/quicktime")

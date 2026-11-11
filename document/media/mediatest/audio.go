@@ -10,7 +10,27 @@ import (
 
 // M4A builds a synthetic audio-only MP4 with one 1-second sound sample.
 // The sample bytes are placeholders, not a provider or decoder probe fixture.
-func M4A(codec string) []byte {
+func M4A(codec string) []byte { return m4a(codec, nil) }
+
+// SoundEdit is one edit-list entry: Duration in movie milliseconds and
+// MediaTime in 48 kHz media samples, or -1 for an empty edit.
+type SoundEdit struct {
+	Duration  uint32
+	MediaTime int32
+}
+
+// M4AWithSoundEdits is M4A with an edit list on its sound track.
+func M4AWithSoundEdits(codec string, edits ...SoundEdit) []byte {
+	elst := binary.BigEndian.AppendUint32(make([]byte, 4), uint32(len(edits))) //nolint:gosec // tiny fixture
+	for _, edit := range edits {
+		elst = binary.BigEndian.AppendUint32(elst, edit.Duration)
+		elst = binary.BigEndian.AppendUint32(elst, uint32(edit.MediaTime)) //nolint:gosec // -1 encodes an empty edit
+		elst = append(elst, 0, 1, 0, 0)
+	}
+	return m4a(codec, Box("edts", Box("elst", elst)))
+}
+
+func m4a(codec string, edts []byte) []byte {
 	ftyp := Box("ftyp", []byte("M4A \x00\x00\x00\x00M4A isommp42"))
 	mdat := Box("mdat", []byte{1, 2, 3, 4})
 	mvhd := make([]byte, 100)
@@ -51,7 +71,7 @@ func M4A(codec string) []byte {
 	dref := Box("dref", append([]byte{0, 0, 0, 0, 0, 0, 0, 1}, Box("url ", []byte{0, 0, 0, 1})...))
 	stbl := Box("stbl", slices.Concat(Box("stsd", stsd), Box("stts", stts), Box("stsz", stsz), Box("stsc", stsc), Box("stco", stco)))
 	mdia := Box("mdia", slices.Concat(Box("mdhd", mdhd), Box("hdlr", hdlr), Box("minf", slices.Concat(Box("dinf", dref), stbl))))
-	return slices.Concat(ftyp, mdat, Box("moov", slices.Concat(Box("mvhd", mvhd), Box("trak", slices.Concat(Box("tkhd", tkhd), mdia)))))
+	return slices.Concat(ftyp, mdat, Box("moov", slices.Concat(Box("mvhd", mvhd), Box("trak", slices.Concat(Box("tkhd", tkhd), edts, mdia)))))
 }
 
 // SizedM4A streams an M4A of exactly size bytes whose one AAC sample sits at

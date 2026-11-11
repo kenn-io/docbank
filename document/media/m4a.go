@@ -22,7 +22,7 @@ const maxM4AChunks = 1 << 20
 // produces samplesPerFrame PCM samples per stored sample, independent of the
 // header durations, so it bounds how much audio the file really holds.
 type m4aAudioFormat struct {
-	qualified                   bool
+	qualified, primed           bool // primed: the encoder may prepend delay samples
 	samplesPerFrame, sampleRate uint32
 }
 
@@ -169,7 +169,8 @@ func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityRea
 				return CapabilityReasonMalformed
 			}
 		}
-		if info.quickTimeSound && !track.proveQuickTimeSoundTiming() || !track.proveAudioRanges(info) {
+		if !track.proveAudioRanges(info) || allowVideo && !track.soundStartsAtPresentationZero() ||
+			info.quickTimeSound && !track.proveQuickTimeSoundPackets() {
 			return CapabilityReasonMalformed
 		}
 	}
@@ -179,18 +180,48 @@ func qualifyM4AMovie(movie []byte, info *mp4Info, allowVideo bool) CapabilityRea
 	return CapabilityReasonEligible
 }
 
-// proveQuickTimeSoundTiming limits MOV audio to the presentation timeline
-// FFmpeg preserves when Docling extracts it to WAV. An initial edit can
-// remove AAC priming. Empty or multiple edits can shift or splice audio.
-func (track *mp4TrackInfo) proveQuickTimeSoundTiming() bool {
+// maxAACPrimingFrames bounds the encoder delay a sound edit may skip. Common
+// AAC encoders prime 1024 or 2112 samples, which is under three frames.
+const maxAACPrimingFrames = 3
+
+// soundStartsAtPresentationZero reports whether transcript times measured
+// from the start of the extracted sound match the movie timeline. The
+// provider's FFmpeg extraction writes audio from zero, so an empty edit, a
+// later media start, or several edits would shift every transcript time.
+// One edit that skips only AAC encoder priming keeps the timeline.
+func (track *mp4TrackInfo) soundStartsAtPresentationZero() bool {
+	if track.elstCount == 0 {
+		return true
+	}
+	if track.editCount != 1 || track.emptyEdit {
+		return false
+	}
+	if track.firstEditMediaTime == 0 {
+		return true
+	}
+	if track.mediaTimescale == 0 {
+		return false
+	}
+	for _, format := range track.audioFormats {
+		// mediaTime / mediaTimescale <= frames × samplesPerFrame / sampleRate.
+		skippedHigh, skippedLow := bits.Mul64(track.firstEditMediaTime, uint64(format.sampleRate))
+		primingHigh, primingLow := bits.Mul64(maxAACPrimingFrames*uint64(format.samplesPerFrame), track.mediaTimescale)
+		if !format.primed || skippedHigh > primingHigh || skippedHigh == primingHigh && skippedLow > primingLow {
+			return false
+		}
+	}
+	return true
+}
+
+// proveQuickTimeSoundPackets limits MOV sound to the packet timing FFmpeg
+// reads the same way the local range proof does. Edit-list timing is owned by
+// soundStartsAtPresentationZero, which applies to every video sound track.
+func (track *mp4TrackInfo) proveQuickTimeSoundPackets() bool {
 	frame := track.audioFormats[0].samplesPerFrame
 	for _, format := range track.audioFormats {
 		if uint64(format.sampleRate) != track.mediaTimescale || format.samplesPerFrame != frame {
 			return false
 		}
-	}
-	if track.editEntries > 1 || track.firstEditMediaTime > uint64(frame) {
-		return false
 	}
 	// FFmpeg can use QuickTime frame geometry for packet sizing instead
 	// of stsz when the table contains one unit-delta run.
@@ -526,7 +557,7 @@ func validAACAudioSpecificConfig(config []byte) m4aAudioFormat {
 	if padding, ok := reader.readBits(remaining); !ok || padding != 0 {
 		return m4aAudioFormat{}
 	}
-	return m4aAudioFormat{qualified: true, samplesPerFrame: aacSamplesPerFrame(objectType, shortFrames == 1), sampleRate: sampleRate}
+	return m4aAudioFormat{qualified: true, primed: true, samplesPerFrame: aacSamplesPerFrame(objectType, shortFrames == 1), sampleRate: sampleRate}
 }
 
 // aacSamplesPerFrame follows ISO/IEC 14496-3: AAC LD codes 512 or 480 samples

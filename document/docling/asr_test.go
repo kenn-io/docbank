@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -304,7 +305,7 @@ func TestDoclingASRClientRequestsAudioAndBuildsTranscriptArtifact(t *testing.T) 
 			require.NoError(t, err)
 			assert.Equal(t, "generated", artifact.Origin)
 			assert.Equal(t, "docling.serve-v1", artifact.Provider)
-			if testCase.mediaType == "audio/mp4" {
+			if testCase.mediaType == "audio/mp4" || testCase.mediaType == "video/mp4" {
 				assert.Empty(t, artifact.ProviderVersion)
 			} else {
 				assert.Equal(t, "1.32.0", artifact.ProviderVersion)
@@ -731,4 +732,29 @@ func TestDoclingASRQuickTimeUploadAndTiming(t *testing.T) {
 	require.Empty(t, artifact.ProviderVersion)
 	require.Len(t, artifact.Segments, 1)
 	require.EqualValues(t, 625, artifact.Segments[0].EndMS)
+}
+
+func TestDoclingASRRejectsDelayedMP4SoundBeforeUpload(t *testing.T) {
+	for name, edits := range map[string][]mediatest.SoundEdit{
+		"empty edit":     {{Duration: 1979, MediaTime: -1}, {Duration: 1000, MediaTime: 1024}},
+		"delayed media":  {{Duration: 1000, MediaTime: 94976}},
+		"multiple edits": {{Duration: 500, MediaTime: 1024}, {Duration: 500, MediaTime: 24000}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.M4AWithSoundEdits("mp4a", edits...))
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				http.NotFound(response, nil)
+			}))
+			t.Cleanup(server.Close)
+			client := newASRClient(t, server.URL, fixture.descriptor)
+			_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+			require.Error(t, err)
+			require.Zero(t, calls.Load())
+		})
+	}
+	fixture := newASRFixture(t, "video/mp4", "synthetic.mp4", mediatest.M4AWithSoundEdits("mp4a", mediatest.SoundEdit{Duration: 1000, MediaTime: 2112}))
+	facts, local := fixture.capability.Facts()
+	require.True(t, local && facts.VideoAudioTrack, "ordinary AAC priming stays eligible")
 }
