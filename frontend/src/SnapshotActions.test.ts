@@ -431,3 +431,51 @@ it("pages checked documents and resets to the first page on another check", asyn
   await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
   await screen.findByText("1–50 of 51");
 });
+
+it("refreshes consumers before a follow-up check can be closed", async () => {
+  let writes = 0;
+  let reads = 0;
+  const onchanged = vi.fn();
+  const view = render(
+    SnapshotActions,
+    props({ scope: "selection", count: 1, targets: [targets[0]], onchanged }),
+  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") {
+      const request = JSON.parse(String(init.body)) as BatchTagRequest;
+      if (++writes === 1) throw new TypeError("Lost response");
+      return Response.json(await receiptFor(request));
+    }
+    if (++reads > 3) return new Promise<Response>(() => {});
+    if (String(input).includes("/tags?"))
+      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    return Response.json({ id: 7, name: "report.pdf", revision: 4 });
+  });
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
+  await waitFor(() => expect(reads).toBeGreaterThan(3));
+  view.unmount();
+  expect(onchanged).toHaveBeenCalledOnce();
+});
+
+it("cancels a check when the user closes recovery", async () => {
+  let signal: AbortSignal | undefined;
+  const onclose = vi.fn();
+  vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+    if (init?.method === "POST") return Promise.reject(new TypeError("Lost response"));
+    signal = init?.signal as AbortSignal;
+    return new Promise<Response>((_resolve, reject) =>
+      signal!.addEventListener("abort", () => reject(signal!.reason)),
+    );
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]], onclose }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await waitFor(() => expect(signal).toBeDefined());
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(signal!.aborted).toBe(true);
+  expect(onclose).toHaveBeenCalledOnce();
+});

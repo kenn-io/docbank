@@ -83,10 +83,8 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      if (!recovering) {
-        receipt = confirmed;
-        onchanged?.(confirmed);
-      }
+      if (!recovering) receipt = confirmed;
+      onchanged?.(confirmed);
     },
     onunknown: () => {
       recovering = true;
@@ -108,8 +106,10 @@
   // The selection is captured when the dialog opens; later clicks on the page do not change it.
   const captured = untrack(() => targets.map((target) => ({ ...target })));
   let alive = true;
+  let checkController: AbortController | undefined;
   onDestroy(() => {
     alive = false;
+    checkController?.abort();
     run.destroy();
   });
 
@@ -144,10 +144,17 @@
     checked = 0;
     results = undefined;
     run.failure = "";
+    const controller = new AbortController();
+    checkController = controller;
     try {
-      const rows = await checkTagResults(session, request, (value) => {
-        if (alive) checked = value;
-      });
+      const rows = await checkTagResults(
+        session,
+        request,
+        (value) => {
+          if (alive) checked = value;
+        },
+        controller.signal,
+      );
       if (!alive) return;
       results = rows;
       offset = 0;
@@ -157,6 +164,7 @@
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
       else run.failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
+      if (checkController === controller) checkController = undefined;
       if (alive) checking = false;
     }
   }
@@ -204,6 +212,7 @@
 
   function close(): void {
     if (applying) return;
+    checkController?.abort();
     onclose();
   }
 </script>

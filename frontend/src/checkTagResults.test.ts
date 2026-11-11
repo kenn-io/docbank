@@ -64,3 +64,43 @@ it.each(["inspection", "metadata"])("propagates authentication failure from %s",
     status: 401,
   });
 });
+
+it("stops in-flight reads and queued documents when cancelled", async () => {
+  const controller = new AbortController();
+  const many = {
+    ...request,
+    nodes: Array.from({ length: 16 }, (_, i) => ({ node_id: i + 1, revision: 1 })),
+  };
+  const signals: AbortSignal[] = [];
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+    signals.push(init!.signal as AbortSignal);
+    return new Promise<Response>((_resolve, reject) =>
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
+    );
+  });
+  const result = checkTagResults("session", many, () => {}, controller.signal);
+  controller.abort();
+  await expect(result).rejects.toBeDefined();
+  expect(fetcher).toHaveBeenCalledTimes(8);
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
+});
+
+it("cancels other reads and queued documents on authentication failure", async () => {
+  const many = {
+    ...request,
+    nodes: Array.from({ length: 16 }, (_, i) => ({ node_id: i + 1, revision: 1 })),
+  };
+  const signals: AbortSignal[] = [];
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (String(input).endsWith("/nodes/1"))
+      return Promise.resolve(Response.json({ detail: "expired" }, { status: 401 }));
+    signals.push(init!.signal as AbortSignal);
+    return new Promise<Response>((_resolve, reject) =>
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
+    );
+  });
+  await expect(checkTagResults("session", many, () => {})).rejects.toMatchObject({ status: 401 });
+  expect(fetcher).toHaveBeenCalledTimes(8);
+  expect(signals).toHaveLength(7);
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
+});
