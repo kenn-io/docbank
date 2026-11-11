@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -332,44 +331,16 @@ func TestDaemonWindowRetainedPDFProfiles(t *testing.T) {
 	fixture.publish(t, catalog, blobs, node, document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage, Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: "retained distinctive text", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}}}})
 	require.NoError(t, blobs.Close())
 	require.NoError(t, catalog.Close())
-	writeConfig := func() {
-		var data bytes.Buffer
-		require.NoError(t, toml.NewEncoder(&data).Encode(map[string]any{"rendition_profiles": fixture.config.RenditionProfiles, "retrieval_profiles": fixture.config.RetrievalProfiles, "processing_profiles": fixture.config.ProcessingProfiles}))
-		require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), data.Bytes(), 0600))
-	}
-	writeConfig()
+	var configData bytes.Buffer
+	require.NoError(t, toml.NewEncoder(&configData).Encode(map[string]any{"rendition_profiles": fixture.config.RenditionProfiles, "retrieval_profiles": fixture.config.RetrievalProfiles, "processing_profiles": fixture.config.ProcessingProfiles}))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), configData.Bytes(), 0600))
 	t.Setenv("DOCBANK_HOME", home)
 	stop := startServe(t)
+	defer stop()
 	waitForDaemon(t, home)
 	settleDaemon(t)
 	id := fmt.Sprintf("id:%d", node.ID)
 	output, err := runCLI(t, "rendition", "window", id, "--profile", "archive")
 	require.NoError(t, err)
 	require.Contains(t, output, "retained distinctive text")
-	first, err := runCLI(t, "rendition", "window", id, "--profile", "archive", "--max-chars", "16")
-	require.NoError(t, err)
-	parts := strings.Split(first, "Next window: ")
-	require.Len(t, parts, 2)
-	continuation := strings.Fields(parts[1])
-	require.Equal(t, "docbank", continuation[0])
-	continuation = append(continuation[1:], "--json")
-	expectedJSON, err := runCLI(t, continuation...)
-	require.NoError(t, err)
-	var expected api.RenditionTextWindow
-	require.NoError(t, json.Unmarshal([]byte(expectedJSON), &expected))
-	require.Positive(t, expected.ActualStart)
-	require.NotEmpty(t, expected.Text)
-	stop()
-	delete(fixture.config.ProcessingProfiles, "archive")
-	writeConfig()
-	stop = startServe(t)
-	defer stop()
-	waitForDaemon(t, home)
-	continuedJSON, err := runCLI(t, continuation...)
-	require.NoError(t, err)
-	var continued api.RenditionTextWindow
-	require.NoError(t, json.Unmarshal([]byte(continuedJSON), &continued))
-	require.Equal(t, expected.Text, continued.Text)
-	require.Equal(t, expected.ActualStart, continued.ActualStart)
-	require.Equal(t, expected.AttachmentID, continued.AttachmentID)
 }

@@ -69,6 +69,9 @@ func windowTestServer(t *testing.T, handle func(http.ResponseWriter, *http.Reque
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/processing/profiles" {
+			assert.Equal(t, "true", r.URL.Query().Get("include_configured"))
+		}
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/v1/nodes/42":
 			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", Name: "notes.pdf", Path: "/notes.pdf", CurrentVersionID: processingTestVersionID, Revision: 1, BlobHash: sha256Hex("source"), Size: 100}))
@@ -224,6 +227,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var profiles []api.ProcessingProfileSummary
 			var renditions []api.DocumentRenditionIdentity
+			var windowCalls int
 			for _, name := range []string{"zeta", "alpha"} {
 				if _, ok := tc.states[name]; ok {
 					if name != tc.unnamed {
@@ -277,6 +281,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 						assert.NoError(t, json.MarshalWrite(w, receipt))
 					}
 				case "POST /api/v1/renditions/windows":
+					windowCalls++
 					var request api.RenditionWindowRequest
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 					assert.Equal(t, sha256Hex(tc.want+"attachment"), request.AttachmentID)
@@ -293,6 +298,7 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 			err := runRenditionWindow(cmd, c, options)
 			if tc.code != 0 {
 				require.Error(t, err)
+				require.Zero(t, windowCalls)
 				require.Equal(t, tc.code, commandExitCode(err, true))
 				for _, want := range tc.wantErr {
 					require.Contains(t, err.Error(), want)
