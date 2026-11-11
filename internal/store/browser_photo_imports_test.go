@@ -10,6 +10,7 @@ import (
 )
 
 func TestBrowserPhotoGroupKey(t *testing.T) {
+	t.Parallel()
 	members := []BrowserPhotoGroupMember{
 		{Path: "Trip/café.ARW", Role: PhotoRoleRAW},
 		{Path: "Trip/café.xmp", Role: PhotoRoleSidecar},
@@ -111,6 +112,7 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 }
 
 func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
@@ -142,6 +144,7 @@ func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
 }
 
 func TestBrowserPhotoRecoveryStateCopy(t *testing.T) {
+	t.Parallel()
 	source := newTestStore(t)
 	target := newTestStore(t)
 	ctx := t.Context()
@@ -178,6 +181,7 @@ func TestBrowserPhotoRecoveryStateCopy(t *testing.T) {
 }
 
 func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
