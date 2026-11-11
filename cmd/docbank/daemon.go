@@ -1069,6 +1069,11 @@ func startProcessingJobs(
 		return fmt.Errorf("starting email backfill: %w", err)
 	}
 	documentEvents := processing.NewDocumentEventBackfill(s, gate.MutateContext, logger)
+	notes := processing.NewNoteBackfill(s, blobs, gate.MutateContext, logger)
+	notes.WriteRevision = s.WriteRevision
+	if err := supervisor.StartWorker("derive:notes", notes.Run); err != nil {
+		return fmt.Errorf("starting note derivation: %w", err)
+	}
 	documentEvents.WriteRevision = s.WriteRevision
 	if err := supervisor.StartWorker("derive:document-events", documentEvents.Run); err != nil {
 		return fmt.Errorf("starting document event backfill: %w", err)

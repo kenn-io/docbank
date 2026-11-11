@@ -134,6 +134,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV41SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 48, release: "v0.17.0", backupSuffix: ".schema-v48.bak",
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.17.0", schemaV48Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 48)
+		},
+		restoreSourceState:         restoreV41SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
@@ -144,6 +155,7 @@ var (
 // currentSchemaTables selects a subset of schema tables for column validation.
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
+	"note_parses", "note_fields", "note_headings", "note_links", "note_aliases",
 	"mailbox_containers", "mailbox_chunks",
 	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",

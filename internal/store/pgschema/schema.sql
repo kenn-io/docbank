@@ -74,6 +74,66 @@ CREATE INDEX content_versions_blob ON {{schema}}.content_versions(blob_hash);
 CREATE INDEX content_versions_source ON {{schema}}.content_versions(source_version_id)
     WHERE source_version_id IS NOT NULL;
 
+-- Rebuildable original-byte note structure; omitted from metadata JSONL.
+CREATE TABLE {{schema}}.note_parses (
+    version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    recipe TEXT COLLATE "C" NOT NULL,
+    parsed_at TEXT COLLATE "C" NOT NULL,
+    state TEXT COLLATE "C" NOT NULL,
+    title TEXT COLLATE "C" NOT NULL,
+    title_source TEXT COLLATE "C" NOT NULL,
+    frontmatter_json TEXT COLLATE "C",
+    frontmatter_error TEXT COLLATE "C",
+    body_start BIGINT NOT NULL,
+    lines BIGINT NOT NULL
+);
+CREATE TABLE {{schema}}.note_fields (
+    version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_parses(version_id) ON DELETE CASCADE,
+    key TEXT COLLATE "C" NOT NULL,
+    ordinal BIGINT NOT NULL,
+    value TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (version_id, key, ordinal)
+);
+CREATE INDEX note_fields_value ON {{schema}}.note_fields(key, value, version_id);
+CREATE TABLE {{schema}}.note_headings (
+    version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_parses(version_id) ON DELETE CASCADE,
+    ordinal BIGINT NOT NULL,
+    level BIGINT NOT NULL,
+    text TEXT COLLATE "C" NOT NULL,
+    slug TEXT COLLATE "C" NOT NULL,
+    path TEXT COLLATE "C" NOT NULL,
+    start BIGINT NOT NULL,
+    line_end BIGINT NOT NULL,
+    section_end BIGINT NOT NULL,
+    line BIGINT NOT NULL,
+    section_end_line BIGINT NOT NULL,
+    PRIMARY KEY (version_id, ordinal)
+);
+CREATE TABLE {{schema}}.note_links (
+    version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_parses(version_id) ON DELETE CASCADE,
+    ordinal BIGINT NOT NULL,
+    form TEXT COLLATE "C" NOT NULL,
+    raw TEXT COLLATE "C" NOT NULL,
+    target TEXT COLLATE "C" NOT NULL,
+    target_path TEXT COLLATE "C",
+    target_key TEXT COLLATE "C",
+    fragment TEXT COLLATE "C" NOT NULL,
+    label TEXT COLLATE "C" NOT NULL,
+    start BIGINT NOT NULL,
+    "end" BIGINT NOT NULL,
+    line BIGINT NOT NULL,
+    PRIMARY KEY (version_id, ordinal)
+);
+CREATE INDEX note_links_path ON {{schema}}.note_links(target_path);
+CREATE INDEX note_links_key ON {{schema}}.note_links(target_key);
+CREATE TABLE {{schema}}.note_aliases (
+    version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.note_parses(version_id) ON DELETE CASCADE,
+    alias_key TEXT COLLATE "C" NOT NULL,
+    alias TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (version_id, alias_key)
+);
+CREATE INDEX note_aliases_key ON {{schema}}.note_aliases(alias_key);
+
 -- Canonical audit records and their projections retain the shared store's
 -- content hashes and typed JSON. Validation stays in the Go audit owner.
 CREATE TABLE {{schema}}.audit_records (

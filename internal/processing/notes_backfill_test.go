@@ -1,0 +1,151 @@
+package processing
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/synctest"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/notemarkdown"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/store"
+)
+
+func TestNoteOriginalBoundariesAndIsolation(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		src   []byte
+		state string
+	}{
+		{"exactly4MiB", bytes.Repeat([]byte{'x'}, int(store.MaxNoteBytes)), "ok"},
+		{"over4MiB", bytes.Repeat([]byte{'x'}, int(store.MaxNoteBytes)+1), "too_large"},
+		{"invalidUTF8", []byte{0xff}, "not_utf8"},
+		{"NUL", []byte("a\x00b"), "not_utf8"},
+		{"headingLimit", []byte(strings.Repeat("# Heading\n", 4097)), "limit"},
+		{"malformedYAML", []byte("---\ntitle: [broken\n---\n# Readable\n"), "ok"},
+		{"validAfterFailures", []byte("# Good\n"), "ok"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			note, state, err := parseNoteOriginal(t.Context(), test.src)
+			require.NoError(t, err)
+			require.Equal(t, test.state, state)
+			if state != "ok" {
+				require.Equal(t, notemarkdown.Note{}, note)
+			}
+			if test.name == "malformedYAML" {
+				require.Equal(t, "Readable", note.Title)
+				require.NotNil(t, note.Frontmatter)
+				require.Nil(t, note.Frontmatter.Raw)
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err := parseNoteOriginal(ctx, []byte("# Cancelled\n"))
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		root := t.TempDir()
+		catalog, err := store.Open(ctx, filepath.Join(root, "test.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "blobs", "tmp"), 0o700))
+		blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+		for _, test := range []struct{ name, src string }{
+			{"good.md", "---\ntags: [blue]\n---\n# Original\n"}, {"bad.md", "\xff"},
+			{"malformed.md", "---\ntitle: [broken\n---\n# Readable\n"},
+		} {
+			require.NoError(t, blobs.WithMutation(ctx, func() error {
+				hash, size, err := blobs.WriteContext(ctx, strings.NewReader(test.src))
+				if err != nil {
+					return err
+				}
+				_, err = catalog.CreateFile(ctx, catalog.RootID(), test.name, hash, size, "text/markdown")
+				return err
+			}))
+		}
+		// Oversize classification must not try to open unavailable blob bytes.
+		_, err = catalog.CreateFile(ctx, catalog.RootID(), "oversize.md", strings.Repeat("a", 64), store.MaxNoteBytes+1, "text/markdown")
+		require.NoError(t, err)
+		require.NoError(t, RebuildNotes(ctx, catalog, blobs))
+		status, err := catalog.NotesStatus(ctx, notemarkdown.Recipe, nil)
+		require.NoError(t, err)
+		require.Equal(t, 2, status[0].Parsed)
+		require.Equal(t, 2, status[0].Failed)
+		require.Zero(t, status[0].Pending)
+		view, err := catalog.NoteByPath(ctx, "/good.md", notemarkdown.Recipe)
+		require.NoError(t, err)
+		require.Equal(t, "Original", view.Summary.Title)
+		require.Equal(t, []string{"blue"}, view.Summary.Tags)
+		view, err = catalog.NoteByPath(ctx, "/malformed.md", notemarkdown.Recipe)
+		require.NoError(t, err)
+		require.Equal(t, "Readable", view.Summary.Title)
+		revision := catalog.WriteRevision()
+		worker := NewNoteBackfill(catalog, blobs, nil, nil)
+		for range 3 {
+			targets, err := worker.List(ctx, "", 25)
+			require.NoError(t, err)
+			require.Empty(t, targets)
+			require.Equal(t, revision, catalog.WriteRevision())
+		}
+	})
+}
+
+func TestNoteRebuildPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	catalog := openDocumentEventTestStore(t)
+	require.ErrorIs(t, RebuildNotes(ctx, catalog, nil), context.Canceled)
+}
+
+func TestNoteBackfillDrainsFiveThousandOriginals(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		root := t.TempDir()
+		catalog, err := store.Open(ctx, filepath.Join(root, "test.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "blobs", "tmp"), 0o700))
+		blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+		var hash string
+		var size int64
+		require.NoError(t, blobs.WithMutation(ctx, func() error {
+			var err error
+			hash, size, err = blobs.WriteContext(ctx, strings.NewReader("# Synthetic\n"))
+			return err
+		}))
+		for i := range 5000 {
+			_, err := catalog.CreateFile(ctx, catalog.RootID(), fmt.Sprintf("note-%04d.md", i), hash, size, "text/markdown")
+			require.NoError(t, err)
+		}
+		worker := NewNoteBackfill(catalog, blobs, nil, nil)
+		worker.DrainOnce = true
+		require.NoError(t, worker.Run(ctx))
+		status, err := catalog.NotesStatus(ctx, notemarkdown.Recipe, nil)
+		require.NoError(t, err)
+		require.Equal(t, 5000, status[0].Parsed)
+		require.Zero(t, status[0].Pending+status[0].Failed)
+		for _, name := range []string{"note-0000.md", "note-2499.md", "note-4999.md"} {
+			view, err := catalog.NoteByPath(ctx, "/"+name, notemarkdown.Recipe)
+			require.NoError(t, err)
+			require.Equal(t, "Synthetic", view.Summary.Title)
+			require.Equal(t, 1, view.HeadingCount)
+		}
+	})
+}

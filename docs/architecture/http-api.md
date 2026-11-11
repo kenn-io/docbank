@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-01
+last_edited: 2026-11-11
 title: HTTP API
 description: The agent-first HTTP API, with filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -30,6 +30,37 @@ starting point.
 The daemon validates query encoding and the cursor before sending response headers. A malformed query or cursor returns 400 `validation`. An expired cursor, another database's cursor, or a sequence beyond the current head returns 410 `changes_cursor_expired`; the problem body's `cursor` is the current head. Save it before rescanning, then resume after it. After streaming starts, a read failure sends `{"type":"error","error":{...}}` and closes the stream. The nested error uses the same problem fields, including `changes_cursor_expired` and its recovery `cursor` when retention overtakes the reader. See [React to vault changes](../agents/integration.md#react-to-vault-changes) for event kinds, retention, and recovery.
 
 A `processed` event announces completed publication for a current live document. Timeline and attribution first publications and changed checksums or states emit; identical results and freshness-only refreshes stay silent. Invalidation and explicit derivative purge stay silent; a later successful republication emits when its prior head is absent. Email inventory head changes and new terminal body results each emit an event. A body changing from pending to unavailable counts. Source-metadata publication compares evidence checksums; an extractor fingerprint change with identical facts stays silent. Dismissed or fully filtered photo descriptions and unchanged or fully protected face results stay silent.
+
+## Authored Markdown notes
+
+`GET /api/v1/notes/by-path?path=/notes/example.md` reads a current live
+Markdown note, including notes outside watched folders. The response contains
+`path`, `node_id`, `content_version_id`, `sha256`, `size`, `modified_at`,
+`title`, `tags`, `source_state`, a `headings` count and decoded `frontmatter`.
+The title prefers frontmatter, then the first H1, then the current filename
+stem. Frontmatter and tags come from the authored original, separately from
+vault tags and sanitized rendition metadata.
+
+`source_state` is `not_watched` without an existing watch-source cursor,
+`gone` when the existing watch absence observations mark that source missing,
+and `present` otherwise. It does not inspect the source filesystem during a
+read. Missing, trashed and ineligible paths return 404. A pending parse returns
+409 `note_pending`; an unreadable original returns 422 `note_not_utf8` or
+`note_limit`. Inputs larger than 4 MiB are outside the readable-note contract.
+Malformed YAML still permits a summary and heading count, with null
+`frontmatter`.
+
+`GET /api/v1/notes/status` returns `items` with `name`, `destination`,
+`parsed`, `pending`, `failed` and optional `last_error` for each configured
+watch collection. The nearest containing watch destination owns each note;
+an additional unnamed `/` collection counts notes outside those destinations.
+Suffix matching is case-insensitive. Oversize Markdown candidates count as
+failed after classification. `last_error` is a bounded failure code from the
+latest failed current note, without source text or a host path.
+
+Both routes are read-only and use the ordinary API authentication. See
+[note derivation](document-processing.md#authored-markdown-notes) for rebuilds,
+eligibility and failure handling.
 
 ## Mailbox imports and explicit EML transfers
 
