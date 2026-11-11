@@ -431,14 +431,14 @@ func TestSearcherRerankingRejectsEmptyExcerptAfterUTF8Bound(t *testing.T) {
 
 func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 	for _, test := range []struct {
-		name, kind, lexical, semantic, want string
-		mode                                Mode
+		name, kind, lexical, semantic, want, public string
+		mode                                        Mode
 	}{
-		{"semantic", "", "", "current semantic source", "current semantic source", ModeSemantic},
-		{"hybrid name", "node_name", "semantic.pdf", "current semantic source", "current semantic source", ModeHybrid},
-		{"hybrid content", "rendition_segment", "matching lexical text", "current semantic source", "matching lexical text", ModeHybrid},
-		{"hybrid missing content", "node_name", "semantic.pdf", "", "semantic.pdf", ModeHybrid},
-		{"hybrid blank content", "node_name", "semantic.pdf", " \n\t", "semantic.pdf", ModeHybrid},
+		{"semantic", "", "", "current semantic source", "current semantic source", "current semantic source", ModeSemantic},
+		{"hybrid name", "node_name", "semantic.pdf", "current semantic source", "current semantic source", "semantic.pdf", ModeHybrid},
+		{"hybrid content", "rendition_segment", "matching lexical text", "current semantic source", "matching lexical text", "matching lexical text", ModeHybrid},
+		{"hybrid missing content", "node_name", "semantic.pdf", "", "semantic.pdf", "semantic.pdf", ModeHybrid},
+		{"hybrid blank content", "node_name", "semantic.pdf", " \n\t", "semantic.pdf", "semantic.pdf", ModeHybrid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
@@ -459,11 +459,7 @@ func TestSearcherRerankingPayloadKeepsPublicExcerpt(t *testing.T) {
 			require.Len(t, reranker.candidates, 1)
 			assert.Equal(t, test.want, reranker.candidates[0].Excerpt)
 			require.Len(t, ranked.Results, 1)
-			wantExcerpt := test.lexical
-			if test.mode == ModeSemantic {
-				wantExcerpt = test.semantic
-			}
-			assert.Equal(t, wantExcerpt, ranked.Results[0].Excerpt)
+			assert.Equal(t, test.public, ranked.Results[0].Excerpt)
 		})
 	}
 }

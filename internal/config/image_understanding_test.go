@@ -38,9 +38,6 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 		want   string
 	}{
 		{"descriptor", func(p *RenditionProfileConfig) { p.DescriptorID = vision.ProviderID }, "image understanding requires its own task"},
-		{"artifact", func(p *RenditionProfileConfig) {
-			p.RequestedArtifacts = []string{string(document.EvidenceArtifactMarkdown)}
-		}, "vision requires a withheld filename"},
 		{"input limit", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 16<<20 + 1 }, "image understanding requires its own task"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

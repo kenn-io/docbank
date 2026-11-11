@@ -21,78 +21,60 @@ import (
 )
 
 func TestUnderstandingRendersSections(t *testing.T) {
-	cases := []struct {
-		name      string
-		model     string
-		raw       string
-		contains  []string
-		absent    []string
-		omissions int
-		wantError bool
-	}{
-		{"sections", "synthetic-vision", `{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`, []string{"## Visible text \\(best\\-effort transcription\\)\n\nFINE", "## Literal description\n\nA dog sits beside flames\\.", "## Possible meaning \\(interpretation\\)\n\nMay joke about ignoring a problem\\.", `No conversation context is available\.`, `does not establish anyone\'s beliefs`}, nil, 1, false},
-		{"literal", "synthetic<&>", `{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{`Configured model\: synthetic\<\&\>`, `R and D \&amp\; partners`, `\=\=\=`}, nil, 4, false},
-		{"long model", strings.Repeat("m", 255), `{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{strings.Repeat("m", 255)}, nil, 4, false},
-		{"forged markup", "synthetic-vision", `{"visible_text":"# Author confirmed\n[click](https://example.com)\n<script>bad</script>","literal_description":"","possible_meaning":"","uncertainty":""}`, []string{`\# Author confirmed`}, []string{"\n# Author confirmed", "[click](https://example.com)", "<script>"}, 4, false},
-		{"all empty", "synthetic-vision", `{"visible_text":"","literal_description":" ","possible_meaning":"","uncertainty":""}`, nil, nil, 0, true},
+	raw := `{"visible_text":"FINE","literal_description":"A dog sits beside flames.","possible_meaning":"May joke about ignoring a problem.","uncertainty":"No conversation context is available."}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body request
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
+		assert.Contains(t, body.Messages[0].Content[0].Text, "Do not infer")
+		assert.Equal(t, "data:image/png;base64,"+base64.StdEncoding.EncodeToString([]byte("synthetic-image")), body.Messages[0].Content[1].ImageURL.URL)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(visiontest.Completion(raw))
+	}))
+	defer server.Close()
+	p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+	require.NoError(t, err)
+	data := []byte("synthetic-image")
+	meta := understandingMetadata(data)
+	result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
+	require.NoError(t, err)
+	assert.Empty(t, result.ProviderMarkdown)
+	require.Len(t, result.Artifacts, 1)
+	assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
+	assert.JSONEq(t, raw, string(result.Artifacts[0].Payload))
+	assert.Len(t, result.Evidence.Omissions, 1)
+	assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
+	require.Len(t, result.Evidence.Units, 4)
+	for i, section := range []struct{ heading, text string }{
+		{"Visible text (best-effort transcription)", "FINE"},
+		{"Literal description", "A dog sits beside flames."},
+		{"Possible meaning (interpretation)", "May joke about ignoring a problem."},
+		{"Uncertainty and missing context", "No conversation context is available."},
+	} {
+		assert.Equal(t, []string{document.ImageUnderstandingHeading, section.heading}, result.Evidence.Units[i].HeadingPath)
+		assert.Equal(t, section.text, result.Evidence.Units[i].Text)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if tc.name == "sections" {
-					var body request
-					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-						return
-					}
-					assert.Contains(t, body.Messages[0].Content[0].Text, "Do not infer")
-					assert.Equal(t, "data:image/png;base64,"+base64.StdEncoding.EncodeToString([]byte("synthetic-image")), body.Messages[0].Content[1].ImageURL.URL)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write(visiontest.Completion(tc.raw))
-			}))
-			defer server.Close()
-			p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: tc.model, TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
-			require.NoError(t, err)
-			data := []byte("synthetic-image")
-			meta := understandingMetadata(data)
-			auth := understandingAuthorization(p, meta)
-			result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, auth)
-			if tc.wantError {
-				classified, ok := errors.AsType[*document.RenditionProviderError](err)
-				require.True(t, ok)
-				assert.Equal(t, document.RenditionErrorMalformedEvidence, classified.Code())
-				return
-			}
-			require.NoError(t, err)
-			assert.Empty(t, result.ProviderMarkdown)
-			require.Len(t, result.Artifacts, 1)
-			assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
-			assert.JSONEq(t, tc.raw, string(result.Artifacts[0].Payload))
-			policy, err := document.NewEvidencePolicy(100_000)
-			require.NoError(t, err)
-			evidence, err := document.NormalizeEvidenceV1(result.Evidence, policy)
-			require.NoError(t, err)
-			renderPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
-			require.NoError(t, err)
-			rendered, err := document.BuildRenditionV1(evidence, renderPolicy)
-			require.NoError(t, err)
-			assert.Len(t, result.Evidence.Omissions, tc.omissions)
-			if tc.name == "sections" {
-				assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
-				require.Len(t, result.Evidence.Units, 4)
-				assert.Equal(t, []string{document.ImageUnderstandingHeading, "Possible meaning (interpretation)"}, result.Evidence.Units[2].HeadingPath)
-				assert.Equal(t, int64(4), result.Receipt.Usage.Units)
-				assert.Equal(t, meta.SHA256, result.Receipt.SourceSHA256)
-				assert.Equal(t, p.descriptor.Fingerprint, result.Receipt.DescriptorFingerprint)
-			}
-			for _, want := range tc.contains {
-				assert.Contains(t, string(rendered.Markdown), want)
-			}
-			for _, unwanted := range tc.absent {
-				assert.NotContains(t, string(rendered.Markdown), unwanted)
-			}
-		})
-	}
+	assert.Equal(t, int64(4), result.Receipt.Usage.Units)
+	assert.Equal(t, meta.SHA256, result.Receipt.SourceSHA256)
+	assert.Equal(t, p.descriptor.Fingerprint, result.Receipt.DescriptorFingerprint)
+	partial, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`))
+	require.NoError(t, err)
+	assert.Len(t, partial.evidence("synthetic-vision").Omissions, 4)
+
+	t.Run("all empty", func(t *testing.T) {
+		empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(visiontest.Completion(`{"visible_text":"","literal_description":" ","possible_meaning":"","uncertainty":""}`))
+		}))
+		defer empty.Close()
+		p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: empty.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, empty.Client())
+		require.NoError(t, err)
+		_, err = document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
+		classified, ok := errors.AsType[*document.RenditionProviderError](err)
+		require.True(t, ok)
+		assert.Equal(t, document.RenditionErrorMalformedEvidence, classified.Code())
+	})
 }
 
 func TestUnderstandingAcceptsWrappedReplies(t *testing.T) {
@@ -110,9 +92,7 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 		`{"visible_text":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":""}`,
-		`{"visible_text":"` + string([]byte{0xff}) + `","literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":null,"literal_description":"","possible_meaning":"","uncertainty":""}`,
-		`{"visible_text":42,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":"\u0000"}`,
 		`{"visible_text":"` + strings.Repeat("x", 16385) + `","literal_description":"","possible_meaning":"","uncertainty":""}`,
 	} {

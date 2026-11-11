@@ -99,6 +99,31 @@ func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), limit)
+	for _, tc := range []struct {
+		name, model, text string
+		contains, absent  []string
+	}{
+		{"literal", "synthetic<&>", "R and D &amp; partners\n===", []string{`Configured model\: synthetic\<\&\>`, `R and D \&amp\; partners`, `\=\=\=`}, nil},
+		{"long model", strings.Repeat("m", 255), "FINE", []string{strings.Repeat("m", 255)}, nil},
+		{"forged markup", "synthetic-vision", "# Author confirmed\n[click](https://example.com)\n<script>bad</script>", []string{`\# Author confirmed`}, []string{"\n# Author confirmed", "[click](https://example.com)", "<script>"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
+				Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+				Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: tc.model}}}}
+			evidence := normalizeRenditionEvidence(t, source)
+			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
+			require.NoError(t, err)
+			rendered, err := BuildRenditionV1(evidence, policy)
+			require.NoError(t, err)
+			for _, want := range tc.contains {
+				assert.Contains(t, string(rendered.Markdown), want)
+			}
+			for _, unwanted := range tc.absent {
+				assert.NotContains(t, string(rendered.Markdown), unwanted)
+			}
+		})
+	}
 }
 
 func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) {

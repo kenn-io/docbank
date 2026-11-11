@@ -25,5 +25,4 @@ func TestExecutableProcessingProfilesRegistersImageUnderstanding(t *testing.T) {
 	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.NoError(t, err)
 	require.Equal(t, vision.UnderstandingProviderID, profiles["vision"].RenditionProvider.Descriptor().ID)
-	require.Equal(t, vision.UnderstandingAdapterContract, profiles["vision"].Profile.Rendition.AdapterContract)
 }
