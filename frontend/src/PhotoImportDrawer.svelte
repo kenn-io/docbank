@@ -241,18 +241,6 @@
         (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
       )
         return;
-      if (
-        reconnect &&
-        (plan.groups.length !== previousItems.length ||
-          plan.groups.some(
-            (group, index) =>
-              group.length !== previousItems[index].files.length ||
-              group.some(
-                (fileIndex, member) => files[fileIndex] !== previousItems[index].files[member],
-              ),
-          ))
-      )
-        throw new Error("The selected photo groups changed. Select the files again.");
       if (!reconnect && !sessionOnly) {
         try {
           await currentStorage.replace(plan.groups.length ? next : undefined, expected);
@@ -260,8 +248,7 @@
           if (!useSessionOnly(cause)) throw cause;
         }
       }
-      if (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
-        return;
+      if (active.signal.aborted || destroyed || destination !== target) return;
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       if (!plan.groups.length) resuming = false;
       plannedDestination = target;

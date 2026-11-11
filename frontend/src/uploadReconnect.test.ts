@@ -1,37 +1,17 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { daemonProof } from "./upload-test-fixtures.js";
+import { DaemonSocket } from "./upload-test-fixtures.js";
 import { UploadReconnect, type UploadConnectionState } from "./uploadReconnect.js";
 
 const sockets: Socket[] = [];
 let proofValid = true;
 let rejectConnections = false;
-class Socket extends EventTarget {
-  static OPEN = 1;
-  readyState = 1;
-  binaryType = "";
-  constructor(_url: string) {
+class Socket extends DaemonSocket {
+  constructor() {
     super();
+    this.token = "session";
+    this.proofValid = proofValid;
+    this.rejectConnection = rejectConnections;
     sockets.push(this);
-    queueMicrotask(() => this.dispatchEvent(new Event(rejectConnections ? "close" : "open")));
-  }
-  send(data: string): void {
-    const message = JSON.parse(data) as { type: string; nonce: string };
-    if (message.type !== "authenticate") throw new Error("Unexpected upload frame");
-    const proof = daemonProof("session", message.nonce);
-    queueMicrotask(() =>
-      this.dispatchEvent(
-        new MessageEvent("message", {
-          data: JSON.stringify({ type: "authenticated", proof: proofValid ? proof : "bad" }),
-        }),
-      ),
-    );
-  }
-  close(): void {
-    this.readyState = 3;
-  }
-  disconnect(): void {
-    this.readyState = 3;
-    this.dispatchEvent(new Event("close"));
   }
 }
 const session = { token: "session", uploadSecret: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE" };
@@ -51,10 +31,13 @@ it("reconnects a dropped channel without sending upload frames", async () => {
   const connection = new UploadReconnect(session, (state) => states.push(state));
   connection.start();
   await vi.waitFor(() => expect(states).toEqual(["connected"]));
-  sockets[0].disconnect();
+  sockets[0].close();
   await vi.advanceTimersByTimeAsync(250);
   expect(states).toEqual(["connected", "reconnecting", "connected"]);
   expect(sockets).toHaveLength(2);
+  expect(
+    sockets.flatMap((socket) => socket.frames).map((frame) => JSON.parse(frame as string).type),
+  ).toEqual(["authenticate", "authenticate"]);
   connection.close();
 });
 
@@ -70,7 +53,7 @@ it.each([401, 403])(
     connection.start();
     await vi.waitFor(() => expect(states).toEqual(["connected"]));
     rejectConnections = true;
-    sockets[0].disconnect();
+    sockets[0].close();
     await vi.advanceTimersByTimeAsync(4000);
     expect(states.at(-1)).toBe("failed");
     fetcher.mockResolvedValue(new Response("{}", { status }));
@@ -88,7 +71,7 @@ it("disposes a pending retry without opening another connection", async () => {
   const connection = new UploadReconnect(session, (state) => states.push(state));
   connection.start();
   await vi.waitFor(() => expect(states).toEqual(["connected"]));
-  sockets[0].disconnect();
+  sockets[0].close();
   connection.close();
   await vi.advanceTimersByTimeAsync(4000);
   expect(sockets).toHaveLength(1);
@@ -103,7 +86,7 @@ it("stops when the new daemon proof is wrong", async () => {
   connection.start();
   await vi.waitFor(() => expect(states).toEqual(["connected"]));
   proofValid = false;
-  sockets[0].disconnect();
+  sockets[0].close();
   await vi.advanceTimersByTimeAsync(250);
   expect(states).toEqual(["connected", "reconnecting", "fatal"]);
   connection.close();
