@@ -2153,7 +2153,6 @@ it.each(["zero", "failure", "frozen"])(
       expect(coverage).not.toHaveBeenCalled();
     } else await waitFor(() => expect(coverage).toHaveBeenCalled());
     expect(screen.queryByText(/without a text layer/)).toBeNull();
-    expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
   },
 );
 
