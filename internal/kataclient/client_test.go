@@ -28,7 +28,7 @@ func realClient(t *testing.T) (*Client, *client.Client, int64) {
 	return New(config.KataConnection{Endpoint: server.Endpoint, APIKey: "synthetic-key", Project: "docbank"}), api, project.Project.ID
 }
 
-func TestPrivateNetworkConnectionKeepsBearerAndRefusesRedirects(t *testing.T) {
+func TestClientKeepsBearerAndRefusesRedirects(t *testing.T) {
 	for _, redirect := range []string{"", "/redirected", "http://other.test:7777/redirected"} {
 		t.Run(redirect, func(t *testing.T) {
 			var requests, redirected atomic.Int32
