@@ -84,8 +84,8 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	started := time.Now().UTC()
 	meta := upload.Metadata()
 	if meta.InputKind != document.RenditionInputOriginalFile || meta.MediaFamily != "image" || meta.ByteLength <= 0 || meta.ByteLength > 16<<20 ||
-		(meta.MediaType != "image/jpeg" && meta.MediaType != "image/png" && meta.MediaType != "image/webp") || authorization.MaxProviderMarkdownBytes <= 0 {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "image understanding requires a bounded JPEG, PNG or WebP original and Markdown retention authorization", nil)
+		(meta.MediaType != "image/jpeg" && meta.MediaType != "image/png" && meta.MediaType != "image/webp") {
+		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "image understanding requires a bounded JPEG, PNG or WebP original", nil)
 	}
 	data, err := providerutil.ReadAuthorizedUpload(ctx, upload, meta, string(provider))
 	if err != nil {
@@ -103,13 +103,11 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	if len(evidence.Units) == 0 {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorMalformedEvidence, "no supported image content", nil)
 	}
-	var markdown strings.Builder
-	for i, unit := range evidence.Units {
-		markdown.WriteString(document.ImageUnderstandingMarkdown(unit.HeadingPath, unit.Locator.Name, unit.Text, i == 0) + "\n\n")
-	}
+	checksum := providerutil.SHA256Hex(raw)
+	evidence.Artifacts = []document.SourceEvidenceArtifactV1{{ProviderID: "understanding", Pointer: "understanding.json", Role: document.EvidenceArtifactStructured, SHA256: checksum}}
 	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: authorization.SourceSHA256, UploadSHA256: meta.SHA256, OperationID: "understand-" + authorization.RenditionRequestFingerprint, StartedAt: started, CompletedAt: time.Now().UTC(), Warnings: []string{"degraded_provenance", "machine_generated_interpretation"}, Usage: document.RenditionUsage{Requests: 1, InputBytes: meta.ByteLength, OutputBytes: int64(len(raw)), Units: int64(len(evidence.Units))}})
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	return document.RenditionResult{Evidence: evidence, ProviderMarkdown: []byte(markdown.String()), Receipt: receipt}, nil
+	return document.RenditionResult{Evidence: evidence, Artifacts: []document.RenditionArtifact{{Role: document.EvidenceArtifactStructured, MediaType: "application/json", Payload: raw, SHA256: checksum}}, Receipt: receipt}, nil
 }

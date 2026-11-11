@@ -16,7 +16,7 @@ func TestExecutableProcessingProfilesRegistersImageUnderstanding(t *testing.T) {
 	binding.AdapterContract = vision.UnderstandingAdapterContract
 	binding.DescriptorID, binding.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
 	binding.DisclosureFingerprint = vision.DisclosureFingerprint(descriptor, binding.Runtime.Endpoint, binding.DeploymentFingerprint)
-	binding.RequestedArtifacts = []string{string(document.EvidenceArtifactMarkdown)}
+	binding.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
 	cfg.RenditionProfiles["vision"] = binding
 	profile := cfg.ProcessingProfiles["vision"]
 	profile.RetainSanitizedMarkdown = true

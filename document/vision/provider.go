@@ -106,13 +106,13 @@ func Descriptor(id, model string, trust document.RenditionTrustBoundary) (docume
 	formats := []document.RenditionFormatCapability{{MediaFamily: "image", MediaType: "image/jpeg", InputKind: document.RenditionInputDerivedUpload}}
 	roles := []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 	if id == UnderstandingProviderID {
-		contract, inputProfile, roles, formats = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v4", nil, nil
+		contract, inputProfile, formats = UnderstandingAdapterContract, "original-image-max16mib-labeled-units-v5", nil
 		for _, mediaType := range []string{"image/jpeg", "image/png", "image/webp"} {
 			formats = append(formats, document.RenditionFormatCapability{MediaFamily: "image", MediaType: mediaType, InputKind: document.RenditionInputOriginalFile})
 		}
 	}
 	fingerprint := providerutil.SHA256Hex([]byte(contract + "\x00" + model + "\x00" + inputProfile + "\x00" + text))
-	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: formats, ReturnsStructured: true, ReturnsMarkdown: id == UnderstandingProviderID, ArtifactRoles: roles})
+	return document.NewRenditionDescriptor(document.RenditionDescriptor{ID: id, ContractVersion: document.RenditionProviderContractVersion, PolicyFingerprint: fingerprint, TrustBoundary: trust, SupportedFormats: formats, ReturnsStructured: true, ArtifactRoles: roles})
 }
 
 // DisclosureFingerprint binds consent to the exact destination and deployment.

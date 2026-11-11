@@ -1168,7 +1168,6 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		}
 		role := document.EvidenceArtifactStructured
 		if profile.AdapterContract == vision.UnderstandingAdapterContract {
-			role = document.EvidenceArtifactMarkdown
 			if profile.DescriptorID != vision.UnderstandingProviderID || profile.MaxDocumentBytes > 16<<20 {
 				return fmt.Errorf("%s image understanding requires its own task and at most 16 MiB input", prefix)
 			}

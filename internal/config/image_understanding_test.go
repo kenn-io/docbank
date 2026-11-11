@@ -21,7 +21,7 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	profile.Runtime.TotalTimeout = 0
 	profile.Runtime.PollInterval = 0
 	profile.Runtime.MaxPollAttempts = 0
-	profile.RequestedArtifacts = []string{"provider_markdown"}
+	profile.RequestedArtifacts = []string{"structured_evidence"}
 	profile.DiscloseFilename = false
 	profile.Runtime.RequestTimeout = Duration(time.Minute)
 	descriptor, err := vision.Descriptor(vision.UnderstandingProviderID, profile.Model, document.RenditionTrustOperatorNetwork)
@@ -39,7 +39,7 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	}{
 		{"descriptor", func(p *RenditionProfileConfig) { p.DescriptorID = vision.ProviderID }, "image understanding requires its own task"},
 		{"artifact", func(p *RenditionProfileConfig) {
-			p.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
+			p.RequestedArtifacts = []string{string(document.EvidenceArtifactMarkdown)}
 		}, "vision requires a withheld filename"},
 		{"input limit", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 16<<20 + 1 }, "image understanding requires its own task"},
 	} {

@@ -64,6 +64,18 @@ func TestUnderstandingRendersSections(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assert.Empty(t, result.ProviderMarkdown)
+			require.Len(t, result.Artifacts, 1)
+			assert.Equal(t, document.EvidenceArtifactStructured, result.Artifacts[0].Role)
+			assert.JSONEq(t, tc.raw, string(result.Artifacts[0].Payload))
+			policy, err := document.NewEvidencePolicy(100_000)
+			require.NoError(t, err)
+			evidence, err := document.NormalizeEvidenceV1(result.Evidence, policy)
+			require.NoError(t, err)
+			renderPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
+			require.NoError(t, err)
+			rendered, err := document.BuildRenditionV1(evidence, renderPolicy)
+			require.NoError(t, err)
 			assert.Len(t, result.Evidence.Omissions, tc.omissions)
 			if tc.name == "sections" {
 				assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
@@ -74,10 +86,10 @@ func TestUnderstandingRendersSections(t *testing.T) {
 				assert.Equal(t, p.descriptor.Fingerprint, result.Receipt.DescriptorFingerprint)
 			}
 			for _, want := range tc.contains {
-				assert.Contains(t, string(result.ProviderMarkdown), want)
+				assert.Contains(t, string(rendered.Markdown), want)
 			}
 			for _, unwanted := range tc.absent {
-				assert.NotContains(t, string(result.ProviderMarkdown), unwanted)
+				assert.NotContains(t, string(rendered.Markdown), unwanted)
 			}
 		})
 	}
@@ -107,7 +119,7 @@ func understandingMetadata(data []byte) document.AuthorizedUploadMetadata {
 
 func understandingAuthorization(p *Provider, meta document.AuthorizedUploadMetadata) document.RenditionAuthorization {
 	now := time.Now().UTC()
-	return document.RenditionAuthorization{ProviderID: p.descriptor.ID, DescriptorFingerprint: p.descriptor.Fingerprint, PolicyFingerprint: p.descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: meta.SHA256, SourceBytes: meta.ByteLength, CapabilityRecordChecksum: meta.CapabilityRecordChecksum, ProviderMetadataChecksum: meta.ProviderMetadataChecksum, MediaFamily: meta.MediaFamily, MediaType: meta.MediaType, InputKind: meta.InputKind, MaxProviderMarkdownBytes: 1 << 20, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
+	return document.RenditionAuthorization{ProviderID: p.descriptor.ID, DescriptorFingerprint: p.descriptor.Fingerprint, PolicyFingerprint: p.descriptor.PolicyFingerprint, RenditionRequestFingerprint: strings.Repeat("c", 64), SourceSHA256: meta.SHA256, SourceBytes: meta.ByteLength, CapabilityRecordChecksum: meta.CapabilityRecordChecksum, ProviderMetadataChecksum: meta.ProviderMetadataChecksum, MediaFamily: meta.MediaFamily, MediaType: meta.MediaType, InputKind: meta.InputKind, AllowedArtifactRoles: []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}, MaxArtifactBytes: 1 << 20, MaxArtifacts: 1, MaxTotalResultBytes: 1 << 20, AuthorizedAt: now.Format("2006-01-02T15:04:05.000000000Z"), ExpiresAt: now.Add(time.Minute).Format("2006-01-02T15:04:05.000000000Z")}
 }
 
 func TestUnderstandingRejectsInvalidImageBounds(t *testing.T) {

@@ -56,7 +56,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
 	portable.Rendition.DiscloseFilename = false
 	portable.Rendition.MaxUnits = 4
-	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactMarkdown}
+	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 	portable.EvidenceLexical.MaxUnitRunes = 5000
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: model}, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": embedder}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}, RerankingProvider: reranker, RerankingProfile: retrieval.RerankingProfile{ID: "synthetic-reranker", MaxCandidates: 10, MaxExcerptBytes: 4096}, RerankingDeadline: time.Second, RerankingFailurePolicy: retrieval.ProviderFailureFailClosed, RerankingDisclosure: RuntimeDisclosure{ImmediateProcessor: "synthetic", UltimateProcessor: "synthetic", Endpoint: "https://rerank.example.invalid", Deployment: workerHash("reranker")}}}})
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestImageUnderstandingInvalidRepliesStopAfterAllowedAttempts(t *testing.T) 
 			portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
 			portable.Rendition.DiscloseFilename = false
 			portable.Rendition.MaxUnits = 4
-			portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactMarkdown}
+			portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactStructured}
 			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: "synthetic-vision"}}}})
 			require.NoError(t, err)
 			t.Cleanup(service.Stop)
