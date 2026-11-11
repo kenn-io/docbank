@@ -502,6 +502,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await expect(
     page.getByText("PDF text coverage is incomplete; some pages may not be searchable."),
   ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-incomplete.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },

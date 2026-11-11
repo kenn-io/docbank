@@ -2147,6 +2147,9 @@ it.each(["partial", "unavailable"])(
     expect(
       await screen.findByText("PDF text coverage is incomplete; some pages may not be searchable."),
     ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
+      "https://docbank.ai/docs/usage/document-processing/#ocr",
+    );
     expect(screen.queryByText(/At least 0/)).toBeNull();
   },
 );

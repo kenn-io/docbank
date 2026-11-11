@@ -4895,7 +4895,7 @@
                         : emptyRoot
                           ? "Add files or a folder to start your vault."
                           : undefined}
-                  children={activeQuery && pdfCoverage?.pdfs_without_text
+                  children={activeQuery && (pdfCoverage?.pdfs_without_text || pdfCoverageIncomplete)
                     ? pdfOCRGuide
                     : emptyRoot
                       ? emptyAddMenu
