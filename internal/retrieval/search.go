@@ -604,10 +604,11 @@ func laneReport(requested, actual Mode, coverage Coverage,
 	for index, candidate := range candidates {
 		contribution := 1 / float64(ReciprocalRankK+candidate.Rank)
 		result := Result{Document: candidate.Document, Rank: index + 1, Score: contribution,
-			Path: candidate.Path, Excerpt: candidate.Excerpt, Evidence: candidate.Evidence, rerankExcerpt: candidate.Excerpt,
+			Path: candidate.Path, Evidence: candidate.Evidence, rerankExcerpt: candidate.Excerpt,
 			Explanation: []Contribution{{Lane: candidate.Lane, Rank: candidate.Rank,
 				Contribution: contribution}}}
 		if candidate.Lane == LaneLexical {
+			result.Excerpt = candidate.Excerpt
 			result.LexicalRank = candidate.Rank
 		} else {
 			result.SemanticRank = candidate.Rank

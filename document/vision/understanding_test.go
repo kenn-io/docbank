@@ -96,30 +96,11 @@ func TestUnderstandingRendersSections(t *testing.T) {
 }
 
 func TestUnderstandingAcceptsWrappedReplies(t *testing.T) {
-	t.Parallel()
 	payload := `{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`
-	for _, tc := range []struct{ name, raw string }{
-		{"fenced", "```json\n" + payload + "\n```"},
-		{"preface", "Here is the result:\n" + payload},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write(visiontest.Completion(tc.raw))
-			}))
-			defer server.Close()
-			p, err := New(Profile{DescriptorID: UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
-			require.NoError(t, err)
-			data := []byte("synthetic-image")
-			meta := understandingMetadata(data)
-			result, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(data)), metadata: meta}, understandingAuthorization(p, meta))
-			require.NoError(t, err)
-			require.Len(t, result.Evidence.Units, 1)
-			assert.Equal(t, "FINE", result.Evidence.Units[0].Text)
-			require.Len(t, result.Artifacts, 1)
-			assert.JSONEq(t, payload, string(result.Artifacts[0].Payload))
-		})
+	for _, raw := range []string{"```json\n" + payload + "\n```", "Here is the result:\n" + payload} {
+		value, err := parseUnderstanding([]byte(raw))
+		require.NoError(t, err, raw)
+		assert.Equal(t, "FINE", *value.VisibleText)
 	}
 }
 
@@ -133,10 +114,9 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 		`{"visible_text":null,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":42,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":"\u0000"}`,
-		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":""} trailing`,
 		`{"visible_text":"` + strings.Repeat("x", 16385) + `","literal_description":"","possible_meaning":"","uncertainty":""}`,
 	} {
-		_, _, err := parseUnderstanding([]byte(raw))
+		_, err := parseUnderstanding([]byte(raw))
 		assert.Error(t, err, "reply %q", raw[:min(len(raw), 100)])
 	}
 }

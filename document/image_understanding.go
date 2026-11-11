@@ -1,7 +1,6 @@
 package document
 
 import (
-	"bytes"
 	"strings"
 	"unicode/utf8"
 )
@@ -21,18 +20,6 @@ const imageUnderstandingNotice = "This is a model interpretation of an image, no
 
 func isImageUnderstandingUnit(headings []string) bool {
 	return len(headings) == 2 && headings[0] == ImageUnderstandingHeading
-}
-
-// ImageUnderstandingMarkdown renders one interpreted unit for readers: its
-// escaped section heading and text, and before the first unit the notice and
-// the model. Evidence keeps the plain text, so none of this is searched.
-func ImageUnderstandingMarkdown(headings []string, model, text string, first bool) string {
-	var out strings.Builder
-	if first {
-		out.WriteString("# " + EscapeRenditionText(imageUnderstandingTitle) + "\n\n" + EscapeRenditionText(imageUnderstandingNotice) + "\n\n" + EscapeRenditionText("Configured model: "+model) + "\n\n")
-	}
-	out.WriteString("## " + EscapeRenditionText(headings[1]) + "\n\n" + EscapeRenditionText(text))
-	return out.String()
 }
 
 // UnescapeRenditionText undoes EscapeRenditionText.
@@ -71,27 +58,16 @@ func sanitizeRenditionUnit(unit NormalizedEvidenceUnitV1, maxLinkChars, maxSourc
 	return strings.Trim(strings.Join(lines, "\n"), "\n"), sourceTruncated, truncated || maxRunes <= 0, nil
 }
 
-// renditionTextOffset finds a unit's text past the labels written before it,
-// so text that repeats a title, notice or model name still resolves to its
-// own section. It returns -1 when the text is absent.
-func renditionTextOffset(markdown []byte, cursor int, unit NormalizedUnitV1, first bool) int {
-	if isImageUnderstandingUnit(unit.HeadingPath) {
-		prefix := len(ImageUnderstandingMarkdown(unit.HeadingPath, unit.Locator.Name, "", first))
-		if !first {
-			prefix += len(renditionUnitSeparator)
-		}
-		cursor = min(cursor+prefix, len(markdown))
-	}
-	if relative := bytes.Index(markdown[cursor:], []byte(unit.Text)); relative >= 0 {
-		return cursor + relative
-	}
-	return -1
-}
-
-// renditionPresentation prefixes a readable unit with its reader-facing labels.
+// renditionPresentation renders a readable unit's labels for readers: its
+// escaped section heading, and before the first unit the notice and the
+// model. Evidence keeps the plain text, so none of this is searched.
 func renditionPresentation(unit NormalizedEvidenceUnitV1, first bool) string {
 	if !isImageUnderstandingUnit(unit.HeadingPath) {
 		return ""
 	}
-	return ImageUnderstandingMarkdown(unit.HeadingPath, unit.Locator.Name, "", first)
+	labels := "## " + EscapeRenditionText(unit.HeadingPath[1]) + "\n\n"
+	if first {
+		labels = "# " + EscapeRenditionText(imageUnderstandingTitle) + "\n\n" + EscapeRenditionText(imageUnderstandingNotice) + "\n\n" + EscapeRenditionText("Configured model: "+unit.Locator.Name) + "\n\n" + labels
+	}
+	return labels
 }

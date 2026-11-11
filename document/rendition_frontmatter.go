@@ -249,10 +249,11 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 		if unit.Text == "" {
 			continue
 		}
-		offset := renditionTextOffset(rendition.Markdown, cursor, unit, len(navigation.Entries) == 0)
-		if offset < 0 {
+		relative := bytes.Index(rendition.Markdown[cursor:], []byte(unit.Text))
+		if relative < 0 {
 			return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
 		}
+		offset := cursor + relative
 		title := unit.Locator.Name
 		if len(unit.HeadingPath) != 0 {
 			title = unit.HeadingPath[len(unit.HeadingPath)-1]
