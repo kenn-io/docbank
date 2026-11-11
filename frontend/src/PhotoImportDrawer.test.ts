@@ -137,12 +137,64 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull(),
   );
+  expect(savedImports.has("saved")).toBe(false);
   await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: [new File(["z"], "new.JPG")] },
   });
   expect(await screen.findByRole("button", { name: "Add 1 group" })).toBeTruthy();
   expect(screen.queryByText(/Import progress changed in another tab/)).toBeNull();
+});
+
+it("refreshes a group committed between inspection and resume", async () => {
+  const remaining = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Trip",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "left.JPG", size: 1 }] }],
+  };
+  const committed = {
+    ...remaining,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: "left.JPG", size: 1 }],
+        receipt: { status: "ambiguous" as const, reason: "multiple_raw" },
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([remaining]),
+    inspectPhotoImport: vi.fn().mockResolvedValueOnce(remaining).mockResolvedValueOnce(committed),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const refresh = vi.fn();
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "late-commit",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: refresh,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "left.JPG")] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
+  await screen.findByText("Multiple RAW files share this name.");
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
 it("refuses changed bytes and lists files outside the saved import", async () => {

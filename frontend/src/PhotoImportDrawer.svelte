@@ -528,6 +528,11 @@
               items[index],
               group.status === "committed" ? group.receipt!.status : group.status,
             );
+            if (group.status === "committed") {
+              items[index].error = receiptReason(group.receipt?.reason);
+              items[index].importedEarlier = true;
+              refreshNeeded = true;
+            }
           }
         }
         savedImport = latest;
@@ -607,7 +612,11 @@
         }
       }
       if (items.every((item) => ["added", "skipped", "ambiguous"].includes(item.state))) {
-        if (!sessionOnly && !savedImport) {
+        if (
+          !sessionOnly &&
+          checkpoint &&
+          (!savedImport || checkpoint.sourceID === savedImport.source_id)
+        ) {
           try {
             await storage.replace(undefined, checkpoint);
             checkpoint = undefined;
