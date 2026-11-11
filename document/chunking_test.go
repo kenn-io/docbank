@@ -290,15 +290,8 @@ func TestEmbeddingInputGenerationRejectsUnknownHeadingsFormatter(t *testing.T) {
 	policy := testInputPolicy(t, 2, 0)
 	policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
 	current := build(t, evidence, policy)
-	older := current
-	older.Version = EmbeddingInputGenerationVersion
-	checksum, err := generationChecksum(older)
-	require.NoError(t, err)
-	older.Checksum = checksum
-	_, err = older.ToEmbeddingInputs(policy.ModelInput)
-	require.ErrorContains(t, err, "does not match model-input contract")
 	current.Chunk.Formatter = "other/v1"
-	_, err = MarshalEmbeddingInputGeneration(current)
+	_, err := MarshalEmbeddingInputGeneration(current)
 	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
 }
 

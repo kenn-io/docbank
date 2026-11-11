@@ -1,11 +1,14 @@
 package vision
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
@@ -34,18 +37,23 @@ type understanding struct {
 // parseUnderstanding reads the reply's JSON object as Parse does.
 func parseUnderstanding(raw []byte) (understanding, error) {
 	var value understanding
-	decoder := firstObjectDecoder(raw)
-	if decoder == nil {
+	start := bytes.IndexByte(raw, '{')
+	if start < 0 {
 		return value, errors.New("image understanding reply has no JSON object")
 	}
-	if err := json.UnmarshalDecode(decoder, &value); err != nil {
+	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &value); err != nil {
 		return value, err
 	}
 	for _, field := range []*string{value.VisibleText, value.LiteralDescription, value.PossibleMeaning, value.Uncertainty} {
 		if field == nil || len(*field) > document.MaxPhotoTextBytes || strings.ContainsRune(*field, 0) {
 			return understanding{}, errors.New("image understanding requires four bounded text fields")
 		}
-		*field = document.StripUnsafeControlCharacters(*field)
+		*field = strings.Map(func(r rune) rune {
+			if r != '\n' && r != '\t' && unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, *field)
 	}
 	return value, nil
 }
@@ -81,7 +89,7 @@ func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 func (p *Provider) renderUnderstanding(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
 	started := time.Now().UTC()
 	meta := upload.Metadata()
-	if meta.ByteLength > document.MaxImageUnderstandingBytes {
+	if meta.ByteLength > 16<<20 {
 		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected, "image understanding requires an image at most 16 MiB", nil)
 	}
 	data, err := providerutil.ReadAuthorizedUpload(ctx, upload, meta, string(provider))

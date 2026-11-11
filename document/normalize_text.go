@@ -32,38 +32,22 @@ func isHTMLBlockElement(tag string) bool {
 	}
 }
 
-// StripUnsafeControlCharacters removes controls while retaining literal whitespace.
-func StripUnsafeControlCharacters(value string) string {
-	return strings.Map(func(character rune) rune {
-		switch character {
-		case '\n', '\t':
-			return character
-		case '\f', '\v', '\u0085':
-			return '\n'
-		}
-		if unicode.IsControl(character) {
-			return -1
-		}
-		return character
-	}, strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n"))
-}
-
 func stripUnsafeControls(value string) string {
 	return strings.Map(func(character rune) rune {
 		switch character {
 		case '\n', '\t':
 			return character
-		case '\u2028', '\u2029':
+		case '\f', '\v', '\u0085', '\u2028', '\u2029':
 			return '\n'
 		}
 		if unicode.IsSpace(character) {
 			return ' '
 		}
-		if character == headingSentinelStart || character == headingSentinelEnd {
+		if unicode.IsControl(character) || character == headingSentinelStart || character == headingSentinelEnd {
 			return -1
 		}
 		return character
-	}, StripUnsafeControlCharacters(value))
+	}, strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n"))
 }
 
 func safeStoredLink(value string, maxChars int) string {

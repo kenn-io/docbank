@@ -226,8 +226,8 @@ func (p *Provider) describe(ctx context.Context, data []byte, mediaType, text st
 // clipped, so one bad field never discards the rest. Text around the first JSON
 // object is ignored. The object must contain at least one description field.
 func Parse(raw []byte) (document.PhotoDescription, error) {
-	decoder := firstObjectDecoder(raw)
-	if decoder == nil {
+	start := bytes.IndexByte(raw, '{')
+	if start < 0 {
 		return document.PhotoDescription{}, errors.New("vision response has no JSON object")
 	}
 	var fields struct {
@@ -236,7 +236,7 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 		Tags        jsontext.Value `json:"tags"`
 		VisibleText jsontext.Value `json:"visible_text"`
 	}
-	if err := json.UnmarshalDecode(decoder, &fields); err != nil {
+	if err := json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[start:])), &fields); err != nil {
 		return document.PhotoDescription{}, err
 	}
 	if len(fields.Caption)+len(fields.Tags)+len(fields.VisibleText)+len(fields.Rotation) == 0 {
@@ -296,15 +296,6 @@ func Parse(raw []byte) (document.PhotoDescription, error) {
 	out.Tags = out.Tags[:min(10, len(out.Tags))]
 	return out, nil
 }
-
-func firstObjectDecoder(raw []byte) *jsontext.Decoder {
-	start := bytes.IndexByte(raw, '{')
-	if start < 0 {
-		return nil
-	}
-	return jsontext.NewDecoder(bytes.NewReader(raw[start:]))
-}
-
 func (p *Provider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
 	if p.descriptor.ID == UnderstandingProviderID {
 		return p.renderUnderstanding(ctx, upload, authorization)

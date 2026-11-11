@@ -1,31 +1,12 @@
 package document
 
-import (
-	"errors"
-	"strings"
-)
+import "strings"
 
 // ImageUnderstandingProviderID selects an ordinary image interpretation rendition.
 const ImageUnderstandingProviderID = "compatible-vision.understand-v1"
 
 // MinImageUnderstandingUnits is the fewest units that fit all four sections.
 const MinImageUnderstandingUnits = 4
-
-// MaxImageUnderstandingBytes is the largest image the provider accepts.
-const MaxImageUnderstandingBytes = 16 << 20
-
-func validateImageUnderstandingRendition(binding RenditionBindingV1) error {
-	if binding.AdapterContract != ImageUnderstandingAdapterContract {
-		return nil
-	}
-	if binding.MaxUnits < MinImageUnderstandingUnits {
-		return errors.New("image understanding requires at least four units")
-	}
-	if binding.MaxDocumentBytes > MaxImageUnderstandingBytes {
-		return errors.New("image understanding requires an image at most 16 MiB")
-	}
-	return nil
-}
 
 // ImageUnderstandingHeading is the caveat that leads every interpreted unit's
 // heading path, so each search excerpt and embedding input carries it.

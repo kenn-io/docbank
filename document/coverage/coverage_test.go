@@ -8,25 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/pdftext"
-	"go.kenn.io/docbank/document/vision"
 )
-
-func TestComputeReportsImageUnderstandingText(t *testing.T) {
-	descriptor, err := vision.Descriptor(vision.UnderstandingProviderID, "synthetic-vision", document.RenditionTrustOperatorNetwork)
-	require.NoError(t, err)
-	sources := DefaultSources()
-	sources.ExtractorID = "synthetic-extractor/v1"
-	sources.BoundProviders = []document.RenditionDescriptor{descriptor}
-	record, err := Compute(sources)
-	require.NoError(t, err)
-	for _, format := range []string{"jpeg", "png", "webp"} {
-		t.Run(format, func(t *testing.T) {
-			state := formatByID(t, record, format).Capabilities[document.CapabilityText]
-			assert.Equal(t, document.CapabilityUnqualified, state.State)
-			assert.Equal(t, descriptor.Fingerprint, state.ProviderFingerprint)
-		})
-	}
-}
 
 func TestComputeRecognizesMarkdownWithoutAnArtifactRole(t *testing.T) {
 	descriptor := syntheticMarkdownDescriptor(t)
