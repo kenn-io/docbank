@@ -365,9 +365,8 @@ also use shared operations for explicit asset selections. Quality scores, hidden
 sessions and photo settings have native Store contracts as well.
 
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
-operations still open SQLite. Photo-derived processing, email PDF
-rendering and other media workers, search,
-Physical backup recovery remains unqualified.
+operations still open SQLite. Photo-derived processing, email PDF rendering,
+other media workers, search and physical backup recovery remain unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
 
@@ -1060,9 +1059,10 @@ the original versions, jobs, receipts, epochs and node revisions.
 `make backend-coverage` reports the recorded SQLite catalog effects,
 their PostgreSQL owners and their remaining boundaries. Audit enrollment already
 queues affected photos through `queueAuditPhotosTx`. Logical import requires a
-pristine target, so it never deletes retained authority or memberships. Candidate insertion writes its face projection in the same
-transaction; import rebuilds that projection after loading the evidence. No
-supported writer replaces candidate evidence or source heads during recovery.
+pristine target, so it never deletes retained authority or memberships. Candidate
+insertion writes its face projection in the same transaction; import rebuilds
+that projection after loading the evidence. No supported writer replaces
+candidate evidence or source heads during recovery.
 Search still has unported effects; retained tables do not establish search support.
 
 For each remaining port, capture affected identities before cascades remove the
