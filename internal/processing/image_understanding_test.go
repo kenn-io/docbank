@@ -27,9 +27,10 @@ import (
 func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T) {
 	t.Parallel()
 	model := "synthetic-vision"
+	const terminalControl = "\x1b[2J"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fields := map[string]string{"visible_text": "SAVE\nNOW\n    ALPHA  \n\tBETA\\\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."}
+		fields := map[string]string{"visible_text": "SAVE\nNOW\n    ALPHA  \n\tBETA\\\nR and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis " + terminalControl, "uncertainty": "Conversation context is unavailable."}
 		raw, err := json.Marshal(fields)
 		if !assert.NoError(t, err) {
 			http.Error(w, "invalid response", http.StatusInternalServerError)
@@ -67,6 +68,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	assert.Equal(t, written.Hash, view.Build.SourceSHA256)
 	window, err := service.RenditionTextWindow(t.Context(), RenditionWindowRequest{VaultUID: fixture.catalog.VaultID(), NodeID: node.ID, ContentVersionID: node.CurrentVersionID, AttachmentID: view.Attachment.ID, MaxChars: 16000})
 	require.NoError(t, err)
+	assert.NotContains(t, window.Text, terminalControl)
 	var rendered bytes.Buffer
 	markdown := []byte(window.Text)
 	root := parser.New().Parse(markdown)
@@ -97,6 +99,7 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
 	assert.Equal(t, node.CurrentVersionID, report.Results[0].Document.ContentVersionID)
+	assert.NotContains(t, report.Results[0].Excerpt, terminalControl)
 	report, err = service.Search(t.Context(), SearchRequest{Profile: "images", Query: "ALPHA", Mode: "lexical", Limit: 10, Fence: SourceFence{VaultUID: fixture.catalog.VaultID(), ContentVersionIDs: []string{node.CurrentVersionID}}})
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
