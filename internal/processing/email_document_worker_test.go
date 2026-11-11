@@ -180,7 +180,7 @@ func TestEmailDocumentsRealCSVProviderSearchAndConsent(t *testing.T) {
 		NodeID: receipt.Relations[0].Child.NodeID, ContentVersionID: receipt.Relations[0].Child.VersionID, Profile: "email",
 	})
 	require.NoError(t, err)
-	prepared, err := service.prepareRendition(t.Context(), node, version, profile, false)
+	prepared, err := service.prepareRendition(t.Context(), node, version, profile)
 	require.NoError(t, err)
 	request.ExecutionIdentity, request.CapturedArtifactPolicy = prepared.identity, prepared.capturedPolicy
 	_, err = service.EnqueueEmailDocumentProcessing(t.Context(), request)
