@@ -255,11 +255,8 @@ func renditionNavigation(rendition RenditionV1) (RenditionMarkdownNavigationV1, 
 				cursor += len("\n\n---\n\n")
 			}
 			cursor += len(renditionPresentation(NormalizedEvidenceUnitV1{HeadingPath: unit.HeadingPath, Locator: unit.Locator}, first))
-			if cursor > len(rendition.Markdown) {
-				return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
-			}
 		}
-		relative := bytes.Index(rendition.Markdown[cursor:], []byte(unit.Text))
+		relative := bytes.Index(rendition.Markdown[min(cursor, len(rendition.Markdown)):], []byte(unit.Text))
 		if relative < 0 {
 			return RenditionMarkdownNavigationV1{}, errors.New("rendition unit is absent from its Markdown body")
 		}

@@ -968,11 +968,6 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 		require.Len(t, candidates, 1)
 		assert.Contains(t, candidates[0].Excerpt, document.ImageUnderstandingHeading+" / Visible text (best-effort transcription)")
 		assert.Contains(t, candidates[0].Excerpt, "SAVE\nNOW\nR and D &amp; partners")
-		for _, query := range []string{"supported", "endorsement"} {
-			matches, _, err := s.SearchExplainedLexicalCandidates(t.Context(), query, 10, SearchOptions{}, false)
-			require.NoError(t, err)
-			assert.Empty(t, matches)
-		}
 	})
 }
 

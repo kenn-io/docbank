@@ -22,19 +22,6 @@ func isImageUnderstandingUnit(headings []string) bool {
 	return len(headings) == 2 && headings[0] == ImageUnderstandingHeading
 }
 
-// UnescapeRenditionText undoes EscapeRenditionText.
-func UnescapeRenditionText(value string) string {
-	runes := []rune(value)
-	var out strings.Builder
-	for i := 0; i < len(runes); i++ {
-		if runes[i] == '\\' && i+1 < len(runes) && isMarkdownASCIIPunctuation(runes[i+1]) {
-			i++
-		}
-		out.WriteRune(runes[i])
-	}
-	return out.String()
-}
-
 // sanitizeRenditionUnit sanitizes a unit's text. Interpretation text is plain,
 // so each line is escaped and sanitized alone and the line breaks Markdown
 // would fold into spaces survive.

@@ -51,28 +51,21 @@ func parseUnderstanding(raw []byte) (understanding, error) {
 	return value, nil
 }
 
-type understandingSection struct {
-	field string
-	title string
-	value *string
-}
-
-func (value understanding) sections() []understandingSection {
-	return []understandingSection{
-		{"visible_text", "Visible text (best-effort transcription)", value.VisibleText},
-		{"literal_description", "Literal description", value.LiteralDescription},
-		{"possible_meaning", "Possible meaning (interpretation)", value.PossibleMeaning},
-		{"uncertainty", "Uncertainty and missing context", value.Uncertainty},
-	}
-}
-
 func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 	evidence := document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceDegradedProvenance,
 		Family: "image", UnitKind: document.EvidenceUnitGeneric,
 		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "machine-generated image interpretation has no verified text coordinates or conversation context"}},
 	}
-	for _, section := range value.sections() {
+	for _, section := range []struct {
+		field, title string
+		value        *string
+	}{
+		{"visible_text", "Visible text (best-effort transcription)", value.VisibleText},
+		{"literal_description", "Literal description", value.LiteralDescription},
+		{"possible_meaning", "Possible meaning (interpretation)", value.PossibleMeaning},
+		{"uncertainty", "Uncertainty and missing context", value.Uncertainty},
+	} {
 		if strings.TrimSpace(*section.value) == "" {
 			evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionField, Field: section.field, Reason: "no supported content provided"})
 			continue
