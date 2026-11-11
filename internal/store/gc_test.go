@@ -1997,7 +1997,7 @@ func TestSparseRepackScanBoundsExaminedIneligiblePacks(t *testing.T) {
 	}
 }
 
-func TestSparseRepackScanIncludesExactlyHalfLiveEvenPack(t *testing.T) {
+func TestSparseRepackScanPrefilterIncludesExactlyHalfLiveEvenPack(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	hash := fmt.Sprintf("%064x", 1)
