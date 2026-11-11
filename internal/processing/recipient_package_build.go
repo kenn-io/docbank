@@ -214,7 +214,7 @@ func (s *Service) admitRecipientPackage(ctx context.Context, request RedactionRe
 		PDF:  RecipientPackageFile{Path: "VOL001/PDF/000001.pdf", Size: artifact.Size, SHA256: artifact.BlobSHA256},
 		Text: recipientFile("VOL001/TEXT/000001.txt", text)}
 	if err := ValidateRecipientDocuments([]RecipientPackageDocument{document}); err != nil {
-		return result, fmt.Errorf("%w: %v", ErrRecipientPackageLimit, err)
+		return result, fmt.Errorf("%w: %w", ErrRecipientPackageLimit, err)
 	}
 	return recipientPackageInputs{reservation: *r, artifact: artifact, review: review, document: document, text: text}, nil
 }

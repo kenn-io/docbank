@@ -194,10 +194,10 @@ func recipientPackageProblem(ctx context.Context, err error) *Error {
 		return NewError(410, "recipient_package_unavailable", "recipient package is unavailable")
 	case errors.Is(err, processing.ErrRecipientPackageNotPublished):
 		return NewError(409, "recipient_package_not_published", "allocation has no published numbered PDF")
-	case errors.Is(err, processing.ErrRecipientPackageInvalid):
-		return NewError(400, "invalid_recipient_package", err.Error())
 	case errors.Is(err, processing.ErrRecipientPackageLimit):
 		return NewError(422, "recipient_package_limit", "recipient package exceeds its size or import limits")
+	case errors.Is(err, processing.ErrRecipientPackageInvalid):
+		return NewError(400, "invalid_recipient_package", err.Error())
 	case errors.Is(err, processing.ErrRecipientPackageIntegrity), errors.Is(err, pdfproduction.ErrPDFIntegrity):
 		return NewError(500, "redaction_integrity", "retained PDF or recipient package failed verification")
 	case errors.Is(err, processing.ErrRedactionPreparationUnavailable):
