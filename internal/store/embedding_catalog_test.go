@@ -1039,7 +1039,8 @@ func embeddingSetFixture(
 		AttachmentID: attachmentID, GenerationChecksum: sourceChecksum,
 		CreatedAt: embeddingCatalogTime,
 	}
-	if kind == document.EmbeddingInputRenditionChunk {
+	switch kind {
+	case document.EmbeddingInputRenditionChunk:
 		generated, evidence := embeddingCatalogGeneration(profile, fingerprints.EvidenceLexical, attachmentID)
 		generation.EvidenceJSON, _, err = document.MarshalNormalizedEvidenceV1(evidence)
 		if err != nil {
@@ -1065,13 +1066,13 @@ func embeddingSetFixture(
 		for index, input := range generated.Inputs {
 			generation.Inputs[index] = EmbeddingInputReference{ID: input.Key, RenderedChecksum: input.Checksum}
 		}
-	} else if kind == document.EmbeddingInputOriginalFile {
+	case document.EmbeddingInputOriginalFile:
 		version, err := s.ContentVersionByID(ctx, versionID)
 		if err != nil {
 			panic(err)
 		}
 		generation = DirectEmbeddingGeneration(version, profileFingerprint, fingerprints.EmbeddingInput[bindingID], binding)
-	} else {
+	default:
 		generation.Inputs = []EmbeddingInputReference{{ID: versionID, RenderedChecksum: sourceChecksum}}
 	}
 	expectedKeys := make([]string, len(generation.Inputs))

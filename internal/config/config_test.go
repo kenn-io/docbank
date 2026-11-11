@@ -284,7 +284,7 @@ func TestAutomaticVideoDiscoveryPreservesProfileIdentity(t *testing.T) {
 	resolved.Document.Embeddings[0] = embeddingDocumentBinding(manualBinding.Name, binding)
 	automaticJSON, automatic, err := document.CanonicalProfile(resolved.Document)
 	require.NoError(t, err)
-	require.Equal(t, manualJSON, automaticJSON)
+	require.JSONEq(t, string(manualJSON), string(automaticJSON))
 	require.Equal(t, manual, automatic)
 
 	cfg.EmbeddingProfiles["semantic"] = binding

@@ -599,7 +599,9 @@ func TestWatchedMP4AutomaticThenManualSendsOnce(t *testing.T) {
 		defer func() {
 			if release != nil {
 				close(release)
-				<-done
+				if err := <-done; err != nil {
+					t.Logf("automatic job after release: %v", err)
+				}
 			}
 		}()
 		select {
