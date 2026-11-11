@@ -97,6 +97,7 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 	assert.Contains(t, planOutput.String(), "sanitized_markdown")
 	assert.Contains(t, planOutput.String(), "report.pdf")
 	assert.Contains(t, planOutput.String(), planFingerprint)
+	assert.Contains(t, planOutput.String(), "docbank processing build id:42 --profile private --plan-fingerprint cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc --consent\n")
 
 	buildCommand, buildOutput := processingTestCommand()
 	require.NoError(t, runProcessingBuild(buildCommand, c, "id:42", "private", planFingerprint, true, false, false))
@@ -338,6 +339,7 @@ func TestWriteProcessingPlanReportsIneligibleSource(t *testing.T) {
 				return
 			}
 			require.Regexp(t, `(?m)^ineligible:\s+unbounded_media_family$`, out.String())
+			require.NotContains(t, out.String(), "docbank processing build")
 		})
 	}
 }

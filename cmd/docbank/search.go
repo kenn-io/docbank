@@ -377,17 +377,18 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
+	planCommand := fmt.Sprintf("docbank processing plan id:%d --profile %s", report.Source.NodeID, options.Profile)
 	if options.Agent {
-		return writeSimilarSearchAgent(cmd, report)
+		return writeSimilarSearchAgent(cmd, report, planCommand)
 	}
-	return writeSimilarSearchReport(cmd, report, node.ID, options.Profile)
+	return writeSimilarSearchReport(cmd, report, planCommand)
 }
 
-func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport, nodeID int64, profile string) error {
+func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport, planCommand string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "similar to: id:%d (version %s)\nbinding: %s\n", report.Source.NodeID, report.Source.ContentVersionID, report.BindingID)
 	if report.State == "unavailable" {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unavailable: no current embedding for binding %q on version %s\n", report.BindingID, report.Source.ContentVersionID)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "docbank processing plan id:%d --profile %s\n", nodeID, profile)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), planCommand)
 		return nil
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "coverage: %s (%d/%d source documents complete)\n", report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)

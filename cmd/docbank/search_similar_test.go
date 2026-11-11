@@ -76,6 +76,11 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 	assert.Contains(t, output.String(), "unavailable: no current embedding")
 	assert.Contains(t, output.String(), "docbank processing plan id:42 --profile private\n")
 	assert.Equal(t, 1, calls)
+	options.Agent = true
+	output.Reset()
+	require.NoError(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, "", options))
+	assert.Contains(t, output.String(), `next="docbank processing plan id:42 --profile private"`)
+	options.Agent = false
 	options.JSON = true
 	output.Reset()
 	require.NoError(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, processingTestVersionID, options))

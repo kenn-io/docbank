@@ -1252,7 +1252,8 @@ The default limit is 20 content groups.
 
 Similarity uses stored embeddings locally. It excludes the source node, groups
 identical content, and reports how many other eligible copies each group has.
-Missing source embeddings return `unavailable`. Query text, `--mode`,
+Missing source embeddings return `unavailable` and show a `docbank processing
+plan` command. The plan shows a build command for an eligible document. Query text, `--mode`,
 `--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
 
 ## docbank export

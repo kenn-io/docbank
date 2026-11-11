@@ -194,7 +194,15 @@ func writeProcessingPlan(cmd *cobra.Command, plan api.ProcessingPlan) error {
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing processing plan: %w", err)
 	}
-	return writeProcessingFlow(cmd, plan.Flow)
+	if err := writeProcessingFlow(cmd, plan.Flow); err != nil {
+		return err
+	}
+	if plan.RenditionIneligibleReason == "" {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "docbank processing build id:%d --profile %s --plan-fingerprint %s --consent\n", plan.Selector.NodeID, plan.Selector.Profile, plan.Fingerprint); err != nil {
+			return fmt.Errorf("writing processing build command: %w", err)
+		}
+	}
+	return nil
 }
 
 func writeProcessingFlow(cmd *cobra.Command, hops []api.ProcessingFlowHop) error {
