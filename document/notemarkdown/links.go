@@ -2,11 +2,12 @@ package notemarkdown
 
 import (
 	"context"
+	"net/url"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 type referenceDefinition struct{ destination Span }
@@ -16,19 +17,16 @@ type linkOpener struct {
 }
 
 type linkScanner struct {
-	ctx   context.Context
-	src   []byte
-	b     *budget
-	refs  map[string]referenceDefinition
-	links []Link
+	ctx    context.Context
+	src    []byte
+	b      *budget
+	refs   map[string]referenceDefinition
+	links  []parsedLink
+	linkAt map[int]parsedLink
 }
 
-func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budget) ([]Link, error) {
-	src, blocks, offsets, err := prepareLinkSource(ctx, src, blocks, b)
-	if err != nil {
-		return nil, err
-	}
-	s := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}}
+func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budget) ([]parsedLink, error) {
+	s := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}, linkAt: map[int]parsedLink{}}
 	// Definitions are resolved before uses; retain byte spans, not copies of
 	// destinations. Unused definitions never become graph occurrences.
 	var excluded []Span
@@ -80,13 +78,6 @@ func extractLinks(ctx context.Context, src []byte, blocks []sourceBlock, b *budg
 				return nil, err
 			}
 		}
-	}
-	for i := range s.links {
-		if err := b.step(ctx, 1); err != nil {
-			return nil, err
-		}
-		s.links[i].Span = originalLinkSpan(s.links[i].Span, offsets)
-		s.links[i].DestinationSpan = originalLinkSpan(s.links[i].DestinationSpan, offsets)
 	}
 	sort.SliceStable(s.links, func(i, j int) bool { return s.links[i].Span.Start < s.links[j].Span.Start })
 	return s.links, nil
@@ -401,7 +392,7 @@ func (s *linkScanner) inlineTargetWithDestination(start, end int) (Span, int, bo
 }
 
 func (s *linkScanner) emit(use, dest Span, form string, embed bool) error {
-	if err := limitCount("links", len(s.links)+1, maxLinks); err != nil {
+	if err := limitCount("links", len(s.links)+1, s.b.limits.MaxLinks); err != nil {
 		return err
 	}
 	if err := limitCount("target_bytes", dest.End-dest.Start, maxTarget); err != nil {
@@ -415,7 +406,29 @@ func (s *linkScanner) emit(use, dest Span, form string, embed bool) error {
 	if err != nil {
 		return err
 	}
-	s.links = append(s.links, Link{Span: use, DestinationSpan: dest, Form: form, Embed: embed, RawTarget: raw, Target: target})
+
+	if decoded, decodeErr := url.PathUnescape(target); decodeErr == nil && utf8.ValidString(decoded) && !strings.ContainsRune(decoded, 0) {
+		target = decoded
+	}
+	label, err := s.linkLabel(use, form, target)
+	if err != nil {
+		return err
+	}
+	if form == "wiki" {
+		form = "wikilink"
+		if embed {
+			form = "embed"
+		}
+	} else if embed {
+		form = "image"
+	} else if form == "markdown_reference" {
+		form = "reference"
+	}
+	link := parsedLink{Span: use, Form: form, RawTarget: raw, Target: target, Label: label}
+	s.links = append(s.links, link)
+	if s.linkAt != nil {
+		s.linkAt[use.Start] = link
+	}
 	return nil
 }
 
@@ -661,4 +674,42 @@ func (s *linkScanner) wiki(open, end int) (int, Span, bool, error) {
 		}
 	}
 	return 0, Span{}, false, nil
+}
+
+func (s *linkScanner) linkLabel(use Span, form, target string) (string, error) {
+	start := use.Start
+	if s.src[start] == '!' {
+		start++
+	}
+	end := use.End
+	if form == "wiki" {
+		start += 2
+		end -= 2
+		label := -1
+		for i := start; i < end; i++ {
+			if err := s.b.step(s.ctx, 1); err != nil {
+				return "", err
+			}
+			if s.src[i] == '\\' && i+1 < end {
+				i++
+				continue
+			}
+			if s.src[i] == '|' {
+				label = i + 1
+				break
+			}
+		}
+		if label < 0 {
+			return target, nil
+		}
+		return headingText(s.ctx, s.src, Span{label, end}, nil, s.b)
+	}
+	// The bracket stack already identified a valid link. Reuse the bounded
+	// display scanner to find its label, including nested images and code.
+	d := headingDisplay{ctx: s.ctx, src: s.src, b: s.b, links: s.linkAt}
+	closing, err := d.labelEnd(start, end)
+	if err != nil {
+		return "", err
+	}
+	return headingText(s.ctx, s.src, Span{start + 1, closing}, s.linkAt, s.b)
 }

@@ -27,16 +27,8 @@ func TestLaterScanCancellation(t *testing.T) {
 			openingHTMLTag.MatchReader(&r)
 			return r.err
 		},
-		"html-close": func(ctx context.Context, b *budget) error {
-			_, err := htmlEndMatches(ctx, []byte(text), "</script>", b)
-			return err
-		},
 		"delimiter": func(ctx context.Context, b *budget) error {
 			_, err := byteRun(ctx, []byte(strings.Repeat("`", 30000)), '`', b)
-			return err
-		},
-		"indent": func(ctx context.Context, b *budget) error {
-			_, _, err := leadingIndent(ctx, []byte(strings.Repeat(" ", 30000)), 0, b)
 			return err
 		},
 		"autolink-uri": func(ctx context.Context, b *budget) error {

@@ -1,114 +1,87 @@
 package notemarkdown
 
 import (
-	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
-func TestFrontmatterBOMCRLF(t *testing.T) {
-	src := []byte("\ufeff---\r\ntitle: Café\r\naliases: [A, B]\r\ntags: [x]\r\n...\r\n# H\r\n")
-	n, err := Parse(t.Context(), src)
+func TestFrontmatterDecodedFields(t *testing.T) {
+	src := []byte("\ufeff---\r\ntitle: Sample\r\naliases: [Alias, Other]\r\ntags: tag\r\nflag: true\r\nnumber: 0x2a\r\nfloat: 1.2500\r\nday: 2026-01-02\r\ntime: 2026-01-02T03:04:05+02:00\r\nlist: [one, 2, false, null, [nested], {key: value}]\r\nmap: {key: value}\r\n...\r\n# Body\r\n")
+	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
-	require.Equal(t, "valid", n.FrontmatterState)
-	require.Equal(t, Metadata{Title: "Café", Aliases: []string{"A", "B"}, Tags: []string{"x"}}, n.Metadata)
-	require.Equal(t, bytes.Index(src, []byte("# H")), n.BodyStart)
-	require.Equal(t, 3, n.Frontmatter.Start)
-	require.Equal(t, n.BodyStart, n.Frontmatter.End)
-	require.Len(t, n.Headings, 1)
+	require.NotNil(t, n.Frontmatter)
+	fm := n.Frontmatter
+	require.Equal(t, 3, fm.Start)
+	require.Equal(t, strings.Index(string(src), "# Body"), fm.End)
+	require.Equal(t, fm.End, n.BodyStart)
+	require.Equal(t, "Sample", n.Title)
+	require.Equal(t, []string{"Alias", "Other"}, fm.Aliases)
+	require.Equal(t, []string{"tag"}, fm.Tags)
+	require.Equal(t, "2026-01-02T00:00:00Z", fm.Raw["day"])
+	require.Equal(t, "2026-01-02T03:04:05+02:00", fm.Raw["time"])
+	require.Contains(t, fm.Fields, Field{Key: "number", Value: "42", Ordinal: 0})
+	require.Contains(t, fm.Fields, Field{Key: "float", Value: "1.25", Ordinal: 0})
+	require.Contains(t, fm.Fields, Field{Key: "flag", Value: "true", Ordinal: 0})
+	require.Contains(t, fm.Fields, Field{Key: "list", Value: "false", Ordinal: 2})
+	for _, f := range fm.Fields {
+		require.NotEqual(t, "map", f.Key)
+		require.NotEqual(t, 4, f.Ordinal)
+		require.NotEqual(t, 5, f.Ordinal)
+	}
+	_, err = json.Marshal(fm.Raw)
+	require.NoError(t, err)
 }
 
-func TestFrontmatterTrustGroup(t *testing.T) {
-	for name, header := range map[string]string{
-		"duplicate": "title: A\ntitle: B", "root": "[a, b]", "number": "title: 42",
-		"boolean": "title: true", "timestamp": "title: 2026-01-02", "null": "title: null",
-		"list entry": "title: okay\ntags: [x, 2]", "alias": "other: &x A\naliases: *x",
-		"merge": "<<: {title: A}", "tag": "title: !custom A", "syntax": "title: [",
-		"nested duplicate": "other: {a: x, a: y}",
-	} {
-		t.Run(name, func(t *testing.T) {
-			n, err := Parse(t.Context(), []byte("---\n"+header+"\n---\n# H\n"))
+func TestFrontmatterAliasesMergesAndJSON(t *testing.T) {
+	src := "---\nfirst: &first {title: First, count: 1}\nsecond: &second {title: Second, other: true}\n<<: [*first, *second]\ntitle: Explicit\ncopy: *first\n---\n# Body\n"
+	n, err := Parse(t.Context(), []byte(src), Limits{})
+	require.NoError(t, err)
+	require.Equal(t, "Explicit", n.Title)
+	require.Equal(t, true, n.Frontmatter.Raw["other"])
+	require.Equal(t, 1, n.Frontmatter.Raw["count"])
+	_, err = json.Marshal(n.Frontmatter.Raw)
+	require.NoError(t, err)
+	n, err = Parse(t.Context(), []byte(strings.ReplaceAll(src, "title: Explicit\n", "")), Limits{})
+	require.NoError(t, err)
+	require.Equal(t, "First", n.Title)
+	n, err = Parse(t.Context(), []byte(src), Limits{MaxFrontmatterKeys: 4})
+	requireLimit(t, err, "frontmatter_keys")
+	require.Equal(t, Note{}, n)
+}
+
+func TestFrontmatterDiagnosticsLeaveBodyReadable(t *testing.T) {
+	for _, header := range []string{"title: [bad", "a: &a [*a]", "a: .nan", "a: .inf", "a: {1: value}", "a: !custom value", "title: first\ntitle: second", "a: *missing"} {
+		t.Run(header, func(t *testing.T) {
+			n, err := Parse(t.Context(), []byte("---\n"+header+"\n---\n# Body\n[[Target]]\n"), Limits{MaxDiagnostics: 1})
 			require.NoError(t, err)
-			require.Equal(t, "invalid", n.FrontmatterState)
-			require.Equal(t, Metadata{}, n.Metadata)
-			require.NotEmpty(t, n.Diagnostics)
-			require.Equal(t, "invalid_frontmatter", n.Diagnostics[0].Code)
-			require.Len(t, n.Headings, 1)
+			require.Nil(t, n.Frontmatter.Raw)
+			require.Empty(t, n.Frontmatter.Fields)
+			require.Len(t, n.Diagnostics, 1)
+			require.Equal(t, "Body", n.Title)
+			require.Equal(t, []string{"Target"}, linkTargets(n.Links))
 		})
 	}
-	n, err := Parse(t.Context(), []byte("---\nunknown: {x: [1, false]}\ndocbank: {contract: fake}\ntitle: 'A: B'\naliases:\n  - one\n  - 'two'\ntags: tag\n---\n"))
+	n, err := Parse(t.Context(), []byte("---\n# Body\n[[Target]]\n"), Limits{})
 	require.NoError(t, err)
-	require.Equal(t, "valid", n.FrontmatterState)
-	require.Equal(t, Metadata{Title: "A: B", Aliases: []string{"one", "two"}, Tags: []string{"tag"}}, n.Metadata)
-}
-
-func TestFrontmatterScalars(t *testing.T) {
-	for _, tc := range []struct{ header, title string }{
-		{`title: "a\tb\u00e9"`, "a\tbé"}, {"title: 'it''s good'", "it's good"},
-		{"title: |-\n  first\n  second", "first\nsecond"},
-		{"title: >-\n  first\n  second", "first second"},
-		{"title: one # comment", "one"}, {"title: \"true\"", "true"},
-	} {
-		n, err := Parse(t.Context(), []byte("---\n"+tc.header+"\n---\n"))
-		require.NoError(t, err)
-		require.Equal(t, "valid", n.FrontmatterState, tc.header)
-		require.Equal(t, tc.title, n.Metadata.Title, tc.header)
-	}
-}
-
-func TestFrontmatterUnclosed(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("---\ntitle: X\n# H\n"))
-	require.NoError(t, err)
-	require.Equal(t, "invalid", n.FrontmatterState)
-	require.Zero(t, n.BodyStart)
 	require.Equal(t, "unclosed_frontmatter", n.Diagnostics[0].Code)
-	require.Len(t, n.Headings, 1)
-	n, err = Parse(t.Context(), []byte("intro\n\n---\ntitle: X\n---\n"))
-	require.NoError(t, err)
-	require.Equal(t, "absent", n.FrontmatterState)
-}
-
-func TestFrontmatterResourceLimits(t *testing.T) {
-	for _, tc := range []struct{ resource, header string }{
-		{"frontmatter_bytes", "unknown: " + strings.Repeat("a", 64<<10)},
-		{"yaml_depth", "unknown: " + strings.Repeat("[", 33) + "x" + strings.Repeat("]", 33)},
-		{"yaml_nodes", "unknown: [" + strings.Repeat("x,", 8193) + "x]"},
-		{"aliases", "aliases: [" + strings.Repeat("x,", 256) + "x]"},
-		{"tags", "tags: [" + strings.Repeat("x,", 256) + "x]"},
-		{"title_bytes", "title: " + strings.Repeat("a", 4097)},
-		{"metadata_value_bytes", "aliases: " + strings.Repeat("a", 1025)},
-		{"metadata_value_bytes", "tags: " + strings.Repeat("a", 1025)},
-	} {
-		t.Run(tc.resource, func(t *testing.T) {
-			n, err := Parse(t.Context(), []byte("---\n"+tc.header+"\n---\n# H\n"))
-			requireLimit(t, err, tc.resource)
-			require.Equal(t, Note{}, n)
-		})
+	require.Equal(t, "Body", n.Title)
+	for _, src := range []string{"---\n---\n", "---\n# comment\n---\n"} {
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		require.Equal(t, map[string]any{}, n.Frontmatter.Raw)
 	}
+	n, err = Parse(t.Context(), []byte("\n---\n# Body\n"), Limits{})
+	require.NoError(t, err)
+	require.Nil(t, n.Frontmatter)
 }
 
-func TestFrontmatterFlowWorkBudget(t *testing.T) {
-	b := &budget{work: maxWork - 8192}
-	_, err := parseYAML(t.Context(), []byte("unknown: [\""+strings.Repeat("a\n", 200)+"\"]"), b)
-	requireLimit(t, err, "work_steps")
-}
-
-func TestPropertyFrontmatterUnicodeAndLineEndings(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		count := hegel.Draw(ht, hegel.Integers[int](1, 128))
-		title := strings.Repeat("é", count)
-		lf := []byte("---\ntitle: '" + title + "'\n---\n# H\n")
-		crlf := bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n"))
-		a, err := Parse(ht.Context(), lf)
-		require.NoError(ht, err)
-		b, err := Parse(ht.Context(), crlf)
-		require.NoError(ht, err)
-		require.Equal(ht, title, a.Metadata.Title)
-		require.Equal(ht, a.Metadata, b.Metadata)
-		require.NotEqual(ht, a.SourceSHA256, b.SourceSHA256)
-		require.Equal(ht, "# H\r\n", string(crlf[b.Headings[0].Span.Start:b.Headings[0].Span.End]))
-	}, hegel.WithTestCases(1000))
+func TestYAMLAliasExpansionIsBounded(t *testing.T) {
+	src := "---\na: &a [" + strings.Repeat("x,", 99) + "x]\nb: [" + strings.Repeat("*a,", 99) + "*a]\n---\n# Body\n"
+	n, err := Parse(t.Context(), []byte(src), Limits{})
+	requireLimit(t, err, "yaml_nodes")
+	require.Equal(t, Note{}, n)
 }

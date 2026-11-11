@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -116,7 +117,7 @@ func (s *linkScanner) inlineHTML(start, end int) (int, error) {
 }
 
 func (s *linkScanner) emitAutolink(use, dest Span, email bool) error {
-	if err := limitCount("links", len(s.links)+1, maxLinks); err != nil {
+	if err := limitCount("links", len(s.links)+1, s.b.limits.MaxLinks); err != nil {
 		return err
 	}
 	size := dest.End - dest.Start
@@ -135,7 +136,14 @@ func (s *linkScanner) emitAutolink(use, dest Span, email bool) error {
 	if email {
 		target = "mailto:" + raw
 	}
-	s.links = append(s.links, Link{Span: use, DestinationSpan: dest, Form: "markdown", RawTarget: raw, Target: target})
+	if decoded, err := url.PathUnescape(target); err == nil && utf8.ValidString(decoded) && !strings.ContainsRune(decoded, 0) {
+		target = decoded
+	}
+	link := parsedLink{Span: use, Form: "markdown", RawTarget: raw, Target: target, Label: raw}
+	s.links = append(s.links, link)
+	if s.linkAt != nil {
+		s.linkAt[use.Start] = link
+	}
 	return nil
 }
 
@@ -228,82 +236,4 @@ func (r *htmlRuneReader) ReadRune() (rune, int, error) {
 	return c, size, nil
 }
 
-func htmlEndMatches(ctx context.Context, text []byte, end string, b *budget) (bool, error) {
-	if end == "raw-tags" {
-		for _, tag := range []string{"</script>", "</style>", "</pre>", "</textarea>"} {
-			matched, err := htmlEndMatches(ctx, text, tag, b)
-			if err != nil || matched {
-				return matched, err
-			}
-		}
-		return false, nil
-	}
-	fold := strings.HasPrefix(end, "</")
-	for i := 0; i+len(end) <= len(text); i++ {
-		if err := b.step(ctx, len(end)); err != nil {
-			return false, err
-		}
-		if fold && bytes.EqualFold(text[i:i+len(end)], []byte(end)) || !fold && string(text[i:i+len(end)]) == end {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// Only type-7 complete standalone tags require a paragraph boundary. Raw
-// block tags may interrupt an ordinary paragraph.
-func htmlBlockStart(ctx context.Context, text []byte, generic bool, b *budget) (string, bool, error) {
-	if bytes.HasPrefix(text, []byte("<!--")) {
-		return "-->", true, nil
-	}
-	if bytes.HasPrefix(text, []byte("<?")) {
-		return "?>", true, nil
-	}
-	if bytes.HasPrefix(text, []byte("<![CDATA[")) {
-		return "]]>", true, nil
-	}
-	if len(text) > 2 && text[0] == '<' && text[1] == '!' && asciiLetter(text[2]) {
-		return ">", true, nil
-	}
-	if len(text) < 2 || text[0] != '<' {
-		return "", false, nil
-	}
-	start := 1
-	if text[start] == '/' {
-		start++
-	}
-	i := start
-	for i < len(text) && (asciiLetter(text[i]) || i > start && (text[i] >= '0' && text[i] <= '9' || text[i] == '-')) {
-		if err := b.step(ctx, 1); err != nil {
-			return "", false, err
-		}
-		i++
-	}
-	if i == start || i < len(text) && !strings.ContainsRune(" \t>/", rune(text[i])) {
-		return "", false, nil
-	}
-	tag := text[start:i]
-	for _, name := range []string{"script", "style", "pre", "textarea"} {
-		if start == 1 && bytes.EqualFold(tag, []byte(name)) {
-			if i < len(text) && text[i] == '/' {
-				return "", false, nil
-			}
-			return "raw-tags", true, nil
-		}
-	}
-	for _, name := range []string{"address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search", "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul"} {
-		if bytes.EqualFold(tag, []byte(name)) {
-			return "", true, nil
-		}
-	}
-	if generic {
-		finish, err := htmlTagEnd(ctx, text, 0, len(text), b)
-		if err != nil {
-			return "", false, err
-		}
-		if finish == len(text) {
-			return "", true, nil
-		}
-	}
-	return "", false, nil
-}
+func asciiLetter(c byte) bool { return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' }

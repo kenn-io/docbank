@@ -19,11 +19,11 @@ type displayToken struct {
 type headingDisplay struct {
 	ctx   context.Context
 	src   []byte
-	links map[int]Link
+	links map[int]parsedLink
 	b     *budget
 }
 
-func headingText(ctx context.Context, src []byte, span Span, links map[int]Link, b *budget) (string, error) {
+func headingText(ctx context.Context, src []byte, span Span, links map[int]parsedLink, b *budget) (string, error) {
 	// Account for token strings, assembled display and whitespace normalization
 	// before materializing any of them. Input is a source span, never a rendition.
 	if err := b.reserveStrings(span.End - span.Start); err != nil {
@@ -73,7 +73,7 @@ func (d *headingDisplay) render(start, end, depth int) (string, error) {
 				first++
 			}
 			var text string
-			if link.Form == "wiki" {
+			if link.Form == "wikilink" || link.Form == "embed" {
 				labelStart := -1
 				for j := first + 2; j < link.Span.End-2; j++ {
 					if err := d.b.step(d.ctx, 1); err != nil {
@@ -331,5 +331,5 @@ func (d *headingDisplay) labelEnd(open, end int) (int, error) {
 			}
 		}
 	}
-	return 0, ErrInvalidArtifact
+	return 0, ErrInvalidInput
 }

@@ -7,23 +7,23 @@ const (
 	maxFrontmatter = 64 << 10
 	maxLines       = 65536
 	maxHeadings    = 4096
-	maxLinks       = 8192
+	maxLinks       = 10000
 	maxMetadata    = 256
+	maxKeys        = 64
 	maxTarget      = 4096
-	maxTitle       = 4096
 	maxValue       = 1024
 	maxYAMLDepth   = 32
 	maxYAMLNodes   = 8192
 	maxDepth       = 128
 	maxNodes       = 262144
-	maxWork        = 16777216
-	maxDerived     = 8 << 20
-	maxArtifact    = 16 << 20
+	maxWork        = 64 << 20
+	maxDerived     = 16 << 20
 	maxDiagnostics = 32
 )
 
 type budget struct {
 	work, derived, nodes int
+	limits               Limits
 }
 
 func addLimit(resource string, value *int, n, limit int) error {
@@ -68,4 +68,23 @@ func (b *budget) node(ctx context.Context, depth int) error {
 func limitCount(resource string, n, limit int) error {
 	value := 0
 	return addLimit(resource, &value, n, limit)
+}
+
+func normalizeLimits(l Limits) (Limits, error) {
+	for _, field := range []struct {
+		value *int
+		hard  int
+	}{
+		{&l.MaxBytes, maxInput}, {&l.MaxHeadings, maxHeadings}, {&l.MaxLinks, maxLinks},
+		{&l.MaxFrontmatterKeys, maxKeys}, {&l.MaxValuesPerKey, maxMetadata},
+		{&l.MaxValueBytes, maxValue}, {&l.MaxDiagnostics, maxDiagnostics},
+	} {
+		if *field.value < 0 || *field.value > field.hard {
+			return Limits{}, ErrInvalidInput
+		}
+		if *field.value == 0 {
+			*field.value = field.hard
+		}
+	}
+	return l, nil
 }

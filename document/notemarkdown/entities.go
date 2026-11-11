@@ -1,9 +1,10 @@
 package notemarkdown
 
 import (
-	"github.com/yuin/goldmark/util"
 	"strconv"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // Candidates are bounded to 34 source bytes by both callers. CommonMark

@@ -3,26 +3,7 @@ package notemarkdown
 import (
 	"context"
 	"crypto/sha256"
-	"unicode/utf8"
 )
-
-func validUTF8(ctx context.Context, text string, b *budget) error {
-	return validateText(ctx, text, false, b)
-}
-
-func validateText(ctx context.Context, text string, rejectNUL bool, b *budget) error {
-	for i := 0; i < len(text); {
-		if err := b.step(ctx, 1); err != nil {
-			return err
-		}
-		r, width := utf8.DecodeRuneInString(text[i:])
-		if r == utf8.RuneError && width == 1 || rejectNUL && r == 0 {
-			return ErrInvalidArtifact
-		}
-		i += width
-	}
-	return nil
-}
 
 // Fixed-size digest keys keep map hashing bounded; collisions are compared in
 // cancellable chunks rather than assumed to be identical strings.

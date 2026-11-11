@@ -3,1026 +3,251 @@ package notemarkdown
 import (
 	"bytes"
 	"context"
+	"sort"
+
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 type sourceBlock struct {
-	span                      Span
-	content                   Span
-	depth, level              int
-	root                      bool
+	span, content             Span // raw physical heading span, compact inline source
+	level                     int
 	paragraph, paragraphStart bool
-	continuation              bool
 }
 
-// Containers own fenced/raw blocks. Dropping an enclosing quote/list ends
-// its unclosed child block before the next physical line is classified.
-type blockContainer struct {
-	kind   byte // q quote, l list item
-	marker byte // list delimiter; siblings need not start at 1
-	indent int  // list content indentation relative to its parent
-	empty  bool // list item has not yet acquired content
+type blockPart struct {
+	segments        []text.Segment
+	level, pos, end int
 }
 
-func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) ([]sourceBlock, error) {
-	var blocks []sourceBlock
-	var containers []blockContainer
-	fenceChar := byte(0)
-	fenceWidth := 0
-	blockDepth := 0
-	htmlEnd := ""
-	inHTML := false
-	paragraph := false
-	paragraphFirst := -1
-	nonDefinitions := map[int]bool{}
-	probes := map[int]*definitionProbe{}
-	for pos := bodyStart; pos < len(original); {
-		line, next, err := sourceLineAt(ctx, original, pos, b)
-		if err != nil {
-			return nil, err
-		}
-		raw := original[line.Start:line.End]
-		content := 0
-		// A partially consumed tab can leave spaces before the next byte.
-		virtualIndent := 0
-		if paragraph && len(blocks) > 0 && blocks[len(blocks)-1].span.End == line.Start {
-			check, candidate, _, _, matched, err := definitionBoundary(ctx, raw, containers, b)
-			if err != nil {
-				return nil, err
-			}
-			if check {
-				only, err := paragraphDefinitionsOnly(ctx, original, blocks, paragraphFirst, nonDefinitions, probes, b)
-				if err != nil {
-					return nil, err
-				}
-				if only {
-					title := false
-					if matched && candidate < len(raw) && (raw[candidate] == '\'' || raw[candidate] == '"' || raw[candidate] == '(') {
-						title, err = continuationTitle(ctx, original, line.Start+candidate, containers, b)
-						if err != nil {
-							return nil, err
-						}
-					}
-					if !title {
-						paragraph = false
-					}
-				}
-			}
-		}
-		matched := 0
-		lazy := false
-		for matched < len(containers) {
-			c := containers[matched]
-			remainingBlank := len(bytes.Trim(raw[content:], " \t")) == 0
-			if c.kind == 'q' {
-				end, columns, err := leadingIndent(ctx, raw, content, b)
-				if err != nil {
-					return nil, err
-				}
-				columns += virtualIndent
-				if columns <= 3 && end < len(raw) && raw[end] == '>' {
-					content, virtualIndent, err = quoteSpace(ctx, raw, end+1, b)
-					if err != nil {
-						return nil, err
-					}
-				} else if interrupt, err := blockInterrupt(ctx, raw[content:], 0, b); err != nil {
-					return nil, err
-				} else if paragraph && !remainingBlank && !interrupt {
-					lazy = true
-					matched = len(containers)
-					break
-				} else {
-					break
-				}
-			} else {
-				if remainingBlank {
-					if c.empty {
-						break
-					}
-					matched++
-					continue
-				}
-				end, columns, err := leadingIndent(ctx, raw, content, b)
-				if err != nil {
-					return nil, err
-				}
-				columns += virtualIndent
-				if columns >= c.indent {
-					used := min(virtualIndent, c.indent)
-					virtualIndent -= used
-					column, err := visualColumn(ctx, raw, content, b)
-					if err != nil {
-						return nil, err
-					}
-					for content < end && used < c.indent {
-						if raw[content] == '\t' {
-							width := 4 - column%4
-							used += width
-							column += width
-						} else {
-							used++
-							column++
-						}
-						content++
-					}
-					virtualIndent += used - c.indent
-					if len(bytes.Trim(raw[content:], " \t")) != 0 {
-						containers[matched].empty = false
-					}
-				} else if interrupt, err := blockInterrupt(ctx, raw[content:], c.marker, b); err != nil {
-					return nil, err
-				} else if paragraph && !interrupt {
-					lazy = true
-					matched = len(containers)
-					break
-				} else {
-					break
-				}
-			}
-			matched++
-		}
-		if matched < len(containers) {
-			containers = containers[:matched]
-			paragraph = false
-			if blockDepth > matched {
-				fenceChar = 0
-				inHTML = false
-				htmlEnd = ""
-			}
-		}
-		blank := len(bytes.Trim(raw[content:], " \t")) == 0
-		if blank {
-			if fenceChar != 0 {
-				pos = next
-				continue
-			}
-			if inHTML && htmlEnd == "" {
-				inHTML = false
-			}
-			paragraph = false
-			pos = next
-			continue
-		}
-		// Reference definitions alone do not keep a paragraph open for block
-		// interruption, including inside a container.
-		if paragraph && !lazy && fenceChar == 0 && !inHTML && len(blocks) > 0 {
-			previous := &blocks[len(blocks)-1]
-			start, indent, err := leadingIndent(ctx, raw, content, b)
-			if err != nil {
-				return nil, err
-			}
-			_, list := listMarker(raw, start)
-			_, html, err := htmlBlockStart(ctx, bytes.Trim(raw[start:], " \t"), true, b)
-			if err != nil {
-				return nil, err
-			}
-			if (list || html) && indent+virtualIndent <= 3 && previous.paragraph && previous.depth == len(containers) && previous.span.End == line.Start {
-				only, err := paragraphDefinitionsOnly(ctx, original, blocks, paragraphFirst, nonDefinitions, probes, b)
-				if err != nil {
-					return nil, err
-				}
-				if only {
-					paragraph = false
-				}
-			}
-		}
-		if fenceChar == 0 && !inHTML && !lazy {
-			for {
-				end, columns, err := leadingIndent(ctx, raw, content, b)
-				if err != nil {
-					return nil, err
-				}
-				columns += virtualIndent
-				if columns >= 4 {
-					break
-				}
-				var c blockContainer
-				after := end
-				if end < len(raw) && raw[end] == '>' {
-					c.kind = 'q'
-					after, virtualIndent, err = quoteSpace(ctx, raw, after+1, b)
-					if err != nil {
-						return nil, err
-					}
-				} else if markerEnd, ok := listMarker(raw, end); ok && (!paragraph || listCanInterrupt(raw, end, markerEnd)) {
-					candidate := bytes.Trim(raw[end:], " \t")
-					setext, err := setextLevel(ctx, candidate, b)
-					if err != nil {
-						return nil, err
-					}
-					thematic, err := thematicBreak(ctx, candidate, b)
-					if err != nil {
-						return nil, err
-					}
-					if thematic || paragraph && setext > 0 {
-						break
-					}
-					c.kind = 'l'
-					c.marker = raw[markerEnd-1]
-					after = markerEnd
-					virtualIndent = 0
-					padEnd, padding, err := leadingIndent(ctx, raw, after, b)
-					if err != nil {
-						return nil, err
-					}
-					if padEnd == len(raw) {
-						c.empty = true
-						padding = 1
-					} else if padding == 0 {
-						padding = 1
-					} else if padding > 4 {
-						if raw[after] == '\t' {
-							column, err := visualColumn(ctx, raw, after, b)
-							if err != nil {
-								return nil, err
-							}
-							virtualIndent = 3 - column%4
-						}
-						padding = 1
-						padEnd = after + 1
-					}
-					c.indent = columns + markerEnd - end + padding
-					after = padEnd
-				} else {
-					break
-				}
-				if len(containers) >= maxDepth {
-					return nil, &LimitError{Resource: "ast_depth"}
-				}
-				if err := b.node(ctx, len(containers)+1); err != nil {
-					return nil, err
-				}
-				containers = append(containers, c)
-				content = after
-				paragraph = false
-			}
-		}
-		if len(bytes.Trim(raw[content:], " \t")) == 0 {
-			paragraph = false
-			pos = next
-			continue
-		}
-		depth := len(containers)
-		root := depth == 0
-		if err := b.node(ctx, depth+1); err != nil {
-			return nil, err
-		}
-		text := raw[content:]
-		trimmed := bytes.Trim(text, " \t")
-		if inHTML {
-			if htmlEnd != "" {
-				matched, err := htmlEndMatches(ctx, text, htmlEnd, b)
-				if err != nil {
-					return nil, err
-				}
-				if matched {
-					inHTML = false
-					htmlEnd = ""
-				}
-			}
-			pos = next
-			continue
-		}
-		if fenceChar != 0 {
-			_, indent, err := leadingIndent(ctx, raw, content, b)
-			if err != nil {
-				return nil, err
-			}
-			n, err := byteRun(ctx, trimmed, fenceChar, b)
-			if err != nil {
-				return nil, err
-			}
-			if indent+virtualIndent <= 3 && n >= fenceWidth && len(bytes.Trim(trimmed[n:], " \t")) == 0 {
-				fenceChar = 0
-			}
-			pos = next
-			continue
-		}
-		prefixEnd := content
-		localStart, indent, err := leadingIndent(ctx, raw, content, b)
-		if err != nil {
-			return nil, err
-		}
-		indent += virtualIndent
-		if indent >= 4 && !paragraph {
-			pos = next
-			continue
-		}
-		if indent <= 3 {
-			content = localStart
-			text = raw[content:]
-			trimmed = bytes.Trim(text, " \t")
-		}
-		if indent <= 3 {
-			marker, n, err := fenceOpener(ctx, trimmed, b)
-			if err != nil {
-				return nil, err
-			}
-			if marker != 0 {
-				fenceChar, fenceWidth, blockDepth = marker, n, depth
-				paragraph = false
-				pos = next
-				continue
-			}
-		}
-		genericHTML := !paragraph
-		end, yes, err := htmlBlockStart(ctx, trimmed, genericHTML, b)
-		if err != nil {
-			return nil, err
-		}
-		if yes && indent <= 3 {
-			inHTML, htmlEnd, blockDepth = true, end, depth
-			paragraph = false
-			if end != "" {
-				matched, err := htmlEndMatches(ctx, trimmed, end, b)
-				if err != nil {
-					return nil, err
-				}
-				if matched {
-					inHTML = false
-					htmlEnd = ""
-				}
-			}
-			pos = next
-			continue
-		}
-		level, headingStart, headingEnd, err := atxHeading(ctx, text, b)
-		if err != nil {
-			return nil, err
-		}
-		if level > 0 && indent <= 3 {
-			block := sourceBlock{span: Span{line.Start, next}, content: Span{line.Start + content + headingStart, line.Start + content + headingEnd}, depth: depth, root: root}
-			if root {
-				block.level = level
-			}
-			blocks = append(blocks, block)
-			paragraph = false
-			pos = next
-			continue
-		}
-		setext, err := setextLevel(ctx, trimmed, b)
-		if err != nil {
-			return nil, err
-		}
-		if paragraph && !lazy && len(blocks) > 0 && setext > 0 && indent <= 3 {
-			previous := &blocks[len(blocks)-1]
-			if previous.depth == depth && previous.level == 0 && previous.span.End == line.Start {
-				if root {
-					headingStart, err := leadingDefinitionsEnd(ctx, original, previous.content, b)
-					if err != nil {
-						return nil, err
-					}
-					if headingStart == previous.content.Start {
-						previous.paragraph = false
-						previous.level = setext
-						previous.span.End = next
-					} else if headingStart < previous.content.End {
-						end := previous.content.End
-						previous.content.End = headingStart
-						previous.span.End = headingStart
-						blocks = append(blocks, sourceBlock{span: Span{headingStart, next}, content: Span{headingStart, end}, root: true, level: setext})
-					} else {
-						paragraph = false
-					}
-				}
-				if paragraph {
-					paragraph = false
-					pos = next
-					continue
-				}
-			}
-		}
-		thematic, err := thematicBreak(ctx, trimmed, b)
-		if err != nil {
-			return nil, err
-		}
-		if thematic && indent <= 3 {
-			paragraph = false
-			pos = next
-			continue
-		}
-		block := sourceBlock{span: Span{line.Start, next}, content: Span{line.Start + content, line.End}, depth: depth, root: root, paragraph: true, paragraphStart: !paragraph}
-		if paragraph && len(blocks) > 0 {
-			previous := &blocks[len(blocks)-1]
-			if previous.level == 0 && previous.root == root && previous.depth == depth && previous.span.End == line.Start {
-				if prefixEnd == 0 {
-					previous.span.End = next
-					previous.content.End = line.End
-					pos = next
-					continue
-				}
-				block.continuation = true
-			}
-		}
-		if !block.continuation {
-			paragraphFirst = len(blocks)
-		}
-		blocks = append(blocks, block)
-		paragraph = true
-		pos = next
-	}
-	return blocks, nil
-}
+// Goldmark's callbacks have no error return. Only this private sentinel is
+// recovered; unexpected panics retain their normal behavior.
+type parseAbort struct{ err error }
 
-// Check each continuation boundary before searching beyond it for the closing delimiter.
-func continuationTitle(ctx context.Context, src []byte, start int, containers []blockContainer, b *budget) (bool, error) {
-	closing := src[start]
-	if closing == '(' {
-		closing = ')'
-	}
-	escaped := false
-	for pos := start; pos < len(src); {
-		line, next, err := sourceLineAt(ctx, src, pos, b)
-		if err != nil {
-			return false, err
-		}
-		if pos != start {
-			text := src[line.Start:line.End]
-			_, content, containerStart, virtual, matched, err := definitionBoundary(ctx, text, containers, b)
-			if err != nil {
-				return false, err
-			}
-			if !matched || len(bytes.Trim(text[content:], " \t")) == 0 {
-				return false, nil
-			}
-			interrupt, err := blockInterruptIndent(ctx, text[containerStart:], 0, virtual, b)
-			if err != nil || interrupt {
-				return false, err
-			}
-		}
-		first := pos
-		if pos == start {
-			first++
-		}
-		for i := first; i < next; i++ {
-			if err := b.step(ctx, 1); err != nil {
-				return false, err
-			}
-			if escaped {
-				escaped = false
-			} else if src[i] == '\\' {
-				escaped = true
-			} else if src[i] == closing {
-				scanner := linkScanner{ctx: ctx, src: src, b: b}
-				_, ok, err := scanner.definitionTitle(start, line.End)
-				return ok, err
-			}
-		}
-		pos = next
-	}
-	return false, nil
-}
-
-func definitionBoundary(ctx context.Context, raw []byte, containers []blockContainer, b *budget) (bool, int, int, int, bool, error) {
-	pos, virtual := 0, 0
-	for _, container := range containers {
-		end, columns, err := leadingIndent(ctx, raw, pos, b)
-		if err != nil {
-			return false, 0, 0, 0, false, err
-		}
-		columns += virtual
-		if container.kind == 'q' {
-			if columns > 3 || end == len(raw) || raw[end] != '>' {
-				return true, end, 0, 0, false, nil
-			}
-			pos, virtual, err = quoteSpace(ctx, raw, end+1, b)
-			if err != nil {
-				return false, 0, 0, 0, false, err
-			}
-			continue
-		}
-		if columns < container.indent {
-			return true, end, 0, 0, false, nil
-		}
-		used := min(virtual, container.indent)
-		virtual -= used
-		column, err := visualColumn(ctx, raw, pos, b)
-		if err != nil {
-			return false, 0, 0, 0, false, err
-		}
-		for pos < end && used < container.indent {
-			width := 1
-			if raw[pos] == '\t' {
-				width = 4 - column%4
-			}
-			used += width
-			column += width
-			pos++
-		}
-		virtual += used - container.indent
-	}
-	end, indent, err := leadingIndent(ctx, raw, pos, b)
+func mustParse(err error) {
 	if err != nil {
-		return false, 0, 0, 0, false, err
+		panic(parseAbort{err})
 	}
-	indent += virtual
-	_, list := listMarker(raw, end)
-	return indent >= 4 || list || end < len(raw) && raw[end] == '<' || len(containers) > 0 && end == len(raw), end, pos, virtual, true, nil
 }
 
-func paragraphDefinitionsOnly(ctx context.Context, src []byte, blocks []sourceBlock, first int, nonDefinitions map[int]bool, probes map[int]*definitionProbe, b *budget) (bool, error) {
-	last := len(blocks) - 1
-	if first < 0 || first > last || !blocks[last].paragraph {
-		return false, nil
-	}
-	key := blocks[first].span.Start
-	if nonDefinitions[key] {
-		return false, nil
-	}
-	if blocks[first].content.Start >= len(src) || src[blocks[first].content.Start] != '[' {
-		nonDefinitions[key] = true
-		return false, nil
-	}
-	probe := probes[key]
-	if probe == nil {
-		probe = &definitionProbe{block: first, offset: blocks[first].content.Start + 1, anchor: -1}
-		probes[key] = probe
-	}
-	for !probe.closed && probe.block <= last {
-		block := blocks[probe.block]
-		probe.offset = max(probe.offset, block.content.Start)
-		for probe.offset < block.content.End {
-			if err := b.step(ctx, 1); err != nil {
-				return false, err
-			}
-			c := src[probe.offset]
-			probe.offset++
-			probe.bytes++
-			if probe.bytes > 4*999 {
-				nonDefinitions[key] = true
-				return false, nil
-			}
-			if probe.escaped {
-				probe.escaped = false
-				continue
-			}
-			if c == '\\' {
-				probe.escaped = true
-				continue
-			}
-			if c == '[' {
-				nonDefinitions[key] = true
-				return false, nil
-			}
-			if c == ']' {
-				probe.closed = true
-				break
-			}
-		}
-		if !probe.closed && probe.block < last {
-			probe.block++
-			probe.offset = blocks[probe.block].content.Start
-			probe.escaped = false
-		} else {
-			break
-		}
-	}
-	if !probe.closed {
-		return false, nil
-	}
-	if probe.wait != 0 {
-		for probe.waitBlock <= last {
-			block := blocks[probe.waitBlock]
-			probe.waitOffset = max(probe.waitOffset, block.content.Start)
-			for probe.waitOffset < block.content.End {
-				if err := b.step(ctx, 1); err != nil {
-					return false, err
-				}
-				c := src[probe.waitOffset]
-				probe.waitOffset++
-				if probe.waitEscaped {
-					probe.waitEscaped = false
-					continue
-				}
-				if c == '\\' {
-					probe.waitEscaped = true
-					continue
-				}
-				if c == probe.wait {
-					probe.wait = 0
-					break
-				}
-			}
-			if probe.wait == 0 {
-				break
-			}
-			if probe.waitBlock == last {
-				return false, nil
-			}
-			probe.waitBlock++
-			probe.waitOffset = blocks[probe.waitBlock].content.Start
-			probe.waitEscaped = false
-		}
-	}
-	scanFirst := first
-	if probe.anchor >= 0 {
-		scanFirst = probe.anchorBlock
-	}
-	if scanFirst == last {
-		content := blocks[last].content
-		if probe.anchor >= 0 {
-			content.Start = probe.anchor
-		}
-		end, lastStart, err := leadingDefinitionProgress(ctx, src, content, b)
-		if err == nil && lastStart >= 0 {
-			probe.anchor, probe.anchorBlock = lastStart, last
-		}
-		if err == nil && end < blocks[last].content.End && !couldBeDefinition(src[end:blocks[last].content.End]) {
-			nonDefinitions[key] = true
-		} else if err == nil && end < blocks[last].content.End {
-			suffix := src[end:blocks[last].content.End]
-			var invalid bool
-			invalid, err = invalidDefinitionDestination(ctx, suffix, b)
-			if invalid {
-				nonDefinitions[key] = true
-			} else if err == nil {
-				probe.wait, err = pendingDefinitionDelimiter(ctx, suffix, b)
-			}
-			probe.waitBlock, probe.waitOffset = last, blocks[last].content.End
-		}
-		return end >= blocks[last].content.End, err
-	}
-	start, end := blocks[scanFirst].span.Start, blocks[last].span.End
-	rebased := make([]sourceBlock, 0, last-scanFirst+1)
-	for _, block := range blocks[scanFirst : last+1] {
-		if err := b.node(ctx, 1); err != nil {
-			return false, err
-		}
-		block.span.Start -= start
-		block.span.End -= start
-		block.content.Start -= start
-		block.content.End -= start
-		rebased = append(rebased, block)
-	}
-	rebased[0].continuation = false
-	if probe.anchor >= 0 {
-		rebased[0].content.Start = probe.anchor - start
-	}
-	view, joined, offsets, err := prepareLinkSource(ctx, src[start:end], rebased, b)
-	if err != nil {
-		return false, err
-	}
-	content := joined[len(joined)-1].content
-	position, lastStart, err := leadingDefinitionProgress(ctx, view, content, b)
-	if err == nil && lastStart >= 0 {
-		originalStart := originalLinkSpan(Span{lastStart, lastStart}, offsets).Start + start
-		index := scanFirst
-		for index < last && blocks[index].span.End <= originalStart {
-			if err := b.step(ctx, 1); err != nil {
-				return false, err
-			}
-			index++
-		}
-		probe.anchor, probe.anchorBlock = originalStart, index
-	}
-	if err == nil && position < content.End && !couldBeDefinition(view[position:content.End]) {
-		nonDefinitions[key] = true
-	} else if err == nil && position < content.End {
-		suffix := view[position:content.End]
-		var invalid bool
-		invalid, err = invalidDefinitionDestination(ctx, suffix, b)
-		if invalid {
-			nonDefinitions[key] = true
-		} else if err == nil {
-			probe.wait, err = pendingDefinitionDelimiter(ctx, suffix, b)
-		}
-		probe.waitBlock, probe.waitOffset = last, blocks[last].content.End
-	}
-	return position >= content.End, err
+type blockGuard struct {
+	parser.BlockParser
+	ctx  context.Context
+	b    *budget
+	ends map[ast.Node]int
 }
 
-// Once a destination fails at a physical line ending, later paragraph lines
-// cannot complete it. A destination that has not started may use the next line.
-func invalidDefinitionDestination(ctx context.Context, text []byte, b *budget) (bool, error) {
-	text = bytes.TrimLeft(text, " \t\r\n")
-	if len(text) == 0 || text[0] != '[' {
-		return false, nil
+func (g *blockGuard) Open(parent ast.Node, r text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	mustParse(g.b.step(g.ctx, 1))
+	if len(pc.OpenedBlocks()) > maxDepth {
+		panic(parseAbort{&LimitError{Resource: "ast_depth"}})
 	}
-	i := 1
-	for i < len(text) && text[i] != ']' {
-		if err := b.step(ctx, 1); err != nil {
-			return false, err
+	_, before := r.Position()
+	n, state := g.BlockParser.Open(parent, r, pc)
+	if n != nil {
+		mustParse(g.b.node(g.ctx, len(pc.OpenedBlocks())+1))
+		if _, ok := n.(*ast.Heading); ok {
+			// Save the Setext underline before Goldmark replaces its Source
+			// with the paragraph's inline content during Close.
+			g.ends[n] = before.Stop
 		}
-		if text[i] == '\\' && i+1 < len(text) {
-			i++
-		}
-		i++
 	}
-	if i+1 >= len(text) || text[i+1] != ':' {
-		return false, nil
-	}
-	i += 2
-	for i < len(text) && linkSpace(text[i]) {
-		if err := b.step(ctx, 1); err != nil {
-			return false, err
-		}
-		i++
-	}
-	if i == len(text) {
-		return false, nil
-	}
-	line, _, err := sourceLineAt(ctx, text, i, b)
-	if err != nil {
-		return false, err
-	}
-	scanner := linkScanner{ctx: ctx, src: text, b: b}
-	dest, tail, ok, err := scanner.destination(i, line.End)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return line.End < len(text), nil
-	}
-	if dest.Start == dest.End && text[i] != '<' {
-		return true, nil
-	}
-	beforeSpace := tail
-	for tail < line.End && (text[tail] == ' ' || text[tail] == '\t') {
-		if err := b.step(ctx, 1); err != nil {
-			return false, err
-		}
-		tail++
-	}
-	if tail == line.End {
-		return false, nil
-	}
-	if tail == beforeSpace || text[tail] != '\'' && text[tail] != '"' && text[tail] != '(' {
-		return true, nil
-	}
-	finish, complete, err := scanner.title(tail, len(text))
-	if err != nil || !complete {
-		return false, err
-	}
-	titleLine, _, err := sourceLineAt(ctx, text, finish, b)
-	if err != nil {
-		return false, err
-	}
-	for finish < titleLine.End && (text[finish] == ' ' || text[finish] == '\t') {
-		if err := b.step(ctx, 1); err != nil {
-			return false, err
-		}
-		finish++
-	}
-	return finish != titleLine.End, nil
+	_, after := r.Position()
+	mustParse(g.b.step(g.ctx, max(0, after.Start-before.Start)))
+	return n, state
+}
+func (g *blockGuard) Continue(n ast.Node, r text.Reader, pc parser.Context) parser.State {
+	mustParse(g.b.step(g.ctx, 1))
+	_, before := r.Position()
+	state := g.BlockParser.Continue(n, r, pc)
+	_, after := r.Position()
+	mustParse(g.b.step(g.ctx, max(0, after.Start-before.Start)))
+	return state
+}
+func (g *blockGuard) Close(n ast.Node, r text.Reader, pc parser.Context) {
+	mustParse(g.b.step(g.ctx, 1))
+	g.BlockParser.Close(n, r, pc)
 }
 
-type definitionProbe struct {
-	block, offset, bytes  int
-	closed, escaped       bool
-	anchor, anchorBlock   int
-	wait                  byte
-	waitBlock, waitOffset int
-	waitEscaped           bool
+type referenceGuard struct {
+	ctx   context.Context
+	b     *budget
+	parts *[]blockPart
 }
 
-// An incomplete label or title cannot become complete until its closing byte
-// arrives. Remember it so growing container paragraphs need not be rebuilt.
-func pendingDefinitionDelimiter(ctx context.Context, text []byte, b *budget) (byte, error) {
-	text = bytes.TrimLeft(text, " \t\r\n")
-	if len(text) == 0 || text[0] != '[' {
-		return 0, nil
+func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Context) {
+	mustParse(g.b.step(g.ctx, 1))
+	segments := n.Source()
+	if len(segments) == 0 {
+		return
 	}
-	i := 1
-	for i < len(text) && text[i] != ']' {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, err
-		}
-		if text[i] == '\\' && i+1 < len(text) {
-			i++
-		}
-		i++
+	first := bytes.TrimLeft(r.Source()[segments[0].Start:segments[0].Stop], " \t\r\n")
+	if len(first) == 0 || first[0] != '[' {
+		return
 	}
-	if i == len(text) {
-		return ']', nil
+	// Use the adopted metered reference recognizer on Goldmark's paragraph
+	// segments. Goldmark calls this during block interruption, before deciding
+	// whether a following list, HTML block or Setext underline starts a block.
+	var view []byte
+	ends := make([]int, 0, len(segments))
+	for _, seg := range segments {
+		mustParse(g.b.step(g.ctx, seg.Stop-seg.Start))
+		mustParse(g.b.reserveStrings(seg.Stop - seg.Start))
+		view = append(view, r.Source()[seg.Start:seg.Stop]...)
+		ends = append(ends, len(view))
 	}
-	if i+1 >= len(text) || text[i+1] != ':' {
-		return 0, nil
-	}
-	i += 2
-	for i < len(text) && linkSpace(text[i]) {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, err
-		}
-		i++
-	}
-	scanner := linkScanner{ctx: ctx, src: text, b: b}
-	_, tail, ok, err := scanner.destination(i, len(text))
-	if err != nil || !ok {
-		return 0, err
-	}
-	for tail < len(text) && linkSpace(text[tail]) {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, err
-		}
-		tail++
-	}
-	if tail == len(text) || text[tail] != '\'' && text[tail] != '"' && text[tail] != '(' {
-		return 0, nil
-	}
-	_, complete, err := scanner.title(tail, len(text))
-	if err != nil || complete {
-		return 0, err
-	}
-	if text[tail] == '(' {
-		return ')', nil
-	}
-	return text[tail], nil
-}
-
-func couldBeDefinition(text []byte) bool {
-	text = bytes.TrimLeft(text, " \t\r\n")
-	return len(text) > 0 && text[0] == '[' && possibleReferenceDefinition(text)
-}
-
-// An unfinished label may become a definition on a continuation line.
-func possibleReferenceDefinition(text []byte) bool {
-	limit := min(len(text), 4*999+1)
-	for i := 1; i < limit; i++ {
-		if text[i] == '\\' && i+1 < limit {
-			i++
-			continue
-		}
-		if text[i] == '[' {
-			return false
-		}
-		if text[i] == ']' {
-			return i+1 == len(text) || text[i+1] == ':'
-		}
-	}
-	return len(text) <= 4*999
-}
-
-func quoteSpace(ctx context.Context, raw []byte, pos int, b *budget) (int, int, error) {
-	if pos >= len(raw) || raw[pos] != ' ' && raw[pos] != '\t' {
-		return pos, 0, nil
-	}
-	if raw[pos] == ' ' {
-		return pos + 1, 0, nil
-	}
-	column, err := visualColumn(ctx, raw, pos, b)
-	if err != nil {
-		return 0, 0, err
-	}
-	return pos + 1, 3 - column%4, nil
-}
-
-// Leading reference definitions belong to the paragraph, not its heading.
-func leadingDefinitionsEnd(ctx context.Context, src []byte, content Span, b *budget) (int, error) {
-	end, _, err := leadingDefinitionProgress(ctx, src, content, b)
-	return end, err
-}
-
-// Retain the last definition's start so a following title can still attach.
-func leadingDefinitionProgress(ctx context.Context, src []byte, content Span, b *budget) (int, int, error) {
-	scanner := linkScanner{ctx: ctx, src: src, b: b, refs: map[string]referenceDefinition{}}
-	pos := content.Start
-	lastStart := -1
-	for pos < content.End {
-		line, next, err := sourceLineAt(ctx, src, pos, b)
-		if err != nil {
-			return 0, 0, err
-		}
-		line.End = min(line.End, content.End)
-		end, ok, err := scanner.definition(line, content.End)
-		if err != nil {
-			return 0, 0, err
-		}
+	scanner := linkScanner{ctx: g.ctx, src: view, b: g.b, refs: map[string]referenceDefinition{}}
+	pos, removed := 0, 0
+	for pos < len(view) {
+		line, next, err := sourceLineAt(g.ctx, view, pos, g.b)
+		mustParse(err)
+		end, ok, err := scanner.definition(line, len(view))
+		mustParse(err)
 		if !ok {
 			break
 		}
-		lastStart = pos
-		pos = max(next, definitionNext(src, end))
+		pos = max(next, definitionNext(view, end))
+		removed = sort.SearchInts(ends, pos) + 1
+		removed = min(removed, len(segments))
 	}
-	return pos, lastStart, nil
-}
-
-func leadingIndent(ctx context.Context, raw []byte, start int, b *budget) (end, columns int, err error) {
-	end = start
-	column, err := visualColumn(ctx, raw, start, b)
-	if err != nil {
-		return 0, 0, err
-	}
-	for end < len(raw) && (raw[end] == ' ' || raw[end] == '\t') {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, 0, err
-		}
-		if raw[end] == '\t' {
-			width := 4 - column%4
-			columns += width
-			column += width
+	if removed > 0 {
+		mustParse(g.b.node(g.ctx, 1))
+		before := append([]text.Segment(nil), segments[:removed]...)
+		*g.parts = append(*g.parts, blockPart{segments: before, pos: before[0].Start})
+		if removed == len(segments) {
+			// Goldmark may Close a transformed paragraph again. Leave its
+			// original Source attached, as its own transformer does.
+			n.Parent().RemoveChild(n)
 		} else {
-			columns++
-			column++
+			n.SetSource(segments[removed:])
 		}
-		end++
 	}
-	return
+
 }
 
-// Container prefixes contain only ASCII markers and whitespace. Count their
-// columns so tabs after a marker use the tab stop of the original line.
-func visualColumn(ctx context.Context, raw []byte, end int, b *budget) (int, error) {
-	column := 0
-	for i := range end {
+// scanBlocks builds one compact inline view from Goldmark's eligible blocks.
+// Each source segment retains an original-byte change point; container markers
+// disappear only from the view. Neither source bytes nor returned spans change.
+func scanBlocks(ctx context.Context, original []byte, bodyStart int, b *budget) (view []byte, blocks []sourceBlock, offsets []linkSourceOffset, err error) {
+	defer func() {
+		if caught := recover(); caught != nil {
+			if abort, ok := caught.(parseAbort); ok {
+				view, blocks, offsets, err = nil, nil, nil, abort.err
+			} else {
+				panic(caught)
+			}
+		}
+	}()
+	if err := b.step(ctx, 1); err != nil {
+		return nil, nil, nil, err
+	}
+	if err := b.reserveStrings(len(original) - bodyStart); err != nil {
+		return nil, nil, nil, err
+	}
+	src := bytes.Clone(original[bodyStart:])
+	// Bare CR is a CommonMark line ending; Goldmark expects LF. Replacement
+	// preserves byte widths, and CRLF is already understood by Goldmark.
+	for i := range src {
 		if err := b.step(ctx, 1); err != nil {
-			return 0, err
+			return nil, nil, nil, err
 		}
-		if raw[i] == '\t' {
-			column += 4 - column%4
-		} else {
-			column++
+		if src[i] == '\r' && (i+1 == len(src) || src[i+1] != '\n') {
+			src[i] = '\n'
 		}
 	}
-	return column, nil
-}
-
-func listMarker(raw []byte, start int) (int, bool) {
-	if start >= len(raw) {
-		return 0, false
+	var parts []blockPart
+	ends := map[ast.Node]int{}
+	parsers := []parser.BlockParser{
+		parser.NewSetextHeadingParser(), parser.NewThematicBreakParser(),
+		parser.NewListParser(), parser.NewListItemParser(), parser.NewCodeBlockParser(),
+		parser.NewATXHeadingParser(), parser.NewFencedCodeBlockParser(),
+		parser.NewBlockquoteParser(), parser.NewHTMLBlockParser(), parser.NewParagraphParser(),
 	}
-	end := start
-	if raw[end] == '-' || raw[end] == '+' || raw[end] == '*' {
-		end++
-	} else {
-		for end < len(raw) && end-start < 9 && raw[end] >= '0' && raw[end] <= '9' {
-			end++
+	priorities := make([]util.PrioritizedValue[parser.BlockParser], 0, len(parsers))
+	for i, p := range parsers {
+		var guarded parser.BlockParser = &blockGuard{BlockParser: p, ctx: ctx, b: b, ends: ends}
+		priorities = append(priorities, util.Prioritized(guarded, (i+1)*100))
+	}
+	p := parser.New(parser.WithDefaultParsers(false), parser.WithBlockParsers(priorities...),
+		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](&referenceGuard{ctx: ctx, b: b, parts: &parts}, 100)))
+	root := p.Parse(src) // no renderer or Goldmark inline parser is installed
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, err
+	}
+	var visit func(ast.Node, int) error
+	visit = func(n ast.Node, depth int) error {
+		if err := b.node(ctx, depth); err != nil {
+			return err
 		}
-		if end == start || end >= len(raw) || raw[end] != '.' && raw[end] != ')' {
-			return 0, false
+		part := blockPart{pos: n.Pos()}
+		switch n := n.(type) {
+		case *ast.Heading:
+			part.segments, part.level, part.end = n.Source(), n.Level, ends[n]
+		case *ast.Paragraph:
+			part.segments = n.Source()
 		}
-		end++
+		if part.level != 0 || len(part.segments) > 0 {
+			parts = append(parts, part)
+		}
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			if _, ok := child.(ast.BlockNode); ok {
+				if err := visit(child, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
-	return end, end == len(raw) || raw[end] == ' ' || raw[end] == '\t'
-}
-
-// Call only after listMarker validates the bounded (at most nine digits) marker.
-// CommonMark's start number is numeric, so 01. may interrupt just like 1.
-func listCanInterrupt(raw []byte, start, end int) bool {
-	if len(bytes.Trim(raw[end:], " \t")) == 0 {
-		return false
+	if err := visit(root, 0); err != nil {
+		return nil, nil, nil, err
 	}
-	if raw[start] < '0' || raw[start] > '9' {
-		return true
+	sort.SliceStable(parts, func(i, j int) bool { return parts[i].pos < parts[j].pos })
+	for _, part := range parts {
+		start := len(view)
+		for _, seg := range part.segments {
+			if err := b.step(ctx, seg.Stop-seg.Start); err != nil {
+				return nil, nil, nil, err
+			}
+			if err := b.reserveStrings(seg.Stop - seg.Start); err != nil {
+				return nil, nil, nil, err
+			}
+			offsets = append(offsets, linkSourceOffset{original: bodyStart + seg.Start, view: len(view)})
+			view = append(view, src[seg.Start:seg.Stop]...)
+		}
+		content := Span{start, len(view)}
+		if err := b.reserveStrings(2); err != nil {
+			return nil, nil, nil, err
+		}
+		view = append(view, '\n', '\n')
+		block := sourceBlock{content: content, level: part.level, paragraph: part.level == 0, paragraphStart: true}
+		if part.level > 0 {
+			pos := bodyStart + part.pos
+			if len(part.segments) > 0 {
+				pos = bodyStart + part.segments[0].Start
+			}
+			first := pos
+			for first > bodyStart && original[first-1] != '\n' && original[first-1] != '\r' {
+				first--
+				if err := b.step(ctx, 1); err != nil {
+					return nil, nil, nil, err
+				}
+			}
+			end := bodyStart + part.end
+			if end > first && (original[end-1] == '\n' || original[end-1] == '\r') {
+				block.span = Span{first, end}
+			} else {
+				_, next, err := sourceLineAt(ctx, original, max(first, end), b)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				block.span = Span{first, next}
+			}
+		}
+		blocks = append(blocks, block)
 	}
-	number := 0
-	for _, digit := range raw[start : end-1] {
-		number = number*10 + int(digit-'0')
-	}
-	return number == 1
-}
-
-func blockInterrupt(ctx context.Context, raw []byte, sibling byte, b *budget) (bool, error) {
-	return blockInterruptIndent(ctx, raw, sibling, 0, b)
-}
-
-func blockInterruptIndent(ctx context.Context, raw []byte, sibling byte, virtual int, b *budget) (bool, error) {
-	start, indent, err := leadingIndent(ctx, raw, 0, b)
-	if err != nil {
-		return false, err
-	}
-	if indent+virtual >= 4 {
-		return false, nil
-	}
-	text := raw[start:]
-	if len(text) == 0 {
-		return true, nil
-	}
-	level, _, _, err := atxHeading(ctx, text, b)
-	if err != nil {
-		return false, err
-	}
-	thematic, err := thematicBreak(ctx, text, b)
-	if err != nil {
-		return false, err
-	}
-	if level > 0 || thematic || text[0] == '>' {
-		return true, nil
-	}
-	if end, ok := listMarker(text, 0); ok && (text[end-1] == sibling || listCanInterrupt(text, 0, end)) {
-		return true, nil
-	}
-	marker, _, err := fenceOpener(ctx, text, b)
-	if err != nil {
-		return false, err
-	}
-	if marker != 0 {
-		return true, nil
-	}
-	_, html, err := htmlBlockStart(ctx, text, false, b)
-	return html, err
-}
-
-func fenceOpener(ctx context.Context, text []byte, b *budget) (byte, int, error) {
-	if len(text) == 0 || text[0] != '`' && text[0] != '~' {
-		return 0, 0, nil
-	}
-	n, err := byteRun(ctx, text, text[0], b)
-	if err != nil {
-		return 0, 0, err
-	}
-	if n < 3 || text[0] == '`' && bytes.ContainsRune(text[n:], '`') {
-		return 0, 0, nil
-	}
-	return text[0], n, nil
+	return view, blocks, offsets, nil
 }
 
 func byteRun(ctx context.Context, s []byte, c byte, b *budget) (int, error) {
@@ -1034,78 +259,4 @@ func byteRun(ctx context.Context, s []byte, c byte, b *budget) (int, error) {
 		i++
 	}
 	return i, nil
-}
-func atxHeading(ctx context.Context, text []byte, b *budget) (level, start, end int, err error) {
-	// ATX openers have at most six markers; longer runs are ordinary text.
-	for level < len(text) && level < 7 && text[level] == '#' {
-		level++
-	}
-	if level < 1 || level > 6 || level < len(text) && text[level] != ' ' && text[level] != '\t' {
-		return 0, 0, 0, nil
-	}
-	start = level
-	for start < len(text) && (text[start] == ' ' || text[start] == '\t') {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, 0, 0, err
-		}
-		start++
-	}
-	end = len(text)
-	for end > start && (text[end-1] == ' ' || text[end-1] == '\t') {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, 0, 0, err
-		}
-		end--
-	}
-	i := end
-	for i > start && text[i-1] == '#' {
-		if err := b.step(ctx, 1); err != nil {
-			return 0, 0, 0, err
-		}
-		i--
-	}
-	if i < end && i >= start && i > level && (text[i-1] == ' ' || text[i-1] == '\t') {
-		end = i
-		for end > start && (text[end-1] == ' ' || text[end-1] == '\t') {
-			if err := b.step(ctx, 1); err != nil {
-				return 0, 0, 0, err
-			}
-			end--
-		}
-	}
-	return level, start, end, nil
-}
-func setextLevel(ctx context.Context, text []byte, b *budget) (int, error) {
-	if len(text) == 0 || text[0] != '=' && text[0] != '-' {
-		return 0, nil
-	}
-	n, err := byteRun(ctx, text, text[0], b)
-	if err != nil {
-		return 0, err
-	}
-	if n != len(text) {
-		return 0, nil
-	}
-	if text[0] == '=' {
-		return 1, nil
-	}
-	return 2, nil
-}
-func thematicBreak(ctx context.Context, text []byte, b *budget) (bool, error) {
-	if len(text) == 0 || text[0] != '-' && text[0] != '_' && text[0] != '*' {
-		return false, nil
-	}
-	c := text[0]
-	count := 0
-	for _, r := range text {
-		if err := b.step(ctx, 1); err != nil {
-			return false, err
-		}
-		if r == c {
-			count++
-		} else if r != ' ' && r != '\t' {
-			return false, nil
-		}
-	}
-	return count >= 3, nil
 }

@@ -2,6 +2,7 @@ package notemarkdown
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -10,9 +11,9 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-func extractHeadings(ctx context.Context, original []byte, blocks []sourceBlock, links []Link, b *budget) ([]Heading, error) {
+func extractHeadings(ctx context.Context, view, original []byte, blocks []sourceBlock, links []parsedLink, lineStarts []int, b *budget) ([]Heading, error) {
 	var result []Heading
-	linkAt := map[int]Link{}
+	linkAt := map[int]parsedLink{}
 	for _, link := range links {
 		if err := b.step(ctx, 1); err != nil {
 			return nil, err
@@ -25,15 +26,10 @@ func extractHeadings(ctx context.Context, original []byte, blocks []sourceBlock,
 		if block.level == 0 {
 			continue
 		}
-		if err := limitCount("headings", len(result)+1, maxHeadings); err != nil {
+		if err := limitCount("headings", len(result)+1, b.limits.MaxHeadings); err != nil {
 			return nil, err
 		}
-		raw := original[block.content.Start:block.content.End]
-		if err := b.reserveStrings(len(raw)); err != nil {
-			return nil, err
-		}
-		markdown := string(raw)
-		text, err := headingText(ctx, original, block.content, linkAt, b)
+		text, err := headingText(ctx, view, block.content, linkAt, b)
 		if err != nil {
 			return nil, err
 		}
@@ -69,15 +65,30 @@ func extractHeadings(ctx context.Context, original []byte, blocks []sourceBlock,
 			suffix++
 		}
 		*counter = suffix
-		result = append(result, Heading{Level: block.level, Span: block.span, Section: Span{block.span.Start, len(original)}, Markdown: markdown, Text: text, Anchor: anchor})
+		result = append(result, Heading{Ordinal: len(result), Level: block.level, Start: block.span.Start, LineEnd: block.span.End, SectionEnd: len(original), Line: sourceLineNumber(lineStarts, block.span.Start), SectionEndLine: len(lineStarts), Text: text, Slug: anchor})
 	}
 	var stack []int
 	for i := range result {
 		for len(stack) > 0 && result[stack[len(stack)-1]].Level >= result[i].Level {
 			j := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			result[j].Section.End = result[i].Span.Start
+			result[j].SectionEnd = result[i].Start
+			result[j].SectionEndLine = result[i].Line
 		}
+		pathBytes := len(result[i].Text)
+		for _, j := range stack {
+			pathBytes += len(result[j].Text) + 3
+		}
+		if err := b.reserveStrings(pathBytes); err != nil {
+			return nil, err
+		}
+		var path strings.Builder
+		for _, j := range stack {
+			path.WriteString(result[j].Text)
+			path.WriteString(" > ")
+		}
+		path.WriteString(result[i].Text)
+		result[i].Path = path.String()
 		stack = append(stack, i)
 	}
 	return result, nil
@@ -111,4 +122,8 @@ func headingKey(ctx context.Context, text string, b *budget) (string, error) {
 
 func asciiPunctuation(c byte) bool {
 	return c >= '!' && c <= '/' || c >= ':' && c <= '@' || c >= '[' && c <= '`' || c >= '{' && c <= '~'
+}
+
+func sourceLineNumber(starts []int, pos int) int {
+	return sort.Search(len(starts), func(i int) bool { return starts[i] > pos })
 }

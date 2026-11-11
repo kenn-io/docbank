@@ -27,14 +27,12 @@ func TestContainerMultilineLinks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.source)
 			saved := bytes.Clone(src)
-			n, err := Parse(t.Context(), src)
+			n, err := Parse(t.Context(), src, Limits{})
 			require.NoError(t, err)
 			require.Equal(t, saved, src)
 			require.Equal(t, []string{tc.target}, linkTargets(n.Links))
 			link := n.Links[0]
-			require.Equal(t, tc.raw, link.RawTarget)
-			require.Equal(t, tc.raw, string(src[link.DestinationSpan.Start:link.DestinationSpan.End]))
-			require.Equal(t, tc.use, string(src[link.Span.Start:link.Span.End]))
+			require.Equal(t, tc.use, string(src[linkSpan(link).Start:linkSpan(link).End]))
 		})
 	}
 }
@@ -47,19 +45,19 @@ func TestContainerMultilineBoundaries(t *testing.T) {
 		"> [not\n> <div>\n> linked](bad.md)\n",
 		"> `[hidden\n> label](bad.md)`\n",
 	} {
-		n, err := Parse(t.Context(), []byte(source))
+		n, err := Parse(t.Context(), []byte(source), Limits{})
 		require.NoError(t, err)
 		require.Empty(t, n.Links, source)
 	}
 	// Deleting prefixes must not shift subsequent root links or headings.
 	src := []byte("> [a\n> b](one.md)\n\n# Root [two](two.md)\n")
-	n, err := Parse(t.Context(), src)
+	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"one.md", "two.md"}, linkTargets(n.Links))
-	require.Equal(t, "[two](two.md)", string(src[n.Links[1].Span.Start:n.Links[1].Span.End]))
+	require.Equal(t, "[two](two.md)", string(src[linkSpan(n.Links[1]).Start:linkSpan(n.Links[1]).End]))
 	require.Len(t, n.Headings, 1)
 	require.Equal(t, "Root two", n.Headings[0].Text)
-	require.Equal(t, "# Root [two](two.md)\n", string(src[n.Headings[0].Span.Start:n.Headings[0].Span.End]))
+	require.Equal(t, "# Root [two](two.md)\n", string(src[headingSpan(n.Headings[0]).Start:headingSpan(n.Headings[0]).End]))
 }
 
 func TestPropertyContainerMultilineLinks(t *testing.T) {
@@ -68,11 +66,10 @@ func TestPropertyContainerMultilineLinks(t *testing.T) {
 		continued := strings.ReplaceAll(prefix, "-", " ")
 		label := strings.Repeat("é", hegel.Draw(ht, hegel.Integers[int](1, 20)))
 		src := []byte(prefix + "[" + label + "\n" + continued + "tail](n&amp;amp;.md)\n")
-		n, err := Parse(ht.Context(), src)
+		n, err := Parse(ht.Context(), src, Limits{})
 		require.NoError(ht, err)
 		require.Equal(ht, []string{"n&amp;.md"}, linkTargets(n.Links))
-		require.Equal(ht, "["+label+"\n"+continued+"tail](n&amp;amp;.md)", string(src[n.Links[0].Span.Start:n.Links[0].Span.End]))
-		require.Equal(ht, "n&amp;amp;.md", string(src[n.Links[0].DestinationSpan.Start:n.Links[0].DestinationSpan.End]))
+		require.Equal(ht, "["+label+"\n"+continued+"tail](n&amp;amp;.md)", string(src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End]))
 	}, hegel.WithTestCases(1000))
 }
 
@@ -81,7 +78,7 @@ func TestContainerReferenceLabelLimit(t *testing.T) {
 	// and must not count toward the CommonMark reference-label bound.
 	first, last := strings.Repeat("a", 498), strings.Repeat("b", 500)
 	src := []byte("> [" + first + "\n> " + last + "][]\n\n[" + first + " " + last + "]: next.md\n")
-	n, err := Parse(t.Context(), src)
+	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"next.md"}, linkTargets(n.Links))
 }
@@ -99,7 +96,7 @@ func TestReviewHTMLAndQuoteBoundaries(t *testing.T) {
 		{"type4 ignores blank until terminator", "<!doctype html\n\n[hidden](bad.md)\n>\n[shown](good.md)\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			n, err := Parse(t.Context(), []byte(tc.source))
+			n, err := Parse(t.Context(), []byte(tc.source), Limits{})
 			require.NoError(t, err)
 			require.Equal(t, []string{"good.md"}, linkTargets(n.Links))
 		})

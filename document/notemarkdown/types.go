@@ -2,106 +2,71 @@ package notemarkdown
 
 import "errors"
 
-// Recipe identifies the syntax, limits, and artifact encoding of Parse.
-const Recipe = "docbank-authored-markdown/v1"
-
-// ResolverRecipe identifies logical target and fragment resolution policy.
-const ResolverRecipe = "docbank-note-targets/v1"
+// Recipe identifies the source structure and normalization rules of Parse.
+const Recipe = "docbank-note-markdown/v2"
 
 var (
-	ErrLimit               = errors.New("authored Markdown resource limit")
-	ErrInvalidInput        = errors.New("invalid authored Markdown input")
-	ErrInvalidArtifact     = errors.New("invalid authored Markdown artifact")
-	ErrInvalidCandidateSet = errors.New("invalid authored Markdown candidate set")
+	ErrLimit        = errors.New("Markdown note resource limit")
+	ErrInvalidInput = errors.New("invalid Markdown note input")
 )
 
 // LimitError contains a fixed resource code, never copied source content.
 type LimitError struct{ Resource string }
 
-func (e *LimitError) Error() string { return "authored Markdown limit: " + e.Resource }
+func (e *LimitError) Error() string { return "Markdown note limit: " + e.Resource }
 func (e *LimitError) Unwrap() error { return ErrLimit }
 
-// Span addresses half-open UTF-8 byte offsets in the exact original.
-type Span struct {
-	Start int `json:"start"`
-	End   int `json:"end"`
-}
-
-type Metadata struct {
-	Title   string   `json:"title"`
-	Aliases []string `json:"aliases"`
-	Tags    []string `json:"tags"`
-}
-
-type Heading struct {
-	Level    int    `json:"level"`
-	Span     Span   `json:"span"`
-	Section  Span   `json:"section"`
-	Markdown string `json:"markdown"`
-	Text     string `json:"text"`
-	Anchor   string `json:"anchor"`
-}
-
-type Link struct {
-	Span            Span   `json:"span"`
-	DestinationSpan Span   `json:"destination_span"`
-	Form            string `json:"form"`
-	Embed           bool   `json:"embed"`
-	RawTarget       string `json:"raw_target"`
-	Target          string `json:"target"`
-}
-
+// Span addresses half-open byte offsets in the exact original, including its BOM.
+type Span struct{ Start, End int }
 type Diagnostic struct {
-	Code string `json:"code"`
-	Span Span   `json:"span"`
+	Code string
+	Span Span
+}
+
+// Limits can narrow the hard limits. Zero selects the default; negative values
+// and values above the defaults are invalid. Internal work limits also apply.
+type Limits struct {
+	MaxBytes, MaxHeadings, MaxLinks                    int
+	MaxFrontmatterKeys, MaxValuesPerKey, MaxValueBytes int
+	MaxDiagnostics                                     int
 }
 
 type Note struct {
-	SourceSHA256     string       `json:"source_sha256"`
-	SourceBytes      int          `json:"source_bytes"`
-	Recipe           string       `json:"recipe"`
-	FrontmatterState string       `json:"frontmatter_state"`
-	Frontmatter      Span         `json:"frontmatter"`
-	BodyStart        int          `json:"body_start"`
-	Metadata         Metadata     `json:"metadata"`
-	Headings         []Heading    `json:"headings"`
-	Links            []Link       `json:"links"`
-	Diagnostics      []Diagnostic `json:"diagnostics"`
+	Frontmatter        *Frontmatter
+	BodyStart          int
+	Title, TitleSource string
+	Headings           []Heading
+	Links              []Link
+	Lines              int
+	Diagnostics        []Diagnostic
 }
 
-type LookupKey struct {
-	Kind  string
-	Value string
+type Frontmatter struct {
+	Start, End    int
+	Raw           map[string]any
+	Fields        []Field
+	Aliases, Tags []string
+}
+type Field struct {
+	Key, Value string
+	Ordinal    int
+}
+type Heading struct {
+	Ordinal, Level             int
+	Text, Slug, Path           string
+	Start, LineEnd, SectionEnd int
+	Line, SectionEndLine       int
+}
+type Link struct {
+	Ordinal                      int
+	Form                         string
+	Raw, Target, Fragment, Label string
+	Start, End, Line             int
 }
 
-type TargetQuery struct {
-	Keys     []LookupKey
-	Fragment string
-	Kind     string
-}
-
-type Candidate struct {
-	Binding string
-	Path    string
-	Kind    string
-	Keys    []LookupKey
-}
-
-// CandidateSet is evidence from one owner-authorized namespace snapshot.
-// Complete certifies all queried keys, or sufficient matches to prove ambiguity.
-type CandidateSet struct {
-	NamespaceGeneration string
-	Complete            bool
-	Candidates          []Candidate
-}
-
-type Resolution struct {
-	State               string
-	Binding             string
-	NamespaceGeneration string
-}
-
-type FragmentResolution struct {
-	State   string
-	Heading *Span
+// Source syntax stays private: consumers receive the P02 projection only.
+type parsedLink struct {
+	Span                     Span
+	Form                     string
+	RawTarget, Target, Label string
 }
