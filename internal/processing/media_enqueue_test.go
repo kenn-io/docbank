@@ -919,7 +919,7 @@ func TestWatchQuickTimeImportAdmission(t *testing.T) {
 			wrong := importFile("wrong.mp4", "video/quicktime", mediatest.H264AACMOV())
 			plan, err := service.Plan(t.Context(), Selector{NodeID: wrong.ID, ContentVersionID: wrong.CurrentVersionID, Profile: "v4"})
 			require.NoError(t, err)
-			require.Equal(t, string(media.CapabilityReasonMalformed), plan.RenditionIneligibleReason)
+			require.Equal(t, string(media.CapabilityReasonSourceName), plan.RenditionIneligibleReason)
 			require.NoError(t, service.AdmitImportedRendition(t.Context(), wrong, "v4"))
 			_, queued, err = f.catalog.ClaimNextRenditionJob(t.Context(), "synthetic-worker", time.Now(), time.Minute)
 			require.NoError(t, err)

@@ -473,6 +473,7 @@ func newASRFixture(t *testing.T, mediaType, filename string, source []byte) asrF
 		InputKind:           document.RenditionInputOriginalFile,
 		VideoAudioTrack:     family == "video",
 		QuickTimeAudioTrack: mediaType == "video/quicktime",
+		RetainedMOVName:     mediaType == "video/quicktime",
 		MaxSourceBytes:      max(1<<20, int64(len(source))), MaxExpandedBytes: 1, MaxEntryBytes: 1 << 20, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 1, MaxCharacters: 1, MaxRecords: 1, MaxPages: 1,
 		MaxSlides: 1, MaxSheets: 1, MaxCells: 1, MaxSpineItems: 1, MaxResources: 1,
@@ -724,8 +725,8 @@ func TestDoclingASRQuickTimeUploadAndTiming(t *testing.T) {
 			writeJSON(t, w, doclingTask("quicktime", "success"))
 			return
 		}
-		result := asrResultResponse(sent.Filename, "1.10.0", 0.625)
-		asrJSONContent(t, result)["origin"] = map[string]any{"filename": sent.Filename, "mimetype": sent.MediaType}
+		result := asrResultResponse(t, sent.Filename, fixture.metadata.SHA256, "1.10.0", 0.625)
+		asrJSONContent(t, result)["origin"].(map[string]any)["mimetype"] = sent.MediaType
 		writeJSON(t, w, result)
 	}))
 	t.Cleanup(server.Close)

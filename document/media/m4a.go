@@ -230,20 +230,33 @@ func (track *mp4TrackInfo) proveQuickTimeSoundPackets() bool {
 	}
 	// FFmpeg can use QuickTime frame geometry for packet sizing instead
 	// of stsz when the table contains one unit-delta run.
+	if track.sampleDuration == track.sampleCount {
+		return false
+	}
+	// A muxer may split one run into adjacent runs with the same delta
+	// without changing any packet's timing, so prove the merged runs.
+	var counts, deltas [2]uint64
+	runs := 0
 	timing := track.quickTimeSampleTiming
-	if track.sampleDuration == track.sampleCount || (len(timing) != 8 && len(timing) != 16) {
-		return false
+	for offset := 0; offset+8 <= len(timing); offset += 8 {
+		count := uint64(binary.BigEndian.Uint32(timing[offset : offset+4]))
+		delta := uint64(binary.BigEndian.Uint32(timing[offset+4 : offset+8]))
+		if runs > 0 && deltas[runs-1] == delta {
+			counts[runs-1] += count
+			continue
+		}
+		if runs == len(counts) {
+			return false
+		}
+		counts[runs], deltas[runs] = count, delta
+		runs++
 	}
-	firstDelta := binary.BigEndian.Uint32(timing[4:8])
-	if len(timing) == 8 && track.sampleCount == 1 {
-		return firstDelta <= frame
-	}
-	if firstDelta != frame {
-		return false
+	if runs == 1 && counts[0] == 1 {
+		return deltas[0] <= uint64(frame)
 	}
 	// The muxer may trim the duration of the last AAC packet.
-	return len(timing) == 8 || binary.BigEndian.Uint32(timing[8:12]) == 1 &&
-		binary.BigEndian.Uint32(timing[12:16]) <= frame
+	return runs != 0 && deltas[0] == uint64(frame) &&
+		(runs == 1 || counts[1] == 1 && deltas[1] <= uint64(frame))
 }
 
 func soundMovieBrand(brand string, quickTime bool) bool {
@@ -384,6 +397,18 @@ func validQuickTimeAACEntry(kind string, entry []byte) m4aAudioFormat {
 	}
 	version := binary.BigEndian.Uint16(entry[8:10])
 	if version == 0 {
+		// Apple capture follows the single esds with a channel layout.
+		last := -1
+		for offset := 28; offset < len(entry); {
+			_, size, ok := mp4BoxHeader(entry, offset)
+			if !ok {
+				return m4aAudioFormat{}
+			}
+			last, offset = offset, offset+size
+		}
+		if last > 28 && quickTimeChannelLayout(entry[last:]) {
+			entry = entry[:last]
+		}
 		return validM4ASampleEntry(kind, entry)
 	}
 	// Version 1 adds four packet/frame fields to the 28-byte base entry.
@@ -398,10 +423,7 @@ func validQuickTimeAACEntry(kind string, entry []byte) m4aAudioFormat {
 	if !ok || waveHeader != 8 || string(entry[waveOffset+4:waveOffset+8]) != "wave" {
 		return m4aAudioFormat{}
 	}
-	tail := entry[waveOffset+waveSize:]
-	if len(tail) != 0 && (len(tail) != 24 || binary.BigEndian.Uint32(tail[:4]) != 24 ||
-		string(tail[4:8]) != "chan" || binary.BigEndian.Uint32(tail[8:12]) != 0 ||
-		binary.BigEndian.Uint32(tail[20:24]) != 0) {
+	if tail := entry[waveOffset+waveSize:]; len(tail) != 0 && !quickTimeChannelLayout(tail) {
 		return m4aAudioFormat{}
 	}
 
@@ -417,6 +439,13 @@ func validQuickTimeAACEntry(kind string, entry []byte) m4aAudioFormat {
 		return m4aAudioFormat{}
 	}
 	return validAACDescriptor(esds[8:])
+}
+
+// quickTimeChannelLayout accepts one 24-byte chan box with version and flags
+// zero and no channel descriptions, as written after a QuickTime esds.
+func quickTimeChannelLayout(box []byte) bool {
+	return len(box) == 24 && binary.BigEndian.Uint32(box[:4]) == 24 && string(box[4:8]) == "chan" &&
+		binary.BigEndian.Uint32(box[8:12]) == 0 && binary.BigEndian.Uint32(box[20:24]) == 0
 }
 
 // m4aDescriptor extracts one MPEG-4 expandable-length descriptor without trusting

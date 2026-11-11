@@ -652,7 +652,7 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			if track == nil || !parseSTTS(payload, track) {
 				return false
 			}
-			if info.quickTimeSound {
+			if info.quickTimeSound && track.handlerType == "soun" {
 				track.quickTimeSampleTiming = payload[8:]
 			}
 		case kind == "ctts" && parent == "stbl":

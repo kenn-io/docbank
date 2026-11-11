@@ -65,6 +65,9 @@ const (
 	// CapabilityReasonEmptySource marks a zero-byte source. InspectCapability
 	// rejects such a policy outright; callers report this reason instead.
 	CapabilityReasonEmptySource CapabilityReason = "empty_source"
+	// CapabilityReasonSourceName marks a QuickTime source whose retained name
+	// does not end in .mov, including one whose name is withheld from the provider.
+	CapabilityReasonSourceName CapabilityReason = "source_name_mismatch"
 )
 
 // InspectionPolicy binds finite preflight limits and downstream authority to
@@ -105,6 +108,10 @@ type InspectionPolicy struct {
 	VideoAudioTrack bool `json:"video_audio_track,omitzero"`
 	// QuickTimeAudioTrack streams qualified MOV sound tracks for video ASR.
 	QuickTimeAudioTrack bool `json:"quicktime_audio_track,omitzero"`
+	// RetainedMOVName records the caller's proof, made before any privacy
+	// fallback replaced the name, that the retained source name ends in .mov.
+	// The record checksum carries it into sealed work that withholds the name.
+	RetainedMOVName bool `json:"retained_mov_name,omitzero"`
 }
 
 // CapabilityMeasurements records only finite, locally verified measurements.
@@ -1441,9 +1448,12 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 	var record CapabilityRecord
 	var err error
 	if quickTimeAudioCandidate(policy, baseType, ext) {
-		if baseType == "video/quicktime" && ext == ".mov" {
+		switch {
+		case baseType == "video/quicktime" && (ext != ".mov" || !policy.RetainedMOVName):
+			record.Reason = CapabilityReasonSourceName
+		case baseType == "video/quicktime":
 			record, err = inspectM4A(buffered, policy, true, true)
-		} else {
+		default:
 			record.Reason = CapabilityReasonMalformed
 		}
 	} else if baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav" {

@@ -187,10 +187,6 @@ func (client *ASRClient) Render(
 	if err != nil {
 		return document.RenditionResult{}, err
 	}
-	if run.metadata.MediaType == "video/quicktime" && result.filename != run.metadata.Filename {
-		return document.RenditionResult{}, provider.Classified(document.RenditionErrorPolicyRejected,
-			"Docling result source identity does not match upload", nil)
-	}
 	return client.buildResult(run, task, result, durationMS)
 }
 
@@ -205,7 +201,7 @@ func (client *ASRClient) inputDuration(upload document.AuthorizedUpload, authori
 	metadata := upload.Metadata()
 	supportedType := facts.MediaFamily == "audio" && (facts.MediaType == "audio/wav" || facts.MediaType == "audio/mpeg" || (client.allowM4A && facts.MediaType == "audio/mp4")) ||
 		facts.MediaFamily == "video" && (client.allowMP4 && facts.VideoAudioTrack && facts.MediaType == "video/mp4" ||
-			client.allowMOV && facts.QuickTimeAudioTrack && facts.MediaType == "video/quicktime")
+			client.allowMOV && facts.QuickTimeAudioTrack && facts.RetainedMOVName && facts.MediaType == "video/quicktime")
 	if !local || facts.Checksum != authorization.CapabilityRecordChecksum ||
 		facts.Checksum != metadata.CapabilityRecordChecksum || facts.SourceSHA256 != metadata.SHA256 ||
 		facts.SourceBytes != metadata.ByteLength || facts.DescriptorFingerprint != client.client.descriptor.Fingerprint ||

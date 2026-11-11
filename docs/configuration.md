@@ -843,9 +843,14 @@ alongside the v3 formats. A v3 grant never authorizes a MOV upload; grant
 consent to the v4 profile before importing MOV files for automatic
 transcription. Watch routing of MOV files has the same #1419 requirement as
 v3. An eligible original has a retained `.mov` suffix, QuickTime MIME and
-`qt  ` brand, a picture track, and local AAC samples. The adapter admits the
-FFmpeg version-1 AAC sound description with `wave`/`esds` and the ISO-style
-version-zero AAC description. Each AAC packet must be timed as one frame:
+`qt  ` brand, a picture track, and local AAC samples. A QuickTime file whose
+retained name lacks the suffix is refused as `source_name_mismatch`, also when
+the name is withheld from the provider. Unlike v3 MP4, a MOV needs a picture
+track: the v4 qualification covered QuickTime movies, not audio-only QuickTime
+files, so those are refused; store audio-only recordings as M4A. The adapter admits the FFmpeg
+version-1 AAC sound description with `wave`/`esds` and the version-zero AAC
+description with one `esds`, each optionally followed by one `chan` channel
+layout without channel descriptions. Each AAC packet must be timed as one frame:
 the legacy one-unit sample timing is refused because the provider would size
 packets differently. The adapter uploads the original bytes as
 `video/quicktime` and uses `document.mov` when withholding the name.
