@@ -759,8 +759,8 @@ it("shows paths and both version dates for matching document names", async () =>
           current: { ...current, node_id: selected.node_id },
           name: "file.txt",
           path: index ? "/two/file.txt" : "/one/file.txt",
-          selected_recorded: "2026-01-01T00:00:00Z",
-          modified: "2025-01-01T00:00:00Z",
+          selected_recorded: "2026-01-01T00:00:01Z",
+          modified: index ? "2025-01-01T00:00:00Z" : "2026-01-01T00:00:30Z",
           status: "changed",
         })),
       );
@@ -778,8 +778,9 @@ it("shows paths and both version dates for matching document names", async () =>
   });
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
-  expect(await screen.findByText("/one/file.txt")).toBeTruthy();
-  expect(screen.getByText("/two/file.txt")).toBeTruthy();
+  expect(await screen.findByText("one/file.txt")).toBeTruthy();
+  expect(screen.getByText("two/file.txt")).toBeTruthy();
+  expect(screen.getByText(/Current: different version/)).toBeTruthy();
   expect(screen.getAllByText(/^Selected: .*Current:/)).toHaveLength(2);
 });
 

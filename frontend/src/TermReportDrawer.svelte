@@ -776,10 +776,10 @@
               <li>
                 <div class="tool-row-main">
                   <strong title={item.path || item.name}
-                    >{item.path || item.name || `Document ${item.selected.node_id}`}</strong
+                    >{item.path?.replace(/^\//, "") || item.name || `Document ${item.selected.node_id}`}</strong
                   ><span
                     >{item.status === "changed"
-                      ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${formatDate(item.modified ?? "")}`
+                      ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${item.selected_recorded && formatDate(item.selected_recorded) === formatDate(item.modified ?? "") ? "different version" : formatDate(item.modified ?? "")}`
                       : item.status === "trashed"
                         ? "In trash"
                         : "No longer available"}</span
