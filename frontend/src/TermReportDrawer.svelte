@@ -615,7 +615,9 @@
         <div class="result">
           {#if draftChanged}<p role="status">These counts use your previous search.</p>{/if}
           {#if active.state === "needs_review"}<p>
-              {active.unresolved_dates} document date{active.unresolved_dates === 1 ? "" : "s"} need review
+              Review {active.unresolved_dates} document date{active.unresolved_dates === 1
+                ? ""
+                : "s"}
               before counts are shown.
             </p>
           {:else}<p class="tool-muted">
