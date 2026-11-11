@@ -1608,12 +1608,30 @@
     const reporter = startTelemetryReporting(session.token);
     telemetryReporting = reporter;
     sessionReporting = startSessionReporting(reporter);
+    const recoveryAbort = new AbortController();
+    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+    let checkingRecovery = false;
+    const checkRecovery = async (remaining: number): Promise<void> => {
+      if (checkingRecovery || recoveryTimer !== undefined || recoveryAbort.signal.aborted) return;
+      checkingRecovery = true;
+      const retry = await checkDisconnectedSession(
+        session.token,
+        sameAddress,
+        recoveryAbort.signal,
+      );
+      checkingRecovery = false;
+      if (retry && sameAddress && remaining > 1 && !recoveryAbort.signal.aborted)
+        recoveryTimer = setTimeout(() => {
+          recoveryTimer = undefined;
+          void checkRecovery(remaining - 1);
+        }, 1000);
+    };
     const channel = new VerifiedUploadChannel(session, undefined, () => {
       if (uploadChannel !== channel) return;
       uploadChannelError = keyLogin
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
         : "The verified upload channel ended. Run `docbank web --no-browser` again before selecting more files.";
-      void checkDisconnectedSession(session.token, sameAddress);
+      void checkRecovery(10);
     });
     void channel.connect().then(
       () => {
@@ -1623,12 +1641,14 @@
       (cause) => {
         if (mounted && webSession === session.token) {
           uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-          void checkDisconnectedSession(session.token, sameAddress);
+          void checkRecovery(10);
         }
       },
     );
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
+      recoveryAbort.abort();
+      clearTimeout(recoveryTimer);
       reporting.stop();
       reporter.stop();
       telemetryReporting = undefined;
@@ -1636,19 +1656,28 @@
     };
   }
 
-  async function checkDisconnectedSession(session: string, sameAddress: boolean): Promise<void> {
+  async function checkDisconnectedSession(
+    session: string,
+    sameAddress: boolean,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     try {
-      await generated.vaultIdentity({ session, signal: AbortSignal.timeout(3000) });
+      await generated.vaultIdentity({
+        session,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(3000)]),
+      });
+      return false;
     } catch (cause) {
-      if (!mounted || webSession !== session) return;
+      if (signal.aborted || !mounted || webSession !== session) return false;
       if (!(cause instanceof APIError) || cause.status !== 401) {
         connectionRecovery = sameAddress ? "same" : "per-run";
-        return;
+        return true;
       }
       resetLocalSessionUI();
       recovery = sameAddress ? "same" : "per-run";
       keySignInEnabled = sameAddress;
       signInNotice = "The connection to Docbank ended.";
+      return false;
     }
   }
 
