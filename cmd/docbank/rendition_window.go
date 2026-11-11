@@ -184,7 +184,7 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 	if err != nil {
 		return selected, err
 	}
-	var names, pins []string
+	var pins []string
 	exact := true
 	for _, rendition := range renditions {
 		fingerprint := rendition.ProfileFingerprint
@@ -203,19 +203,18 @@ func selectWindowProfile(ctx context.Context, c *daemonconn.Connection, node api
 			continue
 		}
 		name := windowProfileName(profiles, fingerprint)
-		names = append(names, name)
 		if name == fingerprint {
 			pins = append(pins, name+": --attachment "+rendition.AttachmentID)
 		} else {
-			pins = append(pins, name+": --profile "+name)
+			pins = append(pins, "--profile "+name)
 		}
 		selected = rendition
 	}
-	if len(names) == 0 {
+	if len(pins) == 0 {
 		return selected, fmt.Errorf("no readable rendition is currently available for this version: %w", store.ErrNotFound)
 	}
-	if len(names) > 1 {
-		return selected, usageError(fmt.Errorf("multiple readable profiles: %s; choose %s", strings.Join(names, ", "), strings.Join(pins, "; ")))
+	if len(pins) > 1 {
+		return selected, usageError(fmt.Errorf("multiple readable profiles; choose %s", strings.Join(pins, "; ")))
 	}
 	return selected, nil
 }

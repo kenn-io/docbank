@@ -218,8 +218,8 @@ func TestRenditionWindowProfileSelection(t *testing.T) {
 		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
 		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: []string{"no readable rendition is currently available"}},
 		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
-		{name: "ambiguous", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: []string{"multiple readable profiles", "alpha: --profile alpha", "zeta: --profile zeta"}},
-		{name: "ambiguous unnamed profile", states: map[string]string{"zeta": "ready", "alpha": "ready"}, unnamed: "alpha", code: exitUsage, wantErr: []string{"multiple readable profiles", "zeta: --profile zeta", "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8: --attachment 9332f63c73e34a574a9a905a7f5ae18b17b5d7d3ba1589df7d9ba5ae1be0804b"}},
+		{name: "ambiguous", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: []string{"multiple readable profiles; choose", "--profile alpha", "--profile zeta"}},
+		{name: "ambiguous unnamed profile", states: map[string]string{"zeta": "ready", "alpha": "ready"}, unnamed: "alpha", code: exitUsage, wantErr: []string{"multiple readable profiles; choose", "--profile zeta", "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8: --attachment 9332f63c73e34a574a9a905a7f5ae18b17b5d7d3ba1589df7d9ba5ae1be0804b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var profiles []api.ProcessingProfileSummary
