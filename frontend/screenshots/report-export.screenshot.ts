@@ -493,7 +493,9 @@ print('Verified report evidence, CSV and all three original byte streams')
       expect(response.request().postDataJSON().selected_documents.documents).toEqual(identities);
       expect(response.status()).toBe(409);
       expect(await response.json()).toMatchObject({ code: "report_selection_changed" });
-      await expect(drawer.getByRole("alert")).toHaveText(
+      await expect(
+        drawer.getByRole("region", { name: "Selected documents changed" }).getByRole("status"),
+      ).toContainText(
         "The report didn't run. Some selected documents have a different version or are no longer available.",
       );
       await page.screenshot({ path: path.join(captures!, "selection-before.png") });
@@ -507,6 +509,7 @@ print('Verified report evidence, CSV and all three original byte streams')
       await expect(
         drawer.getByRole("status").filter({ hasText: "Selection updated" }),
       ).toBeVisible();
+      await page.screenshot({ path: path.join(captures!, "selection-updated.png") });
       await expect(drawer.getByRole("table", { name: "Search report counts" })).toHaveCount(0);
       expect(await history()).toEqual(before);
     });

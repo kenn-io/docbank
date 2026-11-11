@@ -12,6 +12,7 @@
     Checkbox,
     DateRangePicker,
     IconButton,
+    Notice,
     RadioGroup,
     SegmentedControl,
     SelectDropdown,
@@ -92,7 +93,7 @@
   let choices = $state<Record<string, DateChoice>>({});
   let busy = $state(false);
   let error = $state("");
-  let notice = $state("");
+  let notice = $state<{ title?: string; message: string } | null>(null);
   let selectionConflict = $state(false);
   let selectionResult = $state<api.TermReportSelectionItem[] | null>(null);
   let selectionAccepted = $state<Record<number, boolean>>({});
@@ -295,7 +296,10 @@
         throw new Error("The selection response was incomplete or invalid.");
       if (result.every((item) => item.status === "current")) {
         clearSelectionConflict();
-        notice = "All selected documents are current. Create the report again.";
+        notice = {
+          title: "Selection is current",
+          message: "All selected documents are current. Create the report again.",
+        };
         onselectionchanged?.();
       } else {
         selectionAccepted = {};
@@ -339,8 +343,18 @@
     };
     draft.date_choices = [];
     clearSelectionConflict();
-    const accepted = `${changed} current version${changed === 1 ? "" : "s"}`;
-    notice = `Selection updated: ${accepted}${leftOut ? `, ${leftOut} left out` : ""}. Create the report again.`;
+    const documents = (count: number) => `${count} document${count === 1 ? "" : "s"}`;
+    notice = {
+      title: "Selection updated",
+      message: [
+        changed &&
+          `${documents(changed)} now ${changed === 1 ? "uses its current version" : "use their current versions"}.`,
+        leftOut && `${documents(leftOut)} ${leftOut === 1 ? "was" : "were"} left out.`,
+        "Create the report again.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
     onselectionchanged?.();
   }
 
@@ -349,14 +363,14 @@
     draft = newDraft();
     editing = true;
     error = "";
-    notice = "";
+    notice = null;
   }
 
   function cancelDraft(): void {
     clearSelectionConflict();
     editing = false;
     error = "";
-    notice = "";
+    notice = null;
   }
 
   function useHistory(item: TermReportHistory): void {
@@ -379,13 +393,13 @@
     reviewLoaded = false;
     choices = {};
     error = "";
-    notice = `Loaded the ${formatDate(item.summary.observed_at)} report.`;
+    notice = { message: `Loaded the ${formatDate(item.summary.observed_at)} report.` };
   }
 
   async function run(): Promise<void> {
     if (busy) return;
     error = "";
-    notice = "";
+    notice = null;
     if (draft.selected_documents && !draft.selected_documents.documents?.length) {
       error = "Select at least one current document in the workspace.";
       return;
@@ -424,11 +438,11 @@
       if (JSON.stringify(draft) !== submittedFingerprint) {
         active = null;
         submittedDraft = null;
-        notice = "A report from an earlier draft finished. It's in Recent reports.";
+        notice = { message: "A report from an earlier draft finished. It's in Recent reports." };
       } else {
         active = summary;
         submittedDraft = submittedFingerprint;
-        notice = "";
+        notice = null;
       }
       await loadHistory(currentSession, true);
     } catch (cause) {
@@ -557,7 +571,7 @@
       review = [];
       reviewLoaded = false;
       choices = {};
-      notice = "";
+      notice = null;
       await loadHistory(session, true);
     } catch (cause) {
       fail(cause);
@@ -749,12 +763,12 @@
   {/snippet}
   <div class="tool-body">
     {#if selectionConflict}
-      <section class="tool-section">
-        <h3>Selected documents changed</h3>
-        <p role="alert">
-          The report didn't run. Some selected documents have a different version or are no longer
-          available.
-        </p>
+      <section class="tool-section selection-conflict" aria-label="Selected documents changed">
+        <Notice
+          tone="warning"
+          title="Selected documents changed"
+          message="The report didn't run. Some selected documents have a different version or are no longer available."
+        />
         {#if error}<p class="tool-error" role="alert">{error}</p>{/if}
         {#if selectionResult}
           <ul class="tool-list selection-list">
@@ -786,12 +800,9 @@
               ? `The report will cover ${selectedCount} of ${selectionResult.length} selected documents.`
               : "Include at least one document to create a report."}
           </p>
-          <div class="tool-actions">
-            <Button
-              tone="info"
-              surface="solid"
-              disabled={busy || !selectedCount}
-              onclick={applySelection}>Use this selection</Button
+          <div class="tool-actions tool-actions--start">
+            <Button disabled={busy || !selectedCount} onclick={applySelection}
+              >Use this selection</Button
             >
           </div>
         {:else}
@@ -803,7 +814,8 @@
         {/if}
       </section>
     {:else if error}<p class="tool-error" role="alert">{error}</p>{/if}
-    {#if notice}<p role="status">{notice}</p>{/if}
+    {#if notice?.title}<Notice tone="success" title={notice.title} message={notice.message} />
+    {:else if notice}<p role="status">{notice.message}</p>{/if}
 
     {#if editing}{@render reportForm()}{/if}
 
@@ -1067,6 +1079,10 @@
   }
   .scope {
     display: flex;
+  }
+  .selection-conflict {
+    padding-bottom: var(--space-6);
+    border-bottom: 1px solid var(--border-muted);
   }
   .selection-list {
     max-height: 220px;

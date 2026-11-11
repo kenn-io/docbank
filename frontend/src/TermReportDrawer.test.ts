@@ -471,7 +471,8 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
     ),
   );
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
-  expect((await screen.findByRole("alert")).textContent?.replace(/\s+/g, " ").trim()).toBe(
+  const conflict = await screen.findByRole("region", { name: "Selected documents changed" });
+  expect(within(conflict).getByRole("status").textContent).toContain(
     "The report didn't run. Some selected documents have a different version or are no longer available.",
   );
   expect(submitted).toHaveLength(2);
@@ -667,7 +668,12 @@ it("requires acceptance before using current document versions", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Use this selection" }));
   expect(onselectionchanged).toHaveBeenCalledOnce();
   expect(submissions).toHaveLength(1);
-  expect(screen.getByText(/Selection updated: 1 current version, 2 left out/)).toBeTruthy();
+  expect(screen.getByText("Selection updated")).toBeTruthy();
+  expect(
+    screen.getByText(
+      "1 document now uses its current version. 2 documents were left out. Create the report again.",
+    ),
+  ).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   await waitFor(() => expect(submissions).toHaveLength(2));
   expect(submissions[1].selected_documents.documents).toEqual([current]);
