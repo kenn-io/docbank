@@ -209,6 +209,12 @@ func insertMetadataRecord(ctx context.Context, tx *sql.Tx, table string, record 
 	for position, column := range plan.columns {
 		field := value.Field(column.index)
 		switch {
+		case field.Kind() == reflect.Bool:
+			args[position] = boolInt(field.Bool())
+		case field.Kind() == reflect.Pointer && field.Type().Elem().Kind() == reflect.Bool:
+			if !field.IsNil() {
+				args[position] = boolInt(field.Elem().Bool())
+			}
 		case !column.json:
 			args[position] = field.Interface()
 		case field.Type() == jsontextValueType:
@@ -217,7 +223,7 @@ func insertMetadataRecord(ctx context.Context, tx *sql.Tx, table string, record 
 			args[position] = mustCatalogJSON(field.Interface())
 		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(`+plan.list+`) VALUES(`+placeholders(len(args))+`)`, args...)
+	_, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(`+plan.list+`) VALUES(`+numberedPlaceholders(len(args), 0)+`)`, args...)
 	return err
 }
 
@@ -261,7 +267,7 @@ func metadataFieldMaps(codecs map[string]metadataRecordCodec) (map[string][]stri
 // plus the state tables no record restores. nodes and processing_incarnations
 // start with bootstrap rows, so requirePristineMetadataTarget compares them to
 // those rows instead.
-func pristineMetadataTableSum(codecs map[string]metadataRecordCodec) string {
+func pristineMetadataTableSum(codecs map[string]metadataRecordCodec, postgres bool) string {
 	tables := slices.Clone(metadataPristineStateTables)
 	for _, codec := range codecs {
 		if table := codec.sqlTable(); table != "" && table != "nodes" && table != "processing_incarnations" {
@@ -270,6 +276,11 @@ func pristineMetadataTableSum(codecs map[string]metadataRecordCodec) string {
 	}
 	slices.Sort(tables)
 	tables = slices.Compact(tables)
+	if postgres {
+		tables = slices.DeleteFunc(tables, func(table string) bool {
+			return slices.Contains([]string{"content_fts", "vector_index_build_jobs", "vector_index_reader_leases", "vector_index_unavailable_coverage"}, table)
+		})
+	}
 	terms := make([]string, len(tables))
 	for index, table := range tables {
 		terms[index] = `(SELECT COUNT(*) FROM ` + table + `)`

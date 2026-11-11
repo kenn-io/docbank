@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
@@ -352,7 +353,7 @@ var coreMetadataTables = []metadataRecordCodec{
 		table:  "visual_preview_generations", validate: validateVisualPreviewGenerationRecord,
 		insert: importVisualPreviewGeneration}),
 	newMetadataTable(metadataTable[metadataExtractedText]{record: metadataExtractedText{Type: "extracted_text"},
-		table: "extracted_text", validate: validateExtractedTextRecord, insert: importExtractedText}),
+		table: "extracted_text", validate: validateExtractedTextRecord}),
 }
 
 func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob) error {
@@ -367,10 +368,10 @@ func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob) error {
 		INSERT INTO blob_locations(
 			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
 		)
-		SELECT ?, store_id, ?, ?, ?, ?, CASE WHEN ? <= ? THEN 1 ELSE 0 END
-		FROM blob_stores WHERE role = ?`,
+		SELECT $1, store_id, $2, $3, $4, CAST($5 AS BIGINT), CASE WHEN $5 <= $6 THEN 1 ELSE 0 END
+		FROM blob_stores WHERE role = $7`,
 		v.Hash, generation, blobLocationKindLoose, looseEncodingRaw, v.Size,
-		v.Size, maxPackEligibleBytes, blobStoreRolePrimary,
+		maxPackEligibleBytes, blobStoreRolePrimary,
 	)
 	return err
 }
@@ -384,24 +385,13 @@ func importVisualPreviewGeneration(ctx context.Context, tx *sql.Tx, v metadataVi
 		generation_id,vault_uid,content_version_id,source_sha256,contract_version,
 		recipe_fingerprint,canonical_result,checksum,state,output_blob_hash,output_size,
 		output_media_type,output_width,output_height,failure_code,failure_detail,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.GenerationID, v.VaultID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, v.GenerationID, v.VaultID,
 		v.ContentVersionID, v.SourceSHA256, v.ContractVersion, v.RecipeFingerprint,
 		v.CanonicalResult, v.Checksum, preview.State, previewOutputHash(preview),
 		previewOutputSize(preview), previewOutputMediaType(preview), previewOutputWidth(preview),
 		previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
 		v.CreatedAt)
 	return err
-}
-
-func importExtractedText(ctx context.Context, tx *sql.Tx, v metadataExtractedText) error {
-	if err := insertMetadataRecord(ctx, tx, "extracted_text", v); err != nil {
-		return err
-	}
-	var text any
-	if v.Status == ExtractionOK && v.Text != nil {
-		text = *v.Text
-	}
-	return replaceContentFTSTx(ctx, tx, v.BlobHash, v.Extractor, text)
 }
 
 // ExportMetadata writes a deterministic JSONL description of Docbank's
@@ -1007,13 +997,23 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := requirePristineMetadataTarget(ctx, tx); err != nil {
+		postgres := s.postgresSchema != ""
+		if postgres {
+			if _, err := tx.ExecContext(ctx, `SET LOCAL search_path=`+pgx.Identifier{s.postgresSchema}.Sanitize()+`,pg_catalog`); err != nil {
+				return fmt.Errorf("selecting metadata import schema: %w", err)
+			}
+		}
+		if err := requirePristineMetadataTarget(ctx, tx, postgres); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM nodes`); err != nil {
 			return fmt.Errorf("removing bootstrap root: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		deferForeignKeys := `PRAGMA defer_foreign_keys = ON`
+		if postgres {
+			deferForeignKeys = `SET CONSTRAINTS ALL DEFERRED`
+		}
+		if _, err := tx.ExecContext(ctx, deferForeignKeys); err != nil {
 			return fmt.Errorf("deferring metadata foreign keys: %w", err)
 		}
 		header, err := s.importMetadataLines(ctx, tx, r)
@@ -1033,11 +1033,11 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
+			`UPDATE vault_metadata SET vault_uid = $1 WHERE singleton = 1`, header.VaultID,
 		); err != nil {
 			return fmt.Errorf("restoring vault identity: %w", err)
 		}
-		if err := validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
+		if err := s.validateMetadataState(ctx, tx, header.NodeSequence); err != nil {
 			return err
 		}
 		if err := rebuildImportedTextExtractionStateTx(ctx, tx); err != nil {
@@ -1046,8 +1046,24 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err := markImportedSupersededLexicalGenerationsTx(ctx, tx); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, header.NodeSequence); err != nil {
+		allocationQuery := `UPDATE sqlite_sequence SET seq=$1 WHERE name='nodes'`
+		if postgres {
+			allocationQuery = `UPDATE node_allocation SET high_water=$1 WHERE singleton=1`
+			if err := s.refreshImportedCatalogsTx(ctx, tx); err != nil {
+				return err
+			}
+		} else if _, err := tx.ExecContext(ctx, `INSERT INTO content_fts(rowid,blob_hash,extractor,text)
+			SELECT rowid,blob_hash,extractor,text FROM extracted_text WHERE status=$1 AND text IS NOT NULL`, ExtractionOK); err != nil {
+			return fmt.Errorf("restoring extracted-text search projection: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, allocationQuery, header.NodeSequence); err != nil {
 			return fmt.Errorf("restoring node ID high-water mark: %w", err)
+		}
+		if postgres {
+			if _, err := tx.ExecContext(ctx, `SELECT setval(pg_get_serial_sequence('photo_hidden_failures','failure_id'),
+                COALESCE(MAX(failure_id),1),COUNT(*)>0) FROM photo_hidden_failures`); err != nil {
+				return fmt.Errorf("restoring hidden failure insertion order: %w", err)
+			}
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM nodes WHERE parent_id IS NULL`).Scan(&rootID); err != nil {
 			return fmt.Errorf("finding imported root: %w", err)
@@ -1080,14 +1096,19 @@ var metadataPristineStateTables = []string{
 	"export_plans",
 }
 
-var pristineMetadataTables = pristineMetadataTableSum(metadataCodecs)
+var pristineMetadataTables = pristineMetadataTableSum(metadataCodecs, false)
+var pristinePostgresMetadataTables = pristineMetadataTableSum(metadataCodecs, true)
 
-func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
+func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx, postgres bool) error {
+	tables := pristineMetadataTables
+	if postgres {
+		tables = pristinePostgresMetadataTables
+	}
 	var nodes, other, packs int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM nodes),
-		  `+pristineMetadataTables+`
+		  `+tables+`
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state
 		       WHERE singleton != 1 OR binding_epoch != 1 OR publication_epoch != 1 OR resolver_fingerprint != '')
@@ -1116,9 +1137,11 @@ func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 		{"rendition_lexical_heads", `SELECT COUNT(*) FROM rendition_lexical_heads`},
 	} {
 		var exists bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?)`, table.name,
-		).Scan(&exists); err != nil {
+		existsQuery := `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=$1)`
+		if postgres {
+			existsQuery = `SELECT to_regclass($1) IS NOT NULL`
+		}
+		if err := tx.QueryRowContext(ctx, existsQuery, table.name).Scan(&exists); err != nil {
 			return fmt.Errorf("checking metadata import target for %s: %w", table.name, err)
 		}
 		if !exists {
@@ -1217,6 +1240,12 @@ func (s *Store) importMetadataRecord(
 	}
 	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
+	}
+	if s.postgresSchema != "" && kind == "photo_hidden_failure" {
+		// Preserve recorded order without relaxing the runtime identity column.
+		codec := *photoHiddenFailureMetadata
+		codec.insert = insertPostgresHiddenFailure
+		return codec.importRecord(ctx, tx, raw)
 	}
 	if codec, ok := metadataCodecs[kind]; ok {
 		return codec.importRecord(ctx, tx, raw)
@@ -1595,10 +1624,6 @@ func (s *Store) validateMetadataState(ctx context.Context, tx *sql.Tx, nodeSeque
 	layout := currentMetadataLayout()
 	layout.postgres = s.postgresSchema != ""
 	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, layout)
-}
-
-func validateMetadataState(ctx context.Context, tx metadataQuerier, nodeSequence int64) error {
-	return validateMetadataStateWithVaultIdentity(ctx, tx, nodeSequence, currentMetadataLayout())
 }
 
 func validateMetadataStateWithVaultIdentity(

@@ -507,7 +507,7 @@ func importMetadataProcessingConsentGrant(ctx context.Context, tx *sql.Tx, value
 		grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
 		disclosure_fingerprint,input_classes_json,retained_classes_json,
 		revocation_fence,issued_at,expires_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.ConsentSetID, value.VaultID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, value.ID, value.ConsentSetID, value.VaultID,
 		value.ProcessingIncarnationID, authority.principal, authority.scope,
 		authority.profile, authority.disclosure, authority.inputsJSON,
 		authority.retainedJSON, value.RevocationFence, value.IssuedAt, expires)
@@ -534,7 +534,7 @@ func importMetadataProcessingProfile(ctx context.Context, tx *sql.Tx, value meta
 			evidence_lexical_fingerprint,retention_disclosure_fingerprint,
 			attachment_policy_fingerprint,consent_fingerprint,
 			rendition_disclosure_fingerprint,trust_boundary
-		) VALUES(?,?,?,?,?,?,?,?,?)`, record.Fingerprint, string(record.CanonicalProfile),
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, record.Fingerprint, string(record.CanonicalProfile),
 		record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
 		record.RetentionDisclosureFingerprint, record.AttachmentPolicyFingerprint,
 		record.ConsentFingerprint, record.RenditionDisclosureFingerprint, record.TrustBoundary)
@@ -554,11 +554,11 @@ func importMetadataRenditionHead(ctx context.Context, tx *sql.Tx, value metadata
 // when it has consent records.
 func importMetadataProcessingIncarnation(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation) error {
 	var createdAt string
-	err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=?`,
+	err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=$1`,
 		value.ID).Scan(&createdAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		_, err = tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
+		_, err = tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES($1,$2)`,
 			value.ID, value.CreatedAt)
 		return err
 	case err != nil:
@@ -610,12 +610,12 @@ func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataR
 		provider_resume_handle,selected_waiter_id,authorization_grant_id,
 		authorization_incarnation_id,authorization_revocation_fence,
 		lexical_generation_id,failure_code,created_at,updated_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
 		value.ID, value.VaultID, value.SourceSHA256, value.RenditionRequestFingerprint,
 		value.EvidenceLexicalFingerprint, value.CapturedArtifactPolicyFingerprint,
 		string(value.CapturedArtifactPolicy), value.ExecutionIdentityFingerprint,
 		string(identityJSON), snapshotJSON, value.State, value.Phase, value.ClaimOwner,
-		value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, value.ProviderStarted,
+		value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, boolInt(value.ProviderStarted),
 		value.ProviderAttempts,
 		value.ProviderResumeHandle, selectedWaiterID, authorizationGrantID,
 		authorizationIncarnationID, authorizationRevocationFence,
@@ -630,7 +630,7 @@ func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value met
 	}
 	var policyJSON string
 	if err := tx.QueryRowContext(ctx, `SELECT captured_artifact_policy_json
-		FROM rendition_jobs WHERE job_id=?`, value.JobID).Scan(&policyJSON); err != nil {
+		FROM rendition_jobs WHERE job_id=$1`, value.JobID).Scan(&policyJSON); err != nil {
 		return fmt.Errorf("reading restored rendition job captured artifact policy: %w", err)
 	}
 	policy, err := normalizeCapturedArtifactPolicyV1(jsontext.Value(policyJSON))
@@ -647,7 +647,7 @@ func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value met
 		authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
 		state,failure_code,
 		attachment_id,created_at,updated_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, value.ID, value.JobID, value.ContentVersionID,
 		value.ProfileFingerprint, authority.principal, authority.scope,
 		authority.disclosure, authority.inputsJSON, authority.retainedJSON,
 		value.AuthorizationGrantID, value.AuthorizationIncarnationID,
@@ -698,7 +698,7 @@ func restoreLexicalGenerationTx(
 	}
 	if value.Headed {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_heads(
-			singleton,generation_id) VALUES(1,?)`, value.GenerationID); err != nil {
+			singleton,generation_id) VALUES(1,$1)`, value.GenerationID); err != nil {
 			return fmt.Errorf("restoring lexical generation %s head: %w", value.GenerationID, err)
 		}
 	}
@@ -1315,7 +1315,7 @@ func verifyEmbeddingArtifacts(
 			return fmt.Errorf("validating E2 generation artifact %s: %w", id, err)
 		}
 		var evidenceSize int64
-		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=?`, record.EvidenceFingerprint).Scan(&evidenceSize); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash=$1`, record.EvidenceFingerprint).Scan(&evidenceSize); err != nil {
 			return fmt.Errorf("reading E2 evidence blob size: %w", err)
 		}
 		evidence, err := read(ctx, record.EvidenceFingerprint, evidenceSize)
@@ -1327,7 +1327,7 @@ func verifyEmbeddingArtifacts(
 		}
 		setIDs, err := stringColumnTx(ctx, tx, "embedding generation sets", `
 			SELECT embedding_set_id FROM embedding_sets
-			WHERE input_generation_id=? ORDER BY embedding_set_id`, id)
+			WHERE input_generation_id=$1 ORDER BY embedding_set_id`, id)
 		if err != nil {
 			return err
 		}
@@ -1433,7 +1433,7 @@ func validateImportedRenditionHead(
 		FROM rendition_attachments a
 		JOIN rendition_builds b ON b.build_id=a.build_id AND b.vault_uid=a.vault_uid
 		JOIN blobs source ON source.hash=b.source_sha256
-		WHERE a.attachment_id=? AND a.content_version_id=? AND a.profile_fingerprint=?`,
+		WHERE a.attachment_id=$1 AND a.content_version_id=$2 AND a.profile_fingerprint=$3`,
 		head.AttachmentID, head.ContentVersionID, head.ProcessingProfileFingerprint,
 	).Scan(&buildID, &source.hash, &source.size)
 	if errors.Is(err, sql.ErrNoRows) {

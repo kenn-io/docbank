@@ -145,7 +145,7 @@ func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecor
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_records(
 		digest,kind,operation_id,operation_sequence,scope_id,entry_count,
-		event_id,event_ordinal,node_id,record_json) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		event_id,event_ordinal,node_id,record_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		value.Digest, record.Kind, index.operationID, index.operationSequence,
 		index.scopeID, index.entryCount, index.eventID, index.eventOrdinal,
 		index.nodeID, string(canonical))
@@ -165,7 +165,7 @@ func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecor
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_baselines(
-		digest,scope_id,target_node_id,operation_id) VALUES(?,?,?,?)`,
+		digest,scope_id,target_node_id,operation_id) VALUES($1,$2,$3,$4)`,
 		value.Digest, scopeID, targetNodeID, operationID)
 	return err
 }

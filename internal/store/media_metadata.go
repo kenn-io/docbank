@@ -212,7 +212,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaSource(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES(?,?,?,?,?,?)`, record.SourceID, record.Kind, record.Provider, record.OriginScope, record.IdentitySHA256, record.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`, record.SourceID, record.Kind, record.Provider, record.OriginScope, record.IdentitySHA256, record.CreatedAt)
 		return err
 	case metadataMediaSourceVersionType:
 		var record metadataMediaSourceVersion
@@ -222,7 +222,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaSourceVersion(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_source_versions VALUES(?,?,?,?,?,?)`, record.SourceVersionID, record.SourceID, record.Revision, record.ContentVersionID, record.CaptureJSON, record.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_source_versions VALUES($1,$2,$3,$4,$5,$6)`, record.SourceVersionID, record.SourceID, record.Revision, record.ContentVersionID, record.CaptureJSON, record.CreatedAt)
 		return err
 	case metadataMediaOccurrenceType:
 		var record metadataMediaOccurrence
@@ -232,7 +232,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaOccurrence(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.OccurrenceID, record.SourceID, record.SourceVersionID, record.CallerPrincipal, record.CallerOccurrenceRef, record.CallerRevision, record.CallerFilename, record.CallerPersonRef, record.SpeakerLabel, record.MessageJSON, record.Visible, record.FirstSeenAt, record.RevokedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, record.OccurrenceID, record.SourceID, record.SourceVersionID, record.CallerPrincipal, record.CallerOccurrenceRef, record.CallerRevision, record.CallerFilename, record.CallerPersonRef, record.SpeakerLabel, record.MessageJSON, record.Visible, record.FirstSeenAt, record.RevokedAt)
 		return err
 	case metadataMediaInputArtifactType:
 		var record metadataMediaInputArtifact
@@ -242,7 +242,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaInputArtifact(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_input_artifacts VALUES(?,?,?,?,?,?,?,?,?,?,?)`, record.InputID, record.OccurrenceID, record.SourceID, record.SourceVersionID, record.ContentVersionID, record.Kind, record.Origin, record.Provider, record.Language, record.InputSHA256, record.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_input_artifacts VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, record.InputID, record.OccurrenceID, record.SourceID, record.SourceVersionID, record.ContentVersionID, record.Kind, record.Origin, record.Provider, record.Language, record.InputSHA256, record.CreatedAt)
 		return err
 	case metadataMediaOperationType:
 		var record metadataMediaOperation
@@ -267,7 +267,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 				record.ReceiptJSON = string(encoded)
 			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_operations VALUES(?,?,?,?,?,?,?,?)`, record.OperationID, record.Principal, record.Verb, record.RequestSHA256, record.SourceID, record.ReceiptJSON, record.CreatedAt, record.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_operations VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.OperationID, record.Principal, record.Verb, record.RequestSHA256, record.SourceID, record.ReceiptJSON, record.CreatedAt, record.UpdatedAt)
 		return err
 	default:
 		return fmt.Errorf("unknown media metadata type %q", kind)

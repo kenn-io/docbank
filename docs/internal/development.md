@@ -367,7 +367,7 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
-PostgreSQL metadata import and physical backup recovery remain unqualified.
+Physical backup recovery remains unqualified.
 Native multi-store catalog operations are qualified below; deployment adapters
 and filesystem workers remain separate from public PostgreSQL vault opening.
 
@@ -867,7 +867,7 @@ before publication. Runtime grants permit only inserts into members, chunks,
 planned documents and roots; source, plan and job updates are limited to their
 existing mutable columns. These grants do not replace Store lifecycle checks.
 
-#### Logical metadata snapshots and SQLite recovery
+#### Logical metadata transfer and snapshots
 
 The internal Store exports deterministic logical metadata on either backend
 through `ExportMetadata`. `BeginMetadataSnapshot` pins the database view before
@@ -886,20 +886,49 @@ Neither stream contains physical pack placements or rebuildable search indexes.
 An export validates the retained metadata before writing its header. Treat a
 destination error as a failed export and discard the partial output.
 
-PostgreSQL metadata can be imported through `ImportMetadata` into a fresh SQLite
-Store. The source stays unchanged. Logical identities, retained processing
-authority and canonical audit history survive this transfer; `VerifyAudit`
-replays the history and can compare previously recorded evidence on either
-backend. Copying the metadata stream alone does not recover blob bytes or
-physical pack authority. PostgreSQL import, filesystem backup/restore and public
-PostgreSQL vault opening remain separate boundaries.
+Logical metadata can move between PostgreSQL and SQLite without changing the
+format. Use `ImportMetadata` for a pristine SQLite Store. For PostgreSQL, use
+`store.ImportPostgresMetadata(ctx, ownerPool, cfg, reader)` with
+`pgschema.Config{Schema: "documents", SchemaOwner: "docbank_owner"}` and a pool
+connected as that schema owner. The internal import entry point runs `Setup`,
+refuses a nonpristine target, and uses the existing storage writer transaction.
+It selects the schema through `SET LOCAL search_path`; the caller's pool stays
+open with its original session settings. Runtime credentials cannot perform
+setup or change the vault identity, and need no additional grants.
 
-The `metadata-export` contracts cover native audited transfer, deterministic
-exports of retained catalogs, backup blob selection, snapshot isolation, canceled
-calls and failed destinations. They recover through the existing SQLite importer
-and re-export the restored metadata. Retained catalog fixtures qualify the
-exporter, not their producers. Existing runtime SELECT grants cover this path;
-no schema changes or extra write privileges are required.
+Import restores the source vault UUID, node/version identities, allocation
+high-water mark, retained processing records and canonical audit history. It
+keeps the fresh target's processing incarnation, so restored consent records
+cannot authorize a provider call until the operator grants consent again.
+`VerifyAudit` independently replays the restored history and can compare
+previously recorded evidence on either backend.
+
+PostgreSQL foreign keys that normally check immediately remain immediate for
+ordinary writes but allow explicit deferral during import. The complete stream
+is validated before commit, including foreign keys and audit replay. Interrupted
+streams or failed SQL roll back the logical rows, identity and node allocator.
+A failed first import can leave the pristine schema created by `Setup`; retry
+against that same target. Never overwrite or recreate a retained destination.
+
+SQLite rebuilds its extracted-text FTS projection after all records are loaded.
+PostgreSQL restores its retained lexical rows and rebuilds photo timelines, XMP
+export work and candidate-to-face membership in the import transaction. Photo
+rebuilding reads bounded pages. Hidden-photo failure records keep their IDs and
+their next insertion position without relaxing the runtime identity column.
+
+This is logical recovery. Before publishing a restored vault, restore and verify
+all blob bytes and physical pack authority separately. A metadata stream alone
+cannot recover those bytes. Filesystem backup/restore and public PostgreSQL
+vault opening remain separate boundaries.
+
+The `metadata-export` and `metadata-import` contracts cover pinned snapshots,
+native audited transfer, retained-catalog round trips, backup blob selection,
+failed streams and destinations, late database failures, runtime refusal and
+fresh processing consent. PostgreSQL imports are read through the runtime role
+and exported back through the existing SQLite importer. Retained fixtures
+qualify the transfer, not their producers. Runtime SELECT grants cover export;
+import uses the separate schema-owner credentials. The schema fingerprint
+changes with deferrable references; recreate stale disposable test schemas.
 
 #### PostgreSQL reference implementations
 
@@ -1030,11 +1059,11 @@ the original versions, jobs, receipts, epochs and node revisions.
 
 `make backend-coverage` reports the recorded SQLite catalog effects,
 their PostgreSQL owners and their remaining boundaries. Audit enrollment already
-queues affected photos through `queueAuditPhotosTx`. Deleting authority or
-memberships during import/restore still needs that effect. Candidate insertion writes the candidate-to-face projection in its transaction.
-No native writer replaces candidate evidence in place; a future metadata restore
-must also rebuild that projection. Source-head recovery and search still have
-unported effects; their retained tables do not establish write support.
+queues affected photos through `queueAuditPhotosTx`. Logical import requires a
+pristine target, so it never deletes retained authority or memberships. Candidate insertion writes its face projection in the same
+transaction; import rebuilds that projection after loading the evidence. No
+supported writer replaces candidate evidence or source heads during recovery.
+Search still has unported effects; retained tables do not establish search support.
 
 For each remaining port, capture affected identities before cascades remove the
 rows that identify them. Validate values and immutable-record rules in the Go
@@ -1113,7 +1142,8 @@ retained artifacts to the current processing incarnation. Revocations append a
 new fence. A new grant cannot replace the authorization used by an earlier
 provider call; publication rechecks that authorization inside its writer
 transaction. Runtime can insert grants and revocations but cannot update or
-delete their history. Incarnation replacement during restore remains unqualified.
+delete their history. Logical import retains a fresh processing incarnation,
+so restored grants remain historical.
 
 Jobs share a build only when source bytes, execution identity and captured output
 policy agree. Each version/profile waiter keeps its own consent. Claims,
@@ -1644,7 +1674,7 @@ copies.
 The `photo-checkout` contracts exercise native operations, late publication and
 commit failures, batched observation rollback, snapshots and retained-version
 holds. Existing albums are inputs to selection; this does not qualify album
-editing. Filesystem workers, portable metadata import and restore, general photo
+editing. Filesystem workers, physical backup and restore, general photo
 query selection and public PostgreSQL vault opening remain separate.
 
 #### Recoverable deletion
@@ -2060,7 +2090,8 @@ schema can enroll its root without a copied fixture.
 Copying supporting catalogs qualifies their validation, not their producers.
 The [operation inventory](#backend-support-and-drift-checks) identifies native
 writes and their catalog-maintenance coverage. Public PostgreSQL opening,
-metadata import/export, backup/restore and search remain unqualified.
+physical backup/restore and search remain unqualified. Logical metadata transfer
+uses the internal import/export entry points described above.
 
 For PostgreSQL tests, start a disposable server, never an operator database:
 

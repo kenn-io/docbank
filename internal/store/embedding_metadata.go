@@ -232,7 +232,7 @@ func importMetadataEmbeddingGeneration(ctx context.Context, tx *sql.Tx, value me
 		generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,evidence_fingerprint,
 		tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,
 		attachment_context_fingerprint,attachment_id,input_count,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, nullableCatalogString(value.GenerationBlobHash), value.GenerationEncodedSize, value.GenerationChecksum, value.SourceVersionID, value.ProfileFingerprint, value.EvidenceFingerprint, value.TokenizerFingerprint, value.ChunkPolicyFingerprint, value.FormatterFingerprint, value.AttachmentContextFingerprint, value.AttachmentID, value.InputCount, value.CreatedAt)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, value.ID, nullableCatalogString(value.GenerationBlobHash), value.GenerationEncodedSize, value.GenerationChecksum, value.SourceVersionID, value.ProfileFingerprint, value.EvidenceFingerprint, value.TokenizerFingerprint, value.ChunkPolicyFingerprint, value.FormatterFingerprint, value.AttachmentContextFingerprint, value.AttachmentID, value.InputCount, value.CreatedAt)
 	return err
 }
 

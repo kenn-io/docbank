@@ -21,7 +21,7 @@ func (s *Store) backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 	}
 	for file, source := range sources {
 		if source.identity != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=? WHERE file_id=? AND source_provenance_identity IS NULL`, source.identity, file); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=$1 WHERE file_id=$2 AND source_provenance_identity IS NULL`, source.identity, file); err != nil {
 				return fmt.Errorf("backfilling photo source: %w", err)
 			}
 		}

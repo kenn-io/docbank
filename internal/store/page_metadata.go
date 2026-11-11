@@ -179,7 +179,7 @@ func importPageMetadata(ctx context.Context, tx *sql.Tx, record metadataPageReco
 			return err
 		}
 		var found bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM page_documents WHERE version_id=?)`, d.Source.VersionID).Scan(&found); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM page_documents WHERE version_id=$1)`, d.Source.VersionID).Scan(&found); err != nil {
 			return err
 		}
 		if found {
@@ -191,14 +191,14 @@ func importPageMetadata(ctx context.Context, tx *sql.Tx, record metadataPageReco
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO page_recipes(checksum,canonical_json) VALUES(?,?)`, hash, []byte(record.CanonicalJSON))
+		_, err = tx.ExecContext(ctx, `INSERT INTO page_recipes(checksum,canonical_json) VALUES($1,$2)`, hash, []byte(record.CanonicalJSON))
 		return err
 	case metadataPageImageType:
 		image, hash, err := document.DecodePageImageV1(record.CanonicalJSON)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO page_images(version_id,page,recipe_sha256,canonical_json,checksum,blob_hash) VALUES(?,?,?,?,?,?)`, image.Source.VersionID, image.Page, image.RecipeSHA256, []byte(record.CanonicalJSON), hash, image.SHA256)
+		_, err = tx.ExecContext(ctx, `INSERT INTO page_images(version_id,page,recipe_sha256,canonical_json,checksum,blob_hash) VALUES($1,$2,$3,$4,$5,$6)`, image.Source.VersionID, image.Page, image.RecipeSHA256, []byte(record.CanonicalJSON), hash, image.SHA256)
 		return err
 	case metadataPageJobType:
 		job, err := canonical.Decode[PageRenderJob](record.CanonicalJSON)
@@ -219,7 +219,7 @@ func importPageMetadata(ctx context.Context, tx *sql.Tx, record metadataPageReco
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO page_render_jobs(id,node_id,version_id,request_sha256,request_json,state,results_json,failure_code,epoch,token,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,'',?,?)`, job.ID, job.Request.NodeID, job.Request.Source.VersionID, job.RequestSHA256, request, job.State, results, job.FailureCode, job.CreatedAt, job.UpdatedAt)
+		_, err = tx.ExecContext(ctx, `INSERT INTO page_render_jobs(id,node_id,version_id,request_sha256,request_json,state,results_json,failure_code,epoch,token,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,0,'',$9,$10)`, job.ID, job.Request.NodeID, job.Request.Source.VersionID, job.RequestSHA256, request, job.State, results, job.FailureCode, job.CreatedAt, job.UpdatedAt)
 		return err
 	}
 	return ErrPageConflict

@@ -30,7 +30,7 @@ func insertMailboxOccurrence(ctx context.Context, tx *sql.Tx, o MailboxOccurrenc
 	if o.ReceiptID != "" {
 		receipt = o.ReceiptID
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES(?,?,?,?)`, o.JobID, o.Ordinal, receipt, b)
+	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_occurrences(job_id,ordinal,receipt_id,occurrence_json) VALUES($1,$2,$3,$4)`, o.JobID, o.Ordinal, receipt, b)
 	return err
 }
 func exportMailboxJobs(ctx context.Context, q metadataQuerier, write metadataWrite) error {

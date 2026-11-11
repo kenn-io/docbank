@@ -1,5 +1,7 @@
 -- The PostgreSQL identity follows the same logical vault through export and
 -- restore.
+-- Foreign keys can be deferred during logical import. Ordinary writers keep
+-- immediate checks, apart from the existing explicitly deferred references.
 CREATE TABLE {{schema}}.vault_metadata (
     singleton      SMALLINT PRIMARY KEY,
     vault_uid      UUID NOT NULL UNIQUE,
@@ -15,7 +17,7 @@ CREATE TABLE {{schema}}.node_allocation (
 -- Text uses SQLite byte order, independent of the database locale.
 CREATE TABLE {{schema}}.nodes (
     id                 BIGINT PRIMARY KEY,
-    parent_id          BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
+    parent_id          BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name               TEXT COLLATE "C" NOT NULL,
     kind               TEXT COLLATE "C" NOT NULL,
     current_version_id TEXT COLLATE "C",
@@ -23,7 +25,7 @@ CREATE TABLE {{schema}}.nodes (
     created_at         TEXT COLLATE "C" NOT NULL,
     modified_at        TEXT COLLATE "C" NOT NULL,
     trashed_at         TEXT COLLATE "C",
-    trash_parent       BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE SET NULL,
+    trash_parent       BIGINT REFERENCES {{schema}}.nodes(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     trash_name         TEXT COLLATE "C"
 );
 CREATE UNIQUE INDEX one_root ON {{schema}}.nodes((1)) WHERE parent_id IS NULL;
@@ -46,14 +48,14 @@ CREATE TABLE {{schema}}.blobs (
 
 -- SHA-256 owns content identity; MD5 is auxiliary interoperability metadata.
 CREATE TABLE {{schema}}.blob_checksums (
-    blob_sha256 TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    blob_sha256 TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     md5         TEXT COLLATE "C" NOT NULL
 );
 
 CREATE TABLE {{schema}}.content_versions (
     version_id              TEXT COLLATE "C" PRIMARY KEY,
-    node_id                 BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
-    blob_hash               TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash),
+    node_id                 BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    blob_hash               TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE,
     size                    BIGINT NOT NULL,
     mime_type               TEXT COLLATE "C",
     recorded_at             TEXT COLLATE "C" NOT NULL,
@@ -121,7 +123,7 @@ CREATE TABLE {{schema}}.audit_authority (
 );
 CREATE TABLE {{schema}}.audit_scopes (
     scope_id            TEXT COLLATE "C" PRIMARY KEY,
-    target_node_id      BIGINT NOT NULL REFERENCES {{schema}}.nodes(id),
+    target_node_id      BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     enable_operation_id TEXT COLLATE "C" NOT NULL UNIQUE,
     entry_count         BIGINT NOT NULL,
     chain_head          TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_records(digest)
@@ -132,14 +134,14 @@ CREATE TABLE {{schema}}.audit_baselines (
         DEFERRABLE INITIALLY DEFERRED,
     scope_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_scopes(scope_id)
         DEFERRABLE INITIALLY DEFERRED,
-    target_node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id),
+    target_node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     operation_id   TEXT COLLATE "C" NOT NULL,
     UNIQUE (scope_id, target_node_id, operation_id)
 );
 CREATE TABLE {{schema}}.audit_memberships (
     scope_id        TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_scopes(scope_id)
         DEFERRABLE INITIALLY DEFERRED,
-    node_id         BIGINT NOT NULL REFERENCES {{schema}}.nodes(id),
+    node_id         BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     baseline_digest TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.audit_baselines(digest)
         DEFERRABLE INITIALLY DEFERRED,
     PRIMARY KEY (scope_id, node_id)
@@ -158,8 +160,8 @@ CREATE TABLE {{schema}}.ingests (
 
 CREATE TABLE {{schema}}.provenance (
     identity       TEXT COLLATE "C" PRIMARY KEY NOT NULL,
-    node_id        BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
-    ingest_id      TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.ingests(id),
+    node_id        BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    ingest_id      TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.ingests(id) DEFERRABLE INITIALLY IMMEDIATE,
     original_path  TEXT COLLATE "C" NOT NULL,
     original_mtime TEXT COLLATE "C",
     supersedes     TEXT COLLATE "C" REFERENCES {{schema}}.provenance(identity)
@@ -167,8 +169,8 @@ CREATE TABLE {{schema}}.provenance (
 );
 
 CREATE TABLE {{schema}}.provenance_version_bindings (
-    provenance_identity TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.provenance(identity) ON DELETE CASCADE,
-    content_version_id  TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    provenance_identity TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.provenance(identity) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    content_version_id  TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     observed_at         TEXT COLLATE "C" NOT NULL,
     basis_ref           TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (provenance_identity, content_version_id)
@@ -189,7 +191,7 @@ CREATE TABLE {{schema}}.derivative_purge_suppressions (
 
 CREATE TABLE {{schema}}.source_metadata_generations (
     generation_id        TEXT COLLATE "C" PRIMARY KEY,
-    source_sha256        TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    source_sha256        TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     contract_version     TEXT COLLATE "C" NOT NULL,
     extractor_fingerprint TEXT COLLATE "C" NOT NULL,
     canonical_json       BYTEA NOT NULL,
@@ -200,17 +202,17 @@ CREATE TABLE {{schema}}.source_metadata_generations (
 );
 
 CREATE TABLE {{schema}}.source_metadata_heads (
-    source_sha256 TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    source_sha256 TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     generation_id TEXT COLLATE "C" NOT NULL UNIQUE
-        REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE,
+        REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     published_at TEXT COLLATE "C" NOT NULL,
     FOREIGN KEY (source_sha256, generation_id)
-        REFERENCES {{schema}}.source_metadata_generations(source_sha256, generation_id) ON DELETE CASCADE
+        REFERENCES {{schema}}.source_metadata_generations(source_sha256, generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.photo_technical_metadata (
     generation_id          TEXT COLLATE "C" PRIMARY KEY
-        REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE,
+        REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     camera_make            TEXT COLLATE "C",
     camera_model           TEXT COLLATE "C",
     body_serial_number     TEXT COLLATE "C",
@@ -248,8 +250,8 @@ CREATE TABLE {{schema}}.tags (
 );
 
 CREATE TABLE {{schema}}.node_tags (
-    node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE,
-    tag_id  TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.tags(id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    tag_id  TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.tags(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (node_id, tag_id)
 );
 
@@ -273,7 +275,7 @@ CREATE TABLE {{schema}}.photo_files (
     asset_id             TEXT COLLATE "C" REFERENCES {{schema}}.photo_assets(asset_id)
         ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     node_id              BIGINT NOT NULL UNIQUE REFERENCES {{schema}}.nodes(id)
-        ON DELETE CASCADE,
+        ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role                 TEXT COLLATE "C" NOT NULL,
     sidecar_of_file_id   TEXT COLLATE "C",
     revision             BIGINT NOT NULL DEFAULT 1,
@@ -302,7 +304,7 @@ CREATE TABLE {{schema}}.photo_sets (
     name TEXT COLLATE "C" NOT NULL,
     starred BIGINT NOT NULL DEFAULT 0,
     revision BIGINT NOT NULL DEFAULT 1,
-    cover_asset_id TEXT COLLATE "C" REFERENCES {{schema}}.photo_assets(asset_id),
+    cover_asset_id TEXT COLLATE "C" REFERENCES {{schema}}.photo_assets(asset_id) DEFERRABLE INITIALLY IMMEDIATE,
     created_at TEXT COLLATE "C" NOT NULL,
     updated_at TEXT COLLATE "C" NOT NULL,
     deleted_at TEXT COLLATE "C"
@@ -314,7 +316,7 @@ CREATE TABLE {{schema}}.photo_change_receipts (
     operation      TEXT COLLATE "C" NOT NULL,
     asset_id       TEXT COLLATE "C",
     settings_key   TEXT COLLATE "C",
-    set_id         TEXT COLLATE "C" REFERENCES {{schema}}.photo_sets(set_id),
+    set_id         TEXT COLLATE "C" REFERENCES {{schema}}.photo_sets(set_id) DEFERRABLE INITIALLY IMMEDIATE,
     before_revision BIGINT NOT NULL,
     after_revision BIGINT NOT NULL,
     before_json    TEXT COLLATE "C" NOT NULL,
@@ -898,7 +900,7 @@ CREATE TABLE {{schema}}.watch_source_absences (
     PRIMARY KEY (watch_name, source_ref),
     FOREIGN KEY (watch_name, source_ref)
         REFERENCES {{schema}}.watch_sources(watch_name, source_ref)
-        ON UPDATE CASCADE ON DELETE CASCADE
+        ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.push_sources (
@@ -1207,7 +1209,7 @@ CREATE INDEX rendition_lexical_generations_stream
 CREATE TABLE {{schema}}.rendition_lexical_stream_builds (
     stream_id      TEXT COLLATE "C" NOT NULL,
     ordinal        BIGINT NOT NULL,
-    build_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.rendition_builds(build_id),
+    build_id       TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.rendition_builds(build_id) DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (stream_id, ordinal),
     UNIQUE (stream_id, build_id)
 );
@@ -1783,307 +1785,307 @@ CREATE TABLE {{schema}}.photo_suggestions (
     UNIQUE (content_version_id, producer_fingerprint)
 );
 
-ALTER TABLE {{schema}}.export_chunks ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.export_sources(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.export_chunks ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.export_sources(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_members ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.export_sources(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.export_members ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.export_sources(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_members ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.export_members ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_members ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.export_members ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_plans ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.export_sources(id);
+ALTER TABLE {{schema}}.export_plans ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.export_sources(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_documents ADD FOREIGN KEY (plan_id) REFERENCES {{schema}}.export_plans(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.export_documents ADD FOREIGN KEY (plan_id) REFERENCES {{schema}}.export_plans(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_role_roots ADD FOREIGN KEY (plan_id) REFERENCES {{schema}}.export_plans(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.export_role_roots ADD FOREIGN KEY (plan_id) REFERENCES {{schema}}.export_plans(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_role_roots ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.export_role_roots ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.export_jobs ADD FOREIGN KEY (plan_id) REFERENCES {{schema}}.export_plans(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.export_jobs ADD FOREIGN KEY (plan_id) REFERENCES {{schema}}.export_plans(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.collection_snapshots ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.collection_snapshots ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.collection_snapshots ADD FOREIGN KEY (predecessor_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id);
+ALTER TABLE {{schema}}.collection_snapshots ADD FOREIGN KEY (predecessor_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.collection_snapshot_members ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.collection_snapshot_members ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.collection_snapshot_members ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.collection_snapshot_representations ADD FOREIGN KEY (snapshot_id, occurrence_id)
-        REFERENCES {{schema}}.collection_snapshot_members(snapshot_id, occurrence_id) ON DELETE CASCADE;
+        REFERENCES {{schema}}.collection_snapshot_members(snapshot_id, occurrence_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.packages ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id);
+ALTER TABLE {{schema}}.packages ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.packages ADD FOREIGN KEY (predecessor_package_id) REFERENCES {{schema}}.packages(package_id);
+ALTER TABLE {{schema}}.packages ADD FOREIGN KEY (predecessor_package_id) REFERENCES {{schema}}.packages(package_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.packages ADD FOREIGN KEY (ingest_id) REFERENCES {{schema}}.ingests(id);
+ALTER TABLE {{schema}}.packages ADD FOREIGN KEY (ingest_id) REFERENCES {{schema}}.ingests(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_volumes ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.package_volumes ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_namespace_cursors ADD FOREIGN KEY (namespace_id) REFERENCES {{schema}}.bates_namespaces(namespace_id);
+ALTER TABLE {{schema}}.bates_namespace_cursors ADD FOREIGN KEY (namespace_id) REFERENCES {{schema}}.bates_namespaces(namespace_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_allocations ADD FOREIGN KEY (namespace_id) REFERENCES {{schema}}.bates_namespaces(namespace_id);
+ALTER TABLE {{schema}}.bates_allocations ADD FOREIGN KEY (namespace_id) REFERENCES {{schema}}.bates_namespaces(namespace_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_allocations ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id);
+ALTER TABLE {{schema}}.bates_allocations ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_page_labels ADD FOREIGN KEY (allocation_id) REFERENCES {{schema}}.bates_allocations(allocation_id);
+ALTER TABLE {{schema}}.bates_page_labels ADD FOREIGN KEY (allocation_id) REFERENCES {{schema}}.bates_allocations(allocation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_page_labels ADD FOREIGN KEY (namespace_id) REFERENCES {{schema}}.bates_namespaces(namespace_id);
+ALTER TABLE {{schema}}.bates_page_labels ADD FOREIGN KEY (namespace_id) REFERENCES {{schema}}.bates_namespaces(namespace_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_artifacts ADD FOREIGN KEY (allocation_id) REFERENCES {{schema}}.bates_allocations(allocation_id);
+ALTER TABLE {{schema}}.bates_artifacts ADD FOREIGN KEY (allocation_id) REFERENCES {{schema}}.bates_allocations(allocation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_artifacts ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.bates_artifacts ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.bates_artifact_pages ADD FOREIGN KEY (artifact_id) REFERENCES {{schema}}.bates_artifacts(artifact_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.bates_artifact_pages ADD FOREIGN KEY (artifact_id) REFERENCES {{schema}}.bates_artifacts(artifact_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_records ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.package_records ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_labels ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.package_labels ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_labels ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.package_labels ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_import_jobs ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id);
+ALTER TABLE {{schema}}.package_import_jobs ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_import_receipts ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id);
+ALTER TABLE {{schema}}.package_import_receipts ADD FOREIGN KEY (package_id) REFERENCES {{schema}}.packages(package_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.package_import_receipts ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.package_import_receipts ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_documents ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.page_documents ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_frames ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.page_documents(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.page_frames ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.page_documents(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_images ADD FOREIGN KEY (recipe_sha256) REFERENCES {{schema}}.page_recipes(checksum);
+ALTER TABLE {{schema}}.page_images ADD FOREIGN KEY (recipe_sha256) REFERENCES {{schema}}.page_recipes(checksum) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_images ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.page_images ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_images ADD FOREIGN KEY(version_id,page) REFERENCES {{schema}}.page_frames(version_id,page) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.page_images ADD FOREIGN KEY(version_id,page) REFERENCES {{schema}}.page_frames(version_id,page) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_render_jobs ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.page_render_jobs ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.page_render_jobs ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.page_render_jobs ADD FOREIGN KEY (version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.storage_operations ADD FOREIGN KEY (source_store_id) REFERENCES {{schema}}.blob_stores(store_id) ON DELETE SET NULL;
+ALTER TABLE {{schema}}.storage_operations ADD FOREIGN KEY (source_store_id) REFERENCES {{schema}}.blob_stores(store_id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_source_versions ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id);
+ALTER TABLE {{schema}}.media_source_versions ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_source_versions ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.media_source_versions ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_occurrences ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id);
+ALTER TABLE {{schema}}.media_occurrences ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_occurrences ADD FOREIGN KEY (source_version_id) REFERENCES {{schema}}.media_source_versions(source_version_id);
+ALTER TABLE {{schema}}.media_occurrences ADD FOREIGN KEY (source_version_id) REFERENCES {{schema}}.media_source_versions(source_version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (occurrence_id) REFERENCES {{schema}}.media_occurrences(occurrence_id);
+ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (occurrence_id) REFERENCES {{schema}}.media_occurrences(occurrence_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id);
+ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (source_version_id) REFERENCES {{schema}}.media_source_versions(source_version_id);
+ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (source_version_id) REFERENCES {{schema}}.media_source_versions(source_version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.media_input_artifacts ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.media_operations ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id);
+ALTER TABLE {{schema}}.media_operations ADD FOREIGN KEY (source_id) REFERENCES {{schema}}.media_sources(source_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (source_sha256) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (source_sha256) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (output_blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.visual_preview_generations ADD FOREIGN KEY (output_blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.visual_preview_heads ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.visual_preview_heads ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.visual_preview_heads ADD FOREIGN KEY (content_version_id, generation_id)
-        REFERENCES {{schema}}.visual_preview_generations(content_version_id, generation_id) ON DELETE CASCADE;
+        REFERENCES {{schema}}.visual_preview_generations(content_version_id, generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.collection_labels ADD FOREIGN KEY (ingest_id) REFERENCES {{schema}}.ingests(id);
+ALTER TABLE {{schema}}.collection_labels ADD FOREIGN KEY (ingest_id) REFERENCES {{schema}}.ingests(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.watch_sources ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.watch_sources ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.push_sources ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.push_sources ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.push_sources ADD FOREIGN KEY (provenance_identity) REFERENCES {{schema}}.provenance(identity) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.push_sources ADD FOREIGN KEY (provenance_identity) REFERENCES {{schema}}.provenance(identity) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.current_processing_incarnation ADD FOREIGN KEY (incarnation_id) REFERENCES {{schema}}.processing_incarnations(incarnation_id);
+ALTER TABLE {{schema}}.current_processing_incarnation ADD FOREIGN KEY (incarnation_id) REFERENCES {{schema}}.processing_incarnations(incarnation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.processing_consent_grants ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.processing_consent_grants ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.processing_consent_grants ADD FOREIGN KEY (incarnation_id) REFERENCES {{schema}}.processing_incarnations(incarnation_id);
+ALTER TABLE {{schema}}.processing_consent_grants ADD FOREIGN KEY (incarnation_id) REFERENCES {{schema}}.processing_incarnations(incarnation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.processing_consent_revocations ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.processing_consent_revocations ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.processing_consent_revocations ADD FOREIGN KEY (incarnation_id) REFERENCES {{schema}}.processing_incarnations(incarnation_id);
+ALTER TABLE {{schema}}.processing_consent_revocations ADD FOREIGN KEY (incarnation_id) REFERENCES {{schema}}.processing_incarnations(incarnation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_builds ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.rendition_builds ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_builds ADD FOREIGN KEY (source_sha256) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.rendition_builds ADD FOREIGN KEY (source_sha256) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_artifacts ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
+ALTER TABLE {{schema}}.rendition_artifacts ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_artifacts ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.rendition_artifacts ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_units ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
+ALTER TABLE {{schema}}.rendition_units ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.rendition_lexical_segments ADD FOREIGN KEY (build_id, unit_id)
-        REFERENCES {{schema}}.rendition_units(build_id, unit_id);
+        REFERENCES {{schema}}.rendition_units(build_id, unit_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_attachments ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.rendition_attachments ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_attachments ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.rendition_attachments ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.rendition_attachments ADD FOREIGN KEY (vault_uid, build_id)
-        REFERENCES {{schema}}.rendition_builds(vault_uid, build_id);
+        REFERENCES {{schema}}.rendition_builds(vault_uid, build_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.rendition_heads ADD FOREIGN KEY (content_version_id, profile_fingerprint, attachment_id)
         REFERENCES {{schema}}.rendition_attachments(
             content_version_id, profile_fingerprint, attachment_id
-        ) ON DELETE CASCADE;
+        ) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_input_generations ADD FOREIGN KEY (generation_blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.embedding_input_generations ADD FOREIGN KEY (generation_blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_input_generations ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.embedding_input_generations ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.embedding_input_generations(generation_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.embedding_input_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.embedding_jobs ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_generation_inputs ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.embedding_input_generations(generation_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.embedding_generation_inputs ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.embedding_input_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_vector_sets ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id);
+ALTER TABLE {{schema}}.embedding_vector_sets ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_vector_sets ADD FOREIGN KEY (payload_blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.embedding_vector_sets ADD FOREIGN KEY (payload_blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_vector_rows ADD FOREIGN KEY (vector_set_id) REFERENCES {{schema}}.embedding_vector_sets(vector_set_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.embedding_vector_rows ADD FOREIGN KEY (vector_set_id) REFERENCES {{schema}}.embedding_vector_sets(vector_set_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id);
+ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (input_generation_id) REFERENCES {{schema}}.embedding_input_generations(generation_id);
+ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (input_generation_id) REFERENCES {{schema}}.embedding_input_generations(generation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (vector_set_id) REFERENCES {{schema}}.embedding_vector_sets(vector_set_id);
+ALTER TABLE {{schema}}.embedding_sets ADD FOREIGN KEY (vector_set_id) REFERENCES {{schema}}.embedding_vector_sets(vector_set_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_heads ADD FOREIGN KEY (embedding_set_id) REFERENCES {{schema}}.embedding_sets(embedding_set_id);
+ALTER TABLE {{schema}}.embedding_heads ADD FOREIGN KEY (embedding_set_id) REFERENCES {{schema}}.embedding_sets(embedding_set_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_heads ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id);
+ALTER TABLE {{schema}}.embedding_heads ADD FOREIGN KEY (vector_space_id) REFERENCES {{schema}}.embedding_vector_spaces(vector_space_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_heads ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.embedding_heads ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_failures ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.embedding_failures ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.embedding_failures ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.embedding_failures ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_lexical_index ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id);
+ALTER TABLE {{schema}}.rendition_lexical_index ADD FOREIGN KEY (build_id) REFERENCES {{schema}}.rendition_builds(build_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_lexical_generation_manifests ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
+ALTER TABLE {{schema}}.rendition_lexical_generation_manifests ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_lexical_heads ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id);
+ALTER TABLE {{schema}}.rendition_lexical_heads ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_lexical_superseded ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.rendition_lexical_superseded ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.rendition_lexical_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_jobs ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid);
+ALTER TABLE {{schema}}.rendition_jobs ADD FOREIGN KEY (vault_uid) REFERENCES {{schema}}.vault_metadata(vault_uid) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_jobs ADD FOREIGN KEY (source_sha256) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.rendition_jobs ADD FOREIGN KEY (source_sha256) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_job_waiters ADD FOREIGN KEY (job_id) REFERENCES {{schema}}.rendition_jobs(job_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.rendition_job_waiters ADD FOREIGN KEY (job_id) REFERENCES {{schema}}.rendition_jobs(job_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_job_waiters ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.rendition_job_waiters ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.rendition_job_waiters ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint);
+ALTER TABLE {{schema}}.rendition_job_waiters ADD FOREIGN KEY (profile_fingerprint) REFERENCES {{schema}}.processing_profiles(profile_fingerprint) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.saved_query_runs ADD FOREIGN KEY (saved_query_id) REFERENCES {{schema}}.saved_queries(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.saved_query_runs ADD FOREIGN KEY (saved_query_id) REFERENCES {{schema}}.saved_queries(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_part_artifacts ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.email_generations(generation_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.email_part_artifacts ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.email_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_part_artifacts ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.email_part_artifacts ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_attachments ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.email_attachments ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_attachments ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.email_generations(generation_id);
+ALTER TABLE {{schema}}.email_attachments ADD FOREIGN KEY (generation_id) REFERENCES {{schema}}.email_generations(generation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_heads ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.email_heads ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.email_heads ADD FOREIGN KEY (content_version_id, attachment_id)
-        REFERENCES {{schema}}.email_attachments(content_version_id, attachment_id) ON DELETE CASCADE;
+        REFERENCES {{schema}}.email_attachments(content_version_id, attachment_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_body_results ADD FOREIGN KEY (email_attachment_id) REFERENCES {{schema}}.email_attachments(attachment_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.email_body_results ADD FOREIGN KEY (email_attachment_id) REFERENCES {{schema}}.email_attachments(attachment_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_body_results ADD FOREIGN KEY (rendition_attachment_id) REFERENCES {{schema}}.rendition_attachments(attachment_id);
+ALTER TABLE {{schema}}.email_body_results ADD FOREIGN KEY (rendition_attachment_id) REFERENCES {{schema}}.rendition_attachments(attachment_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_document_publications ADD FOREIGN KEY (parent_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.email_document_publications ADD FOREIGN KEY (parent_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_document_publications ADD FOREIGN KEY (email_attachment_id) REFERENCES {{schema}}.email_attachments(attachment_id);
+ALTER TABLE {{schema}}.email_document_publications ADD FOREIGN KEY (email_attachment_id) REFERENCES {{schema}}.email_attachments(attachment_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_document_relations ADD FOREIGN KEY (operation_id) REFERENCES {{schema}}.email_document_publications(operation_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.email_document_relations ADD FOREIGN KEY (operation_id) REFERENCES {{schema}}.email_document_publications(operation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.email_document_relations ADD FOREIGN KEY (child_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.email_document_relations ADD FOREIGN KEY (child_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_set_members ADD FOREIGN KEY (set_id) REFERENCES {{schema}}.photo_sets(set_id);
+ALTER TABLE {{schema}}.photo_set_members ADD FOREIGN KEY (set_id) REFERENCES {{schema}}.photo_sets(set_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_set_members ADD FOREIGN KEY (asset_id) REFERENCES {{schema}}.photo_assets(asset_id);
+ALTER TABLE {{schema}}.photo_set_members ADD FOREIGN KEY (asset_id) REFERENCES {{schema}}.photo_assets(asset_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.persons ADD FOREIGN KEY (key_face_id) REFERENCES {{schema}}.photo_faces(face_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE {{schema}}.person_identities ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.person_identities ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.person_external_identities ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.person_external_identities ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (ingest_id) REFERENCES {{schema}}.ingests(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (ingest_id) REFERENCES {{schema}}.ingests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE SET NULL;
+ALTER TABLE {{schema}}.custodian_assignments ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.person_document_assertions ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.person_document_assertions ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.person_document_assertions ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.person_document_assertions ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_faces ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.photo_faces ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_faces ADD FOREIGN KEY (assertion_id) REFERENCES {{schema}}.person_document_assertions(assertion_id);
+ALTER TABLE {{schema}}.photo_faces ADD FOREIGN KEY (assertion_id) REFERENCES {{schema}}.person_document_assertions(assertion_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.document_people_generations ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.document_people_generations ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.document_people_heads ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.document_people_heads ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.document_people ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.document_people ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.document_people ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.document_people ADD FOREIGN KEY (node_id) REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.document_people ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.document_people ADD FOREIGN KEY (person_id) REFERENCES {{schema}}.persons(person_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_chunks ADD FOREIGN KEY (container_id) REFERENCES {{schema}}.mailbox_containers(id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.mailbox_chunks ADD FOREIGN KEY (container_id) REFERENCES {{schema}}.mailbox_containers(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_chunks ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash);
+ALTER TABLE {{schema}}.mailbox_chunks ADD FOREIGN KEY (blob_hash) REFERENCES {{schema}}.blobs(hash) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_transfer_receipts ADD FOREIGN KEY (archive_id) REFERENCES {{schema}}.mailbox_archives(id);
+ALTER TABLE {{schema}}.mailbox_transfer_receipts ADD FOREIGN KEY (archive_id) REFERENCES {{schema}}.mailbox_archives(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_transfer_receipts ADD FOREIGN KEY (target_version_id) REFERENCES {{schema}}.content_versions(version_id);
+ALTER TABLE {{schema}}.mailbox_transfer_receipts ADD FOREIGN KEY (target_version_id) REFERENCES {{schema}}.content_versions(version_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_transfer_receipts ADD FOREIGN KEY (document_publication_id) REFERENCES {{schema}}.email_document_publications(operation_id);
+ALTER TABLE {{schema}}.mailbox_transfer_receipts ADD FOREIGN KEY (document_publication_id) REFERENCES {{schema}}.email_document_publications(operation_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_jobs ADD FOREIGN KEY (container_id) REFERENCES {{schema}}.mailbox_containers(id);
+ALTER TABLE {{schema}}.mailbox_jobs ADD FOREIGN KEY (container_id) REFERENCES {{schema}}.mailbox_containers(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_occurrences ADD FOREIGN KEY (job_id) REFERENCES {{schema}}.mailbox_jobs(id);
+ALTER TABLE {{schema}}.mailbox_occurrences ADD FOREIGN KEY (job_id) REFERENCES {{schema}}.mailbox_jobs(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.mailbox_occurrences ADD FOREIGN KEY (receipt_id) REFERENCES {{schema}}.mailbox_transfer_receipts(id);
+ALTER TABLE {{schema}}.mailbox_occurrences ADD FOREIGN KEY (receipt_id) REFERENCES {{schema}}.mailbox_transfer_receipts(id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_quality_signals ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.photo_quality_signals ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.person_candidate_faces ADD FOREIGN KEY (candidate_id) REFERENCES {{schema}}.person_match_candidates(candidate_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.person_candidate_faces ADD FOREIGN KEY (candidate_id) REFERENCES {{schema}}.person_match_candidates(candidate_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_checkout_entries ADD FOREIGN KEY (checkout_id) REFERENCES {{schema}}.photo_checkouts(checkout_id);
+ALTER TABLE {{schema}}.photo_checkout_entries ADD FOREIGN KEY (checkout_id) REFERENCES {{schema}}.photo_checkouts(checkout_id) DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE {{schema}}.photo_suggestions ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.photo_suggestions ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 CREATE UNIQUE INDEX package_import_receipts_record ON {{schema}}.package_import_receipts(package_id, record_key);
 
@@ -2106,8 +2108,8 @@ CREATE UNIQUE INDEX person_candidate_identity ON {{schema}}.person_match_candida
 CREATE UNIQUE INDEX person_candidate_identity_unsuggested ON {{schema}}.person_match_candidates(actor_key, reason, evidence_sha256) WHERE suggested_person_id IS NULL;
 
 CREATE TABLE {{schema}}.blob_locations (
-    blob_hash    TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
-    store_id     TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    blob_hash    TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    store_id     TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) DEFERRABLE INITIALLY IMMEDIATE,
     generation   TEXT COLLATE "C" NOT NULL,
     kind         TEXT COLLATE "C" NOT NULL,
     encoding     TEXT COLLATE "C",
@@ -2117,7 +2119,7 @@ CREATE TABLE {{schema}}.blob_locations (
 );
 
 CREATE TABLE {{schema}}.blob_packs (
-    store_id     TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    store_id     TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) DEFERRABLE INITIALLY IMMEDIATE,
     pack_id      TEXT COLLATE "C" NOT NULL,
     entry_count  BIGINT NOT NULL,
     stored_bytes BIGINT NOT NULL,
@@ -2142,28 +2144,28 @@ CREATE TABLE {{schema}}.blob_pack_entries (
     crc32c      BIGINT NOT NULL,
     PRIMARY KEY (blob_hash, store_id),
     FOREIGN KEY (store_id, pack_id)
-        REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
+        REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.rendition_blob_staging (
-    blob_hash TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE
+    blob_hash TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.derivative_blob_purge_pending (
-    blob_hash TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE
+    blob_hash TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.text_extraction_queue (
-    blob_hash       TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE,
+    blob_hash       TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.blobs(hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     next_attempt_at TEXT COLLATE "C" NOT NULL
 );
 
 CREATE TABLE {{schema}}.text_searchable_versions (
-    version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE
+    version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.photo_timeline (
-    file_id       TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE,
+    file_id       TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     sort_key      TEXT COLLATE "C" NOT NULL,
     day           TEXT COLLATE "C" NOT NULL,
     modified_time TEXT COLLATE "C",
@@ -2171,7 +2173,7 @@ CREATE TABLE {{schema}}.photo_timeline (
 );
 
 CREATE TABLE {{schema}}.photo_source_claims (
-    file_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE,
+    file_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     original_path TEXT COLLATE "C",
     original_mtime TEXT COLLATE "C",
     folder_key TEXT COLLATE "C"
@@ -2220,7 +2222,7 @@ CREATE TABLE {{schema}}.document_event_state (
 
 CREATE TABLE {{schema}}.document_event_generations (
     generation_id TEXT COLLATE "C" PRIMARY KEY,
-    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     contract_version TEXT COLLATE "C" NOT NULL, deriver_fingerprint TEXT COLLATE "C" NOT NULL, inputs_sha256 TEXT COLLATE "C" NOT NULL,
     document_kind TEXT COLLATE "C" NOT NULL,
     canonical_json BYTEA NOT NULL,
@@ -2229,15 +2231,15 @@ CREATE TABLE {{schema}}.document_event_generations (
 );
 
 CREATE TABLE {{schema}}.document_event_heads (
-    content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
-    generation_id TEXT COLLATE "C" NOT NULL UNIQUE REFERENCES {{schema}}.document_event_generations(generation_id) ON DELETE CASCADE,
+    content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    generation_id TEXT COLLATE "C" NOT NULL UNIQUE REFERENCES {{schema}}.document_event_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     input_epoch BIGINT NOT NULL, published_at TEXT COLLATE "C" NOT NULL,
     FOREIGN KEY (content_version_id, generation_id)
-        REFERENCES {{schema}}.document_event_generations(content_version_id, generation_id) ON DELETE CASCADE
+        REFERENCES {{schema}}.document_event_generations(content_version_id, generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.document_events (
-    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.document_event_generations(generation_id) ON DELETE CASCADE,
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.document_event_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     event_id TEXT COLLATE "C" NOT NULL, source_key TEXT COLLATE "C" NOT NULL, date_kind TEXT COLLATE "C" NOT NULL,
     source_kind_raw TEXT COLLATE "C" NOT NULL, date_value TEXT COLLATE "C" NOT NULL, raw_value TEXT COLLATE "C" NOT NULL,
     precision TEXT COLLATE "C" NOT NULL, fraction_digits BIGINT NOT NULL,
@@ -2257,7 +2259,7 @@ CREATE TABLE {{schema}}.document_event_actors (
     sensitive BIGINT NOT NULL,
     PRIMARY KEY (generation_id, event_id, role, ordinal),
     FOREIGN KEY (generation_id, event_id)
-        REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE
+        REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.document_event_primaries (
@@ -2265,11 +2267,11 @@ CREATE TABLE {{schema}}.document_event_primaries (
     event_id TEXT COLLATE "C" NOT NULL, rule_id TEXT COLLATE "C" NOT NULL, reason TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (generation_id, scope_class, disclosure),
     FOREIGN KEY (generation_id, event_id)
-        REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE
+        REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.document_event_dirty (
-    content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     revision BIGINT NOT NULL, reason TEXT COLLATE "C" NOT NULL
 );
 
@@ -2347,7 +2349,7 @@ CREATE INDEX photo_change_receipts_checkout_commit ON {{schema}}.photo_change_re
 
 -- Exact cleanup survives removal of logical blob membership.
 CREATE TABLE {{schema}}.gc_loose_retirements (
-    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) DEFERRABLE INITIALLY IMMEDIATE,
     blob_hash TEXT COLLATE "C" NOT NULL,
     loose_encoding BIGINT NOT NULL,
     PRIMARY KEY (store_id, blob_hash, loose_encoding)
@@ -2357,7 +2359,7 @@ CREATE TABLE {{schema}}.derivative_pack_purge_pending (
     store_id TEXT COLLATE "C" NOT NULL,
     pack_id TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (store_id, pack_id),
-    FOREIGN KEY (store_id, pack_id) REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE
+    FOREIGN KEY (store_id, pack_id) REFERENCES {{schema}}.blob_packs(store_id, pack_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE {{schema}}.photo_technical_metadata_state (
@@ -2373,7 +2375,7 @@ CREATE TABLE {{schema}}.document_event_builds (
 );
 
 CREATE TABLE {{schema}}.document_event_attempts (
-    content_version_id text COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    content_version_id text COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     input_epoch bigint NOT NULL, input_revision bigint NOT NULL, inputs_sha256 text COLLATE "C" NOT NULL,
     state text COLLATE "C" NOT NULL, diagnostic_json bytea NOT NULL, attempted_at text COLLATE "C" NOT NULL
 );
@@ -2418,8 +2420,8 @@ CREATE INDEX content_versions_email_mime ON {{schema}}.content_versions(version_
 
 -- Local import receipts may be pruned only after physical cleanup is complete.
 CREATE TABLE {{schema}}.storage_operation_cleanup (
-    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE,
-    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id),
+    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) DEFERRABLE INITIALLY IMMEDIATE,
     loose_hash TEXT COLLATE "C" NOT NULL DEFAULT '',
     loose_encoding BIGINT NOT NULL DEFAULT 0,
     pack_id TEXT COLLATE "C" NOT NULL DEFAULT '',
@@ -2432,10 +2434,10 @@ CREATE INDEX content_versions_photo_size ON {{schema}}.content_versions(size);
 
 -- Worker intent and completion are rebuilt after restoring retained metadata.
 CREATE TABLE {{schema}}.photo_description_explicit_waiters (
-    waiter_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.rendition_job_waiters(waiter_id) ON DELETE CASCADE
+    waiter_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.rendition_job_waiters(waiter_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE TABLE {{schema}}.photo_face_scans (
-    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
+    content_version_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     detector_fingerprint TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (content_version_id, detector_fingerprint)
 );
@@ -2457,7 +2459,7 @@ CREATE INDEX vector_index_generations_space
     ON {{schema}}.vector_index_generations(vector_space_id, source_manifest_checksum, generation_id);
 CREATE TABLE {{schema}}.vector_index_heads (
     vector_space_id TEXT COLLATE "C" PRIMARY KEY,
-    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id),
+    generation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.vector_index_generations(generation_id) DEFERRABLE INITIALLY IMMEDIATE,
     source_manifest_checksum TEXT COLLATE "C" NOT NULL
 );
 
@@ -2498,8 +2500,8 @@ CREATE INDEX package_labels_lookup ON {{schema}}.package_labels(label,provenance
 CREATE INDEX export_jobs_pending ON {{schema}}.export_jobs(state,id);
 
 CREATE TABLE {{schema}}.storage_operation_stores (
-    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE,
-    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) ON DELETE CASCADE,
+    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (operation_id,store_id)
 );

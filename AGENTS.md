@@ -279,6 +279,9 @@ release, from a breaking change to `feat` to `fix`.
   the existing `database/sql` store boundary, explicit schema and schema-owner
   settings, setup-only DDL and validation-only runtime opening. Reuse existing
   query, search and fixture facilities before adding another abstraction.
+  Logical PostgreSQL import uses the schema owner and a pristine target. Never
+  grant runtime credentials identity writes for restore; verify physical bytes
+  before publishing a restored vault.
   PostgreSQL schemas remain disposable until the first deployment whose data
   must survive upgrades. Until then, edit canonical DDL directly. Setup records
   the embedded SQL's SHA-256 fingerprint; setup and runtime validation refuse a

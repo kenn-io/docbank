@@ -201,7 +201,7 @@ func importCollectionSnapshotMetadata(ctx context.Context, tx *sql.Tx, record me
 	_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshots(
 		snapshot_id,vault_uid,predecessor_id,source_collection_ids_json,
 		member_count,page_count,member_hash,manifest_sha256,canonical_json,checksum,sealed_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, snapshot.SnapshotID, record.VaultID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, snapshot.SnapshotID, record.VaultID,
 		nullableString(snapshot.PredecessorID), sourceJSON, snapshot.MemberCount,
 		snapshot.PageCount, snapshot.MemberHash, snapshot.ManifestSHA256,
 		[]byte(record.CanonicalJSON), record.Checksum, snapshot.SealedAt)
@@ -228,7 +228,7 @@ func importCollectionSnapshotMemberMetadata(ctx context.Context, tx *sql.Tx, rec
 		family_id,parent_occurrence_id,family_order,display_name,frozen_fields_json,
 		document_kind,selected_source_pages_json,selected_pdf_sha256,source_page_count,
 		canonical_json,checksum
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.SnapshotID, member.Ordinal,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, record.SnapshotID, member.Ordinal,
 		member.OccurrenceID, member.NodeID, member.ContentVersionID, member.BlobSHA256,
 		member.Size, member.FamilyID, member.ParentOccurrenceID, member.FamilyOrder,
 		member.DisplayName, member.FrozenFieldsJSON, member.DocumentKind, selected,
@@ -248,7 +248,7 @@ func importCollectionSnapshotRepresentationMetadata(ctx context.Context, tx *sql
 		snapshot_id,occurrence_id,role,ordinal,status,text_authority,content_version_id,
 		blob_sha256,size,media_type,page_number,verified_page_count,rendition_build_id,
 		lexical_generation_id,recipe_sha256,canonical_json,checksum
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.SnapshotID, rep.OccurrenceID,
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, record.SnapshotID, rep.OccurrenceID,
 		rep.Role, rep.Ordinal, rep.Status, rep.TextAuthority, nullableString(rep.ContentVersionID),
 		nullableString(rep.BlobSHA256), rep.Size, rep.MediaType, rep.PageNumber, rep.VerifiedPageCount,
 		nullableString(rep.RenditionBuildID), nullableString(rep.LexicalGenerationID),
@@ -268,7 +268,7 @@ func importPackageRecordMetadata(ctx context.Context, tx *sql.Tx, record metadat
 		package_id,snapshot_id,direction,package_name,party_label,profile_sha256,profile_json,
 		mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
 		predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at,completed_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, pkg.PackageID, nullableString(pkg.SnapshotID),
+	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, pkg.PackageID, nullableString(pkg.SnapshotID),
 		pkg.Direction, pkg.PackageName, pkg.PartyLabel, pkg.ProfileSHA256, pkg.ProfileJSON,
 		pkg.MappingSHA256, pkg.MappingJSON, pkg.ManifestSHA256, pkg.ManifestBlobSHA256,
 		nullableString(pkg.PredecessorPackageID), pkg.Relation, nullableString(pkg.IngestID),
@@ -287,7 +287,7 @@ func importPackageVolumeMetadata(ctx context.Context, tx *sql.Tx, record metadat
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO package_volumes(
 		package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-	) VALUES(?,?,?,?,?,?)`, record.PackageID, volume.Ordinal, volume.VolumeName,
+	) VALUES($1,$2,$3,$4,$5,$6)`, record.PackageID, volume.Ordinal, volume.VolumeName,
 		volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
 	return err
 }

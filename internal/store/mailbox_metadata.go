@@ -89,7 +89,7 @@ func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArch
 	if !mailboxText(a.ID, 128) || !mailboxText(a.Owner, 256) || !mailboxText(a.Description, 1024) {
 		return ErrMailboxInvalid
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES(?,?,?)`, a.ID, a.Owner, a.Description)
+	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, a.ID, a.Owner, a.Description)
 	return err
 }
 
@@ -98,11 +98,11 @@ func importMailboxContainer(ctx context.Context, tx *sql.Tx, r metadataMailboxCo
 	if err := validateRetainedMailboxContainer(ctx, tx, c); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at,manifest_sha256) VALUES(?,?,?,?,?,?,?,?)`, c.ID, c.Owner, c.SHA256, c.Size, c.Format, c.State, c.CreatedAt, c.ManifestSHA256); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_containers(id,owner,sha256,size,format,state,created_at,manifest_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, c.ID, c.Owner, c.SHA256, c.Size, c.Format, c.State, c.CreatedAt, c.ManifestSHA256); err != nil {
 		return err
 	}
 	for _, ch := range c.Chunks {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES(?,?,?,?)`, c.ID, ch.Index, ch.SHA256, ch.Size); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailbox_chunks(container_id,chunk_index,blob_hash,size) VALUES($1,$2,$3,$4)`, c.ID, ch.Index, ch.SHA256, ch.Size); err != nil {
 			return err
 		}
 	}

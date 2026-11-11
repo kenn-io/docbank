@@ -132,7 +132,7 @@ func insertPhotoCheckoutMetadata(ctx context.Context, tx *sql.Tx, v metadataPhot
 
 func insertPhotoCheckoutEntryMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckoutEntry) error {
 	held := v.BaseHeld != nil && *v.BaseHeld
-	_, err := tx.ExecContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id,base_held) VALUES(?,?,?,?,?,?,?,?,?)`, v.CheckoutID, v.FileID, v.AssetID, v.VersionID, v.Hash, v.Size, v.Path, v.SidecarOfID, held)
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id,base_held) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, v.CheckoutID, v.FileID, v.AssetID, v.VersionID, v.Hash, v.Size, v.Path, v.SidecarOfID, boolInt(held))
 	return err
 }
 
