@@ -196,64 +196,33 @@ const escapedImageText =
   "\n\t  # Machine\\-generated image understanding\n\n" +
   "flames\\. C:\\\\dir \\a\n\t\tline \\(1\\)  \n\n";
 
-const imageTexts = [
-  "flames. C:\\dir \\a\n\t\tline (1)  ",
-  "\n\n  indented\t\nends in a backslash\\\nand two\\\\\n",
-  "```\nliteral fence\n```\n````longer````\n~~~\ntilde\n~~~\n\n\n",
-  "\\# not a heading \\* \\` \\\\",
-  "``````",
-  "\n",
-];
-
-const imageSections = [
-  "```\nflames. C:\\dir \\a\n\t\tline (1)  \n```",
-  "```\n\n\n  indented\t\nends in a backslash\\\nand two\\\\\n\n```",
-  "`````\n```\nliteral fence\n```\n````longer````\n~~~\ntilde\n~~~\n\n\n\n`````",
-  "```\n\\# not a heading \\* \\` \\\\\n```",
-  "```````\n``````\n```````",
-  "```\n\n\n```",
-];
-
-const handcraftedMarkdown =
-  "# Machine\\-generated image understanding\n\n" +
-  "Configured model: gpt\\-4\\.1\n\n" +
-  imageSections.map((section, index) => `## Section \\(${index}\\)\n\n${section}`).join("\n\n") +
-  "\n";
-const handcraftedText =
-  "# Machine-generated image understanding\n\n" +
-  "Configured model: gpt-4.1\n\n" +
-  imageTexts.map((text, index) => `## Section (${index})\n\n${text}`).join("\n\n") +
-  "\n";
-const producerMarkdown = readFileSync(
-  "../document/testdata/image-understanding-reader.golden.md",
-  "utf8",
-);
-const producerText =
-  "# Machine-generated image understanding\n\n" +
-  "This is a model interpretation of an image, not verified source testimony. Possible meaning is uncertain without conversation context and does not establish anyone's beliefs, endorsement, or intent.\n\n" +
-  "Configured model: model\n\n" +
-  "## Visible text (best-effort transcription)\n\n" +
-  "  literal \\# text\n```\ninside\n````\n\n\n\n---\n\n" +
-  "## Literal description\n\nnext\\\nline\n\n";
-
-it.each([
-  ["handcrafted", handcraftedMarkdown, handcraftedText],
-  ["Go producer", producerMarkdown, producerText],
-])(
-  "shows %s image understanding text exactly as transcribed",
-  async (_name, markdown, expected) => {
-    await expect(
-      readArtifact(renditionArtifact(markdown), "compatible-vision.understand-v1"),
-    ).resolves.toBe(expected);
-  },
-);
-
-it.each([
-  ["another provider", "compatible-ocr.extract-v1"],
-  ["a receipt without a provider", ""],
-])("keeps degraded text from %s byte-for-byte", async (_name, providerID) => {
+it("shows the producer's image understanding text exactly as transcribed", async () => {
+  const markdown = readFileSync(
+    "../document/testdata/image-understanding-reader.golden.md",
+    "utf8",
+  );
+  const expected =
+    "# Machine-generated image understanding\n\n" +
+    "This is a model interpretation of an image, not verified source testimony. Possible meaning is uncertain without conversation context and does not establish anyone's beliefs, endorsement, or intent.\n\n" +
+    "Configured model: synthetic<&>" +
+    "m".repeat(243) +
+    "\n\n" +
+    "## Visible text (best-effort transcription)\n\n" +
+    "    ALPHA\n    BETA\n  literal \\# text\n```\ninside\n````\n\n\n\n\n---\n\n" +
+    "## Literal description\n\nnext\\\nline\n~~~\ntext\t\n\n\n---\n\n" +
+    "## Possible meaning (interpretation)\n\nflames. C:\\dir \\a\n\t\tline (1)  \n\n---\n\n" +
+    "## Uncertainty and missing context\n\n\n\n  indented\t\nends in a backslash\\\nand two\\\\\n``````\n\\# not a heading \\* \\` \\\\\n";
   await expect(
-    readArtifact(renditionArtifact(escapedImageText, "degraded_provenance"), providerID),
+    readArtifact(renditionArtifact(markdown), "compatible-vision.understand-v1"),
+  ).resolves.toBe(expected);
+});
+
+it("keeps degraded text from another provider byte-for-byte", async () => {
+  await expect(
+    readArtifact(
+      renditionArtifact(escapedImageText, "degraded_provenance"),
+      "compatible-ocr.extract-v1",
+    ),
   ).resolves.toBe(escapedImageText);
 });
 

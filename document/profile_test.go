@@ -194,21 +194,6 @@ func TestCanonicalProfileModelInputRotatesInputAndVectorSpace(t *testing.T) {
 	assert.ElementsMatch(t, layers("profile", "input:semantic", "vector:semantic"), changedFingerprintLayers(before, after))
 }
 
-func TestCanonicalProfileRejectsUnderstandingTaskWithPhotoAdapter(t *testing.T) {
-	profile := syntheticProcessingProfileV1()
-	profile.Rendition.AdapterContract = vision.AdapterContract
-	profile.Rendition.Descriptor.ID = vision.ProviderID
-	profile.Embeddings = nil
-	profile.RetentionDisclosure.RetainSanitizedMarkdown = false
-	profile.RetentionDisclosure.RetainProviderMarkdown = false
-	profile.RetentionDisclosure.RetainTypedArtifacts = false
-	_, _, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
-	profile.Rendition.Descriptor.ID = vision.UnderstandingProviderID
-	_, _, err = document.CanonicalProfile(profile)
-	require.Error(t, err, "the photo adapter cannot run the understanding task")
-}
-
 func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -241,6 +226,14 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.RetentionDisclosure.RetainProviderMarkdown = false
 			p.RetentionDisclosure.RetainTypedArtifacts = true
 		}, "photo vision profiles do not retain Markdown or typed artifacts"},
+		{"understanding task with photo adapter", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = vision.AdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Embeddings = nil
+			p.RetentionDisclosure.RetainSanitizedMarkdown = false
+			p.RetentionDisclosure.RetainProviderMarkdown = false
+			p.RetentionDisclosure.RetainTypedArtifacts = false
+		}, "requires its own adapter and task"},
 		{"image understanding unit boundary", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
 			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
@@ -252,7 +245,7 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.Rendition.MaxDocumentBytes = 16<<20 + 1
 			p.Rendition.MaxUnits = 4
 			p.Embeddings[1].Chunk.Formatter = document.RenditionChunkHeadingsFormatter
-		}, "16"},
+		}, "at most 16 MiB"},
 		{"image understanding chunk formatter", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
 			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID

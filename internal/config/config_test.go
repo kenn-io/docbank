@@ -1362,7 +1362,7 @@ func TestVisionRuntimeConfig(t *testing.T) {
 		photo := mismatch.RenditionProfiles["primary"]
 		photo.DescriptorID, photo.DescriptorFingerprint = understanding.ID, understanding.Fingerprint
 		mismatch.RenditionProfiles["primary"] = photo
-		require.Error(t, mismatch.Validate(), "the photo adapter cannot run the understanding task")
+		require.ErrorContains(t, mismatch.Validate(), "image understanding requires its own task and adapter")
 	})
 
 	t.Run("unrecognized task", func(t *testing.T) {

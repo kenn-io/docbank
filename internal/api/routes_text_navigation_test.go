@@ -141,7 +141,7 @@ func TestTextNavigationHTTPAvailability(t *testing.T) {
 			require.NoError(t, err)
 		})
 		node := createFileWithContent(t, server, store, "/outline.pdf", "%PDF-1.4 synthetic")
-		fixture := publishRenditionTextSourceFixture(t, store, cfg, node, strings.Repeat("# h\n\n", 4097), `{"provider":"synthetic","request_id":"db17"}`)
+		fixture := publishRenditionTextSourceFixture(t, store, cfg, node, strings.Repeat("# h\n\n", 4097))
 		vault, err := uuid.Parse(store.VaultID())
 		require.NoError(t, err)
 		version, err := uuid.Parse(node.CurrentVersionID)

@@ -36,7 +36,7 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 		tooLarge := profile
 		tooLarge.MaxDocumentBytes = 16<<20 + 1
 		cfg.RenditionProfiles["primary"] = tooLarge
-		require.Error(t, cfg.Validate())
+		require.ErrorContains(t, cfg.Validate(), "at most 16 MiB")
 		cfg.RenditionProfiles["primary"] = profile
 	})
 	profile.DescriptorID = vision.ProviderID

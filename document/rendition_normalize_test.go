@@ -86,54 +86,17 @@ func TestBuildRenditionV1(t *testing.T) {
 	assert.Contains(t, renderUnsafeMarkdown(t, rendered.Markdown), "<table>")
 }
 
-func TestImageUnderstandingEscapesModelName(t *testing.T) {
-	model := "synthetic<&>" + strings.Repeat("m", 243)
-	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
-		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}}}})
-	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 100_000, MaxUnitRunes: 100_000, MaxSegmentRunes: 2000})
-	require.NoError(t, err)
-	rendered, err := BuildRenditionV1(evidence, policy)
-	require.NoError(t, err)
-	assert.Contains(t, string(rendered.Markdown), `Configured model\: synthetic\<\&\>`+strings.Repeat("m", 243))
-}
-
-func TestImageUnderstandingPreservesIndentedText(t *testing.T) {
-	const text = "    ALPHA\n    BETA"
-	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
-		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}})
-	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 1000, MaxUnitRunes: 100, MaxSegmentRunes: 100})
-	require.NoError(t, err)
-	rendered, err := BuildRenditionV1(evidence, policy)
-	require.NoError(t, err)
-	require.Len(t, rendered.Units, 1)
-	assert.Equal(t, text, rendered.Units[0].Text)
-	assert.Contains(t, string(rendered.Markdown), "```\n"+text+"\n```")
-	require.Len(t, rendered.LexicalSegments, 1)
-	assert.Equal(t, text, rendered.LexicalSegments[0].Text)
-	for _, tc := range []struct{ text, block string }{
-		{"~~~\ntext\t", "```\n~~~\ntext\t\n```"},
-	} {
-		source := SourceEvidenceV1{ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance, Family: "image", UnitKind: EvidenceUnitGeneric,
-			Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
-			Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: tc.text, Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}}}}
-		rendered, err := BuildRenditionV1(normalizeRenditionEvidence(t, source), policy)
-		require.NoError(t, err)
-		assert.Contains(t, string(rendered.Markdown), tc.block)
-		assert.Equal(t, tc.text, rendered.LexicalSegments[0].Text)
-		assertNoRawHTML(t, string(rendered.Markdown))
-	}
-}
-
 func TestImageUnderstandingReaderFixture(t *testing.T) {
+	model := "synthetic<&>" + strings.Repeat("m", 243)
 	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
 		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
 		Family: "image", UnitKind: EvidenceUnitGeneric,
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
 		Units: []SourceEvidenceUnitV1{
-			{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "  literal \\# text\n```\ninside\n````\n\n", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
-			{Order: 1, HeadingPath: []string{ImageUnderstandingHeading, "Literal description"}, Text: "next\\\nline\n", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: "model"}},
+			{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text (best-effort transcription)"}, Text: "    ALPHA\n    BETA\n  literal \\# text\n```\ninside\n````\n\n\n", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}},
+			{Order: 1, HeadingPath: []string{ImageUnderstandingHeading, "Literal description"}, Text: "next\\\nline\n~~~\ntext\t\n", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}},
+			{Order: 2, HeadingPath: []string{ImageUnderstandingHeading, "Possible meaning (interpretation)"}, Text: "flames. C:\\dir \\a\n\t\tline (1)  ", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}},
+			{Order: 3, HeadingPath: []string{ImageUnderstandingHeading, "Uncertainty and missing context"}, Text: "\n\n  indented\t\nends in a backslash\\\nand two\\\\\n``````\n\\# not a heading \\* \\` \\\\", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone, Name: model}},
 		},
 	})
 	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10000, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
