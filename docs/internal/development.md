@@ -240,6 +240,12 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
+For a layout change, bump `currentStorageSchemaVersion` and append the version
+and digest reported by `make schema-contract-check` to
+`internal/store/testdata/schema-contracts.json`. Keep earlier records intact.
+The digest covers tables, triggers, views, and unique indexes. New non-unique
+indexes do not need a version bump.
+
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
 `schema.sql` saved as `internal/store/testdata/schema-<tag>.sql` and registered
