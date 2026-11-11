@@ -383,16 +383,13 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 	found := false
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		now := at.UTC().Format(timestampLayout)
-		if err := settleOriginalFileJobsTx(ctx, tx, jobID, now); err != nil {
-			return err
-		}
 		var claimedID string
 		args := []any{jobID, jobID, now, now, now, string(executable)}
 		for {
-			var state string
+			var state, inputKind string
 			var count int
 			var expiredEpoch int64
-			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch FROM embedding_jobs j
+			err := tx.QueryRowContext(ctx, `SELECT j.job_id,j.state,j.claim_count,j.claim_epoch,j.input_kind FROM embedding_jobs j
 			WHERE ($1='' OR j.job_id=$2)
 			AND j.state IN ('queued','retry_wait','running') AND j.available_at<=$3
 			AND (j.state<>'running' OR j.lease_expires_at<=$4)
@@ -414,12 +411,21 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 			  WHERE p.profile_fingerprint=j.profile_fingerprint
 			    AND `+d.text("b.value", "name")+`=j.binding_id AND `+d.text("b.value", "input_kind")+`=j.input_kind
 			    AND `+d.text("b.value", "descriptor.fingerprint")+` IN (SELECT value FROM `+d.arrayValues("$6")+`))
-			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch)
+			ORDER BY j.available_at,j.job_id LIMIT 1`, args...).Scan(&claimedID, &state, &count, &expiredEpoch, &inputKind)
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
 			if err != nil {
 				return err
+			}
+			if inputKind == string(document.EmbeddingInputOriginalFile) {
+				settled, err := settleOriginalFileJobsTx(ctx, tx, claimedID, now)
+				if err != nil {
+					return err
+				}
+				if settled {
+					continue
+				}
 			}
 			if state != "running" || count < embeddingJobMaxClaims {
 				break
@@ -470,64 +476,59 @@ func (s *Store) claimEmbeddingWork(ctx context.Context, jobID, owner string, at 
 	return claim, work, found, err
 }
 
-// settleOriginalFileJobsTx checks the exact producer pair after looking up
-// heads by tuple. A head can still serve an older generation while a replacement
-// builds, so the tuple alone does not prove that a job is complete.
-func settleOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, jobID, now string) error {
-	const pageSize = 100
-	for after := ""; ; {
-		satisfied, next, err := satisfiedOriginalFileJobsPageTx(ctx, tx, jobID, after, now, pageSize)
-		if err != nil {
-			return err
-		}
-		for _, id := range satisfied {
-			if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
-				SET state='completed',claim_owner=NULL,lease_expires_at=NULL,failure_code=NULL,updated_at=$1
-				WHERE job_id=$2`, now, id); err != nil {
-				return err
-			}
-		}
-		if next == "" {
-			return nil
-		}
-		after = next
+// settleOriginalFileJobsTx completes the candidate's unfinished jobs for the
+// same version, profile, binding and vector space when the head already holds
+// their manual or automatic generation. It reports whether the candidate itself
+// was completed. Settling only the candidate's tuple keeps each claim bounded.
+func settleOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, candidateID, now string) (bool, error) {
+	satisfied, err := satisfiedOriginalFileJobsTx(ctx, tx, candidateID, now)
+	if err != nil {
+		return false, err
 	}
+	candidateSettled := false
+	for _, id := range satisfied {
+		if _, err := tx.ExecContext(ctx, `UPDATE embedding_jobs
+			SET state='completed',claim_owner=NULL,lease_expires_at=NULL,failure_code=NULL,updated_at=$1
+			WHERE job_id=$2`, now, id); err != nil {
+			return false, err
+		}
+		candidateSettled = candidateSettled || id == candidateID
+	}
+	return candidateSettled, nil
 }
 
-func satisfiedOriginalFileJobsPageTx(ctx context.Context, tx *sql.Tx, jobID, after, now string, limit int) ([]string, string, error) {
+// satisfiedOriginalFileJobsTx checks the exact producer pair after looking up
+// heads by tuple. A head can still serve an older generation while a replacement
+// builds, so the tuple alone does not prove that a job is complete.
+func satisfiedOriginalFileJobsTx(ctx context.Context, tx *sql.Tx, candidateID, now string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT j.job_id,j.generation_id,j.content_version_id,j.profile_fingerprint,j.binding_id,
 		g.generation_checksum,g.chunk_policy_fingerprint,s.input_generation_id
-		FROM embedding_jobs j JOIN embedding_input_generations g ON g.generation_id=j.generation_id
+		FROM embedding_jobs c JOIN embedding_jobs j ON j.content_version_id=c.content_version_id
+		  AND j.profile_fingerprint=c.profile_fingerprint AND j.binding_id=c.binding_id
+		  AND j.input_kind=c.input_kind AND j.vector_space_id=c.vector_space_id
+		JOIN embedding_input_generations g ON g.generation_id=j.generation_id
 		JOIN embedding_heads h ON h.content_version_id=j.content_version_id AND h.profile_fingerprint=j.profile_fingerprint
 		  AND h.binding_id=j.binding_id AND h.input_kind=j.input_kind
 		JOIN embedding_sets s ON s.embedding_set_id=h.embedding_set_id
 		  AND s.profile_fingerprint=j.profile_fingerprint AND s.vector_space_id=j.vector_space_id
-		WHERE ($1='' OR j.job_id=$1) AND j.job_id>$2 AND j.input_kind='original_file'
-		  AND (j.state IN ('queued','retry_wait') OR (j.state='running' AND j.lease_expires_at<=$3))
-		ORDER BY j.job_id LIMIT $4`, jobID, after, now, limit)
+		WHERE c.job_id=$1 AND j.input_kind='original_file'
+		  AND (j.state IN ('queued','retry_wait') OR (j.state='running' AND j.lease_expires_at<=$2))`, candidateID, now)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	var satisfied []string
-	var last string
-	var count int
 	for rows.Next() {
-		var generationID, version, profile, binding, sourceHash, inputFP, headGenerationID string
-		if err := rows.Scan(&last, &generationID, &version, &profile, &binding, &sourceHash, &inputFP, &headGenerationID); err != nil {
-			return nil, "", err
+		var id, generationID, version, profile, binding, sourceHash, inputFP, headGenerationID string
+		if err := rows.Scan(&id, &generationID, &version, &profile, &binding, &sourceHash, &inputFP, &headGenerationID); err != nil {
+			return nil, err
 		}
-		count++
-		manual := directEmbeddingGenerationID(version, sourceHash, profile, binding, inputFP)
-		automatic := LengthPrefixedSHA256(automaticDirectGenerationTag, manual)
+		manual, automatic := directGenerationIDs(version, sourceHash, profile, binding, inputFP)
 		if (generationID == manual || generationID == automatic) && (headGenerationID == manual || headGenerationID == automatic) {
-			satisfied = append(satisfied, last)
+			satisfied = append(satisfied, id)
 		}
 	}
-	if count < limit {
-		last = ""
-	}
-	return satisfied, last, rows.Err()
+	return satisfied, rows.Err()
 }
 
 func (s *Store) RenewEmbeddingWork(ctx context.Context, claim EmbeddingJobClaim, at time.Time, lease time.Duration) (EmbeddingJobClaim, error) {

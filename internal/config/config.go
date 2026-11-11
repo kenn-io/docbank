@@ -1329,6 +1329,10 @@ func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (
 	return parsed, nil
 }
 
+// AutoDiscoverVideoMaxInputBytes is Voyage's per-video request limit. It is
+// below Docbank's 20 MiB MP4 inspection limit, so discovery follows it.
+const AutoDiscoverVideoMaxInputBytes = 20_000_000
+
 func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix string) error {
 	for field, value := range map[string]string{
 		"compatibility_id": profile.CompatibilityID, "descriptor_id": profile.DescriptorID,
@@ -1372,6 +1376,9 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 	}
 	if profile.MaxInputBytes <= 0 || profile.MaxInputBytes > 1<<30 {
 		return fmt.Errorf("%s max input bytes must be between 1 and %d", prefix, int64(1<<30))
+	}
+	if profile.AutoDiscoverVideo && profile.MaxInputBytes > AutoDiscoverVideoMaxInputBytes {
+		return fmt.Errorf("%s auto_discover_video requires max_input_bytes at or below %d", prefix, int64(AutoDiscoverVideoMaxInputBytes))
 	}
 	if profile.MaxResponseBytes <= 0 || profile.MaxResponseBytes > 1<<30 {
 		return fmt.Errorf("%s max response bytes must be between 1 and %d", prefix, int64(1<<30))

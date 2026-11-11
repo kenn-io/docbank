@@ -292,6 +292,29 @@ func TestAutomaticVideoDiscoveryPreservesProfileIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "auto_discover_video requires an original_file Voyage runtime")
 }
 
+func TestAutomaticVideoDiscoveryBoundsMaxInputBytes(t *testing.T) {
+	binding := validProcessingConfig().EmbeddingProfiles["semantic"]
+	binding.InputKind, binding.Chunk, binding.MaxInputTokens = string(document.EmbeddingInputOriginalFile), EmbeddingChunkConfig{}, 0
+	binding.Runtime = &EmbeddingRuntimeConfig{AdapterContract: "docbank-voyage-embeddings/v1"}
+	binding.AutoDiscoverVideo = true
+
+	binding.MaxInputBytes = AutoDiscoverVideoMaxInputBytes + 1
+	err := validateEmbeddingProfileConfig(binding, "[embedding_profiles.semantic]")
+	require.EqualError(t, err, "[embedding_profiles.semantic] auto_discover_video requires max_input_bytes at or below 20000000")
+
+	binding.MaxInputBytes = AutoDiscoverVideoMaxInputBytes
+	err = validateEmbeddingProfileConfig(binding, "[embedding_profiles.semantic]")
+	if err != nil {
+		require.NotContains(t, err.Error(), "max_input_bytes")
+	}
+
+	binding.AutoDiscoverVideo, binding.MaxInputBytes = false, AutoDiscoverVideoMaxInputBytes+1
+	err = validateEmbeddingProfileConfig(binding, "[embedding_profiles.semantic]")
+	if err != nil {
+		require.NotContains(t, err.Error(), "max_input_bytes")
+	}
+}
+
 func TestRerankingConfigIsStrictAndStaysOutsidePortableProfile(t *testing.T) {
 	base := validProcessingConfig()
 	base.CredentialBindings = map[string]CredentialBindingConfig{

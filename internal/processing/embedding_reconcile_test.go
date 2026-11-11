@@ -651,6 +651,36 @@ func TestWatchedMP4BothQueuedSendsOnce(t *testing.T) {
 	require.Equal(t, 1, f.provider.runtime.calls())
 }
 
+func TestWatchedMP4ClaimSettlesOnlyItsOwnClip(t *testing.T) {
+	t.Parallel()
+	f := newWatchedMP4Fixture(t)
+	first := f.add(t, "first.mp4", mediatest.H265MP4())
+	second := f.add(t, "second.mp4", mediatest.VP9MP4())
+	require.NoError(t, f.service.grantProfileConsent(t.Context(), f.profile, nil))
+	firstAutomatic := f.enqueue(t, first, true)
+	firstManual := f.enqueue(t, first, false)
+	secondAutomatic := f.enqueue(t, second, true)
+	processed, err := f.worker.RunJob(t.Context(), firstAutomatic)
+	require.NoError(t, err)
+	require.True(t, processed)
+
+	processed, err = f.worker.RunJob(t.Context(), secondAutomatic)
+	require.NoError(t, err)
+	require.True(t, processed)
+	states := map[string]string{}
+	for _, job := range f.jobs(t, first) {
+		states[job.ID] = job.State
+	}
+	require.Equal(t, "queued", states[firstManual], "another clip's claim leaves this clip's jobs alone")
+
+	_, err = f.worker.ScanOnce(t.Context())
+	require.NoError(t, err)
+	for _, job := range f.jobs(t, first) {
+		require.Equal(t, "completed", job.State)
+	}
+	require.Equal(t, 2, f.provider.runtime.calls())
+}
+
 func TestWatchedMP4RestoreAfterOptOutSendsNothing(t *testing.T) {
 	t.Parallel()
 	f := newWatchedMP4Fixture(t)

@@ -18,14 +18,13 @@ func embeddingJobDisclosureFingerprint(binding document.EmbeddingBindingV1, inpu
 	return binding.DisclosureFingerprint
 }
 
-const automaticDirectGenerationTag = "docbank/automatic-direct-file-input-generation/v1"
-
 // DirectEmbeddingGeneration identifies the exact original-file input to a binding.
 func DirectEmbeddingGeneration(version ContentVersion, profileFingerprint,
 	embeddingInputFingerprint string, binding document.EmbeddingBindingV1,
 ) EmbeddingInputGenerationRecord {
+	manual, _ := directGenerationIDs(version.ID, version.BlobHash, profileFingerprint, binding.Name, embeddingInputFingerprint)
 	return EmbeddingInputGenerationRecord{
-		ID:                           directEmbeddingGenerationID(version.ID, version.BlobHash, profileFingerprint, binding.Name, embeddingInputFingerprint),
+		ID:                           manual,
 		SourceVersionID:              version.ID,
 		ProcessingProfileFingerprint: profileFingerprint,
 		EvidenceFingerprint:          LengthPrefixedSHA256("docbank/direct-file-evidence/v1", version.BlobHash),
@@ -37,8 +36,11 @@ func DirectEmbeddingGeneration(version ContentVersion, profileFingerprint,
 		CreatedAt:                    version.RecordedAt}
 }
 
-func directEmbeddingGenerationID(versionID, sourceHash, profile, binding, inputFP string) string {
-	return LengthPrefixedSHA256("docbank/direct-file-input-generation/v1", versionID, sourceHash, profile, binding, inputFP)
+// directGenerationIDs derives the manual and automatic generation IDs for one
+// original-file input. Every producer and equivalence check uses this pair.
+func directGenerationIDs(versionID, sourceHash, profile, binding, inputFP string) (manual, automatic string) {
+	manual = LengthPrefixedSHA256("docbank/direct-file-input-generation/v1", versionID, sourceHash, profile, binding, inputFP)
+	return manual, LengthPrefixedSHA256("docbank/automatic-direct-file-input-generation/v1", manual)
 }
 
 // AutomaticDirectEmbeddingGeneration retains the producer in the identity
@@ -47,7 +49,7 @@ func AutomaticDirectEmbeddingGeneration(version ContentVersion, profile, inputFP
 	binding document.EmbeddingBindingV1,
 ) EmbeddingInputGenerationRecord {
 	generation := DirectEmbeddingGeneration(version, profile, inputFP, binding)
-	generation.ID = LengthPrefixedSHA256(automaticDirectGenerationTag, generation.ID)
+	_, generation.ID = directGenerationIDs(version.ID, version.BlobHash, profile, binding.Name, inputFP)
 	return generation
 }
 
@@ -65,9 +67,8 @@ func equivalentEmbeddingGenerationIDs(generation EmbeddingInputGenerationRecord,
 	if binding.InputKind != document.EmbeddingInputOriginalFile {
 		return generation.ID, generation.ID
 	}
-	manual = directEmbeddingGenerationID(generation.SourceVersionID, generation.GenerationChecksum,
+	return directGenerationIDs(generation.SourceVersionID, generation.GenerationChecksum,
 		generation.ProcessingProfileFingerprint, binding.Name, inputFP)
-	return manual, LengthPrefixedSHA256(automaticDirectGenerationTag, manual)
 }
 
 func directGenerationProducer(generation EmbeddingInputGenerationRecord, binding document.EmbeddingBindingV1,

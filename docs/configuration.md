@@ -1134,9 +1134,10 @@ configuration, or mismatched descriptor.
 
 Set `auto_discover_video = true` in an `[embedding_profiles.<name>]` binding
 with `input_kind = "original_file"` and the Voyage runtime. The capability
-manifest must record a passing `video_mp4` probe. Set `max_input_bytes` at or
-below 20,000,000 bytes and allow for request encoding in the runtime's
-`max_request_bytes`. See [Voyage's per-video limit](https://docs.voyageai.com/reference/multimodal-embeddings-api).
+manifest must record a passing `video_mp4` probe. Configuration rejects a
+`max_input_bytes` above 20,000,000 bytes, [Voyage's per-video limit](https://docs.voyageai.com/reference/multimodal-embeddings-api),
+and discovery skips larger files. Allow for request encoding in the runtime's
+`max_request_bytes`.
 
 Docbank's MP4 byte inspection caps input at 20 MiB. The daemon wires Voyage
 for automatic video uploads. Gemini's adapter is available to Go applications.
