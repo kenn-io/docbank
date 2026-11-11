@@ -3,7 +3,7 @@ Copyright 2026 Kenn Software LLC
 
 PDF production dependencies
 
-Runtime: go-pdfium v1.20.0 (MIT), PDFium Chromium 8044 (BSD-3-Clause and
+Runtime: go-pdfium v1.21.4 (MIT), PDFium Chromium 8044 (BSD-3-Clause and
 third-party licenses below), wazero v1.12.0 (Apache-2.0), and Noto Sans JP
 2.004-H2 (SIL Open Font License 1.1). Exact module and asset identities are in
 internal/pdfproduction/dependencies.json. The PDF production package embeds its local
@@ -13,7 +13,7 @@ The PDFium notices below are preserved verbatim from the Chromium 8044
 binary distribution. Its WASM is not substituted for go-pdfium's qualified
 WASM. The go-pdfium license covers its wrapper and modifications.
 
-go-pdfium v1.20.0
+go-pdfium v1.21.4
 
 MIT License
 

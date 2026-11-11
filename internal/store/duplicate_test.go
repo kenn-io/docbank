@@ -330,11 +330,11 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 		label := new(fmt.Sprintf("Collection %d", index))
 		run, err := s.BeginIngestWithLabel(ctx, "cli", "Synthetic group", label)
 		require.NoError(t, err)
-		for copy := range index + 2 {
+		for replica := range index + 2 {
 			node, err := s.CreateFile(ctx, s.RootID(),
-				fmt.Sprintf("group-%d-copy-%d.txt", index, copy), hash, int64(index+1), "text/plain")
+				fmt.Sprintf("group-%d-copy-%d.txt", index, replica), hash, int64(index+1), "text/plain")
 			require.NoError(t, err)
-			if copy == 0 {
+			if replica == 0 {
 				addCollectionMembership(t, s, run, node.ID, "/synthetic/source.txt", nil)
 				memberships[node.ID] = DuplicateCollection{ID: run.ID(), Label: label}
 			}

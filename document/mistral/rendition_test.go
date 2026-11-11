@@ -1061,7 +1061,7 @@ func testMultipagePDF(pages int) []byte {
 }
 
 func TestMistralUnlocksPDF(t *testing.T) {
-	source, err := mediatest.EncryptedPDF("open", "owner", 128)
+	source, err := mediatest.EncryptedPDF(t.Context(), "open", "owner", 128)
 	require.NoError(t, err)
 	policy := testPolicy(t, 1<<20, 10)
 	manifest := syntheticManifest(t, policy, true)

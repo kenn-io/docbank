@@ -22,8 +22,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/selfupdate"
 
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/update"
 	"go.kenn.io/docbank/internal/version"
 )
@@ -113,8 +115,8 @@ func newFakeClient(t *testing.T, ts *httptest.Server, currentVersion string) sel
 // (TestUpdateCoordinatesDaemonUnderLaunchLock).
 func withoutDaemon(o update.Options) update.Options {
 	o.WithLaunchLock = func(_ context.Context, _ string, fn func() error) error { return fn() }
-	o.Stop = func(context.Context, string) (bool, error) { return false, nil }
-	o.Start = func(context.Context, string) error { return nil }
+	o.Stop = func(context.Context, string) (record *kitdaemon.RuntimeRecord, err error) { return }
+	o.Start = func(context.Context, string, bool) error { return nil }
 	return o
 }
 
@@ -138,17 +140,30 @@ func TestUpdateInstallsFromFakeRelease(t *testing.T) {
 }
 
 func TestUpdateCoordinatesDaemonUnderLaunchLock(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		for _, installFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("explicit=%t/installFails=%t", explicit, installFails), func(t *testing.T) { coordinateDaemonUpdate(t, explicit, installFails) })
+		}
+	}
+}
+
+func coordinateDaemonUpdate(t *testing.T, explicit, installFails bool) {
+	t.Helper()
 	ts, _ := fakeReleaseServer(t, "9.9.9")
 	c := newFakeClient(t, ts, "0.0.1")
 	root := t.TempDir()
 	dest := filepath.Join(t.TempDir(), "docbank")
 	require.NoError(t, os.WriteFile(dest, []byte("old"), 0o755))
+	destination := dest
+	if installFails {
+		destination = filepath.Join(dest, "docbank") // A file cannot be the staging directory.
+	}
 
 	var locked bool
 	var order []string
 	var out strings.Builder
 	err := update.Run(t.Context(), &out, update.Options{
-		Yes: true, Client: &c, Root: root, Destination: dest,
+		Yes: true, Client: &c, Root: root, Destination: destination,
 		WithLaunchLock: func(_ context.Context, gotRoot string, fn func() error) error {
 			require.Equal(t, root, gotRoot)
 			order = append(order, "lock")
@@ -158,25 +173,33 @@ func TestUpdateCoordinatesDaemonUnderLaunchLock(t *testing.T) {
 			order = append(order, "unlock")
 			return err
 		},
-		Stop: func(_ context.Context, gotRoot string) (bool, error) {
+		Stop: func(_ context.Context, gotRoot string) (*kitdaemon.RuntimeRecord, error) {
 			require.True(t, locked, "stop must happen while the launch lock is held")
 			require.Equal(t, root, gotRoot)
 			order = append(order, "stop")
-			return true, nil
+			return &kitdaemon.RuntimeRecord{Metadata: map[string]string{daemonconn.MetaExplicitStart: strconv.FormatBool(explicit)}}, nil
 		},
-		Start: func(_ context.Context, gotRoot string) error {
+		Start: func(_ context.Context, gotRoot string, persistent bool) error {
 			require.True(t, locked, "restart must happen while the launch lock is held")
 			require.Equal(t, root, gotRoot)
-			got, err := os.ReadFile(dest)
-			require.NoError(t, err)
-			require.Contains(t, string(got), "9.9.9", "restart should happen after install")
+			assert.Equal(t, explicit, persistent, "restart keeps the stopped daemon's lifetime")
+			if !installFails {
+				got, err := os.ReadFile(dest)
+				require.NoError(t, err)
+				require.Contains(t, string(got), "9.9.9", "restart should happen after install")
+			}
 			order = append(order, "start")
 			return nil
 		},
 	})
-	require.NoError(t, err, out.String())
+	if installFails {
+		require.ErrorContains(t, err, "installing")
+		assert.Contains(t, out.String(), "install failed; restarted previous daemon")
+	} else {
+		require.NoError(t, err, out.String())
+		assert.Contains(t, out.String(), "daemon restarted")
+	}
 	assert.Equal(t, []string{"lock", "stop", "start", "unlock"}, order)
-	assert.Contains(t, out.String(), "daemon restarted")
 }
 
 func TestUpdateCheckOnly(t *testing.T) {

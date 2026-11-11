@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-11-01
 title: HTTP API
-description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+description: The agent-first HTTP API, with filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
 
 # HTTP API
@@ -1456,7 +1456,8 @@ with API-key clients.
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
 durations, and the `exclude` and `exclude_patterns` lists with its current
-`watch:<name>` job record.
+`watch:<name>` job record. The `exclude_patterns` list is effective: it includes
+the default patterns unless `default_excludes = false`.
 Watches with a processing profile include `processing` with `profile` and `consent_state` (`active`, `required`, `expired`, or `revoked`).
 If consent lookup fails, `error` describes the status failure instead.
 `GET /jobs` includes the same optional status on watch jobs, so browser sessions can display it without access to machine-local watch configuration.

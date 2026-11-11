@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, FormField, Spinner } from "@kenn-io/kit-ui";
   import {
     getPhotoHiddenState,
     unlockPhotoHidden,
@@ -449,8 +449,7 @@
       </form>
       {#if busy}<Spinner />{/if}
       {#if hiddenState.configured}
-        <details>
-          <summary>Manage passcode</summary>
+        <Disclosure variant="plain" title="Manage passcode">
           <form
             aria-describedby={lockoutDescription}
             onsubmit={(event) => {
@@ -505,7 +504,7 @@
               Disabling Hidden returns every hidden photo to Library.
             </p>
           </form>
-        </details>
+        </Disclosure>
       {/if}
     </div>
   {/if}
@@ -550,20 +549,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-  }
-  details {
-    margin-top: var(--space-5);
-  }
-  summary {
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-  }
-  summary:focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 4px;
-  }
-  details form {
-    margin-top: var(--space-3);
   }
   .form-actions {
     display: flex;

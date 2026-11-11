@@ -2236,6 +2236,52 @@ func (c *Client) CreateBatesNamespace(ctx context.Context, options *CreateBatesN
 	return responseParser(ctx, resp)
 }
 
+// ReadBatesNamespace Read a Bates namespace and its next sequence
+func (c *Client) ReadBatesNamespace(ctx context.Context, options *ReadBatesNamespaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadBatesNamespaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/bates/namespaces/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadBatesNamespaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadBatesNamespaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadBatesNamespaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadBatesNamespaceErrorResponse](resp, "ReadBatesNamespaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/bates/namespaces/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanBatesStamp Preview tentative Bates labels without stamping or reserving
 func (c *Client) PlanBatesStamp(ctx context.Context, options *PlanBatesStampRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanBatesStampResponse, error) {
 	var err error
@@ -12109,6 +12155,51 @@ func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequ
 	return responseParser(ctx, resp)
 }
 
+// GetLocalTextStatus Read search by meaning setup status
+func (c *Client) GetLocalTextStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalTextStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetLocalTextStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetLocalTextStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetLocalTextStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetLocalTextStatusErrorResponse](resp, "GetLocalTextStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -12837,6 +12928,53 @@ func (c *Client) ReadRedactionPreviewText(ctx context.Context, options *ReadReda
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/previews/{id}/text")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PublishNumberedPDF Publish one reviewed numbered PDF into retained storage
+func (c *Client) PublishNumberedPDF(ctx context.Context, options *PublishNumberedPDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PublishNumberedPDFResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/publications",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PublishNumberedPDFResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PublishNumberedPDFResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PublishNumberedPDFResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PublishNumberedPDFErrorResponse](resp, "PublishNumberedPDFErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/publications")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -17540,6 +17678,37 @@ func (o *CreateBatesNamespaceRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CreateBatesNamespaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadBatesNamespaceRequestOptions is the options needed to make a request to ReadBatesNamespace.
+type ReadBatesNamespaceRequestOptions struct {
+	PathParams *ReadBatesNamespacePath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadBatesNamespaceRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadBatesNamespaceRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -24547,6 +24716,34 @@ func (o *ReadRedactionPreviewTextRequestOptions) GetHeader() (map[string]string,
 	return nil, nil
 }
 
+// PublishNumberedPDFRequestOptions is the options needed to make a request to PublishNumberedPDF.
+type PublishNumberedPDFRequestOptions struct {
+	Body *PublishNumberedPDFBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PublishNumberedPDFRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PublishNumberedPDFRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PublishNumberedPDFRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PublishNumberedPDFRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RenderNativePDFRequestOptions is the options needed to make a request to RenderNativePDF.
 type RenderNativePDFRequestOptions struct {
 	Body *RenderNativePDFBody
@@ -27104,6 +27301,10 @@ type DownloadBatesExportPath struct {
 	ID uuid.UUID `json:"id"`
 }
 
+type ReadBatesNamespacePath struct {
+	ID uuid.UUID `json:"id"`
+}
+
 type GetCollectionPath struct {
 	ID string `json:"id"`
 }
@@ -28028,6 +28229,8 @@ type CreateRedactionPreviewBody = PreviewInput
 
 type DownloadRedactionPreviewBody = RedactionPreviewConfirmation
 
+type PublishNumberedPDFBody = RedactionRenderRequest
+
 type RenderNativePDFBody = RedactionRenderRequest
 
 type ReserveNumberedPDFBody = NumberedReservationRequest
@@ -28676,6 +28879,10 @@ type ListBatesNamespacesErrorResponse = Error
 type CreateBatesNamespaceResponse = api.BatesNamespace
 
 type CreateBatesNamespaceErrorResponse = Error
+
+type ReadBatesNamespaceResponse = api.BatesNamespaceDetail
+
+type ReadBatesNamespaceErrorResponse = Error
 
 type PlanBatesStampResponse = api.BatesPlan
 
@@ -29644,6 +29851,10 @@ type ApplyLocalTextResponse = api.LocalTextPlan
 
 type ApplyLocalTextErrorResponse = Error
 
+type GetLocalTextStatusResponse = api.LocalTextStatus
+
+type GetLocalTextStatusErrorResponse = Error
+
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
 type PlanDocumentProcessingErrorResponse = Error
@@ -29725,6 +29936,30 @@ type ReadRedactionPreviewPageErrorResponse = Error
 type ReadRedactionPreviewTextResponse = []byte
 
 type ReadRedactionPreviewTextErrorResponse = Error
+
+type PublishNumberedPDFResponse = api.BatesExport
+
+type PublishNumberedPDFErrorResponse api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON403 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON409 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON504 api.Error
 
 type RenderNativePDFResponse = []byte
 
@@ -30264,6 +30499,8 @@ type BatesExportRequest = api.BatesExportRequest
 
 type BatesNamespace = api.BatesNamespace
 
+type BatesNamespaceDetail = api.BatesNamespaceDetail
+
 type BatesNamespacePage = api.BatesNamespacePage
 
 type BatesNamespaceRequest = api.BatesNamespaceRequest
@@ -30710,6 +30947,8 @@ type LocalTextApplyRequest = api.LocalTextApplyRequest
 type LocalTextPlan = api.LocalTextPlan
 
 type LocalTextPlanRequest = api.LocalTextPlanRequest
+
+type LocalTextStatus = api.LocalTextStatus
 
 type Locator = report.Locator
 

@@ -104,7 +104,7 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		policy.InputKind = document.RenditionInputDerivedUpload
 		policy.ExpectedBytes, policy.ExpectedSHA256 = int64(len(data)), workerHashBytes(data)
 		policy.MaxPixels = 1024 * 1024
-		capability, err := media.InspectCapability(bytes.NewReader(data), policy)
+		capability, err := media.InspectCapability(ctx, bytes.NewReader(data), policy)
 		if err != nil || !capability.Eligible {
 			return EmbeddingExecution{}, errors.Join(ErrEmbeddingInputRejected, err)
 		}
@@ -145,7 +145,7 @@ func (runtime *ProviderEmbeddingRuntime) Prepare(ctx context.Context, work Embed
 		}
 		work.SourceFilename = syntheticFilename(work.SourceFilename, work.SourceMediaType, false)
 		policy := directEmbeddingInspectionPolicy(work)
-		capability, err := media.InspectCapability(reader, policy)
+		capability, err := media.InspectCapability(ctx, reader, policy)
 		if err != nil {
 			_ = reader.Close()
 			return EmbeddingExecution{}, err

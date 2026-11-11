@@ -20,18 +20,18 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"provenance", "ingest.go, provenance.go and provenance_bindings.go", "imports/sources contracts; immutable inserts and same-node predecessor validation", `
  ingests_immutable_update provenance_immutable_update provenance_same_node_insert
  provenance_version_bindings_immutable_update`},
-	{"pack summaries", "pack_maintenance.go: refreshPackSummariesTx", "documents/physical-storage contracts", `
+	{"pack summaries", "pack_maintenance.go: refreshPackSummariesTx", "documents/physical-storage/multi-store contracts", `
  blob_pack_summary_mapping_insert blob_pack_summary_mapping_delete
  blob_pack_summary_mapping_update blob_pack_summary_blob_delete blob_pack_summary_blob_insert`},
 	{"content promotion", "document_maintenance.go: promoteContentBlobTx", "documents contracts", `
  content_versions_promote_rendition_staging content_versions_revoke_derivative_purge`},
-	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events contracts; people publication remains unqualified", `
+	{"invalidation epochs", "document_events.go and retention_maintenance.go", "sources/retention/metadata-events/document-people contracts", `
  document_event_heads_deleted content_versions_invalidate_person_bindings`},
 	{"photo timeline", "document_maintenance.go: refreshPhotoTimelineTx", "documents/imports/photo-import/photo-checkout/sources/retention contracts; SQLite pending table is a trigger intermediate", `
  photo_timeline_refresh photo_timeline_file_insert photo_timeline_role_change
  photo_timeline_version_delete photo_timeline_version_change
  photo_timeline_binding_insert photo_timeline_correction_insert`},
-	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis/photo-quality-hidden contracts", `
+	{"photo export queue", "document_maintenance.go: refreshPhotoAssetWorkTx and refreshNodePhotoWorkTx", "documents/photo-import/photo-checkout/trash/retention/organization/photo-edit/photo-analysis/photo-quality-hidden/photo-review contracts", `
  photo_xmp_unsettled_refresh photo_xmp_unsettled_file_insert photo_xmp_unsettled_file_update
  photo_xmp_unsettled_file_delete photo_xmp_unsettled_asset_insert photo_xmp_unsettled_asset_update
  photo_xmp_unsettled_node_update photo_xmp_unsettled_node_insert photo_xmp_unsettled_node_delete
@@ -48,7 +48,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"photo XMP publication", "photo_xmp.go: settlePhotoXMPTx; document_maintenance.go: refreshPhotoAssetWorkTx", "photo-edit contracts; receipts are replaced rather than updated", `
  photo_xmp_unsettled_receipt_insert photo_xmp_unsettled_receipt_update`},
 	{"photo metadata recovery", "unported: source-head recovery", "must refresh export work when heads are removed", `photo_xmp_unsettled_head_delete`},
-	{"people candidates", "unported: person candidate publication", "must update the candidate-to-face projection in the publishing transaction", `
+	{"people candidates", "person_candidates.go: retainPersonCandidate", "people-curation contracts cover inserts; evidence replacement during metadata restore remains unqualified", `
  person_candidate_faces_insert person_candidate_faces_update`},
 	{"lexical indexes", "unported: search", "must preserve eligible rows and index access; schema comparison excludes FTS virtual/shadow tables", `
  nodes_fts_insert nodes_fts_delete nodes_fts_update
@@ -65,7 +65,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"metadata and event evidence", "source_metadata.go and document_events.go; INSERT-only publication grants", "metadata-events contracts; retained evidence is never rewritten", `
  source_metadata_generations_immutable_update document_event_generations_immutable_update
  document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
-	{"retained processing records", "no runtime UPDATE grant; producers unported", "enrollment validates retained rows; derivatives/retention may delete them, never rewrite them", `
+	{"document-person generations", "document_people.go; INSERT-only generation grants", "document-people contracts; publication replaces heads without rewriting retained attribution", `
  document_people_generations_immutable_update`},
 	{"visual preview records", "visual_preview.go; INSERT-only generation grants", "visual-evidence contracts; active heads may change without rewriting retained generations", `
  visual_preview_generations_immutable_update`},
@@ -86,13 +86,15 @@ var backendMaintenanceEffects = []backendMaintenance{
  processing_profiles_immutable_update rendition_builds_immutable_update
  rendition_artifacts_immutable_update rendition_units_immutable_update
  rendition_lexical_segments_immutable_update rendition_attachments_immutable_update`},
-	{"transfer and batch records", "unported: collection snapshots, Bates and packages", "retained validation does not qualify immutable-record or state-transition writes", `
+	{"sealed snapshots and Bates publication", "packages.go, packages_stream.go and bates*.go; INSERT-only identity grants", "sealed-delivery contracts; Store enforces monotone ranges and one-way publication; PostgreSQL column grants alone do not enforce transitions", `
  collection_snapshots_immutable_update collection_snapshot_members_immutable_update
  collection_snapshot_representations_immutable_update
  bates_artifacts_immutable_update bates_artifact_pages_immutable_update
  bates_namespaces_immutable_update bates_namespace_cursors_monotone
  bates_allocations_transition_guard bates_page_labels_immutable_update
- package_volumes_immutable_update packages_transition_guard package_records_immutable_update
+ package_volumes_immutable_update`},
+	{"received package transitions", "package_import*.go; INSERT-only record, label and receipt grants; column-specific package/job updates", "received-packages contracts; Store fences leases and fills snapshot/completion once; PostgreSQL permits direct SQL rewrites of those columns; SQLite receipts block updates, not deletion", `
+ packages_transition_guard package_records_immutable_update
  package_labels_immutable_update package_import_receipts_immutable_update`},
 	{"batch tag receipts", "batch_tag.go; runtime INSERT-only grants", "organization contracts; committed receipts survive tag deletion", `batch_tag_receipts_immutable_update batch_tag_receipts_immutable_delete`},
 }

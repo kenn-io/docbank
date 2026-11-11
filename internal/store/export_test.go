@@ -15,9 +15,10 @@ import (
 )
 
 // A lost response must not cause a source resolver to select a newer head.
-func TestExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t *testing.T) {
+func checkExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("a1"), 12, "text/plain")
 	require.NoError(t, err)
 	request := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}}}
@@ -106,9 +107,10 @@ func TestExportAdmissionRejectsOversizedUploadBeforeResolution(t *testing.T) {
 	require.Zero(t, count)
 }
 
-func TestExportChunksSealExactVersionsAndRejectChangedRetries(t *testing.T) {
+func checkExportChunksSealExactVersionsAndRejectChangedRetries(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("b1"), 1, "text/plain")
 	require.NoError(t, err)
 	old := bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}
@@ -126,9 +128,10 @@ func TestExportChunksSealExactVersionsAndRejectChangedRetries(t *testing.T) {
 	require.Equal(t, "sealed", sealed.State)
 }
 
-func TestExportPlanPinsRolesAndCannotInventMissingText(t *testing.T) {
+func checkExportPlanPinsRolesAndCannotInventMissingText(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.txt", fakeHash("c1"), 12, "text/plain")
 	require.NoError(t, err)
 	source, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}}}, nil)
@@ -153,9 +156,11 @@ func TestExportPlanPinsRolesAndCannotInventMissingText(t *testing.T) {
 	require.Empty(t, documents[0].Roles[1].Path)
 }
 
-func TestExportPlanFailureRollsBackAdmissionAndAllowsRetry(t *testing.T) {
+func checkExportPlanFailureRollsBackAdmissionAndAllowsRetry(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s, versions := newRenditionCatalogFixture(t)
+	s := open(t)
+	versions := seedRenditionCatalogVersions(t, s)
 	profile := catalogProcessingProfile(t, false)
 	build := catalogRenditionBuild(s, profile)
 	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
@@ -198,11 +203,12 @@ func TestExportPlanFailureRollsBackAdmissionAndAllowsRetry(t *testing.T) {
 	require.ErrorIs(t, err, bundle.ErrConflict)
 }
 
-func TestExportPlanOptionalPagesRespectMetadataBounds(t *testing.T) {
+func checkExportPlanOptionalPagesRespectMetadataBounds(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, pages := range []int{2, 30, 100} {
 		t.Run(strconv.Itoa(pages), func(t *testing.T) {
-			s := newTestStore(t)
+			s := open(t)
 			request := pageStoreRequest(t, s)
 			var frames []document.PageFrameV1
 			for page := 1; page <= pages; page++ {

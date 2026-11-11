@@ -256,8 +256,14 @@ func (s *Store) processingEmbeddingCompleteTx(ctx context.Context, tx *sql.Tx, p
 	}
 	var count int
 	d := metadataJSONDialect{s.postgresSchema != ""}
-	err = tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT n.id) `+currentEmbeddingHeadsSQL()+`
+	query := `SELECT DISTINCT n.id ` + currentEmbeddingHeadsSQL() + `
  AND eh.profile_fingerprint=$1 AND eh.binding_id=$2 AND eh.input_kind=$3 AND eh.vector_space_id=$4
- AND cv.version_id IN (SELECT value FROM `+d.arrayValues("$5")+`)`, profile, binding, kind, space, string(encoded)).Scan(&count)
+ AND cv.version_id IN (SELECT value FROM ` + d.arrayValues("$5") + `)`
+	if kind == document.EmbeddingInputRenditionChunk {
+		query += ` UNION SELECT n.id FROM ` + nodeFrom + ` WHERE n.kind='file' AND n.trashed_at IS NULL
+ AND cv.version_id IN (SELECT value FROM ` + d.arrayValues("$5") + `)
+ AND ` + emptyRenditionChunkSQL("cv.version_id", "$1")
+	}
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+query+`) settled`, profile, binding, kind, space, string(encoded)).Scan(&count)
 	return count, err
 }

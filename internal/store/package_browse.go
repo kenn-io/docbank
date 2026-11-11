@@ -42,8 +42,13 @@ func (s *Store) PackageMembers(ctx context.Context, packageID string, afterOrdin
 	if validateUUIDv4(packageID) != nil || afterOrdinal < 0 || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var snapshotID sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT snapshot_id FROM packages WHERE package_id=?`, packageID).Scan(&snapshotID)
+	err = tx.QueryRowContext(ctx, `SELECT snapshot_id FROM packages WHERE package_id=$1`, packageID).Scan(&snapshotID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -53,7 +58,11 @@ func (s *Store) PackageMembers(ctx context.Context, packageID string, afterOrdin
 	if !snapshotID.Valid || snapshotID.String == "" {
 		return nil, nil
 	}
-	return s.SnapshotMembers(ctx, snapshotID.String, afterOrdinal, limit)
+	members, err := loadSnapshotMembersTx(ctx, tx, snapshotID.String, afterOrdinal, limit)
+	if err != nil {
+		return nil, err
+	}
+	return members, tx.Commit()
 }
 
 // PackageRecordRowIDs maps each occurrence on one member page to its retained
@@ -75,7 +84,7 @@ func (s *Store) PackageRecordRowIDs(ctx context.Context, packageID string, occur
 		args = append(args, occurrenceID)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_id,row_id FROM package_records
-		WHERE package_id=? AND occurrence_id IN (`+placeholders(len(occurrenceIDs))+`)`, args...)
+		WHERE package_id=$1 AND occurrence_id IN (`+numberedPlaceholders(len(occurrenceIDs), 1)+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +106,7 @@ func (s *Store) PackageRecordByOccurrence(ctx context.Context, packageID, occurr
 		return PackageRecordRow{}, ErrPackageConflict
 	}
 	var rowID string
-	err := s.db.QueryRowContext(ctx, `SELECT row_id FROM package_records WHERE package_id=? AND occurrence_id=?`,
+	err := s.db.QueryRowContext(ctx, `SELECT row_id FROM package_records WHERE package_id=$1 AND occurrence_id=$2`,
 		packageID, occurrenceID).Scan(&rowID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PackageRecordRow{}, ErrNotFound
@@ -115,7 +124,7 @@ func (s *Store) PackageLabels(ctx context.Context, packageID, occurrenceID strin
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE package_id=? AND occurrence_id=?
+		FROM package_labels WHERE package_id=$1 AND occurrence_id=$2
 		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint`,
 		packageID, occurrenceID)
 	if err != nil {
@@ -148,9 +157,14 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 	if validateUUIDv4(packageID) != nil || afterRowID != "" && !canonical.IsSHA256Hex(afterRowID) || limit < 1 || limit > 250 {
 		return nil, ErrPackageConflict
 	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var profileJSON []byte
 	var producedOn string
-	err := s.db.QueryRowContext(ctx, `SELECT profile_json,COALESCE(produced_on,'') FROM packages WHERE package_id=?`, packageID).
+	err = tx.QueryRowContext(ctx, `SELECT profile_json,COALESCE(produced_on,'') FROM packages WHERE package_id=$1`, packageID).
 		Scan(&profileJSON, &producedOn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -164,7 +178,7 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 	}
 	afterOrdinal := 0
 	if afterRowID != "" {
-		err = s.db.QueryRowContext(ctx, `SELECT row_ordinal FROM package_records WHERE package_id=? AND row_id=?`,
+		err = tx.QueryRowContext(ctx, `SELECT row_ordinal FROM package_records WHERE package_id=$1 AND row_id=$2`,
 			packageID, afterRowID).Scan(&afterOrdinal)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrPackageConflict
@@ -173,9 +187,9 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 			return nil, err
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT occurrence_id,row_id,raw_json FROM package_records
-		WHERE package_id=? AND (row_ordinal>? OR (row_ordinal=? AND row_id>?))
-		ORDER BY row_ordinal,row_id LIMIT ?`, packageID, afterOrdinal, afterOrdinal, afterRowID, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT occurrence_id,row_id,raw_json FROM package_records
+		WHERE package_id=$1 AND (row_ordinal>$2 OR (row_ordinal=$3 AND row_id>$4))
+		ORDER BY row_ordinal,row_id LIMIT $5`, packageID, afterOrdinal, afterOrdinal, afterRowID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +202,10 @@ func (s *Store) PackageTimelineInputs(ctx context.Context, packageID, afterRowID
 		}
 		inputs = append(inputs, input)
 	}
-	return inputs, rows.Err()
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return inputs, tx.Commit()
 }
 
 // PackageLabelCandidates returns a bounded stable page without collapsing
@@ -215,11 +232,11 @@ func (s *Store) PackageLabelCandidates(ctx context.Context, label, packageID, la
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT package_id,provenance,label_set,label,
 		occurrence_id,content_version_id,COALESCE(artifact_id,''),COALESCE(page_number,0),page_state,endpoint
-		FROM package_labels WHERE label=? AND (?='' OR package_id=?) AND (?='' OR label_set=?)
-		AND (?='' OR provenance=?) AND (?='' OR (package_id,provenance,label_set,occurrence_id,
-		COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint)>(?,?,?,?,?,?,?))
+		FROM package_labels WHERE label=$1 AND ($2='' OR package_id=$3) AND ($4='' OR label_set=$5)
+		AND ($6='' OR provenance=$7) AND ($8='' OR (package_id,provenance,label_set,occurrence_id,
+		COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint)>($9,$10,$11,$12,$13,$14,$15))
 		ORDER BY package_id,provenance,label_set,occurrence_id,COALESCE(artifact_id,''),COALESCE(page_number,0),endpoint
-		LIMIT ?`, label, packageID, packageID, labelSet, labelSet, provenance, provenance,
+		LIMIT $16`, label, packageID, packageID, labelSet, labelSet, provenance, provenance,
 		after, cursor.PackageID, cursor.Provenance, cursor.LabelSet, cursor.OccurrenceID,
 		cursor.ArtifactID, cursor.PageNumber, cursor.Endpoint, limit+1)
 	if err != nil {

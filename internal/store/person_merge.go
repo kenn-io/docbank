@@ -159,7 +159,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 			return err
 		}
 		var absorbedName string
-		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=$1`, absorbedID).Scan(&absorbedName); err != nil {
 			return err
 		}
 		if err := s.checkFaceMergeConflictsTx(ctx, tx, survivorID, absorbedID); err != nil {
@@ -186,60 +186,60 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM person_identities WHERE person_id=? AND EXISTS(SELECT 1 FROM person_identities keep WHERE keep.person_id=? AND keep.kind=person_identities.kind AND keep.value_normalized=person_identities.value_normalized AND (person_identities.kind='name_alias' OR (keep.scope_kind=person_identities.scope_kind AND keep.scope_value=person_identities.scope_value)))`, absorbedID, survivorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_identities WHERE person_id=$1 AND EXISTS(SELECT 1 FROM person_identities keep WHERE keep.person_id=$2 AND keep.kind=person_identities.kind AND keep.value_normalized=person_identities.value_normalized AND (person_identities.kind='name_alias' OR (keep.scope_kind=person_identities.scope_kind AND keep.scope_value=person_identities.scope_value)))`, absorbedID, survivorID); err != nil {
 			return err
 		}
 		now := nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `UPDATE person_identities SET person_id=? WHERE person_id=?`, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_identities SET person_id=$1 WHERE person_id=$2`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=?,updated_at=? WHERE person_id=?`, survivorID, now, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=$1,updated_at=$2 WHERE person_id=$3`, survivorID, now, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,revision=revision+1 WHERE person_id=$2`, survivorID, absorbedID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, personMergeFaceRevisionSQL, survivorID, absorbedID, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=COALESCE((SELECT other.action FROM person_document_assertions other WHERE other.person_id IN (?,?) AND other.person_id<>person_document_assertions.person_id AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.action<>'withdrawn'),action),revision=revision+1 WHERE person_id IN (?,?) AND action='withdrawn'`, survivorID, absorbedID, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=COALESCE((SELECT other.action FROM person_document_assertions other WHERE other.person_id IN ($1,$2) AND other.person_id<>person_document_assertions.person_id AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.action<>'withdrawn'),action),revision=revision+1 WHERE person_id IN ($3,$4) AND action='withdrawn'`, survivorID, absorbedID, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=COALESCE(key_face_id,(SELECT key_face_id FROM persons WHERE person_id=?)) WHERE person_id=?`, absorbedID, survivorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=COALESCE(key_face_id,(SELECT key_face_id FROM persons WHERE person_id=$1)) WHERE person_id=$2`, absorbedID, survivorID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=$1 AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=$2 AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=$3)`, survivorID, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE person_id=? AND photo_mark=0 AND EXISTS(SELECT 1 FROM person_document_assertions other WHERE other.person_id=? AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.photo_mark=1)`, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE person_id=$1 AND photo_mark=0 AND EXISTS(SELECT 1 FROM person_document_assertions other WHERE other.person_id=$2 AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.photo_mark=1)`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
-			SELECT 1 FROM person_document_assertions keep WHERE keep.person_id=?
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=$1 AND EXISTS(
+			SELECT 1 FROM person_document_assertions keep WHERE keep.person_id=$2
 			AND keep.content_version_id=person_document_assertions.content_version_id
 			AND keep.role=person_document_assertions.role AND keep.action=person_document_assertions.action
 		)`, absorbedID, survivorID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET person_id=$1,revision=revision+1 WHERE person_id=$2`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET decided_person_id=?,revision=revision+1 WHERE decided_person_id=?`, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET decided_person_id=$1,revision=revision+1 WHERE decided_person_id=$2`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=$1 AND state='open'`, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=? WHERE surviving_person_id=?`, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=$1 WHERE surviving_person_id=$2`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE person_id=?`, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE person_id=$1`, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, absorbedID, survivorID, "merged", now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES($1,$2,$3,$4)`, absorbedID, survivorID, "merged", now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, survivorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=$2`, now, survivorID); err != nil {
 			return err
 		}
 		mergeID, err := newUUIDv4()
@@ -249,7 +249,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		receipt = PersonMergeReceipt{MergeID: mergeID, OperationID: operationID, RequestSHA256: requestHash,
 			SurvivorPersonID: survivorID, AbsorbedPersonID: absorbedID, AbsorbedDisplayName: absorbedName,
 			Moved: moved, SurvivorRevisionBefore: survivorRevision, SurvivorRevisionAfter: survivorRevision + 1, CreatedAt: now}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_merges(merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, mergeID, operationID, requestHash, survivorID, absorbedID, absorbedName, movedRaw, survivorRevision, survivorRevision+1, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_merges(merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, mergeID, operationID, requestHash, survivorID, absorbedID, absorbedName, movedRaw, survivorRevision, survivorRevision+1, now)
 		return err
 	})
 	return receipt, err
@@ -265,26 +265,26 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 	var hidden bool
 	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 	SELECT EXISTS(SELECT 1 FROM (
-		SELECT content_version_id FROM person_document_assertions WHERE person_id IN (?,?)
+		SELECT content_version_id FROM person_document_assertions WHERE person_id IN ($1,$2)
 		UNION
-		SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
+		SELECT e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN ($3,$4)
 		UNION
-		SELECT content_version_id FROM custodian_assignments WHERE person_id IN (?,?) AND scope_kind='document'
+		SELECT content_version_id FROM custodian_assignments WHERE person_id IN ($5,$6) AND scope_kind='document'
 		UNION
 		SELECT n.current_version_id FROM custodian_assignments ca JOIN collection_members cm ON cm.ingest_id=ca.ingest_id JOIN nodes n ON n.id=cm.node_id
-		WHERE ca.person_id IN (?,?) AND ca.scope_kind='collection'
+		WHERE ca.person_id IN ($7,$8) AND ca.scope_kind='collection'
 		UNION
 		SELECT m.content_version_id FROM custodian_assignments ca JOIN packages p ON p.package_id=ca.package_id
 		JOIN collection_snapshot_members m ON m.snapshot_id=p.snapshot_id
-		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND (ca.package_record_id='' OR EXISTS(
+		WHERE ca.person_id IN ($9,$10) AND ca.scope_kind='package' AND (ca.package_record_id='' OR EXISTS(
 			SELECT 1 FROM package_records r WHERE r.package_id=p.package_id AND r.row_id=ca.package_record_id AND r.occurrence_id=m.occurrence_id))
 		UNION
 		SELECT r.content_version_id FROM custodian_assignments ca JOIN package_import_receipts r ON r.package_id=ca.package_id
-		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND (ca.package_record_id='' OR ca.package_record_id=r.record_key)
+		WHERE ca.person_id IN ($11,$12) AND ca.scope_kind='package' AND (ca.package_record_id='' OR ca.package_record_id=r.record_key)
 		UNION
 		SELECT n.current_version_id FROM custodian_assignments ca JOIN packages p ON p.package_id=ca.package_id
 		JOIN collection_members cm ON cm.ingest_id=p.ingest_id JOIN nodes n ON n.id=cm.node_id
-		WHERE ca.person_id IN (?,?) AND ca.scope_kind='package' AND ca.package_record_id='' AND p.snapshot_id IS NULL
+		WHERE ca.person_id IN ($13,$14) AND ca.scope_kind='package' AND ca.package_record_id='' AND p.snapshot_id IS NULL
 	) affected WHERE NOT `+personVersionVisibleSQL("affected.content_version_id")+`)`, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID).Scan(&hidden); err != nil {
 		return err
 	}
@@ -297,7 +297,7 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 func personMergeReceiptTx(ctx context.Context, tx *sql.Tx, operationID string) (PersonMergeReceipt, error) {
 	var receipt PersonMergeReceipt
 	var movedRaw []byte
-	err := tx.QueryRowContext(ctx, `SELECT merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at FROM person_merges WHERE operation_id=?`, operationID).Scan(&receipt.MergeID, &receipt.OperationID, &receipt.RequestSHA256, &receipt.SurvivorPersonID, &receipt.AbsorbedPersonID, &receipt.AbsorbedDisplayName, &movedRaw, &receipt.SurvivorRevisionBefore, &receipt.SurvivorRevisionAfter, &receipt.CreatedAt)
+	err := tx.QueryRowContext(ctx, `SELECT merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at FROM person_merges WHERE operation_id=$1`, operationID).Scan(&receipt.MergeID, &receipt.OperationID, &receipt.RequestSHA256, &receipt.SurvivorPersonID, &receipt.AbsorbedPersonID, &receipt.AbsorbedDisplayName, &movedRaw, &receipt.SurvivorRevisionBefore, &receipt.SurvivorRevisionAfter, &receipt.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PersonMergeReceipt{}, ErrNotFound
 	}
@@ -320,10 +320,10 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 		query string
 		dst   *[]string
 	}{
-		{`SELECT identity_id FROM person_identities WHERE person_id=? ORDER BY identity_id`, &moved.IdentityIDs},
-		{`SELECT assignment_id FROM custodian_assignments WHERE person_id=? ORDER BY assignment_id`, &moved.AssignmentIDs},
-		{`SELECT assertion_id FROM person_document_assertions WHERE person_id=? ORDER BY assertion_id`, &moved.AssertionIDs},
-		{`SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id=? AND state='open' ORDER BY candidate_id`, &moved.SupersededCandidates},
+		{`SELECT identity_id FROM person_identities WHERE person_id=$1 ORDER BY identity_id`, &moved.IdentityIDs},
+		{`SELECT assignment_id FROM custodian_assignments WHERE person_id=$1 ORDER BY assignment_id`, &moved.AssignmentIDs},
+		{`SELECT assertion_id FROM person_document_assertions WHERE person_id=$1 ORDER BY assertion_id`, &moved.AssertionIDs},
+		{`SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id=$1 AND state='open' ORDER BY candidate_id`, &moved.SupersededCandidates},
 	}
 	for _, item := range queries {
 		values, err := collectPersonMergeColumnTx(ctx, tx, item.query, absorbedID)
@@ -349,7 +349,7 @@ func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, abso
 }
 
 func collectPersonExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID string) (_ []PersonExternalUID, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT system,archive_id,uid FROM person_external_identities WHERE person_id=? ORDER BY system,archive_id,uid`, personID)
+	rows, err := tx.QueryContext(ctx, `SELECT system,archive_id,uid FROM person_external_identities WHERE person_id=$1 ORDER BY system,archive_id,uid`, personID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,8 +368,8 @@ func collectPersonExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID strin
 func collectPersonMergeDeduplicatedAssertionsTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (_ []PersonMergeDeduplicatedAssertion, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,a.photo_mark,k.assertion_id
 		FROM person_document_assertions a JOIN person_document_assertions k
-		ON k.person_id=? AND k.content_version_id=a.content_version_id AND k.role=a.role AND (k.action=a.action OR k.action='withdrawn' OR a.action='withdrawn')
-		WHERE a.person_id=? ORDER BY a.assertion_id`, survivorID, absorbedID)
+		ON k.person_id=$1 AND k.content_version_id=a.content_version_id AND k.role=a.role AND (k.action=a.action OR k.action='withdrawn' OR a.action='withdrawn')
+		WHERE a.person_id=$2 ORDER BY a.assertion_id`, survivorID, absorbedID)
 	if err != nil {
 		return nil, err
 	}
@@ -390,9 +390,9 @@ func collectPersonMergeDeduplicatedIdentitiesTx(ctx context.Context, tx *sql.Tx,
 	rows, err := tx.QueryContext(ctx, `SELECT a.identity_id,a.kind,a.value_normalized,a.value_display,
 		a.scope_kind,a.scope_value,a.normalization,a.origin,a.evidence_kind,a.evidence_id,a.confidence,a.recorded_at,k.identity_id
 		FROM person_identities a JOIN person_identities k
-		  ON k.person_id=? AND k.kind=a.kind AND k.value_normalized=a.value_normalized
+		  ON k.person_id=$1 AND k.kind=a.kind AND k.value_normalized=a.value_normalized
 		 AND (a.kind='name_alias' OR (k.scope_kind=a.scope_kind AND k.scope_value=a.scope_value))
-		WHERE a.person_id=? ORDER BY a.identity_id,k.identity_id`, survivorID, absorbedID)
+		WHERE a.person_id=$2 ORDER BY a.identity_id,k.identity_id`, survivorID, absorbedID)
 	if err != nil {
 		return nil, err
 	}
@@ -432,11 +432,11 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
 		SELECT kind,CASE WHEN kind='name_alias' THEN '' ELSE scope_kind END AS normalized_scope_kind,
 		CASE WHEN kind='name_alias' THEN '' ELSE scope_value END AS normalized_scope_value,value_normalized
-		FROM person_identities WHERE person_id IN (?,?)
+		FROM person_identities WHERE person_id IN ($1,$2)
 		GROUP BY kind,normalized_scope_kind,normalized_scope_value,value_normalized)`, survivorID, absorbedID).Scan(&identities); err != nil {
 		return err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_external_identities WHERE person_id IN (?,?)`, survivorID, absorbedID).Scan(&external); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_external_identities WHERE person_id IN ($1,$2)`, survivorID, absorbedID).Scan(&external); err != nil {
 		return err
 	}
 	if identities > document.MaxPersonIdentitiesPerPerson || external > document.MaxPersonExternalIdentities {
@@ -447,11 +447,11 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 	// before collecting IDs that cannot fit.
 	var movedBytes int
 	if err := tx.QueryRowContext(ctx, `SELECT
-		COALESCE((SELECT SUM(length(identity_id)+2) FROM person_identities WHERE person_id=?),0)
-		+ COALESCE((SELECT SUM(length(assignment_id)+2) FROM custodian_assignments WHERE person_id=?),0)
-		+ COALESCE((SELECT SUM(length(assertion_id)+2) FROM person_document_assertions WHERE person_id=?),0)
+		COALESCE((SELECT SUM(length(identity_id)+2) FROM person_identities WHERE person_id=$1),0)
+		+ COALESCE((SELECT SUM(length(assignment_id)+2) FROM custodian_assignments WHERE person_id=$2),0)
+		+ COALESCE((SELECT SUM(length(assertion_id)+2) FROM person_document_assertions WHERE person_id=$3),0)
 		+ COALESCE((SELECT SUM(length(candidate_id)+2) FROM person_match_candidates
-			WHERE suggested_person_id=? AND (state='open' OR reason='face_match')),0)`,
+			WHERE suggested_person_id=$4 AND (state='open' OR reason='face_match')),0)`,
 		absorbedID, absorbedID, absorbedID, absorbedID).Scan(&movedBytes); err != nil {
 		return err
 	}
@@ -460,7 +460,7 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 	}
 	var conflict bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a
-		JOIN person_document_assertions s ON s.person_id=? AND a.person_id=?
+		JOIN person_document_assertions s ON s.person_id=$1 AND a.person_id=$2
 		AND s.content_version_id=a.content_version_id AND s.role=a.role AND s.action<>a.action AND s.action<>'withdrawn' AND a.action<>'withdrawn')`, survivorID, absorbedID).Scan(&conflict); err != nil {
 		return err
 	}
@@ -468,7 +468,7 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 		return ErrPersonMergeConflict
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_external_identities
-		WHERE person_id IN (?,?) AND uid_state='current' GROUP BY system,archive_id HAVING COUNT(*)>1)`, survivorID, absorbedID).Scan(&conflict); err != nil {
+		WHERE person_id IN ($1,$2) AND uid_state='current' GROUP BY system,archive_id HAVING COUNT(*)>1)`, survivorID, absorbedID).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict {
@@ -492,7 +492,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var storedHash string
 		var raw []byte
-		err := tx.QueryRowContext(ctx, `SELECT request_sha256,receipt_json FROM person_splits WHERE operation_id=?`, request.OperationID).Scan(&storedHash, &raw)
+		err := tx.QueryRowContext(ctx, `SELECT request_sha256,receipt_json FROM person_splits WHERE operation_id=$1`, request.OperationID).Scan(&storedHash, &raw)
 		raw, found, err := replayReceipt(raw, err, storedHash == requestHash, ErrPersonMergeConflict)
 		if err != nil {
 			return err
@@ -531,7 +531,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 					}
 				}
 				var exists bool
-				query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE person_id=? AND %s=?)`, selection.table, selection.column)
+				query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE person_id=$1 AND %s=$2)`, selection.table, selection.column)
 				if err := tx.QueryRowContext(ctx, query, request.PersonID, id).Scan(&exists); err != nil || !exists {
 					if err != nil {
 						return err
@@ -542,7 +542,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		}
 		for _, external := range request.External {
 			var exists bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_external_identities WHERE person_id=? AND system=? AND archive_id=? AND uid=?)`, request.PersonID, external.System, external.ArchiveID, external.UID).Scan(&exists); err != nil || !exists {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_external_identities WHERE person_id=$1 AND system=$2 AND archive_id=$3 AND uid=$4)`, request.PersonID, external.System, external.ArchiveID, external.UID).Scan(&exists); err != nil || !exists {
 				if err != nil {
 					return err
 				}
@@ -554,7 +554,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 			return err
 		}
 		now := nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,'operator','curated',?,?)`, newID, request.DisplayName, document.FoldPersonName(request.DisplayName), now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES($1,$2,$3,'operator','curated',$4,$5)`, newID, request.DisplayName, document.FoldPersonName(request.DisplayName), now, now); err != nil {
 			return err
 		}
 		for _, selection := range []struct {
@@ -566,33 +566,33 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 			{"person_document_assertions", "assertion_id", request.AssertionIDs},
 		} {
 			for _, id := range selection.ids {
-				query := fmt.Sprintf(`UPDATE %s SET person_id=? WHERE person_id=? AND %s=?`, selection.table, selection.column)
+				query := fmt.Sprintf(`UPDATE %s SET person_id=$1 WHERE person_id=$2 AND %s=$3`, selection.table, selection.column)
 				if selection.table == "person_document_assertions" {
-					query = `UPDATE person_document_assertions SET person_id=?,revision=revision+1 WHERE person_id=? AND assertion_id=?`
-					if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, id); err != nil {
+					query = `UPDATE person_document_assertions SET person_id=$1,revision=revision+1 WHERE person_id=$2 AND assertion_id=$3`
+					if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=$1`, id); err != nil {
 						return err
 					}
 				}
 				if selection.table == "custodian_assignments" {
-					query = `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=? AND assignment_id=?`
+					query = `UPDATE custodian_assignments SET person_id=$1,revision=revision+1 WHERE person_id=$2 AND assignment_id=$3`
 				}
 				if _, err := tx.ExecContext(ctx, query, newID, request.PersonID, id); err != nil {
 					return err
 				}
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=(SELECT p.key_face_id FROM persons p JOIN photo_faces f ON f.face_id=p.key_face_id JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.person_id=? AND a.person_id=?) WHERE person_id=?`, request.PersonID, newID, newID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=(SELECT p.key_face_id FROM persons p JOIN photo_faces f ON f.face_id=p.key_face_id JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.person_id=$1 AND a.person_id=$2) WHERE person_id=$3`, request.PersonID, newID, newID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL WHERE person_id=? AND key_face_id=(SELECT key_face_id FROM persons WHERE person_id=?)`, request.PersonID, newID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL WHERE person_id=$1 AND key_face_id=(SELECT key_face_id FROM persons WHERE person_id=$2)`, request.PersonID, newID); err != nil {
 			return err
 		}
 		for _, external := range request.External {
-			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=?,updated_at=? WHERE person_id=? AND system=? AND archive_id=? AND uid=?`, newID, now, request.PersonID, external.System, external.ArchiveID, external.UID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=$1,updated_at=$2 WHERE person_id=$3 AND system=$4 AND archive_id=$5 AND uid=$6`, newID, now, request.PersonID, external.System, external.ArchiveID, external.UID); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, request.PersonID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=$2`, now, request.PersonID); err != nil {
 			return err
 		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
@@ -603,7 +603,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_splits(operation_id,request_sha256,receipt_json,created_at) VALUES(?,?,?,?)`, request.OperationID, requestHash, raw, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_splits(operation_id,request_sha256,receipt_json,created_at) VALUES($1,$2,$3,$4)`, request.OperationID, requestHash, raw, now)
 		return err
 	})
 	return receipt, err
@@ -616,8 +616,8 @@ func validateMergedPhotoFaces(ctx context.Context, tx *sql.Tx, id string) error 
 // UNION deduplicates face-version pairs referenced by assignments and candidates.
 const personMergeFaceRevisionSQL = `UPDATE photo_faces SET revision=revision+1 WHERE EXISTS (
  SELECT 1 FROM (
-  SELECT face_id,content_version_id FROM photo_faces WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN (?,?))
+  SELECT face_id,content_version_id FROM photo_faces WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN ($1,$2))
   UNION
-  SELECT e.face_id,e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
+  SELECT e.face_id,e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN ($3,$4)
  ) affected WHERE affected.face_id=photo_faces.face_id AND affected.content_version_id=photo_faces.content_version_id
 )`

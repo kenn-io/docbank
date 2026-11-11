@@ -258,9 +258,9 @@ func BenchmarkSemanticMemberships(b *testing.B) {
 				opts := SearchOptions{}
 				ranked := make([]vectorindex.Neighbor, 0, len(neighbors))
 				// Interleave copies so an ordinary page starts with distinct groups.
-				for copy := range 100 {
+				for replica := range 100 {
 					for group := range count / 100 {
-						if index := group*100 + copy; index < len(neighbors) {
+						if index := group*100 + replica; index < len(neighbors) {
 							ranked = append(ranked, neighbors[index])
 						}
 					}

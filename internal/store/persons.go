@@ -7,6 +7,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -73,7 +75,7 @@ func createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, orig
 		return Person{}, ErrInvalidPerson
 	}
 	var retired bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_aliases WHERE retired_person_id=?)`, id).Scan(&retired); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_aliases WHERE retired_person_id=$1)`, id).Scan(&retired); err != nil {
 		return Person{}, err
 	}
 	if retired {
@@ -84,11 +86,11 @@ func createPersonWithIDTx(ctx context.Context, tx *sql.Tx, id, displayName, orig
 		state = "curated"
 	}
 	now := nowRFC3339()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
 		return Person{}, err
 	}
 	var created Person
-	err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+	err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=$1`, id).Scan(
 		&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
 		&created.Revision, &created.CreatedAt, &created.UpdatedAt)
 	return created, err
@@ -122,7 +124,7 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 		if err := fencePersonTx(ctx, tx, id, revision); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name=?,display_name_folded=?,revision=revision+1,state='curated',updated_at=? WHERE person_id=? AND revision=? AND state<>'retired'`, name, document.FoldPersonName(name), nowRFC3339(), id, revision)
+		result, err := tx.ExecContext(ctx, `UPDATE persons SET display_name=$1,display_name_folded=$2,revision=revision+1,state='curated',updated_at=$3 WHERE person_id=$4 AND revision=$5 AND state<>'retired'`, name, document.FoldPersonName(name), nowRFC3339(), id, revision)
 		if err != nil {
 			return err
 		}
@@ -133,7 +135,7 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 		if count != 1 {
 			return ErrStaleRevision
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=$1`, id).Scan(
 			&updated.PersonID, &updated.DisplayName, &updated.DisplayNameFolded, &updated.Origin, &updated.State,
 			&updated.Revision, &updated.CreatedAt, &updated.UpdatedAt); err != nil {
 			return err
@@ -167,7 +169,7 @@ func retirePersonTx(ctx context.Context, tx *sql.Tx, id string, revision int64) 
 		return Person{}, err
 	}
 	now := nowRFC3339()
-	result, err := tx.ExecContext(ctx, `UPDATE persons SET state='retired',revision=revision+1,updated_at=? WHERE person_id=? AND revision=? AND state<>'retired'`, now, id, revision)
+	result, err := tx.ExecContext(ctx, `UPDATE persons SET state='retired',revision=revision+1,updated_at=$1 WHERE person_id=$2 AND revision=$3 AND state<>'retired'`, now, id, revision)
 	if err != nil {
 		return Person{}, err
 	}
@@ -178,19 +180,19 @@ func retirePersonTx(ctx context.Context, tx *sql.Tx, id string, revision int64) 
 	if count != 1 {
 		return Person{}, ErrStaleRevision
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=NULL,reason='deleted',retired_at=? WHERE surviving_person_id=?`, now, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=NULL,reason='deleted',retired_at=$1 WHERE surviving_person_id=$2`, now, id); err != nil {
 		return Person{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,NULL,'deleted',?)`, id, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES($1,NULL,'deleted',$2)`, id, now); err != nil {
 		return Person{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=NULL,revision=revision+1 WHERE person_id=? AND retired_at IS NULL`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=NULL,revision=revision+1 WHERE person_id=$1 AND retired_at IS NULL`, id); err != nil {
 		return Person{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=$1 AND state='open'`, id); err != nil {
 		return Person{}, err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+	if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=$1`, id).Scan(
 		&retired.PersonID, &retired.DisplayName, &retired.DisplayNameFolded, &retired.Origin, &retired.State,
 		&retired.Revision, &retired.CreatedAt, &retired.UpdatedAt); err != nil {
 		return Person{}, err
@@ -203,7 +205,7 @@ func retirePersonTx(ctx context.Context, tx *sql.Tx, id string, revision int64) 
 
 func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, error) {
 	var survivor sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?`, id).Scan(&survivor)
+	err := tx.QueryRowContext(ctx, `SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1`, id).Scan(&survivor)
 	if err == nil {
 		if !survivor.Valid || survivor.String == "" {
 			return "", ErrNotFound
@@ -213,7 +215,7 @@ func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, erro
 		return "", err
 	}
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?)`, id).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=$1)`, id).Scan(&exists); err != nil {
 		return "", err
 	}
 	if !exists {
@@ -225,7 +227,7 @@ func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, erro
 func personByIDTx(ctx context.Context, q metadataQuerier, id string) (Person, string, error) {
 	var person Person
 	err := q.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
-		FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)
+		FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2)
 		AND state<>'retired'`, id, id).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
 		&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -258,32 +260,33 @@ func personDerivedExactIdentitySQL(alias string) string {
 }
 
 // personVisibleSQL is the browser's person visibility rule for a page of
-// people. It binds visibleOnly, then hideLocked twice. Its correlated
+// people. It binds visibleOnly, then hideLocked. Its correlated
 // subqueries use the person index. visiblePersonByIDSQL applies the same rule
 // to one person.
-func personVisibleSQL(person string) string {
-	return `(?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
+func personVisibleSQL(person string, first int) string {
+	visible, locked := fmt.Sprintf("$%d", first), fmt.Sprintf("$%d", first+1)
+	return `(` + visible + `=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=` + person + `)
 		AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=` + person + `
 			AND ` + personDerivedExactIdentitySQL("i") + `)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a
-		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", "?") + `) OR EXISTS(
+		WHERE a.person_id=` + person + ` AND ` + personVisibleAssertionSQL("a", locked) + `) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=` + person + `
-		AND ` + personVisibleActorSQL("p", "?") + `))`
+		AND ` + personVisibleActorSQL("p", locked) + `))`
 }
 
 // Materialize the bounded matches before reading their visible identity labels.
 var peopleByDisplayNameSQL = `WITH matches AS MATERIALIZED (
  SELECT persons.* FROM persons WHERE %s state<>'retired'
 	AND (%s)
-	ORDER BY display_name_folded,person_id LIMIT ?)
+	ORDER BY display_name_folded,person_id LIMIT $%[3]d)
 SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,'',
 	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
 		FROM person_identities i WHERE i.person_id=persons.person_id
 		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
-		AND (?=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
+		AND ($%[4]d=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
-			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
+			AND dp.sensitive=0 AND ($%[5]d=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
  FROM matches persons ORDER BY display_name_folded,person_id`
 
@@ -316,23 +319,27 @@ type PeopleSearchOptions struct {
 // peopleCandidatesSQL narrows the matches to a typed name prefix and, for the
 // Photos page, to people with a visible depicted photo: Library photos, and
 // Hidden photos too while unlocked.
-func peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
+func (s *Store) peopleCandidatesSQL(prefix string, photosOnly, unlocked bool) (string, []any) {
 	clause, args := "", []any{}
 	if prefix != "" {
-		clause, args = `instr(persons.display_name_folded, ?) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, ?) AND `, []any{prefix, prefix}
+		clause, args = `instr(persons.display_name_folded, $1) > 0 AND docbank_person_name_starts_with_word_v1(persons.display_name_folded, $2) AND `, []any{prefix, prefix}
+		if s.postgresSchema != "" {
+			clause = `strpos(persons.display_name_folded, $1)>0 AND persons.display_name_folded COLLATE "C" ~ $2 AND `
+			args[1] = personWordStartPostgres + regexp.QuoteMeta(prefix)
+		}
 	}
 	if photosOnly {
-		clause += personHasPhotoSQL(unlocked, "") + " AND "
+		clause += s.personHasPhotoSQL(unlocked, "") + " AND "
 	}
 	return clause, args
 }
 
 // personHasPhotoSQL builds the eligible person list once. The recent walk has
 // already checked its person's photo, so only namesakes need the list.
-func personHasPhotoSQL(unlocked bool, walkerAlias string) string {
-	joins, where := personPhotoSource(unlocked)
+func (s *Store) personHasPhotoSQL(unlocked bool, walkerAlias string) string {
+	joins, where := s.personPhotoSource(unlocked)
 	clause := `persons.person_id IN (SELECT assertion.person_id FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.action='assert' AND assertion.role='depicted')`
 	if walkerAlias != "" {
 		clause = "(persons.person_id=" + walkerAlias + ".person_id OR " + clause + ")"
@@ -360,26 +367,38 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		// The recent walk adds its own photo check, reusing its evidence joins.
 		prefix := document.FoldPersonName(query)
 		photosOnly := options.PhotoSummary && !options.RecentFirst
-		usePhotoSet := hideLocked && scope.Configured
-		candidates, args := peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
+		// Per-person checks slow down when the people they walk have only
+		// Hidden photos, so locked pages with Hidden photos use the full set.
+		// Look for them only with a passcode; the scan costs every page.
+		usePhotoSet := false
+		if photosOnly && hideLocked && scope.Configured {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets WHERE hidden_at IS NOT NULL)`).Scan(&usePhotoSet); err != nil {
+				return err
+			}
+		}
+		candidates, args := s.peopleCandidatesSQL(prefix, photosOnly && usePhotoSet, !hideLocked)
 		if photosOnly && !usePhotoSet {
-			joins, where := personPhotoSource(!hideLocked)
+			joins, where := s.personPhotoSource(!hideLocked)
 			// Unary + keeps SQLite on the name index so it can stop after the page fills.
-			candidates += `+persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
+			indexHint := ""
+			if s.postgresSchema == "" {
+				indexHint = "+"
+			}
+			candidates += indexHint + `persons.person_id IN (SELECT person_id FROM person_document_assertions WHERE role='depicted' AND action='assert')
  AND EXISTS (SELECT 1 FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.person_id=persons.person_id AND assertion.action='assert' AND assertion.role='depicted') AND `
 		}
 		// Photo eligibility already supplies visible, non-sensitive evidence.
 		// Identity labels still use visibleOnly below.
 		if visibleOnly && !options.PhotoSummary {
-			candidates += personVisibleSQL("persons.person_id") + " AND "
-			args = append(args, true, hideLocked, hideLocked)
+			candidates += personVisibleSQL("persons.person_id", len(args)+1) + " AND "
+			args = append(args, 1, boolInt(hideLocked))
 		}
 		if options.RecentFirst {
-			people, err = peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
+			people, err = s.peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
 		} else {
-			people, err = peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
+			people, err = s.peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
 		}
 		if err != nil {
 			return err
@@ -392,11 +411,16 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 	return people, scope, err
 }
 
+func peopleNamePageSQL(candidates string, first int) string {
+	cursor := fmt.Sprintf(`$%[1]d='' OR display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[2]d)`, first, first+1)
+	return fmt.Sprintf(peopleByDisplayNameSQL, candidates, cursor, first+2, first+3, first+4)
+}
+
 // peopleByDisplayNameTx bounds the name matches before reading identity labels.
-func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID string, limit int, visibleOnly, hideLocked bool) ([]PersonSearchResult, error) {
-	cursor := `?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?)`
-	args = append(slices.Clone(args), afterName, afterName, afterName, afterID, limit, visibleOnly, hideLocked)
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(peopleByDisplayNameSQL, candidates, cursor), args...)
+func (s *Store) peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID string, limit int, visibleOnly, hideLocked bool) ([]PersonSearchResult, error) {
+	query := peopleNamePageSQL(candidates, len(args)+1)
+	args = append(slices.Clone(args), afterName, afterID, limit, boolInt(visibleOnly), boolInt(hideLocked))
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -415,33 +439,38 @@ func peopleByDisplayNameTx(ctx context.Context, tx *sql.Tx, candidates string, a
 
 // peopleRecentTx probes each matching person's newest eligible evidence for
 // typed prefixes. Empty queries walk assertions and finish timestamp ties.
-func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool, prefix string) ([]PersonSearchResult, error) {
-	joins, where := personPhotoSource(!hideLocked)
-	walkCandidates, walkArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
+func (s *Store) peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []any, afterName, afterID, afterRecent string, limit int, visibleOnly, hideLocked, photosOnly bool, prefix string) ([]PersonSearchResult, error) {
+	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
+	joins, where := s.personPhotoSource(!hideLocked)
+	walkCandidates, walkArgs := s.peopleCandidatesSQL(prefix, false, !hideLocked)
 	if visibleOnly && !photosOnly {
-		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id") + ") AND "
-		walkArgs = append(walkArgs, true, hideLocked, hideLocked)
+		walkCandidates += "(persons.person_id=person.person_id OR " + personVisibleSQL("persons.person_id", len(walkArgs)+1) + ") AND "
+		walkArgs = append(walkArgs, 1, boolInt(hideLocked))
 	}
 	if photosOnly {
-		walkCandidates += personHasPhotoSQL(!hideLocked, "person") + " AND "
+		walkCandidates += s.personHasPhotoSQL(!hideLocked, "person") + " AND "
 	}
 	// Empty queries read all assertions. A sequential table scan avoids
 	// fetching each evidence row through the person index.
+	indexHint := ""
+	if s.postgresSchema == "" {
+		indexHint = " NOT INDEXED"
+	}
 	query := `SELECT persons.person_id,persons.display_name_folded,assertion.recorded_at
- FROM person_document_assertions assertion NOT INDEXED
- CROSS JOIN persons person ON person.person_id=assertion.person_id
- CROSS JOIN persons ON persons.display_name_folded=person.display_name_folded
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ FROM person_document_assertions assertion` + indexHint + `
+ ` + s.peopleJoin() + ` persons person ON person.person_id=assertion.person_id
+ ` + s.peopleJoin() + ` persons ON persons.display_name_folded=person.display_name_folded
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.role='depicted' AND assertion.action='assert' AND person.state<>'retired'
  AND ` + walkCandidates + ` persons.state<>'retired'
  ORDER BY assertion.recorded_at DESC`
 	var rankedSQL string
 	var rankedArgs []any
 	if prefix != "" {
-		matches, matchArgs := peopleCandidatesSQL(prefix, false, !hideLocked)
+		matches, matchArgs := s.peopleCandidatesSQL(prefix, false, !hideLocked)
 		rankedSQL = `WITH own AS MATERIALIZED (
  SELECT persons.*, (SELECT assertion.recorded_at FROM person_document_assertions assertion
- CROSS JOIN content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
+ ` + s.peopleJoin() + ` content_versions cv ON cv.version_id=assertion.content_version_id` + joins + where + `
  AND assertion.person_id=persons.person_id AND assertion.role='depicted' AND assertion.action='assert'
  ORDER BY assertion.recorded_at DESC LIMIT 1) own
  FROM persons WHERE ` + matches + ` state<>'retired'),
@@ -452,13 +481,14 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if photosOnly {
 			eligible += "own IS NOT NULL AND "
 		} else if visibleOnly {
-			eligible += personVisibleSQL("persons.person_id") + " AND "
-			matchArgs = append(slices.Clone(matchArgs), true, hideLocked, hideLocked)
+			eligible += personVisibleSQL("persons.person_id", len(matchArgs)+1) + " AND "
+			matchArgs = append(slices.Clone(matchArgs), 1, boolInt(hideLocked))
 		}
-		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + `
- (?='' OR rank<? OR (rank=? AND (display_name_folded>? OR (display_name_folded=? AND person_id>?))))
- ORDER BY rank DESC,display_name_folded,person_id LIMIT ?`
-		matchArgs = append(matchArgs, afterName, afterRecent, afterRecent, afterName, afterName, afterID, limit)
+		first := len(matchArgs) + 1
+		query = rankedSQL + `SELECT person_id,display_name_folded,rank FROM ranked persons WHERE ` + eligible + fmt.Sprintf(`
+ ($%[1]d='' OR rank<$%[2]d OR (rank=$%[2]d AND (display_name_folded>$%[1]d OR (display_name_folded=$%[1]d AND person_id>$%[3]d))))
+ ORDER BY rank DESC,display_name_folded,person_id LIMIT $%[4]d`, first, first+1, first+2, first+3)
+		matchArgs = append(matchArgs, afterName, afterRecent, afterID, limit)
 		walkArgs = matchArgs
 	}
 	rows, err := tx.QueryContext(ctx, query, walkArgs...)
@@ -510,7 +540,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if err != nil {
 			return nil, err
 		}
-		people, err = peopleByDisplayNameTx(ctx, tx, "person_id IN (SELECT value FROM json_each(?)) AND ", []any{string(encoded)}, "", "", limit, visibleOnly, hideLocked)
+		people, err = s.peopleByDisplayNameTx(ctx, tx, "person_id IN (SELECT value FROM "+d.arrayValues("$1")+") AND ", []any{string(encoded)}, "", "", limit, visibleOnly, hideLocked)
 		if err != nil {
 			return nil, err
 		}
@@ -552,7 +582,7 @@ func peopleRecentTx(ctx context.Context, tx *sql.Tx, candidates string, args []a
 		if afterRecent != "" {
 			afterName, afterID = "", ""
 		}
-		unranked, err := peopleByDisplayNameTx(ctx, tx, "display_name_folded NOT IN (SELECT value FROM json_each(?)) AND "+candidates, append([]any{string(encoded)}, args...), afterName, afterID, limit-len(people), visibleOnly, hideLocked)
+		unranked, err := s.peopleByDisplayNameTx(ctx, tx, candidates+"display_name_folded NOT IN (SELECT value FROM "+d.arrayValues(fmt.Sprintf("$%d", len(args)+1))+") AND ", append(slices.Clone(args), string(encoded)), afterName, afterID, limit-len(people), visibleOnly, hideLocked)
 		if err != nil {
 			return nil, err
 		}
@@ -573,19 +603,19 @@ func WithVisiblePeopleOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, visiblePersonContextKey{}, true)
 }
 
-// visiblePersonByIDSQL is personVisibleSQL for the person bound as ?1, with
-// hideLocked as ?2. Correlated EXISTS stops at the person's first assertion
+// visiblePersonByIDSQL is personVisibleSQL for the person bound as $1, with
+// hideLocked as $2. Correlated EXISTS stops at the person's first assertion
 // instead of collecting every person's assertions, so the browser write fence
 // stays cheap in a mail-heavy vault.
-var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?1 AND (
- (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1)
-	AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1)
-	AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=?1
+var visiblePersonByIDSQL = `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=$1 AND (
+ (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1)
+	AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1)
+	AND NOT EXISTS(SELECT 1 FROM person_identities i WHERE i.person_id=$1
 		AND ` + personDerivedExactIdentitySQL("i") + `))
- OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=?1
-	AND ` + personVisibleAssertionSQL("a", "?2") + `)
- OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=?1
-	AND ` + personVisibleActorSQL("p", "?2") + `)))`
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1
+	AND ` + personVisibleAssertionSQL("a", "$2") + `)
+ OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1
+	AND ` + personVisibleActorSQL("p", "$2") + `)))`
 
 // fenceVisiblePeopleTx reports a person concealed from a browser write as not
 // found, so a person that Hidden locking or sensitivity conceals from the list
@@ -601,7 +631,7 @@ func (s *Store) fenceVisiblePeopleTx(ctx context.Context, tx *sql.Tx, ids ...str
 	hideLocked := errors.Is(err, ErrHiddenLocked)
 	for _, id := range ids {
 		var found bool
-		if err := tx.QueryRowContext(ctx, visiblePersonByIDSQL, id, hideLocked).Scan(&found); err != nil {
+		if err := tx.QueryRowContext(ctx, visiblePersonByIDSQL, id, boolInt(hideLocked)).Scan(&found); err != nil {
 			return err
 		}
 		if !found {
@@ -633,13 +663,13 @@ func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision
 			return err
 		}
 		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_identities WHERE person_id=?`, personID).Scan(&count); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_identities WHERE person_id=$1`, personID).Scan(&count); err != nil {
 			return err
 		}
 		if count >= document.MaxPersonIdentitiesPerPerson {
 			return ErrPersonIdentityConflict
 		}
-		result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, identity.IdentityID, personID, identity.Kind, identity.ValueNormalized, identity.ValueDisplay, identity.ScopeKind, identity.ScopeValue, identity.Normalization, identity.Origin, identity.EvidenceKind, identity.EvidenceID, identity.Confidence, identity.RecordedAt)
+		result, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`, identity.IdentityID, personID, identity.Kind, identity.ValueNormalized, identity.ValueDisplay, identity.ScopeKind, identity.ScopeValue, identity.Normalization, identity.Origin, identity.EvidenceKind, identity.EvidenceID, identity.Confidence, identity.RecordedAt)
 		if err != nil {
 			return err
 		}
@@ -650,7 +680,7 @@ func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision
 		if inserted != 1 {
 			return ErrPersonIdentityConflict
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, nowRFC3339(), personID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=$2`, nowRFC3339(), personID); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -666,7 +696,7 @@ func (s *Store) RemovePersonIdentity(ctx context.Context, personID, identityID s
 		if err := fencePersonTx(ctx, tx, personID, revision); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM person_identities WHERE person_id=? AND identity_id=?`, personID, identityID)
+		result, err := tx.ExecContext(ctx, `DELETE FROM person_identities WHERE person_id=$1 AND identity_id=$2`, personID, identityID)
 		if err != nil {
 			return err
 		}
@@ -677,7 +707,7 @@ func (s *Store) RemovePersonIdentity(ctx context.Context, personID, identityID s
 		if count != 1 {
 			return ErrNotFound
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, nowRFC3339(), personID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=$2`, nowRFC3339(), personID); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -685,7 +715,7 @@ func (s *Store) RemovePersonIdentity(ctx context.Context, personID, identityID s
 }
 
 func personIdentitiesTx(ctx context.Context, q metadataQuerier, personID string) ([]PersonIdentity, error) {
-	rows, err := q.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at,scope_kind,scope_value FROM person_identities WHERE person_id=? ORDER BY kind,value_normalized,identity_id`, personID)
+	rows, err := q.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at,scope_kind,scope_value FROM person_identities WHERE person_id=$1 ORDER BY kind,value_normalized,identity_id`, personID)
 	if err != nil {
 		return nil, err
 	}
@@ -721,7 +751,7 @@ func (s *Store) PersonDetailPage(ctx context.Context, personID string, page Pers
 	if page.Limit < 1 || page.Limit > 1000 || page.After != "" && validateUUIDv4(page.After) != nil {
 		return PersonDetail{}, ErrInvalidPerson
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return PersonDetail{}, err
 	}
@@ -755,7 +785,7 @@ func (s *Store) PersonDetailPage(ctx context.Context, personID string, page Pers
 func fencePersonTx(ctx context.Context, tx *sql.Tx, personID string, revision int64) error {
 	var state string
 	var current int64
-	err := tx.QueryRowContext(ctx, `SELECT state,revision FROM persons WHERE person_id=?`, personID).Scan(&state, &current)
+	err := tx.QueryRowContext(ctx, `SELECT state,revision FROM persons WHERE person_id=$1`, personID).Scan(&state, &current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -773,18 +803,45 @@ func fencePersonTx(ctx context.Context, tx *sql.Tx, personID string, revision in
 
 // advancePersonBindingEpochTx invalidates person bindings after an authority change.
 func advancePersonBindingEpochTx(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
+	_, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,updated_at=$1 WHERE singleton=1`, nowRFC3339())
 	return err
 }
 
 // advancePersonBindingEpochForVersionTx avoids invalidating projections that cannot read this version.
 func advancePersonBindingEpochForVersionTx(ctx context.Context, tx *sql.Tx, versionID string) error {
 	var hasEventHead bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM document_event_heads WHERE content_version_id=?)`, versionID).Scan(&hasEventHead); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM document_event_heads WHERE content_version_id=$1)`, versionID).Scan(&hasEventHead); err != nil {
 		return err
 	}
 	if !hasEventHead {
 		return nil
 	}
 	return advancePersonBindingEpochTx(ctx, tx)
+}
+
+// PostgreSQL's locale-defined word classes differ from Go's Unicode letters,
+// numbers and marks. Render those same ranges once, using literal code points.
+var personWordStartPostgres = func() string {
+	class, err := syntax.Parse(`[\pL\pN\pM]`, syntax.Perl)
+	if err != nil {
+		panic(err)
+	}
+	var pattern strings.Builder
+	pattern.WriteString("(^|[^")
+	for i := 0; i < len(class.Rune); i += 2 {
+		pattern.WriteRune(class.Rune[i])
+		if class.Rune[i] != class.Rune[i+1] {
+			pattern.WriteRune('-')
+			pattern.WriteRune(class.Rune[i+1])
+		}
+	}
+	pattern.WriteString("])")
+	return pattern.String()
+}()
+
+func (s *Store) peopleJoin() string {
+	if s.postgresSchema != "" {
+		return "JOIN"
+	}
+	return "CROSS JOIN"
 }

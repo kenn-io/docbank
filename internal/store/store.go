@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -178,9 +179,19 @@ func (s *Store) bootstrap(ctx context.Context, incarnation *metadataProcessingIn
 	return nil
 }
 
+// applySchema bounds driver SQL-tail copying while keeping the caller's transaction.
+func applySchema(ctx context.Context, tx *sql.Tx) error {
+	for group := range strings.SplitSeq(schemaSQL, "\n\n") {
+		if _, err := tx.ExecContext(ctx, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) bootstrapTx(ctx context.Context, incarnation *metadataProcessingIncarnation) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+		if err := applySchema(ctx, tx); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
 		epoch, err := newUUIDv4()

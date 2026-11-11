@@ -241,7 +241,8 @@ See docs/usage/search.md.`,
 			}
 			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
 				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
-			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, opts.Fuzzy)
+			fuzzyRan := opts.Fuzzy && (rep.Fuzzy == nil || rep.Fuzzy.Status != store.FuzzyStatusNotRun)
+			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, fuzzyRan)
 		}
 		defer func() {
 			if retErr == nil && !searchJSON {

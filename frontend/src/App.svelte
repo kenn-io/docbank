@@ -1,6 +1,6 @@
 <script lang="ts">
   import { webURL, webPath } from "./web-path.js";
-  import VaultDrawer from "./VaultDrawer.svelte";
+  import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
   import ToolPage from "./ToolPage.svelte";
   import ExportMenu from "./ExportMenu.svelte";
@@ -42,6 +42,7 @@
     MenuItem,
     MenuTrigger,
     Modal,
+    SearchByMeaningHint,
     SearchInput,
     FormField,
     SelectDropdown,
@@ -242,6 +243,7 @@
           | "trash"
           | "tagCatalog"
           | "telemetry"
+          | "searchByMeaning"
           | "photoImport";
       }
     | {
@@ -275,6 +277,7 @@
     upload: "upload",
     mailbox: "mailbox",
     loadFile: "load_file",
+    searchByMeaning: null,
     photoImport: null,
   };
 
@@ -1169,6 +1172,12 @@
   let naturalRerank = $state(false);
   let naturalSearchNote = $state("");
   let naturalProfilesError = $state("");
+  let naturalProfilesLoaded = $state(false);
+  // Shown as the shared Turn on hint rather than as text.
+  const searchByMeaningOff = "Search by meaning is off";
+  // Setup can outlast the drawer, so its request and result belong to the session.
+  let localText = $state<SearchByMeaningSetup>({ readError: "", pending: false, error: "" });
+  let localTextRead: AbortController | undefined;
   let naturalRerankPending = $state(false);
   let naturalProfileDefaultPending = $state<{ request: number; session: string } | null>(null);
   let profileGeneration = 0;
@@ -1643,6 +1652,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = profiles;
       naturalProfilesError = "";
+      naturalProfilesLoaded = true;
       const selected = selectNaturalSearchProfile(profiles);
       const defaultMode: NaturalSearchMode = selected ? "auto" : "names";
       if (snapshotActive) {
@@ -1668,6 +1678,7 @@
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfileDefaultPending = null;
       naturalProfiles = [];
+      naturalProfilesLoaded = false;
       if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       else
         naturalProfilesError = naturalSearchFallbackNote(
@@ -1933,6 +1944,9 @@
     activeQuery = "";
     activeTagID = "";
     naturalProfiles = [];
+    naturalProfilesLoaded = false;
+    localTextRead?.abort();
+    localText = { readError: "", pending: false, error: "" };
     naturalSearchMode = "names";
     naturalRerank = false;
     submittedSearchQuery = "";
@@ -1959,6 +1973,51 @@
       return;
     }
     error = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  function readLocalTextStatus(): () => void {
+    localTextRead?.abort();
+    const controller = (localTextRead = new AbortController());
+    const session = webSession;
+    localText.readError = "";
+    void generated
+      .getLocalTextStatus({ session, signal: controller.signal })
+      .then((status) => {
+        if (controller.signal.aborted || session !== webSession) return;
+        localText.status = status;
+        if (status.active || status.restart_required) localText.error = "";
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted || session !== webSession) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else localText.readError = cause instanceof Error ? cause.message : String(cause);
+      });
+    return () => controller.abort();
+  }
+
+  // Clicking Turn on is the consent, so the reviewed plan is applied without another prompt.
+  async function turnOnLocalText(): Promise<void> {
+    const session = webSession;
+    localText.pending = true;
+    localText.error = "";
+    let error = "";
+    try {
+      const plan = await generated.planLocalText({ server: "auto" }, { session });
+      await generated.applyLocalText(
+        { server: "auto", plan_fingerprint: plan.fingerprint, consent: true },
+        { session },
+      );
+    } catch (cause) {
+      if (session !== webSession) return;
+      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (session !== webSession) return;
+    localText.pending = false;
+    localText.error = error;
+    // Saving always leaves a restart pending, so a failed re-read still shows the restart step.
+    if (!error && localText.status) localText.status.restart_required = true;
+    readLocalTextStatus();
   }
 
   async function loadRoot(): Promise<void> {
@@ -2137,6 +2196,7 @@
           refreshing,
           session,
           controller.signal,
+          profile ? "" : searchByMeaningOff,
         );
         accepted = !!outcome;
         if (accepted && request === generation && requestedSort) applyResultSort(requestedSort);
@@ -4020,7 +4080,9 @@
         </div>
       {/if}
       <div class="nav-group vault-nav">
-        <AppTooltip text="Disk use, backups, protected folders, and usage reporting" side="right"
+        <AppTooltip
+          text="Disk use, backups, protected folders, usage reporting, and search by meaning"
+          side="right"
           ><button type="button" class="nav-item" onclick={() => openPanel({ kind: "storage" })}>
             <ArchiveIcon size="16" aria-hidden="true" />System
           </button></AppTooltip
@@ -4745,7 +4807,14 @@
               {#if error}
                 <div class="banner error" role="alert">{error}</div>
               {/if}
-              {#if naturalSearchNote}
+              {#if naturalSearchNote === searchByMeaningOff}
+                <!-- Discovery can finish after the search, so the hint waits for it to confirm. -->
+                {#if naturalProfilesLoaded && !naturalProfile && !localText.status?.restart_required}
+                  <div class="banner search-note" role="status" aria-live="polite">
+                    <SearchByMeaningHint onturnon={() => openPanel({ kind: "searchByMeaning" })} />
+                  </div>
+                {/if}
+              {:else if naturalSearchNote}
                 <div class="banner search-note" role="status" aria-live="polite">
                   {naturalSearchNote}
                 </div>
@@ -4976,6 +5045,8 @@
           <aside class="detail" aria-label="Document inspector">
             {#if selectedSnapshot}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5056,6 +5127,8 @@
               </DocumentInspector>
             {:else if !snapshotActive && selected}
               <DocumentInspector
+                onpublished={() => productionsDiscoveryRevision++}
+                onproductions={() => openDocsPage("productions")}
                 session={webSession}
                 source={selectedSource ?? undefined}
                 authorizationRevision={currentInspectorNode?.revision}
@@ -5188,6 +5261,11 @@
     </div>
     {#if reader}
       <DocumentReader
+        onpublished={() => productionsDiscoveryRevision++}
+        onproductions={() => {
+          closeReader();
+          openDocsPage("productions");
+        }}
         session={webSession}
         source={reader.source}
         authorizationRevision={reader.revision}
@@ -5298,12 +5376,15 @@
           onauthfailure={handleFailure}
         />
       {/if}
-      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry"].includes(panel.kind)}
+      {#if ["jobs", "auditEvidence", "backups", "storage", "telemetry", "searchByMeaning"].includes(panel.kind)}
         <VaultDrawer
           session={webSession}
           initialTab={panel.kind}
+          searchByMeaning={localText}
           onclose={closePanel(panel)}
           onauthfailure={handleFailure}
+          onreadsearchbymeaning={readLocalTextStatus}
+          onturnonsearchbymeaning={turnOnLocalText}
         />
       {/if}
       {#if panel.kind === "savedQueries"}

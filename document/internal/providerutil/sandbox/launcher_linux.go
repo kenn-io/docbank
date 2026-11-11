@@ -597,7 +597,7 @@ func installNetworkSeccomp(builder func(uint32) ([]unix.SockFilter, error)) erro
 	_, _, errno := unix.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER,
 		unix.SECCOMP_FILTER_FLAG_TSYNC, uintptr(unsafe.Pointer(&program))) //nolint:gosec // audited seccomp ABI pointer
 	if errno != 0 {
-		return errno
+		return fmt.Errorf("install network seccomp filter: %w", errno)
 	}
 	return nil
 }

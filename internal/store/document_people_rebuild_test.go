@@ -7,9 +7,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPeopleRebuildReplay(t *testing.T) {
+func checkPeopleRebuildReplay(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
 
@@ -23,14 +24,15 @@ func TestPeopleRebuildReplay(t *testing.T) {
 
 	var count int
 	require.NoError(t, s.db.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM document_people_builds WHERE operation_id=?`, operationID,
+		`SELECT COUNT(*) FROM document_people_builds WHERE operation_id=$1`, operationID,
 	).Scan(&count))
 	require.Equal(t, 1, count)
 }
 
-func TestDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t *testing.T) {
+func checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ingestDocumentEventTarget(t, s, "pending.txt", "b1")
 	coverage, err := s.DocumentPeopleCoverage(t.Context())
 	require.NoError(t, err)
@@ -38,9 +40,10 @@ func TestDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t *testing.T
 	require.Zero(t, coverage.Published)
 }
 
-func TestPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t *testing.T) {
+func checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "rebuild.txt", "a1", nil)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
@@ -91,9 +94,10 @@ func TestPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t *testing.T) {
 	require.Zero(t, coverage.Pending)
 }
 
-func TestPeopleRebuildCountsFailureAfterNodeRevisionChanges(t *testing.T) {
+func checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "changed-failure.txt", "a2", nil)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)
@@ -117,9 +121,10 @@ func TestPeopleRebuildCountsFailureAfterNodeRevisionChanges(t *testing.T) {
 	require.Zero(t, coverage.Pending)
 }
 
-func TestPeopleRebuildStopsRetryingTerminalFailure(t *testing.T) {
+func checkPeopleRebuildStopsRetryingTerminalFailure(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	version := seedDocumentPeopleEvent(t, s, "changed-unavailable.txt", "a3", nil)
 	operationID, err := newUUIDv4()
 	require.NoError(t, err)

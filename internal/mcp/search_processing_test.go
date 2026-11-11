@@ -11,11 +11,13 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestSearchDocumentsModeGuidance(t *testing.T) {
 	f := newNativeExportFixture(t)
-	f.addFile(t, "refund.txt", "Refunds take five days.")
+	member := f.addFile(t, "refund.txt", "Refunds take five days.")
+	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "Refunds take five days."}))
 	daemon, _, profile := newProcessingDocumentServer(t, f)
 	output := exportCall(t, daemon, "search_documents", map[string]any{"query": "refund", "filters": map[string]any{}})
 	require.Equal(t, profile, output["profile"])
@@ -26,6 +28,8 @@ func TestSearchDocumentsModeGuidance(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, hits, 1)
 	require.Equal(t, "/refund.txt", schemaMap(t, hits[0])["path"])
+	result := exportCall(t, daemon, "search_documents", map[string]any{"query": `"take refunds"`, "filters": map[string]any{}})
+	require.Empty(t, result["results"])
 }
 
 func TestSearchDocumentsMixedProfileImageBinding(t *testing.T) {
