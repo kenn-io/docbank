@@ -316,7 +316,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
           "1",
         ]);
       }
-      await expect(drawer.getByRole("paragraph").filter({ hasText: "3 scoped" })).toContainText(
+      await expect(drawer.getByRole("paragraph").filter({ hasText: "3 in date ranges" })).toContainText(
         "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete related-file information · 1 dates from import or recorded time · expires",
       );
       await table.scrollIntoViewIfNeeded();

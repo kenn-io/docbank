@@ -103,7 +103,7 @@
     {@const coverage = result.collection.coverage}
     {#if coverage.configuration === "unconfigured"}<p>Processing is not configured.</p>
     {:else if coverage.configuration === "profile_required"}<p>
-        Choose a processing profile to see searchable text.
+        Choose a processing profile to see text processing counts.
       </p>
     {:else if coverage.counts}
       <div class="counts" aria-label="Text coverage">
