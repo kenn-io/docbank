@@ -152,11 +152,33 @@ it.each([
   ).rejects.toThrow(/Malformed rendition text receipt/);
 });
 
-function renditionArtifact(markdown: string, completeness = "complete") {
+function renditionArtifact(markdown: string, completeness = "complete", image = false) {
+  const entries = image
+    ? [
+        ["    ALPHA", "Visible text (best-effort transcription)"],
+        ["next\\", "Literal description"],
+        ["flames.", "Possible meaning (interpretation)"],
+        ["\n\n  indented", "Uncertainty and missing context"],
+      ].map(([text, title], index) => {
+        const offset = markdown.indexOf(text);
+        const prefix = markdown.slice(0, offset);
+        return {
+          key: `unit_${createHash("sha256").update(String(index)).digest("hex")}`,
+          kind: "generic",
+          title,
+          line: prefix.split("\n").length,
+          byte: Buffer.byteLength(prefix),
+        };
+      })
+    : [{ key: "page:1", kind: "page", line: 1, byte: 0 }];
   const envelope = {
     docbank: {
       contract: "docbank-sanitized-markdown/v1",
-      source: { sha256: source.blobHash, format: "txt", media_type: "text/plain" },
+      source: {
+        sha256: source.blobHash,
+        format: image ? "png" : "txt",
+        media_type: image ? "image/png" : "text/plain",
+      },
       rendition: {
         build_id: "e".repeat(64),
         rendition_request_fingerprint: "a".repeat(64),
@@ -166,24 +188,28 @@ function renditionArtifact(markdown: string, completeness = "complete") {
         completeness,
         truncated: false,
       },
-      document: { unit_kind: "page", unit_count: 1 },
+      document: { unit_kind: image ? "generic" : "page", unit_count: image ? 4 : 1 },
       navigation: {
         offset_base: "body",
         complete: true,
-        entries: [{ key: "page:1", kind: "page", line: 1, byte: 0 }],
+        entries,
       },
     },
   };
   return new TextEncoder().encode(`---\n${JSON.stringify(envelope)}\n---\n${markdown}`);
 }
 
-async function readArtifact(bytes: Uint8Array<ArrayBuffer>, providerID?: string): Promise<string> {
+async function readArtifact(
+  bytes: Uint8Array<ArrayBuffer>,
+  providerID?: string,
+  selected = source,
+): Promise<string> {
   const digest = createHash("sha256").update(bytes).digest("hex");
-  const ready = await resolveReady(bytes.length, digest);
+  const ready = await resolveReady(bytes.length, digest, selected);
   const headers = renditionHeaders(ready, digest, bytes);
   if (providerID !== undefined) headers.set("X-Docbank-Rendition-Provider-ID", providerID);
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(bytes, { headers }));
-  return readVerifiedRenditionText("session", source, 9, ready, new AbortController().signal);
+  return readVerifiedRenditionText("session", selected, 9, ready, new AbortController().signal);
 }
 
 it("returns verified inert rendition text", async () => {
@@ -213,16 +239,17 @@ it("shows the producer's image understanding text exactly as transcribed", async
     "## Possible meaning (interpretation)\n\nflames. C:\\dir \\a\n\t\tline (1)  \n\n---\n\n" +
     "## Uncertainty and missing context\n\n\n\n  indented\t\nends in a backslash\\\nand two\\\\\n``````\n\\# not a heading \\* \\` \\\\\n";
   await expect(
-    readArtifact(renditionArtifact(markdown, "degraded_provenance"), "compatible-vision.understand-v1"),
+    readArtifact(
+      renditionArtifact(markdown, "degraded_provenance", true),
+      "compatible-vision.understand-v1",
+      { ...source, name: "evidence.png", path: "/evidence.png", mimeType: "image/png" },
+    ),
   ).resolves.toBe(expected);
 });
 
 it("keeps text from another provider byte-for-byte", async () => {
   await expect(
-    readArtifact(
-      renditionArtifact(escapedImageText),
-      "compatible-ocr.extract-v1",
-    ),
+    readArtifact(renditionArtifact(escapedImageText), "compatible-ocr.extract-v1"),
   ).resolves.toBe(escapedImageText);
 });
 
@@ -240,11 +267,12 @@ it.each(["body digest", "generation header"])("rejects a wrong %s", async (probl
   ).rejects.toThrow(/disagreed with the selected rendition/);
 });
 
-async function resolveReady(size: number, digest: string) {
+async function resolveReady(size: number, digest: string, selected = source) {
   vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
     new Response(
       JSON.stringify(
         receipt({
+          source: { ...(receipt().source as object), media_type: selected.mimeType },
           artifact: {
             ...artifact,
             sha256: digest,
@@ -257,7 +285,7 @@ async function resolveReady(size: number, digest: string) {
   );
   const resolved = await resolveRenditionText(
     "session",
-    source,
+    selected,
     9,
     "archive",
     observation,

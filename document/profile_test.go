@@ -244,7 +244,6 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
 			p.Rendition.MaxDocumentBytes = 16<<20 + 1
 			p.Rendition.MaxUnits = 4
-			p.Embeddings[1].Chunk.Formatter = document.RenditionChunkHeadingsFormatter
 		}, "at most 16 MiB"},
 		{"image understanding chunk formatter", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
