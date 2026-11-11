@@ -241,11 +241,12 @@ ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
 For a Docbank SQLite vault layout change, bump `currentStorageSchemaVersion`.
-Run `make schema-contract-check` and add the record printed when the test fails
-under `internal/store/testdata/schema-contracts/`. Keep earlier records intact.
-The digest covers SQL text stored in SQLite's catalog for tables, triggers,
-views, unique indexes, and the record's baseline non-unique indexes. New
-non-unique indexes do not need a version bump; changes to baseline indexes do.
+For an unreleased version, run `make schema-contract-check` and add the
+canonical record printed when the test fails under
+`internal/store/testdata/schema-contracts/`, without changing earlier records.
+The digest covers SQLite catalog SQL for tables, triggers, views, and unique
+indexes. Record each new non-unique index at the same version; changing or
+removing a recorded index needs a version bump.
 
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact

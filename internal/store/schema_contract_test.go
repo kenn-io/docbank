@@ -3,7 +3,7 @@ package store
 import (
 	"crypto/sha256"
 	"database/sql"
-	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/canonical"
 )
 
 type schemaContract struct {
@@ -19,7 +21,7 @@ type schemaContract struct {
 	Indexes map[string]string `json:"indexes"`
 }
 
-func schemaCatalogDigest(t *testing.T, db *sql.DB, baseline map[string]string) (string, map[string]string) {
+func schemaCatalogDigest(t *testing.T, db *sql.DB) (string, map[string]string) {
 	t.Helper()
 	catalog := releasedSchemaCatalog(t, db, true)
 	indexes := make(map[string]string)
@@ -30,11 +32,7 @@ func schemaCatalogDigest(t *testing.T, db *sql.DB, baseline map[string]string) (
 			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, object[1], name).Scan(&unique))
 			if !unique {
 				indexes[name] = object[2]
-				if baseline != nil {
-					if _, ok := baseline[name]; !ok {
-						continue
-					}
-				}
+				continue
 			}
 		}
 		names = append(names, name)
@@ -45,40 +43,42 @@ func schemaCatalogDigest(t *testing.T, db *sql.DB, baseline map[string]string) (
 		object := catalog[name]
 		entries = append(entries, [4]string{name, object[0], object[1], object[2]})
 	}
-	if baseline == nil {
-		baseline = indexes
-	}
-	data, err := json.Marshal(struct {
-		Entries [][4]string       `json:"entries"`
-		Indexes map[string]string `json:"indexes"`
-	}{entries, baseline}, json.Deterministic(true))
+	data, err := canonical.Marshal(entries)
 	require.NoError(t, err)
 	return fmt.Sprintf("%x", sha256.Sum256(data)), indexes
 }
 
-func schemaContractFilename(record schemaContract) string {
-	return fmt.Sprintf("%06d-%s.json", record.Version, record.Digest)
+func schemaContractFile(record schemaContract) (string, []byte, error) {
+	data, err := canonical.Marshal(record)
+	if err != nil {
+		return "", nil, err
+	}
+	return fmt.Sprintf("%06d-%x.json", record.Version, sha256.Sum256(data)), data, nil
 }
 
 func loadSchemaContracts(dir string) ([]schemaContract, error) {
 	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	var records []schemaContract
 	for _, entry := range entries {
-		if entry.IsDir() {
-			return nil, fmt.Errorf("unexpected directory %s", entry.Name())
-		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, err
 		}
-		var record schemaContract
-		if err := json.Unmarshal(data, &record); err != nil {
+		record, err := canonical.Decode[schemaContract](data)
+		if err != nil {
 			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
 		}
-		if entry.Name() != schemaContractFilename(record) {
+		name, _, err := schemaContractFile(record)
+		if err != nil {
+			return nil, err
+		}
+		if entry.Name() != name {
 			return nil, fmt.Errorf("schema contract filename %s does not match its record", entry.Name())
 		}
 		records = append(records, record)
@@ -87,123 +87,171 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 }
 
 func checkSchemaContract(records []schemaContract, version int, digest string, indexes map[string]string) error {
-	matches, highest := 0, 0
-	var recorded string
+	highest, found := 0, false
+	combined := make(map[string]string)
+	collision := false
 	for _, record := range records {
-		if record.Version > highest {
-			highest = record.Version
+		highest = max(highest, record.Version)
+		if record.Version != version {
+			continue
 		}
-		if record.Version == version {
-			matches++
-			recorded = record.Digest
+		found = true
+		collision = collision || record.Digest != digest
+		for name, sql := range record.Indexes {
+			if previous, ok := combined[name]; ok && previous != sql {
+				collision = true
+			}
+			combined[name] = sql
 		}
 	}
-	if version < highest || matches > 1 || (matches == 1 && recorded != digest) {
-		return fmt.Errorf("schema version %d conflicts with recorded layouts; take version %d, preserve the record from main, remove your conflicting proposal for the old version, and move it to the new version", version, highest+1)
+	for name, sql := range combined {
+		if indexes[name] != sql {
+			collision = true
+		}
 	}
-	if matches == 0 {
-		record := schemaContract{Version: version, Digest: digest, Indexes: indexes}
-		data, err := json.Marshal(record, json.Deterministic(true))
+	if version < highest || collision {
+		return fmt.Errorf("schema version %d conflicts with recorded layouts; take version %d, preserve main's records, remove your conflicting proposal for the old version, and move it to the new version", version, highest+1)
+	}
+	additions := make(map[string]string)
+	for name, sql := range indexes {
+		if _, ok := combined[name]; !ok {
+			additions[name] = sql
+		}
+	}
+	if !found || len(additions) > 0 {
+		record := schemaContract{Version: version, Digest: digest, Indexes: additions}
+		name, data, err := schemaContractFile(record)
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("add schema contract %s: %s", schemaContractFilename(record), data)
+		return fmt.Errorf("add schema contract %s: %s", name, data)
 	}
 	return nil
 }
 
 func TestStorageSchemaVersionContract(t *testing.T) {
+	if slices.Contains(releasedStorageSchemaVersions, currentStorageSchemaVersion) {
+		return
+	}
 	records, err := loadSchemaContracts("testdata/schema-contracts")
 	require.NoError(t, err)
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
-			var baseline map[string]string
-			for _, record := range records {
-				if record.Version == currentStorageSchemaVersion {
-					baseline = record.Indexes
-					break
-				}
-			}
-			digest, indexes := schemaCatalogDigest(t, db, baseline)
+			digest, indexes := schemaCatalogDigest(t, db)
 			require.NoError(t, checkSchemaContract(records, currentStorageSchemaVersion, digest, indexes))
 		})
 	}
 }
 
 func TestStorageSchemaContractRecords(t *testing.T) {
-	dir := t.TempDir()
-	record := schemaContract{Version: 49, Digest: "abc", Indexes: map[string]string{"idx": "CREATE INDEX idx ON nodes(id)"}}
-	data, err := json.Marshal(record)
-	require.NoError(t, err)
-	path := filepath.Join(dir, schemaContractFilename(record))
-	require.NoError(t, os.WriteFile(path, data, 0600))
+	dir := filepath.Join(t.TempDir(), "records")
 	records, err := loadSchemaContracts(dir)
+	require.NoError(t, err)
+	require.Empty(t, records)
+	require.NoError(t, os.Mkdir(dir, 0700))
+	record := schemaContract{Version: 49, Digest: "abc", Indexes: map[string]string{"idx": "CREATE INDEX idx ON nodes(id)"}}
+	name, data, err := schemaContractFile(record)
+	require.NoError(t, err)
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, data, 0600))
+	records, err = loadSchemaContracts(dir)
 	require.NoError(t, err)
 	require.Equal(t, []schemaContract{record}, records)
 	require.NoError(t, os.Rename(path, filepath.Join(dir, "wrong.json")))
 	_, err = loadSchemaContracts(dir)
 	require.ErrorContains(t, err, "does not match its record")
-}
-
-func TestStorageSchemaContractCollisions(t *testing.T) {
-	main := schemaContract{Version: 49, Digest: "main"}
-	proposal := schemaContract{Version: 49, Digest: "proposal"}
-	dir := t.TempDir()
-	for _, record := range []schemaContract{main, proposal} {
-		data, err := json.Marshal(record)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, schemaContractFilename(record)), data, 0600))
-	}
-	records, err := loadSchemaContracts(dir)
-	require.NoError(t, err)
-	guidance := "schema version 49 conflicts with recorded layouts; take version 50, preserve the record from main, remove your conflicting proposal for the old version, and move it to the new version"
-	require.EqualError(t, checkSchemaContract(records, 49, proposal.Digest, nil), guidance)
-	require.EqualError(t, checkSchemaContract([]schemaContract{main}, 49, proposal.Digest, nil), guidance)
-	require.EqualError(t, checkSchemaContract(records, 48, "old", nil), "schema version 48 conflicts with recorded layouts; take version 50, preserve the record from main, remove your conflicting proposal for the old version, and move it to the new version")
-	require.EqualError(t, checkSchemaContract(records[:1], 50, proposal.Digest, nil), `add schema contract 000050-proposal.json: {"version":50,"digest":"proposal","indexes":{}}`)
-	proposal.Version = 50
-	require.NoError(t, checkSchemaContract([]schemaContract{main, proposal}, 50, proposal.Digest, nil))
-	require.NoError(t, checkSchemaContract([]schemaContract{main, {Version: 49, Digest: "old"}, proposal}, 50, proposal.Digest, nil))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "wrong.json"), []byte(`{"digest":"abc","format":1,"indexes":{},"version":49}`), 0600))
+	_, err = loadSchemaContracts(dir)
+	require.Error(t, err)
 }
 
 func TestStorageSchemaContractChanges(t *testing.T) {
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
-			digest, baseline := schemaCatalogDigest(t, db, nil)
-			records := []schemaContract{{Version: 48, Digest: digest, Indexes: baseline}}
-			require.NoError(t, checkSchemaContract(records, 48, digest, baseline))
+			digest, indexes := schemaCatalogDigest(t, db)
+			record := schemaContract{Version: 49, Digest: digest, Indexes: indexes}
+			require.ErrorContains(t, checkSchemaContract(nil, 49, digest, indexes), "add schema contract 000049-")
+			require.NoError(t, checkSchemaContract([]schemaContract{record}, 49, digest, indexes))
+			var proposals []schemaContract
+			for _, statement := range []string{`CREATE TABLE proposal_a (id INTEGER)`, `CREATE TABLE proposal_b (id INTEGER)`} {
+				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), statement)
+				require.NoError(t, err)
+				changed, current := schemaCatalogDigest(t, db)
+				proposals = append(proposals, schemaContract{Version: 49, Digest: changed, Indexes: current})
+				_, err = db.ExecContext(t.Context(), "ROLLBACK TO probe")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), "RELEASE probe")
+				require.NoError(t, err)
+			}
+			require.ErrorContains(t, checkSchemaContract(proposals, 49, proposals[1].Digest, indexes), "take version 50")
+			proposals[1].Version = 50
+			require.NoError(t, checkSchemaContract(proposals, 50, proposals[1].Digest, indexes))
 			for _, tc := range []struct {
-				name    string
-				sql     string
-				changed bool
+				name string
+				sql  string
 			}{
-				{"table", `CREATE TABLE contract_probe (id INTEGER)`, true},
-				{"column", `ALTER TABLE nodes ADD COLUMN contract_probe TEXT`, true},
-				{"unique index", `CREATE UNIQUE INDEX contract_probe ON nodes(id)`, true},
-				{"non-unique index", `CREATE INDEX contract_probe ON nodes(id)`, false},
-				{"remove baseline index", `DROP INDEX nodes_parent`, true},
-				{"change baseline index", `DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`, true},
+				{"table", `CREATE TABLE contract_probe (id INTEGER)`},
+				{"column", `ALTER TABLE nodes ADD COLUMN contract_probe TEXT`},
+				{"unique index", `CREATE UNIQUE INDEX contract_probe ON nodes(id)`},
+				{"remove index", `DROP INDEX nodes_parent`},
+				{"change index", `DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), tc.sql)
 					require.NoError(t, err)
-					digest, indexes := schemaCatalogDigest(t, db, baseline)
-					err = checkSchemaContract(records, 48, digest, indexes)
-					if tc.changed {
-						require.ErrorContains(t, err, "take version 49")
-					} else {
-						require.NoError(t, err)
-					}
+					changed, current := schemaCatalogDigest(t, db)
+					require.ErrorContains(t, checkSchemaContract([]schemaContract{record}, 49, changed, current), "take version 50")
 					_, err = db.ExecContext(t.Context(), "ROLLBACK TO probe")
 					require.NoError(t, err)
 					_, err = db.ExecContext(t.Context(), "RELEASE probe")
 					require.NoError(t, err)
 				})
 			}
+			_, err := db.ExecContext(t.Context(), `CREATE INDEX contract_probe ON nodes(id)`)
+			require.NoError(t, err)
+			newDigest, current := schemaCatalogDigest(t, db)
+			require.Equal(t, digest, newDigest)
+			addition := schemaContract{Version: 49, Digest: digest, Indexes: map[string]string{"contract_probe": current["contract_probe"]}}
+			name, data, err := schemaContractFile(addition)
+			require.NoError(t, err)
+			require.EqualError(t, checkSchemaContract([]schemaContract{record}, 49, newDigest, current), fmt.Sprintf("add schema contract %s: %s", name, data))
+			records := []schemaContract{record, addition}
+			require.NoError(t, checkSchemaContract(records, 49, newDigest, current))
+			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_probe; CREATE INDEX contract_probe ON nodes(name)`)
+			require.NoError(t, err)
+			changed, current := schemaCatalogDigest(t, db)
+			require.ErrorContains(t, checkSchemaContract(records, 49, changed, current), "take version 50")
+			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_probe`)
+			require.NoError(t, err)
+			changed, current = schemaCatalogDigest(t, db)
+			require.ErrorContains(t, checkSchemaContract(records, 49, changed, current), "take version 50")
 		})
 	}
+}
+
+func TestStorageSchemaContractCollisions(t *testing.T) {
+	main := schemaContract{Version: 49, Digest: "main", Indexes: map[string]string{"a": "sql a"}}
+	proposal := schemaContract{Version: 49, Digest: "proposal", Indexes: map[string]string{"b": "sql b"}}
+	current := map[string]string{"a": "sql a", "b": "sql b"}
+	guidance := "schema version 49 conflicts with recorded layouts; take version 50, preserve main's records, remove your conflicting proposal for the old version, and move it to the new version"
+	require.EqualError(t, checkSchemaContract([]schemaContract{main, proposal}, 49, "combined", current), guidance)
+	proposal.Version = 50
+	proposal.Indexes["a"] = "sql a"
+	require.NoError(t, checkSchemaContract([]schemaContract{main, proposal}, 50, "proposal", current))
+	require.ErrorContains(t, checkSchemaContract([]schemaContract{main, proposal}, 48, "old", current), "take version 51")
+	addition := schemaContract{Version: 49, Digest: "main", Indexes: map[string]string{"b": "sql b"}}
+	mainName, _, err := schemaContractFile(main)
+	require.NoError(t, err)
+	additionName, _, err := schemaContractFile(addition)
+	require.NoError(t, err)
+	require.NotEqual(t, mainName, additionName)
+	require.NoError(t, checkSchemaContract([]schemaContract{main, addition}, 49, "main", current))
+	addition.Indexes["a"] = "different"
+	require.EqualError(t, checkSchemaContract([]schemaContract{main, addition}, 49, "main", current), guidance)
 }
