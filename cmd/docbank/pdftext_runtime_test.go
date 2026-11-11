@@ -321,7 +321,7 @@ func TestDaemonWindowRetainedPDFProfiles(t *testing.T) {
 	require.NoError(t, err)
 	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 	require.NoError(t, err)
-	data := mediatest.PDFTextPages([]string{"native distinctive text"}, false)
+	data := mediatest.PDFTextPages([]string{""}, false)
 	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)
 	encoding, err := written.EncodingName()
