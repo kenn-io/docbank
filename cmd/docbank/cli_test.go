@@ -1883,7 +1883,7 @@ func TestStorageRepackJSON(t *testing.T) {
 	_ = setupVaultHome(t)
 	measureRepackAgesAhead(t)
 	for name, content := range map[string]string{
-		"keep.txt": "keep", "drop-a.txt": "drop a", "drop-b.txt": "drop b",
+		"keep.txt": "keep", "drop-a.txt": "drop a", "drop-b.txt": "drop b", "drop-c.txt": "drop c",
 	} {
 		src := writeSourceFile(t, name, content)
 		_, err := runCLI(t, "add", src, "--dest", "/inbox")
@@ -1904,13 +1904,24 @@ func TestStorageRepackJSON(t *testing.T) {
 
 	out, err = runCLI(t, "storage", "repack", "--help")
 	require.NoError(t, err)
-	assert.Contains(t, out, "most half their entries remain")
+	assert.Contains(t, out, "than half their entries remain")
 	assert.Contains(t, out, "--min-age")
 	assert.Contains(t, out, "--min-dead-bytes")
 
 	out, err = runCLI(t, "storage", "repack")
 	require.NoError(t, err)
 	assert.Contains(t, out, "selected 0 pack(s)")
+
+	out, err = runCLI(t, "storage", "repack", "--min-age", "1ns", "--min-dead-bytes", "1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "selected 0 pack(s)")
+
+	_, err = runCLI(t, "rm", "/inbox/drop-c.txt")
+	require.NoError(t, err)
+	_, err = runCLI(t, "trash", "empty", "--run")
+	require.NoError(t, err)
+	_, err = runCLI(t, "gc", "--run")
+	require.NoError(t, err)
 
 	out, err = runCLI(t, "storage", "repack", "--min-age", "1ns",
 		"--min-dead-bytes", "1", "--json")

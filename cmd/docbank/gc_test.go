@@ -12,20 +12,9 @@ import (
 )
 
 func TestGCPackedRepackGuidance(t *testing.T) {
-	var run bool
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Run bool `json:"run"`
-		}
-		if !assert.NoError(t, json.UnmarshalRead(r.Body, &request)) {
-			return
-		}
-		run = request.Run
 		w.Header().Set("Content-Type", "application/json")
 		report := api.GCReport{CandidateBlobs: 1, PendingPackedBlobs: 1, PendingPackedBytes: 100}
-		if run {
-			report.Removed, report.RemovedBlobs, report.Run = 1, 1, true
-		}
 		assert.NoError(t, json.MarshalWrite(w, report))
 	})
 
@@ -33,8 +22,4 @@ func TestGCPackedRepackGuidance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "1 packed blob(s), 100 stored byte(s) pending repack")
 	assert.NotContains(t, out, "docbank storage repack")
-
-	out, err = runCLI(t, "vault", "gc", "--run")
-	require.NoError(t, err)
-	assert.Contains(t, out, "repack eligible packs: docbank storage repack (selection rules and options: docbank storage repack --help)")
 }

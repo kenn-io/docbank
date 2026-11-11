@@ -1659,7 +1659,7 @@ docbank storage repack [--min-age <duration>] [--min-dead-bytes <bytes>]
 Rewrites eligible sparse packs with only their live blobs, atomically changes
 catalog authority, and retires the old immutable pack files after active
 readers release them. Packs with no live mappings are retired regardless of
-age. A partially live pack is eligible when at most half its entries remain and
+age. A partially live pack is eligible when fewer than half its entries remain and
 it satisfies both selection thresholds. Defaults are `--min-age 24h` and
 `--min-dead-bytes 8388608`. Use smaller positive values for immediate
 manual compaction.
