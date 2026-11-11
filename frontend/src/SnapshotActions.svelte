@@ -66,6 +66,7 @@
   let readFailure = $state("");
   let receipt = $state<BatchTagReceipt>();
   let request = $state<BatchTagRequest>();
+  let recovering = $state(false);
   let checking = $state(false);
   let checked = $state(0);
   let results = $state<TagResult[]>();
@@ -83,7 +84,12 @@
       receipt = confirmed;
       onchanged?.(confirmed);
     },
-    onunknown: () => onunknown?.(),
+    onunknown: () => {
+      recovering = true;
+      results = undefined;
+      complete = false;
+      onunknown?.();
+    },
     unknownMessage:
       "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
     staleMessage: "Some documents changed. Check their tags again.",
@@ -101,7 +107,7 @@
   });
 
   const busy = $derived(disabled || preparing || applying || reading || checking);
-  const locked = $derived(busy || stale || receipt !== undefined);
+  const locked = $derived(busy || stale || recovering || receipt !== undefined);
   const consequence = $derived(
     tag
       ? tagChangeConsequence(assign, tag.name, count)
@@ -126,7 +132,7 @@
   }
 
   async function check(): Promise<void> {
-    if (!request || checking) return;
+    if (!request || checking || applying) return;
     checking = true;
     checked = 0;
     results = undefined;
@@ -149,16 +155,17 @@
     }
   }
 
-  function retry(): void {
+  async function retry(): Promise<void> {
     if (!request || !complete || !remaining.length || applying) return;
-    request = {
+    const outcome = await run.submit({
       ...request,
       operation_id: randomUUID(),
       nodes: remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! })),
-    };
-    results = undefined;
-    complete = false;
-    void run.submit(request);
+    });
+    if (alive && outcome === "stale") {
+      results = undefined;
+      complete = false;
+    }
   }
 
   async function importFile(event: Event): Promise<void> {
@@ -261,7 +268,7 @@
       {#if unavailable}<p class="status">
           {unavailable} couldn't be checked and are left out.
         </p>{/if}
-    {:else}
+    {:else if !failure}
       <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
     {#if applying || preparing || checking}
@@ -291,7 +298,7 @@
                         : row.status === "matched"
                           ? assign
                             ? `Has “${tag?.name}”`
-                            : "Removed"
+                            : `Doesn't have “${tag?.name}”`
                           : assign
                             ? `Missing “${tag?.name}”`
                             : `Still has “${tag?.name}”`}</td
@@ -336,15 +343,17 @@
     {/if}
     {#if receipt}
       <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
-    {:else if run.stale && request}
+    {:else if (run.stale || recovering) && request}
       {#if results && remaining.length && complete}<span class="footer-start"
-          ><Button size="sm" surface="soft" onclick={() => void check()}>Check again</Button></span
+          ><Button size="sm" surface="soft" disabled={applying} onclick={() => void check()}
+            >Check again</Button
+          ></span
         >{/if}
       <Button surface="soft" disabled={applying} onclick={close}
         >{results && !remaining.length ? "Done" : "Close"}</Button
       >
       {#if results && remaining.length && complete}
-        <Button tone="info" surface="solid" disabled={applying} onclick={retry}
+        <Button tone="info" surface="solid" disabled={applying} onclick={() => void retry()}
           >{assign ? "Add" : "Remove"} “{tag?.name}” {assign ? "to" : "from"}
           {documentCount(remaining.length)}</Button
         >
@@ -412,6 +421,9 @@
   .footer-start {
     margin-inline-end: auto;
   }
+  .tag-change :global(.kit-disclosure--plain > .kit-disclosure__content) {
+    padding-block-end: 0;
+  }
   .target-list {
     overflow: auto;
     max-height: 240px;
@@ -426,6 +438,13 @@
     text-align: left;
     overflow-wrap: anywhere;
     border-bottom: 1px solid var(--border-default);
+  }
+  .target-list :global(.target-table th:first-child),
+  .target-list :global(.target-table td:first-child) {
+    padding-inline-start: 0;
+  }
+  .target-list :global(.target-table .kit-table) {
+    margin-block-end: 0;
   }
   .pager {
     display: flex;

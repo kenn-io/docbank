@@ -574,6 +574,9 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
       searches.push(JSON.parse(String(init?.body)));
       return json(first);
     }
+    if (url === "/api/v1/nodes/1") return json({ id: 1, name: "report-1.pdf", revision: 3 });
+    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0")
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
     if (url === "/api/v1/batch/tags/preview")
       return json({
         tag_id: tag.id,
@@ -604,14 +607,16 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
   });
   await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
-  await waitFor(() => expect(searches).toHaveLength(2));
-  await screen.findByRole("cell", { name: "/records/report-1.pdf" });
-  expect(searches[1]).toEqual(searches[0]);
   const warning = await screen.findByText(
     "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
   );
   expect(warning.closest('[role="alert"]')).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(searches).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
+  expect(await screen.findByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(searches).toHaveLength(2));
+  expect(searches[1]).toEqual(searches[0]);
   expect(
     screen.queryByText(
       "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",

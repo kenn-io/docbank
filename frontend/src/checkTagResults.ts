@@ -30,7 +30,7 @@ export async function checkTagResults(
         if (node.trashed_at) {
           rows[index] = { node_id: id, name, status: "trash" };
         } else {
-          const current = await liveNodeTags(session, id);
+          const current = await liveNodeTags(session, id, node);
           const assigned = current.items.some((tag) => tag.id === request.tag_id);
           rows[index] = {
             node_id: id,

@@ -248,3 +248,77 @@ it.each([true, false])(
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
   },
 );
+
+it.each(["unknown", "rejected", "stale"])(
+  "keeps the original selection after a %s retry",
+  async (outcome) => {
+    const writes: BatchTagRequest[] = [];
+    let applied = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.includes("preview")) {
+        const body = JSON.parse(String(init.body));
+        return Response.json({
+          tag_id: catalog[0].id,
+          tag_revision: 2,
+          nodes: body.nodes.map((node: { node_id: number; revision: number }) => ({
+            ...node,
+            assigned: false,
+          })),
+        });
+      }
+      if (init?.method === "POST") {
+        const request = JSON.parse(String(init.body)) as BatchTagRequest;
+        writes.push(request);
+        if (writes.length === 1) throw new TypeError("Lost response");
+        if (outcome === "unknown") {
+          applied = true;
+          throw new TypeError("Lost retry response");
+        }
+        return Response.json(
+          {
+            code: outcome === "stale" ? "stale_revision" : "invalid_request",
+            detail: "Retry refused",
+          },
+          { status: 409 },
+        );
+      }
+      const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+      if (url.includes("/tags")) {
+        const hasTag = id === 7 || applied;
+        return Response.json({
+          items: hasTag ? [catalog[0]] : [],
+          total: hasTag ? 1 : 0,
+          limit: 1000,
+          offset: 0,
+        });
+      }
+      return Response.json({ id, name: `Document ${id}`, revision: id === 7 ? 10 : 12 });
+    });
+    render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+    await chooseReview();
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Add “Review” to 1 document" }),
+    );
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
+    if (outcome === "rejected") {
+      await screen.findByText("Retry refused");
+      expect(screen.getByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
+      expect(screen.getByText(/1 of 2 documents/)).toBeTruthy();
+    } else {
+      if (outcome === "stale")
+        await screen.findByText("Some documents changed. Check their tags again.");
+      await fireEvent.click(
+        await screen.findByRole("button", {
+          name: outcome === "unknown" ? "Check tag results" : "Check again",
+        }),
+      );
+      await screen.findByText(
+        outcome === "unknown" ? "All 2 documents have “Review”." : /1 of 2 documents/,
+      );
+    }
+  },
+);

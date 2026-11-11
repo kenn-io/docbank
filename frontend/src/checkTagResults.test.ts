@@ -41,6 +41,7 @@ it("reads all tag pages and excludes missing and trashed documents", async () =>
     ],
   });
   expect(fetch.mock.calls.some(([url]) => String(url).includes("offset=1000"))).toBe(true);
+  expect(fetch.mock.calls.filter(([url]) => String(url) === "/api/v1/nodes/1")).toHaveLength(2);
 });
 
 it("blocks retry when a read fails or changes while tags load", async () => {
@@ -51,7 +52,7 @@ it("blocks retry when a read fails or changes while tags load", async () => {
     if (url.includes("/nodes/3")) return Response.json({ detail: "Missing" }, { status: 404 });
     if (url.includes("/tags"))
       return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
-    return Response.json({ id: 1, name: "Live", revision: ++reads < 3 ? 4 : 5 });
+    return Response.json({ id: 1, name: "Live", revision: ++reads < 2 ? 4 : 5 });
   });
   const result = await checkTagResults("session", request, () => {});
   expect(result.complete).toBe(false);

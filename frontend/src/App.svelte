@@ -3355,6 +3355,7 @@
     refreshDocumentsView();
   }
 
+  let snapshotTagRefreshPending = false;
   function handleUnknownTagging(): void {
     refreshCurrentView();
   }
@@ -5554,10 +5555,16 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
-        onunknown={handleUnknownTagging}
+        onunknown={() => (snapshotTagRefreshPending = true)}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onclose={() => snapshot.cancelAction()}
+        onclose={() => {
+          snapshot.cancelAction();
+          if (snapshotTagRefreshPending) {
+            snapshotTagRefreshPending = false;
+            refreshCurrentView();
+          }
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
