@@ -1409,3 +1409,14 @@ func TestWatchProcessingProfileValidation(t *testing.T) {
 	cfg.RenditionProfiles["primary"] = rendition
 	require.ErrorContains(t, cfg.Validate(), "requires an original-document rendition")
 }
+
+func TestDoclingASRVideoRuntime(t *testing.T) {
+	cfg := validRenditionRuntimeConfig(t)
+	profile := cfg.RenditionProfiles["primary"]
+	profile.AdapterContract = DoclingASRVideoAdapterContract
+	cfg.RenditionProfiles["primary"] = profile
+	require.NoError(t, cfg.Validate())
+	profile.MaxTranscriptChars = 0
+	cfg.RenditionProfiles["primary"] = profile
+	require.ErrorContains(t, cfg.Validate(), "max_transcript_chars")
+}

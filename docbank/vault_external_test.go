@@ -1261,6 +1261,124 @@ func (syntheticTranscriptSource) Transcript(context.Context, string) (document.S
 	return document.SuppliedTranscript{Provider: "synthetic", Text: "async media semantic needle\n"}, nil
 }
 
+type largeTranscriptSource struct{}
+
+func (largeTranscriptSource) Transcript(context.Context, string) (document.SuppliedTranscript, error) {
+	return document.SuppliedTranscript{Provider: "synthetic", Text: strings.Repeat("a", (16<<20)+1)}, nil
+}
+
+func TestEmbeddedLargeSuppliedTranscriptRead(t *testing.T) {
+	t.Parallel()
+	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
+		Source: largeTranscriptSource{}, SourceBinding: embeddedHash("large-media-source"), MaxDocumentChars: 18 << 20,
+	})
+	require.NoError(t, err)
+	result := testEmbeddedTranscriptRead(t, renderer, "ready")
+	require.Len(t, result.Transcript.Units[0].Text, (16<<20)+1)
+}
+
+func TestEmbeddedUnboundSuppliedTimedTranscriptRead(t *testing.T) {
+	t.Parallel()
+	renderer := newTimedTranscriptRenditionProvider(t)
+	renderer.origin = "supplied"
+	result := testEmbeddedTranscriptRead(t, renderer, "ready")
+	require.Equal(t, "generated", result.Transcript.Origin)
+	require.Empty(t, result.Transcript.SuppliedInputID)
+	require.Equal(t, "partial", result.Transcript.SpeechState)
+	require.Equal(t, "en", result.Transcript.Language)
+	require.Equal(t, "needle first phrase", result.Transcript.Units[0].Text)
+	t.Run("custom stored contract", func(t *testing.T) {
+		result := testEmbeddedTranscriptRead(t, customTranscriptProvider{newTimedTranscriptRenditionProvider(t)}, "unavailable")
+		require.Nil(t, result.Transcript)
+		require.Equal(t, "transcribed", result.CoverageState)
+	})
+	t.Run("transformed supplied transcript", func(t *testing.T) {
+		provider, err := suppliedtranscript.New(suppliedtranscript.Profile{Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("transformed-source"), MaxDocumentChars: 1 << 20})
+		require.NoError(t, err)
+		result := testEmbeddedTranscriptRead(t, transformedTranscriptProvider{provider}, "ready")
+		require.Empty(t, result.Transcript.SuppliedInputID)
+		require.Equal(t, "transformed media semantic needle\n", result.Transcript.Units[0].Text)
+		policy, err := document.NewEvidencePolicy(1 << 20)
+		require.NoError(t, err)
+		source, artifact, err := document.BuildTranscriptSourceEvidenceV1(document.SuppliedTranscript{Provider: "synthetic", Text: "async media semantic needle\n"}, policy)
+		require.NoError(t, err)
+		require.Equal(t, artifact.SHA256, result.Transcript.ArtifactSHA256)
+		source.Units[0].Text = "transformed media semantic needle\n"
+		normalized, err := document.NormalizeEvidenceV1(source, policy)
+		require.NoError(t, err)
+		require.Equal(t, normalized.Checksum, result.Transcript.EvidenceChecksum)
+	})
+}
+
+type customTranscriptProvider struct{ document.RenditionProvider }
+
+func (provider customTranscriptProvider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+	result, err := provider.RenditionProvider.Render(ctx, upload, authorization)
+	if err == nil {
+		payload := []byte(`{"contract_version":"custom-transcript/v1","text":"original"}`)
+		result.Artifacts[0].Payload = payload
+		result.Artifacts[0].SHA256 = embeddedHash(string(payload))
+		result.Evidence.Artifacts[0].SHA256 = result.Artifacts[0].SHA256
+	}
+	return result, err
+}
+
+type transformedTranscriptProvider struct{ document.RenditionProvider }
+
+func (provider transformedTranscriptProvider) Render(ctx context.Context, upload document.AuthorizedUpload, authorization document.RenditionAuthorization) (document.RenditionResult, error) {
+	result, err := provider.RenditionProvider.Render(ctx, upload, authorization)
+	if err == nil {
+		result.Evidence.Units[0].Text = "transformed media semantic needle\n"
+	}
+	return result, err
+}
+
+func testEmbeddedTranscriptRead(t *testing.T, renderer document.RenditionProvider, expectedState string) docbank.MediaTranscript {
+	t.Helper()
+	var result docbank.MediaTranscript
+	synctest.Test(t, func(t *testing.T) {
+		profile := embeddedProcessingProfile(t, renderer.Descriptor())
+		profile.Rendition.Name = "large-transcript"
+		profile.Rendition.MaxResponseBytes = 64 << 20
+		profile.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript}
+		profile.EvidenceLexical.MaxDocumentChars = 18 << 20
+		profile.EvidenceLexical.MaxUnitRunes = 18 << 20
+		profile.RetentionDisclosure.RetainTypedArtifacts = true
+		vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{
+			Profiles: map[string]docbank.ProcessingProfileConfig{"large": {Profile: profile, RenditionProvider: renderer}},
+		}})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		wav := mediatest.WAV()
+		digest := sha256.Sum256(wav)
+		digestHex := hex.EncodeToString(digest[:])
+		receipt, err := vault.SubmitSuppliedMedia(t.Context(), docbank.SuppliedMediaRequest{
+			OperationID: "00000000-0000-4000-8000-000000000481", Content: bytes.NewReader(wav),
+			Filename: "large.wav", MediaType: "audio/wav", SHA256: digestHex, ByteLength: int64(len(wav)),
+			Occurrence: docbank.MediaOccurrenceInput{Ref: "large-call", Revision: "1"},
+		})
+		require.NoError(t, err)
+		node, err := vault.Stat(t.Context(), "/media/"+digestHex[:2]+"/"+digestHex+".wav")
+		require.NoError(t, err)
+		request := docbank.ProcessingPlanRequest{Selector: docbank.ProcessingSelector{NodeID: node.ID, ContentVersionID: receipt.ContentVersionID, Profile: "large"}}
+		plan, err := vault.PlanProcessing(t.Context(), request)
+		require.NoError(t, err)
+		_, err = vault.GrantProcessingPlanConsent(t.Context(), docbank.ProcessingConsentGrantRequest{PlanRequest: request, PlanFingerprint: plan.Fingerprint})
+		require.NoError(t, err)
+		queued, err := vault.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000482", receipt.SourceID, docbank.MediaProcessingRequest{Profile: "large"})
+		require.NoError(t, err)
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			status, statusErr := vault.ProcessingStatus(t.Context(), docbank.ProcessingStatusRequest{JobID: queued.JobID})
+			require.NoError(collect, statusErr)
+			require.Equal(collect, "completed", status.State, "%+v", status)
+		}, 2*time.Minute, 100*time.Millisecond)
+		result, err = vault.MediaTranscript(t.Context(), docbank.MediaTranscriptRequest{SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: receipt.ContentVersionID})
+		require.NoError(t, err)
+		require.Equal(t, expectedState, result.EvidenceState)
+	})
+	return result
+}
+
 func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {
 	t.Parallel()
 	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
@@ -1797,6 +1915,7 @@ func TestEmbeddedProcessingRejectsConflictingProvidersForOneDescriptor(t *testin
 type timedTranscriptRenditionProvider struct {
 	descriptor document.RenditionDescriptor
 	policy     document.EvidencePolicy
+	origin     string
 }
 
 func syntheticWAV(label string) []byte {
@@ -1837,7 +1956,7 @@ func newTimedTranscriptRenditionProvider(t *testing.T) *timedTranscriptRendition
 	require.NoError(t, err)
 	policy, err := document.NewEvidencePolicy(1_000_000)
 	require.NoError(t, err)
-	return &timedTranscriptRenditionProvider{descriptor: descriptor, policy: policy}
+	return &timedTranscriptRenditionProvider{descriptor: descriptor, policy: policy, origin: "generated"}
 }
 
 func (provider *timedTranscriptRenditionProvider) Descriptor() document.RenditionDescriptor {
@@ -1860,7 +1979,7 @@ func (provider *timedTranscriptRenditionProvider) Render(
 		}, provider.policy)
 	} else {
 		evidence, artifact, err = mediatranscript.Build(mediatranscript.ArtifactV1{
-			ContractVersion: "media-transcript/v1", Origin: "generated", Provider: "synthetic",
+			ContractVersion: "media-transcript/v1", Origin: provider.origin, Provider: "synthetic", Language: "en",
 			Segments: []mediatranscript.Segment{
 				{Order: 0, StartMS: 0, EndMS: 1000, Speaker: "Speaker 1", Text: "needle first phrase"},
 				{Order: 1, StartMS: 7000, EndMS: 9500, Speaker: "Speaker 2", Text: "second vector phrase"},

@@ -3,6 +3,8 @@ package media_test
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -272,5 +274,143 @@ func TestInspectM4ABoundsChunkCount(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, record.Eligible)
 		require.Equal(t, want, record.Reason, "chunks=%d", chunks)
+	}
+}
+
+func TestInspectMP4AudioTrack(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"AAC video":     mediatest.H264AACMP4(),
+		"no sound":      mediatest.H265MP4(),
+		"metadata only": bytes.Replace(mediatest.M4A("mp4a"), []byte("soun"), []byte("meta"), 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack = true
+			policy.MaxDurationMS = 300000
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.Equal(t, name == "AAC video", record.Eligible, record.Reason)
+			if record.Eligible {
+				require.Equal(t, "video", record.MediaFamily)
+				require.Equal(t, "mp4", record.Format)
+				require.Equal(t, "video/mp4", record.MediaType)
+				require.GreaterOrEqual(t, record.Measurements.DurationMS, int64(5000))
+				require.NoError(t, media.ValidateCapabilityRecord(record))
+			}
+		})
+	}
+	data := mediatest.H264AACMP4()
+	policy := inspectionPolicy(data, "phone.mov", "video/quicktime")
+	policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.False(t, record.Eligible)
+	policy.Filename, policy.DeclaredMediaType, policy.MaxEntryBytes = "phone.mp4", "video/mp4", 32
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.Equal(t, media.CapabilityReasonEntryBytes, record.Reason)
+}
+
+func TestInspectMP4AudioWithNonVisualTracks(t *testing.T) {
+	for _, handler := range []string{"meta", "tmcd"} {
+		t.Run(handler, func(t *testing.T) {
+			data := mediatest.M4A("mp4a")
+			movie := bytes.Index(data, []byte("moov")) - 4
+			track := bytes.Index(data, []byte("trak")) - 4
+			extra := bytes.Replace(bytes.Clone(data[track:]), []byte("soun"), []byte(handler), 1)
+			data = append(data, extra...)
+			binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie))
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.True(t, record.Eligible, record.Reason)
+		})
+	}
+}
+
+// The provider transcribes one extracted sound stream, so video mode refuses
+// a second sound track even when both tracks qualify on their own.
+func TestInspectMP4RejectsSecondSoundTrack(t *testing.T) {
+	data := mediatest.M4A("mp4a")
+	mdat := bytes.Index(data, []byte("mdat")) - 4
+	// Give the second track its own four sample bytes after the first's.
+	data = slices.Insert(data, mdat+12, 5, 6, 7, 8)
+	binary.BigEndian.PutUint32(data[mdat:mdat+4], 16)
+	movie := bytes.Index(data, []byte("moov")) - 4
+	track := bytes.Index(data, []byte("trak")) - 4
+	second := bytes.Clone(data[track:])
+	binary.BigEndian.PutUint32(second[bytes.Index(second, []byte("tkhd"))+16:], 2)
+	stco := bytes.Index(second, []byte("stco")) + 12
+	binary.BigEndian.PutUint32(second[stco:stco+4], uint32(mdat+12))
+	data = append(data, second...)
+	binary.BigEndian.PutUint32(data[movie:movie+4], uint32(len(data)-movie))
+
+	audio := inspectionPolicy(data, "call.m4a", "audio/mp4")
+	audio.MaxDurationMS = 1000
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), audio)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, "audio-only M4A keeps its existing behavior: %s", record.Reason)
+
+	video := inspectionPolicy(data, "phone.mp4", "video/mp4")
+	video.VideoAudioTrack, video.MaxDurationMS = true, 300000
+	record, err = media.InspectCapability(t.Context(), bytes.NewReader(data), video)
+	require.NoError(t, err)
+	require.False(t, record.Eligible)
+	require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+}
+
+func TestInspectMP4AudioWithVideoCompositionOffsets(t *testing.T) {
+	data, err := io.ReadAll(mediatest.SizedMP4VideoComposition(64 << 10))
+	require.NoError(t, err)
+	policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+	policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible, record.Reason)
+	require.Equal(t, "video", record.MediaFamily)
+	require.Positive(t, record.Measurements.DurationMS)
+}
+
+func TestInspectMP4ExistingPolicyIdentity(t *testing.T) {
+	data := mediatest.H264AACMP4()
+	policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+	policy.MaxDurationMS, policy.MaxPixels, policy.MaxFrames = 300000, 1<<20, 18000
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible)
+	require.Equal(t, "a3255099414355444e81b8fce938cb7ffd0c6b0fea0e9ed384be187cd26a5625", record.PolicyFingerprint)
+}
+
+func TestInspectMP4AudioTimeline(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		codec    string
+		edits    []mediatest.SoundEdit
+		eligible bool
+	}{
+		{name: "no edit list", codec: "mp4a", eligible: true},
+		{name: "AAC priming 1024", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 1024}}, eligible: true},
+		{name: "AAC priming 2112", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 2112}}, eligible: true},
+		{name: "ALAC from zero", codec: "alac", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 0}}, eligible: true},
+		{name: "delayed media start", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 94976}}},
+		{name: "empty edit delays sound", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 1979, MediaTime: -1}, {Duration: 1000, MediaTime: 1024}}},
+		{name: "multiple edits", codec: "mp4a", edits: []mediatest.SoundEdit{{Duration: 500, MediaTime: 1024}, {Duration: 500, MediaTime: 24000}}},
+		{name: "ALAC media offset", codec: "alac", edits: []mediatest.SoundEdit{{Duration: 1000, MediaTime: 1024}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			data := mediatest.M4AWithSoundEdits(testCase.codec, testCase.edits...)
+			if testCase.edits == nil {
+				data = mediatest.M4A(testCase.codec)
+			}
+			policy := inspectionPolicy(data, "phone.mp4", "video/mp4")
+			policy.VideoAudioTrack, policy.MaxDurationMS = true, 300000
+			record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), policy)
+			require.NoError(t, err)
+			require.Equal(t, testCase.eligible, record.Eligible, record.Reason)
+			if !testCase.eligible {
+				require.Equal(t, media.CapabilityReasonMalformed, record.Reason)
+			}
+		})
 	}
 }

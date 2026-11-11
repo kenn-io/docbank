@@ -9648,13 +9648,20 @@ components:
           type: string
         content_version_id:
           type: string
+        contract_version:
+          type: string
         coverage_state:
           type: string
         evidence_state:
           type: string
+        node_id:
+          format: int64
+          type: integer
         operation_state:
           type: string
         source_id:
+          type: string
+        source_sha256:
           type: string
         source_version_id:
           type: string
@@ -9663,6 +9670,7 @@ components:
         vault_uid:
           type: string
       required:
+        - contract_version
         - vault_uid
         - source_id
         - source_version_id
@@ -9678,13 +9686,23 @@ components:
     MediaTranscriptEvidence:
       additionalProperties: false
       properties:
+        artifact_sha256:
+          type: string
         build_id:
           type: string
         completeness:
           type: string
+        evidence_checksum:
+          type: string
         has_omissions:
           type: boolean
+        language:
+          type: string
         origin:
+          type: string
+        profile_fingerprint:
+          type: string
+        speech_state:
           type: string
         supplied_input_id:
           type: string
@@ -9695,6 +9713,9 @@ components:
             $ref: "#/components/schemas/MediaTranscriptUnit"
           type: array
       required:
+        - profile_fingerprint
+        - evidence_checksum
+        - speech_state
         - build_id
         - origin
         - completeness

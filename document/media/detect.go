@@ -425,6 +425,7 @@ func isMP4(data []byte) bool {
 
 type mp4Info struct {
 	audioInspection           bool
+	soundTrackVideo           bool
 	tracks                    []*mp4TrackInfo
 	boxCount, maxBoxes        int64
 	width, height, durationMS int64
@@ -525,6 +526,9 @@ type mp4TrackInfo struct {
 	mediaTimescale, mediaDuration                    uint64
 	sampleDuration                                   uint64
 	editDuration                                     uint64
+	editCount                                        uint32
+	firstEditMediaTime                               uint64
+	emptyEdit                                        bool
 	timedSamples, compositionSamples                 uint64
 	sampleCount                                      uint64
 	hasVisualSamples                                 bool
@@ -977,13 +981,18 @@ func parseCTTS(payload []byte, info *mp4Info, track *mp4TrackInfo) bool {
 		samples += sampleCount
 	}
 	track.compositionSamples = samples
-	info.unknownDuration = true
+	// Sound-track inspection takes its bounds from the movie and sound, and a
+	// video track's composition offsets cannot lengthen either.
+	if !info.soundTrackVideo || track.handlerType != "vide" {
+		info.unknownDuration = true
+	}
 	return true
 }
 
 // parseELST validates an edit list and records its total presentation length.
 // Segment durations use the movie timescale, so they can be compared directly
-// with mvhd and tkhd after the track is complete.
+// with mvhd and tkhd after the track is complete. It also records the entry
+// count, empty edits, and the first media start for sound-timeline checks.
 func parseELST(payload []byte, track *mp4TrackInfo) bool {
 	if len(payload) < 8 || payload[0] > 1 || payload[1] != 0 || payload[2] != 0 || payload[3] != 0 {
 		return false
@@ -1002,27 +1011,33 @@ func parseELST(payload []byte, track *mp4TrackInfo) bool {
 	}
 	var total uint64
 	for offset := 8; offset < len(payload); offset += entrySize {
-		var duration uint64
-		var validMediaTime bool
+		var duration, mediaTime uint64
+		var validMediaTime, empty bool
 		var rateOffset int
 		if payload[0] == 1 {
 			duration = binary.BigEndian.Uint64(payload[offset : offset+8])
-			mediaTime := binary.BigEndian.Uint64(payload[offset+8 : offset+16])
-			validMediaTime = mediaTime <= math.MaxInt64 || mediaTime == math.MaxUint64
+			mediaTime = binary.BigEndian.Uint64(payload[offset+8 : offset+16])
+			empty = mediaTime == math.MaxUint64
+			validMediaTime = mediaTime <= math.MaxInt64 || empty
 			rateOffset = offset + 16
 		} else {
 			duration = uint64(binary.BigEndian.Uint32(payload[offset : offset+4]))
-			mediaTime := binary.BigEndian.Uint32(payload[offset+4 : offset+8])
-			validMediaTime = mediaTime <= math.MaxInt32 || mediaTime == math.MaxUint32
+			time32 := binary.BigEndian.Uint32(payload[offset+4 : offset+8])
+			mediaTime, empty = uint64(time32), time32 == math.MaxUint32
+			validMediaTime = time32 <= math.MaxInt32 || empty
 			rateOffset = offset + 8
 		}
 		if duration == 0 || !validMediaTime || binary.BigEndian.Uint16(payload[rateOffset:rateOffset+2]) != 1 ||
 			binary.BigEndian.Uint16(payload[rateOffset+2:rateOffset+4]) != 0 || math.MaxUint64-total < duration {
 			return false
 		}
+		if offset == 8 {
+			track.firstEditMediaTime = mediaTime
+		}
+		track.emptyEdit = track.emptyEdit || empty
 		total += duration
 	}
-	track.editDuration = total
+	track.editDuration, track.editCount = total, count
 	return true
 }
 
@@ -1196,6 +1211,11 @@ func (track *mp4TrackInfo) finish(info *mp4Info) bool {
 	}
 	if track.handlerType != "vide" {
 		return isNonVisualHandler(track.handlerType) && !presentation && !track.hasVisualSamples
+	}
+	if info.audioInspection {
+		// ASR proves sound samples only; visual decoding retains its own bounds.
+		info.pictureTracks++
+		return true
 	}
 	if !presentation || !track.hasVisualSamples || track.stsdCount != 1 || track.unknownSampleEntries != 0 ||
 		track.codedWidth <= 0 || track.codedHeight <= 0 || track.codec == "" {

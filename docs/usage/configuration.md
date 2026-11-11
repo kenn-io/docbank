@@ -98,15 +98,19 @@ daemon validates them before it creates a hosted provider and refuses redirects
 and unexpected provider behavior according to the adapter contract.
 
 A rendition profile can use the same deployment-local boundary for supplied
-audio transcription. Set `adapter_contract` to
-`docbank-docling-asr/v1`, bind `credential:<name>`, and add a `runtime` block
-with the Docling origin, request and polling bounds, allowed CIDRs, proxy
-mode, and transport timeouts. The qualified adapter accepts original WAV and
-MP3 input and publishes generated `media-transcript/v1` evidence. Its plan
+audio transcription. Set `adapter_contract` to `docbank-docling-asr/v1` for
+WAV and MP3, or `docbank-docling-asr/v2` to include M4A. Bind
+`credential:<name>` and add a `runtime` block with the Docling origin, request
+and polling bounds, allowed CIDRs, proxy mode, and transport timeouts. The
+adapter publishes generated `media-transcript/v1` evidence. Its plan
 discloses the destination before consent, and provider responses do not become
 portable policy. Set the rendition's `max_transcript_chars` independently of
 each processing profile's `max_document_chars`. A runtime that no processing
-profile selects stays staged. See the [audio configuration reference](../configuration.md#supplied-audio-transcription)
+profile selects stays staged. Use `docbank-docling-asr/v2` to add M4A, or
+`docbank-docling-asr/v3` to add MP4 sound-track transcription alongside all
+three audio formats. v3 requires provider-host FFmpeg and fresh consent.
+Size upload, response, and timeout bounds for the video; embedded PNG frames
+count against the 512 MiB response ceiling at their base64-encoded size. See the [audio and video configuration reference](../configuration.md#audio-and-video-transcription)
 for disclosure-fingerprint calculation and the restriction on sharing a descriptor
 across deployments.
 

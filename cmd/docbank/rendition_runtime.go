@@ -109,7 +109,7 @@ func configureRenditionProviders(cfg config.Config) (
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
 		case vision.AdapterContract:
 			provider, disclosures[name], err = configureVision(cfg, name, registered)
-		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
+		case config.DoclingASRAdapterContract, config.DoclingASRM4AAdapterContract, config.DoclingASRVideoAdapterContract, config.DoclingDocumentAdapterContract, config.MistralOCRAdapterContract:
 			provider, disclosures[name], err = configureExternalRendition(cfg, name, registered)
 		default:
 			continue
@@ -234,13 +234,17 @@ func resolveRenditionAdapter(configured config.RenditionProfileConfig) (resolved
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return mistral.NewRenditionProvider(profile, secrets, client)
 			}}, nil
-	case config.DoclingASRAdapterContract:
+	case config.DoclingASRAdapterContract, config.DoclingASRM4AAdapterContract, config.DoclingASRVideoAdapterContract:
 		profile, err := configuredDoclingASRProfile(configured)
 		if err != nil {
 			return resolvedRenditionAdapter{}, err
 		}
+		disclosure := docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint)
+		if configured.AdapterContract == config.DoclingASRM4AAdapterContract {
+			disclosure = docling.ASRM4ADisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint)
+		}
 		return resolvedRenditionAdapter{descriptor: profile.Descriptor, secretBinding: profile.SecretBinding,
-			disclosureFingerprint: docling.ASRDisclosureFingerprint(profile.Descriptor, runtime.Endpoint, configured.DeploymentFingerprint),
+			disclosureFingerprint: disclosure,
 			newProvider: func(secrets environmentCredentialSecrets, client *http.Client) (document.RenditionProvider, error) {
 				return docling.NewASR(profile, secrets, client)
 			}}, nil
@@ -278,18 +282,33 @@ func configuredDoclingTransportProfile(configured config.RenditionProfileConfig,
 }
 
 func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docling.ASRProfile, error) {
-	policyFingerprint, err := docling.ASRPolicyFingerprint(configured.MaxTranscriptChars)
+	allowMP4 := configured.AdapterContract == config.DoclingASRVideoAdapterContract
+	allowM4A := configured.AdapterContract == config.DoclingASRM4AAdapterContract || allowMP4
+	fingerprint := docling.ASRPolicyFingerprint
+	if allowMP4 {
+		fingerprint = docling.ASRVideoPolicyFingerprint
+	} else if allowM4A {
+		fingerprint = docling.ASRM4APolicyFingerprint
+	}
+	policyFingerprint, err := fingerprint(configured.MaxTranscriptChars)
 	if err != nil {
 		return docling.ASRProfile{}, err
+	}
+	formats := []document.RenditionFormatCapability{
+		{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+		{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
+	}
+	if allowM4A {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
+	}
+	if allowMP4 {
+		formats = append(formats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile})
 	}
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "docling.serve-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: policyFingerprint,
 		TrustBoundary:     document.RenditionTrustBoundary(configured.TrustBoundary),
-		SupportedFormats: []document.RenditionFormatCapability{
-			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
-			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
-		},
+		SupportedFormats:  formats,
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 	})
@@ -297,7 +316,7 @@ func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docl
 		return docling.ASRProfile{}, err
 	}
 	return docling.ASRProfile{Profile: configuredDoclingTransportProfile(configured, descriptor),
-		MaxTranscriptChars: configured.MaxTranscriptChars}, nil
+		MaxTranscriptChars: configured.MaxTranscriptChars, AllowM4A: allowM4A, AllowMP4: allowMP4}, nil
 }
 
 func configuredRenditionRequestFingerprints(cfg config.Config, renditionName string) (map[string]struct{}, error) {

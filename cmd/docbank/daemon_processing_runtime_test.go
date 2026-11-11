@@ -659,3 +659,44 @@ func TestExecutableProcessingProfilesRejectsVisionDisclosureThatDoesNotBindTheEn
 	_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
 	require.ErrorContains(t, err, "vision disclosure fingerprint does not bind runtime endpoint")
 }
+
+func TestExecutableProcessingProfilesRegistersDoclingM4A(t *testing.T) {
+	cfg, old := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+	enableDaemonASRM4A(t, &cfg)
+	binding := cfg.RenditionProfiles["asr"]
+	resolved, err := configuredDoclingASRProfile(binding)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	profile, ok := profiles["asr"]
+	require.True(t, ok)
+	require.NotNil(t, profile.RenditionProvider)
+	descriptor := profile.RenditionProvider.Descriptor()
+	require.NotEqual(t, old.Fingerprint, descriptor.Fingerprint)
+	require.Equal(t, config.DoclingASRM4AAdapterContract, profile.RenditionDisclosure.ImmediateProcessor)
+	require.Contains(t, descriptor.SupportedFormats, document.RenditionFormatCapability{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile})
+	binding.DisclosureFingerprint = docling.ASRDisclosureFingerprint(resolved.Descriptor, binding.Runtime.Endpoint, binding.DeploymentFingerprint)
+	cfg.RenditionProfiles["asr"] = binding
+	_, err = executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.ErrorContains(t, err, "disclosure fingerprint")
+}
+
+func TestExecutableProcessingProfilesRegistersDoclingVideo(t *testing.T) {
+	cfg, old := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+	enableDaemonASRVideo(t, &cfg)
+	require.NoError(t, cfg.Validate())
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	profile, ok := profiles["asr"]
+	require.True(t, ok)
+	require.NotNil(t, profile.RenditionProvider)
+	descriptor := profile.RenditionProvider.Descriptor()
+	require.NotEqual(t, old.Fingerprint, descriptor.Fingerprint)
+	require.Equal(t, config.DoclingASRVideoAdapterContract, profile.RenditionDisclosure.ImmediateProcessor)
+	require.Contains(t, descriptor.SupportedFormats, document.RenditionFormatCapability{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile})
+	invalid := cfg.RenditionProfiles["asr"]
+	invalid.MaxTranscriptChars = 0
+	cfg.RenditionProfiles["asr"] = invalid
+	require.ErrorContains(t, cfg.Validate(), "max_transcript_chars")
+}

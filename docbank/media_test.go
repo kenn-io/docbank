@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -466,6 +467,18 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		require.NotNil(t, transcript.Transcript)
 		require.Equal(t, firstBuildID, transcript.Transcript.BuildID)
 		require.Equal(t, older.SuppliedInputID, transcript.Transcript.SuppliedInputID)
+		require.Equal(t, "media-transcript-read/v1", transcript.ContractVersion)
+		require.Equal(t, node.ID, transcript.NodeID)
+		require.Equal(t, identity.SHA256, transcript.SourceSHA256)
+		internalTranscript, err := vault.processing.MediaTranscript(t.Context(), processing.MediaTranscriptRequest{
+			SourceID: mediaReceipt.SourceID, SourceVersionID: firstJob.SourceVersionID, ContentVersionID: mediaReceipt.ContentVersionID,
+		})
+		require.NoError(t, err)
+		require.Equal(t, internalTranscript.Transcript.ProfileFingerprint, transcript.Transcript.ProfileFingerprint)
+		require.Equal(t, internalTranscript.Transcript.EvidenceChecksum, transcript.Transcript.EvidenceChecksum)
+		require.Equal(t, internalTranscript.Transcript.ArtifactSHA256, transcript.Transcript.ArtifactSHA256)
+		require.Equal(t, internalTranscript.Transcript.SpeechState, transcript.Transcript.SpeechState)
+		require.Equal(t, internalTranscript.Transcript.Language, transcript.Transcript.Language)
 		newer := importTranscript("00000000-0000-4000-8000-000000000424",
 			secondOccurrence.OccurrenceID, "newer replacement transcript")
 		require.NotEqual(t, older.SuppliedInputID, newer.SuppliedInputID)

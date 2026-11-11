@@ -88,16 +88,24 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	BuildID         string                `json:"build_id"`
-	SuppliedInputID string                `json:"supplied_input_id,omitempty"`
-	Origin          string                `json:"origin"`
-	Completeness    string                `json:"completeness"`
-	Truncated       bool                  `json:"truncated"`
-	HasOmissions    bool                  `json:"has_omissions"`
-	Units           []MediaTranscriptUnit `json:"units"`
+	ProfileFingerprint string                `json:"profile_fingerprint"`
+	EvidenceChecksum   string                `json:"evidence_checksum"`
+	ArtifactSHA256     string                `json:"artifact_sha256,omitempty"`
+	SpeechState        string                `json:"speech_state"`
+	Language           string                `json:"language,omitempty"`
+	BuildID            string                `json:"build_id"`
+	SuppliedInputID    string                `json:"supplied_input_id,omitempty"`
+	Origin             string                `json:"origin"`
+	Completeness       string                `json:"completeness"`
+	Truncated          bool                  `json:"truncated"`
+	HasOmissions       bool                  `json:"has_omissions"`
+	Units              []MediaTranscriptUnit `json:"units"`
 }
 
 type MediaTranscript struct {
+	ContractVersion  string                   `json:"contract_version"`
+	NodeID           int64                    `json:"node_id,omitzero"`
+	SourceSHA256     string                   `json:"source_sha256,omitempty"`
 	VaultUID         string                   `json:"vault_uid"`
 	SourceID         string                   `json:"source_id"`
 	SourceVersionID  string                   `json:"source_version_id"`

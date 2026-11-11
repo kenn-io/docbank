@@ -1974,7 +1974,15 @@ accident. The JSON result keeps `evidence_state`, `coverage_state`, and
 `operation_state` separate. Only a `ready` evidence state includes transcript
 units. Units keep an optional `time_span` and speaker, and the origin
 identifies supplied versus generated evidence. Ready transcripts include
-`build_id`, and supplied transcripts also include `supplied_input_id`. See
+`build_id`, `profile_fingerprint`, `evidence_checksum`, and a retained
+`artifact_sha256` when available. The `media-transcript-read/v1` envelope also
+binds `node_id` and original `source_sha256`. Generated timed speech can report
+`speech_state: "complete"` while overall evidence is partial because it omits
+non-speech sounds. Supplied transcripts, including timed captions, always report
+`speech_state: "partial"` as provenance; this does not assert missing speech.
+A provider-reported partial-success build also reports partial speech.
+Empty or failed speech recognition is never empty success.
+Supplied transcripts also include `supplied_input_id`. See
 [how to verify search attribution](agents/integration.md#read-an-exact-media-transcript).
 
 Remote references submitted by the CLI are read from `--reference-file PATH`,
