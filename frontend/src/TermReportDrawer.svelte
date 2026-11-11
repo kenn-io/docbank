@@ -95,7 +95,6 @@
   let selectionConflict = $state(false);
   let selectionResult = $state<api.TermReportSelectionItem[] | null>(null);
   let selectionAccepted = $state<Record<number, boolean>>({});
-  let selectionFingerprint = "";
   const selectedCount = $derived(
     selectionResult?.filter(
       (item) =>
@@ -103,13 +102,6 @@
         (item.status === "changed" && selectionAccepted[item.selected.node_id]),
     ).length ?? 0,
   );
-  $effect(() => {
-    const fingerprint = JSON.stringify(draft.selected_documents);
-    if (selectionConflict && selectionFingerprint && fingerprint !== selectionFingerprint) {
-      selectionConflict = false;
-      selectionResult = null;
-    }
-  });
   let optionsOpen = $state(false);
   let generation = 0;
   let historyGeneration = 0;
@@ -142,7 +134,6 @@
       draft.selected_documents
     ) {
       selectionConflict = true;
-      selectionFingerprint = JSON.stringify(draft.selected_documents);
       selectionResult = null;
       error = "";
       return;
@@ -243,12 +234,10 @@
   function clearSelectionConflict(): void {
     selectionConflict = false;
     selectionResult = null;
-    selectionFingerprint = "";
   }
 
   async function refreshSelection(): Promise<void> {
     if (busy || !draft.selected_documents) return;
-    const fingerprint = JSON.stringify(draft.selected_documents);
     const epoch = generation;
     const currentSession = session;
     busy = true;
@@ -261,36 +250,10 @@
       if (
         epoch !== generation ||
         currentSession !== session ||
-        fingerprint !== JSON.stringify(draft.selected_documents) ||
         !selectionConflict
       )
         return;
-      const expected = new Map(
-        draft.selected_documents.documents?.map((item) => [item.node_id, item]),
-      );
-      if (
-        result.length !== expected.size ||
-        result.some((item) => {
-          const selected = expected.get(item.selected.node_id);
-          const valid =
-            selected &&
-            item.selected.version_id === selected.version_id &&
-            item.selected.sha256 === selected.sha256 &&
-            ["current", "changed", "missing", "trashed"].includes(item.status) &&
-            (item.status === "current" || item.status === "changed"
-              ? !!item.current &&
-                item.current.node_id === selected.node_id &&
-                !!item.current.version_id &&
-                !!item.current.sha256 &&
-                (item.status !== "current" ||
-                  (item.current.version_id === selected.version_id &&
-                    item.current.sha256 === selected.sha256))
-              : !item.current);
-          expected.delete(item.selected.node_id);
-          return !valid;
-        }) ||
-        expected.size
-      )
+      if (result.some((item) => !["current", "changed", "missing", "trashed"].includes(item.status)))
         throw new Error("The selection response was incomplete or invalid.");
       if (result.every((item) => item.status === "current")) {
         clearSelectionConflict();
@@ -303,12 +266,7 @@
         selectionResult = result;
       }
     } catch (cause) {
-      if (
-        epoch !== generation ||
-        fingerprint !== JSON.stringify(draft.selected_documents) ||
-        !selectionConflict
-      )
-        return;
+      if (epoch !== generation || currentSession !== session || !selectionConflict) return;
       if (cause instanceof APIError && cause.status === 401) fail(cause);
       else
         error = `Couldn't refresh the selection. ${cause instanceof Error ? cause.message : String(cause)}`;
@@ -318,12 +276,7 @@
   }
 
   function applySelection(): void {
-    if (
-      !selectionResult ||
-      !selectedCount ||
-      selectionFingerprint !== JSON.stringify(draft.selected_documents)
-    )
-      return;
+    if (!selectionResult || !selectedCount) return;
     const changed = selectionResult.filter(
       (item) => item.status === "changed" && selectionAccepted[item.selected.node_id],
     ).length;
@@ -338,7 +291,6 @@
         )
         .map((item) => item.current!),
     };
-    draft.date_choices = [];
     clearSelectionConflict();
     const documents = (count: number) => `${count} document${count === 1 ? "" : "s"}`;
     notice = {

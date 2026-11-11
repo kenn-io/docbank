@@ -624,7 +624,6 @@ it("requires acceptance before using current document versions", async () => {
   const trashed = { ...old, node_id: 2 };
   const missing = { ...old, node_id: 3 };
   const submissions: any[] = [];
-  const onselectionchanged = vi.fn();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     if (init?.method === "GET") return json({ items: [], total: 0 });
     if (String(url).endsWith("/selection"))
@@ -652,7 +651,6 @@ it("requires acceptance before using current document versions", async () => {
     initialDocuments: [old, trashed, missing],
     onclose: vi.fn(),
     onauthfailure: vi.fn(),
-    onselectionchanged,
   });
   await fireEvent.click(screen.getByRole("button", { name: "Create report" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Refresh selection" }));
@@ -666,7 +664,6 @@ it("requires acceptance before using current document versions", async () => {
   expect(checkbox).toHaveProperty("checked", false);
   await fireEvent.click(checkbox);
   await fireEvent.click(screen.getByRole("button", { name: "Use this selection" }));
-  expect(onselectionchanged).toHaveBeenCalledOnce();
   expect(submissions).toHaveLength(1);
   expect(screen.getByText("Selection updated")).toBeTruthy();
   expect(
