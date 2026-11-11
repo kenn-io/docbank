@@ -139,14 +139,20 @@ func TestUnderstandingRejectsInvalidImageBounds(t *testing.T) {
 		mutate func(*document.AuthorizedUploadMetadata)
 		want   string
 	}{
-		{"oversized", bytes.Repeat([]byte("x"), 16<<20+1), func(meta *document.AuthorizedUploadMetadata) {}, "image at most 16 MiB"},
+		{"oversized", bytes.Repeat([]byte("x"), 16<<20+1), func(meta *document.AuthorizedUploadMetadata) {}, ""},
 		{"unsupported format", data, func(meta *document.AuthorizedUploadMetadata) { meta.MediaType = "image/gif" }, "unsupported format"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			meta := understandingMetadata(tc.data)
 			tc.mutate(&meta)
 			_, err := document.RenderRendition(t.Context(), p, &testUpload{ReadCloser: io.NopCloser(bytes.NewReader(tc.data)), metadata: meta}, understandingAuthorization(p, meta))
-			require.ErrorContains(t, err, tc.want)
+			if tc.want == "" {
+				classified, ok := errors.AsType[*document.RenditionProviderError](err)
+				require.True(t, ok)
+				assert.Equal(t, document.RenditionErrorPolicyRejected, classified.Code())
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
 			assert.Zero(t, calls.Load())
 		})
 	}

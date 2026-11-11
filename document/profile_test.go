@@ -246,6 +246,13 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
 			p.Rendition.MaxUnits = 3
 		}, "at least four units"},
+		{"image understanding source size", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
+			p.Rendition.MaxDocumentBytes = 16<<20 + 1
+			p.Rendition.MaxUnits = 4
+			p.Embeddings[1].Chunk.Formatter = document.RenditionChunkHeadingsFormatter
+		}, "16"},
 		{"image understanding chunk formatter", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
 			p.Rendition.Descriptor.ID = vision.UnderstandingProviderID
