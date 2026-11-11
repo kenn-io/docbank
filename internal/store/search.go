@@ -857,17 +857,9 @@ func (s *Store) SelectedSemanticRowsAvailable(ctx context.Context, profile, bind
 	available := false
 	err = s.withSearchOptionsTx(ctx, normalized, func(tx *sql.Tx, scope SearchOptions) error {
 		selected, fingerprints, err := embeddingProfileBindingAuthority(ctx, tx, profile, binding)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				var persisted bool
-				if queryErr := tx.QueryRowContext(ctx, `SELECT EXISTS(
-					SELECT 1 FROM processing_profiles WHERE profile_fingerprint=?)`, profile).Scan(&persisted); queryErr != nil {
-					return queryErr
-				}
-				if !persisted {
-					return nil
-				}
-			}
+		if errors.Is(err, ErrNotFound) && fingerprints.Profile == "" {
+			return nil
+		} else if err != nil {
 			return err
 		}
 		space := scope.VectorSpaceID

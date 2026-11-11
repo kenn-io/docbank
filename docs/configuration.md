@@ -934,8 +934,7 @@ processing profile whose embedding bindings all use `rendition_chunk` to give
 The supplied provider and its source-input, retention and evidence policies are
 unchanged. The composed profile needs its own processing consent, and changing
 the donor changes its fingerprint. The default is empty, so supplied
-transcripts and captions stay lexical. To embed an existing supplied transcript,
-grant consent for the composed profile and retry its processing. See
+transcripts and captions stay lexical. See
 [recording search integration](agents/integration.md#search-transcripts-for-exact-recordings).
 
 Moving an embedding endpoint or changing its timeout still requires the updated descriptor fingerprint and consent for the current profile. Docbank reuses compatible saved vectors after consent. An unchanged configuration keeps its existing vector space across upgrades. Legacy BGE-M3 and Qwen3 profiles may require recomputation on their first policy change because their old records omit deployment revisions.

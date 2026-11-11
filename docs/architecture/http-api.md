@@ -872,8 +872,6 @@ requested profile and binding, produced by ordinary processing; search never
 processes media. Coverage counts content versions and is incomplete while any
 requested selection lacks ready evidence or any selected build lacks its
 embeddings. Pending or unavailable transcripts leave ready matches usable.
-When selected sources share a content version but have different builds, that
-version remains incomplete.
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
