@@ -244,7 +244,7 @@ func registerRenditionTextRoutes(api huma.API, d Deps) {
 			}
 			var receipt document.RenditionReceipt
 			if err := json.Unmarshal(view.Rendition.Build.ProviderReceipt, &receipt); err != nil {
-				return nil, NewError(http.StatusInternalServerError, "rendition_text_corrupt", "The verified text rendition provider receipt is invalid.")
+				return nil, NewError(http.StatusInternalServerError, "rendition_text_corrupt", "Cannot verify the saved text.")
 			}
 			stream, size, err := d.Blobs.OpenStreamContext(ctx, view.Artifact.BlobHash)
 			if err != nil {
