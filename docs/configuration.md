@@ -482,12 +482,26 @@ later, use explicit processing for earlier imports that lack a rendition.
 Unchanged rescans add no work.
 
 When a routed profile has text-chunk embeddings and current build consent, the
-daemon embeds the text of current versions with a published rendition for that
-profile, including ASR transcripts. The `embed:watch:<profile>` worker runs only
-`rendition_chunk` bindings. It also picks up already published renditions with
-missing chunk embeddings when consent is granted, including renditions built
-manually outside watched folders. If vault-wide local text selects the same
-profile, its worker handles the backlog.
+`embed:watch:<profile>` worker embeds the text of renditions of files imported
+by watches that route to this profile, including ASR transcripts. It runs only
+`rendition_chunk` bindings. A document qualifies when all of these hold:
+
+- A configured watch imported it, and that watch routes the file to the
+  profile. The route is resolved as at import; when the media family comes
+  from the file suffix, the worker uses the source file name the watch
+  recorded, so renaming the document in the vault doesn't change it.
+- The document's current version has the bytes the watch last recorded for
+  its source. After a manual edit, the document waits until it matches again.
+- That version has a published rendition for the profile.
+
+Files added to a watch destination by hand, files imported by a nested watch
+that routes elsewhere, and documents outside every watch are not embedded
+automatically; use explicit processing for them. A rendition doesn't record
+who built it, so a qualifying document's rendition counts even when an
+operator built it with explicit processing for the same profile. The worker
+also picks up qualifying renditions with missing chunk embeddings when consent
+is granted. If vault-wide local text selects the same profile, its worker
+handles that profile's backlog.
 
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,

@@ -331,6 +331,7 @@
               <tr>
                 <th scope="row"
                   >{lane.title}
+                  {#if lane.description}<span class="muted">{lane.description}</span>{/if}
                   {#if processing}
                     {@render processingStatus(processing)}
                   {/if}

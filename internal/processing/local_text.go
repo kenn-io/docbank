@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"path"
 	"slices"
 	"sync"
 	"time"
@@ -54,6 +55,8 @@ type LocalTextSetup struct {
 	logger     *slog.Logger
 	rendered   bool
 	lane       string
+	// watches holds, by name, the configured watches that can route to Selected.
+	watches map[string]config.WatchConfig
 }
 
 func (setup *LocalTextSetup) review(ctx context.Context, mode string) (LocalTextPlan, *Service, error) {
@@ -257,7 +260,7 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 	}
 	var result []store.DocumentSummary
 	for len(result) < limit {
-		items, err := setup.Service.catalog.MissingProcessingTargetsAfter(ctx, profile.record.Fingerprint, after, bindings, 1000, setup.rendered)
+		items, next, done, err := setup.missingPage(ctx, profile.record.Fingerprint, after, bindings)
 		if err != nil {
 			return nil, err
 		}
@@ -290,7 +293,7 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 				return result, nil
 			}
 		}
-		if len(items) < 1000 {
+		if done {
 			if len(result) == 0 && sweep {
 				for key, skip := range setup.skips {
 					if !skip.seen {
@@ -302,9 +305,35 @@ func (setup *LocalTextSetup) pendingTargets(ctx context.Context, after string, l
 			}
 			return result, nil
 		}
-		after = items[len(items)-1].ContentVersionID
+		after = next
 	}
 	return result, nil
+}
+
+const missingTargetPage = 1000
+
+// missingPage reads one catalog page and returns the cursor after it. The
+// watch lane keeps only versions whose recorded watch source routes to the
+// selected profile, resolved as import admission resolves it.
+func (setup *LocalTextSetup) missingPage(ctx context.Context, fingerprint, after string, bindings int) (items []store.DocumentSummary, next string, done bool, err error) {
+	if !setup.rendered {
+		items, err = setup.Service.catalog.MissingProcessingTargetsAfter(ctx, fingerprint, after, bindings, missingTargetPage)
+		if err != nil || len(items) == 0 {
+			return nil, "", true, err
+		}
+		return items, items[len(items)-1].ContentVersionID, len(items) < missingTargetPage, nil
+	}
+	watched, err := setup.Service.catalog.MissingWatchedRenditionTargetsAfter(ctx, fingerprint, after, bindings, missingTargetPage, slices.Sorted(maps.Keys(setup.watches)))
+	if err != nil || len(watched) == 0 {
+		return nil, "", true, err
+	}
+	for _, item := range watched {
+		// A watch names the file by its source name, which a later vault rename keeps.
+		if setup.watches[item.WatchName].ProcessingProfileFor(item.MediaType, path.Base(item.SourceRef)) == setup.Selected {
+			items = append(items, item.DocumentSummary)
+		}
+	}
+	return items, watched[len(watched)-1].ContentVersionID, len(watched) < missingTargetPage, nil
 }
 
 func (setup *LocalTextSetup) process(ctx context.Context, item store.DocumentSummary) error {

@@ -803,7 +803,7 @@ func (service *Service) planForSource(ctx context.Context, selector Selector, no
 		plan.Estimate.ProviderCalls++
 	}
 	if _, watched := service.watchEmbeddingProfiles[profile.record.Fingerprint]; watched {
-		const scope = "Granting consent automatically sends text chunks from other published renditions for this profile throughout the vault to the configured embedding providers."
+		const scope = "Granting consent automatically sends text chunks from published renditions of files imported by watches that route to this profile to the configured embedding providers."
 		plan.Estimate.Scope = strings.TrimSpace(plan.Estimate.Scope + " " + scope)
 	}
 	if profile.portable.Rendition != nil {

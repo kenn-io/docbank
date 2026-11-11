@@ -437,7 +437,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if name == choice.Profile {
 			continue
 		}
-		if setup := processingService.WatchEmbeddings(name); setup != nil {
+		if setup := processingService.WatchEmbeddings(name, cfg.Watches); setup != nil {
 			if err := jobSupervisor.StartWorker("embed:watch:"+name, func(ctx context.Context) error { return setup.Backfill(ctx, logger) }); err != nil {
 				return err
 			}

@@ -17,9 +17,16 @@ const job = (fields: Partial<Job>): Job => ({
 });
 
 describe("activity lanes", () => {
-  it("describes the processing profile for a watch embedding lane", () => {
-    const [lane] = jobLanes([job({ lane: "embed:watch:pdf" })]);
-    expect(lane).toMatchObject({ title: "Preparing similarity search", description: "pdf" });
+  it("describes the processing profile for each idle watch embedding lane", () => {
+    const idle = { status: "running", busy: false } as const;
+    const lanes = jobLanes([
+      job({ ...idle, name: "embed:watch:pdf", lane: "embed:watch:pdf" }),
+      job({ ...idle, name: "embed:watch:audio", lane: "embed:watch:audio" }),
+    ]);
+    expect(lanes.map(({ title, description }) => ({ title, description }))).toEqual([
+      { title: "Preparing similarity search", description: "audio" },
+      { title: "Preparing similarity search", description: "pdf" },
+    ]);
   });
 
   it("compares UTC timestamps at full fractional precision and retains paused idle lanes", () => {

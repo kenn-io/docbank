@@ -3,9 +3,11 @@ package processing
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -46,14 +48,25 @@ func (service *Service) AdmitImportedRendition(ctx context.Context, node store.N
 	return err
 }
 
-// WatchEmbeddings embeds only text chunks of versions this profile already rendered.
-// Listing and execution retain the profile's existing build-consent checks.
-func (service *Service) WatchEmbeddings(name string) *LocalTextSetup {
+// WatchEmbeddings embeds only text chunks of rendered files that one of the
+// watches imported and routes to this profile. Listing and execution retain
+// the profile's existing build-consent checks.
+func (service *Service) WatchEmbeddings(name string, watches []config.WatchConfig) *LocalTextSetup {
 	profile := service.profiles[name]
 	if !slices.ContainsFunc(profile.portable.Embeddings, isChunkEmbedding) {
 		return nil
 	}
-	return &LocalTextSetup{Service: service, Selected: name, rendered: true, lane: "watch-embeddings:" + name}
+	routed := make(map[string]config.WatchConfig)
+	for _, watch := range watches {
+		// ProcessingProfileFor ignores the family map when a single profile is set.
+		if watch.Profile == name || watch.Profile == "" && slices.Contains(slices.Collect(maps.Values(watch.Profiles)), name) {
+			routed[watch.Name] = watch
+		}
+	}
+	if len(routed) == 0 {
+		return nil
+	}
+	return &LocalTextSetup{Service: service, Selected: name, rendered: true, lane: "watch-embeddings:" + name, watches: routed}
 }
 
 func isChunkEmbedding(binding document.EmbeddingBindingV1) bool {
