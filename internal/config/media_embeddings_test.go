@@ -2,11 +2,12 @@ package config
 
 import (
 	"bytes"
-	"github.com/BurntSushi/toml"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSelectedMediaEmbeddingProfileConfiguration(t *testing.T) {

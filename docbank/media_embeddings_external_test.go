@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/docbank"
-	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/document/plaintext"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 	"uuid"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/docbank"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/plaintext"
 )
 
 func TestSelectedMediaPublicSuppliedEmbeddingComposition(t *testing.T) {

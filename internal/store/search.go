@@ -614,9 +614,8 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 func searchCandidateRevalidationSQL(filterSQL, renditionEvidenceSQL string, opts SearchOptions) string {
 	selectedEvidenceSQL := ""
 	if len(opts.SelectedBuilds) != 0 {
-		selectedEvidenceSQL = ` OR NOT EXISTS (SELECT 1 FROM json_each(?) selected
-   WHERE json_extract(selected.value,'$.content_version_id')=source.version_id
-    AND json_extract(selected.value,'$.build_id')=json_extract(evidence.value,'$.build_id')) `
+		selectedEvidenceSQL = ` OR (source.version_id,COALESCE(json_extract(evidence.value,'$.build_id'),'')) NOT IN (
+   SELECT json_extract(value,'$.content_version_id'),json_extract(value,'$.build_id') FROM json_each(?)) `
 	}
 
 	differentSourceSQL := "source.node_id<>scoped.node_id"
@@ -951,38 +950,43 @@ func currentEmbeddingHeadsSQL() string {
 // builds before ANN scoring and candidate reduction. It deliberately retains
 // the ordinary profile/binding/current-rendition predicates.
 func semanticSearchFilterSQL(opts SearchOptions) (string, []any) {
+	selected := opts.SelectedBuilds
+	opts.SelectedBuilds = nil
 	filter, args := searchFilterSQL(opts)
-	if len(opts.SelectedBuilds) == 0 {
+	if len(selected) == 0 {
 		return filter, args
 	}
-	encoded, err := json.Marshal(opts.SelectedBuilds)
+	encoded, err := json.Marshal(selected)
 	if err != nil {
 		panic(err)
 	}
-	filter += ` AND es.input_kind='rendition_chunk' AND EXISTS (
-  SELECT 1 FROM json_each(?) selected
-  JOIN rendition_attachments selected_ra ON selected_ra.attachment_id=eig.attachment_id
-   AND selected_ra.content_version_id=es.content_version_id
-  WHERE json_extract(selected.value,'$.content_version_id')=es.content_version_id
-   AND json_extract(selected.value,'$.build_id')=selected_ra.build_id)`
+	filter += ` AND es.input_kind='rendition_chunk' AND (es.content_version_id,eig.attachment_id) IN (
+  SELECT json_extract(selected.value,'$.content_version_id'),selected_ra.attachment_id
+  FROM json_each(?) selected JOIN rendition_attachments selected_ra
+   ON selected_ra.build_id=json_extract(selected.value,'$.build_id')
+   AND selected_ra.content_version_id=json_extract(selected.value,'$.content_version_id'))`
 	return filter, append(args, string(encoded))
 }
 
 func selectedSemanticCompleteVersionsTx(ctx context.Context, tx metadataQuerier, profileFingerprint, bindingID string,
 	inputKind document.EmbeddingInputKind, vectorSpaceID string, opts SearchOptions,
 ) (_ []string, retErr error) {
-	filterSQL, filterArgs := semanticSearchFilterSQL(opts)
+	scope := opts
+	scope.SelectedBuilds = nil
+	filterSQL, filterArgs := searchFilterSQL(scope)
 	if len(opts.SelectedBuilds) != 0 {
 		encoded, err := json.Marshal(opts.SelectedBuilds)
 		if err != nil {
 			return nil, err
 		}
 		// A content version is complete only when every selected build is embedded.
-		filterSQL += ` AND NOT EXISTS (SELECT 1 FROM json_each(?) selected
-   WHERE json_extract(selected.value,'$.content_version_id')=es.content_version_id
-    AND NOT EXISTS (SELECT 1 FROM rendition_attachments selected_ra
-     WHERE selected_ra.attachment_id=eig.attachment_id
-      AND selected_ra.build_id=json_extract(selected.value,'$.build_id')))`
+		filterSQL += ` AND es.input_kind='rendition_chunk' AND (es.content_version_id,eig.attachment_id) IN (
+   SELECT selected.version_id,selected_ra.attachment_id FROM (
+    SELECT json_extract(value,'$.content_version_id') version_id,
+     MIN(json_extract(value,'$.build_id')) build_id FROM json_each(?)
+    GROUP BY version_id HAVING MIN(json_extract(value,'$.build_id'))=MAX(json_extract(value,'$.build_id'))
+   ) selected JOIN rendition_attachments selected_ra
+    ON selected_ra.content_version_id=selected.version_id AND selected_ra.build_id=selected.build_id)`
 		filterArgs = append(filterArgs, string(encoded))
 	}
 

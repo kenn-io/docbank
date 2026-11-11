@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"

@@ -20,6 +20,17 @@ func TestSelectedMediaEmbeddingBuildFence(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT build_id FROM rendition_attachments WHERE attachment_id=?`, attachment).Scan(&build))
 	neighbors := []vectorindex.Neighbor{{SetID: record.VectorSet.ID, InputKey: record.InputGeneration.Inputs[0].ID, InputChecksum: record.InputGeneration.Inputs[0].RenderedChecksum, Score: 1}}
 	requested := []SearchCandidateIdentity{{NodeID: sRootVersionNode(t, s, version), ContentVersionID: version, BuildID: build, Evidence: []SearchEvidenceIdentity{{NodeID: sRootVersionNode(t, s, version), ContentVersionID: version, Kind: "embedding", BuildID: build, VectorSpaceID: record.VectorSpace.ID, EmbeddingSetID: record.ID, InputGenerationID: record.InputGeneration.ID, InputID: record.InputGeneration.Inputs[0].ID, InputKind: record.InputKind, SourceManifestChecksum: source.ManifestChecksum}}}}
+	filter, args := semanticSearchFilterSQL(SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: version, BuildID: build}}})
+	plan, err := s.db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN SELECT es.content_version_id FROM embedding_sets es JOIN embedding_input_generations eig ON eig.generation_id=es.input_generation_id JOIN content_versions cv ON cv.version_id=es.content_version_id WHERE 1=1 `+filter, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, plan.Close()) }()
+	for plan.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, plan.Scan(&id, &parent, &unused, &detail))
+		require.NotContains(t, detail, "CORRELATED", "selected pairs must not be scanned once per embedding")
+	}
+	require.NoError(t, plan.Err())
 	for _, wrong := range []bool{false, true} {
 		selected := build
 		if wrong {

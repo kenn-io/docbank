@@ -24,9 +24,6 @@ func WithSuppliedMediaEmbeddings(supplied, donor ProfileConfig) (ProfileConfig, 
 		if binding.InputKind != document.EmbeddingInputRenditionChunk {
 			return ProfileConfig{}, errors.New("supplied media embedding donor requires rendition_chunk bindings")
 		}
-		if donor.EmbeddingProviders[binding.Name] == nil || donor.Tokenizers[binding.Name] == nil {
-			return ProfileConfig{}, errors.New("supplied media embedding donor is not executable")
-		}
 	}
 	supplied.Profile.Embeddings = slices.Clone(donor.Profile.Embeddings)
 	supplied.EmbeddingProviders = maps.Clone(donor.EmbeddingProviders)
@@ -34,8 +31,5 @@ func WithSuppliedMediaEmbeddings(supplied, donor ProfileConfig) (ProfileConfig, 
 	supplied.EmbeddingClassifiers = maps.Clone(donor.EmbeddingClassifiers)
 	supplied.EmbeddingSimilarityFloors = maps.Clone(donor.EmbeddingSimilarityFloors)
 	supplied.Tokenizers = maps.Clone(donor.Tokenizers)
-	if _, _, err := document.CanonicalProfile(supplied.Profile); err != nil {
-		return ProfileConfig{}, err
-	}
 	return supplied, nil
 }
