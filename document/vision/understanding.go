@@ -59,10 +59,6 @@ func (value understanding) sections() []understandingSection {
 	}
 }
 
-func (section understandingSection) text() string {
-	return strings.ReplaceAll(strings.ReplaceAll(*section.value, "\r\n", "\n"), "\r", "\n")
-}
-
 func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 	evidence := document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceDegradedProvenance,
@@ -70,12 +66,13 @@ func (value understanding) evidence(model string) document.SourceEvidenceV1 {
 		Omissions: []document.SourceEvidenceOmissionV1{{Kind: document.EvidenceOmissionField, Field: "natural_provenance", Reason: "machine-generated image interpretation has no verified text coordinates or conversation context"}},
 	}
 	for _, section := range value.sections() {
-		if strings.TrimSpace(section.text()) == "" {
+		content := strings.ReplaceAll(strings.ReplaceAll(*section.value, "\r\n", "\n"), "\r", "\n")
+		if strings.TrimSpace(content) == "" {
 			evidence.Omissions = append(evidence.Omissions, document.SourceEvidenceOmissionV1{Kind: document.EvidenceOmissionField, Field: section.field, Reason: "no supported content provided"})
 			continue
 		}
 		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
-			Order: len(evidence.Units), HeadingPath: []string{document.ImageUnderstandingHeading, section.title}, Text: section.text(), Speaker: model,
+			Order: len(evidence.Units), HeadingPath: []string{document.ImageUnderstandingHeading, section.title}, Text: content, Speaker: model,
 			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone},
 		})
 	}

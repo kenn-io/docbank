@@ -92,10 +92,10 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 		require.NoError(t, err, mode)
 		require.Len(t, report.Results, 1, mode)
 		assert.Equal(t, node.CurrentVersionID, report.Results[0].Document.ContentVersionID)
-		assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / ")
 		require.NotEmpty(t, reranker.excerpts)
 		assert.Contains(t, reranker.excerpts[0], "Machine-generated image understanding; unverified; sender intent unknown / ")
 		if mode != "semantic" {
+			assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / ")
 			assert.Contains(t, report.Results[0].Excerpt, "Possible meaning (interpretation)")
 			assert.Contains(t, report.Results[0].Excerpt, "denial")
 		}

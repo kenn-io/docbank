@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json/v2"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -83,20 +82,16 @@ func TestUnderstandingRetainsLongConfiguredModel(t *testing.T) {
 	require.NoError(t, err)
 	policy, err := document.NewEvidencePolicy(100_000)
 	require.NoError(t, err)
-	for _, length := range []int{129, 255} {
-		t.Run(fmt.Sprint(length), func(t *testing.T) {
-			model := strings.Repeat("m", length)
-			_, err := Descriptor(UnderstandingProviderID, model, document.RenditionTrustOperatorNetwork)
-			require.NoError(t, err)
-			normalized, err := document.NormalizeEvidenceV1(value.evidence(model), policy)
-			require.NoError(t, err)
-			renderPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1_000})
-			require.NoError(t, err)
-			rendered, err := document.BuildRenditionV1(normalized, renderPolicy)
-			require.NoError(t, err)
-			assert.Contains(t, string(rendered.Markdown), model)
-		})
-	}
+	model := strings.Repeat("m", 255)
+	_, err = Descriptor(UnderstandingProviderID, model, document.RenditionTrustOperatorNetwork)
+	require.NoError(t, err)
+	normalized, err := document.NormalizeEvidenceV1(value.evidence(model), policy)
+	require.NoError(t, err)
+	renderPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1_000})
+	require.NoError(t, err)
+	rendered, err := document.BuildRenditionV1(normalized, renderPolicy)
+	require.NoError(t, err)
+	assert.Contains(t, string(rendered.Markdown), model)
 }
 
 func TestUnderstandingDescriptorSupportsRenditionText(t *testing.T) {

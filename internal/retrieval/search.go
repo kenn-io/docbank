@@ -488,7 +488,6 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 		}
 		truncated = truncated || resolution.Truncated
 		for _, item := range resolution.Candidates {
-			showExcerpt := false
 			if len(candidates) == query.VectorLimit {
 				truncated = true
 				break
@@ -517,13 +516,12 @@ func (searcher *Searcher) semantic(ctx context.Context, query Query) (_ []Candid
 					continue
 				}
 				item.Excerpt = input.excerpt
-				showExcerpt = input.showExcerpt
 				reference.TimeSpan = input.span
 			}
 			candidates = append(candidates, Candidate{Document: DocumentIdentity{VaultID: item.VaultID,
 				NodeID: item.NodeID, ContentVersionID: item.ContentVersionID}, Lane: LaneSemantic,
 				Rank: len(candidates) + 1, Score: item.Score, Path: item.Path, VectorSpaceID: item.VectorSpaceID,
-				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}, photoBlobHash: photoFusionBlob(query.Scope, item.BlobHash), showExcerpt: showExcerpt})
+				Excerpt: item.Excerpt, Evidence: []EvidenceReference{reference}, photoBlobHash: photoFusionBlob(query.Scope, item.BlobHash)})
 		}
 		if len(candidates) == query.VectorLimit || !resolution.Truncated {
 			break
@@ -614,9 +612,6 @@ func laneReport(requested, actual Mode, coverage Coverage,
 			result.LexicalRank = candidate.Rank
 		} else {
 			result.SemanticRank = candidate.Rank
-			if candidate.showExcerpt {
-				result.Excerpt = candidate.Excerpt
-			}
 		}
 		results[index] = result
 	}

@@ -92,17 +92,12 @@ func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
 		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
 		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Speaker: "model", Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone}}},
 	})
-	for _, limit := range []int{10, 300} {
-		t.Run(strconv.Itoa(limit), func(t *testing.T) {
-			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
-			require.NoError(t, err)
-			rendered, err := BuildRenditionV1(evidence, policy)
-			if err != nil {
-				return // A limit too small for the required labels may be rejected.
-			}
-			assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), limit)
-		})
-	}
+	// The labels fit, leaving too little room for all of the text.
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 295, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
+	require.NoError(t, err)
+	rendered, err := BuildRenditionV1(evidence, policy)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), 295)
 }
 
 func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) {

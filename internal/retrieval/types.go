@@ -83,7 +83,6 @@ func (source MediaSourceSelector) Identity() MediaSource {
 type Candidate struct {
 	// photoBlobHash groups copies before the shared fusion limit.
 	photoBlobHash string
-	showExcerpt   bool
 	Document      DocumentIdentity
 	Lane          Lane
 	Rank          int

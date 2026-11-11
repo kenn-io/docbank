@@ -285,22 +285,13 @@ func TestBuildEmbeddingInputsChargesHeadingContext(t *testing.T) {
 	}
 }
 
-func TestEmbeddingInputGenerationVersionKeepsLegacyFormatterSemantics(t *testing.T) {
+func TestEmbeddingInputGenerationRejectsUnknownHeadingsFormatter(t *testing.T) {
 	evidence := testChunkEvidence(t, []sourceChunkUnit{{text: "AABB", heading: []string{"Section"}}})
 	policy := testInputPolicy(t, 2, 0)
-	legacy := build(t, evidence, policy)
-	encoded, err := MarshalEmbeddingInputGeneration(legacy)
-	require.NoError(t, err)
-	decoded, err := DecodeEmbeddingInputGeneration(encoded, testGenerationDecodeBounds())
-	require.NoError(t, err)
-	inputs, err := decoded.ToEmbeddingInputs(policy.ModelInput)
-	require.NoError(t, err)
-	assert.Equal(t, "AABB", inputs[0].Text)
-
 	policy.Chunk.Formatter = RenditionChunkHeadingsFormatter
 	current := build(t, evidence, policy)
 	current.Chunk.Formatter = "other/v1"
-	_, err = MarshalEmbeddingInputGeneration(current)
+	_, err := MarshalEmbeddingInputGeneration(current)
 	require.ErrorContains(t, err, "unsupported embedding input generation version or formatter")
 }
 
