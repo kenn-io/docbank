@@ -185,7 +185,7 @@ func TestSelectedMediaSearchRequiresQueryConsent(t *testing.T) {
 
 func TestSelectedMediaSearchBoundsAuthenticatedMultibyteExcerpt(t *testing.T) {
 	t.Parallel()
-	text := strings.Repeat("观测星空🌌 ", 300)
+	text := "观测\x01星空\x02 " + strings.Repeat("观测星空🌌 ", 300)
 	f := newMediaQualificationFixture(t, mediaQualificationOptions{TranscriptA: text, ChunkTokens: 8192})
 	record := f.manifest.Records[0]
 	client := daemonconn.New(f.server.URL, f.manifest.APIKey)

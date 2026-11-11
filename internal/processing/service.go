@@ -1736,8 +1736,12 @@ func (service *Service) prepareSearch(
 		MediaEvidence: service.mediaEvidence}
 	var authorization document.EmbeddingAuthorization
 	if len(profile.portable.Embeddings) != 0 {
+		bindingMode := mode
 		selectedSemantic := request.MediaSources != nil && (mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid)
-		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, mode)
+		if selectedSemantic {
+			bindingMode = retrieval.ModeSemantic
+		}
+		binding, bindingErr := selectDocumentSearchBinding(profile.portable, request.BindingID, bindingMode)
 		if selectedSemantic && errors.Is(bindingErr, ErrSemanticUnavailable) {
 			mode = retrieval.ModeLexical
 		} else if errors.Is(bindingErr, store.ErrNotFound) && request.BindingID == "" && mode != retrieval.ModeSemantic {
@@ -1762,6 +1766,9 @@ func (service *Service) prepareSearch(
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
 		if request.MediaSources == nil {
 			return preparedSearch{}, ErrSemanticUnavailable
+		}
+		if request.BindingID != "" {
+			return preparedSearch{}, fmt.Errorf("embedding binding %q: %w", request.BindingID, store.ErrNotFound)
 		}
 		mode = retrieval.ModeLexical
 	}

@@ -69,6 +69,9 @@ type SearchMediaEvidence struct {
 
 const maxExplainedSearchExcerptRunes = 512
 
+// SearchExcerptRuneLimit bounds selected semantic evidence to 2048 UTF-8 bytes.
+const SearchExcerptRuneLimit = maxExplainedSearchExcerptRunes
+
 // currentRenditionChunkAuthoritySQL is the shared serving predicate for a
 // rendition-chunk embedding. Every caller supplies embedding_sets as es and
 // embedding_input_generations as eig.
@@ -312,7 +315,7 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 	result := make([]ExplainedLexicalCandidate, len(hits))
 	for index, hit := range hits {
 		result[index] = ExplainedLexicalCandidate{Node: hit.Node, Path: hit.Path,
-			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: BoundedSearchExcerpt(hit.Node.Name)}
+			Match: SearchMatchName, EvidenceKind: "node_name", Excerpt: boundedExplainedSearchExcerpt(hit.Node.Name)}
 	}
 	return result
 }
@@ -331,11 +334,11 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 			return Node{}, fmt.Errorf("decoding lexical evidence locator: %w", err)
 		}
 	}
-	candidate.Excerpt = BoundedSearchExcerpt(candidate.Excerpt)
+	candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
 	return node, nil
 }
 
-func BoundedSearchExcerpt(value string) string {
+func boundedExplainedSearchExcerpt(value string) string {
 	runes := []rune(value)
 	if len(runes) > maxExplainedSearchExcerptRunes {
 		match := max(slices.Index(runes, rune(1)), 0)
@@ -1137,7 +1140,7 @@ func searchExcerptByVersionTx(ctx context.Context, queryer interface {
 	if err != nil {
 		return "", err
 	}
-	return BoundedSearchExcerpt(excerpt), nil
+	return boundedExplainedSearchExcerpt(excerpt), nil
 }
 
 type semanticEligibilityKey struct {

@@ -154,13 +154,15 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	require.Equal(t, 102, report.Coverage.ScopedDocuments)
 	require.Equal(t, 101, report.Coverage.CompleteDocuments)
 	for _, mode := range []string{"semantic", "hybrid"} {
-		fallback, err := service.Search(t.Context(), SearchRequest{Query: "longer selected transcript", Mode: mode, Profile: "images",
-			Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{ids[100]}}, MediaSources: []retrieval.MediaSourceSelector{sources[100]}})
-		require.NoError(t, err)
-		require.Equal(t, retrieval.ModeLexical, fallback.ActualMode)
-		require.Contains(t, fallback.Degradations, retrieval.DegradationSemanticUnavailable)
-		require.Len(t, fallback.Results, 1)
-		require.Equal(t, selectedBuild, fallback.Results[0].Evidence[0].BuildID)
+		for _, binding := range []string{"", image.binding.Name} {
+			fallback, err := service.Search(t.Context(), SearchRequest{Query: "longer selected transcript", Mode: mode, Profile: "images",
+				BindingID: binding, Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{ids[100]}}, MediaSources: []retrieval.MediaSourceSelector{sources[100]}})
+			require.NoError(t, err)
+			require.Equal(t, retrieval.ModeLexical, fallback.ActualMode)
+			require.Contains(t, fallback.Degradations, retrieval.DegradationSemanticUnavailable)
+			require.Len(t, fallback.Results, 1)
+			require.Equal(t, selectedBuild, fallback.Results[0].Evidence[0].BuildID)
+		}
 	}
 	runLoomRenditionJob(t, service, pendingJob.JobID)
 	empty, err := service.Search(t.Context(), SearchRequest{Query: "absentphrase", Mode: "lexical", Profile: name,

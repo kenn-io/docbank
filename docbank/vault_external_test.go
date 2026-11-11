@@ -2945,6 +2945,9 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 			require.Equal(t, docbank.DocumentSearchLexical, report.ActualMode)
 			require.Contains(t, report.Degradations, "semantic_unavailable")
 			require.Empty(t, report.Results)
+			selected.BindingID = "missing"
+			_, err = vault.SearchDocuments(t.Context(), selected)
+			require.ErrorIs(t, err, docbank.ErrNotFound)
 		})
 	}
 	invalidMode := request
