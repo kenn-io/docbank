@@ -110,11 +110,17 @@ PostgreSQL mirrors these catalogs using its canonical schema fingerprint.
 
 The bounded worker starts with the daemon and wakes after catalog writes.
 It replaces obsolete recipes, removes projections without a current live note,
-and refreshes relative link paths after a node or ancestor moves. Publication
+and refreshes relative link paths after a node or ancestor moves. Each page
+selects at most 25 current-note or cached version identities before checking
+their ancestry and bounded cached links. Unchanged and trashed rows advance the
+scan cursor; only EOF completes a pass. Cleanup rechecks live ownership in its
+write transaction. An unchanged no-work pass settles until a catalog write.
+Publication
 checks the observed version, revision and canonical path in one transaction.
 Filename title fallback is computed from the live name. UTF-8 or NUL failures,
 oversize inputs and parser limits record `not_utf8`, `too_large` or `limit`
-without blocking other notes. Malformed YAML leaves readable body structure.
+without blocking other notes. Malformed or unclosed YAML leaves readable body
+structure and retains its bounded parser diagnostic alongside null frontmatter.
 Operational blob or database errors remain retryable.
 
 Restore rebuilds note structure from restored original blobs before publishing

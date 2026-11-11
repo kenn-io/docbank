@@ -123,6 +123,113 @@ func newTestBackfill(catalog *fakeBackfillCatalog, page int, drain bool) *Backfi
 	}
 }
 
+func (c *fakeBackfillCatalog) scan(_ context.Context, after string, limit int) (BackfillPage[string], error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.listed++
+	page := BackfillPage[string]{EOF: true}
+	selected := 0
+	for _, key := range c.keys {
+		if key <= after {
+			continue
+		}
+		page.EOF, page.Next = false, key
+		if !c.done[key] {
+			page.Targets = append(page.Targets, key)
+		}
+		selected++
+		if selected == limit {
+			break
+		}
+	}
+	return page, nil
+}
+
+func TestBackfillPageProgressPreservesControlRelistAndRetries(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a", "b", "c", "d")
+		catalog.done["a"], catalog.done["c"], catalog.failing["b"] = true, true, 1
+		worker := newTestBackfill(catalog, 1, true)
+		worker.List = nil
+		var cursors []string
+		worker.ListPage = func(ctx context.Context, after string, limit int) (BackfillPage[string], error) {
+			cursors = append(cursors, after)
+			return catalog.scan(ctx, after, limit)
+		}
+		controls, gated := 0, 0
+		worker.Control = func(context.Context) (store.LaneControl, error) {
+			controls++
+			if controls == 2 {
+				return store.LaneControl{}, errors.New("synthetic control failure")
+			}
+			return store.LaneControl{Concurrency: 1}, nil
+		}
+		worker.Mutate = func(_ context.Context, fn func() error) error { gated++; return fn() }
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		require.NoError(t, worker.Run(ctx))
+		require.Equal(t, 2, catalog.attempts["b"], "retry survives filtered pages through EOF")
+		require.Equal(t, 1, catalog.attempts["d"])
+		require.Equal(t, 3, gated)
+		require.Equal(t, []string{"", "a", "b", "c", "c"}, cursors[:5], "control failure relists the same selected page")
+	})
+}
+
+func TestBackfillRejectsAmbiguousListingsAndInvalidPageProgress(t *testing.T) {
+	t.Parallel()
+	worker := newTestBackfill(newFakeBackfillCatalog(), 2, true)
+	worker.ListPage = func(context.Context, string, int) (BackfillPage[string], error) {
+		return BackfillPage[string]{EOF: true}, nil
+	}
+	require.Error(t, worker.Run(t.Context()), "two listing owners are ambiguous")
+	worker.List = nil
+	for _, page := range []BackfillPage[string]{
+		{}, {Next: "b"}, {Next: "a"},
+		{EOF: true, Next: "c"}, {EOF: true, Targets: []string{"c"}},
+		{Next: "e", Targets: []string{"c", "d", "e"}},
+		{Next: "e", Targets: []string{"d", "c"}},
+		{Next: "d", Targets: []string{"e"}}, {Next: "d", Targets: []string{"b"}},
+	} {
+		worker.ListPage = func(context.Context, string, int) (BackfillPage[string], error) { return page, nil }
+		_, err := worker.scan(t.Context(), "b")
+		require.ErrorIs(t, err, errBackfillPage)
+	}
+}
+
+func TestBackfillPagedNoActionPassSettlesOnlyAtUnchangedRevision(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		catalog := newFakeBackfillCatalog("a", "b")
+		catalog.done["a"], catalog.done["b"] = true, true
+		var revision atomic.Uint64
+		worker := newTestBackfill(catalog, 1, false)
+		worker.List, worker.WriteRevision = nil, revision.Load
+		worker.ListPage = func(ctx context.Context, after string, limit int) (BackfillPage[string], error) {
+			page, err := catalog.scan(ctx, after, limit)
+			if after == "a" && revision.Load() == 0 {
+				catalog.mu.Lock()
+				catalog.done["a"] = false // A write behind the scan cursor.
+				catalog.mu.Unlock()
+				revision.Add(1)
+			}
+			return page, err
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- worker.Run(ctx) }()
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		listed := catalog.listed
+		require.Equal(t, 1, catalog.attempts["a"], "a write during a filtered pass forces another full pass")
+		time.Sleep(3 * backfillMaxIdleDelay)
+		synctest.Wait()
+		require.Equal(t, listed, catalog.listed, "unchanged multi-page scans settle at EOF")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
+}
+
 func TestBackfillSettlesUntilWriteRevisionChanges(t *testing.T) {
 	t.Parallel()
 	t.Run("revision", func(t *testing.T) {

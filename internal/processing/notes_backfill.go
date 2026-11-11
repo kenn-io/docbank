@@ -16,8 +16,8 @@ import (
 // NoteCatalog is the existing store boundary used by the original-byte
 // projection worker. Deterministic bad content is retained as a terminal state.
 type NoteCatalog interface {
-	MissingNoteTargetsAfter(context.Context, string, string, int) ([]store.NoteTarget, error)
-	PruneNoteParses(context.Context, int) (int64, error)
+	ScanNoteTargetsAfter(context.Context, string, string, int) (store.NotePage, error)
+	PruneNoteParse(context.Context, store.NoteTarget) error
 	PublishNoteParse(context.Context, store.NoteTarget, string, string, notemarkdown.Note) error
 }
 
@@ -30,18 +30,9 @@ func NewNoteBackfill(catalog NoteCatalog, blobs *blob.Store,
 	return &Backfill[store.NoteTarget]{
 		Name: "notes", Page: 25, IdleDelay: time.Second, Mutate: mutate, Logger: logger,
 		Key: func(target store.NoteTarget) string { return target.VersionID },
-		List: func(ctx context.Context, after string, limit int) ([]store.NoteTarget, error) {
-			cleanup := func() error { _, err := catalog.PruneNoteParses(ctx, 100); return err }
-			var err error
-			if mutate == nil {
-				err = cleanup()
-			} else {
-				err = mutate(ctx, cleanup)
-			}
-			if err != nil {
-				return nil, err
-			}
-			return catalog.MissingNoteTargetsAfter(ctx, notemarkdown.Recipe, after, limit)
+		ListPage: func(ctx context.Context, after string, limit int) (BackfillPage[store.NoteTarget], error) {
+			page, err := catalog.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, after, limit)
+			return BackfillPage[store.NoteTarget]{Targets: page.Targets, Next: page.Next, EOF: page.EOF}, err
 		},
 		Process: func(ctx context.Context, target store.NoteTarget) error {
 			return processNoteTarget(ctx, catalog, blobs, target)
@@ -52,6 +43,9 @@ func NewNoteBackfill(catalog NoteCatalog, blobs *blob.Store,
 func processNoteTarget(ctx context.Context, catalog NoteCatalog, blobs *blob.Store, target store.NoteTarget) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if target.Prune {
+		return catalog.PruneNoteParse(ctx, target)
 	}
 	if target.Size > store.MaxNoteBytes {
 		return catalog.PublishNoteParse(ctx, target, notemarkdown.Recipe, "too_large", notemarkdown.Note{})
@@ -102,15 +96,6 @@ func parseNoteOriginal(ctx context.Context, src []byte) (notemarkdown.Note, stri
 // RebuildNotes drains original-byte projections before a restored vault is
 // published. Bad note content is a completed classification, not restore loss.
 func RebuildNotes(ctx context.Context, catalog NoteCatalog, blobs *blob.Store) error {
-	for {
-		removed, err := catalog.PruneNoteParses(ctx, 100)
-		if err != nil {
-			return err
-		}
-		if removed == 0 {
-			break
-		}
-	}
 	worker := NewNoteBackfill(catalog, blobs, nil, nil)
 	worker.DrainOnce = true
 	return worker.Run(ctx)

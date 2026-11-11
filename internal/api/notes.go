@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/notemarkdown"
@@ -24,8 +27,15 @@ type NoteSummary struct {
 
 type NoteByPath struct {
 	NoteSummary
-	Headings    int            `json:"headings"`
-	Frontmatter map[string]any `json:"frontmatter"`
+	Headings         int                       `json:"headings"`
+	Frontmatter      map[string]jsontext.Value `json:"frontmatter,format:emitnull" nullable:"true"`
+	FrontmatterError string                    `json:"frontmatter_error,omitempty" enum:"invalid_frontmatter,unclosed_frontmatter" doc:"Bounded parser diagnostic when frontmatter was discarded; the note body remains readable."`
+}
+
+func (NoteByPath) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	// Raw members carry arbitrary JSON, rather than base64-encoded bytes.
+	schema.Properties["frontmatter"].AdditionalProperties = &huma.Schema{}
+	return schema
 }
 
 type NoteWatchStatus struct {
@@ -50,6 +60,10 @@ func registerNoteRoutes(api huma.API, d Deps) {
 		OperationID: "getNoteByPath", Method: http.MethodGet, Path: "/api/v1/notes/by-path",
 		Summary: "Read a current Markdown note summary and frontmatter",
 	}, func(ctx context.Context, in *byPathInput) (*byPathOutput, error) {
+		if !strings.HasPrefix(in.Path, "/") {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("path %q must be absolute (start with /)", in.Path))
+		}
 		view, err := d.Store.NoteByPath(ctx, in.Path, notemarkdown.Recipe)
 		if err != nil {
 			return nil, FromStoreError(err)
@@ -58,13 +72,17 @@ func registerNoteRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusConflict, "note_pending", "Note structure is still being derived")
 		}
 		if view.State != "ok" {
-			return nil, NewError(http.StatusUnprocessableEntity, "note_"+view.State, "Note structure is unavailable for these original bytes")
+			message := "Note structure is unavailable for these original bytes"
+			if view.State == "not_utf8" {
+				message = "Note original contains invalid UTF-8 or NUL bytes"
+			}
+			return nil, NewError(http.StatusUnprocessableEntity, "note_"+view.State, message)
 		}
 		n := view.Summary
 		return &byPathOutput{Body: NoteByPath{NoteSummary: NoteSummary{
 			Path: n.Path, NodeID: n.NodeID, ContentVersionID: n.ContentVersionID, SHA256: n.SHA256, Size: n.Size,
 			ModifiedAt: n.ModifiedAt, Title: n.Title, Tags: n.Tags, SourceState: n.SourceState,
-		}, Headings: view.HeadingCount, Frontmatter: view.Frontmatter}}, nil
+		}, Headings: view.HeadingCount, Frontmatter: view.Frontmatter, FrontmatterError: view.FrontmatterError}}, nil
 	})
 	type statusOutput struct{ Body NotesStatus }
 	huma.Register(api, huma.Operation{

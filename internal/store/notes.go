@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -22,6 +23,13 @@ type NoteTarget struct {
 	NodeID, Revision                          int64
 	VersionID, BlobHash, Path, Name, MIMEType string
 	Size                                      int64
+	Prune                                     bool
+}
+
+type NotePage struct {
+	Targets []NoteTarget
+	Next    string
+	EOF     bool
 }
 
 // NoteWatch is effective runtime configuration, never another watch authority.
@@ -38,10 +46,11 @@ type NoteSummary struct {
 }
 
 type NoteView struct {
-	Summary      NoteSummary
-	State        string
-	HeadingCount int
-	Frontmatter  map[string]any
+	Summary          NoteSummary
+	State            string
+	HeadingCount     int
+	Frontmatter      map[string]jsontext.Value
+	FrontmatterError string
 }
 
 type NoteWatchStatus struct {
@@ -69,18 +78,23 @@ func IsNoteCandidate(n Node) bool {
 
 // NoteCollection returns the nearest containing watch destination, or root.
 // A slash boundary prevents /work from also matching /workshop.
-func NoteCollection(notePath string, watches []NoteWatch) NoteWatch {
+func NoteCollection(notePath string, watches []NoteWatch) (NoteWatch, error) {
 	best := NoteWatch{Destination: "/"}
+	bestLength := 1
 	for _, watch := range watches {
-		dest := watch.Destination
+		dest, err := canonicalBatchMovePath(watch.Destination)
+		if err != nil {
+			return NoteWatch{}, fmt.Errorf("note collection %q: %w", watch.Name, err)
+		}
 		if dest != "/" && !strings.HasPrefix(notePath, dest+"/") {
 			continue
 		}
-		if len(dest) > len(best.Destination) || (len(dest) == len(best.Destination) && (best.Name == "" || watch.Name < best.Name)) {
+		if len(dest) > bestLength || (len(dest) == bestLength && (best.Name == "" || watch.Name < best.Name)) {
 			best = watch
+			bestLength = len(dest)
 		}
 	}
-	return best
+	return best, nil
 }
 
 // Traverse live ancestry, so a file below a trashed directory is ineligible.
@@ -94,71 +108,94 @@ const noteTreeCTE = `WITH RECURSIVE note_tree(id,path) AS (
 const noteCandidateSQL = `n.kind='file' AND (cv.mime_type='text/markdown'
  OR lower(n.name) LIKE '%.md' OR lower(n.name) LIKE '%.markdown')`
 
-// MissingNoteTargetsAfter lists a bounded batch of missing/current-recipe or
-// context-stale projections. Cached relative links are compared with the live
-// path, rather than relying on wall clocks or duplicating path authority.
-func (s *Store) MissingNoteTargetsAfter(ctx context.Context, recipe, after string, limit int) ([]NoteTarget, error) {
-	if recipe == "" || len(recipe) > 256 || limit < 1 || limit > 100 {
-		return nil, errors.New("invalid note target query")
+// ScanNoteTargetsAfter selects one bounded page before inspecting ancestry or
+// cached links. Existing parses also participate so obsolete rows are cleaned
+// in the same ordered pass. Next advances even when every row is unchanged.
+func (s *Store) ScanNoteTargetsAfter(ctx context.Context, recipe, after string, limit int) (NotePage, error) {
+	if recipe == "" || len(recipe) > 256 || !utf8.ValidString(recipe) || limit < 1 || limit > 100 || (after != "" && validateUUIDv4(after) != nil) {
+		return NotePage{}, errors.New("invalid note target query")
 	}
-	var targets []NoteTarget
+	var page NotePage
 	err := s.withReadTx(ctx, func(tx *sql.Tx) error {
-		cursor := after
-		for len(targets) < limit {
-			var page []NoteTarget
-			cached := make(map[string]bool)
-			rows, err := tx.QueryContext(ctx, noteTreeCTE+`
- SELECT n.id,n.revision,cv.version_id,cv.blob_hash,t.path,n.name,COALESCE(cv.mime_type,''),cv.size,
-        p.version_id IS NOT NULL AND p.recipe=$1
- FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
- LEFT JOIN note_parses p ON p.version_id=cv.version_id
- WHERE `+noteCandidateSQL+` AND cv.version_id>$2
- AND (p.version_id IS NULL OR p.recipe<>$1 OR EXISTS(SELECT 1 FROM note_links l
-      WHERE l.version_id=cv.version_id AND l.target_path IS NOT NULL))
- ORDER BY cv.version_id LIMIT $3`, recipe, cursor, limit)
+		rows, err := tx.QueryContext(ctx, `WITH candidates AS (
+ SELECT cv.version_id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id
+ WHERE cv.version_id>$1 AND n.trashed_at IS NULL AND `+noteCandidateSQL+`
+ ORDER BY cv.version_id LIMIT $2
+ ), cached AS (
+ SELECT version_id FROM note_parses WHERE version_id>$1 ORDER BY version_id LIMIT $2
+ ), selected AS (
+ SELECT version_id FROM candidates UNION SELECT version_id FROM cached
+ ORDER BY version_id LIMIT $2
+ ) SELECT cv.version_id,cv.node_id,p.recipe FROM selected s
+ JOIN content_versions cv ON cv.version_id=s.version_id
+ LEFT JOIN note_parses p ON p.version_id=cv.version_id ORDER BY cv.version_id`, after, limit)
+		if err != nil {
+			return err
+		}
+		var selected []NoteTarget
+		var recipes []*string
+		var ids []int64
+		for rows.Next() {
+			var target NoteTarget
+			var cachedRecipe *string
+			if err := rows.Scan(&target.VersionID, &target.NodeID, &cachedRecipe); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			selected = append(selected, target)
+			recipes = append(recipes, cachedRecipe)
+			ids = append(ids, target.NodeID)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		if len(selected) == 0 {
+			page.EOF = true
+			return nil
+		}
+		page.Next = selected[len(selected)-1].VersionID
+		paths, err := s.pathsOf(ctx, tx, ids)
+		if err != nil {
+			return err
+		}
+		for i, target := range selected {
+			n, err := nodeByIDTx(ctx, tx, target.NodeID)
 			if err != nil {
 				return err
 			}
-			for rows.Next() {
-				var target NoteTarget
-				var current bool
-				if err := rows.Scan(&target.NodeID, &target.Revision, &target.VersionID, &target.BlobHash, &target.Path, &target.Name, &target.MIMEType, &target.Size, &current); err != nil {
-					_ = rows.Close()
+			live := n.CurrentVersionID == target.VersionID && IsNoteCandidate(n)
+			if live {
+				// pathsOf includes trashed ancestry; the owning live lookup
+				// explicitly excludes it without walking the complete tree.
+				_, err := s.nodeByPath(ctx, tx, paths[i])
+				if err != nil && !errors.Is(err, ErrNotFound) {
 					return err
 				}
-				page = append(page, target)
-				cached[target.VersionID] = current
+				live = err == nil
 			}
-			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-				return err
-			}
-			if len(page) == 0 {
-				return nil
-			}
-			for _, target := range page {
-				stale := !cached[target.VersionID]
-				if !stale {
-					var err error
-					stale, err = noteLinkContextChanged(ctx, tx, target)
-					if err != nil {
-						return err
-					}
+			if !live {
+				if recipes[i] != nil {
+					target.Prune = true
+					page.Targets = append(page.Targets, target)
 				}
-				if stale {
-					targets = append(targets, target)
-				}
-				if len(targets) == limit {
-					return nil
+				continue
+			}
+			target.Path, target.Name, target.MIMEType = paths[i], n.Name, n.MimeType
+			target.Revision, target.BlobHash, target.Size = n.Revision, n.BlobHash, n.Size
+			stale := recipes[i] == nil || *recipes[i] != recipe
+			if !stale {
+				stale, err = noteLinkContextChanged(ctx, tx, target)
+				if err != nil {
+					return err
 				}
 			}
-			cursor = page[len(page)-1].VersionID
-			if len(page) < limit {
-				return nil
+			if stale {
+				page.Targets = append(page.Targets, target)
 			}
 		}
 		return nil
 	})
-	return targets, err
+	return page, err
 }
 
 func noteLinkContextChanged(ctx context.Context, tx *sql.Tx, target NoteTarget) (bool, error) {
@@ -180,32 +217,29 @@ func noteLinkContextChanged(ctx context.Context, tx *sql.Tx, target NoteTarget) 
 	return false, rows.Err()
 }
 
-// PruneNoteParses removes one bounded batch of projections that have no live
-// current Markdown owner. Cascades remove all four dependent catalogs.
-func (s *Store) PruneNoteParses(ctx context.Context, limit int) (int64, error) {
-	if limit < 1 || limit > 100 {
-		return 0, errors.New("invalid note cleanup limit")
-	}
-	var removed int64
-	var obsolete bool
-	err := s.db.QueryRowContext(ctx, noteTreeCTE+`SELECT EXISTS(SELECT 1 FROM note_parses p WHERE NOT EXISTS(
- SELECT 1 FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
- WHERE cv.version_id=p.version_id AND `+noteCandidateSQL+`))`).Scan(&obsolete)
-	if err != nil || !obsolete {
-		return 0, err
-	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, noteTreeCTE+`DELETE FROM note_parses WHERE version_id IN (
- SELECT p.version_id FROM note_parses p WHERE NOT EXISTS(
- SELECT 1 FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
- WHERE cv.version_id=p.version_id AND `+noteCandidateSQL+`) ORDER BY p.version_id LIMIT $1)`, limit)
-		if err != nil {
+// PruneNoteParse revalidates ownership inside the deletion transaction. A
+// restore or rename after discovery must not delete a newly valid projection.
+func (s *Store) PruneNoteParse(ctx context.Context, target NoteTarget) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		n, err := nodeByIDTx(ctx, tx, target.NodeID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		removed, err = result.RowsAffected()
+		if err == nil && n.CurrentVersionID == target.VersionID && IsNoteCandidate(n) {
+			canonical, err := pathOf(ctx, tx, n.ID)
+			if err != nil {
+				return err
+			}
+			if _, err = s.nodeByPath(ctx, tx, canonical); err == nil {
+				return nil
+			} else if !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM note_parses WHERE version_id=$1
+ AND EXISTS(SELECT 1 FROM content_versions WHERE version_id=$1 AND node_id=$2)`, target.VersionID, target.NodeID)
 		return err
 	})
-	return removed, err
 }
 
 // PublishNoteParse stores only parser structure. Stale targets do no work;
@@ -232,6 +266,11 @@ func (s *Store) PublishNoteParse(ctx context.Context, target NoteTarget, recipe,
 		}
 		if view.Path != target.Path || view.Path == "" {
 			return nil
+		}
+		if _, err := s.nodeByPath(ctx, tx, view.Path); errors.Is(err, ErrNotFound) {
+			return nil
+		} else if err != nil {
+			return err
 		}
 		// Equal-recipe retries must preserve the immutable parse unless a
 		// relative destination changed with the node or an ancestor move.
@@ -316,8 +355,20 @@ func validateNoteParse(target NoteTarget, recipe, state string, note notemarkdow
 			text := string(encoded)
 			raw = &text
 		} else {
-			text := "invalid_frontmatter"
-			diagnostic = &text
+			// Parser diagnostics are bounded codes, never authored YAML text.
+			if len(note.Diagnostics) != 1 {
+				return invalid()
+			}
+			d := note.Diagnostics[0]
+			if d.Span.Start < 0 || d.Span.End < d.Span.Start || int64(d.Span.End) > target.Size {
+				return invalid()
+			}
+			switch d.Code {
+			case "invalid_frontmatter", "unclosed_frontmatter":
+				diagnostic = &d.Code
+			default:
+				return invalid()
+			}
 		}
 	}
 	return raw, diagnostic, nil
@@ -410,8 +461,8 @@ func (s *Store) NoteByPath(ctx context.Context, notePath, recipe string) (NoteVi
 		view.State = "pending"
 		var raw *string
 		var title string
-		err = tx.QueryRowContext(ctx, `SELECT state,title,frontmatter_json,(SELECT count(*) FROM note_headings WHERE version_id=$1)
- FROM note_parses WHERE version_id=$1 AND recipe=$2`, n.CurrentVersionID, recipe).Scan(&view.State, &title, &raw, &view.HeadingCount)
+		err = tx.QueryRowContext(ctx, `SELECT state,title,frontmatter_json,COALESCE(frontmatter_error,''),(SELECT count(*) FROM note_headings WHERE version_id=$1)
+ FROM note_parses WHERE version_id=$1 AND recipe=$2`, n.CurrentVersionID, recipe).Scan(&view.State, &title, &raw, &view.FrontmatterError, &view.HeadingCount)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -464,7 +515,10 @@ func (s *Store) NotesStatus(ctx context.Context, recipe string, watches []NoteWa
 		if err := rows.Scan(&notePath, &state, &at); err != nil {
 			return err
 		}
-		watch := NoteCollection(notePath, watches)
+		watch, err := NoteCollection(notePath, watches)
+		if err != nil {
+			return err
+		}
 		index := positions[watch.Name+"\x00"+watch.Destination]
 		item := &items[index]
 		switch state {

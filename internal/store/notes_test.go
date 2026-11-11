@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json/jsontext"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -30,9 +31,40 @@ func publishNoteFixture(t *testing.T, s *Store, target NoteTarget, src, recipe s
 
 func noteTargets(t *testing.T, s *Store, recipe string) []NoteTarget {
 	t.Helper()
-	targets, err := s.MissingNoteTargetsAfter(t.Context(), recipe, "", 100)
-	require.NoError(t, err)
-	return targets
+	var targets []NoteTarget
+	for cursor := ""; ; {
+		page, err := s.ScanNoteTargetsAfter(t.Context(), recipe, cursor, 100)
+		require.NoError(t, err)
+		for _, target := range page.Targets {
+			if !target.Prune {
+				targets = append(targets, target)
+			}
+		}
+		if page.EOF {
+			return targets
+		}
+		require.Greater(t, page.Next, cursor)
+		cursor = page.Next
+	}
+}
+
+func pruneNoteFixtures(t *testing.T, s *Store) int {
+	t.Helper()
+	removed := 0
+	for cursor := ""; ; {
+		page, err := s.ScanNoteTargetsAfter(t.Context(), notemarkdown.Recipe, cursor, 100)
+		require.NoError(t, err)
+		for _, target := range page.Targets {
+			if target.Prune {
+				require.NoError(t, s.PruneNoteParse(t.Context(), target))
+				removed++
+			}
+		}
+		if page.EOF {
+			return removed
+		}
+		cursor = page.Next
+	}
 }
 
 func noteCatalogCounts(t *testing.T, s *Store, version string) []int {
@@ -81,8 +113,7 @@ func checkNoteLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
 	_, version, err := s.ReplaceContent(ctx, n.ID, UnconditionalRev, fmt.Sprintf("%x", sha256.Sum256([]byte(replacement))), int64(len(replacement)), "text/markdown")
 	require.NoError(t, err)
 	// A late publication for the prior version must not recreate its rows.
-	removed, err := s.PruneNoteParses(ctx, 100)
-	require.NoError(t, err)
+	removed := pruneNoteFixtures(t, s)
 	require.EqualValues(t, 1, removed)
 	publishNoteFixture(t, s, targets[0], src, notemarkdown.Recipe)
 	require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
@@ -94,8 +125,7 @@ func checkNoteLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
 	require.NoError(t, err)
 	_, err = s.NoteByPath(ctx, "/drafts/Design.MARKDOWN", notemarkdown.Recipe)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.PruneNoteParses(ctx, 100)
-	require.NoError(t, err)
+	pruneNoteFixtures(t, s)
 	require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, version.ID))
 	_, _, err = s.Restore(ctx, dir.ID, UnconditionalRev)
 	require.NoError(t, err)
@@ -134,8 +164,7 @@ func checkNoteMoveAndPresence(t *testing.T, newStore func(*testing.T) *Store) {
 	// A Markdown suffix may disappear without changing the content version.
 	_, _, err = s.Move(ctx, n.ID, dir.ID, "renamed.txt", UnconditionalRev)
 	require.NoError(t, err)
-	_, err = s.PruneNoteParses(ctx, 100)
-	require.NoError(t, err)
+	pruneNoteFixtures(t, s)
 	require.Empty(t, noteTargets(t, s, notemarkdown.Recipe))
 	require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
 	_, _, err = s.Move(ctx, n.ID, dir.ID, "renamed.md", UnconditionalRev)
@@ -196,8 +225,7 @@ func checkNoteFailureAndValidation(t *testing.T, newStore func(*testing.T) *Stor
 	require.Error(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "ok", notemarkdown.Note{Lines: 1}))
 	require.Error(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "limit", notemarkdown.Note{Title: "partial"}))
 	revision := s.WriteRevision()
-	_, err = s.PruneNoteParses(ctx, 100)
-	require.NoError(t, err)
+	pruneNoteFixtures(t, s)
 	require.Equal(t, revision, s.WriteRevision())
 }
 
@@ -220,16 +248,16 @@ func checkNoteFiveThousand(t *testing.T, newStore func(*testing.T) *Store) {
 	cursor := ""
 	published := 0
 	for {
-		targets, err := s.MissingNoteTargetsAfter(ctx, notemarkdown.Recipe, cursor, 100)
+		page, err := s.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, cursor, 100)
 		require.NoError(t, err)
-		if len(targets) == 0 {
+		if page.EOF {
 			break
 		}
-		for _, target := range targets {
+		for _, target := range page.Targets {
 			publishNoteFixture(t, s, target, src, notemarkdown.Recipe)
 			published++
 		}
-		cursor = targets[len(targets)-1].VersionID
+		cursor = page.Next
 	}
 	require.Equal(t, 5000, published)
 	status, err := s.NotesStatus(ctx, notemarkdown.Recipe, nil)
@@ -255,10 +283,142 @@ func TestNoteEligibilityAndCollection(t *testing.T) {
 	trash := "2026-01-01T00:00:00Z"
 	require.False(t, IsNoteCandidate(Node{Name: "a.md", Kind: "file", TrashedAt: &trash}))
 	watches := []NoteWatch{{"outer", "/work"}, {"inner", "/work/deep"}, {"root", "/"}}
-	require.Equal(t, watches[1], NoteCollection("/work/deep/n.md", watches))
-	require.Equal(t, watches[0], NoteCollection("/work/n.md", watches))
-	require.Equal(t, watches[2], NoteCollection("/workshop/n.md", watches))
-	require.Equal(t, NoteWatch{Destination: "/"}, NoteCollection("/n.md", nil))
+	for _, test := range []struct {
+		path    string
+		watches []NoteWatch
+		want    NoteWatch
+	}{
+		{"/work/deep/n.md", watches, watches[1]},
+		{"/work/n.md", watches, watches[0]},
+		{"/workshop/n.md", watches, watches[2]},
+		{"/n.md", nil, NoteWatch{Destination: "/"}},
+	} {
+		got, err := NoteCollection(test.path, test.watches)
+		require.NoError(t, err)
+		require.Equal(t, test.want, got)
+	}
+}
+
+func checkNoteAuthoredValuesAndCollections(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	ctx := t.Context()
+	dir, err := s.Mkdir(ctx, s.RootID(), "work")
+	require.NoError(t, err)
+	deep, err := s.Mkdir(ctx, dir.ID, "café")
+	require.NoError(t, err)
+	const numbers = "---\nlarge: 9007199254740993\nsigned: -9223372036854775808\nunsigned: 18446744073709551615\nnested: {values: [9007199254740993, 18446744073709551615]}\n---\n# Readable\n"
+	for i, test := range []struct {
+		src, diagnostic string
+	}{
+		{numbers, ""},
+		{"---\ntitle: [broken\n---\n# Readable\n", "invalid_frontmatter"},
+		{"---\n# Readable\n", "unclosed_frontmatter"},
+		{"# Readable\n", ""},
+		{"---\n---\n# Readable\n", ""},
+	} {
+		name := fmt.Sprintf("note-%d.md", i)
+		n := createNoteFixture(t, s, deep.ID, name, test.src, "text/markdown")
+		targets := noteTargets(t, s, notemarkdown.Recipe)
+		require.Len(t, targets, 1)
+		publishNoteFixture(t, s, targets[0], test.src, notemarkdown.Recipe)
+		view, err := s.NoteByPath(ctx, "/work/café/"+name, notemarkdown.Recipe)
+		require.NoError(t, err)
+		require.Equal(t, "ok", view.State)
+		require.Equal(t, "Readable", view.Summary.Title)
+		require.Equal(t, test.diagnostic, view.FrontmatterError)
+		var stored *string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT frontmatter_error FROM note_parses WHERE version_id=$1`, n.CurrentVersionID).Scan(&stored))
+		if test.diagnostic != "" {
+			require.Equal(t, &test.diagnostic, stored)
+			require.Nil(t, view.Frontmatter)
+		} else {
+			require.Nil(t, stored)
+		}
+		if i == 0 {
+			require.Equal(t, jsontext.Value(`9007199254740993`), view.Frontmatter["large"])
+			require.Equal(t, jsontext.Value(`-9223372036854775808`), view.Frontmatter["signed"])
+			require.Equal(t, jsontext.Value(`18446744073709551615`), view.Frontmatter["unsigned"])
+			require.Equal(t, jsontext.Value(`{"values":[9007199254740993,18446744073709551615]}`), view.Frontmatter["nested"])
+		}
+		if i == 3 {
+			require.Nil(t, view.Frontmatter)
+		}
+		if i == 4 {
+			require.NotNil(t, view.Frontmatter)
+			require.Empty(t, view.Frontmatter)
+		}
+	}
+	createNoteFixture(t, s, dir.ID, "outer.md", "body", "text/markdown")
+	createNoteFixture(t, s, s.RootID(), "root.md", "body", "text/markdown")
+	watches := []NoteWatch{{"outer", "/work/"}, {"inner", "//work//cafe\u0301///"}, {"root", "//"}}
+	status, err := s.NotesStatus(ctx, notemarkdown.Recipe, watches)
+	require.NoError(t, err)
+	require.Equal(t, 1, status[0].Pending)
+	require.Equal(t, 5, status[1].Parsed)
+	require.Equal(t, 1, status[2].Pending)
+	require.Zero(t, status[3].Parsed+status[3].Pending+status[3].Failed)
+}
+
+func checkNoteBoundedPagesAndPrune(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	t.Parallel()
+	s := newStore(t)
+	ctx := t.Context()
+	const src = "# Linked\n[Next](next.md)\n"
+	for i := range 5 {
+		dir, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("dir-%d", i))
+		require.NoError(t, err)
+		createNoteFixture(t, s, dir.ID, "note.md", src, "text/markdown")
+	}
+	targets := noteTargets(t, s, notemarkdown.Recipe)
+	require.Len(t, targets, 5)
+	for _, target := range targets[:4] {
+		publishNoteFixture(t, s, target, src, notemarkdown.Recipe)
+	}
+	var parents []int64
+	for _, target := range targets[2:4] {
+		n, err := s.NodeByID(ctx, target.NodeID)
+		require.NoError(t, err)
+		parents = append(parents, *n.ParentID)
+		_, _, err = s.Trash(ctx, *n.ParentID, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	cursor := ""
+	var prunes []NoteTarget
+	for i := range 5 {
+		page, err := s.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, cursor, 1)
+		require.NoError(t, err)
+		require.False(t, page.EOF)
+		require.Equal(t, targets[i].VersionID, page.Next)
+		if i < 2 {
+			require.Empty(t, page.Targets, "unchanged linked rows consume one bounded page")
+		} else {
+			require.Len(t, page.Targets, 1)
+			if i < 4 {
+				require.True(t, page.Targets[0].Prune, "trashed ancestry cannot be derived")
+				prunes = append(prunes, page.Targets[0])
+			} else {
+				require.False(t, page.Targets[0].Prune)
+				publishNoteFixture(t, s, page.Targets[0], src, notemarkdown.Recipe)
+			}
+		}
+		cursor = page.Next
+	}
+	page, err := s.ScanNoteTargetsAfter(ctx, notemarkdown.Recipe, cursor, 1)
+	require.NoError(t, err)
+	require.True(t, page.EOF)
+	require.Empty(t, page.Next)
+	_, _, err = s.Restore(ctx, parents[0], UnconditionalRev)
+	require.NoError(t, err)
+	require.NoError(t, s.PruneNoteParse(ctx, prunes[0]))
+	require.Equal(t, []int{1, 0, 1, 1, 0}, noteCatalogCounts(t, s, prunes[0].VersionID), "stale cleanup cannot delete restored ownership")
+	require.NoError(t, s.PruneNoteParse(ctx, prunes[1]))
+	// A stale derivation after ancestor trash must not recreate pruned rows.
+	publishNoteFixture(t, s, targets[3], src, notemarkdown.Recipe)
+	require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, prunes[1].VersionID))
+	require.Empty(t, noteTargets(t, s, notemarkdown.Recipe))
 }
 
 func TestNoteLinkProjectionKeepsLiteralNamesAndExternalURIs(t *testing.T) {
@@ -348,11 +508,21 @@ func FuzzNoteCollectionSlashBoundary(f *testing.F) {
 	f.Add("work", "note.md")
 	f.Add("資料", "A:notes.md")
 	f.Fuzz(func(t *testing.T, folder, name string) {
-		if folder == "" || strings.ContainsAny(folder+name, "/\x00") {
+		var err error
+		folder, err = NormalizeName(folder)
+		if err != nil {
+			t.Skip()
+		}
+		name, err = NormalizeName(name)
+		if err != nil {
 			t.Skip()
 		}
 		watch := NoteWatch{"watch", "/" + folder}
-		require.Equal(t, watch, NoteCollection("/"+folder+"/"+name, []NoteWatch{watch}))
-		require.Equal(t, NoteWatch{Destination: "/"}, NoteCollection("/"+folder+"-sibling/"+name, []NoteWatch{watch}))
+		got, err := NoteCollection("/"+folder+"/"+name, []NoteWatch{watch})
+		require.NoError(t, err)
+		require.Equal(t, watch, got)
+		got, err = NoteCollection("/"+folder+"-sibling/"+name, []NoteWatch{watch})
+		require.NoError(t, err)
+		require.Equal(t, NoteWatch{Destination: "/"}, got)
 	})
 }

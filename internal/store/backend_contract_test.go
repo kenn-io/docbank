@@ -26,6 +26,8 @@ var backendSuites = []backendSuite{
 		{"NoteLifecycle", func(t *testing.T) { checkNoteLifecycle(t, newTestStore) }, func(t *testing.T) { checkNoteLifecycle(t, newPostgresQueryStore) }},
 		{"NoteMoveAndPresence", func(t *testing.T) { checkNoteMoveAndPresence(t, newTestStore) }, func(t *testing.T) { checkNoteMoveAndPresence(t, newPostgresQueryStore) }},
 		{"NoteFailureAndValidation", func(t *testing.T) { checkNoteFailureAndValidation(t, newTestStore) }, func(t *testing.T) { checkNoteFailureAndValidation(t, newPostgresQueryStore) }},
+		{"NoteAuthoredValuesAndCollections", func(t *testing.T) { checkNoteAuthoredValuesAndCollections(t, newTestStore) }, func(t *testing.T) { checkNoteAuthoredValuesAndCollections(t, newPostgresQueryStore) }},
+		{"NoteBoundedPagesAndPrune", func(t *testing.T) { checkNoteBoundedPagesAndPrune(t, newTestStore) }, func(t *testing.T) { checkNoteBoundedPagesAndPrune(t, newPostgresQueryStore) }},
 		{"NoteFiveThousand", func(t *testing.T) { checkNoteFiveThousand(t, newTestStore) }, func(t *testing.T) { checkNoteFiveThousand(t, newPostgresQueryStore) }},
 	}},
 	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{

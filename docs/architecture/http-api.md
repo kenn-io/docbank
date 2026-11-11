@@ -39,20 +39,26 @@ Markdown note, including notes outside watched folders. The response contains
 `title`, `tags`, `source_state`, a `headings` count and decoded `frontmatter`.
 The title prefers frontmatter, then the first H1, then the current filename
 stem. Frontmatter and tags come from the authored original, separately from
-vault tags and sanitized rendition metadata.
+vault tags and sanitized rendition metadata. Frontmatter values retain their
+JSON types and exact numbers, including nested integers. The required `path`
+must start with `/`; relative paths return 422 `validation`.
 
 `source_state` is `not_watched` without an existing watch-source cursor,
 `gone` when the existing watch absence observations mark that source missing,
 and `present` otherwise. It does not inspect the source filesystem during a
 read. Missing, trashed and ineligible paths return 404. A pending parse returns
 409 `note_pending`; an unreadable original returns 422 `note_not_utf8` or
-`note_limit`. Inputs larger than 4 MiB are outside the readable-note contract.
-Malformed YAML still permits a summary and heading count, with null
-`frontmatter`.
+`note_limit`. `note_not_utf8` means invalid UTF-8 or a NUL byte. Inputs larger
+than 4 MiB are outside the readable-note contract. Malformed or unclosed YAML
+still permits a summary and heading count, with null `frontmatter` and a bounded
+`frontmatter_error` code of `invalid_frontmatter` or `unclosed_frontmatter`.
+Absent frontmatter is null without an error; an empty YAML mapping is `{}`.
 
 `GET /api/v1/notes/status` returns `items` with `name`, `destination`,
 `parsed`, `pending`, `failed` and optional `last_error` for each configured
-watch collection. The nearest containing watch destination owns each note;
+watch collection. Destination matching uses the vault's slash and NFC name
+normalization while the response retains configured destinations. The nearest
+containing watch destination owns each note;
 an additional unnamed `/` collection counts notes outside those destinations.
 Suffix matching is case-insensitive. Oversize Markdown candidates count as
 failed after classification. `last_error` is a bounded failure code from the

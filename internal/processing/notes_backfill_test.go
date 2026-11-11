@@ -95,9 +95,14 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 		revision := catalog.WriteRevision()
 		worker := NewNoteBackfill(catalog, blobs, nil, nil)
 		for range 3 {
-			targets, err := worker.List(ctx, "", 25)
+			page, err := worker.ListPage(ctx, "", 25)
 			require.NoError(t, err)
-			require.Empty(t, targets)
+			require.Empty(t, page.Targets)
+			require.False(t, page.EOF, "unchanged selected rows still advance")
+			require.NotEmpty(t, page.Next)
+			page, err = worker.ListPage(ctx, page.Next, 25)
+			require.NoError(t, err)
+			require.True(t, page.EOF)
 			require.Equal(t, revision, catalog.WriteRevision())
 		}
 	})
@@ -127,7 +132,7 @@ func TestNoteBackfillDrainsFiveThousandOriginals(t *testing.T) {
 		var size int64
 		require.NoError(t, blobs.WithMutation(ctx, func() error {
 			var err error
-			hash, size, err = blobs.WriteContext(ctx, strings.NewReader("# Synthetic\n"))
+			hash, size, err = blobs.WriteContext(ctx, strings.NewReader("# Synthetic\n[Next](next.md)\n"))
 			return err
 		}))
 		for i := range 5000 {
@@ -135,6 +140,13 @@ func TestNoteBackfillDrainsFiveThousandOriginals(t *testing.T) {
 			require.NoError(t, err)
 		}
 		worker := NewNoteBackfill(catalog, blobs, nil, nil)
+		// Seed an entire unchanged linked page before later missing originals.
+		page, err := worker.ListPage(ctx, "", worker.Page)
+		require.NoError(t, err)
+		require.Len(t, page.Targets, worker.Page)
+		for _, target := range page.Targets {
+			require.NoError(t, worker.Process(ctx, target))
+		}
 		worker.DrainOnce = true
 		require.NoError(t, worker.Run(ctx))
 		status, err := catalog.NotesStatus(ctx, notemarkdown.Recipe, nil)
@@ -147,5 +159,8 @@ func TestNoteBackfillDrainsFiveThousandOriginals(t *testing.T) {
 			require.Equal(t, "Synthetic", view.Summary.Title)
 			require.Equal(t, 1, view.HeadingCount)
 		}
+		revision := catalog.WriteRevision()
+		require.NoError(t, worker.Run(ctx), "all linked filtered pages reach EOF")
+		require.Equal(t, revision, catalog.WriteRevision())
 	})
 }
