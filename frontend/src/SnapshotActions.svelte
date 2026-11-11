@@ -17,6 +17,7 @@
   import type { SelectionTarget } from "./selection.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
   import type { BatchTagRequest, BatchTagReceipt } from "./batch-tags.js";
+  import DocumentPager from "./DocumentPager.svelte";
   import { APIError } from "./api-transport.js";
   import { checkTagResults, type TagResult } from "./checkTagResults.js";
   import { TagChangeRun } from "./tagChangeRun.svelte.js";
@@ -169,7 +170,9 @@
     });
     if (alive && (outcome === "stale" || outcome === "unknown")) {
       results = results?.map((row) =>
-        attempted.has(row.node_id) ? { node_id: row.node_id, name: row.name, status: "unavailable" } : row,
+        attempted.has(row.node_id)
+          ? { node_id: row.node_id, name: row.name, status: "unavailable" }
+          : row,
       );
     }
   }
@@ -314,18 +317,7 @@
             {/snippet}
           </Table>
         </div>
-        {#if results.length > 50}
-          <nav class="pager" aria-label="Document pages">
-            <span>{offset + 1}–{Math.min(offset + 50, results.length)} of {results.length}</span
-            ><Button size="sm" disabled={offset === 0} onclick={() => (offset -= 50)}
-              >Previous</Button
-            ><Button
-              size="sm"
-              disabled={offset + 50 >= results.length}
-              onclick={() => (offset += 50)}>Next</Button
-            >
-          </nav>
-        {/if}
+        <DocumentPager total={results.length} {offset} onoffset={(value) => (offset = value)} />
       </Disclosure>
     {/if}
   </div>
@@ -447,12 +439,6 @@
   }
   .target-list :global(.target-table .kit-table) {
     margin-block-end: 0;
-  }
-  .pager {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--font-size-sm);
   }
   .file {
     position: absolute;

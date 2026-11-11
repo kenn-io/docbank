@@ -15,39 +15,34 @@ const request: BatchTagRequest = {
 };
 afterEach(() => vi.restoreAllMocks());
 
-it("previews live documents and retains missing and trashed rows", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+it("keeps matched, trashed, and missing documents", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.includes("preview")) {
-      expect(JSON.parse(String(init?.body)).nodes).toEqual([{ node_id: 1, revision: 4 }]);
-      return Response.json({
-        tag_id: request.tag_id,
-        tag_revision: 2,
-        nodes: [{ node_id: 1, revision: 4, assigned: true }],
-      });
-    }
     if (url.includes("/nodes/2"))
-      return Response.json({ id: 2, name: "Trash", revision: 2, trashed_at: "2026-01-01" });
+      return Response.json({
+        id: 2,
+        name: "Trash",
+        path: "/Trash",
+        revision: 2,
+        trashed_at: "2026-01-01",
+      });
     if (url.includes("/nodes/3")) return Response.json({ detail: "Missing" }, { status: 404 });
-    return Response.json({ id: 1, name: "Live", revision: 4 });
+    if (url.includes("/tags?"))
+      return Response.json({ items: [{ id: request.tag_id }], total: 1, limit: 1000, offset: 0 });
+    return Response.json({ id: 1, name: "Live", path: "/Live", revision: 4 });
   });
-  expect(await checkTagResults("session", request, () => {})).toEqual([
-    { node_id: 1, name: "Live", revision: 4, status: "matched" },
-    { node_id: 2, name: "Trash", status: "trash" },
+  const progress: number[] = [];
+  expect(await checkTagResults("session", request, (count) => progress.push(count))).toEqual([
+    { node_id: 1, name: "/Live", revision: 4, status: "matched" },
+    { node_id: 2, name: "/Trash", status: "trash" },
     { node_id: 3, name: "Document 3", status: "unavailable" },
   ]);
-  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(progress).toEqual([1, 2, 3]);
 });
 
-it("keeps candidates unchecked when the preview rejects changed revisions", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input).includes("preview"))
-      return Response.json({ code: "stale_revision" }, { status: 409 });
-    const id = Number(String(input).match(/nodes\/(\d+)/)?.[1]);
-    return Response.json({ id, name: `Document ${id}`, revision: 4 });
-  });
-  const rows = await checkTagResults("session", request, () => {});
-  expect(rows).toEqual(
+it("retains all documents when reads fail", async () => {
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+  expect(await checkTagResults("session", request, () => {})).toEqual(
     request.nodes.map(({ node_id }) => ({
       node_id,
       name: `Document ${node_id}`,
@@ -56,19 +51,14 @@ it("keeps candidates unchecked when the preview rejects changed revisions", asyn
   );
 });
 
-it("skips the preview when no documents can be read", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
-  const rows = await checkTagResults("session", request, () => {});
-  expect(rows.every((row) => row.status === "unavailable")).toBe(true);
-  expect(fetch).toHaveBeenCalledTimes(3);
-});
-
-it.each(["node", "preview"])("propagates authentication failure from %s", async (source) => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (source === "node" || String(input).includes("preview"))
-      return Response.json({ detail: "Unauthorized" }, { status: 401 });
-    const id = Number(String(input).match(/nodes\/(\d+)/)?.[1]);
-    return Response.json({ id, name: `Document ${id}`, revision: 4 });
+it.each(["inspection", "metadata"])("propagates authentication failure from %s", async (source) => {
+  let reads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    reads++;
+    return Response.json(
+      { detail: "failure" },
+      { status: source === "inspection" || reads > 3 ? 401 : 404 },
+    );
   });
   await expect(checkTagResults("session", request, () => {})).rejects.toMatchObject({
     status: 401,

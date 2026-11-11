@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import SnapshotActions from "./SnapshotActions.svelte";
 import { ACTION_MAX_BYTES } from "./actionRecovery.js";
 import { batchTagRequestDigest, type BatchTagRequest } from "./batch-tags.js";
@@ -79,6 +79,54 @@ async function receiptFor(request: BatchTagRequest, unchanged: number[] = []) {
     })),
   };
 }
+
+it("checks each document independently and keeps its path through retry", async () => {
+  const writes: BatchTagRequest[] = [];
+  let reads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST") {
+      if (url.includes("preview"))
+        return Response.json({ code: "stale_revision" }, { status: 409 });
+      const request = JSON.parse(String(init.body)) as BatchTagRequest;
+      writes.push(request);
+      if (writes.length === 1) throw new TypeError("Lost response");
+      return Response.json(await receiptFor(request));
+    }
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    if (url.includes("/tags?"))
+      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    const revision = id === 7 && ++reads > 1 ? 11 : id === 7 ? 10 : 12;
+    return Response.json({
+      id,
+      name: "report.pdf",
+      path: id === 7 ? "/alpha/report.pdf" : "/beta/report.pdf",
+      revision,
+    });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  const retry = await screen.findByRole("button", { name: "Add “Review” to 1 document" });
+  expect(writes).toHaveLength(1);
+  await fireEvent.click(screen.getByText("Review documents"));
+  expect(
+    within(screen.getByText("/alpha/report.pdf").closest("tr")!).getByText("Couldn't check"),
+  ).toBeTruthy();
+  expect(
+    within(screen.getByText("/beta/report.pdf").closest("tr")!).getByText("Missing “Review”"),
+  ).toBeTruthy();
+  await fireEvent.click(retry);
+  await screen.findByText("Has “Review”");
+  expect(
+    within(screen.getByText("/alpha/report.pdf").closest("tr")!).getByText("Couldn't check"),
+  ).toBeTruthy();
+  expect(
+    within(screen.getByText("/beta/report.pdf").closest("tr")!).getByText("Has “Review”"),
+  ).toBeTruthy();
+  expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
+});
 
 it("states what a whole-result change does before continuing", async () => {
   const onstart = vi.fn();
@@ -206,21 +254,19 @@ it.each([true, false])(
     const writes: BatchTagRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (init?.method === "POST" && url.includes("preview")) {
-        const body = JSON.parse(String(init.body));
-        expect(body.nodes).toEqual([{ node_id: 9, revision: 12 }]);
-        return Response.json({
-          tag_id: catalog[0].id,
-          tag_revision: 2,
-          nodes: [{ node_id: 9, revision: 12, assigned: !assign }],
-        });
-      }
       if (init?.method === "POST") {
         const request = JSON.parse(String(init.body)) as BatchTagRequest;
         writes.push(request);
         if (writes.length === 1) throw new TypeError("Lost response");
         return Response.json(await receiptFor(request));
       }
+      if (url.includes("/tags?"))
+        return Response.json({
+          items: assign ? [] : catalog,
+          total: assign ? 0 : 1,
+          limit: 1000,
+          offset: 0,
+        });
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
       if (id === 7) throw new TypeError("Network error");
       return Response.json({ id, name: `Document ${id}`, revision: 12 });
@@ -254,17 +300,6 @@ it.each(["unknown", "rejected", "stale"])(
     let applied = false;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (init?.method === "POST" && url.includes("preview")) {
-        const body = JSON.parse(String(init.body));
-        return Response.json({
-          tag_id: catalog[0].id,
-          tag_revision: 2,
-          nodes: body.nodes.map((node: { node_id: number; revision: number }) => ({
-            ...node,
-            assigned: node.node_id === 7 || applied,
-          })),
-        });
-      }
       if (init?.method === "POST") {
         const request = JSON.parse(String(init.body)) as BatchTagRequest;
         writes.push(request);
@@ -281,6 +316,13 @@ it.each(["unknown", "rejected", "stale"])(
           { status: 409 },
         );
       }
+      if (url.includes("/tags?"))
+        return Response.json({
+          items: applied ? catalog : [],
+          total: applied ? 1 : 0,
+          limit: 1000,
+          offset: 0,
+        });
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
       if (id === 7) throw new TypeError("Network error");
       return Response.json({ id, name: `Document ${id}`, revision: id === 7 ? 10 : 12 });
@@ -309,3 +351,27 @@ it.each(["unknown", "rejected", "stale"])(
     }
   },
 );
+
+it("pages checked documents and resets to the first page on another check", async () => {
+  const many = Array.from({ length: 51 }, (_, i) => ({ node_id: i + 1, revision: 1 }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") throw new TypeError("Lost response");
+    const url = String(input);
+    if (url.includes("/tags?"))
+      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    return Response.json({ id, name: `File ${id}`, path: `/File ${id}`, revision: 2 });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 51, targets: many }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await screen.findByRole("button", { name: "Add “Review” to 51 documents" });
+  await fireEvent.click(screen.getByText("Review documents"));
+  expect(screen.getByText("1–50 of 51")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByText("51–51 of 51")).toBeTruthy();
+  expect(screen.getByText("/File 51")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+  await screen.findByText("1–50 of 51");
+});

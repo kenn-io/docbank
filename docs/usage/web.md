@@ -381,10 +381,9 @@ on at most 1,000 documents. Type a new name and choose **Create “name”** to
 create the tag, then apply it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
-If the result is uncertain, the dialog locks and the browser refreshes the view.
-Close the dialog and check the documents' tags before trying again. Applying
-the same addition or removal again is safe. A stale selection requires you to
-close the dialog and select again.
+If the result is uncertain, choose **Check tag results** to inspect each selected document.
+You can explicitly retry the documents that still need the change. Unavailable documents are omitted from the retry; check again to include them.
+A stale selection requires you to close the dialog and select again.
 After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
@@ -403,10 +402,9 @@ automatically. **Remove** affects the whole selection, including documents
 that already had the tag before an addition.
 
 **Tag selected…** applies one atomic, revision-checked change to at most 1,000
-documents and reports how many changed. If the result is uncertain, the dialog
-locks and the view refreshes. Close it and check the documents' tags before
-trying again. Applying the same addition or removal again is safe. A stale
-document means you close the dialog and select again.
+documents and reports how many changed. If the result is uncertain, choose **Check tag results** to inspect the selected documents.
+You can explicitly retry the documents that still need the change. Unavailable documents are omitted from the retry; check again to include them.
+Closing the dialog refreshes the snapshot query. A stale document means you close the dialog and select again.
 
 **Tag all…** → **Continue** captures every result, up to 250,000 documents,
 and prepares revision-checked batches of at most 1,000. The captured

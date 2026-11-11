@@ -577,12 +577,6 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
     if (url === "/api/v1/nodes/1") return json({ id: 1, name: "report-1.pdf", revision: 3 });
     if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0")
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
-    if (url === "/api/v1/batch/tags/preview")
-      return json({
-        tag_id: tag.id,
-        tag_revision: 2,
-        nodes: [{ node_id: 1, revision: 3, assigned: false }],
-      });
     // A server error leaves the client unable to confirm whether the change committed.
     if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
     throw new Error(`unexpected request: ${url}`);
