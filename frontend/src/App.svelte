@@ -1648,7 +1648,7 @@
   async function loadNaturalProfiles(session: string): Promise<void> {
     const request = ++profileGeneration;
     try {
-      const profiles = await generated.listDocumentProcessingProfiles({ session });
+      const profiles = await generated.listDocumentProcessingProfiles(undefined, { session });
       if (request !== profileGeneration || session !== webSession) return;
       naturalProfiles = profiles;
       naturalProfilesError = "";

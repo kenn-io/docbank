@@ -61,7 +61,7 @@
     loading = true;
     error = "";
     try {
-      const all = await generated.listDocumentProcessingProfiles({ session });
+      const all = await generated.listDocumentProcessingProfiles(undefined, { session });
       if (request !== generation) return;
       profiles = all.filter((profile) => profile.embedding_bindings.length > 0);
       profileName = profiles[0]?.name ?? "";

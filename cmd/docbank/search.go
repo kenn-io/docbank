@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -346,7 +347,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if !slices.Contains(options.ContentVersionIDs, version) {
 		return usageError(errors.New("the selected version must occur in --source-version"))
 	}
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 	if err != nil {
 		return err
 	}
@@ -417,7 +418,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 
 	if err != nil {
 		return err

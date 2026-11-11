@@ -37,7 +37,7 @@ Office text and OCR need a configured profile. Providers may be
 hosted: plan shows what leaves the machine, and build needs --consent.
 Typical flow: processing profiles -> processing plan <path-or-id> --profile P
 -> processing build <path-or-id> --profile P --plan-fingerprint F --consent
--> rendition window <path-or-id> --version V --profile P.`,
+-> rendition window <path-or-id>.`,
 	GroupID:     groupSearch,
 	Use:         "processing",
 	Short:       "Preview and run document processing",
@@ -121,7 +121,7 @@ var processingStatusCmd = &cobra.Command{
 }
 
 func runProcessingProfiles(cmd *cobra.Command, c *daemonconn.Connection, jsonOutput bool) error {
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 
 	if err != nil {
 		return err
