@@ -52,7 +52,7 @@ album index at `/photos/albums`, People at `/photos/people`, or an album at `/ph
 Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
 **Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
-**Protected folders**, and **Usage reporting**. On a narrow screen, **Open navigation** reveals the
+**Protected folders**, **Usage reporting**, and **Search by meaning**. On a narrow screen, **Open navigation** reveals the
 same menu.
 
 Folder breadcrumbs let you jump to any parent. Each file has an icon and a
@@ -661,10 +661,9 @@ committed records and removes unfinished document entries as described in the
 
 ## Process a version and read its text
 
-Processing extracts a document's text and stores it. With a configured
-embedding service, it also prepares the document for search by meaning.
-Configure a [processing profile](../configuration.md) first. A new vault has
-none.
+A PDF's text layer appears in the Text tab without setup. For other formats,
+configure a [processing profile](../configuration.md) to extract and store text.
+With a configured embedding service, processing also prepares documents for search by meaning.
 
 1. Select a document and choose **Extract text** beside its name. This action appears when a configured profile includes text extraction. The processing dialog checks which profiles accept the file. Profiles that only prepare search vectors show **Index for search** instead.
 2. Read where the file goes. A local profile says it runs on this computer;
@@ -852,6 +851,8 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
 count, each row shows the name with its folder beneath, and the **Match** column
@@ -917,23 +918,23 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose **System → Protected folders** to run the vault-wide permanent
-audit verifier. The verifier does more than read stored status. Docbank
-replays canonical audit history against the current node, version, membership,
-topology, tag, and provenance projections, then reads and recomputes SHA-256 for
-every unique blob retained by protected history.
+Choose **System → Protected folders** to read protection status. When nothing is
+protected, the section shows the command to protect a folder and skips verification.
+Otherwise, including when status cannot be read, Docbank runs the vault-wide
+permanent audit verifier. It replays canonical audit history against the current
+node, version, membership, topology, tag, and provenance projections, then reads
+and recomputes SHA-256 for every unique blob retained by protected history.
 
 A successful result reports the protected and verified file totals and the
 protected size. **Details** holds the vault and allocation-lineage identities,
 the operation high-water mark, the allocation entry count and head, and each
 scope's terminal entry count and chain head. Copy buttons preserve the complete
-identities even when they wrap. A vault with nothing protected shows the
-`docbank audit enable` command instead of a failure. Metadata, missing-content,
+identities even when they wrap. Metadata, missing-content,
 corruption, and unreadable-content problems stay visible with the affected hash.
 
-This drawer runs only a fresh proof of current authority. It does not accept a
-previous evidence bundle, enroll a scope, or change protected state. Record
-`docbank audit verify --json` outside the vault and later use
+Verification results provide a fresh proof of current authority. The drawer does
+not accept a previous evidence bundle, enroll a scope, or change protected state.
+Record `docbank audit verify --json` outside the vault and later use
 `docbank audit verify --expected` when that external copy must act as a rollback
 trust anchor. Closing the drawer cancels its active request. Maintenance
 contention or interruption remains visible, and you can retry.

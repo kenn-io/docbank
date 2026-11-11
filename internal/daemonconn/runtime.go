@@ -15,13 +15,19 @@ const (
 	// EnvBackgroundDaemon marks a process as an auto-spawned background
 	// daemon (as opposed to a foreground `docbank daemon run`).
 	EnvBackgroundDaemon = "DOCBANK_BACKGROUND_DAEMON"
+	// EnvPersistentDaemon carries explicit launch intent to a detached child.
+	EnvPersistentDaemon = "DOCBANK_PERSISTENT_DAEMON"
+	// MetaExplicitStart records a request to stay running across replacements.
+	MetaExplicitStart = "explicit_start"
+	// MetaIdleTimeout records the effective idle timeout, or 0s when disabled.
+	MetaIdleTimeout     = "idle_timeout"
 	metaShutdownToken   = "shutdown_token"
 	metaAPIKey          = "api_key"
 	metaProtocolVersion = "protocol_version"
 	metaWebAddress      = "web_address"
 	// Bump whenever a newer CLI cannot safely use an older daemon's HTTP or
 	// runtime-record contract, even when both binaries report the same version.
-	daemonProtocolVersion = "122"
+	daemonProtocolVersion = "125"
 )
 
 // EnsureResult reports what EnsureDaemon found or did.
@@ -33,6 +39,11 @@ type EnsureResult struct {
 	// Replaced is the incompatible daemon EnsureDaemon stopped before
 	// starting Record, nil when nothing was replaced.
 	Replaced *kitdaemon.RuntimeRecord
+}
+
+// Explicit reports whether a user requested a daemon that stays running.
+func Explicit(rec kitdaemon.RuntimeRecord) bool {
+	return rec.Metadata[MetaExplicitStart] == "true"
 }
 
 // RuntimeStore returns the kit runtime-record store rooted at root.

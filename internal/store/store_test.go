@@ -135,6 +135,30 @@ func TestOpenBootstrapsRoot(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestOpenSchemaFailureLeavesNoTables(t *testing.T) { //nolint:paralleltest // swaps the package-level schemaSQL
+	originalSchema := schemaSQL
+	t.Cleanup(func() { schemaSQL = originalSchema })
+	schemaSQL += "\n\nINSERT INTO missing_schema_table VALUES (1);"
+
+	dbPath := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(t.Context(), dbPath)
+	if s != nil {
+		require.NoError(t, s.Close())
+	}
+	require.ErrorContains(t, err, "applying schema:")
+	require.ErrorContains(t, err, "missing_schema_table")
+
+	db, err := DefaultSQLiteDriver().Open(dbPath, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var tables int
+	require.NoError(t, db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'export_sources'`).Scan(&tables))
+	require.Zero(t, tables, "a late schema error rolls back earlier groups")
+}
+
 func TestOpenConcurrentBootstrap(t *testing.T) { //nolint:paralleltest // owns concurrent opens within the five-second bootstrap budget
 	dbPath := filepath.Join(t.TempDir(), "docbank.db")
 

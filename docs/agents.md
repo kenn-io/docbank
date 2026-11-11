@@ -1,4 +1,5 @@
 ---
+last_edited: 2026-11-04
 title: Docbank for agents
 description: Why agents use Docbank, which interface to choose, and how it keeps document automation safe.
 ---
@@ -25,10 +26,12 @@ validation, revision checks, and maintenance rules as the CLI.
 
 | Surface | Use it for | Contract |
 |---------|------------|----------|
-| CLI | Human-directed work, shell scripts, and inspecting behavior | Readable output; machine modes where documented. Discover commands with `docbank --help`; runnable commands include examples |
+| CLI | Human-directed work, shell scripts, and inspecting behavior | Readable output; machine modes where documented. Discover commands with `docbank cli search "<task>"`, then inspect the suggested help |
 | HTTP API | Independent applications and long-running agent workflows | Authenticated JSON, revisions, pagination, structured errors |
 | OpenAPI | Client generation and capability discovery | `docbank openapi`, `/openapi.yaml` |
 | Markdown docs | Context retrieval without HTML scraping | Every public `/foo/` page is also published at `/foo.md` |
+
+Use [command discovery](cli-reference.md#find-a-command-by-task) without a vault or daemon.
 
 The [Agent integration guide](agents/integration.md) covers endpoint
 setup, authentication, upload and download proof, revision-aware mutations,

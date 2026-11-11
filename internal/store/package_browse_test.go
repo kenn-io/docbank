@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/docbank/internal/loadfile"
 )
 
-func TestPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T) {
+func checkPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	request := validPackageRequest(t, s)
 	run, err := s.BeginIngest(t.Context(), "package:loadfile", "synthetic")
 	require.NoError(t, err)
@@ -34,9 +35,10 @@ func TestPackageMembersReadSealedOccurrenceThroughPackageID(t *testing.T) {
 	require.ErrorIs(t, err, ErrPackageConflict)
 }
 
-func TestPackageTimelineInputsPreserveRawDateAndDeclaredZone(t *testing.T) {
+func checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	request := validPackageRequest(t, s)
 	profile := loadfile.Profile{ID: "dat-concordance-v1", DeclaredTimezone: "Europe/Berlin"}
 	profileJSON, err := canonical.Marshal(profile)
@@ -107,9 +109,10 @@ func commitTimelineInput(t *testing.T, s *Store, job PackageImportJob, versionID
 	return key
 }
 
-func TestPackageLabelCandidatesPageAmbiguousSenderLabels(t *testing.T) {
+func checkPackageLabelCandidatesPageAmbiguousSenderLabels(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	first, firstNode := seedReceivedPackage(t, s, "candidate-a")
 	commitReceivedLabel(t, s, first, firstNode.CurrentVersionID, "EXT000001")
 	_, _, err := s.MovePath(t.Context(), "/package.txt", "/package-one.txt")
@@ -146,6 +149,10 @@ func TestPackageLabelCandidatesPageAmbiguousSenderLabels(t *testing.T) {
 	record, err := s.PackageRecordByOccurrence(t.Context(), first.PackageID, scoped[0].OccurrenceID)
 	require.NoError(t, err)
 	require.Equal(t, scoped[0].OccurrenceID, record.OccurrenceID)
+	rowIDs, err := s.PackageRecordRowIDs(t.Context(), first.PackageID, []string{record.OccurrenceID, "00000000000000000000000000000000"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{record.OccurrenceID: record.RowID}, rowIDs)
+
 	labels, err := s.PackageLabels(t.Context(), first.PackageID, scoped[0].OccurrenceID)
 	require.NoError(t, err)
 	require.Equal(t, scoped, labels)

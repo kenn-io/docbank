@@ -451,6 +451,9 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 		if err := validateRenditionBinding(*profile.Rendition); err != nil {
 			return err
 		}
+		if profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract && profile.Rendition.MaxUnits < 4 {
+			return errors.New("image understanding requires at least four units")
+		}
 	}
 	if err := validateEvidenceLexicalPolicy(profile.EvidenceLexical); err != nil {
 		return err
@@ -476,6 +479,9 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 		names[binding.Name] = struct{}{}
 		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract {
 			return errors.New("rendition_chunk embeddings require a text rendition; photo vision profiles publish photo results")
+		}
+		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == ImageUnderstandingAdapterContract && (binding.Chunk == nil || binding.Chunk.Formatter != RenditionChunkHeadingsFormatter) {
+			return errors.New("image understanding requires the rendition chunk headings formatter")
 		}
 		if err := validateEmbeddingBinding(binding, profile.Rendition != nil); err != nil {
 			return fmt.Errorf("embedding binding %d: %w", index, err)

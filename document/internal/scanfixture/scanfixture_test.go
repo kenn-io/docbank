@@ -40,7 +40,7 @@ func TestCorpusIsCompleteStableAndPageAccurate(t *testing.T) {
 		if pageCounts[fixture.Name] == 0 {
 			continue
 		}
-		pages, err := formatdetect.CountPDFPages(fixture.Bytes)
+		pages, err := formatdetect.CountPDFPages(t.Context(), fixture.Bytes)
 		require.NoError(t, err, fixture.Name)
 		assert.Equal(t, pageCounts[fixture.Name], pages, fixture.Name)
 	}
@@ -58,7 +58,7 @@ func TestCorpusIsCompleteStableAndPageAccurate(t *testing.T) {
 	assert.Len(t, oversized, 134217729)
 	t.Logf("oversized SHA-256: %x", sha256.Sum256(oversized))
 	assert.Contains(t, string(oversized[len(oversized)-1024:]), "startxref")
-	pages, err := formatdetect.CountPDFPages(oversized)
+	pages, err := formatdetect.CountPDFPages(t.Context(), oversized)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), pages)
 }
@@ -77,7 +77,7 @@ func TestFrozenSeedsAreParserValid(t *testing.T) {
 	}
 
 	require.NotEmpty(t, encrypted.Bytes)
-	_, err := formatdetect.CountPDFPages(encrypted.Bytes)
+	_, err := formatdetect.CountPDFPages(t.Context(), encrypted.Bytes)
 	require.ErrorIs(t, err, formatdetect.ErrPDFEncrypted)
 
 	require.NotEmpty(t, webpFixture.Bytes)

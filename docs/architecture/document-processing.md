@@ -28,7 +28,7 @@ start with [Document understanding in Go](../document-understanding.md).
 | Web app and TUI | Preview processing, record consent, inspect jobs, and read retained sanitized renditions |
 
 The default configuration has no processing profiles. The daemon can execute
-its built-in plaintext and EPUB rendition adapters and the OpenAI-compatible
+its built-in plaintext, EPUB, and PDF text rendition adapters and the OpenAI-compatible
 and Voyage embedding runtimes listed in [Configuration][embedding-runtime].
 Other public provider packages are available to embedded Go callers. Adding a
 package does not register a daemon runtime. Configuration alone does not grant
@@ -39,8 +39,14 @@ consent or enqueue work.
 `configureRenditionProviders` selects `document/epub` for `docbank-epub-rendition/v1`
 and passes the existing byte and unit limits to its constructor. The provider
 owns the `epub.in-process-v1` descriptor and virtual-unit policy. Startup
-rejects descriptor or trust-boundary drift. Unknown adapters remain
-unavailable.
+rejects descriptor or trust-boundary drift. The same checks apply to
+`document/pdftext` and `docbank-pdftext-rendition/v1`, with byte and page limits
+bound into the descriptor. Its sealed `PDFTextOnly` inspection policy admits
+opaque image streams and external references while retaining parser bounds.
+The PDF text provider releases PDFium's shared lease after each page.
+Omission-only partial PDFs retain normalized evidence and a canonical
+frontmatter envelope with an empty body. Verified-empty reads require that
+exact envelope's size and checksum. Unknown adapters remain unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
 workflow from profile selection through preview, consent, execution, and reads.
@@ -385,6 +391,11 @@ artifacts up to 64 MiB, independently of navigation slots. `rendition get` can
 retrieve an attachment still active for its version; it cannot retrieve a
 superseded attachment. Navigation does not add historical bulk download.
 
+Omission-only PDF builds settle chunk processing across restarts;
+original-file embedding bindings still need their own results.
+Older binaries refuse omission-only evidence or its empty
+Markdown body, so downgrading requires a version that can read these results.
+
 ## Retain, restore, or remove derived results
 
 A processing profile declares whether to retain provider Markdown, sanitized
@@ -492,6 +503,6 @@ The existing stack decision route checks membership and every source file, recom
 
 `document/vision` also implements the opt-in `docbank-compatible-image-understanding/v1` adapter and `compatible-vision.understand-v1` descriptor. This task accepts original JPEG, PNG and WebP images up to 16 MiB through ordinary source inspection, consent, egress fencing and rendition jobs. It shares the compatible chat transport with photo suggestions but uses its own prompt, descriptor, disclosure fingerprint and Markdown artifact contract. Existing photo-description and face-detection identities remain unchanged.
 
-The provider requires bounded string fields for visible text, literal description, possible meaning and uncertainty. Missing, null, oversized or malformed fields fail the result. Provider text is escaped before insertion into fixed Markdown sections. Each section is a separate evidence unit with its semantic layer in `heading_path` and the machine-generated caveat repeated in its text, so chunking retains the distinction. The prompt requests transcription without interpretation, grounds tentative meme meaning in visible evidence, and prohibits identifying people or inferring beliefs, endorsement or intent. This is model guidance, not a guarantee about model accuracy. No conversation context is disclosed.
+The provider requires bounded string fields for visible text, literal description, possible meaning and uncertainty. Missing, null, oversized or malformed fields fail the result. Provider text is escaped before insertion into fixed Markdown sections. Each section is a separate evidence unit with its semantic layer and machine-generated caveat in `heading_path`. The `rendition-chunk-headings/v1` formatter carries those headings into each embedding input, and search prefixes them to excerpts. The prompt requests transcription without interpretation, grounds tentative meme meaning in visible evidence, and prohibits identifying people or inferring beliefs, endorsement or intent. This is model guidance, not a guarantee about model accuracy. No conversation context is disclosed.
 
 Evidence explicitly records degraded provenance because generated explanations have no verified source text coordinates. The source hash, prompt/model policy, request identity, receipt and artifact checksum follow the existing rendition publication contract. Normalized evidence and sanitized Markdown feed ordinary lexical segments and optional `rendition_chunk` embedding bindings. Search and evidence windows keep the exact content-version and build identities. No suggestion catalog, authored photo metadata, separate vector store or face identity mechanism participates.

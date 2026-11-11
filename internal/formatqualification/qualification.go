@@ -83,6 +83,7 @@ var baseQualifications = []Qualification{
 	{CatalogID: "mp4", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsMP4CreationTime", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
 	{CatalogID: "pdf", Capability: CapabilityDetect, Evidence: documentDetectionEvidence, ImplementationID: documentDetectionID, InputKind: InputOriginalFile},
 	{CatalogID: "pdf", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataUsesAuthoritativePDFInfo", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},
+	{CatalogID: "pdf", Capability: CapabilityText, Evidence: "TestPDFTextCorpus", DescriptorFingerprint: "915bf5d1a85f1c2ae395f23827312fbcd54c533fbe09d95cfad58e2f456697c3", InputKind: InputOriginalFile},
 	{CatalogID: "pdf", Capability: CapabilityText, Evidence: "TestSyntheticMarkdownPDFOutput", DescriptorFingerprint: "129bea875ffc3ab1511ef447c82379298c1d358923bec6af91433786148cbc95", InputKind: InputOriginalFile},
 	{CatalogID: "png", Capability: CapabilityDetect, Evidence: "TestDetectBytesRecognizesSupportedContainers", ImplementationID: mediaDetectionID, InputKind: InputOriginalFile},
 	{CatalogID: "png", Capability: CapabilityMetadata, Evidence: "TestExtractSourceMetadataReadsVisualContainerFacts", ImplementationID: sourceMetadataExtractorID, InputKind: InputOriginalFile},

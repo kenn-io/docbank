@@ -210,8 +210,14 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 		version   string
 		supported bool
 	}{
-		{"0.20.9", false}, {"0.21.0-rc.1", false}, {"0.21.0", true},
-		{"0.28.0", true}, {"0.31.0", true}, {"0.32.0", false}, {"1.0.0", false}, {"2.21.0", false},
+		{"", false}, {"0.20.9", false}, {"0.21.0-rc.1", false}, {"0.21.0", true},
+		{"0.21.1-rc.1", true}, {"v0.21.0+build.1", true},
+		{"0.21.0+build-rc.1", true}, {"0.21.0-rc.1+build", false},
+		{"0.41.0", true}, {"0.42.0", true}, {"0.43.0", true}, {"0.44.0", true},
+		{"0.99.0", true}, {"0.43.0-rc.1", true},
+		{"1.0.0-rc.1", false}, {"1.0.0", false}, {"2.21.0", false},
+		{"0.43", false}, {"0.43.nope", false}, {"0.043.0", false}, {"0.-43.0", false},
+		{"0.43.0.0", false}, {"0.43.18446744073709551616", false},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			var operationRequests atomic.Int32
@@ -231,8 +237,7 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "Synthetic issue", issue.Title)
 			} else {
-				require.ErrorContains(t, err, "unsupported Kata API schema")
-				require.EqualError(t, err, "unsupported Kata API schema: require 0.21.0 through 0.31.x")
+				require.EqualError(t, err, "unsupported Kata API schema: require >=0.21.0, <1.0.0")
 				failure, ok := errors.AsType[*Error](err)
 				require.True(t, ok)
 				require.Equal(t, "incompatible_api", failure.Code)
@@ -240,6 +245,80 @@ func TestClientRejectsUnsupportedSchemaBeforeWriting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func schemaOperation(ctx context.Context, c *Client, operation string) error {
+	switch operation {
+	case "get":
+		_, err := c.Get(ctx, "abcd")
+		return err
+	case "create":
+		_, err := c.Create(ctx, "schema-key", "Synthetic issue", "", nil)
+		return err
+	case "patch":
+		_, err := c.Patch(ctx, "abcd", "docbank.evidence", nil, jsontext.Value(`[]`))
+		return err
+	case "comment":
+		return c.Comment(ctx, "abcd", "schema-key", "Evidence added")
+	case "comments":
+		_, err := c.GetComments(ctx, "abcd")
+		return err
+	default:
+		_, err := c.FindMarker(ctx, "marker")
+		return err
+	}
+}
+
+func TestClientRejectsMissingOrMalformedSchemaBeforeOperations(t *testing.T) {
+	for _, health := range []string{`{}`, `{"api_schema_version":null}`, `{"api_schema_version":42}`, `{"api_schema_version":`} {
+		t.Run(health, func(t *testing.T) {
+			var operationRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					_, _ = w.Write([]byte(health))
+					return
+				}
+				operationRequests.Add(1)
+			}))
+			defer server.Close()
+			for _, operation := range []string{"get", "create", "patch", "comment", "comments", "marker"} {
+				c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+				require.Error(t, schemaOperation(t.Context(), c, operation), operation)
+			}
+			require.Zero(t, operationRequests.Load())
+		})
+	}
+}
+
+func TestClientRetriesFailedSchemaCheckAndCachesSuccess(t *testing.T) {
+	var healthRequests, operationRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			version := "0.43.0"
+			if healthRequests.Add(1) == 1 {
+				version = "1.0.0"
+			}
+			_, _ = fmt.Fprintf(w, `{"api_schema_version":%q}`, version)
+			return
+		}
+		operationRequests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"token_invalid"}}`))
+	}))
+	defer server.Close()
+	c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
+	_, err := c.Get(t.Context(), "abcd")
+	require.EqualError(t, err, "unsupported Kata API schema: require >=0.21.0, <1.0.0")
+	for range 2 {
+		_, err = c.Get(t.Context(), "abcd")
+		failure, ok := errors.AsType[*Error](err)
+		require.True(t, ok)
+		require.Equal(t, "token_invalid", failure.Code)
+	}
+	require.EqualValues(t, 2, healthRequests.Load())
+	require.EqualValues(t, 2, operationRequests.Load())
 }
 
 func TestFindMarkerSearchesVisibleProjectsWhenGlobalDenied(t *testing.T) {

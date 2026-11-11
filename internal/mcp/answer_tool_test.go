@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -116,7 +118,7 @@ func TestSelectAnswerSearchPreservesProfiles(t *testing.T) {
 
 func TestAnswerQuestionEvidenceAndCoverage(t *testing.T) {
 	f := &answerFakeClient{report: api.DocumentSearchReport{RequestedMode: "hybrid", ActualMode: "hybrid", Coverage: api.DocumentSearchCoverage{State: "complete", ScopedDocuments: 1, CompleteDocuments: 1}}}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
 	for _, tc := range []struct {
 		name, question, reason string
 		incomplete, truncated  bool
@@ -188,7 +190,7 @@ func TestAnswerQuestionEnvelopeBound(t *testing.T) {
 	last := &f.results[len(f.results)-1]
 	last.SemanticRank = 1
 	last.Evidence = append(last.Evidence, api.DocumentEvidenceReference{Kind: "embedding", VectorSpaceID: vectorSpaceID, EmbeddingSetID: strings.Repeat("d", 64), InputGenerationID: strings.Repeat("e", 64), InputID: "input-a", InputKind: "rendition_chunk", BuildID: strings.Repeat("a", 64), SourceManifestChecksum: strings.Repeat("f", 64)})
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
 	out, links, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","limit":50,"max_passage_bytes":65536,"rerank":true}`))
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +222,7 @@ func TestAnswerQuestionRelevanceOnlyForRerankedPrefix(t *testing.T) {
 		f.fenceVersions = append(f.fenceVersions, version)
 		f.results = append(f.results, api.DocumentSearchResult{VaultUID: "00000000-0000-4000-8000-000000000001", NodeID: int64(i), ContentVersionID: version, Path: fmt.Sprintf("/example-%d", i), Rank: i, LexicalRank: i, Excerpt: "example", Score: score, Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: strings.Repeat("a", 64), SegmentID: "segment-a"}}})
 	}
-	session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+	session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
 	out, _, err := answerQuestion(context.Background(), session, []byte(`{"question":"example","rerank":true}`))
 	if err != nil || len(out.Passages) != 2 || out.Passages[0].Relevance == nil || *out.Passages[0].Relevance != providerScore || out.Passages[1].Relevance != nil {
 		t.Fatalf("out=%+v err=%v", out, err)
@@ -234,7 +236,7 @@ func TestAnswerQuestionEmptyFenceValidatesWithoutSearch(t *testing.T) {
 			if !tc.binding {
 				f.profiles = []api.ProcessingProfileSummary{{Name: "local", Fingerprint: strings.Repeat("a", 64)}}
 			}
-			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
+			session := func(ctx context.Context, fn func(context.Context, documentClient) error) error { return fn(ctx, f) }
 			out, links, err := answerQuestion(t.Context(), session, []byte(fmt.Sprintf(`{"question":"example","rerank":%t}`, tc.rerank)))
 			if err != nil || f.validations != 1 || len(f.requests) != 0 || out.Receipt.SearchExecuted || out.Receipt.ExecutedQuerySHA256 != "" || out.Status != answer.NoMatch || !out.CoverageComplete || len(out.CoverageReasons) != 0 {
 				t.Fatalf("out=%+v err=%v", out, err)
@@ -301,4 +303,16 @@ func TestAnswerProcessingErrorsStayScopedToAnswerTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectAnswerSearchKeepsConfiguredDefaultWithPDFText(t *testing.T) {
+	profiles := []api.ProcessingProfileSummary{{Name: "docbank-pdf-text"}, {Name: "z", QueryEmbeddingBindings: []string{"query"}}}
+	selected, candidates, err := selectAnswerSearch(profiles, answerInput{})
+	require.NoError(t, err)
+	require.Equal(t, "z", selected.Name)
+	require.Len(t, candidates, 1)
+	require.Equal(t, "z", candidates[0].Profile)
+	selected, _, err = selectAnswerSearch(profiles, answerInput{Profile: "docbank-pdf-text"})
+	require.NoError(t, err)
+	require.Equal(t, "docbank-pdf-text", selected.Name)
 }

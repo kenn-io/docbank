@@ -17,7 +17,7 @@ func (s *Store) ReleaseExportJob(
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var actual string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT owner FROM export_jobs WHERE id=?`, id).Scan(&actual); err != nil {
+			`SELECT owner FROM export_jobs WHERE id=$1`, id).Scan(&actual); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -36,9 +36,9 @@ func (s *Store) ReleaseExportJob(
 		if err := removeArchive(); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM export_jobs WHERE id=?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM export_jobs WHERE id=$1`, id); err != nil {
 			return err
 		}
-		return reduceExportRetention(ctx, tx, job.PlanID)
+		return s.reduceExportRetention(ctx, tx, job.PlanID)
 	})
 }

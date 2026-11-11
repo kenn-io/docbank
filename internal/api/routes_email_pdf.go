@@ -128,7 +128,7 @@ func verifiedEmailPDFBytes(ctx context.Context, d Deps, receipt document.EmailPD
 	if int64(len(b)) != size || !r.Verified() {
 		return nil, store.ErrEmailCorrupt
 	}
-	pages, err := emailpdf.VerifyPDF(b)
+	pages, err := emailpdf.VerifyPDF(ctx, b)
 	if err != nil || pages != receipt.Output.Pages {
 		return nil, errors.Join(store.ErrEmailCorrupt, err)
 	}

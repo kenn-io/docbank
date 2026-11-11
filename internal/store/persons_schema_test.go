@@ -42,29 +42,9 @@ func TestPristineMetadataTargetRequiresUntouchedPeopleState(t *testing.T) {
 
 func seedPeopleVersion(t *testing.T, s *Store) (int64, string) {
 	t.Helper()
-	version, err := newUUIDv4()
+	name, err := newUUIDv4()
 	require.NoError(t, err)
-	operation, err := newUUIDv4()
+	node, err := s.CreateFile(t.Context(), s.RootID(), name+".txt", strings.Repeat("a", 64), 1, "text/plain")
 	require.NoError(t, err)
-	hash := strings.Repeat("a", 64)
-	var node int64
-	require.NoError(t, s.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(t.Context(), `INSERT OR IGNORE INTO blobs(hash,size,created_at) VALUES(?,1,?)`, hash, nowRFC3339()); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(t.Context(), `INSERT INTO nodes(parent_id,name,kind,current_version_id,created_at,modified_at)
-			VALUES(?,?,'file',?,?,?)`, s.RootID(), version+".txt", version, nowRFC3339(), nowRFC3339())
-		if err != nil {
-			return err
-		}
-		node, err = result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(t.Context(), `INSERT INTO content_versions(version_id,node_id,blob_hash,size,mime_type,recorded_at,
-			node_revision,introduced_operation_id,transition_kind) VALUES(?,?,?,1,'text/plain',?,1,?,'content_create')`,
-			version, node, hash, nowRFC3339(), operation)
-		return err
-	}))
-	return node, version
+	return node.ID, node.CurrentVersionID
 }

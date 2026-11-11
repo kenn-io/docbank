@@ -467,7 +467,7 @@ func batesRecipeSchema() schema {
 		"opacity": schema{"type": jsonSchemaNumber, jsonSchemaConst: 1}, "units": schema{"type": "string", jsonSchemaConst: "point"},
 		"rotation_policy": schema{"type": "string", jsonSchemaConst: "follow_page"}, "restamp": schema{"type": "boolean", jsonSchemaConst: false},
 		"engine_identity": objectSchema(schema{
-			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.15.0"},
+			"name": schema{"type": "string", jsonSchemaConst: "pdfcpu"}, "version": schema{"type": "string", jsonSchemaConst: "v0.16.4"},
 			"api":     schema{"type": "string", jsonSchemaConst: "AddWatermarksMap"},
 			"options": schema{"type": "array", jsonSchemaConst: []string{"onTop=true", "update=restamp"}},
 		}, "name", "version", "api", "options"),
@@ -686,7 +686,7 @@ func searchDocumentsSchemas() (schema, schema) {
 	properties["binding_id"] = stringSchema(128)
 	properties["explain"] = booleanSchema()
 	properties["rerank"] = booleanSchema()
-	input := rootObjectSchema(properties, "query", "profile")
+	input := rootObjectSchema(properties, "query")
 	// Keep the exactly-one-scope rule without a root oneOf, which Anthropic rejects.
 	input["if"] = schema{"required": []string{"content_version_ids"}}
 	input["then"] = schema{"not": schema{"required": []string{"filters"}}}
@@ -702,6 +702,7 @@ func searchDocumentsSchemas() (schema, schema) {
 		"evidence_ids":       arraySchema(stringSchema(1024), 64),
 	}, "node_id", "content_version_id", "rank", "score", "path", "evidence_ids")
 	output := rootObjectSchema(withPrivateCache(schema{
+		"profile":              stringSchema(128),
 		schemaVaultIDField:     uuidSchema(),
 		"fence":                fenceAuthoritySchema(),
 		"fence_fingerprint":    fenceFingerprintSchema(),
@@ -715,10 +716,10 @@ func searchDocumentsSchemas() (schema, schema) {
 			schemaStateField:     stringSchema(64),
 		}, "binding_required", "scoped_documents", "complete_documents", schemaStateField),
 		"reranking":       searchRerankingSchema(),
-		"skipped_reasons": arraySchema(stringSchema(64), 64),
+		"skipped_reasons": arraySchema(stringSchema(2048), 64),
 		"results":         arraySchema(result, 100),
 		"truncated":       booleanSchema(),
-	}), cacheRequired("requested_mode",
+	}), cacheRequired("profile", "requested_mode",
 		"actual_mode", "coverage", "skipped_reasons", "results", "truncated")...)
 	output["if"] = schema{kataRequiredField: []string{"fence"}}
 	output["then"] = schema{

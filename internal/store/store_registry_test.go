@@ -12,9 +12,10 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestSecondaryBlobStoreLifecycle(t *testing.T) {
+func checkSecondaryBlobStoreLifecycle(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
@@ -41,9 +42,10 @@ func TestSecondaryBlobStoreLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
+func checkBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(t.Context(), secondary))
@@ -68,7 +70,7 @@ func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(),
-		`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+		`UPDATE blob_stores SET lifecycle=$1 WHERE store_id=$2`,
 		blobStoreLifecycleDetached, secondary.ID,
 	)
 	require.NoError(t, err)
@@ -86,9 +88,10 @@ func TestBlobStoreRemovalRejectsActiveDestinationOperation(t *testing.T) {
 	require.NoError(t, s.UnregisterBlobStore(t.Context(), secondary.ID))
 }
 
-func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
+func checkBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	primary, err := s.PrimaryBlobStore(t.Context())
 	require.NoError(t, err)
 	require.ErrorIs(t, s.DetachBlobStore(t.Context(), primary.ID), ErrBlobStorePrimary)
@@ -100,14 +103,14 @@ func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	_, err = s.db.ExecContext(t.Context(),
-		`INSERT INTO blobs(hash, size, created_at) VALUES(?, 1, ?)`,
+		`INSERT INTO blobs(hash, size, created_at) VALUES($1, 1, $2)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
-		) VALUES(?, ?, ?, 'loose', 'raw', 1, 1)`,
+		) VALUES($1, $2, $3, 'loose', 'raw', 1, 1)`,
 		hash,
 		secondary.ID, "30000000-0000-4000-8000-000000000001",
 	)
@@ -115,9 +118,10 @@ func TestBlobStoreRemovalRequiresEmptyDetachedSecondary(t *testing.T) {
 	require.ErrorIs(t, s.DetachBlobStore(t.Context(), secondary.ID), ErrBlobStoreNotEmpty)
 }
 
-func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
+func checkBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
 	)
@@ -133,7 +137,7 @@ func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
 	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO storage_operation_cleanup(
 			operation_id,store_id,loose_hash,loose_encoding,pack_id
-		) VALUES(?,?,?,?,'')`,
+		) VALUES($1,$2,$3,$4,'')`,
 		operation.ID, secondary.ID, fakeHash("92"), packstore.LooseEncodingRaw,
 	)
 	require.NoError(t, err)
@@ -143,9 +147,10 @@ func TestBlobStoreDetachRequiresCompletedPhysicalCleanup(t *testing.T) {
 	)
 }
 
-func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
+func checkEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	secondary, err := s.PrepareSecondaryBlobStore(
 		"archive", "filesystem", "archive_nas",
 	)
@@ -154,7 +159,7 @@ func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
 	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_packs(
 			store_id,pack_id,entry_count,stored_bytes,created_at
-		) VALUES(?,?,1,100,?)`,
+		) VALUES($1,$2,1,100,$3)`,
 		secondary.ID, "pack-after-mapping-revocation", nowRFC3339(),
 	)
 	require.NoError(t, err)
@@ -169,9 +174,10 @@ func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
 	}}, refs)
 }
 
-func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T) {
+func checkBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -193,7 +199,7 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',7,1)`,
+		) VALUES($1,$2,$3,'loose','raw',7,1)`,
 		sharedHash, secondary.ID, "31000000-0000-4000-8000-000000000001",
 	)
 	require.NoError(t, err)
@@ -224,7 +230,7 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 	_, err = s.CreateFile(ctx, s.RootID(), "remote.txt", remoteHash, 11, "text/plain")
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE blob_locations SET store_id=? WHERE blob_hash=?`, secondary.ID, remoteHash)
+		UPDATE blob_locations SET store_id=$1 WHERE blob_hash=$2`, secondary.ID, remoteHash)
 	require.NoError(t, err)
 
 	hash, err := packstore.ParseHash(soleHash)
@@ -254,7 +260,7 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 
 	// Revoking a replica makes both current documents using it depend on primary.
 	_, err = s.db.ExecContext(ctx,
-		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`, sharedHash, secondary.ID)
+		`DELETE FROM blob_locations WHERE blob_hash=$1 AND store_id=$2`, sharedHash, secondary.ID)
 	require.NoError(t, err)
 	inventory, err = s.BlobStoreInventory(ctx)
 	require.NoError(t, err)
@@ -262,9 +268,10 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 	assert.Equal(t, int64(4), inventory[primary.ID].AffectedDocuments)
 }
 
-func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T) {
+func checkBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -285,13 +292,13 @@ func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T
 		_, err = s.db.ExecContext(ctx, `
 			INSERT INTO blob_locations(
 				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-			) VALUES(?,?,?,'loose','raw',7,1)`,
+			) VALUES($1,$2,$3,'loose','raw',7,1)`,
 			hash, storeID, fmt.Sprintf("41000000-0000-4000-8000-%012d", index+1),
 		)
 		require.NoError(t, err)
 	}
 	_, err = s.db.ExecContext(ctx,
-		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`, hash, primary.ID)
+		`DELETE FROM blob_locations WHERE blob_hash=$1 AND store_id=$2`, hash, primary.ID)
 	require.NoError(t, err)
 
 	_, err = s.CreateFile(ctx, s.RootID(), "local.txt", fakeHash("42"), 11, "text/plain")
@@ -302,14 +309,14 @@ func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO blob_locations
-		SELECT blob_hash, ?, generation, kind, encoding, stored_size, pack_eligible
-		FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		SELECT blob_hash, $1, generation, kind, encoding, stored_size, pack_eligible
+		FROM blob_locations WHERE blob_hash=$2 AND store_id=$3`,
 		first.ID, fakeHash("43"), primary.ID)
 	require.NoError(t, err)
 	_, err = s.CreateFile(ctx, s.RootID(), "secondary.txt", fakeHash("44"), 17, "text/plain")
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE blob_locations SET store_id=? WHERE blob_hash=?`, second.ID, fakeHash("44"))
+		`UPDATE blob_locations SET store_id=$1 WHERE blob_hash=$2`, second.ID, fakeHash("44"))
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
@@ -340,9 +347,10 @@ func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T
 	}
 }
 
-func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
+func checkBlobStoreRegistrationRejectsConflicts(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	first, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(t.Context(), first))
@@ -365,9 +373,10 @@ func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
 	}
 }
 
-func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
+func checkBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -393,14 +402,14 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 
 	hash := fakeHash("d8")
 	_, err = s.db.ExecContext(t.Context(),
-		`INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`,
+		`INSERT INTO blobs(hash,size,created_at) VALUES($1,4,$2)`,
 		hash, nowRFC3339(),
 	)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',4,1)`,
+		) VALUES($1,$2,$3,'loose','raw',4,1)`,
 		hash, secondary.ID, "40000000-0000-4000-8000-000000000001",
 	)
 	require.NoError(t, err)
@@ -413,7 +422,7 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	_, err = s.db.ExecContext(t.Context(), `
 		INSERT INTO blob_locations(
 			blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-		) VALUES(?,?,?,'loose','raw',4,1)`,
+		) VALUES($1,$2,$3,'loose','raw',4,1)`,
 		hash, primary.ID, "40000000-0000-4000-8000-000000000002",
 	)
 	require.NoError(t, err)
@@ -428,7 +437,7 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	require.Len(t, remaining.Candidates, 2)
 
 	_, err = s.db.ExecContext(t.Context(),
-		`UPDATE storage_operations SET cancel_requested=0 WHERE operation_id=?`,
+		`UPDATE storage_operations SET cancel_requested=0 WHERE operation_id=$1`,
 		operation.ID,
 	)
 	require.NoError(t, err)
@@ -494,9 +503,10 @@ func TestBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t *testing.T) {
 	assert.Equal(t, "detached", detached.Lifecycle)
 }
 
-func TestBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T) {
+func checkBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -531,9 +541,10 @@ func TestBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t *testing.T)
 	assert.Equal(t, blobStoreLifecycleDraining, draining.Lifecycle)
 }
 
-func TestBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t *testing.T) {
+func checkBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -583,9 +594,10 @@ func TestBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t *testing.
 	assert.True(t, finalized.Detached)
 }
 
-func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
+func checkEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -613,9 +625,10 @@ func TestEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
 	require.ErrorIs(t, err, ErrStorageOperationTerminal)
 }
 
-func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T) {
+func checkDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := open(t)
 	ctx := t.Context()
 	primary, err := s.PrimaryBlobStore(ctx)
 	require.NoError(t, err)
@@ -633,7 +646,7 @@ func TestDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t *testing.T
 	_, err = s.ClaimStorageOperation(ctx, operation.ID)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(),
-		`UPDATE blob_stores SET lifecycle=? WHERE store_id=?`,
+		`UPDATE blob_stores SET lifecycle=$1 WHERE store_id=$2`,
 		blobStoreLifecycleDetached, secondary.ID,
 	)
 	require.NoError(t, err)

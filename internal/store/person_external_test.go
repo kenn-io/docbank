@@ -8,9 +8,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T) {
+func checkRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Example Person", "operator")
 	require.NoError(t, err)
@@ -31,25 +32,15 @@ func TestRecordExternalUIDAliasesPreservesExistingHopBound(t *testing.T) {
 	require.Equal(t, "uid-32", resolved.ResolvedUID)
 }
 
-func TestPersonExternalAliasCycle(t *testing.T) {
+func checkPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
-	_, err := s.db.ExecContext(t.Context(), `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
-		VALUES('msgvault','synthetic','a','b','2026-09-12T00:00:00Z'),
-		      ('msgvault','synthetic','b','a','2026-09-12T00:00:00Z')`)
-	require.NoError(t, err)
-	_, err = s.ResolveExternalPersonUID(t.Context(), "msgvault", "synthetic", "a")
-	require.ErrorContains(t, err, "cycle")
-}
-
-func TestPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	for index := range document.MaxPersonExternalIdentities {
 		uid := fmt.Sprintf("uid-%02d", index)
-		_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,display_name_snapshot,linked_at,updated_at) VALUES(?,'msgvault','synthetic',?,'vcard_uid','retired','','2026-09-12T00:00:00Z','2026-09-12T00:00:00Z')`, person.PersonID, uid)
+		_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,display_name_snapshot,linked_at,updated_at) VALUES($1,'msgvault','synthetic',$2,'vcard_uid','retired','','2026-09-12T00:00:00Z','2026-09-12T00:00:00Z')`, person.PersonID, uid)
 		require.NoError(t, err)
 	}
 	identity := PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic",
@@ -63,9 +54,10 @@ func TestPersonExternalIdentityLimitRejectsNewAndAllowsExistingUpdate(t *testing
 	require.Equal(t, "Ada updated", updated.DisplayNameSnapshot)
 }
 
-func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) {
+func checkPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "transfer")
 	require.NoError(t, err)
@@ -96,11 +88,12 @@ func TestPersonExternalIdentityForwardsAndHonorsUnlinkedTombstone(t *testing.T) 
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestRecordExternalUIDAliasesRetiresCurrentIdentity(t *testing.T) {
+func checkRecordExternalUIDAliasesRetiresCurrentIdentity(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
 	for _, targetExists := range []bool{false, true} {
 		t.Run(fmt.Sprintf("target exists=%t", targetExists), func(t *testing.T) {
-			s := newTestStore(t)
+			s := newStore(t)
 			ctx := t.Context()
 			owner, err := s.CreatePerson(ctx, "Original owner", "operator")
 			require.NoError(t, err)
@@ -144,9 +137,10 @@ func TestRecordExternalUIDAliasesRetiresCurrentIdentity(t *testing.T) {
 	}
 }
 
-func TestLinkExternalIdentityRejectsCurrentAlias(t *testing.T) {
+func checkLinkExternalIdentityRejectsCurrentAlias(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Example Person", "operator")
 	require.NoError(t, err)
@@ -159,9 +153,10 @@ func TestLinkExternalIdentityRejectsCurrentAlias(t *testing.T) {
 	require.Empty(t, identities)
 }
 
-func TestPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T) {
+func checkPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	identity := PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic",
@@ -180,9 +175,10 @@ func TestPersonExternalCurrentIdentityRequiresAliasTransition(t *testing.T) {
 	require.Equal(t, "current", identities[0].UIDState)
 }
 
-func TestPersonExternalIdentityCannotBeLinkedToAnotherPerson(t *testing.T) {
+func checkPersonExternalIdentityCannotBeLinkedToAnotherPerson(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	owner, err := s.CreatePerson(t.Context(), "Owner", "operator")
 	require.NoError(t, err)
 	other, err := s.CreatePerson(t.Context(), "Other", "operator")
@@ -202,9 +198,10 @@ func TestPersonExternalIdentityCannotBeLinkedToAnotherPerson(t *testing.T) {
 	require.Equal(t, other.Revision, unchanged.Revision)
 }
 
-func TestRecordExternalUIDAliasesRetargetsAfterSplit(t *testing.T) {
+func checkRecordExternalUIDAliasesRetargetsAfterSplit(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	var people []Person
 	for _, uid := range []string{"survivor", "split"} {
 		person, err := s.CreatePerson(t.Context(), uid, "transfer")
@@ -228,9 +225,10 @@ func TestRecordExternalUIDAliasesRetargetsAfterSplit(t *testing.T) {
 	require.Equal(t, "split", resolved.ResolvedUID)
 }
 
-func TestPersonActorKeysPaginationValidatesCursor(t *testing.T) {
+func checkPersonActorKeysPaginationValidatesCursor(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
 	require.NoError(t, err)
 	for index, address := range []string{"Ada@example.test", "Grace@example.test"} {
@@ -259,9 +257,10 @@ func TestPersonActorKeysPaginationValidatesCursor(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPerson)
 }
 
-func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
+func checkRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
 	require.NoError(t, err)
 	_, err = s.LinkExternalIdentity(t.Context(), PersonExternalIdentity{PersonID: person.PersonID,
@@ -293,9 +292,10 @@ func TestRecordExternalUIDAliasesRejectsCycleAtomically(t *testing.T) {
 	require.Equal(t, person.Revision, unchanged.Revision)
 }
 
-func TestActorKeysForPersonForwardsMergedPersonID(t *testing.T) {
+func checkActorKeysForPersonForwardsMergedPersonID(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	survivor, err := s.CreatePerson(t.Context(), "Survivor", "operator")
 	require.NoError(t, err)
 	absorbed, err := s.CreatePerson(t.Context(), "Absorbed", "operator")

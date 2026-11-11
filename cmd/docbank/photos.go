@@ -28,20 +28,22 @@ albums organize assets. <asset-id> comes from
 photos assets inspect <path-or-id>.
 Output: JSON asset and album receipts; import prints a job ID
 (or JSON with --json).`,
-	GroupID: groupSources,
-	Use:     "photos",
-	Short:   "Manage photo assets",
-	Args:    cobra.NoArgs,
-	RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	GroupID:     groupSources,
+	Use:         "photos",
+	Short:       "Manage photo assets",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var photoAssetsCmd = &cobra.Command{
 	Long: `create or promote groups a file into an asset; inspect gives its asset ID and
 member file IDs for attach, detach, exclude and display. Output: JSON.`,
-	Use:   "assets",
-	Short: "Inspect and mutate photo assets",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	Use:         "assets",
+	Short:       "Inspect and mutate photo assets",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var photoCreateCmd = &cobra.Command{
@@ -274,10 +276,11 @@ var photoSettingsCmd = &cobra.Command{
 hidden_unlock_lifetime to a duration such as 15m. Reset hidden_unlock_lifetime
 to return to five minutes. Backup schedule overrides live under
 "docbank backup schedule". Output: JSON.`,
-	Use:   "settings",
-	Short: "Inspect or change photo settings",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	Use:         "settings",
+	Short:       "Inspect or change photo settings",
+	Args:        cobra.NoArgs,
+	Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker},
+	RunE:        func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var photoSettingsShowCmd = &cobra.Command{

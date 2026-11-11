@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,7 +25,9 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(visiontest.Completion(`{"visible_text":"FINE","literal_description":"A cartoon dog beside flames.","possible_meaning":"May joke about denial of a crisis.","uncertainty":"Conversation context is unavailable."}`))
+		raw, err := json.Marshal(map[string]string{"visible_text": "R and D &amp; partners\n===", "literal_description": "A cartoon dog beside flames.", "possible_meaning": strings.Repeat("ordinary context ", 100) + "denial of a crisis", "uncertainty": "Conversation context is unavailable."})
+		require.NoError(t, err)
+		_, _ = w.Write(visiontest.Completion(string(raw)))
 	}))
 	defer server.Close()
 	renderer, err := vision.New(vision.Profile{DescriptorID: vision.UnderstandingProviderID, Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
@@ -36,11 +39,14 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	require.NoError(t, json.Unmarshal(stored.CanonicalProfile, &portable))
 	require.NoError(t, json.Unmarshal(embeddingWorkerProfile(t, embedder.Descriptor()).CanonicalProfile, &embeddings))
 	portable.Embeddings = embeddings.Embeddings[:1]
+	portable.Embeddings[0].Chunk.Formatter = "rendition-chunk-headings/v1"
+	portable.Embeddings[0].MaxInputTokens = 512
 	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
 	portable.Rendition.AdapterContract = vision.UnderstandingAdapterContract
 	portable.Rendition.DiscloseFilename = false
 	portable.Rendition.MaxUnits = 4
 	portable.Rendition.RequestedArtifacts = []document.EvidenceArtifactRole{document.EvidenceArtifactMarkdown}
+	portable.EvidenceLexical.MaxUnitRunes = 5000
 	service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"images": {Profile: portable, RenditionProvider: renderer, RenditionDisclosure: RuntimeDisclosure{Endpoint: server.URL, Model: "synthetic-vision"}, EmbeddingProviders: map[string]document.EmbeddingProvider{"chunk": embedder}, Tokenizers: map[string]document.Tokenizer{"chunk": embeddingIntegrationTokenizer{}}}}})
 	require.NoError(t, err)
 	t.Cleanup(service.Stop)
@@ -61,7 +67,12 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 	assert.NotEmpty(t, view.Build.ProviderReceipt)
 	require.NotEmpty(t, embedder.text)
 	assert.Contains(t, embedder.text, "denial of a crisis")
-	assert.Contains(t, embedder.headings, []string{"Machine-generated image understanding", "Possible meaning (interpretation)"})
+	assert.Contains(t, embedder.text, "R and D &amp; partners")
+	assert.Contains(t, embedder.headings, []string{"Machine-generated image understanding; unverified; sender intent unknown", "Possible meaning (interpretation)"})
+	for _, input := range embedder.inputs {
+		assert.Contains(t, input.Text, "Machine-generated image understanding; unverified; sender intent unknown / ")
+		assert.Contains(t, input.Text, input.HeadingPath[1])
+	}
 	jobs, err := fixture.catalog.EmbeddingJobsForVersionProfile(t.Context(), node.CurrentVersionID, service.profiles["images"].record.Fingerprint)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
@@ -71,6 +82,11 @@ func TestImageUnderstandingPublishesEmbedsAndSearchesSourceVersion(t *testing.T)
 		require.NoError(t, err, mode)
 		require.Len(t, report.Results, 1, mode)
 		assert.Equal(t, node.CurrentVersionID, report.Results[0].Document.ContentVersionID)
+		assert.Contains(t, report.Results[0].Excerpt, "Machine-generated image understanding; unverified; sender intent unknown / ")
+		if mode != "semantic" {
+			assert.Contains(t, report.Results[0].Excerpt, "Possible meaning (interpretation)")
+			assert.Contains(t, report.Results[0].Excerpt, "denial")
+		}
 	}
 }
 
@@ -79,12 +95,14 @@ type understandingEmbeddingCapture struct {
 
 	text     string
 	headings [][]string
+	inputs   []document.EmbeddingInput
 }
 
 func (p *understandingEmbeddingCapture) Embed(ctx context.Context, inputs []document.EmbeddingInput, auth document.EmbeddingAuthorization) (document.EmbeddingResult, error) {
 	for _, input := range inputs {
 		p.text += input.Text + "\n"
 		p.headings = append(p.headings, input.HeadingPath)
+		p.inputs = append(p.inputs, input)
 	}
 	return p.localTextEmbeddingProvider.Embed(ctx, inputs, auth)
 }

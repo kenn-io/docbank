@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/answer"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/processing"
 )
 
 // answerContentExcerpt admits only an excerpt from the lexical content lane.
@@ -83,15 +84,10 @@ type answerOutput struct {
 	Receipt          answerReceipt    `json:"receipt"`
 }
 
-type answerClient interface {
-	documentClient
-	ListDocumentProcessingProfiles(ctx context.Context) ([]api.ProcessingProfileSummary, error)
-}
-
-type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
+type answerReadSession func(context.Context, func(context.Context, documentClient) error) error
 
 func daemonAnswerSession(lease *daemonLease) answerReadSession {
-	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
+	return daemonClientSession(lease, func(c *daemonconn.Connection) documentClient { return daemonDocumentClient{c} })
 }
 
 var answerErrorMessages = map[string]string{
@@ -100,9 +96,16 @@ var answerErrorMessages = map[string]string{
 	"reranking_unavailable":          "The processing profile has no configured reranking provider; ask the operator to configure it.",
 	"reranking_failed":               "Document reranking failed; check the daemon log before retrying.",
 	"stale_index":                    "The selected index needs rebuilding.",
+	"index_unavailable":              "The selected index needs building.",
 }
 
 func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInput) (api.ProcessingProfileSummary, []daemonconn.SearchCandidate, error) {
+	if input.Profile == "" && len(profiles) > 1 {
+		configured := slices.DeleteFunc(slices.Clone(profiles), func(p api.ProcessingProfileSummary) bool { return p.Name == processing.PDFTextProfileName })
+		if len(configured) > 0 {
+			profiles = configured
+		}
+	}
 	if len(profiles) == 0 {
 		return api.ProcessingProfileSummary{}, nil, api.NewError(http.StatusServiceUnavailable, "processing_unavailable", "no processing profiles available")
 	}
@@ -115,12 +118,16 @@ func selectAnswerSearch(profiles []api.ProcessingProfileSummary, input answerInp
 	selected := profiles[0]
 	candidates := daemonconn.AutomaticSearchCandidates(profiles)
 	if input.Profile != "" {
-		selected = api.ProcessingProfileSummary{Name: input.Profile}
+		found := false
 		for _, p := range profiles {
 			if p.Name == input.Profile {
 				selected = p
+				found = true
 				break
 			}
+		}
+		if !found {
+			return selected, nil, api.NewError(http.StatusUnprocessableEntity, "processing_profile_unavailable", "processing profile is not configured")
 		}
 		if input.BindingID != "" {
 			candidates = []daemonconn.SearchCandidate{{Profile: input.Profile, Binding: input.BindingID}}
@@ -158,7 +165,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		executed  bool
 		documents []api.DocumentSummary
 	}
-	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
+	result, err := documentRead(ctx, session, func(ctx context.Context, c documentClient) (response, error) {
 		filters := input.Filters
 		if filters == nil && len(input.ContentVersionIDs) == 0 {
 			filters = &api.DocumentSourceFenceFilters{}
@@ -175,37 +182,21 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		findProfile := func(name string) api.ProcessingProfileSummary {
-			for _, p := range profiles {
-				if p.Name == name {
-					return p
-				}
-			}
-			return selected
-		}
 		run := func(profile, binding, mode string) (api.DocumentSearchReport, error) {
 			return searchResolvedDocuments(ctx, c, api.DocumentSearchRequest{Query: input.Question, Mode: mode, Profile: profile, BindingID: binding, Limit: input.Limit, Rerank: input.Rerank, ContentFirst: true, Fence: api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs}})
 		}
-		var report api.DocumentSearchReport
-		var binding, failure string
-		for _, candidate := range candidates {
-			report, err = run(candidate.Profile, candidate.Binding, "hybrid")
-			if err == nil {
-				selected = findProfile(candidate.Profile)
-				binding = candidate.Binding
-				break
-			}
-			code, _ := daemonconn.ProblemCode(err)
-			if ctx.Err() != nil {
-				return response{}, ctx.Err()
-			}
-			if input.Profile != "" || !daemonconn.BindingSearchFailure(code) {
+		attempt, err := tryProfileSearch(ctx, profiles, selected, candidates, func(code string) bool {
+			return input.Profile == "" && daemonconn.BindingSearchFailure(code)
+		}, func(profile, binding string) (api.DocumentSearchReport, error) {
+			return run(profile, binding, "hybrid")
+		})
+		if err != nil {
+			facts, _ := toolProblemFacts(err)
+			if input.Profile != "" || !daemonconn.BindingSearchFailure(facts.Code) {
 				return response{}, err
 			}
-			if failure == "" {
-				failure = code
-			}
 		}
+		report, selected, binding, failure := attempt.value, attempt.profile, attempt.binding, attempt.failure
 		if binding == "" {
 			report, err = run(selected.Name, "", "lexical")
 			if err != nil {
@@ -370,4 +361,40 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		}
 		return answerOutput{}, nil, fmt.Errorf("%w: answer receipt", errToolResultTooLarge)
 	}
+}
+
+type profileSearchAttempt[T any] struct {
+	value            T
+	profile          api.ProcessingProfileSummary
+	binding, failure string
+}
+
+// tryProfileSearch shares candidate order while callers decide retry and fallback policy.
+func tryProfileSearch[T any](ctx context.Context, profiles []api.ProcessingProfileSummary, selected api.ProcessingProfileSummary, candidates []daemonconn.SearchCandidate, retry func(string) bool, run func(string, string) (T, error)) (profileSearchAttempt[T], error) {
+	attempt := profileSearchAttempt[T]{profile: selected}
+	var err, firstErr error
+	for _, candidate := range candidates {
+		attempt.value, err = run(candidate.Profile, candidate.Binding)
+		if err == nil {
+			for _, profile := range profiles {
+				if profile.Name == candidate.Profile {
+					attempt.profile = profile
+					break
+				}
+			}
+			attempt.binding = candidate.Binding
+			return attempt, nil
+		}
+		if ctx.Err() != nil {
+			return attempt, ctx.Err()
+		}
+		facts, _ := toolProblemFacts(err)
+		if !retry(facts.Code) {
+			return attempt, err
+		}
+		if attempt.failure == "" {
+			attempt.failure, firstErr = facts.Code, err
+		}
+	}
+	return attempt, firstErr
 }

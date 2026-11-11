@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/document"
@@ -119,7 +121,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		return hits, page.Total > int64(limit), nil
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if fq == "" {
 		return nil, false, nil
 	}
@@ -182,7 +184,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		}
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
-			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
+			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json,'' AS headings_json,'' AS provider_id
 			FROM content_fts CROSS JOIN content_versions matched_cv ON matched_cv.blob_hash=content_fts.blob_hash
 			CROSS JOIN nodes n ON n.id=matched_cv.node_id AND n.current_version_id=matched_cv.version_id
 			CROSS JOIN content_versions cv ON cv.version_id=matched_cv.version_id
@@ -192,13 +194,14 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		if generationID != "" {
 			contentQuery = selectedCTE + `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
-				 ru.locator_json
+				 ru.locator_json,ru.heading_path_json,coalesce(json_extract(rb.provider_receipt_json,'$.provider_id'),'')
 				FROM rendition_lexical_fts ` + selectedJoin + `
 				CROSS JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
 				CROSS JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
 				CROSS JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
+				JOIN rendition_builds rb ON rb.build_id=ls.build_id
 				JOIN rendition_attachments a
 				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
@@ -318,11 +321,11 @@ func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
 
 func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate *ExplainedLexicalCandidate) (Node, error) {
 	var node Node
-	var locatorJSON string
+	var locatorJSON, headingsJSON, providerID string
 	if err := row.Scan(&node.ID, &node.ParentID, &node.Name, &node.Kind,
 		&node.CurrentVersionID, &node.BlobHash, &node.MD5, &node.Size, &node.MimeType,
 		&node.Revision, &node.CreatedAt, &node.ModifiedAt, &node.TrashedAt,
-		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON); err != nil {
+		&candidate.BuildID, &candidate.SegmentID, &candidate.Excerpt, &locatorJSON, &headingsJSON, &providerID); err != nil {
 		return Node{}, err
 	}
 	if locatorJSON != "" {
@@ -330,17 +333,29 @@ func scanExplainedLexicalRow(row interface{ Scan(dest ...any) error }, candidate
 			return Node{}, fmt.Errorf("decoding lexical evidence locator: %w", err)
 		}
 	}
-	candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
+	if providerID == "compatible-vision.understand-v1" {
+		var headings []string
+		if err := json.Unmarshal([]byte(headingsJSON), &headings); err != nil {
+			return Node{}, fmt.Errorf("decoding lexical evidence headings: %w", err)
+		}
+		prefix := document.FormatRenditionHeadingContext(headings, "")
+		candidate.Excerpt = prefix + boundedExplainedSearchExcerptLimit(candidate.Excerpt, max(0, maxExplainedSearchExcerptRunes-utf8.RuneCountInString(prefix)))
+	} else {
+		candidate.Excerpt = boundedExplainedSearchExcerpt(candidate.Excerpt)
+	}
 	return node, nil
 }
 
 func boundedExplainedSearchExcerpt(value string) string {
+	return boundedExplainedSearchExcerptLimit(value, maxExplainedSearchExcerptRunes)
+}
+
+func boundedExplainedSearchExcerptLimit(value string, limit int) string {
 	runes := []rune(value)
-	if len(runes) > maxExplainedSearchExcerptRunes {
+	if len(runes) > limit {
 		match := max(slices.Index(runes, rune(1)), 0)
-		start := max(0, min(match-maxExplainedSearchExcerptRunes/2,
-			len(runes)-maxExplainedSearchExcerptRunes))
-		runes = runes[start : start+maxExplainedSearchExcerptRunes]
+		start := max(0, min(match-limit/2, len(runes)-limit))
+		runes = runes[start : start+limit]
 	}
 	runes = slices.DeleteFunc(runes, func(value rune) bool { return value == 1 || value == 2 })
 	return string(runes)
@@ -717,6 +732,10 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, err
 	}
 	binding, fingerprints, err := embeddingProfileBindingAuthority(ctx, s.db, profileFingerprint, bindingID)
+	if errors.Is(err, ErrNotFound) && fingerprints.Profile == "" {
+		// A configured profile can be searched before processing persists it.
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -733,6 +752,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		}
 	}
 	space, err := loadVectorSpaceTx(ctx, s.db, vectorSpaceID)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -744,6 +766,9 @@ func (s *Store) acquireSemanticSearchAuthority(ctx context.Context, profileFinge
 		return SemanticSearchAuthority{}, errors.New("semantic search vector space does not match profile binding authority")
 	}
 	lease, err := s.AcquireVectorIndexGeneration(ctx, vectorSpaceID, owner, at, duration)
+	if errors.Is(err, ErrNotFound) {
+		return SemanticSearchAuthority{}, ErrVectorIndexUnavailable
+	}
 	if err != nil {
 		return SemanticSearchAuthority{}, err
 	}
@@ -2399,6 +2424,69 @@ func ftsQuery(input string) string {
 	return strings.Join(terms, " ")
 }
 
+// SearchRequiredTerms returns the terms required by ordinary lexical search.
+func SearchRequiredTerms(query string) []string {
+	_, terms, _ := prepareSearch(query)
+	return terms
+}
+
+func prepareSearch(query string) (string, []string, bool) {
+	quotes := strings.NewReplacer("“", `"`, "”", `"`, "„", `"`).Replace(query)
+	fallback := func() (string, []string, bool) { return ftsQuery(query), strings.Fields(query), false }
+	if strings.Count(quotes, `"`)%2 != 0 {
+		return fallback()
+	}
+	analyzer := lexical.Literal()
+	natural, err := analyzer.PrepareNatural(query)
+	if err != nil {
+		return fallback()
+	}
+	wordless := func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) || unicode.IsSpace(r) }
+	// A phrase of stop words alone does not make unquoted stop words optional.
+	if len(natural.Phrases) > 0 && len(natural.Words) == 0 {
+		onlyStopWords := true
+		for _, phrase := range natural.Phrases {
+			words := strings.FieldsFunc(strings.ToLower(phrase), wordless)
+			for _, word := range words {
+				if !lexical.IsStopWord(word) {
+					onlyStopWords = false
+				}
+			}
+		}
+		if onlyStopWords {
+			var unquoted []string
+			for i, part := range strings.Split(quotes, `"`) {
+				if i%2 == 0 {
+					unquoted = append(unquoted, part)
+				}
+			}
+			prepared, _ := analyzer.PrepareNatural(strings.Join(unquoted, " "))
+			natural.Words = prepared.Words
+		}
+	}
+	var groups, terms []string
+	typed := strings.Fields(strings.ReplaceAll(strings.ToLower(quotes), `"`, " "))
+	for _, word := range natural.Words {
+		var forms []string
+		for _, form := range word.Forms {
+			literal, _ := analyzer.PreparePhrase(form)
+			match := literal.Match
+			if slices.ContainsFunc(typed, func(t string) bool { return strings.TrimFunc(t, wordless) == form }) {
+				match += "*"
+			}
+			forms = append(forms, match)
+		}
+		groups = append(groups, "("+strings.Join(forms, " OR ")+")")
+		terms = append(terms, word.Text)
+	}
+	for _, phrase := range natural.Phrases {
+		literal, _ := analyzer.PreparePhrase(phrase)
+		groups = append(groups, literal.Match)
+		terms = append(terms, `"`+phrase+`"`)
+	}
+	return strings.Join(groups, " AND "), terms, len(natural.Phrases) > 0
+}
+
 // nameSearchCandidates leaves filtering and name-based ties to the outer
 // query. A candidate cutoff here would discard eligible equal-score names.
 func nameSearchCandidates(match string) (sqlquery.Query, error) {
@@ -2447,7 +2535,7 @@ func (s *Store) SearchPageWithOptions(
 	if err != nil {
 		return nil, false, err
 	}
-	fq := ftsQuery(query)
+	fq, _, _ := prepareSearch(query)
 	if SearchNeedsQuery(query, opts) {
 		return nil, false, ErrSearchQueryRequired
 	}

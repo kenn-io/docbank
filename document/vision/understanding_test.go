@@ -25,14 +25,25 @@ func TestUnderstandingKeepsObservationAndInterpretationSeparate(t *testing.T) {
 	require.NoError(t, err)
 	text := value.markdown()
 	assert.Contains(t, text, "## Visible text (best-effort transcription)\n\nFINE")
-	assert.Contains(t, text, "## Literal description\n\nA dog sits beside flames.")
-	assert.Contains(t, text, "## Possible meaning (interpretation)\n\nMay joke about ignoring a problem.")
-	assert.Contains(t, text, "No conversation context is available.")
+	assert.Contains(t, text, "## Literal description\n\nA dog sits beside flames\\.")
+	assert.Contains(t, text, "## Possible meaning (interpretation)\n\nMay joke about ignoring a problem\\.")
+	assert.Contains(t, text, "No conversation context is available\\.")
 	assert.Contains(t, text, "does not establish anyone's beliefs, endorsement, or intent")
+}
+
+func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
+	value, err := parseUnderstanding([]byte(`{"visible_text":"R and D &amp; partners\n===","literal_description":"","possible_meaning":"","uncertainty":""}`))
+	require.NoError(t, err)
+	assert.Contains(t, value.markdown(), `R and D \&amp\; partners`)
+	assert.Contains(t, value.markdown(), `\=\=\=`)
 }
 
 func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 	for _, raw := range []string{
+		`{"literal_description":"","possible_meaning":"","uncertainty":""}`,
+		`{"visible_text":"","possible_meaning":"","uncertainty":""}`,
+		`{"visible_text":"","literal_description":"","uncertainty":""}`,
+		`{"visible_text":"","literal_description":"","possible_meaning":""}`,
 		`{}`, `{"visible_text":"text"}`, `{"visible_text":null,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":42,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":"\u0000"}`,
@@ -114,9 +125,9 @@ func TestUnderstandingOriginalImageProducesVersionedEvidence(t *testing.T) {
 	assert.Equal(t, int32(1), calls.Load())
 	assert.Equal(t, document.EvidenceDegradedProvenance, result.Evidence.Completeness)
 	require.Len(t, result.Evidence.Units, 4)
-	assert.Equal(t, []string{"Machine-generated image understanding", "Possible meaning (interpretation)"}, result.Evidence.Units[2].HeadingPath)
-	assert.Contains(t, result.Evidence.Units[2].Text, "does not establish anyone's beliefs")
-	assert.Contains(t, string(result.ProviderMarkdown), "May depict denial.")
+	assert.Equal(t, []string{"Machine-generated image understanding; unverified; sender intent unknown", "Possible meaning (interpretation)"}, result.Evidence.Units[2].HeadingPath)
+	assert.Equal(t, int64(4), result.Receipt.Usage.Units)
+	assert.Contains(t, string(result.ProviderMarkdown), "May depict denial\\.")
 	assert.Equal(t, digest, result.Receipt.SourceSHA256)
 	assert.Equal(t, p.descriptor.Fingerprint, result.Receipt.DescriptorFingerprint)
 	// Input bounds must be checked before any additional provider call.

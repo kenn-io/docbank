@@ -561,13 +561,13 @@ test("masks selected PDF text using native spans and verified delivery", async (
         await drawer.getByRole("button", { name: "Preview redaction", exact: true }).click();
       }
       await expect(
-        drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }),
+        drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }),
       ).toBeVisible({ timeout: 120000 });
       await drawer.getByRole("button", { name: "Text", exact: true }).click();
       await expect(drawer.locator("pre")).toHaveText(
         kind === "tight" ? "[REDACTED] [REDACTED]EEP" : "KEEP FIRST [REDACTED] KEEP SECOND",
       );
-      await drawer.getByRole("button", { name: "Confirm and download ZIP", exact: true }).click();
+      await drawer.getByRole("button", { name: "Download unnumbered ZIP", exact: true }).click();
       const download = page.waitForEvent("download");
       await page
         .getByRole("dialog", { name: "Download reviewed PDF?", exact: true })

@@ -39,6 +39,12 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	postgres := newPostgresQueryStore(t)
 	left := describeBackendSchema(t, sqlite)
 	right := describeBackendSchema(t, postgres)
+	// SQLite retains numbered released layouts; disposable PostgreSQL layouts
+	// identify the embedded SQL directly until retained deployments begin.
+	assert.Equal(t, backendColumn{Kind: "integer", Required: true}, left["vault_metadata"].Columns["schema_version"])
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
+	delete(left["vault_metadata"].Columns, "schema_version")
+	delete(right["vault_metadata"].Columns, "schema_fingerprint")
 	// PostgreSQL's transactional node counter implements SQLite's sqlite_sequence.
 	require.Contains(t, right, "node_allocation")
 	delete(right, "node_allocation")

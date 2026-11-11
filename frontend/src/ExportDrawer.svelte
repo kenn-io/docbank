@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, untrack, tick } from "svelte";
   import {
+    Disclosure,
     Button,
     Checkbox,
     Chip,
@@ -11,7 +12,7 @@
     TextInput,
   } from "@kenn-io/kit-ui";
   import type { RadioGroupOption } from "@kenn-io/kit-ui";
-  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+
   import DrawerShell from "./DrawerShell.svelte";
   import "./toolForm.css";
   import { APIError } from "./api-transport.js";
@@ -350,11 +351,10 @@
       </div>
 
       {#if !admitted && !photo}
-        <details class="tool-disclosure" bind:open={optionsOpen}>
-          <summary
-            ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label">Options</span
-            ><span class="tool-disclosure-value">{optionSummary}</span></summary
-          >
+        <Disclosure variant="plain" class="tool-disclosure" bind:open={optionsOpen}>
+          {#snippet summary()}<span class="tool-label">Options</span><span
+              class="tool-disclosure-value">{optionSummary}</span
+            >{/snippet}
           <div class="tool-grid">
             <div class="tool-field tool-span-2">
               <span class="tool-label">Original files</span>
@@ -516,7 +516,7 @@
               {/if}
             {/if}
           </div>
-        </details>
+        </Disclosure>
       {/if}
       {#if photo && !admitted && !validQuality}<p role="alert" class="tool-error">
           Enter a whole number from 1 to 100 for JPEG quality.
@@ -713,16 +713,14 @@
             >
           </div>
         {/if}
-        <details class="tool-disclosure">
-          <summary
-            ><ChevronRightIcon size="14" aria-hidden="true" /><span class="tool-label">Details</span
-            ><span class="tool-disclosure-value"
+        <Disclosure variant="plain" class="tool-disclosure">
+          {#snippet summary()}<span class="tool-label">Details</span><span
+              class="tool-disclosure-value"
               >{plan.total.toLocaleString()}
               {plan.photo_render ? "photo" : "document"}{plan.total === 1 ? "" : "s"} · {formatBytes(
                 plan.role_bytes,
               )}</span
-            ></summary
-          >
+            >{/snippet}
           <div class="tool-section">
             <dl class="tool-stats">
               <div>
@@ -821,7 +819,7 @@
               )}
             </dl>
           </div>
-        </details>
+        </Disclosure>
       {/if}
     </div>
   </DrawerShell>

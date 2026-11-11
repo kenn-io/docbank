@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ type ServerConfig struct {
 	BindAddr     string   `toml:"bind_addr"`     // default "127.0.0.1"
 	APIPort      int      `toml:"api_port"`      // default 0 (ephemeral)
 	APIKey       string   `toml:"api_key"`       // default "" (ephemeral per-run key on loopback)
-	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; background daemons only
+	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; automatically started daemons only
 }
 
 // WebConfig controls the built-in web UI.
@@ -217,6 +218,30 @@ type WatchConfig struct {
 	Exclude         []string `toml:"exclude"`
 	// ExcludePatterns uses docbank add glob semantics; Exclude stays literal.
 	ExcludePatterns []string `toml:"exclude_patterns"`
+	// DefaultExcludes enables built-in partial-file and conflict exclusions unless false.
+	DefaultExcludes *bool `toml:"default_excludes"`
+}
+
+// defaultWatchExcludePatterns lists the built-in watch exclusion glob rules.
+var defaultWatchExcludePatterns = [...]string{
+	".syncthing.*.tmp",
+	"~syncthing~*.tmp",
+	"*.sync-conflict-*",
+	"*.crdownload",
+}
+
+// EffectiveExcludePatterns combines watch defaults with configured glob rules.
+func (w WatchConfig) EffectiveExcludePatterns() []string {
+	if w.DefaultExcludes != nil && !*w.DefaultExcludes {
+		return append([]string{}, w.ExcludePatterns...)
+	}
+	patterns := append([]string{}, defaultWatchExcludePatterns[:]...)
+	for _, pattern := range w.ExcludePatterns {
+		if !slices.Contains(defaultWatchExcludePatterns[:], pattern) {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns
 }
 
 // RenditionProfileConfig names a deployment binding for one pinned rendition
@@ -1095,6 +1120,9 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
 		return fmt.Errorf("%s max units must be between 1 and 1000000", prefix)
+	}
+	if profile.AdapterContract == vision.UnderstandingAdapterContract && profile.MaxUnits < 4 {
+		return fmt.Errorf("%s image understanding requires at least four units", prefix)
 	}
 	if len(profile.RequestedArtifacts) == 0 || len(profile.RequestedArtifacts) > 4 {
 		return fmt.Errorf("%s requested_artifacts must contain 1-4 roles", prefix)

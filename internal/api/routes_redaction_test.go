@@ -108,6 +108,21 @@ func TestRedactionHTTP(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/redaction/render", nil, map[string]any{
 		"preparation": rawPreparation, "masks": masks, "review_sha256": review.SHA256, "allocation_id": reservation.AllocationID})
 	require.Equal(t, 200, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/redaction/publications", nil, map[string]any{
+		"preparation": rawPreparation, "masks": masks, "review_sha256": review.SHA256, "allocation_id": reservation.AllocationID})
+	require.Equal(t, 200, response.StatusCode, body)
+	var published api.BatesExport
+	require.NoError(t, json.Unmarshal([]byte(body), &published))
+	require.Equal(t, reservation.AllocationID.String(), published.ArtifactID)
+	require.Equal(t, "HTTP000001", published.Pages[0].Label)
+	require.NotNil(t, published.Namespace)
+	require.NotNil(t, published.Allocation)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/bates/namespaces/"+ns.NamespaceID, nil, nil)
+	require.Equal(t, 200, response.StatusCode, body)
+	var detail api.BatesNamespaceDetail
+	require.NoError(t, json.Unmarshal([]byte(body), &detail))
+	require.Equal(t, int64(3), detail.NextSequence)
+	require.Equal(t, "private, no-store", response.Header.Get("Cache-Control"))
 	render := processing.RedactionRenderRequest{Preparation: prep, Masks: masks, ReviewSHA256: review.SHA256}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/redaction/render", nil, map[string]any{
 		"preparation": rawPreparation, "masks": masks, "review_sha256": review.SHA256,
@@ -138,7 +153,7 @@ func TestRedactionHTTP(t *testing.T) {
 	partial.Masks[0].Selector = *problem.Redaction.Expanded
 	response, body = do(t, ts, http.MethodPost, "/api/v1/redaction/resolve", nil, partial)
 	require.Equal(t, 200, response.StatusCode, body)
-	for _, path := range []string{"/api/v1/redaction/render", "/api/v1/redaction/reservations"} {
+	for _, path := range []string{"/api/v1/redaction/render"} {
 		response, body = do(t, ts, http.MethodPost, path, map[string]string{"X-Api-Key": ""}, render)
 		require.Equal(t, 401, response.StatusCode, body)
 		response, body = do(t, ts, http.MethodPost, path, map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}, render)

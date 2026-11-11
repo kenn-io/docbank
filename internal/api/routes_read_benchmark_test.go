@@ -126,8 +126,8 @@ func BenchmarkDuplicatePageHTTP(b *testing.B) {
 			run, err := s.BeginIngest(ctx, "cli", "Synthetic duplicate page")
 			require.NoError(b, err)
 			for group := range 50 {
-				for copy := range tc.references {
-					name := fmt.Sprintf("group-%03d-copy-%02d.bin", group, copy)
+				for replica := range tc.references {
+					name := fmt.Sprintf("group-%03d-copy-%02d.bin", group, replica)
 					_, err := s.IngestFileExact(ctx, run, parent.ID, name, fmt.Sprintf("%064x", group+1),
 						1024, "application/octet-stream", "/synthetic/"+name, "")
 					require.NoError(b, err)

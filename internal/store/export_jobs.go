@@ -28,7 +28,7 @@ func (s *Store) ExportPlanForClaim(ctx context.Context, claim ExportClaim) (bund
 
 func loadExportJob(ctx context.Context, q metadataQuerier, id string) (bundle.Job, error) {
 	var raw []byte
-	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_jobs WHERE id=?`, id).Scan(&raw)
+	err := q.QueryRowContext(ctx, `SELECT canonical_json FROM export_jobs WHERE id=$1`, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return bundle.Job{}, ErrNotFound
 	}
@@ -47,13 +47,13 @@ func putExportJob(ctx context.Context, tx *sql.Tx, j bundle.Job) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET canonical_json=?,state=?,expires_at=? WHERE id=?`, raw, j.State, j.ExpiresAt, j.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET canonical_json=$1,state=$2,expires_at=$3 WHERE id=$4`, raw, j.State, j.ExpiresAt, j.ID)
 	return err
 }
 
 func (s *Store) ExportJob(ctx context.Context, owner, id string) (bundle.Job, error) {
 	var actual string
-	err := s.db.QueryRowContext(ctx, `SELECT owner FROM export_jobs WHERE id=?`, id).Scan(&actual)
+	err := s.db.QueryRowContext(ctx, `SELECT owner FROM export_jobs WHERE id=$1`, id).Scan(&actual)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && actual != owner {
 		return bundle.Job{}, ErrNotFound
 	}
@@ -79,7 +79,7 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 	var job bundle.Job
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var previous, actual string
-		e := tx.QueryRowContext(ctx, `SELECT request_sha256,owner FROM export_jobs WHERE id=?`, r.OperationID).Scan(&previous, &actual)
+		e := tx.QueryRowContext(ctx, `SELECT request_sha256,owner FROM export_jobs WHERE id=$1`, r.OperationID).Scan(&previous, &actual)
 		if e == nil && actual != owner {
 			return ErrNotFound
 		}
@@ -94,7 +94,7 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 			}
 			return e
 		}
-		if e = tx.QueryRowContext(ctx, `SELECT owner FROM export_plans WHERE id=?`, r.PlanID).Scan(&actual); e != nil {
+		if e = tx.QueryRowContext(ctx, `SELECT owner FROM export_plans WHERE id=$1`, r.PlanID).Scan(&actual); e != nil {
 			return ErrNotFound
 		}
 		if actual != owner {
@@ -111,7 +111,7 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 			return bundle.ErrConflict
 		}
 		var total, owned int
-		if e = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(CASE WHEN owner=? THEN 1 ELSE 0 END),0) FROM export_jobs`, owner).Scan(&total, &owned); e != nil {
+		if e = tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(CASE WHEN owner=$1 THEN 1 ELSE 0 END),0) FROM export_jobs`, owner).Scan(&total, &owned); e != nil {
 			return e
 		}
 		if total >= 8 || owned >= 2 {
@@ -123,20 +123,20 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,owner,plan_id,request_sha256,canonical_json,state,epoch,token,archive_name,expires_at) VALUES(?,?,?,?,?,'queued',0,'','',?)`, job.ID, owner, r.PlanID, digest, raw, job.ExpiresAt)
+		_, e = tx.ExecContext(ctx, `INSERT INTO export_jobs(id,owner,plan_id,request_sha256,canonical_json,state,epoch,token,archive_name,expires_at) VALUES($1,$2,$3,$4,$5,'queued',0,'','',$6)`, job.ID, owner, r.PlanID, digest, raw, job.ExpiresAt)
 		if e != nil {
 			return e
 		}
-		return extendExportRetention(ctx, tx, plan.ID, job.ExpiresAt)
+		return s.extendExportRetention(ctx, tx, plan.ID, job.ExpiresAt)
 	})
 	return job, err
 }
 
-func extendExportRetention(ctx context.Context, tx *sql.Tx, planID, until string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE export_plans SET expires_at=max(expires_at,?) WHERE id=?`, until, planID); err != nil {
+func (s *Store) extendExportRetention(ctx context.Context, tx *sql.Tx, planID, until string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE export_plans SET expires_at=`+(metadataJSONDialect{postgres: s.postgresSchema != ""}).maximum()+`(expires_at,$1) WHERE id=$2`, until, planID); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE export_sources SET expires_at=max(expires_at,?) WHERE id=(SELECT source_id FROM export_plans WHERE id=?)`, until, planID)
+	_, err := tx.ExecContext(ctx, `UPDATE export_sources SET expires_at=`+(metadataJSONDialect{postgres: s.postgresSchema != ""}).maximum()+`(expires_at,$1) WHERE id=(SELECT source_id FROM export_plans WHERE id=$2)`, until, planID)
 	return err
 }
 
@@ -144,7 +144,11 @@ func (s *Store) ClaimExportJob(ctx context.Context) (ExportClaim, error) {
 	var claim ExportClaim
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var id string
-		err := tx.QueryRowContext(ctx, `SELECT id,owner FROM export_jobs WHERE state='queued' ORDER BY json_extract(canonical_json,'$.created_at'),id LIMIT 1`).Scan(&id, &claim.Owner)
+		created := `json_extract(canonical_json,'$.created_at')`
+		if s.postgresSchema != "" {
+			created = (metadataJSONDialect{postgres: true}).text("convert_from(canonical_json,'UTF8')", "created_at")
+		}
+		err := tx.QueryRowContext(ctx, `SELECT id,owner FROM export_jobs WHERE state='queued' ORDER BY `+created+`,id LIMIT 1`).Scan(&id, &claim.Owner)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -162,7 +166,7 @@ func (s *Store) ClaimExportJob(ctx context.Context) (ExportClaim, error) {
 			return putExportJob(ctx, tx, claim.Job)
 		}
 		claim.Token = uuid.New().String()
-		err = tx.QueryRowContext(ctx, `UPDATE export_jobs SET epoch=epoch+1,token=? WHERE id=? RETURNING epoch`, claim.Token, id).Scan(&claim.Epoch)
+		err = tx.QueryRowContext(ctx, `UPDATE export_jobs SET epoch=epoch+1,token=$1 WHERE id=$2 RETURNING epoch`, claim.Token, id).Scan(&claim.Epoch)
 		if err != nil {
 			return err
 		}
@@ -179,7 +183,7 @@ func (s *Store) ClaimExportJob(ctx context.Context) (ExportClaim, error) {
 
 func checkExportClaim(ctx context.Context, q metadataQuerier, c ExportClaim) error {
 	var valid bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_jobs WHERE id=? AND state='running' AND epoch=? AND token=? AND expires_at>?)`, c.Job.ID, c.Epoch, c.Token, nowRFC3339()).Scan(&valid)
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_jobs WHERE id=$1 AND state='running' AND epoch=$2 AND token=$3 AND expires_at>$4)`, c.Job.ID, c.Epoch, c.Token, nowRFC3339()).Scan(&valid)
 	if err != nil {
 		return err
 	}
@@ -239,7 +243,7 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 			j.State = "completed"
 			j.Receipt = receipt
 			j.ExpiresAt = exportDeadline(24 * time.Hour)
-			if err = extendExportRetention(ctx, tx, j.PlanID, j.ExpiresAt); err != nil {
+			if err = s.extendExportRetention(ctx, tx, j.PlanID, j.ExpiresAt); err != nil {
 				return err
 			}
 		}
@@ -247,11 +251,11 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 			return err
 		}
 		if receipt == nil {
-			if err = reduceExportRetention(ctx, tx, j.PlanID); err != nil {
+			if err = s.reduceExportRetention(ctx, tx, j.PlanID); err != nil {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET token='',archive_name=? WHERE id=?`, archiveName, j.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET token='',archive_name=$1 WHERE id=$2`, archiveName, j.ID)
 		return err
 	})
 }
@@ -259,7 +263,7 @@ func (s *Store) FinishExportJob(ctx context.Context, c ExportClaim, receipt *bun
 func (s *Store) CancelExportJob(ctx context.Context, owner, id string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var actual string
-		if err := tx.QueryRowContext(ctx, `SELECT owner FROM export_jobs WHERE id=?`, id).Scan(&actual); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT owner FROM export_jobs WHERE id=$1`, id).Scan(&actual); err != nil {
 			return ErrNotFound
 		}
 		if actual != owner {
@@ -281,36 +285,36 @@ func (s *Store) CancelExportJob(ctx context.Context, owner, id string) error {
 		if err = putExportJob(ctx, tx, j); err != nil {
 			return err
 		}
-		if err = reduceExportRetention(ctx, tx, j.PlanID); err != nil {
+		if err = s.reduceExportRetention(ctx, tx, j.PlanID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET epoch=epoch+1,token='' WHERE id=?`, id)
+		_, err = tx.ExecContext(ctx, `UPDATE export_jobs SET epoch=epoch+1,token='' WHERE id=$1`, id)
 		return err
 	})
 }
 
-func reduceExportRetention(ctx context.Context, tx *sql.Tx, id string) error {
+func (s *Store) reduceExportRetention(ctx context.Context, tx *sql.Tx, id string) error {
 	p, err := loadExportPlan(ctx, tx, id)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE export_plans SET expires_at=max(?,COALESCE((SELECT max(expires_at) FROM export_jobs WHERE plan_id=? AND state IN ('queued','running','completed')),'')) WHERE id=?`, p.ExpiresAt, id, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE export_plans SET expires_at=`+(metadataJSONDialect{postgres: s.postgresSchema != ""}).maximum()+`($1,COALESCE((SELECT max(expires_at) FROM export_jobs WHERE plan_id=$2 AND state IN ('queued','running','completed')),'')) WHERE id=$3`, p.ExpiresAt, id, id); err != nil {
 		return err
 	}
 	var raw []byte
-	if err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=?`, p.Source.ID).Scan(&raw); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT canonical_json FROM export_sources WHERE id=$1`, p.Source.ID).Scan(&raw); err != nil {
 		return err
 	}
 	var source bundle.Source
 	if err = json.Unmarshal(raw, &source); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE export_sources SET expires_at=max(?,COALESCE((SELECT max(expires_at) FROM export_plans WHERE source_id=?),'')) WHERE id=?`, source.ExpiresAt, p.Source.ID, p.Source.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE export_sources SET expires_at=`+(metadataJSONDialect{postgres: s.postgresSchema != ""}).maximum()+`($1,COALESCE((SELECT max(expires_at) FROM export_plans WHERE source_id=$2),'')) WHERE id=$3`, source.ExpiresAt, p.Source.ID, p.Source.ID)
 	return err
 }
 
 func (s *Store) RevokeExportOwner(ctx context.Context, owner string) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM export_jobs WHERE owner=? AND state IN ('queued','running') LIMIT 8`, owner)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM export_jobs WHERE owner=$1 AND state IN ('queued','running') LIMIT 8`, owner)
 	if err != nil {
 		return err
 	}
@@ -374,17 +378,17 @@ func (s *Store) RevokeAbandonedExportSessions(ctx context.Context) error {
 
 func (s *Store) ExportArchiveRetained(ctx context.Context, id string) (bool, error) {
 	var retained bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_jobs WHERE id=? AND state='completed')`, id).Scan(&retained)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_jobs WHERE id=$1 AND state='completed')`, id).Scan(&retained)
 	return retained, err
 }
 
 // ExpiredExportJobs is bounded; the worker checks archive leases before removal.
 func (s *Store) ExpiredExportJobs(ctx context.Context) ([]string, error) {
-	return pageMetadataKeys(ctx, s.db, `SELECT id FROM export_jobs WHERE expires_at<=? ORDER BY id LIMIT 100`, nowRFC3339())
+	return pageMetadataKeys(ctx, s.db, `SELECT id FROM export_jobs WHERE expires_at<=$1 ORDER BY id LIMIT 100`, nowRFC3339())
 }
 func (s *Store) DeleteExpiredExportJob(ctx context.Context, id string) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM export_jobs WHERE id=? AND expires_at<=?`, id, nowRFC3339())
+		_, err := tx.ExecContext(ctx, `DELETE FROM export_jobs WHERE id=$1 AND expires_at<=$2`, id, nowRFC3339())
 		return err
 	})
 }
@@ -392,10 +396,10 @@ func (s *Store) DeleteExpiredExportJob(ctx context.Context, id string) error {
 func (s *Store) CleanupExportAuthority(ctx context.Context) error {
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		// Operational claims and private files are retired by the worker first.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM export_plans WHERE id IN (SELECT p.id FROM export_plans p WHERE p.expires_at<=? AND NOT EXISTS(SELECT 1 FROM export_jobs j WHERE j.plan_id=p.id) ORDER BY p.id LIMIT 100)`, nowRFC3339()); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM export_plans WHERE id IN (SELECT p.id FROM export_plans p WHERE p.expires_at<=$1 AND NOT EXISTS(SELECT 1 FROM export_jobs j WHERE j.plan_id=p.id) ORDER BY p.id LIMIT 100)`, nowRFC3339()); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM export_sources WHERE id IN (SELECT s.id FROM export_sources s WHERE s.expires_at<=? AND NOT EXISTS(SELECT 1 FROM export_plans p WHERE p.source_id=s.id) ORDER BY s.id LIMIT 100)`, nowRFC3339())
+		_, err := tx.ExecContext(ctx, `DELETE FROM export_sources WHERE id IN (SELECT s.id FROM export_sources s WHERE s.expires_at<=$1 AND NOT EXISTS(SELECT 1 FROM export_plans p WHERE p.source_id=s.id) ORDER BY s.id LIMIT 100)`, nowRFC3339())
 		return err
 	})
 }

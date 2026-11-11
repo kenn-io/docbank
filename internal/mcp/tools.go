@@ -76,8 +76,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_changes", title: "List changes", description: "Without a cursor, return an empty page and the current checkpoint. Save next_cursor before scanning documents, then resume from it. Later calls return up to 500 changes; repeat while has_more is true.", schemas: listChangesSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
-	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every word of the question to appear in one segment; key terms match better than a sentence. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
-	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
+	{name: "answer_question", openWorld: true, title: "Answer question", description: "Return matched evidence and coverage without synthesizing an answer. Content passages require every prepared word and exact quoted phrase in one segment; common words may be dropped and regular word forms match. Use key terms. Open sources to verify excerpts. coverage_complete reports embedding coverage only; INCOMPLETE_COVERAGE can also reflect missing passage text or omitted evidence.", schemas: answerQuestionSchemas},
+	{name: "search_documents", title: "Search documents", description: "Search current live documents matching metadata filters, or an exact list of up to 4,096 versions, and report coverage. Omit profile to use answer_question's profile selection; results name the profile used. Skipped reasons can include failure codes and setup guidance. With no profile, auto may send query text to a query-capable provider under existing query-text consent and falls back to lexical results when search by meaning is unavailable. Opt-in reranking sends the query and bounded candidate excerpts to the configured provider under the profile's consent.", schemas: searchDocumentsSchemas, openWorld: true},
 	findConflictsTool,
 	{name: "get_document", title: "Get document", description: "Read metadata for one exact current document identity.", schemas: getDocumentSchemas},
 	{name: "list_document_versions", title: "List document versions", description: "Page through immutable content versions for one stable document node.", schemas: listDocumentVersionsSchemas},
@@ -321,13 +321,13 @@ func validToolSemantics(name string, arguments map[string]any) bool {
 		if strings.TrimSpace(question) == "" {
 			return false
 		}
+		fallthrough
+	case "search_documents", "find_conflicts":
 		if _, binding := arguments["binding_id"]; binding {
 			if _, profile := arguments["profile"]; !profile {
 				return false
 			}
 		}
-		fallthrough
-	case "search_documents", "find_conflicts":
 		filters, ok := arguments["filters"].(map[string]any)
 		if !ok {
 			return arguments["filters"] == nil
@@ -403,7 +403,14 @@ type toolErrorOutput struct {
 	ObservedScopeCount int    `json:"observed_scope_count,omitzero"`
 }
 
+type searchProfileError struct{ code, message string }
+
+func (e *searchProfileError) Error() string { return e.message }
+
 func domainToolError(err error) (*sdkmcp.CallToolResult, bool) {
+	if guidance, ok := errors.AsType[*searchProfileError](err); ok {
+		return toolErrorResult(toolErrorOutput{Code: guidance.code, Message: guidance.message})
+	}
 	code, observed := stableDomainError(err)
 	return domainToolErrorResult(code, observed)
 }
@@ -413,6 +420,10 @@ func domainToolErrorResult(code string, observed int) (*sdkmcp.CallToolResult, b
 		return nil, false
 	}
 	output := toolErrorOutput{Code: code, Message: domainErrorMessage(code), ObservedScopeCount: observed}
+	return toolErrorResult(output)
+}
+
+func toolErrorResult(output toolErrorOutput) (*sdkmcp.CallToolResult, bool) {
 	encoded, marshalErr := json.Marshal(output)
 	if marshalErr != nil || len(encoded) > maxToolErrorBytes {
 		return nil, false

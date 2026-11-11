@@ -22,6 +22,7 @@ var (
 	ErrVectorIndexBuildFenced     = errors.New("vector index build is fenced")
 	ErrVectorIndexLeaseFenced     = errors.New("vector index reader lease is fenced")
 	ErrVectorIndexSourceStale     = errors.New("vector index source membership is stale")
+	ErrVectorIndexUnavailable     = errors.New("vector index has no active generation")
 	ErrVectorSetUnavailable       = errors.New("vector set payload is unavailable")
 )
 
@@ -435,7 +436,7 @@ func loadVectorIndexGenerationTx(ctx context.Context, query metadataQuerier, gen
 	var size int
 	err := query.QueryRowContext(ctx, `SELECT generation_id,vector_space_id,source_manifest_checksum,
 		index_manifest_checksum,generation_bytes,byte_size,row_count,built_at
-		FROM vector_index_generations WHERE generation_id=?`, generationID).Scan(&record.ID,
+		FROM vector_index_generations WHERE generation_id=$1`, generationID).Scan(&record.ID,
 		&record.VectorSpaceID, &record.SourceManifestChecksum, &record.IndexManifestChecksum,
 		&record.Bytes, &size, &record.RowCount, &record.BuiltAt)
 	if errors.Is(err, sql.ErrNoRows) {

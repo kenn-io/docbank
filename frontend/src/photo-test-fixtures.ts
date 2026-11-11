@@ -14,6 +14,20 @@ import type { SavedQuery } from "./savedQueries.js";
 
 type SmartSetOverrides = Partial<Omit<SavedQuery, "kind" | "payload" | "fingerprint">>;
 
+export function stubDeferredPhotoFetch() {
+  const rows: ((response: Response) => void)[] = [];
+  const counts: ((response: Response) => void)[] = [];
+  const fetcher = vi.fn(
+    (url: string, init: RequestInit) =>
+      photoMetadataResponse(url, init) ??
+      new Promise<Response>((resolve) =>
+        (JSON.parse(String(init.body)).facets?.length ? counts : rows).push(resolve),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  return { rows, counts, fetcher };
+}
+
 export function savedSmartSet(
   payload: Query,
   fingerprint: string,

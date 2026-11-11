@@ -16,6 +16,9 @@ const (
 	maxGenerationWorkBytes   = int64(16 << 30)
 )
 
+// RenditionChunkHeadingsFormatter includes evidence headings in each model input.
+const RenditionChunkHeadingsFormatter = "rendition-chunk-headings/v1"
+
 // InputPolicy is the resolved runtime form of one rendition-chunk binding: the
 // operator's identity-bearing chunk policy, the tokenizer implementation that
 // proves it, the sealed model-input contract, the lexical evidence identity,
@@ -452,19 +455,20 @@ func (fitter *inputFitter) maximalByteFit(start, end int, limits chunkLimits) (i
 }
 
 func (fitter *inputFitter) fitsByteLimits(tokens []embeddingToken, limits chunkLimits) (bool, error) {
-	_, content, _, err := fitter.tokenMetadata(tokens)
+	_, content, heading, err := fitter.tokenMetadata(tokens)
 	if err != nil {
 		return false, err
 	}
 	contentBytes := int64(len(content))
 	contentRunes := int64(tokens[len(tokens)-1].end - tokens[0].start)
-	if err := fitter.work.consume([]int64{contentBytes}, []int64{contentRunes}); err != nil {
+	prefix := fitter.headingContext(heading, "")
+	if err := fitter.work.consume([]int64{contentBytes, int64(len(prefix))}, []int64{contentRunes, int64(utf8.RuneCountInString(prefix))}); err != nil {
 		return false, err
 	}
 	if contentBytes > limits.contentBytes {
 		return false, nil
 	}
-	return renderedDocumentByteLength(fitter.policy.ModelInput.Document, fitter.attachment, contentBytes) <= limits.renderedBytes, nil
+	return renderedDocumentByteLength(fitter.policy.ModelInput.Document, fitter.attachment, contentBytes+int64(len(prefix))) <= limits.renderedBytes, nil
 }
 
 // tokenFit finds the longest prefix of tokens[start:end) that fits every
@@ -610,13 +614,16 @@ func (fitter *inputFitter) make(tokens []embeddingToken, limits chunkLimits, ord
 	}
 	encoder := fitter.policy.ModelInput.Document
 	contentBytes := int64(len(content))
-	if contentBytes > limits.contentBytes || renderedDocumentByteLength(encoder, fitter.attachment, contentBytes) > limits.renderedBytes {
+	prefix := fitter.headingContext(heading, "")
+	renderedBytes := contentBytes + int64(len(prefix))
+	if contentBytes > limits.contentBytes || renderedDocumentByteLength(encoder, fitter.attachment, renderedBytes) > limits.renderedBytes {
 		return GeneratedEmbeddingInput{}, nil, errProviderInputLimit
 	}
 	contentRunes := int64(tokens[len(tokens)-1].end - tokens[0].start)
+	renderedRunes := contentRunes + int64(utf8.RuneCountInString(prefix))
 	if err := fitter.work.consume(
-		[]int64{contentBytes, contextualizedDocumentByteLength(fitter.attachment, contentBytes), renderedDocumentByteLength(encoder, fitter.attachment, contentBytes)},
-		[]int64{contentRunes, contextualizedDocumentRuneLength(fitter.attachment, contentRunes), renderedDocumentRuneLength(encoder, fitter.attachment, contentRunes)},
+		[]int64{contentBytes, contextualizedDocumentByteLength(fitter.attachment, renderedBytes), renderedDocumentByteLength(encoder, fitter.attachment, renderedBytes)},
+		[]int64{contentRunes, contextualizedDocumentRuneLength(fitter.attachment, renderedRunes), renderedDocumentRuneLength(encoder, fitter.attachment, renderedRunes)},
 	); err != nil {
 		return GeneratedEmbeddingInput{}, nil, err
 	}
@@ -633,7 +640,7 @@ func (fitter *inputFitter) make(tokens []embeddingToken, limits chunkLimits, ord
 		}
 		return GeneratedEmbeddingInput{}, nil, fmt.Errorf("validate exact embedding content tokens: %w", err)
 	}
-	rendered := fitter.policy.ModelInput.EncodeDocument(contextualizeDocumentInput(fitter.attachment, content))
+	rendered := fitter.policy.ModelInput.EncodeDocument(contextualizeDocumentInput(fitter.attachment, fitter.headingContext(heading, content)))
 	renderedTokens, err := countRenderedTokens(fitter.policy.Tokenizer, rendered, limits.renderedTokens)
 	if errors.Is(err, ErrTokenizerLimit) || int64(len(rendered)) > limits.renderedBytes {
 		return GeneratedEmbeddingInput{}, nil, errProviderInputLimit
@@ -647,6 +654,21 @@ func (fitter *inputFitter) make(tokens []embeddingToken, limits chunkLimits, ord
 		ContentTokens: len(contentBoundaries), RenderedTokens: renderedTokens, Checksum: checksum,
 		HeadingPath: heading, SourceSpan: span,
 	}, contentBoundaries, nil
+}
+
+// FormatRenditionHeadingContext prefixes the evidence headings to text.
+func FormatRenditionHeadingContext(headings []string, text string) string {
+	if len(headings) == 0 {
+		return text
+	}
+	return strings.Join(headings, " / ") + "\n\n" + text
+}
+
+func (fitter *inputFitter) headingContext(headings []string, text string) string {
+	if fitter.policy.Chunk.Formatter == RenditionChunkHeadingsFormatter {
+		return FormatRenditionHeadingContext(headings, text)
+	}
+	return text
 }
 
 // tokenMetadata resolves a token range to its source span, the exact content

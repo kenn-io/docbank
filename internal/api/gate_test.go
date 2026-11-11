@@ -349,13 +349,13 @@ func TestScheduledPackDeadlineClearsAdmissionAfterBackupCapture(t *testing.T) {
 			t.Fatal("scheduled pack admission did not release at its interval")
 		}
 		select {
-		case <-captureDone:
-			t.Fatal("backup capture ended before the HTTP mutation")
+		case err := <-captureDone:
+			t.Fatalf("backup capture ended before the HTTP mutation: %v", err)
 		default:
 		}
 		select {
-		case <-schedulerDone:
-			t.Fatal("scheduled pack scheduler stopped before the HTTP mutation")
+		case err := <-schedulerDone:
+			t.Fatalf("scheduled pack scheduler stopped before the HTTP mutation: %v", err)
 		default:
 		}
 

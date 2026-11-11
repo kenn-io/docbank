@@ -270,7 +270,11 @@ func (generation EmbeddingInputGeneration) ToEmbeddingInputs(contract ModelInput
 	}
 	result := make([]EmbeddingInput, len(generation.Inputs))
 	for index, input := range generation.Inputs {
-		contextualized := contextualizeDocumentInput(attachment, input.Content)
+		content := input.Content
+		if generation.Chunk.Formatter == RenditionChunkHeadingsFormatter {
+			content = FormatRenditionHeadingContext(input.HeadingPath, content)
+		}
+		contextualized := contextualizeDocumentInput(attachment, content)
 		if contract.EncodeDocument(contextualized) != input.Rendered || sha256Hex([]byte(input.Rendered)) != input.Checksum {
 			return nil, errors.New("generated embedding input does not match model-input contract")
 		}

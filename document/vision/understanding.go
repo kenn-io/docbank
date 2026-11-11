@@ -14,7 +14,7 @@ import (
 
 // UnderstandingAdapterContract publishes image interpretations through the
 // ordinary rendition pipeline, separately from reviewable photo suggestions.
-const UnderstandingAdapterContract = "docbank-compatible-image-understanding/v1"
+const UnderstandingAdapterContract = document.ImageUnderstandingAdapterContract
 
 // UnderstandingProviderID selects an ordinary image interpretation rendition.
 const UnderstandingProviderID = "compatible-vision.understand-v1"
@@ -45,20 +45,8 @@ func parseUnderstanding(raw []byte) (understanding, error) {
 	return value, nil
 }
 
-// plainMarkdown escapes punctuation before formatting provider text, so source
-// instructions and model output cannot masquerade as headings or links.
-func plainMarkdown(value string) string {
-	var text strings.Builder
-	for _, r := range strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n") {
-		if strings.ContainsRune("\\`*_{}[]<>()#+-!|", r) {
-			text.WriteByte('\\')
-		}
-		text.WriteRune(r)
-	}
-	return strings.TrimSpace(text.String())
-}
-
 const understandingTitle = "Machine-generated image understanding"
+const understandingHeading = "Machine-generated image understanding; unverified; sender intent unknown"
 const understandingNotice = "This is a model interpretation of an image, not verified source testimony. Possible meaning is uncertain without conversation context and does not establish anyone's beliefs, endorsement, or intent."
 
 type understandingSection struct {
@@ -76,11 +64,16 @@ func (value understanding) sections() []understandingSection {
 }
 
 func (section understandingSection) markdown() string {
-	content := plainMarkdown(*section.value)
-	if content == "" {
+	content := document.EscapeRenditionText(section.text())
+	return "\n## " + section.title + "\n\n" + content + "\n"
+}
+
+func (section understandingSection) text() string {
+	content := strings.ReplaceAll(strings.ReplaceAll(*section.value, "\r\n", "\n"), "\r", "\n")
+	if strings.TrimSpace(content) == "" {
 		content = "No supported content provided."
 	}
-	return "\n## " + section.title + "\n\n" + content + "\n"
+	return content
 }
 
 func (value understanding) markdown() string {
@@ -118,13 +111,13 @@ func (p *Provider) renderUnderstanding(ctx context.Context, upload document.Auth
 	evidence.Units = nil
 	for order, section := range value.sections() {
 		evidence.Units = append(evidence.Units, document.SourceEvidenceUnitV1{
-			Order: order, HeadingPath: []string{understandingTitle, section.title},
-			Text:    "# " + understandingTitle + "\n\n" + understandingNotice + "\n" + section.markdown(),
+			Order: order, HeadingPath: []string{understandingHeading, section.title},
+			Text:    section.text(),
 			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorGeneric, IndexOrigin: document.EvidenceIndexOriginNone},
 		})
 	}
 
-	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: authorization.SourceSHA256, UploadSHA256: meta.SHA256, OperationID: "understand-" + authorization.RenditionRequestFingerprint, StartedAt: started, CompletedAt: time.Now().UTC(), Warnings: []string{"degraded_provenance", "machine_generated_interpretation"}, Usage: document.RenditionUsage{Requests: 1, InputBytes: meta.ByteLength, OutputBytes: int64(len(raw)), Units: 1}})
+	receipt, err := providerutil.NewReceipt(provider, providerutil.Receipt{Descriptor: p.descriptor, Authorization: authorization, SourceSHA256: authorization.SourceSHA256, UploadSHA256: meta.SHA256, OperationID: "understand-" + authorization.RenditionRequestFingerprint, StartedAt: started, CompletedAt: time.Now().UTC(), Warnings: []string{"degraded_provenance", "machine_generated_interpretation"}, Usage: document.RenditionUsage{Requests: 1, InputBytes: meta.ByteLength, OutputBytes: int64(len(raw)), Units: int64(len(evidence.Units))}})
 	if err != nil {
 		return document.RenditionResult{}, err
 	}

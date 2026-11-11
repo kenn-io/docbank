@@ -15,7 +15,7 @@ import (
 
 func TestVerifyPDFRejectsEmptyTruncatedAndExcessivePages(t *testing.T) {
 	for _, data := range [][]byte{nil, []byte("%PDF-1.7\n%%EOF"), []byte("not a PDF")} {
-		_, err := VerifyPDF(data)
+		_, err := VerifyPDF(t.Context(), data)
 		require.Error(t, err)
 	}
 	p := fpdf.New("P", "mm", "A4", "")
@@ -24,10 +24,10 @@ func TestVerifyPDFRejectsEmptyTruncatedAndExcessivePages(t *testing.T) {
 	p.Text(20, 20, "Synthetic independent parser fixture")
 	var b bytes.Buffer
 	require.NoError(t, p.Output(&b))
-	pages, err := VerifyPDF(b.Bytes())
+	pages, err := VerifyPDF(t.Context(), b.Bytes())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), pages)
-	_, err = VerifyPDF(b.Bytes()[:b.Len()-20])
+	_, err = VerifyPDF(t.Context(), b.Bytes()[:b.Len()-20])
 	require.Error(t, err)
 }
 

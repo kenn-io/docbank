@@ -38,11 +38,16 @@ type BatesArtifactPublication struct {
 // BatesPublicationPlan resolves one reservation back to the exact immutable
 // snapshot bytes and page order that it allocated.
 func (s *Store) BatesPublicationPlan(ctx context.Context, allocationID string) (BatesAllocation, []BatesArtifactPage, error) {
-	allocation, err := s.BatesAllocation(ctx, allocationID)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
-	inputs, err := expectedBatesPagesLimited(ctx, s.db, allocation.SnapshotID, MaxBatesExportPages)
+	defer func() { _ = tx.Rollback() }()
+	allocation, err := loadBatesAllocation(ctx, tx, allocationID)
+	if err != nil {
+		return BatesAllocation{}, nil, err
+	}
+	inputs, err := expectedBatesPagesLimited(ctx, tx, allocation.SnapshotID, MaxBatesExportPages)
 	if err != nil {
 		return BatesAllocation{}, nil, err
 	}
@@ -59,7 +64,7 @@ func (s *Store) BatesPublicationPlan(ctx context.Context, allocationID string) (
 			SourceBlobSHA256: input.UnstampedSHA256, SourcePage: input.SourcePage,
 			OutputPage: label.OutputPage, Label: label.Label}
 	}
-	return allocation, pages, nil
+	return allocation, pages, tx.Commit()
 }
 
 // PublishBatesArtifact atomically roots already-durable verified PDF bytes,
@@ -123,18 +128,18 @@ func (s *Store) PublishBatesArtifact(ctx context.Context, publication BatesArtif
 		}
 		createdAt := nowRFC3339()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO bates_artifacts(artifact_id,allocation_id,blob_hash,size,media_type,page_count,recipe_json,manifest_sha256,state,created_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?)`, publication.ArtifactID, publication.AllocationID, publication.BlobSHA256,
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, publication.ArtifactID, publication.AllocationID, publication.BlobSHA256,
 			publication.Size, batesArtifactMediaTypePDF, publication.PageCount, []byte(publication.RecipeJSON), manifestSHA, batesArtifactStateVerified, createdAt); err != nil {
 			return err
 		}
 		for _, page := range publication.Pages {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO bates_artifact_pages(artifact_id,ordinal,occurrence_id,source_blob_sha256,source_page,output_page,label)
-				VALUES(?,?,?,?,?,?,?)`, publication.ArtifactID, page.Ordinal, page.OccurrenceID, page.SourceBlobSHA256,
+				VALUES($1,$2,$3,$4,$5,$6,$7)`, publication.ArtifactID, page.Ordinal, page.OccurrenceID, page.SourceBlobSHA256,
 				page.SourcePage, page.OutputPage, page.Label); err != nil {
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE bates_allocations SET state=?,committed_at=? WHERE allocation_id=? AND state=?`,
+		result, err := tx.ExecContext(ctx, `UPDATE bates_allocations SET state=$1,committed_at=$2 WHERE allocation_id=$3 AND state=$4`,
 			batesAllocationStateCommitted, createdAt, publication.AllocationID, batesAllocationStateReserved)
 		if err != nil {
 			return err
@@ -172,11 +177,19 @@ func BatesArtifactManifestSHA(artifact BatesArtifact) (string, error) {
 }
 
 func (s *Store) BatesArtifact(ctx context.Context, allocationID string) (BatesArtifact, error) {
-	artifact, err := loadBatesArtifactByAllocation(ctx, s.db, allocationID)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return BatesArtifact{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	artifact, err := loadBatesArtifactByAllocation(ctx, tx, allocationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BatesArtifact{}, ErrNotFound
 	}
-	return artifact, err
+	if err != nil {
+		return BatesArtifact{}, err
+	}
+	return artifact, tx.Commit()
 }
 
 func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]BatesArtifact, error) {
@@ -186,21 +199,26 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 	if after != "" && validateUUIDv4(after) != nil {
 		return nil, ErrInvalidBatesCursor
 	}
-	query := `SELECT artifact_id FROM bates_artifacts ORDER BY created_at,artifact_id LIMIT ?`
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	query := `SELECT artifact_id FROM bates_artifacts ORDER BY created_at,artifact_id LIMIT $1`
 	args := []any{limit}
 	if after != "" {
 		var createdAt string
-		if err := s.db.QueryRowContext(ctx, `SELECT created_at FROM bates_artifacts WHERE artifact_id=?`, after).Scan(&createdAt); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT created_at FROM bates_artifacts WHERE artifact_id=$1`, after).Scan(&createdAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, ErrInvalidBatesCursor
 			}
 			return nil, err
 		}
 		query = `SELECT artifact_id FROM bates_artifacts
-			WHERE created_at>? OR (created_at=? AND artifact_id>?) ORDER BY created_at,artifact_id LIMIT ?`
+			WHERE created_at>$1 OR (created_at=$2 AND artifact_id>$3) ORDER BY created_at,artifact_id LIMIT $4`
 		args = []any{createdAt, createdAt, after, limit}
 	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -218,13 +236,13 @@ func (s *Store) BatesArtifacts(ctx context.Context, after string, limit int) ([]
 	}
 	artifacts := make([]BatesArtifact, 0, len(ids))
 	for _, id := range ids {
-		artifact, err := loadBatesArtifact(ctx, s.db, id)
+		artifact, err := loadBatesArtifact(ctx, tx, id)
 		if err != nil {
 			return nil, err
 		}
 		artifacts = append(artifacts, artifact)
 	}
-	return artifacts, nil
+	return artifacts, tx.Commit()
 }
 
 func (s *Store) BatesArtifactCount(ctx context.Context) (int, error) {
@@ -237,7 +255,7 @@ func (s *Store) BatesArtifactCount(ctx context.Context) (int, error) {
 
 func loadBatesArtifactByAllocation(ctx context.Context, q metadataQuerier, allocationID string) (BatesArtifact, error) {
 	var id string
-	if err := q.QueryRowContext(ctx, `SELECT artifact_id FROM bates_artifacts WHERE allocation_id=?`, allocationID).Scan(&id); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT artifact_id FROM bates_artifacts WHERE allocation_id=$1`, allocationID).Scan(&id); err != nil {
 		return BatesArtifact{}, err
 	}
 	return loadBatesArtifact(ctx, q, id)

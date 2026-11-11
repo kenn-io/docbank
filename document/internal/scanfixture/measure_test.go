@@ -11,7 +11,7 @@ func TestMeasureLabelsSkippedInputs(t *testing.T) {
 		{Name: "image", MediaType: "image/png"},
 		{Name: "oversized", MediaType: mediaTypePDF, Generated: true},
 	} {
-		require.NotEmpty(t, Measure(input, 128<<20).Skipped, input.Name)
+		require.NotEmpty(t, Measure(t.Context(), input, 128<<20).Skipped, input.Name)
 	}
 }
 
@@ -20,8 +20,8 @@ func TestMeasureUsesTheSourceBoundForStreamLimits(t *testing.T) {
 		Name: "bounded", MediaType: mediaTypePDF,
 		Bytes: textPDF(1, "Synthetic text that exceeds a small configured stream bound."),
 	}
-	got := Measure(input, 16)
-	withRoom := Measure(input, 128<<20)
+	got := Measure(t.Context(), input, 16)
+	withRoom := Measure(t.Context(), input, 128<<20)
 	require.Equal(t, int64(1), got.Pages)
 	require.NotEmpty(t, got.InspectError)
 	require.Empty(t, withRoom.InspectError)
@@ -35,7 +35,7 @@ func TestMeasureRecordsOpaqueStreamsWithoutCallingThemScans(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, input.Bytes)
-	got := Measure(input, 128<<20)
+	got := Measure(t.Context(), input, 128<<20)
 	require.Equal(t, int64(3), got.Pages)
 	require.True(t, got.Unbounded)
 	require.NotEmpty(t, got.InspectError)

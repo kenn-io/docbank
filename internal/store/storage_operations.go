@@ -604,9 +604,9 @@ func recordStorageOperationCleanupTx(
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO storage_operation_cleanup(
+			INSERT INTO storage_operation_cleanup(
 				operation_id,store_id,loose_hash,loose_encoding,pack_id
-			) VALUES(?,?,?,?,?)`,
+			) VALUES($1,$2,$3,$4,$5) ON CONFLICT(operation_id,store_id,loose_hash,loose_encoding,pack_id) DO NOTHING`,
 			operationID, storeID, ref.LooseHash.String(), ref.LooseEncoding, ref.PackID,
 		); err != nil {
 			return fmt.Errorf("recording storage cleanup: %w", err)
@@ -621,7 +621,7 @@ func (s *Store) StorageOperationCleanups(
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT store_id,loose_hash,loose_encoding,pack_id
 		FROM storage_operation_cleanup
-		WHERE operation_id=?
+		WHERE operation_id=$1
 		ORDER BY store_id,pack_id,loose_hash,loose_encoding`,
 		operationID,
 	)
@@ -662,23 +662,25 @@ func (s *Store) StorageOperationCleanups(
 func (s *Store) CompleteStorageOperationCleanup(
 	ctx context.Context, operationID string, item StorageOperationCleanup,
 ) error {
-	result, err := s.db.ExecContext(ctx, `
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
 		DELETE FROM storage_operation_cleanup
-		WHERE operation_id=? AND store_id=? AND loose_hash=? AND loose_encoding=? AND pack_id=?`,
-		operationID, item.StoreID, item.Ref.LooseHash.String(),
-		item.Ref.LooseEncoding, item.Ref.PackID,
-	)
-	if err != nil {
-		return fmt.Errorf("completing storage operation cleanup: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("reading storage cleanup completion: %w", err)
-	}
-	if affected != 1 {
-		return fmt.Errorf("storage cleanup no longer exists: %w", ErrNotFound)
-	}
-	return nil
+		WHERE operation_id=$1 AND store_id=$2 AND loose_hash=$3 AND loose_encoding=$4 AND pack_id=$5`,
+			operationID, item.StoreID, item.Ref.LooseHash.String(),
+			item.Ref.LooseEncoding, item.Ref.PackID,
+		)
+		if err != nil {
+			return fmt.Errorf("completing storage operation cleanup: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reading storage cleanup completion: %w", err)
+		}
+		if affected != 1 {
+			return fmt.Errorf("storage cleanup no longer exists: %w", ErrNotFound)
+		}
+		return nil
+	})
 }
 
 // PrepareStorageOperationCleanup determines whether a retired physical object
@@ -689,23 +691,23 @@ func (s *Store) PrepareStorageOperationCleanup(
 ) (bool, error) {
 	var retire bool
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var exists int
+		var exists bool
 		if err := tx.QueryRowContext(ctx, `
 			SELECT EXISTS(
 				SELECT 1 FROM storage_operation_cleanup
-				WHERE operation_id=? AND store_id=? AND loose_hash=?
-				  AND loose_encoding=? AND pack_id=?
+				WHERE operation_id=$1 AND store_id=$2 AND loose_hash=$3
+				  AND loose_encoding=$4 AND pack_id=$5
 			)`,
 			operationID, item.StoreID, item.Ref.LooseHash.String(),
 			item.Ref.LooseEncoding, item.Ref.PackID,
 		).Scan(&exists); err != nil {
 			return fmt.Errorf("checking storage operation cleanup: %w", err)
 		}
-		if exists == 0 {
+		if !exists {
 			return fmt.Errorf("storage cleanup no longer exists: %w", ErrNotFound)
 		}
 
-		var authorized int
+		var authorized bool
 		if item.Ref.LooseHash != "" {
 			encoding, err := looseEncodingName(item.Ref.LooseEncoding)
 			if err != nil {
@@ -714,7 +716,7 @@ func (s *Store) PrepareStorageOperationCleanup(
 			if err := tx.QueryRowContext(ctx, `
 				SELECT EXISTS(
 					SELECT 1 FROM blob_locations
-					WHERE blob_hash=? AND store_id=? AND kind=? AND encoding=?
+					WHERE blob_hash=$1 AND store_id=$2 AND kind=$3 AND encoding=$4
 				)`,
 				item.Ref.LooseHash.String(), item.StoreID,
 				blobLocationKindLoose, encoding,
@@ -724,17 +726,17 @@ func (s *Store) PrepareStorageOperationCleanup(
 		} else {
 			if err := tx.QueryRowContext(ctx, `
 				SELECT EXISTS(
-					SELECT 1 FROM blob_packs WHERE store_id=? AND pack_id=?
+					SELECT 1 FROM blob_packs WHERE store_id=$1 AND pack_id=$2
 				)`, item.StoreID, item.Ref.PackID,
 			).Scan(&authorized); err != nil {
 				return fmt.Errorf("checking pack cleanup authority: %w", err)
 			}
 		}
-		if authorized != 0 {
+		if authorized {
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM storage_operation_cleanup
-				WHERE operation_id=? AND store_id=? AND loose_hash=?
-				  AND loose_encoding=? AND pack_id=?`,
+				WHERE operation_id=$1 AND store_id=$2 AND loose_hash=$3
+				  AND loose_encoding=$4 AND pack_id=$5`,
 				operationID, item.StoreID, item.Ref.LooseHash.String(),
 				item.Ref.LooseEncoding, item.Ref.PackID,
 			)

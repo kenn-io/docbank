@@ -51,7 +51,7 @@ func TestFindConflictsReportsDifferingFigures(t *testing.T) {
 	docs, err := reader.ResolveDocumentSummaries(t.Context(), api.DocumentSummaryResolveRequest{Identities: identities})
 	require.NoError(t, err)
 	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true, nil)
 	})
 	require.NoError(t, err)
 	var excerpt string
@@ -171,7 +171,7 @@ func TestFindConflictsSkipsRepeatedRenditionExcerpt(t *testing.T) {
 	require.NoError(t, f.catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: member.SHA256, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "The cooling period is 15 days."}))
 	daemon, _, profile := newProcessingDocumentServer(t, f)
 	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "cooling period", Profile: profile, Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true, nil)
 	})
 	require.NoError(t, err)
 	var repeatedExcerpt string
@@ -294,7 +294,7 @@ func TestFindConflictsSkipsTruncatedRendition(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 	daemon := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, httpServer.URL))
 	search, err := daemonRead(t.Context(), daemon.daemon, func(ctx context.Context, c *daemonconn.Connection) (documentSearchResponse, error) {
-		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "service fee", Profile: "text", Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true)
+		return runDocumentSearch(ctx, daemonDocumentClient{c}, searchDocumentsInput{Query: "service fee", Profile: "text", Mode: "lexical", Filters: &api.DocumentSourceFenceFilters{}}, true, nil)
 	})
 	require.NoError(t, err)
 	require.Len(t, search.report.Results, 2)

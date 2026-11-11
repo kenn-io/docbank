@@ -186,7 +186,10 @@ for (const basePath of ["", "/archive", "/assets"]) {
       await login(page);
       await page.getByRole("button", { name: "Documents", exact: true }).click();
       await expect(page).toHaveURL(origin + "/");
-      await page.getByRole("button", { name: "Add", exact: true }).click();
+      await page
+        .locator(".browser-toolbar")
+        .getByRole("button", { name: "Add", exact: true })
+        .click();
       await page.getByRole("menuitem", { name: "Upload files", exact: true }).click();
       await page.getByLabel("Choose local files", { exact: true }).setInputFiles({
         name: "web-signin-session-expiry.txt",

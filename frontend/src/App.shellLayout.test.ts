@@ -65,7 +65,10 @@ it.each([
     committed: 1,
   });
   start();
-  await fireEvent.click(await screen.findByRole("button", { name: "Add" }));
+  const toolbar = (await screen.findByRole("button", { name: "Refresh current view" })).closest(
+    ".browser-toolbar",
+  )!;
+  await fireEvent.click(within(toolbar as HTMLElement).getByRole("button", { name: "Add" }));
   const importFiles = await screen.findByRole("menuitem", { name: "Import load files" });
   await waitFor(() => expect(importFiles.getAttribute("aria-disabled")).not.toBe("true"));
   await fireEvent.click(importFiles);

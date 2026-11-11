@@ -65,7 +65,7 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 			return err
 		}
 		var owner string
-		err := tx.QueryRowContext(ctx, `SELECT person_id FROM person_external_identities WHERE system=? AND archive_id=? AND uid=?`, identity.System, identity.ArchiveID, identity.UID).Scan(&owner)
+		err := tx.QueryRowContext(ctx, `SELECT person_id FROM person_external_identities WHERE system=$1 AND archive_id=$2 AND uid=$3`, identity.System, identity.ArchiveID, identity.UID).Scan(&owner)
 		isNew := errors.Is(err, sql.ErrNoRows)
 		if err == nil && owner != identity.PersonID {
 			return ErrPersonIdentityConflict
@@ -74,7 +74,7 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 			return err
 		}
 		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_external_identities WHERE person_id=?`, identity.PersonID).Scan(&count); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_external_identities WHERE person_id=$1`, identity.PersonID).Scan(&count); err != nil {
 			return err
 		}
 		if isNew && count >= document.MaxPersonExternalIdentities {
@@ -83,8 +83,8 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 		if identity.UIDState == "current" {
 			var conflict bool
 			if err := tx.QueryRowContext(ctx, `SELECT
-				EXISTS(SELECT 1 FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?)
-				OR EXISTS(SELECT 1 FROM person_external_identities WHERE person_id=? AND system=? AND archive_id=? AND uid_state='current' AND uid<>?)`,
+				EXISTS(SELECT 1 FROM person_external_uid_aliases WHERE system=$1 AND archive_id=$2 AND retired_uid=$3)
+				OR EXISTS(SELECT 1 FROM person_external_identities WHERE person_id=$4 AND system=$5 AND archive_id=$6 AND uid_state='current' AND uid<>$7)`,
 				identity.System, identity.ArchiveID, identity.UID, identity.PersonID, identity.System, identity.ArchiveID, identity.UID).Scan(&conflict); err != nil {
 				return err
 			}
@@ -92,11 +92,11 @@ func (s *Store) LinkExternalIdentity(ctx context.Context, identity PersonExterna
 				return ErrPersonIdentityConflict
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(system,archive_id,uid) DO UPDATE SET uid_kind=excluded.uid_kind,uid_state=excluded.uid_state,last_seen_revision=excluded.last_seen_revision,display_name_snapshot=excluded.display_name_snapshot,updated_at=excluded.updated_at`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID, identity.UIDKind, identity.UIDState, identity.LastSeenRevision, identity.DisplayNameSnapshot, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_external_identities(person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(system,archive_id,uid) DO UPDATE SET uid_kind=excluded.uid_kind,uid_state=excluded.uid_state,last_seen_revision=excluded.last_seen_revision,display_name_snapshot=excluded.display_name_snapshot,updated_at=excluded.updated_at`, identity.PersonID, identity.System, identity.ArchiveID, identity.UID, identity.UIDKind, identity.UIDState, identity.LastSeenRevision, identity.DisplayNameSnapshot, now, now)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, identity.PersonID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=$2`, now, identity.PersonID); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -122,7 +122,7 @@ func (s *Store) UnlinkExternalIdentity(ctx context.Context, system, archiveID, u
 	}
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var personID string
-		if err := tx.QueryRowContext(ctx, `SELECT person_id FROM person_external_identities WHERE system=? AND archive_id=? AND uid=?`, system, archiveID, uid).Scan(&personID); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT person_id FROM person_external_identities WHERE system=$1 AND archive_id=$2 AND uid=$3`, system, archiveID, uid).Scan(&personID); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
@@ -131,10 +131,10 @@ func (s *Store) UnlinkExternalIdentity(ctx context.Context, system, archiveID, u
 			return err
 		}
 		now := nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='unlinked',updated_at=? WHERE system=? AND archive_id=? AND uid=?`, now, system, archiveID, uid); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='unlinked',updated_at=$1 WHERE system=$2 AND archive_id=$3 AND uid=$4`, now, system, archiveID, uid); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, personID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=$2`, now, personID); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -153,16 +153,16 @@ func (s *Store) RecordExternalUIDAliases(ctx context.Context, system, archiveID,
 			if !validExternalTuple(system, archiveID, retired) || retired == survivingUID {
 				return ErrInvalidPerson
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES(?,?,?,?,?) ON CONFLICT(system,archive_id,retired_uid) DO UPDATE SET surviving_uid=excluded.surviving_uid,observed_at=excluded.observed_at`, system, archiveID, retired, survivingUID, now); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(system,archive_id,retired_uid) DO UPDATE SET surviving_uid=excluded.surviving_uid,observed_at=excluded.observed_at`, system, archiveID, retired, survivingUID, now); err != nil {
 				return err
 			}
 			// An alias and its current identity must transition together so readers
 			// never see an active key whose resolution points somewhere else.
-			if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=(
-				SELECT person_id FROM person_external_identities WHERE system=? AND archive_id=? AND uid=? AND uid_state='current')`, now, system, archiveID, retired); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=$1 WHERE person_id=(
+				SELECT person_id FROM person_external_identities WHERE system=$2 AND archive_id=$3 AND uid=$4 AND uid_state='current')`, now, system, archiveID, retired); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='retired',updated_at=? WHERE system=? AND archive_id=? AND uid=? AND uid_state='current'`, now, system, archiveID, retired); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET uid_state='retired',updated_at=$1 WHERE system=$2 AND archive_id=$3 AND uid=$4 AND uid_state='current'`, now, system, archiveID, retired); err != nil {
 				return err
 			}
 		}
@@ -184,16 +184,16 @@ func validateExternalAliasChainTx(ctx context.Context, tx *sql.Tx, system, archi
 		}
 		seen[uid] = true
 		var next string
-		err := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, system, archiveID, uid).Scan(&next)
+		err := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=$1 AND archive_id=$2 AND retired_uid=$3`, system, archiveID, uid).Scan(&next)
 		if errors.Is(err, sql.ErrNoRows) {
 			// A new target must also stay reachable from every existing inbound alias.
 			var tooLong bool
 			if err := tx.QueryRowContext(ctx, `WITH RECURSIVE ancestors(uid,depth) AS (
-				SELECT ?,? UNION ALL
+				SELECT retired_uid,CAST($1 AS BIGINT) FROM person_external_uid_aliases WHERE retired_uid=$2 AND system=$3 AND archive_id=$4 UNION ALL
 				SELECT a.retired_uid,ancestors.depth+1 FROM person_external_uid_aliases a
 				JOIN ancestors ON a.surviving_uid=ancestors.uid
-				WHERE a.system=? AND a.archive_id=? AND ancestors.depth<33
-			) SELECT EXISTS(SELECT 1 FROM ancestors WHERE depth>32)`, start, hops, system, archiveID).Scan(&tooLong); err != nil {
+				WHERE a.system=$3 AND a.archive_id=$4 AND ancestors.depth<33
+			) SELECT EXISTS(SELECT 1 FROM ancestors WHERE depth>32)`, hops, start, system, archiveID).Scan(&tooLong); err != nil {
 				return err
 			}
 			if tooLong {
@@ -218,7 +218,7 @@ func resolvePersonUIDTx(ctx context.Context, tx *sql.Tx, system, archive, uid st
 		}
 		seen[uid] = true
 		var person, state string
-		err := tx.QueryRowContext(ctx, `SELECT person_id,uid_state FROM person_external_identities WHERE system=? AND archive_id=? AND uid=?`, system, archive, uid).Scan(&person, &state)
+		err := tx.QueryRowContext(ctx, `SELECT person_id,uid_state FROM person_external_identities WHERE system=$1 AND archive_id=$2 AND uid=$3`, system, archive, uid).Scan(&person, &state)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return ExternalUIDResolution{}, err
 		}
@@ -226,7 +226,7 @@ func resolvePersonUIDTx(ctx context.Context, tx *sql.Tx, system, archive, uid st
 			return ExternalUIDResolution{}, ErrNotFound
 		}
 		var next string
-		aliasErr := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=? AND archive_id=? AND retired_uid=?`, system, archive, uid).Scan(&next)
+		aliasErr := tx.QueryRowContext(ctx, `SELECT surviving_uid FROM person_external_uid_aliases WHERE system=$1 AND archive_id=$2 AND retired_uid=$3`, system, archive, uid).Scan(&next)
 		if aliasErr == nil {
 			uid = next
 			continue
@@ -250,7 +250,7 @@ func (s *Store) ResolveExternalPersonUID(ctx context.Context, system, archiveID,
 	if !validExternalTuple(system, archiveID, uid) {
 		return ExternalUIDResolution{}, ErrInvalidPerson
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return ExternalUIDResolution{}, err
 	}
@@ -263,7 +263,7 @@ func (s *Store) ResolveExternalPersonUID(ctx context.Context, system, archiveID,
 }
 
 func personExternalIdentitiesTx(ctx context.Context, q metadataQuerier, personID string) ([]PersonExternalIdentity, error) {
-	rows, err := q.QueryContext(ctx, `SELECT person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at FROM person_external_identities WHERE person_id=? ORDER BY system,archive_id,uid`, personID)
+	rows, err := q.QueryContext(ctx, `SELECT person_id,system,archive_id,uid,uid_kind,uid_state,last_seen_revision,display_name_snapshot,linked_at,updated_at FROM person_external_identities WHERE person_id=$1 ORDER BY system,archive_id,uid`, personID)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysR
 	if err != nil {
 		return PersonActorKeyPage{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return PersonActorKeyPage{}, err
 	}
@@ -313,7 +313,7 @@ func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysR
 	}
 	keys := map[string]struct{}{}
 	err = func() (retErr error) {
-		rows, err := tx.QueryContext(ctx, `SELECT kind,value_normalized FROM person_identities WHERE person_id=?`, resolvedPersonID)
+		rows, err := tx.QueryContext(ctx, `SELECT kind,value_normalized FROM person_identities WHERE person_id=$1`, resolvedPersonID)
 		if err != nil {
 			return err
 		}
@@ -333,7 +333,7 @@ func (s *Store) ActorKeysForPerson(ctx context.Context, request PersonActorKeysR
 		return PersonActorKeyPage{}, err
 	}
 	err = func() (retErr error) {
-		rows, err := tx.QueryContext(ctx, `SELECT system,archive_id,uid FROM person_external_identities WHERE person_id=? AND uid_state='current'`, resolvedPersonID)
+		rows, err := tx.QueryContext(ctx, `SELECT system,archive_id,uid FROM person_external_identities WHERE person_id=$1 AND uid_state='current'`, resolvedPersonID)
 		if err != nil {
 			return err
 		}
