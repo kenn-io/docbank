@@ -2100,6 +2100,9 @@ it("shows PDF text gaps for an empty live search", async () => {
   render(App);
   await submitSearch("missing");
   expect(await screen.findByText("2 PDFs have 3 pages without a text layer.")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
 });
 
 it.each(["zero", "failure"])("keeps the empty search quiet when coverage is %s", async (state) => {
@@ -2113,6 +2116,7 @@ it.each(["zero", "failure"])("keeps the empty search quiet when coverage is %s",
   await submitSearch("missing");
   await waitFor(() => expect(coverage).toHaveBeenCalled());
   expect(screen.queryByText(/without a text layer/)).toBeNull();
+  expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
 });
 
 it("ignores coverage from an older search", async () => {
@@ -2132,4 +2136,5 @@ it("ignores coverage from an older search", async () => {
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));
   await act(async () => resolve(json({ pdfs_without_text: 1, pages_without_text: 1 })));
   expect(screen.queryByText(/without a text layer/)).toBeNull();
+  expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
 });

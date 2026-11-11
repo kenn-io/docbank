@@ -375,4 +375,12 @@
     border-radius: var(--radius-md);
     background: var(--bg-inset);
   }
+  .notice a,
+  .notice a:visited {
+    color: var(--accent-blue);
+    text-decoration: none;
+  }
+  .notice a:hover {
+    text-decoration: underline;
+  }
 </style>

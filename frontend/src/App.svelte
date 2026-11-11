@@ -3868,6 +3868,15 @@
   />
 {/snippet}
 
+{#snippet pdfOCRGuide()}
+  <a
+    class="pdf-ocr-link"
+    href="https://docbank.ai/docs/usage/document-processing/#ocr"
+    target="_blank"
+    rel="noreferrer">Learn about OCR</a
+  >
+{/snippet}
+
 {#snippet emptyAddMenu()}
   {@render addMenu("start")}
 {/snippet}
@@ -4882,7 +4891,11 @@
                       : emptyRoot
                         ? "Add files or a folder to start your vault."
                         : undefined}
-                  children={emptyRoot ? emptyAddMenu : undefined}
+                  children={activeQuery && pdfCoverage?.pdfs_without_text
+                    ? pdfOCRGuide
+                    : emptyRoot
+                      ? emptyAddMenu
+                      : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}
@@ -5615,6 +5628,11 @@
 {#if hiddenAccess?.setupPrompt}<HiddenSetupModal access={hiddenAccess} />{/if}
 
 <style>
+  .pdf-ocr-link,
+  .pdf-ocr-link:visited {
+    color: var(--accent-blue);
+  }
+
   .vault-nav {
     margin-top: auto;
   }
