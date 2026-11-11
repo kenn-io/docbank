@@ -537,11 +537,11 @@ func quickTimeVersionZeroSound(data []byte) []byte {
 	binary.BigEndian.PutUint16(base[8+8:], 0)  // version
 	binary.BigEndian.PutUint16(base[8+20:], 0) // compression ID
 	replacement := slices.Concat(base, esds, data[chanAt:chanAt+24])
-	binary.BigEndian.PutUint32(replacement, uint32(len(replacement))) //nolint:gosec // small fixture
+	binary.BigEndian.PutUint32(replacement, uint32(len(replacement)))
 	delta := len(replacement) - oldSize
 	for _, box := range []string{"moov", "trak", "mdia", "minf", "stbl", "stsd"} {
 		size := bytes.LastIndex(data[:entry], []byte(box)) - 4
-		binary.BigEndian.PutUint32(data[size:], uint32(int(binary.BigEndian.Uint32(data[size:]))+delta)) //nolint:gosec // small fixture
+		binary.BigEndian.PutUint32(data[size:], uint32(int(binary.BigEndian.Uint32(data[size:]))+delta))
 	}
 	return slices.Concat(data[:entry], replacement, data[entry+oldSize:])
 }
