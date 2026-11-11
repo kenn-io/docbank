@@ -85,6 +85,26 @@ func TestBuildRenditionV1(t *testing.T) {
 	assert.Contains(t, renderUnsafeMarkdown(t, rendered.Markdown), "<table>")
 }
 
+func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
+		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
+		Family: "image", UnitKind: EvidenceUnitGeneric,
+		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Speaker: "model", Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone}}},
+	})
+	for _, limit := range []int{10, 300} {
+		t.Run(strconv.Itoa(limit), func(t *testing.T) {
+			policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
+			require.NoError(t, err)
+			rendered, err := BuildRenditionV1(evidence, policy)
+			if err != nil {
+				return // A limit too small for the required labels may be rejected.
+			}
+			assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), limit)
+		})
+	}
+}
+
 func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) {
 	evidenceUnit := NormalizedEvidenceUnitV1{
 		ID: "evidence_unit_test",

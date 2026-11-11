@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,10 @@ func TestUnderstandingPreservesLiteralMarkdownText(t *testing.T) {
 
 func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 	for _, raw := range []string{
+		`{"literal_description":"","possible_meaning":"","uncertainty":""}`,
+		`{"visible_text":"","possible_meaning":"","uncertainty":""}`,
+		`{"visible_text":"","literal_description":"","uncertainty":""}`,
+		`{"visible_text":"","literal_description":"","possible_meaning":""}`,
 		`{}`, `{"visible_text":"text"}`, `{"visible_text":null,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":42,"literal_description":"","possible_meaning":"","uncertainty":""}`,
 		`{"visible_text":"","literal_description":"","possible_meaning":"","uncertainty":"\u0000"}`,
@@ -70,6 +75,27 @@ func TestUnderstandingRejectsIncompleteOrUnboundedOutput(t *testing.T) {
 	} {
 		_, err := parseUnderstanding([]byte(raw))
 		assert.Error(t, err, "reply %q", raw[:min(len(raw), 100)])
+	}
+}
+
+func TestUnderstandingRetainsLongConfiguredModel(t *testing.T) {
+	value, err := parseUnderstanding([]byte(`{"visible_text":"FINE","literal_description":"","possible_meaning":"","uncertainty":""}`))
+	require.NoError(t, err)
+	policy, err := document.NewEvidencePolicy(100_000)
+	require.NoError(t, err)
+	for _, length := range []int{129, 255} {
+		t.Run(fmt.Sprint(length), func(t *testing.T) {
+			model := strings.Repeat("m", length)
+			_, err := Descriptor(UnderstandingProviderID, model, document.RenditionTrustOperatorNetwork)
+			require.NoError(t, err)
+			normalized, err := document.NormalizeEvidenceV1(value.evidence(model), policy)
+			require.NoError(t, err)
+			renderPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1_000})
+			require.NoError(t, err)
+			rendered, err := document.BuildRenditionV1(normalized, renderPolicy)
+			require.NoError(t, err)
+			assert.Contains(t, string(rendered.Markdown), model)
+		})
 	}
 }
 
