@@ -192,7 +192,10 @@
         ) {
           updateItem(queued.id, {
             state: "unconfirmed",
-            error: "Upload could not be confirmed. Retry this file to check whether it was added.",
+            error:
+              cause instanceof APIError
+                ? cause.message
+                : "Upload could not be confirmed. Retry this file to check whether it was added.",
           });
           failedCause ??= cause;
           break;

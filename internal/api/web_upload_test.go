@@ -65,6 +65,7 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 		RequestID string            `json:"request_id"`
 		Proof     string            `json:"proof"`
 		Code      string            `json:"code"`
+		Detail    string            `json:"detail"`
 		Receipt   api.UploadReceipt `json:"receipt"`
 	}
 	content := []byte("quarterly")
@@ -159,6 +160,18 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
 	require.Equal(t, "receipt", message.Type)
 	require.Equal(t, "added", message.Receipt.Status)
+
+	require.NoError(t, s.Blobs.Remove(hex.EncodeToString(digest[:])))
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type": "begin", "request_id": "missing", "parent_id": destination.ID,
+		"name": "quarterly.txt", "mime_type": "text/plain",
+		"expected_hash": hex.EncodeToString(digest[:]), "expected_size": len(content),
+		"check_existing": true,
+	}))
+	require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+	require.Equal(t, "error", message.Type)
+	require.Equal(t, "content_unavailable", message.Code)
+	require.Contains(t, message.Detail, "docbank vault verify")
 }
 
 func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {

@@ -316,6 +316,24 @@ func handleWebUploadConnection(
 					return err
 				}
 				if found {
+					stream, size, err := d.Blobs.OpenStreamContext(ctx, node.BlobHash)
+					if err == nil {
+						var read int64
+						read, err = io.Copy(io.Discard, stream)
+						if err == nil {
+							err = stream.Verify()
+						}
+						err = errors.Join(err, stream.Close())
+						if err == nil && (size != node.Size || read != node.Size) {
+							err = io.ErrUnexpectedEOF
+						}
+					}
+					if err != nil {
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						return NewError(http.StatusConflict, "content_unavailable", "Stored content could not be verified. Run docbank vault verify to identify the problem.")
+					}
 					result = ingest.UploadResult{Node: node, ComputedHash: node.BlobHash, ComputedSize: node.Size}
 					return nil
 				}
