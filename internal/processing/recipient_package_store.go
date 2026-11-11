@@ -109,13 +109,25 @@ func (s *Service) expireRecipientPackageLocked() error {
 // DiscardRecipientPackages cancels only this owner's creation and transfers.
 // Empty owner is reserved for service shutdown, never an HTTP-supplied value.
 func (s *Service) DiscardRecipientPackages(owner string) error {
+	return s.discardRecipientPackage(owner, "")
+}
+
+// DiscardRecipientPackage releases only the named entry after ticket failure.
+func (s *Service) DiscardRecipientPackage(owner, id string) error {
+	if id == "" {
+		return ErrRecipientPackageUnavailable
+	}
+	return s.discardRecipientPackage(owner, id)
+}
+
+func (s *Service) discardRecipientPackage(owner, id string) error {
 	if s == nil {
 		return nil
 	}
 	s.recipientPackages.mu.Lock()
 	defer s.recipientPackages.mu.Unlock()
 	e := s.recipientPackages.entry
-	if e == nil || owner != "" && e.owner != owner {
+	if e == nil || owner != "" && e.owner != owner || id != "" && e.result.ID != id {
 		return nil
 	}
 	e.retired = true
@@ -133,6 +145,7 @@ func (s *Service) RevokeRecipientPackages(owner string) {
 // RecipientPackageReader pins the verified handle until delivery finishes.
 type RecipientPackageReader struct {
 	*io.SectionReader
+
 	Package PreparedRecipientPackage
 	ctx     context.Context
 	close   func() error

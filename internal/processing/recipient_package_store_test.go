@@ -29,6 +29,7 @@ func readyRecipientPackage(t *testing.T) (*Service, *recipientPackageEntry) {
 		e.pins = 0
 		require.NoError(t, f.service.DiscardRecipientPackages("alice"))
 	})
+	//nolint:usetesting // Exercise cleanup under the configured spool, as in production.
 	e.directory, err = os.MkdirTemp(f.service.spoolDirectory, "native-pdf-")
 	require.NoError(t, err)
 	e.file, err = os.CreateTemp(e.directory, "recipient-*.zip")

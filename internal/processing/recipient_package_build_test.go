@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 	"go.kenn.io/docbank/internal/store"
@@ -43,6 +44,39 @@ func recipientBuildFixture(t *testing.T) (preparationFixture, RedactionRenderReq
 	request := RedactionRenderRequest{Preparation: prep, Masks: masks,
 		ReviewSHA256: review.SHA256, AllocationID: r.AllocationID}
 	return f, request, runtime
+}
+
+//nolint:paralleltest // Qualified PDFium measures whole-process RSS.
+func TestBuildRecipientPackageChecksRetainedPDF(t *testing.T) {
+	f, request, _ := recipientBuildFixture(t)
+	ctx := t.Context()
+	allocation, pages, err := f.catalog.BatesPublicationPlan(ctx, request.AllocationID.String())
+	require.NoError(t, err)
+	ns, err := f.catalog.BatesNamespace(ctx, allocation.NamespaceID, "", "", 0)
+	require.NoError(t, err)
+	review, err := MatchRedactionReview(request.Preparation, request.Masks, request.Preparation.Selection.Revision, request.ReviewSHA256)
+	require.NoError(t, err)
+	recipe, err := BuildNumberedRecipe(uuid.MustParse(f.catalog.VaultID()), ns, 1, review)
+	require.NoError(t, err)
+	encoded, err := canonical.Marshal(recipe)
+	require.NoError(t, err)
+	// The recorded bytes and manifest agree, but the PDF has no redaction or footer.
+	// Publication storage trusts its caller's verification; packaging must check again.
+	source, _, err := f.blobs.OpenStreamContext(ctx, request.Preparation.Selection.Source.SHA256)
+	require.NoError(t, err)
+	written, err := f.blobs.WriteDetailedContext(ctx, source)
+	require.NoError(t, err)
+	require.NoError(t, source.Close())
+	_, err = f.catalog.PublishBatesArtifact(ctx, store.BatesArtifactPublication{
+		ArtifactID: allocation.AllocationID, AllocationID: allocation.AllocationID,
+		BlobSHA256: written.Hash, Size: written.Size, PageCount: 1, RecipeJSON: encoded, Pages: pages,
+	}, processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	_, err = f.service.BuildRecipientPackage(ctx, "alice", request, nil)
+	require.ErrorIs(t, err, pdfproduction.ErrPDFIntegrity)
+	files, err := filepath.Glob(filepath.Join(f.service.spoolDirectory, "native-pdf-*"))
+	require.NoError(t, err)
+	require.Empty(t, files, "failed verification must not leave a downloadable package")
 }
 
 //nolint:paralleltest // Qualified PDFium measures whole-process RSS.
