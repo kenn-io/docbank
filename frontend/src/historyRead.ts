@@ -1,5 +1,6 @@
 import { APIError, NetworkError } from "./api-transport.js";
 import { pause } from "./pageViewer.js";
+import { retryOnce } from "./retryOnce.js";
 
 export function retryableHistoryError(cause: unknown): boolean {
   return cause instanceof APIError
@@ -12,11 +13,9 @@ export async function readHistory<T>(
   signal: AbortSignal,
   retry = true,
 ): Promise<T> {
-  try {
-    return await read();
-  } catch (cause) {
-    if (!retry || signal.aborted || !retryableHistoryError(cause)) throw cause;
-    await pause(signal);
-    return read();
-  }
+  return retryOnce(
+    read,
+    (cause) => retry && !signal.aborted && retryableHistoryError(cause),
+    () => pause(signal),
+  );
 }
