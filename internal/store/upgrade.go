@@ -42,7 +42,6 @@ var (
 	releasedPendingDeletionTables = []string{
 		"gc_loose_retirements", "derivative_blob_purge_pending", "derivative_pack_purge_pending",
 	}
-	releasedBrowserPhotoImportTables = []string{"browser_photo_imports", "browser_photo_import_groups"}
 )
 
 // releasedExportTables lists the export state in foreign-key order. Metadata
@@ -824,14 +823,6 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		return replaceImportedTables(ctx, source, tx, []string{
 			"vault_change_head", "vault_changes", "watch_source_absences", "vector_membership_epochs",
 		})
-	})
-}
-
-// restoreBrowserPhotoImportState keeps deployment-local import handles across
-// a cutover whose released source includes these catalogs.
-func restoreBrowserPhotoImportState(ctx context.Context, source metadataQuerier, target *Store) error {
-	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return copyReleasedTables(ctx, source, tx, releasedBrowserPhotoImportTables)
 	})
 }
 

@@ -61,19 +61,41 @@ type BrowserPhotoGroupRef struct {
 	GroupKey string
 }
 
-func validateBrowserPhotoReceipt(result PhotoImportResult, members int) error {
-	if result.Added == result.Skipped || len(result.Nodes) == 0 || (members > 0 && len(result.Nodes) != members) {
-		return errors.New("invalid saved browser photo receipt")
+type browserPhotoReceipt struct {
+	Version int    `json:"version"`
+	Status  string `json:"status"`
+	AssetID string `json:"asset_id,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func decodeBrowserPhotoReceipt(data string) (*PhotoImportResult, error) {
+	var receipt browserPhotoReceipt
+	if err := json.Unmarshal([]byte(data), &receipt); err != nil {
+		return nil, err
 	}
-	for _, node := range result.Nodes {
-		if node.ID <= 0 {
-			return errors.New("invalid saved browser photo receipt node")
+	result := &PhotoImportResult{}
+	result.Asset.ID = receipt.AssetID
+	if receipt.Version != 1 {
+		return nil, errors.New("unsupported browser photo receipt version")
+	}
+	switch receipt.Status {
+	case "added":
+		result.Added = true
+	case "skipped":
+		result.Skipped = true
+	case "ambiguous":
+		if receipt.Reason != PhotoImportMultipleRAW && receipt.Reason != PhotoImportSeparatePhotos {
+			return nil, errors.New("invalid browser photo receipt reason")
 		}
+		result.Added = true
+		result.Ambiguity = &PhotoImportAmbiguity{Reason: receipt.Reason}
+	default:
+		return nil, errors.New("invalid browser photo receipt status")
 	}
-	if result.Ambiguity != nil && result.Ambiguity.Reason != PhotoImportMultipleRAW && result.Ambiguity.Reason != PhotoImportSeparatePhotos {
-		return errors.New("invalid saved browser photo ambiguity")
+	if receipt.Status != "ambiguous" && receipt.Reason != "" {
+		return nil, errors.New("invalid browser photo receipt reason")
 	}
-	return nil
+	return result, nil
 }
 
 // BrowserPhotoGroupReceipt reads a published receipt without waiting for an active upload.
@@ -86,14 +108,7 @@ func (s *Store) BrowserPhotoGroupReceipt(ctx context.Context, ref BrowserPhotoGr
 	if err != nil || !receipt.Valid {
 		return nil, err
 	}
-	result := new(PhotoImportResult)
-	if err := json.Unmarshal([]byte(receipt.String), result); err != nil {
-		return nil, err
-	}
-	if err := validateBrowserPhotoReceipt(*result, 0); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return decodeBrowserPhotoReceipt(receipt.String)
 }
 
 // ListBrowserPhotoImports lists saved imports in reverse creation order.
@@ -162,6 +177,9 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 		if err := tx.QueryRowContext(ctx, `SELECT source_id,picker_kind,label,destination,created_at,anchor_id,suffix_json,destination_id,skipped_json
 			FROM browser_photo_imports WHERE import_id=$1 AND vault_id=$2`, id.String(), s.VaultID()).Scan(
 			&source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination, &skipped); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
 			return err
 		}
 		var err error
@@ -205,11 +223,8 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 				}
 			}
 			if receipt.Valid {
-				group.Receipt = new(PhotoImportResult)
-				if err := json.Unmarshal([]byte(receipt.String), group.Receipt); err != nil {
-					return err
-				}
-				if err := validateBrowserPhotoReceipt(*group.Receipt, len(group.Members)); err != nil {
+				group.Receipt, err = decodeBrowserPhotoReceipt(receipt.String)
+				if err != nil {
 					return err
 				}
 			}
@@ -267,12 +282,11 @@ func (s *Store) prepareBrowserPhotoGroupTx(
 		}
 	}
 	if receiptJSON.Valid {
-		if err := json.Unmarshal([]byte(receiptJSON.String), result); err != nil {
+		saved, err := decodeBrowserPhotoReceipt(receiptJSON.String)
+		if err != nil {
 			return false, err
 		}
-		if err := validateBrowserPhotoReceipt(*result, len(members)); err != nil {
-			return false, err
-		}
+		*result = *saved
 		return true, nil
 	}
 	var suffix []string
@@ -288,7 +302,13 @@ func (s *Store) prepareBrowserPhotoGroupTx(
 }
 
 func saveBrowserPhotoReceiptTx(ctx context.Context, tx *sql.Tx, ref BrowserPhotoGroupRef, result PhotoImportResult) error {
-	receipt, err := json.Marshal(result)
+	saved := browserPhotoReceipt{Version: 1, Status: "skipped", AssetID: result.Asset.ID}
+	if result.Ambiguity != nil {
+		saved.Status, saved.Reason = "ambiguous", result.Ambiguity.Reason
+	} else if result.Added {
+		saved.Status = "added"
+	}
+	receipt, err := json.Marshal(saved)
 	if err != nil {
 		return err
 	}

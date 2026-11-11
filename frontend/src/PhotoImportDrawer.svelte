@@ -52,6 +52,7 @@
     group: number;
     files: File[];
     names?: string[];
+    importedEarlier?: boolean;
     hashes: string[];
     state:
       | "ready"
@@ -271,6 +272,7 @@
         group: index,
         files: [],
         names: group.files.map((file) => file.relative_path),
+        importedEarlier: group.status === "committed",
         hashes: group.hashes ?? group.files.map(() => ""),
         error: receiptReason(group.receipt?.reason),
         state:
@@ -305,6 +307,7 @@
       const signal = new AbortController().signal;
       for (const [index, group] of (savedImport.groups ?? []).entries()) {
         const item = items[index];
+        if (group.status === "committed") continue;
         const matched = group.files.map((file) => byPath.get(file.relative_path));
         let changed = false;
         for (const [i, file] of matched.entries()) {
@@ -512,7 +515,12 @@
         savedImport = latest;
       } else if (!registered) {
         registrationUncertain = true;
-        importID = await channel.registerPhotoImport(importID, pickerKind, controller.signal);
+        try {
+          importID = await channel.registerPhotoImport(importID, pickerKind, controller.signal);
+        } catch (cause) {
+          if (cause instanceof APIError) registrationUncertain = false;
+          throw cause;
+        }
         registered = true;
         registrationUncertain = false;
       }
@@ -634,7 +642,7 @@
         onchange={() => {
           if (!items.length && destination !== plannedDestination) void plan();
         }}
-        disabled={!checkpointReady || running || planning || started}
+        disabled={!checkpointReady || running || planning || started || !!savedImport}
         block
       /></label
     >
@@ -679,6 +687,16 @@
           }}>Start new import</Button
         >
       {/if}
+      {#if checkpoint && !items.length && !savedImport && !registered && !registrationUncertain}
+        <Button
+          disabled={running || planning || !!disabledReason}
+          onclick={() => {
+            resuming = true;
+            destination = checkpoint!.destination;
+            picker.choose(checkpoint!.pickerKind);
+          }}>Resume import</Button
+        >
+      {/if}
       <LocalFilePicker
         bind:this={picker}
         disabled={!checkpointReady ||
@@ -714,9 +732,9 @@
         {#each items as item}
           <li>
             <strong>{(item.names ?? item.files.map(localFilePath)).join(", ")}</strong><span
-              >{item.names && item.state === "added"
+              >{item.importedEarlier && item.state === "added"
                 ? "Imported earlier"
-                : item.names && item.state === "skipped"
+                : item.importedEarlier && item.state === "skipped"
                   ? "Already in vault at import"
                   : labels[item.state]}</span
             >

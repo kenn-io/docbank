@@ -911,6 +911,7 @@ func TestBrowserPhotoFolderContinuationKeepsImportedSource(t *testing.T) {
 		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "destination": "/photos", "request_id": "plan", "source_id": source, "files": selected}))
 		plan := readPhotoResponse(t, conn)
 		require.Equal(t, "photo_import_plan", plan.Type)
+		plan.ImportID = registerBrowserPhotos(t, conn, plan.ImportID)
 		for i, file := range selected {
 			hash := sha256.Sum256(data[i])
 			member := map[string]any{"relative_path": file["relative_path"], "expected_hash": hex.EncodeToString(hash[:]), "expected_size": len(data[i])}
@@ -1043,6 +1044,7 @@ func TestBrowserPhotoPlanSkipsLeadingUnsupportedFilesWithoutHashes(t *testing.T)
 	require.Equal(t, "photo_import_plan", plan.Type, "%s: %s", plan.Code, plan.Detail)
 	require.Equal(t, []int{0, 1}, plan.Unsupported)
 	require.Equal(t, [][]int{{2}}, plan.Groups)
+	plan.ImportID = registerBrowserPhotos(t, conn, plan.ImportID)
 	receipt := uploadBrowserPhoto(t, conn, plan.ImportID, 0, files[2], selected[2].data)
 	require.Equal(t, "photo_group_receipt", receipt.Type)
 	require.Equal(t, "added", receipt.Receipt.Status)
