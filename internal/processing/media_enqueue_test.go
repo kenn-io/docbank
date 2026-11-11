@@ -34,8 +34,7 @@ func TestMediaProcessingRequiresExplicitSelection(t *testing.T) {
 	require.Error(t, validateMediaProcessing(&MediaProcessingRequest{SuppliedInputID: "input"}))
 }
 
-// TestSuppliedMediaProfileAdmissionAndEmbeddingComposition checks the built-in
-// codec bindings and composition of a donor's embeddings.
+// TestSuppliedMediaProfileAdmitsWAVAndMP3 checks the built-in codec bindings.
 func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
