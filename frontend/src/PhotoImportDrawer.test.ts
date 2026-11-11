@@ -259,6 +259,49 @@ it("requires an explicit choice after a lost registration reply", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("resumes a checkpoint from before saved imports", async () => {
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  const selected = [files()[0]];
+  savedImports.set("legacy", {
+    sourceID: "legacy-source",
+    revision: "legacy-revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: photoImportManifest(selected).digest,
+    pickerKind: "files",
+  });
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "legacy",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  expect(channel.planPhotoImport).toHaveBeenCalledWith(
+    selected,
+    "/photos",
+    "legacy-source",
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+});
+
 it("allows retry after a rejected registration", async () => {
   const channel: PhotoImportTransport = {
     planPhotoImport: vi

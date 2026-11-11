@@ -1065,3 +1065,25 @@ func TestBrowserPhotoPlanRejectsZeroSource(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, reply.Status)
 	require.Equal(t, "validation", reply.Code)
 }
+
+func TestBrowserPhotoLegacyCheckpointReusesSidecar(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	data := []byte("<x:xmpmeta/>")
+	hash := sha256.Sum256(data)
+	member := map[string]any{"relative_path": "capture.xmp", "expected_hash": hex.EncodeToString(hash[:]), "size": len(data)}
+	for range 2 {
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{member}}))
+		plan := readPhotoResponse(t, conn)
+		require.Equal(t, "photo_import_plan", plan.Type)
+		id := registerBrowserPhotos(t, conn, plan.ImportID)
+		receipt := uploadBrowserPhoto(t, conn, id, 0, member, data)
+		require.Equal(t, "photo_group_receipt", receipt.Type)
+	}
+	dest, err := catalog.NodeByPath(t.Context(), "/photos")
+	require.NoError(t, err)
+	children, err := catalog.Children(t.Context(), dest.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+}
