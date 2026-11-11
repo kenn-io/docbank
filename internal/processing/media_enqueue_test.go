@@ -36,7 +36,7 @@ func TestMediaProcessingRequiresExplicitSelection(t *testing.T) {
 
 // TestSuppliedMediaProfileAdmissionAndEmbeddingComposition checks the built-in
 // codec bindings and composition of a donor's embeddings.
-func TestSuppliedMediaProfileAdmissionAndEmbeddingComposition(t *testing.T) {
+func TestSuppliedMediaProfileAdmitsWAVAndMP3(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
 	name, profile, err := NewSuppliedMediaProfile(
@@ -51,6 +51,13 @@ func TestSuppliedMediaProfileAdmissionAndEmbeddingComposition(t *testing.T) {
 	require.Contains(t, formats, document.RenditionFormatCapability{
 		MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile,
 	})
+}
+
+func TestSuppliedMediaEmbeddingComposition(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewSuppliedMediaProfile(fixture.catalog, fixture.blobs, "daemon:operator")
+	require.NoError(t, err)
 	_, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
 	configured := setup.Service.profiles["pdf"]
 	donor := ProfileConfig{Profile: configured.portable, EmbeddingProviders: configured.embedders, Tokenizers: configured.tokenizers}
