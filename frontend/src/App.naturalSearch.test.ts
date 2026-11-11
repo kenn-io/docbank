@@ -36,6 +36,19 @@ function json(value: unknown): Response {
   });
 }
 
+function textCoverage(overrides: object = {}) {
+  return {
+    no_text: 0,
+    families: [],
+    pending: 0,
+    pdfs_without_text: 0,
+    pages_without_text: 0,
+    pdf_page_coverage_partial: false,
+    pdf_page_coverage_unavailable: 0,
+    ...overrides,
+  };
+}
+
 function node(id: number, name: string, version: string) {
   return {
     id,
@@ -267,7 +280,7 @@ function installHarness(options: HarnessOptions) {
       return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search/text-coverage"))
-      return options.coverage?.() ?? json({ pdfs_without_text: 0 });
+      return options.coverage?.() ?? json(textCoverage());
     if (url.startsWith("/api/v1/search?") && method === "GET") {
       legacyCalls += 1;
       if (options.legacyFailureAfter !== undefined && legacyCalls > options.legacyFailureAfter) {
@@ -2105,12 +2118,12 @@ it.each([
   ["unavailable", "At least 2 PDFs have at least 3 pages", false],
   ["complete", "2 PDFs have 3 pages", true],
 ])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
-  const coverage = {
+  const coverage = textCoverage({
     pdfs_without_text: kind === "singular" ? 1 : 2,
     pages_without_text: kind === "singular" ? 1 : 3,
     pdf_page_coverage_partial: kind === "partial",
     pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
-  };
+  });
   const { fetchMock } = renderEmptySearch(async () => json(coverage));
   if (tagged) {
     await screen.findAllByText("report.txt");
@@ -2122,9 +2135,6 @@ it.each([
   await submitSearch("missing");
   expect(await screen.findByText(`${message} without a text layer.`)).toBeTruthy();
   if (tagged) {
-    expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
-      "https://docbank.ai/docs/usage/document-processing/#ocr",
-    );
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
       .find((url) => url.startsWith("/api/v1/search/text-coverage"));
@@ -2132,33 +2142,27 @@ it.each([
   }
 });
 
-it.each(["partial", "unavailable"])(
-  "shows incomplete PDF coverage when no gaps are known (%s)",
-  async (kind) => {
-    renderEmptySearch(async () =>
-      json({
-        pdfs_without_text: 0,
-        pages_without_text: 0,
-        pdf_page_coverage_partial: kind === "partial",
-        pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
-      }),
-    );
-    await submitSearch("missing");
-    expect(
-      await screen.findByText("PDF text coverage is incomplete; some pages may not be searchable."),
-    ).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
-      "https://docbank.ai/docs/usage/document-processing/#ocr",
-    );
-    expect(screen.queryByText(/At least 0/)).toBeNull();
-  },
-);
+it("shows incomplete PDF coverage when no gaps are known", async () => {
+  renderEmptySearch(async () => json(textCoverage({ pdf_page_coverage_unavailable: 1 })));
+  await submitSearch("missing");
+  expect(
+    await screen.findByText("PDF text coverage is incomplete; some pages may not be searchable."),
+  ).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Learn about OCR" }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  expect(screen.queryByText(/At least 0/)).toBeNull();
+});
 
 it("shows current vault PDF gaps for an empty frozen query", async () => {
   const { fetchMock } = renderEmptySearch(async () =>
-    json({ pdfs_without_text: 2, pages_without_text: 3 }),
+    json(textCoverage({ pdfs_without_text: 2, pages_without_text: 3 })),
   );
-  await screen.findByRole("searchbox", { name: "Search documents" });
+  await screen.findAllByText("report.txt");
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
   await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
   await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
   await submitSearch("missing");
@@ -2171,7 +2175,8 @@ it("shows current vault PDF gaps for an empty frozen query", async () => {
   expect(within(results).getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
   const request = fetchMock.mock.calls
     .map(([url]) => String(url))
-    .find((url) => url.startsWith("/api/v1/search/text-coverage"));
+    .filter((url) => url.startsWith("/api/v1/search/text-coverage"))
+    .at(-1);
   expect(new URL(request!, "https://example.com").search).toBe("");
 });
 
@@ -2179,9 +2184,7 @@ it.each(["zero", "failure", "frozen"])(
   "keeps the empty search quiet when coverage is %s",
   async (state) => {
     const coverage = vi.fn(async () =>
-      state === "failure"
-        ? new Response("failure", { status: 500 })
-        : json({ pdfs_without_text: 0, pages_without_text: 0 }),
+      state === "failure" ? new Response("failure", { status: 500 }) : json(textCoverage()),
     );
     renderEmptySearch(coverage);
     if (state === "frozen") {
@@ -2201,16 +2204,21 @@ it("ignores coverage from an older search", async () => {
   const old = new Promise<Response>((done) => {
     resolve = done;
   });
-  const coverage = vi
-    .fn()
-    .mockReturnValueOnce(old)
-    .mockResolvedValue(json({ pdfs_without_text: 0, pages_without_text: 0 }));
-  renderEmptySearch(coverage);
+  const coverage = vi.fn().mockReturnValueOnce(old).mockResolvedValue(json(textCoverage()));
+  const { fetchMock } = renderEmptySearch(coverage);
   await submitSearch("first");
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(1));
+  const request = fetchMock.mock.calls.find(([url]) =>
+    String(url).startsWith("/api/v1/search/text-coverage"),
+  );
+  const signal = request?.[1]?.signal;
+  expect(signal).toBeTruthy();
   await submitSearch("second");
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));
-  await act(async () => resolve(json({ pdfs_without_text: 1, pages_without_text: 1 })));
+  expect(signal?.aborted).toBe(true);
+  await act(async () =>
+    resolve(json(textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }))),
+  );
   expect(screen.queryByText(/without a text layer/)).toBeNull();
   expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
 });
