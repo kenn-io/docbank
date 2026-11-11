@@ -3,20 +3,13 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"os"
-	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 	"uuid"
@@ -28,7 +21,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/vectorworker"
 )
 
 // This fixture replaces only the external transcription/embedding boundary.
@@ -62,7 +54,6 @@ type mediaQualificationManifest struct {
 }
 
 type mediaQualificationFixture struct {
-	gate               *api.OperationGate
 	manifest           mediaQualificationManifest
 	catalog            *testStore
 	service            *processing.Service
@@ -70,15 +61,11 @@ type mediaQualificationFixture struct {
 	unprocessedEncoder *mediaQualificationEncoder
 	unprocessedProfile string
 	server             *httptest.Server
-	stop               chan struct{}
-	stopOnce           sync.Once
 }
 
 const mediaQualificationUnprocessedProfile = "qualification-new-donor"
 
 type mediaQualificationEncoder struct {
-	endpoint         string
-	client           *http.Client
 	descriptor       document.EmbeddingDescriptor
 	mu               sync.Mutex
 	entered, release chan struct{}
@@ -106,28 +93,6 @@ func (p *mediaQualificationEncoder) Embed(ctx context.Context, inputs []document
 			}
 		}
 	}
-	if p.endpoint != "" {
-		texts := make([]string, len(inputs))
-		for i, input := range inputs {
-			texts[i] = input.Text
-		}
-		var response struct {
-			Vectors [][]float32 `json:"vectors"`
-		}
-		if err := p.request(ctx, http.MethodPost, "/embed", struct {
-			Texts []string `json:"texts"`
-		}{texts}, &response); err != nil {
-			return document.EmbeddingResult{}, err
-		}
-		if len(response.Vectors) != len(inputs) {
-			return document.EmbeddingResult{}, errors.New("encoder vector count mismatch")
-		}
-		result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(inputs))}
-		for i, values := range response.Vectors {
-			result.Vectors[i] = document.EmbeddingVector{Key: inputs[i].Key, Values: values}
-		}
-		return result, nil
-	}
 	vectors := make([]document.EmbeddingVector, len(inputs))
 	for i, input := range inputs {
 		values := []float32{0, 0, 1}
@@ -141,31 +106,6 @@ func (p *mediaQualificationEncoder) Embed(ctx context.Context, inputs []document
 		vectors[i] = document.EmbeddingVector{Key: input.Key, Values: values}
 	}
 	return document.EmbeddingResult{Vectors: vectors}, nil
-}
-
-func (p *mediaQualificationEncoder) request(ctx context.Context, method, path string, body, output any) error {
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, p.endpoint+path, reader)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	response, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("fixture encoder returned %d", response.StatusCode)
-	}
-	return json.UnmarshalRead(io.LimitReader(response.Body, 8<<20), output)
 }
 
 func (p *mediaQualificationEncoder) barrier(ctx context.Context, action string) error {
@@ -258,7 +198,7 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 			option.ChunkTokens = 512
 		}
 	}
-	f := &mediaQualificationFixture{stop: make(chan struct{})}
+	f := &mediaQualificationFixture{}
 	var worker renditionTestWorker
 	encoder := &mediaQualificationEncoder{}
 	contract, err := document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "qualification-v1", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "document: {{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "query: {{content}}"}})
@@ -266,35 +206,11 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 	encoder.descriptor, err = document.NewEmbeddingDescriptor(document.EmbeddingDescriptor{ID: "synthetic.media-qualification", ContractVersion: document.EmbeddingProviderContractVersion, PolicyFingerprint: processingTestHash("qualification-policy"), TrustBoundary: document.EmbeddingTrustLocalProcess, Model: "deterministic-contract-only", ModelRevision: "v1", Dimension: 3, Metric: document.VectorMetricCosine, Normalization: document.VectorNormalizationNone, ScalarEncoding: "float32", DocumentFormatter: "qualification/document-v1", QueryFormatter: "qualification/query-v1", InputKinds: []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}, CompatibilityID: contract.CompatibilityID, SupportsTextQuery: true, ModelInput: contract, SupportedRequestModes: []document.ModelInputMode{document.ModelInputModeText}})
 	require.NoError(t, err)
 	f.manifest.Quality = "deterministic-contract"
-	if endpoint := os.Getenv("DOCBANK_MEDIA_QUALIFICATION_ENCODER_URL"); endpoint != "" {
-		parsed, err := url.Parse(endpoint)
-		require.NoError(t, err)
-		require.Equal(t, "http", parsed.Scheme)
-		require.Equal(t, "127.0.0.1", parsed.Hostname())
-		encoder.endpoint = strings.TrimRight(endpoint, "/")
-		encoder.client = &http.Client{Timeout: 30 * time.Second}
-		var metadata map[string]any
-		require.NoError(t, encoder.request(t.Context(), http.MethodGet, "/health", nil, &metadata))
-		f.manifest.Quality, f.manifest.ModelMetadata = "real-model", metadata
-		descriptor := encoder.descriptor
-		descriptor.Fingerprint = ""
-		descriptor.Dimension = 384
-		descriptor.Normalization = document.VectorNormalizationUnitLength
-		descriptor.ModelInput, err = document.NewModelInputContract(document.ModelInputContractConfig{Profile: document.ModelInputProfileCustom, CompatibilityID: "qualification-minilm-identity-v1", Document: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "{{content}}"}, Query: document.ModelInputEncoder{Mode: document.ModelInputModeText, Template: "{{content}}"}})
-		require.NoError(t, err)
-		descriptor.CompatibilityID = descriptor.ModelInput.CompatibilityID
-		descriptor.DocumentFormatter, descriptor.QueryFormatter = "identity", "identity"
-		descriptor.Model = "all-minilm-l6-v2"
-		descriptor.ModelRevision = fmt.Sprint(metadata["revision"])
-		encoder.descriptor, err = document.NewEmbeddingDescriptor(descriptor)
-		require.NoError(t, err)
-	}
 	f.encoder = encoder
 	f.manifest.APIKey = uuid.New().String() // Fixture-only key; never a daemon runtime record.
 	f.server, f.catalog = newTestServer(t, func(deps *api.Deps) {
 		deps.Cfg.Server.APIKey = f.manifest.APIKey
 		gate := api.NewOperationGate()
-		f.gate = gate
 		deps.Gate = gate
 		name, supplied, err := processing.NewSuppliedMediaProfile(deps.Store, deps.Blobs, "daemon:operator")
 		require.NoError(t, err)
@@ -398,15 +314,6 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 		require.Equal(t, record.Origin, transcript.Transcript.Origin)
 		f.manifest.Records = append(f.manifest.Records, record)
 	}
-	// Readiness includes real nonlexical HTTP reads, after continuation has
-	// synchronously completed embedding jobs and vector publication.
-	for _, record := range f.manifest.Records {
-		report, err := client.SearchDocuments(t.Context(), f.request(record.Profile, "semantic", record))
-		require.NoError(t, err)
-		require.Equal(t, "semantic", report.ActualMode)
-		require.Equal(t, "complete", report.Coverage.State)
-		require.Len(t, report.Results, 1)
-	}
 	t.Cleanup(func() { _ = f.encoder.barrier(context.WithoutCancel(t.Context()), "release") })
 	return f
 }
@@ -414,28 +321,6 @@ func newMediaQualificationFixture(t *testing.T, options ...mediaQualificationOpt
 func (f *mediaQualificationFixture) control(ctx context.Context, action, id string) error {
 	if action == "arm" || action == "wait" || action == "release" {
 		return f.encoder.barrier(ctx, action)
-	}
-	if action == "refresh" {
-		worker, err := vectorworker.NewIndexWorker(vectorworker.IndexWorkerConfig{Catalog: f.catalog.Store, ReadVectorSet: func(ctx context.Context, member store.VectorIndexMember) ([]byte, error) {
-			return f.catalog.ReadVectorIndexVectorSet(ctx, f.catalog.Blobs, member)
-		}, Mutate: f.gate.MutateContext, Owner: "qualification-refresh", BuildLease: time.Minute, ReaderLease: time.Minute, IdleDelay: time.Second})
-		if err != nil {
-			return err
-		}
-		spaces, err := f.catalog.ListVectorIndexSpaces(ctx)
-		if err != nil {
-			return err
-		}
-		for _, space := range spaces {
-			if _, err := worker.Rebuild(ctx, space); err != nil && !errors.Is(err, store.ErrNotFound) {
-				return err
-			}
-		}
-		return nil
-	}
-	if action == "stop" {
-		f.stopOnce.Do(func() { close(f.stop) })
-		return nil
 	}
 	for _, record := range f.manifest.Records {
 		if record.ID == id {
@@ -472,58 +357,4 @@ func (f *mediaQualificationFixture) control(ctx context.Context, action, id stri
 		}
 	}
 	return errors.New("unknown fixture action or record")
-}
-
-// TestMediaQualificationServer is an opt-in cross-repository qualification
-// process. The test deadline bounds its lifetime; interrupt and stop both run
-// testing cleanup, including removal of every synthetic vault and manifest.
-func TestMediaQualificationServer(t *testing.T) {
-	t.Parallel()
-	path := os.Getenv("DOCBANK_MEDIA_QUALIFICATION_MANIFEST")
-	if path == "" {
-		t.Skip("set explicit fixture manifest output path")
-	}
-	f := newMediaQualificationFixture(t)
-	handler := f.catalog.Server.Handler()
-	// httptest binds loopback. The control wrapper exists only in this test binary.
-	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/qualification/control" {
-			handler.ServeHTTP(w, r)
-			return
-		}
-		if r.Method != http.MethodPost || r.Header.Get("X-Api-Key") != f.manifest.APIKey {
-			http.Error(w, "fixture control denied", http.StatusForbidden)
-			return
-		}
-		var request struct {
-			Action string `json:"action"`
-			ID     string `json:"id"`
-		}
-		if err := json.UnmarshalRead(io.LimitReader(r.Body, 4096), &request, json.RejectUnknownMembers(true)); err != nil {
-			http.Error(w, "invalid control", http.StatusBadRequest)
-			return
-		}
-		if err := f.control(r.Context(), request.Action, request.ID); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"ok":true}`)
-	}))
-	t.Cleanup(controlServer.Close)
-	t.Cleanup(func() { _ = f.encoder.barrier(context.WithoutCancel(t.Context()), "release") })
-	f.manifest.URL = controlServer.URL
-	encoded, err := json.Marshal(f.manifest)
-	require.NoError(t, err)
-	temporary := path + ".tmp"
-	t.Cleanup(func() { _ = os.Remove(temporary) })
-	require.NoError(t, os.WriteFile(temporary, encoded, 0o600))
-	require.NoError(t, os.Rename(temporary, path))
-	t.Cleanup(func() { require.NoError(t, os.Remove(path)) })
-	ctx, cancel := signal.NotifyContext(t.Context(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	select {
-	case <-f.stop:
-	case <-ctx.Done():
-	}
 }

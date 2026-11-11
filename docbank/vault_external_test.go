@@ -2940,10 +2940,21 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 			selected.Mode = mode
 			selected.MediaSources = []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}
 			report, err := vault.SearchDocuments(t.Context(), selected)
-			require.ErrorContains(t, err, "semantic retrieval is not configured", "the selector mode is admitted; this profile has no embeddings")
+			require.NoError(t, err)
+			require.Equal(t, mode, report.RequestedMode)
+			require.Equal(t, docbank.DocumentSearchLexical, report.ActualMode)
+			require.Contains(t, report.Degradations, "semantic_unavailable")
 			require.Empty(t, report.Results)
+			selected.BindingID = "missing"
+			_, err = vault.SearchDocuments(t.Context(), selected)
+			require.ErrorIs(t, err, docbank.ErrNotFound)
 		})
 	}
+	invalidMode := request
+	invalidMode.Mode = "invalid"
+	invalidMode.MediaSources = []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}
+	_, err = vault.SearchDocuments(t.Context(), invalidMode)
+	require.ErrorContains(t, err, "unsupported document search mode")
 
 	request.ContentFirst = true
 	report, err := vault.SearchDocuments(t.Context(), request)

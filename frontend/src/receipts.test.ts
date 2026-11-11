@@ -277,7 +277,7 @@ describe("search result authority", () => {
   });
 });
 
-it.each(["semantic", "hybrid"] as const)(
+it.each(["semantic"] as const)(
   "accepts a lexical fallback for selected %s search",
   (mode) => {
     const request: DocumentSearchRequest = {

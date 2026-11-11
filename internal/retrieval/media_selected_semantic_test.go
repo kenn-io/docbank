@@ -32,5 +32,6 @@ func FuzzSelectedMediaFusionKeepsBuildIdentity(f *testing.F) {
 			require.Len(t, result.Evidence, 1)
 			require.Equal(t, result.Document.BuildID, result.Evidence[0].BuildID)
 		}
+		require.Less(t, results[0].Document.BuildID, results[1].Document.BuildID)
 	})
 }

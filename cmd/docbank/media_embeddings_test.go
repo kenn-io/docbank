@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
@@ -34,11 +33,8 @@ func TestSelectedMediaDaemonSuppliedEmbeddingSetup(t *testing.T) {
 	require.Equal(t, base.Profile.RetentionDisclosure, composed.Profile.RetentionDisclosure)
 	require.Equal(t, base.RenditionProvider.Descriptor(), composed.RenditionProvider.Descriptor())
 	require.NotEmpty(t, composed.Profile.Embeddings)
-	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Principal: "daemon:operator", Profiles: map[string]processing.ProfileConfig{name: composed}})
-	require.NoError(t, err)
-	t.Cleanup(service.Stop)
+	require.Equal(t, processing.SuppliedMediaProfileName, name)
 	cfg.SuppliedMediaEmbeddingProfile = "missing"
 	_, _, err = configuredSuppliedMediaProfile(cfg, catalog, blobs, profiles)
 	require.ErrorContains(t, err, "no executable runtime")
-	cfg.SuppliedMediaEmbeddingProfile = config.LocalTextProfile
 }

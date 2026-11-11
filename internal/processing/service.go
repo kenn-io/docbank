@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/pdftext"
 	"go.kenn.io/docbank/document/upload"
@@ -1710,6 +1711,9 @@ func (service *Service) prepareSearch(
 		return preparedSearch{}, store.ErrSearchQueryRequired
 	}
 	mode := retrieval.Mode(request.Mode)
+	if _, err := embedding.NormalizeSearchOptions(embedding.SearchOptions{Mode: embedding.SearchMode(mode)}); err != nil {
+		return preparedSearch{}, err
+	}
 	if mode == "" {
 		mode = retrieval.ModeAuto
 	}
@@ -1752,6 +1756,9 @@ func (service *Service) prepareSearch(
 	} else if mode == retrieval.ModeSemantic || mode == retrieval.ModeHybrid {
 		if request.MediaSources == nil {
 			return preparedSearch{}, ErrSemanticUnavailable
+		}
+		if request.BindingID != "" {
+			return preparedSearch{}, fmt.Errorf("embedding binding %q: %w", request.BindingID, store.ErrNotFound)
 		}
 		mode = retrieval.ModeLexical
 	}

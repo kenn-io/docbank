@@ -69,6 +69,6 @@ func TestSelectedMediaPublicSuppliedEmbeddingComposition(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEqual(t, plan.Fingerprint, changed.Fingerprint)
 		_, err = vault.RetryMedia(t.Context(), uuid.New().String(), receipt.SourceID, docbank.MediaProcessingRequest{Profile: "supplied-transcript", SuppliedInputID: artifact.SuppliedInputID})
-		require.Error(t, err, "a changed donor must not inherit consent across restart")
+		require.ErrorIs(t, err, docbank.ErrProcessingConsentRequired, "a changed donor must not inherit consent across restart")
 	})
 }
