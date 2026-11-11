@@ -584,11 +584,11 @@
         if (!sessionOnly && !savedImport) {
           try {
             await storage.replace(undefined, checkpoint);
+            checkpoint = undefined;
           } catch (cause) {
             if (!useSessionOnly(cause)) throw cause;
           }
         }
-        checkpoint = undefined;
       }
     } catch (cause) {
       failedCause ??= cause;

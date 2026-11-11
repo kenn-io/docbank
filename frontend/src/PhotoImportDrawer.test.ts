@@ -60,8 +60,17 @@ beforeEach(() => {
 });
 
 it("inspects a saved import and resumes only its remaining group", async () => {
+  savedImports.set("saved", {
+    sourceID: "saved-source",
+    revision: "saved-revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: "a".repeat(64),
+    pickerKind: "files",
+  });
   const saved = {
     import_id: "saved-import",
+    source_id: "saved-source",
     label: "Trip",
     destination: "/photos",
     picker_kind: "files" as const,
@@ -78,7 +87,9 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     ],
   };
   const channel: PhotoImportTransport = {
-    planPhotoImport: vi.fn(),
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "new-preview", groups: [[0]], unsupported: [] }),
     registerPhotoImport: vi.fn(),
     listPhotoImports: vi.fn().mockResolvedValue([saved]),
     inspectPhotoImport: vi.fn().mockResolvedValue(saved),
@@ -118,6 +129,12 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull(),
   );
+  await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["z"], "new.JPG")] },
+  });
+  expect(await screen.findByRole("button", { name: "Add 1 group" })).toBeTruthy();
+  expect(screen.queryByText(/Import progress changed in another tab/)).toBeNull();
 });
 
 it("refuses changed bytes and lists files outside the saved import", async () => {
