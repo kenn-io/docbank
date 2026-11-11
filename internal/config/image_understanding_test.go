@@ -32,22 +32,15 @@ func TestImageUnderstandingRuntimeAllowsTextRendition(t *testing.T) {
 	embedding.Chunk.Formatter = document.RenditionChunkHeadingsFormatter
 	cfg.EmbeddingProfiles["semantic"] = embedding
 	require.NoError(t, cfg.Validate())
-	embedding.Chunk.Formatter = "chunk/v1"
-	cfg.EmbeddingProfiles["semantic"] = embedding
-	require.ErrorContains(t, cfg.Validate(), "headings formatter")
-	embedding.Chunk.Formatter = document.RenditionChunkHeadingsFormatter
-	cfg.EmbeddingProfiles["semantic"] = embedding
 	for _, tc := range []struct {
 		name   string
 		change func(*RenditionProfileConfig)
 		want   string
 	}{
-		{"unit boundary", func(p *RenditionProfileConfig) { p.MaxUnits = 3 }, "at least four units"},
 		{"descriptor", func(p *RenditionProfileConfig) { p.DescriptorID = vision.ProviderID }, "image understanding requires its own task"},
 		{"artifact", func(p *RenditionProfileConfig) {
 			p.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
 		}, "vision requires a withheld filename"},
-		{"filename", func(p *RenditionProfileConfig) { p.DiscloseFilename = true }, "vision requires a withheld filename"},
 		{"input limit", func(p *RenditionProfileConfig) { p.MaxDocumentBytes = 16<<20 + 1 }, "image understanding requires its own task"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

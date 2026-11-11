@@ -226,6 +226,14 @@ func TestCanonicalProfileRejectsInvalidPolicy(t *testing.T) {
 			p.RetentionDisclosure.RetainProviderMarkdown = false
 			p.RetentionDisclosure.RetainTypedArtifacts = true
 		}, "photo vision profiles do not retain Markdown or typed artifacts"},
+		{"image understanding unit boundary", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.MaxUnits = 3
+		}, "at least four units"},
+		{"image understanding chunk formatter", func(p *document.ProcessingProfileV1) {
+			p.Rendition.AdapterContract = document.ImageUnderstandingAdapterContract
+			p.Rendition.MaxUnits = 4
+		}, "headings formatter"},
 		{"chunk embedding with photo description", func(p *document.ProcessingProfileV1) {
 			p.Rendition.AdapterContract = vision.AdapterContract
 			p.RetentionDisclosure.RetainSanitizedMarkdown = false

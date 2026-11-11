@@ -93,11 +93,27 @@ func TestImageUnderstandingRenditionRespectsDocumentLimit(t *testing.T) {
 		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Speaker: "model", Text: "hello", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone}}},
 	})
 	// The labels fit, leaving too little room for all of the text.
-	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 295, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
+	limit := utf8.RuneCountInString(ImageUnderstandingMarkdown(evidence.Units[0].HeadingPath, evidence.Units[0].Speaker, "", true)) + len("hello") - 1
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: limit, MaxUnitRunes: 1000, MaxSegmentRunes: 100})
 	require.NoError(t, err)
 	rendered, err := BuildRenditionV1(evidence, policy)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), 295)
+	assert.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(string(rendered.Markdown), "\n")), limit)
+}
+
+func TestUnderstandingRetainsLongConfiguredModel(t *testing.T) {
+	model := strings.Repeat("m", 255)
+	evidence := normalizeRenditionEvidence(t, SourceEvidenceV1{
+		ContractVersion: SourceEvidenceContractV1, Completeness: EvidenceDegradedProvenance,
+		Family: "image", UnitKind: EvidenceUnitGeneric,
+		Omissions: []SourceEvidenceOmissionV1{{Kind: EvidenceOmissionField, Field: "natural_provenance", Reason: "unknown"}},
+		Units:     []SourceEvidenceUnitV1{{Order: 0, HeadingPath: []string{ImageUnderstandingHeading, "Visible text"}, Speaker: model, Text: "FINE", Locator: SourceEvidenceLocatorV1{Kind: EvidenceLocatorGeneric, IndexOrigin: EvidenceIndexOriginNone}}},
+	})
+	policy, err := NewRenditionPolicy(RenditionLimits{MaxDocumentChars: 10_000, MaxUnitRunes: 10_000, MaxSegmentRunes: 1_000})
+	require.NoError(t, err)
+	rendered, err := BuildRenditionV1(evidence, policy)
+	require.NoError(t, err)
+	assert.Contains(t, string(rendered.Markdown), model)
 }
 
 func TestNormalizedRenditionUnitChecksumIncludesEveryLocatorField(t *testing.T) {
