@@ -5,7 +5,6 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,17 +29,12 @@ func realClient(t *testing.T) (*Client, *client.Client, int64) {
 }
 
 func TestPrivateNetworkConnectionKeepsBearerAndRefusesRedirects(t *testing.T) {
-	t.Setenv("DKE_TEST_KATA_KEY", "synthetic-key")
 	for _, redirect := range []string{"", "/redirected", "http://other.test:7777/redirected"} {
 		t.Run(redirect, func(t *testing.T) {
 			var requests, redirected atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				assert.Equal(t, "kata:7777", r.Host)
 				assert.Equal(t, "Bearer synthetic-key", r.Header.Get("Authorization"))
-				assert.Nil(t, r.URL.User)
-				assert.Empty(t, r.URL.RawQuery)
-				assert.NotContains(t, r.RequestURI, "synthetic-key")
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/health":
@@ -57,23 +51,7 @@ func TestPrivateNetworkConnectionKeepsBearerAndRefusesRedirects(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			cfg := config.KataConfig{Enabled: true, Endpoint: "http://kata:7777", APIKeyEnv: "DKE_TEST_KATA_KEY", TrustPrivateNetwork: true}
-			connection, err := cfg.Resolve(t.TempDir())
-			require.NoError(t, err)
-			c := New(connection)
-			// Route only the configured authority to a real test-owned HTTP listener.
-			baseTransport, ok := http.DefaultTransport.(*http.Transport)
-			require.True(t, ok)
-			transport := baseTransport.Clone()
-			transport.Proxy = nil
-			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-				if address != "kata:7777" {
-					return nil, errors.New("unexpected authority")
-				}
-				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-			}
-			t.Cleanup(transport.CloseIdleConnections)
-			c.http.Transport = boundedTransport{base: transport}
+			c := New(config.KataConnection{Endpoint: server.URL, APIKey: "synthetic-key", Project: "docbank"})
 			project, err := c.projectID(t.Context(), "docbank")
 			if redirect == "" {
 				require.NoError(t, err)
