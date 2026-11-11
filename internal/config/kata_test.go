@@ -78,6 +78,9 @@ func TestKataEndpointPolicyBoundaries(t *testing.T) {
 				require.Equal(t, tc.endpoint, got.Endpoint)
 			} else {
 				require.ErrorContains(t, err, "trust_private_network = true")
+				if tc.trust {
+					require.ErrorContains(t, err, "public IPs require HTTPS")
+				}
 			}
 		})
 	}
