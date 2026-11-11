@@ -43,7 +43,6 @@
     initialDocuments?: readonly Identity[];
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
-    onselectionchanged?: () => void;
   }
   let {
     session,
@@ -51,7 +50,6 @@
     initialDocuments,
     onclose,
     onauthfailure,
-    onselectionchanged,
   }: Props = $props();
 
   const page = getContext<boolean>(drawerPage);
@@ -300,7 +298,6 @@
           title: "Selection is current",
           message: "All selected documents are current. Create the report again.",
         };
-        onselectionchanged?.();
       } else {
         selectionAccepted = {};
         selectionResult = result;
@@ -355,7 +352,6 @@
         .filter(Boolean)
         .join(" "),
     };
-    onselectionchanged?.();
   }
 
   function openDraft(): void {
