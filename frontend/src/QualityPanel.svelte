@@ -103,7 +103,7 @@
     {@const coverage = result.collection.coverage}
     {#if coverage.configuration === "unconfigured"}<p>Processing is not configured.</p>
     {:else if coverage.configuration === "profile_required"}<p>
-        Choose a processing profile to inspect coverage.
+        Choose a processing profile to see searchable text.
       </p>
     {:else if coverage.counts}
       <div class="counts" aria-label="Text coverage">
@@ -114,10 +114,7 @@
           >Unprocessed: {coverage.counts.unprocessed}</Chip
         ><Chip>No text: {coverage.counts.none}</Chip>
       </div>
-      <p>
-        Coverage describes retained searchable output. A configured policy does not guarantee an
-        extraction adapter is running.
-      </p>
+      <p>A processing profile doesn't guarantee that Docbank can extract text from every file.</p>
     {/if}
     <p>
       Zero-byte documents: {result.zero_bytes}. Media/extension mismatches: {result.mismatches}.

@@ -18,18 +18,18 @@ const reportFileLimit int64 = 512 << 20
 
 func writeReportCoverage(output io.Writer, summary report.Summary) error {
 	if summary.State == "needs_review" {
-		if _, err := fmt.Fprintln(output, "coverage pending date review; counts are withheld"); err != nil {
+		if _, err := fmt.Fprintln(output, "Review the document dates before the report can show counts"); err != nil {
 			return fmt.Errorf("writing pending report coverage: %w", err)
 		}
 		return nil
 	}
 	coverage := summary.Coverage
-	if _, err := fmt.Fprintf(output, "coverage: %d scoped, %d searchable, %d missing text, %d incomplete families, %d fallback dates\n",
+	if _, err := fmt.Fprintf(output, "documents in date ranges: %d; searchable: %d; missing text: %d; incomplete related-file information: %d; dates from import or recorded time: %d\n",
 		coverage.Scoped, coverage.Searchable, coverage.MissingText, coverage.IncompleteFamilies, coverage.FallbackDates); err != nil {
 		return fmt.Errorf("writing report coverage: %w", err)
 	}
 	if coverage.MissingText > 0 || coverage.IncompleteFamilies > 0 {
-		if _, err := fmt.Fprintln(output, "warning: counts exclude unavailable text or family evidence"); err != nil {
+		if _, err := fmt.Fprintln(output, "warning: counts exclude unavailable text and related-file information"); err != nil {
 			return fmt.Errorf("writing report coverage limit: %w", err)
 		}
 	}
@@ -37,7 +37,7 @@ func writeReportCoverage(output io.Writer, summary report.Summary) error {
 		if index >= len(summary.Terms) {
 			break
 		}
-		if _, err := fmt.Fprintf(output, "term %d coverage: %d searchable, %d missing text, %d incomplete families, %d fallback dates\n",
+		if _, err := fmt.Fprintf(output, "term %d: %d searchable, %d missing text, %d with incomplete related-file information, %d dates from import or recorded time\n",
 			summary.Terms[index].Number, row.Searchable, row.MissingText, row.IncompleteFamilies, row.FallbackDates); err != nil {
 			return fmt.Errorf("writing term coverage: %w", err)
 		}

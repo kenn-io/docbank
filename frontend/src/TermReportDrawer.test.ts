@@ -196,7 +196,7 @@ it("merges continued date evidence into one document card and retains its choice
   await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), {
     target: { value: "Checked the first source date" },
   });
-  await fireEvent.click(screen.getByRole("button", { name: "More evidence" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Load more dates" }));
   expect(await screen.findByText("Document 2")).toBeTruthy();
   expect(screen.getAllByText("Document 1")).toHaveLength(1);
   const firstCard = screen.getByRole("group", { name: "Document 1" });
@@ -210,7 +210,7 @@ it("merges continued date evidence into one document card and retains its choice
     "Checked the first source date",
   );
   expect(screen.getByRole("radio", { name: /2026-03-17/ })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "More evidence" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Load more dates" })).toBeNull();
 });
 
 it.each([false, true])(
@@ -284,7 +284,9 @@ it.each([false, true])(
     await fireEvent.input(screen.getByRole("textbox", { name: "Reason" }), {
       target: { value: "Checked the source date" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create report with these date choices" }),
+    );
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       "Enter a reviewed date and source timezone for each interpreted date.",
@@ -297,7 +299,9 @@ it.each([false, true])(
     await fireEvent.input(screen.getByRole("textbox", { name: "Source timezone" }), {
       target: { value: "UTC" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create report with these date choices" }),
+    );
     await waitFor(() => expect(revisions).toHaveLength(1));
     expect(revisions[0].choices[0]).toMatchObject({
       action: "interpret",
@@ -323,7 +327,9 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("option", { name: "created" }));
     await fireEvent.click(screen.getByRole("combobox", { name: /^Action/ }));
     await fireEvent.click(screen.getByRole("option", { name: "Select source date" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Create report with these date choices" }),
+    );
     await waitFor(() => expect(revisions).toHaveLength(2));
     expect(revisions[1].choices[0]).toMatchObject({ action: "select" });
     expect(revisions[1].choices[0]).not.toHaveProperty("reviewed_role");
@@ -454,7 +460,7 @@ it("keeps selected history fixed, clears review choices, and explains date-scope
     selected_documents: { documents },
     date_choices: [],
   });
-  expect(await screen.findByText(/1 scoped · 1 searchable/)).toBeTruthy();
+  expect(await screen.findByText(/1 in date ranges · 1 searchable/)).toBeTruthy();
   await fireEvent.input(screen.getByRole("textbox", { name: "Expression for term 1" }), {
     target: { value: "beta" },
   });
@@ -536,9 +542,9 @@ it.each(["beta", ""])(
     expect(screen.getByRole("radio", { name: "All documents" }).getAttribute("aria-checked")).toBe(
       "true",
     );
-    expect(screen.getByRole("combobox", { name: /^Coverage policy:/ })).toHaveProperty(
+    expect(screen.getByRole("combobox", { name: /^Missing information:/ })).toHaveProperty(
       "textContent",
-      expect.stringContaining("Stop on incomplete coverage"),
+      expect.stringContaining("Stop report"),
     );
     expect(screen.getByRole("textbox", { name: "Report timezone" })).toHaveProperty("value", "UTC");
     expect(screen.queryByRole("checkbox", { name: /New source/ })).toBeNull();

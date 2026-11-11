@@ -71,7 +71,8 @@
       onchanged?.(confirmed);
     },
     onunknown: () => onunknown?.(),
-    unknownMessage: "The result is unknown. Check these documents' tags before trying again.",
+    unknownMessage:
+      "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
     staleMessage: "Some documents changed. Close and select them again.",
   });
   const applying = $derived(run.pending);

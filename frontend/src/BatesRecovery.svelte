@@ -174,7 +174,7 @@
                 </p>{/if}
               {#if detailErrors[item.artifact_id]}
                 <p class="tool-error" role="alert">{detailErrors[item.artifact_id]}</p>
-                <Button onclick={() => void expand(item)}>Retry receipt</Button>
+                <Button onclick={() => void expand(item)}>Retry loading export details</Button>
               {/if}
               {#if details[item.artifact_id]}
                 {@const detail = details[item.artifact_id]!}

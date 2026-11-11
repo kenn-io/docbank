@@ -65,7 +65,7 @@
 </script>
 
 <DrawerShell
-  title="Document provenance"
+  title="Document source history"
   ariaLabel={`Provenance for ${documentName}`}
   closeLabel="Close provenance"
   {onclose}
@@ -78,7 +78,7 @@
     {:else if error}
       <p class="error" role="alert">{error}</p>
     {:else if !page?.items.length}
-      <p class="empty">No provenance recorded</p>
+      <p class="empty">No source history recorded</p>
     {:else}
       <ol aria-label="Imports">
         {#each page.items as fact (fact.identity)}

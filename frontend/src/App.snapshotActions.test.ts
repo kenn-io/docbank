@@ -608,12 +608,14 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
   await screen.findByRole("cell", { name: "/records/report-1.pdf" });
   expect(searches[1]).toEqual(searches[0]);
   const warning = await screen.findByText(
-    "The result is unknown. Check these documents' tags before trying again.",
+    "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
   );
   expect(warning.closest('[role="alert"]')).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(
-    screen.queryByText("The result is unknown. Check these documents' tags before trying again."),
+    screen.queryByText(
+      "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
+    ),
   ).toBeNull();
   expect(
     (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,

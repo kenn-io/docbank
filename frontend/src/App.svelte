@@ -4696,7 +4696,7 @@
                 <div class="loading"><Spinner size={16} /> Creating frozen snapshot…</div>
               {:else}
                 <div class="snapshot-failure">
-                  <p>No snapshot results were accepted.</p>
+                  <p>Couldn't load the snapshot results.</p>
                   {#if snapshot.state.query && snapshot.state.options}<Button
                       onclick={runSnapshotAgain}>Run again</Button
                     >{/if}
@@ -5578,8 +5578,10 @@
       />
     {/if}
     {#if taggingOutcomeUnknown}
-      <Modal title="Tagging result unknown" onclose={() => (taggingOutcomeUnknown = false)}>
-        <p role="alert">The result is unknown. Check these documents' tags before trying again.</p>
+      <Modal title="Tag change unconfirmed" onclose={() => (taggingOutcomeUnknown = false)}>
+        <p role="alert">
+          Docbank couldn't confirm the tag change. Check the documents' tags before trying again.
+        </p>
         {#snippet footer()}
           <Button onclick={() => (taggingOutcomeUnknown = false)}>Dismiss</Button>
         {/snippet}

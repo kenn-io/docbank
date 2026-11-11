@@ -8,7 +8,7 @@ it.each([
   [
     "unsupported_query",
     false,
-    "No searchable text or unsupported syntax. Showing metadata matches.",
+    "This query can't run as an image search. Showing metadata matches.",
   ],
   ["consent_required", false, "Image search needs consent. Showing metadata matches."],
   ["provider_unavailable", false, "Image search is unavailable. Showing metadata matches."],

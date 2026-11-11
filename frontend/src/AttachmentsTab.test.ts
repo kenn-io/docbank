@@ -167,7 +167,9 @@ it("keeps unavailable occurrences visible and fences replaced-source and denied 
   expect(await screen.findByText("encrypted")).toBeTruthy();
   expect(oldSignal?.aborted).toBe(true);
   release(Response.json(empty));
-  expect(await screen.findByText(/Parent relations unavailable: Not allowed/)).toBeTruthy();
+  expect(
+    await screen.findByText(/Couldn't load the document this file is attached to: Not allowed/),
+  ).toBeTruthy();
   expect(screen.getByText("encrypted")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "same.txt" })).toBeNull();
   expect(screen.queryByText("No published attachments")).toBeNull();

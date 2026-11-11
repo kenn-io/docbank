@@ -120,7 +120,9 @@
   <section aria-label={outgoing ? "Attachments" : "Attached to"}>
     <strong>{outgoing ? "Attachments" : "Attached to"}</strong>
     {#if error}<p class="problem" role="status">
-        {outgoing ? "Attachment" : "Parent"} relations unavailable: {error}
+        {outgoing
+          ? "Couldn't load attachments"
+          : "Couldn't load the document this file is attached to"}: {error}
       </p>{/if}
     {#if page}
       <ul>

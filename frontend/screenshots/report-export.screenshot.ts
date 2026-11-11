@@ -123,8 +123,10 @@ test("qualifies selected reports and original exports under a mount", async ({ p
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
       await drawer.getByText("Options", { exact: true }).click();
       await expect(
-        drawer.getByRole("combobox", { name: /^Coverage policy:/ }),
-      ).toHaveAccessibleName("Coverage policy: Stop on incomplete coverage");
+        drawer.getByRole("combobox", { name: /^Missing information:/ }),
+      ).toHaveAccessibleName(
+        "Missing information: Stop report",
+      );
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
       const response = await creating;
@@ -202,7 +204,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
       await drawer.getByRole("button", { name: "Add term", exact: true }).click();
       await drawer.getByRole("textbox", { name: "Expression for term 2" }).fill("beta");
       await drawer.getByText("Options", { exact: true }).click();
-      await drawer.getByRole("combobox", { name: /^Coverage policy:/ }).click();
+      await drawer.getByRole("combobox", { name: /^Missing information:/ }).click();
       await page.getByRole("option", { name: "Count available text", exact: true }).click();
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create report", exact: true }).click();
@@ -258,7 +260,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
         animations: "disabled",
       });
       const revising = post(`/api/v1/search-exports/${parent.id}/revisions`);
-      await drawer.getByRole("button", { name: "Create reviewed revision" }).click();
+      await drawer.getByRole("button", { name: "Create report with these date choices" }).click();
       const revision = await revising;
       expect(revision.status()).toBe(200);
       expect(revision.request().postDataJSON()).toEqual({ choices: [reviewedChoice] });
@@ -315,7 +317,7 @@ test("qualifies selected reports and original exports under a mount", async ({ p
         ]);
       }
       await expect(drawer.getByRole("paragraph").filter({ hasText: "3 scoped" })).toContainText(
-        "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates · expires",
+        "3 in date ranges · 2 searchable · 1 missing text · 0 with incomplete related-file information · 1 dates from import or recorded time · expires",
       );
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({

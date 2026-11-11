@@ -170,7 +170,7 @@
     { value: "advanced", label: "Advanced" },
   ];
   const coverageOptions = [
-    { value: "strict", label: "Stop on incomplete coverage" },
+    { value: "strict", label: "Stop report" },
     { value: "available_only", label: "Count available text" },
   ];
   const dateOrderOptions = [
@@ -556,9 +556,11 @@
           />
         </div>
         <div class="tool-field tool-span-3">
-          <span class="tool-label" id="report-coverage-label">Coverage</span>
+          <span class="tool-label" id="report-coverage-label"
+            >Missing dates, text, or related-file information</span
+          >
           <SelectDropdown
-            title="Coverage policy"
+            title="Missing information"
             value={draft.coverage_mode}
             options={coverageOptions}
             onchange={(value) => (draft.coverage_mode = value)}
@@ -617,11 +619,10 @@
               before counts are shown.
             </p>
           {:else}<p class="tool-muted">
-              {active.coverage.scoped} scoped · {active.coverage.searchable} searchable · {active
-                .coverage.missing_text} missing text · {active.coverage.incomplete_families} incomplete
-              families · {active.coverage.fallback_dates} fallback dates · expires {formatDate(
-                active.expires_at,
-              )}
+              {active.coverage.scoped} in date ranges · {active.coverage.searchable} searchable · {active
+                .coverage.missing_text} missing text · {active.coverage.incomplete_families} with incomplete
+              related-file information · {active.coverage.fallback_dates} dates from import or recorded
+              time · expires {formatDate(active.expires_at)}
             </p>{/if}
           {#if active.coverage.warnings?.length}<ul>
               {#each active.coverage.warnings as warning}<li>{warning}</li>{/each}
@@ -769,13 +770,13 @@
               {/each}
               <div class="tool-actions">
                 {#if reviewCursor}<Button disabled={busy} onclick={() => void loadDates()}
-                    >More evidence</Button
+                    >Load more dates</Button
                   >{/if}
                 <Button
                   tone="info"
                   surface="solid"
                   disabled={busy || !Object.keys(choices).length}
-                  onclick={() => void revise()}>Create reviewed revision</Button
+                  onclick={() => void revise()}>Create report with these date choices</Button
                 >
               </div>
             </div>
