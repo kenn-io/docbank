@@ -22,7 +22,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
-		"lookupContentReferences",
+		"lookupContentReferences", "getVersionDates", "getVersionPeople",
 		"listCollections", "getCollection", "listCollectionMembers", "getCollectionLabel", "setCollectionLabel",
 		"rebuildDocumentPeople", "getPeopleRebuild", "getPeopleCoverage",
 		"getEmailMetadata", "ensureEmailMetadata", "getEmailMetadataGeneration", "getEmailPart",

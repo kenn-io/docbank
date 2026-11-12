@@ -769,7 +769,13 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 			args[i] = key
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 		}
-		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `)`
+		args = append(args, versionID)
+		versionParam := fmt.Sprintf("$%d", len(args))
+		membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
+		if s.postgresSchema != "" {
+			membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) WHERE o.value->>'content_version_id' = ` + versionParam + `)`
+		}
+		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `) AND ` + membership
 		columns := `candidate_id,actor_key,evidence_json,created_at`
 		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
 			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
