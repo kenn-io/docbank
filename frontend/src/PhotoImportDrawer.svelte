@@ -871,7 +871,8 @@
         onchoose={choose}
       />
     </div>
-    {#if !disabledReason && !error}<p>
+    {#if !disabledReason && !error && (!items.length || items.some((item) => !["added", "skipped", "ambiguous"].includes(item.state)))}<p
+      >
         Keep this tab and Add photos open until the import finishes.
       </p>{/if}
     {#if planning}
@@ -886,7 +887,9 @@
       <div class="totals" aria-live="polite">
         {#each ["added", "skipped", "ambiguous", "failed", "unconfirmed"] as state}<span
             class:zero={!counts[state as Item["state"]]}
-            >{labels[state as keyof typeof labels]}: {counts[state as Item["state"]]}</span
+            >{state === "skipped" ? "Duplicates" : labels[state as keyof typeof labels]}: {counts[
+              state as Item["state"]
+            ]}</span
           >{/each}
         <span class:zero={!unsupported.length}>Skipped: {unsupported.length}</span>
       </div>
