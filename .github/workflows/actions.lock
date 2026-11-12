@@ -12,16 +12,16 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'kenn-io/actions@main'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.52.0'
         - 'step-security/golangci-lint-action@v9.3.0'
     '.github/workflows/container.yml':
         - 'actions/checkout@v7.0.1'
         - 'kenn-io/actions@main'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.52.0'
     '.github/workflows/deploy-docs.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.1.0'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.52.0'
     '.github/workflows/render-pdf-image.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/render-pdf-pr.yml': []
@@ -30,13 +30,13 @@ workflows:
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
         - 'kenn-io/actions@main'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.52.0'
     '.github/workflows/sibling-pins.yml':
         - 'kenn-io/actions@main'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'kenn-io/kit@v0.48.4'
+        - 'kenn-io/kit@v0.52.0'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/cache@v6.1.0':
@@ -78,9 +78,9 @@ dependencies:
             - 'actions/checkout@v7.0.1'
             - 'actions/setup-go@v7.0.0'
             - 'step-security/paths-filter@v4.0.3'
-    'kenn-io/kit@v0.48.4':
-        ref: 'v0.48.4'
-        commit: 'sha1-82dfc281dc47ce86ba9269737b56e5ac4d35ffe0'
+    'kenn-io/kit@v0.52.0':
+        ref: 'v0.52.0'
+        commit: 'sha1-052a54e5190c6e72257e6106f8a40ed3ba8abf08'
         owner_id: 259885253
         repo_id: 1238000987
     'step-security/golangci-lint-action@v9.3.0':
