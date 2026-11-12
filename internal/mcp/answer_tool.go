@@ -109,7 +109,7 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
 	vaultID, err := uuid.Parse(fence.VaultUID)
 	if err != nil {
-		return api.CoverageReport{}, err
+		return api.CoverageReport{}, fmt.Errorf("parsing coverage vault ID: %w", err)
 	}
 	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
 		Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs,
