@@ -35,3 +35,17 @@ func TestContractRoutesExpiryAndRevision(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"title": nil})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
+
+func TestContractCreateRejectsMisnamedAndNullFields(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	for _, body := range []map[string]any{
+		{"title": "Agreement", "Status": "active"},
+		{"title": "Agreement", "status": nil},
+		{"title": "Agreement", "parties": nil},
+		{"title": "Agreement", "parties": []any{map[string]any{"party_id": "11111111-1111-4111-8111-111111111111", "role": "own", "Role": "counterparty"}}},
+	} {
+		resp, response := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, body)
+		require.GreaterOrEqual(t, resp.StatusCode, 400, response)
+	}
+}

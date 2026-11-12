@@ -16,6 +16,29 @@ type ContractPartyInput struct {
 	PartyID string `json:"party_id"`
 	Role    string `json:"role"`
 }
+
+func (p *ContractPartyInput) UnmarshalJSON(raw []byte) error {
+	type fields ContractPartyInput
+	var members map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return err
+	}
+	for key, value := range members {
+		if key != "party_id" && key != "role" {
+			return fmt.Errorf("unknown field %s", key)
+		}
+		if string(value) == "null" {
+			return fmt.Errorf("%s cannot be null", key)
+		}
+	}
+	var value fields
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	*p = ContractPartyInput(value)
+	return nil
+}
+
 type ContractParty struct {
 	PartyID     string  `json:"party_id"`
 	Role        string  `json:"role"`
@@ -61,6 +84,33 @@ type CreateContractRequest struct {
 	Termination   string               `json:"termination,omitzero"`
 	Parties       []ContractPartyInput `json:"parties,omitempty"`
 }
+
+// UnmarshalJSON rejects ignored or null nonnullable create members.
+func (p *CreateContractRequest) UnmarshalJSON(raw []byte) error {
+	type fields CreateContractRequest
+	var members map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return err
+	}
+	for key, value := range members {
+		switch key {
+		case "title", "contract_type", "status", "summary", "purpose", "consideration", "termination", "parties":
+			if string(value) == "null" {
+				return fmt.Errorf("%s cannot be null", key)
+			}
+		case "starts_on", "expires_on", "signed_on":
+		default:
+			return fmt.Errorf("unknown field %s", key)
+		}
+	}
+	var value fields
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	*p = CreateContractRequest(value)
+	return nil
+}
+
 type PatchContractRequest struct {
 	Title         *string `json:"title,omitempty"`
 	ContractType  *string `json:"contract_type,omitempty"`
