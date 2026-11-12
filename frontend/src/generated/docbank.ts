@@ -1759,9 +1759,17 @@ export interface ContractPage {
   offset: number;
 }
 
+export type ContractPartyInputRole = typeof ContractPartyInputRole[keyof typeof ContractPartyInputRole];
+
+
+export const ContractPartyInputRole = {
+  own: 'own',
+  counterparty: 'counterparty',
+} as const;
+
 export interface ContractPartyInput {
   party_id: string;
-  role: string;
+  role: ContractPartyInputRole;
 }
 
 export interface Counts {
@@ -9714,16 +9722,32 @@ export type UpdateContractHeaders = {
 };
 
 export type DetachContractPartyParams = {
-role: string;
+role: DetachContractPartyRole;
 };
+
+export type DetachContractPartyRole = typeof DetachContractPartyRole[keyof typeof DetachContractPartyRole];
+
+
+export const DetachContractPartyRole = {
+  own: 'own',
+  counterparty: 'counterparty',
+} as const;
 
 export type DetachContractPartyHeaders = {
 'If-Match': string;
 };
 
 export type AttachContractPartyParams = {
-role: string;
+role: AttachContractPartyRole;
 };
+
+export type AttachContractPartyRole = typeof AttachContractPartyRole[keyof typeof AttachContractPartyRole];
+
+
+export const AttachContractPartyRole = {
+  own: 'own',
+  counterparty: 'counterparty',
+} as const;
 
 export type AttachContractPartyHeaders = {
 'If-Match': string;

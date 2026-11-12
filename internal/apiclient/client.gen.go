@@ -28168,6 +28168,20 @@ const (
 	Under1M RevokeWebSessionQueryDurationBucket = "under_1m"
 )
 
+type DetachContractPartyQueryRole string
+
+const (
+	Counterparty DetachContractPartyQueryRole = "counterparty"
+	Own          DetachContractPartyQueryRole = "own"
+)
+
+type AttachContractPartyQueryRole string
+
+const (
+	AttachContractPartyQueryRoleCounterparty AttachContractPartyQueryRole = "counterparty"
+	AttachContractPartyQueryRoleOwn          AttachContractPartyQueryRole = "own"
+)
+
 type ListDocumentsQuerySort string
 
 const (
@@ -29643,11 +29657,11 @@ type GetContractQuery struct {
 }
 
 type DetachContractPartyQuery struct {
-	Role string `json:"role"`
+	Role DetachContractPartyQueryRole `json:"role"`
 }
 
 type AttachContractPartyQuery struct {
-	Role string `json:"role"`
+	Role AttachContractPartyQueryRole `json:"role"`
 }
 
 type GetDocumentProcessingCoverageQuery struct {

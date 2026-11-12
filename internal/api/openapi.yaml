@@ -3315,6 +3315,9 @@ components:
         party_id:
           type: string
         role:
+          enum:
+            - own
+            - counterparty
           type: string
       required:
         - party_id
@@ -24712,6 +24715,9 @@ paths:
           name: role
           required: true
           schema:
+            enum:
+              - own
+              - counterparty
             type: string
         - in: header
           name: If-Match
@@ -24754,6 +24760,9 @@ paths:
           name: role
           required: true
           schema:
+            enum:
+              - own
+              - counterparty
             type: string
         - in: header
           name: If-Match

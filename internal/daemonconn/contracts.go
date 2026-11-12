@@ -66,7 +66,7 @@ func (c *Connection) DeleteContract(ctx context.Context, id string, rev int64) e
 }
 func (c *Connection) AttachContractParty(ctx context.Context, id string, rev int64, partyID, role string) (api.Contract, error) {
 	var r *http.Response
-	p, err := c.apiWithResponse(&r).AttachContractParty(ctx, &apiclient.AttachContractPartyRequestOptions{PathParams: &apiclient.AttachContractPartyPath{ContractID: id, PartyID: partyID}, Header: &apiclient.AttachContractPartyHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.AttachContractPartyQuery{Role: role}})
+	p, err := c.apiWithResponse(&r).AttachContractParty(ctx, &apiclient.AttachContractPartyRequestOptions{PathParams: &apiclient.AttachContractPartyPath{ContractID: id, PartyID: partyID}, Header: &apiclient.AttachContractPartyHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.AttachContractPartyQuery{Role: apiclient.AttachContractPartyQueryRole(role)}})
 	if err != nil {
 		return api.Contract{}, mutationRequestError(r, err)
 	}
@@ -74,7 +74,7 @@ func (c *Connection) AttachContractParty(ctx context.Context, id string, rev int
 }
 func (c *Connection) DetachContractParty(ctx context.Context, id string, rev int64, partyID, role string) (api.Contract, error) {
 	var r *http.Response
-	p, err := c.apiWithResponse(&r).DetachContractParty(ctx, &apiclient.DetachContractPartyRequestOptions{PathParams: &apiclient.DetachContractPartyPath{ContractID: id, PartyID: partyID}, Header: &apiclient.DetachContractPartyHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.DetachContractPartyQuery{Role: role}})
+	p, err := c.apiWithResponse(&r).DetachContractParty(ctx, &apiclient.DetachContractPartyRequestOptions{PathParams: &apiclient.DetachContractPartyPath{ContractID: id, PartyID: partyID}, Header: &apiclient.DetachContractPartyHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.DetachContractPartyQuery{Role: apiclient.DetachContractPartyQueryRole(role)}})
 	if err != nil {
 		return api.Contract{}, mutationRequestError(r, err)
 	}
