@@ -12,6 +12,7 @@ import (
 )
 
 func TestWhenFieldTable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		claim document.DocumentEventV1
@@ -27,6 +28,7 @@ func TestWhenFieldTable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			response := versionDatesAPI(store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{tc.claim}}}}, "safe", "")
 			raw, err := json.Marshal(response.Claims[0].When)
 			if err != nil {
@@ -48,6 +50,7 @@ func TestWhenFieldTable(t *testing.T) {
 }
 
 func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
+	t.Parallel()
 	sent := document.DocumentEventV1{EventID: "sent", DateKind: "sent", Precision: "date", DateValue: "2026-03-10", Actors: []document.DocumentEventActorV1{{Role: "sender"}, {Role: "blind_copy", Sensitive: true}}}
 	created := document.DocumentEventV1{EventID: "created", DateKind: "created", Precision: "date", DateValue: "2026-03-09"}
 	f := store.DocumentDateFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{DocumentKind: "email", Events: []document.DocumentEventV1{sent, created}, Primaries: []document.DocumentEventPrimaryV1{{EventID: "created", ScopeClass: "vault", Disclosure: "safe"}, {EventID: "sent", ScopeClass: "vault", Disclosure: "full"}}}}}
@@ -62,6 +65,7 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 }
 
 func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
+	t.Parallel()
 	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
 	f.Persons["visible"] = store.FactPerson{Person: store.Person{DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
 	f.Edges[0].RawLabel = "Public Author"
@@ -85,6 +89,7 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 }
 
 func TestEmittedWhenMatchesContractExamples(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		path  string
 		claim document.DocumentEventV1
@@ -98,6 +103,7 @@ func TestEmittedWhenMatchesContractExamples(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
 			tc.claim.EventID = "evt-55"
 			tc.claim.DateKind = "imported"
 			tc.claim.ClaimBasis = "source_asserted"

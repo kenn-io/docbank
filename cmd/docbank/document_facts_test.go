@@ -8,6 +8,15 @@ import (
 	"go.kenn.io/docbank/internal/api"
 )
 
+func TestDocumentFactsCommandRegistration(t *testing.T) {
+	for _, path := range [][]string{{"people", "list"}, {"document", "people"}, {"document", "dates"}} {
+		cmd, remaining, err := rootCmd.Find(path)
+		require.NoError(t, err)
+		require.Empty(t, remaining)
+		require.Equal(t, path[len(path)-1], cmd.Name())
+	}
+}
+
 func TestDocumentFactsCommands(t *testing.T) {
 	f := newDocumentInspectionFixture(t)
 	t.Setenv("DOCBANK_HOME", f.root)
