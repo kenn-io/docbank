@@ -7,9 +7,9 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestDocumentFactsDatesState(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentFactsDatesState(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
 	version, _ := ingestDocumentEventTarget(t, s, "example.txt", "a1")
 	facts, err := s.DocumentDateFacts(t.Context(), version.ID)
 	require.NoError(t, err)
@@ -127,9 +127,9 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.Empty(t, facts.Edges)
 }
 
-func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func sensitiveUnresolvedActorFixture(t *testing.T, newStore func(*testing.T) *Store) (*Store, string, DocumentPeopleInputs, PersonDocumentAssertion) {
+	t.Helper()
+	s := newStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "recipient", Sensitive: true}
 	version, target := ingestDocumentEventTarget(t, s, "sensitive.txt", "d9")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
@@ -180,29 +180,47 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 			}
 		}
 	}
+	return s, version.ID, input, assertion
+}
+
+func checkDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newStore)
+	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
+	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
+}
+
+func TestDocumentPeopleFactsSuppressionIgnoresCorruptEventGeneration(t *testing.T) {
+	t.Parallel()
+	s, versionID, input, assertion := sensitiveUnresolvedActorFixture(t, newTestStore)
 	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
 	// The current event generation is unused while candidate reads are suppressed.
-	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER document_event_generations_immutable_update`)
+	_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER document_event_generations_immutable_update`)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), version.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), versionID)
 	require.NoError(t, err)
-	failed, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	checkSuppressedPeopleCandidates(t, s, versionID, assertion)
+}
+
+func checkSuppressedPeopleCandidates(t *testing.T, s *Store, versionID string, assertion PersonDocumentAssertion) {
+	t.Helper()
+	failed, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
 	require.NoError(t, err)
 	require.Equal(t, "failed", failed.State)
 	require.Empty(t, failed.Candidates)
 	require.Equal(t, []PersonDocumentAssertion{assertion}, failed.Assertions)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", versionID)
 	require.NoError(t, err)
-	pending, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	pending, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
 	require.NoError(t, err)
 	require.Equal(t, "pending", pending.State)
 	require.Empty(t, pending.Candidates)
 	require.Equal(t, []PersonDocumentAssertion{assertion}, pending.Assertions)
 }
 
-func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
 	ctx := t.Context()
 	photo := browsePhotoNode(t, s, "hidden-facts.jpg", fakeHash("c2"), "image/jpeg")
 	asset, err := s.PhotoAssetForNode(ctx, photo.ID)

@@ -77,6 +77,26 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
 		t.Fatalf("safe: %+v", safe)
 	}
+	// Only explicit assignments may use a provisional derived catalog name in safe reads.
+	for _, tc := range []struct {
+		name, evidence, basis, label, want string
+	}{
+		{"automatic", "source_metadata", "identifier_match", "Public Author", "Public Author"},
+		{"automatic empty label", "source_metadata", "identifier_match", "", ""},
+		{"operator assertion", "operator_assertion", "operator_assigned", "", "Private Bcc"},
+		{"operator custodian", "custodian_assignment", "operator_assigned", "Assigned Label", "Private Bcc"},
+		{"inferred custodian", "custodian_assignment", "package_column", "Package Label", "Package Label"},
+		{"inferred custodian empty label", "custodian_assignment", "transfer_record", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			edgeFacts := safeFacts
+			edgeFacts.Edges = []document.DocumentPersonEdgeV1{{PersonID: "visible", EvidenceKind: tc.evidence, Basis: tc.basis, RawLabel: tc.label}}
+			got := versionPeopleAPI(edgeFacts, true, "")
+			if len(got.Edges) != 1 || got.Edges[0].DisplayName != tc.want || got.Edges[0].RawLabel != tc.label {
+				t.Fatalf("safe edges = %+v; want name %q and label %q", got.Edges, tc.want, tc.label)
+			}
+		})
+	}
 	safeFacts.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Confirmed Name", State: "curated", Origin: "derived"}, Visible: true}
 	if got := versionPeopleAPI(safeFacts, true, "").Edges[0].DisplayName; got != "Confirmed Name" {
 		t.Fatalf("curated name = %q", got)
