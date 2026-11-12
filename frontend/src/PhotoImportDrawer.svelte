@@ -314,7 +314,11 @@
         } else if (group.status === "remaining") {
           setState(
             item,
-            item.files.length ? "ready" : item.state === "changed" ? "changed" : "missing",
+            item.files.length === group.files.length
+              ? "ready"
+              : item.state === "changed"
+                ? "changed"
+                : "missing",
           );
           item.error = undefined;
         } else setState(item, group.status);
@@ -405,7 +409,10 @@
       const signal = new AbortController().signal;
       for (const [index, group] of (savedImport.groups ?? []).entries()) {
         const item = items[index];
-        const matched = group.files.map((file) => byPath.get(file.relative_path));
+        const prior = new Map(item.files.map((file) => [localFilePath(file), file]));
+        const matched = group.files.map(
+          (file) => byPath.get(file.relative_path) ?? prior.get(file.relative_path),
+        );
         let changed = false;
         for (const [i, file] of matched.entries()) {
           if (!file) continue;
@@ -427,7 +434,7 @@
           continue;
         }
         if (changed || matched.some((file) => !file)) {
-          item.files = [];
+          item.files = changed ? [] : matched.filter((file): file is File => !!file);
           if (group.status === "remaining") setState(item, changed ? "changed" : "missing");
         } else {
           item.files = matched as File[];
@@ -625,7 +632,7 @@
         const latest = await channel.inspectPhotoImport(importID, controller.signal);
         for (const [index, group] of (latest.groups ?? []).entries()) {
           reconcileSavedHashes(items[index], group);
-          if (group.status === "remaining" && !items[index].files.length)
+          if (group.status === "remaining" && items[index].files.length !== group.files.length)
             setState(items[index], "missing");
           if (
             group.status === "committed" ||
