@@ -34,13 +34,13 @@ func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	return nil
 }
 
-// printCreatedContract reports a contract that CreateContract already confirmed, so an output
-// failure still names the stored record and must not invite a duplicate create.
-func printCreatedContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
-	if err := printContract(cmd, c, jsonOutput); err != nil {
-		return fmt.Errorf("contract %s created, but writing output failed: %w", c.ContractID, err)
+// confirmedCreateOutputError adds the created contract's ID to an output failure after
+// CreateContract succeeded, so callers do not retry a create that already committed.
+func confirmedCreateOutputError(contractID string, err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("contract %s created, but writing output failed: %w", contractID, err)
 }
 
 func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
@@ -245,7 +245,7 @@ func newContractCreateCommand() *cobra.Command {
 		if err != nil {
 			return contractMutationError("create contract", err)
 		}
-		return printCreatedContract(cmd, v, jsonOutput)
+		return confirmedCreateOutputError(v.ContractID, printContract(cmd, v, jsonOutput))
 	}}
 	f := cmd.Flags()
 	f.StringVar(&b.ContractType, "type", "", "contract type")
