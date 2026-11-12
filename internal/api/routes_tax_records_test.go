@@ -388,3 +388,18 @@ func TestTaxRecordRejectedPatchesPreserveRow(t *testing.T) {
 		assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
 	}
 }
+
+func TestTaxRecordKindNormalizationBoundary(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	filer, _ := createTaxTestAccount(t, ts, nil)
+	body := map[string]any{"filer_party_id": filer.PartyID, "country": "ZZ", "tax_kind": "  " + strings.Repeat("a", 64) + "  ", "kind": "notice", "title": "Example"}
+	resp, raw := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, body)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, raw)
+	var record api.TaxRecord
+	require.NoError(t, json.Unmarshal([]byte(raw), &record))
+	assert.Equal(t, strings.Repeat("a", 64), record.TaxKind)
+	body["tax_kind"] = strings.Repeat("a", 65)
+	resp, raw = do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, body)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, raw)
+}

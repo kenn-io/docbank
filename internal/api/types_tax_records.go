@@ -40,6 +40,13 @@ type TaxRecord struct {
 	UpdatedAt        string  `json:"updated_at"`
 	RetiredAt        *string `json:"retired_at" nullable:"true"`
 }
+
+// TransformSchema describes the normalized tax kind returned by the store.
+func (TaxRecord) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["tax_kind"].MaxLength = new(64)
+	return schema
+}
+
 type TaxRecordPage struct {
 	Items  []TaxRecord `json:"items"`
 	Limit  int         `json:"limit"`
@@ -228,6 +235,9 @@ func (p CreateTaxRecordRequest) input() store.TaxRecordInput {
 	return store.TaxRecordInput{AccountID: p.AccountID, FilerPartyID: p.FilerPartyID, AuthorityPartyID: p.AuthorityPartyID, Kind: p.Kind, Title: p.Title, Country: p.Country, Subdivision: p.Subdivision, TaxKind: p.TaxKind, FormCode: p.FormCode, TaxYear: p.TaxYear, PeriodStart: p.PeriodStart, PeriodEnd: p.PeriodEnd, DueDate: p.DueDate, LeadDays: p.LeadDays, Direction: p.Direction, Amount: p.Amount, Currency: p.Currency, Note: p.Note, AuthoritySet: p.ClearAuthority || p.present["authority_party_id"]}
 }
 func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
+	if kind := schema.Properties["tax_kind"]; kind != nil {
+		kind.Description = "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization."
+	}
 	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "title": 1200, "form_code": 256, "amount": 32, "note": 8192} {
 		if property := schema.Properties[field]; property != nil {
 			property.MaxLength = new(length)

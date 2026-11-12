@@ -984,6 +984,8 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	assert.ElementsMatch(t, []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"}, recordPresence)
 	for _, schema := range []*huma.Schema{doc.Components.Schemas.Map()["CreateTaxRecordRequest"], rp} {
 		require.NotNil(t, schema)
+		assert.Equal(t, 256, *schema.Properties["tax_kind"].MaxLength)
+		assert.Contains(t, schema.Properties["tax_kind"].Description, "256 UTF-8 bytes")
 		assert.Equal(t, 1200, *schema.Properties["title"].MaxLength)
 		assert.Equal(t, 256, *schema.Properties["form_code"].MaxLength)
 		assert.Equal(t, 32, *schema.Properties["amount"].MaxLength)
@@ -998,6 +1000,7 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	}
 	output := doc.Components.Schemas.Map()["TaxRecord"]
 	require.NotNil(t, output)
+	assert.Equal(t, 64, *output.Properties["tax_kind"].MaxLength)
 	assert.True(t, output.Properties["amount_minor"].Nullable)
 	for _, param := range recordItem.Get.Parameters {
 		assert.NotEqual(t, "reveal", param.Name)

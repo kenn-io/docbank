@@ -77,7 +77,7 @@ func TestTaxRecordRevisionInspectNoRetry(t *testing.T) {
 		if r.Method == http.MethodGet {
 			reads++
 			w.Header().Set("ETag", `"1"`)
-			_, _ = w.Write([]byte(`{"record_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","kind":"filing","title":"Example","state":"expected","direction":"unknown","verification":"unverified","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
+			_, _ = w.Write([]byte(`{"record_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","account_id":null,"authority_party_id":null,"subdivision":"","form_code":"","tax_year":null,"period_start":null,"period_end":null,"due_date":null,"lead_days":null,"amount_minor":null,"currency":"","verified_on":null,"verified_revision":null,"verification_note":"","note":"","retired_at":null,"country":"ZZ","tax_kind":"Example","kind":"filing","title":"Example","state":"expected","direction":"unknown","verification":"unverified","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
 			return
 		}
 		writes++
@@ -104,7 +104,7 @@ func TestTaxRecordHelpAndCommittedOutputFailure(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/records" {
 			w.WriteHeader(http.StatusCreated)
 		}
-		_, _ = w.Write([]byte(`{"record_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","kind":"filing","title":"Example","state":"expected","direction":"unknown","verification":"unverified","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
+		_, _ = w.Write([]byte(`{"record_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","account_id":null,"authority_party_id":null,"subdivision":"","form_code":"","tax_year":null,"period_start":null,"period_end":null,"due_date":null,"lead_days":null,"amount_minor":null,"currency":"","verified_on":null,"verified_revision":null,"verification_note":"","note":"","retired_at":null,"country":"ZZ","tax_kind":"Example","kind":"filing","title":"Example","state":"expected","direction":"unknown","verification":"unverified","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
 	})
 	for _, args := range [][]string{{"record", "add", "--kind", "filing", "--title", "Example"}, {"record", "edit", id, "--note", "Example", "--revision=1"}, {"record", "retire", id, "--revision=1"}} {
 		cmd := newTaxCommand()

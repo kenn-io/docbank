@@ -87,38 +87,32 @@ func taxMutationFailure(err error, resource string) error {
 	return err
 }
 
-// A maximum page has 1,000 accounts. Three 8,192-byte notes, two
-// 256-byte fields and location codes expand by at most six JSON bytes per
-// source byte; 4,096 bytes per row covers names, IDs, dates and framing.
-// The remaining space covers the page envelope and harmless metadata.
+// A maximum page has 1,000 accounts or records. Three account 8,192-byte
+// notes and two 256-byte fields exceed the record text budget. Six bytes
+// per source byte covers JSON escaping; 4,096 bytes cover other row fields.
 const maxTaxReceiptRowBytes = 6*(3*8192+2*256+2+6+3) + 4096
-const maxTaxAccountReceiptBytes = maxTaxReceiptRowBytes + 1024*1024
+const maxTaxSingleReceiptBytes = maxTaxReceiptRowBytes + 1024*1024
 const maxTaxReceiptBytes = 1000*maxTaxReceiptRowBytes + 1024*1024
 
-// decodeTaxReceipt checks wire presence before zero values can hide omissions.
-func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxAccountPage, error) {
-	limit := int64(maxTaxAccountReceiptBytes)
-	if page {
-		limit = maxTaxReceiptBytes
-	}
-	return decodeTaxReceiptLimit(ctx, response, page, limit)
+func readTaxReceipt(ctx context.Context, response *http.Response, page bool, fields []string, nullable map[string]bool) ([]byte, error) {
+ limit := int64(maxTaxSingleReceiptBytes)
+ if page { limit = maxTaxReceiptBytes }
+ return readTaxReceiptLimit(ctx, response, page, fields, nullable, limit)
 }
 
-func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, limit int64) (api.TaxAccountPage, error) {
+func readTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, fields []string, nullable map[string]bool, limit int64) ([]byte, error) {
 	defer func() { _ = response.Body.Close() }()
 	if err := ctx.Err(); err != nil {
-		return api.TaxAccountPage{}, &responseDecodeError{err: err}
+		return nil, &responseDecodeError{err: err}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return api.TaxAccountPage{}, &responseDecodeError{err: err}
+		return nil, &responseDecodeError{err: err}
 	}
 	if int64(len(data)) > limit {
-		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("tax account response exceeds size limit")}
+		return nil, &responseDecodeError{err: errors.New("tax response exceeds size limit")}
 	}
-	invalid := func() (api.TaxAccountPage, error) {
-		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account response")}
-	}
+	invalid := func() ([]byte, error) { return nil, &responseDecodeError{err: errors.New("invalid tax response")} }
 	var items []jsontext.Value
 	if page {
 		var envelope map[string]jsontext.Value
@@ -133,15 +127,28 @@ func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bo
 		if json.Unmarshal(item, &members) != nil || members == nil {
 			return invalid()
 		}
-		for _, field := range []string{"account_id", "filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind", "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note", "revision", "created_at", "updated_at", "retired_at"} {
+		for _, field := range fields {
 			value, ok := members[field]
-			if !ok {
-				return invalid()
-			}
-			if string(value) == "null" && field != "authority_party_id" && field != "effective_start" && field != "effective_end" && field != "retired_at" {
+			if !ok || (string(value) == "null" && !nullable[field]) {
 				return invalid()
 			}
 		}
+	}
+	return data, nil
+}
+
+func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxAccountPage, error) {
+	limit := int64(maxTaxSingleReceiptBytes)
+ if page { limit = maxTaxReceiptBytes }
+ return decodeTaxReceiptLimit(ctx, response, page, limit)
+}
+
+func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, limit int64) (api.TaxAccountPage, error) {
+	fields := []string{"account_id", "filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind", "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note", "revision", "created_at", "updated_at", "retired_at"}
+	nullable := map[string]bool{"authority_party_id": true, "effective_start": true, "effective_end": true, "retired_at": true}
+	data, err := readTaxReceiptLimit(ctx, response, page, fields, nullable, limit)
+	if err != nil {
+		return api.TaxAccountPage{}, err
 	}
 	var result api.TaxAccountPage
 	if page {
@@ -152,7 +159,7 @@ func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bo
 		result.Items = []api.TaxAccount{account}
 	}
 	if err != nil {
-		return invalid()
+		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account response")}
 	}
 	return result, nil
 }
