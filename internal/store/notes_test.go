@@ -516,6 +516,9 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00.000000000Z')`)
 			require.NoError(t, err)
+			// Match released Open's lexical startup before freezing its snapshot.
+			_, err = legacy.MigrateLegacyPlainText(ctx)
+			require.NoError(t, err)
 			tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 			require.NoError(t, err)
 			var before bytes.Buffer
