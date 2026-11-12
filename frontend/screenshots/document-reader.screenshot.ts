@@ -422,7 +422,10 @@ for (const [filename, module] of [
     await page.getByRole("button", { name: "Upload 1 file", exact: true }).click();
     await expect(page.getByText("Added", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Close upload documents" }).click();
+    await page.route(chunk, (route) => route.abort());
     await row.dblclick();
+    await expect(reader.getByRole("alert")).toContainText("The reader could not load");
+    await page.unroute(chunk);
     await reader.getByRole("button", { name: "Reload Docbank" }).click();
     await reader.getByRole("button", { name: "Reload anyway" }).click();
     await expect(row).toBeVisible();

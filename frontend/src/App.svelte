@@ -1105,7 +1105,6 @@
     );
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
-  let sessionChannel: VerifiedUploadChannel | null = null;
   let uploadChannelError = $state("");
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
@@ -1589,10 +1588,7 @@
     };
   });
 
-  setContext(readerReloadContext, async () => {
-    await sessionChannel?.closeAndWait();
-    reloadWithSession();
-  });
+  setContext(readerReloadContext, async () => reloadWithSession());
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
     rememberSession(keyLogin ? null : session);
@@ -1615,7 +1611,6 @@
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
         : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
     });
-    sessionChannel = channel;
     void channel.connect().then(
       () => {
         if (mounted && webSession === session.token) uploadChannel = channel;
@@ -1933,7 +1928,6 @@
     sessionReporting = undefined;
     uploadChannel?.close();
     uploadChannel = null;
-    sessionChannel = null;
     webSession = "";
     directory = null;
     replaceRows([], false);
