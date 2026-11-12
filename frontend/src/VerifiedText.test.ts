@@ -75,7 +75,7 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
   },
 );
 
-async function mockReadyText(source: SelectedSource, pages: number[] = []) {
+async function mockReadyText(source: SelectedSource, pages: number[] = [], artifactStatus = 200) {
   const { createHash } = await import("node:crypto");
   const body = "Report one. Report two.";
   const envelope = {
@@ -132,6 +132,7 @@ async function mockReadyText(source: SelectedSource, pages: number[] = []) {
     )
     .mockResolvedValueOnce(
       new Response(bytes, {
+        status: artifactStatus,
         headers: {
           "Content-Type": "text/markdown; charset=utf-8",
           "Content-Length": String(bytes.length),
@@ -236,4 +237,17 @@ it("combines a PDF page gap with the verified-empty notice", async () => {
     "Processing verified that this document has no readable text.",
   );
   expect(screen.getAllByRole("status")).toHaveLength(1);
+});
+
+it("shows unavailable PDF page evidence without claiming there are no gaps", async () => {
+  renderPDF({ state: "unprocessed", page_coverage: "unavailable" });
+  expect(await screen.findByText("PDF page text coverage is unavailable.")).toBeTruthy();
+  expect(screen.queryByText(/no text layer/)).toBeNull();
+});
+
+it("retains PDF page gaps when reading the text artifact fails", async () => {
+  await mockReadyText(pdf, [2], 500);
+  renderPDF();
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(screen.getByText(/Page 2 has no text layer/)).toBeTruthy();
 });
