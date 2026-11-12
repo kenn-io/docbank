@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import SnapshotActions from "./SnapshotActions.svelte";
 import { ACTION_MAX_BYTES } from "./actionRecovery.js";
-import { batchTagRequestDigest, type BatchTagRequest } from "./batch-tags.js";
+import type { BatchTagRequest } from "./batch-tags.js";
+import { receiptFor } from "./test/receiptFor.js";
 
 const catalog = [
   {
@@ -59,25 +60,6 @@ async function chooseReview(): Promise<void> {
     target: { value: "Rev" },
   });
   await fireEvent.click(screen.getByRole("option", { name: "Review (12)" }));
-}
-
-async function receiptFor(request: BatchTagRequest, unchanged: number[] = []) {
-  return {
-    version: 1,
-    operation_id: request.operation_id,
-    request_digest: await batchTagRequestDigest(request),
-    tag_id: request.tag_id,
-    assign: request.assign,
-    tag_revision: 3,
-    assignment_count: 13,
-    completed_at: "2026-09-11T13:00:00.000000000Z",
-    nodes: request.nodes.map((node) => ({
-      node_id: node.node_id,
-      expected_revision: node.revision,
-      revision: unchanged.includes(node.node_id) ? node.revision : node.revision + 1,
-      changed: !unchanged.includes(node.node_id),
-    })),
-  };
 }
 
 it("states what a whole-result change does before continuing", async () => {
@@ -264,7 +246,7 @@ it.each([true, false])(
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     const check = await screen.findByRole("button", { name: "Check tag results" });
     await fireEvent.click(check);
-    await waitFor(() => expect(onchecked).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onchecked).toHaveBeenCalledTimes(2));
     const retry = await screen.findByRole("button", {
       name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
     });
@@ -498,13 +480,71 @@ it("identifies a selected document when its recovery read fails", async () => {
   expect(screen.getByText("readme.txt")).toBeTruthy();
 });
 
-it("preserves a deleted tag error on the first apply", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 }),
-  );
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+it.each(["Tag was deleted", "Document was deleted"])(
+  "allows a new tag after a rejected change: %s",
+  async (detail) => {
+    const other = { ...catalog[0], id: "33333333-3333-4333-8333-333333333333", name: "Other" };
+    const writes: BatchTagRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as BatchTagRequest;
+      writes.push(request);
+      if (writes.length === 1 || detail === "Document was deleted")
+        return Response.json({ detail }, { status: 404 });
+      return Response.json(await receiptFor(request));
+    });
+    render(
+      SnapshotActions,
+      props({ scope: "selection", count: 2, targets, catalog: [...catalog, other] }),
+    );
+    await chooseReview();
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText(detail);
+    await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+      target: { value: "Other" },
+    });
+    await fireEvent.click(screen.getByRole("option", { name: "Other (12)" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    if (detail === "Document was deleted") await screen.findByText(detail);
+    else await screen.findByText(/Added “Other”/);
+    expect(writes[1].tag_id).toBe(other.id);
+  },
+);
+
+it("refreshes the view when an uncertain change is closed without a check", async () => {
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Lost response"));
+  const onchecked = vi.fn();
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onchecked }));
   await chooseReview();
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText("Tag was deleted");
-  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+  await screen.findByRole("button", { name: "Check tag results" });
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(onchecked).toHaveBeenCalledOnce();
+});
+
+it("refreshes after a confirmed retry even when the next check fails", async () => {
+  let writes = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") {
+      if (++writes === 1) throw new TypeError("Lost response");
+      return Response.json(await receiptFor(JSON.parse(String(init.body))));
+    }
+    if (String(input).endsWith(`/tags/${catalog[0].id}`)) {
+      if (writes > 1) throw new TypeError("Check failed");
+      return Response.json(catalog[0]);
+    }
+    if (String(input).includes("/tags?"))
+      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    return Response.json({ id: 7, name: "File 7", revision: 5 });
+  });
+  const onchecked = vi.fn();
+  render(
+    SnapshotActions,
+    props({ scope: "selection", count: 1, targets: [targets[0]], onchecked }),
+  );
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
+  await screen.findByText("Check failed");
+  expect(onchecked).toHaveBeenCalledTimes(3);
 });

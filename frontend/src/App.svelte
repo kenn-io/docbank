@@ -1361,6 +1361,7 @@
     selectedSnapshotRows.map((row) => ({
       node_id: row.node_id,
       revision: snapshotTargetRevision(row, snapshot.overlays),
+      name: row.path,
     })),
   );
   const allVisibleSnapshotRowsSelected = $derived(

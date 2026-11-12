@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { PreparedAction } from "./actionRecovery.js";
 import type { PersistedAction } from "./actionJournal.js";
 import { batchTagRequestDigest } from "./batch-tags.js";
+import { receiptFor } from "./test/receiptFor.js";
 import { canonicalQuery, type Query } from "./query.js";
 import { snapshotMemberHash, type SnapshotPage, type SnapshotRow } from "./snapshots.js";
 
@@ -578,6 +579,7 @@ it("refreshes the view and tag catalog during recovery", async () => {
       searches.push(JSON.parse(String(init?.body)));
       return json(first);
     }
+    if (url === "/api/v1/nodes/2") return new Response("missing", { status: 404 });
     if (url === "/api/v1/nodes/1") return json({ id: 1, name: "report-1.pdf", revision: 3 });
     if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0")
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
@@ -599,6 +601,7 @@ it("refreshes the view and tag catalog during recovery", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "250" }));
   await fireEvent.keyDown(window, { key: "Escape" });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-2.pdf" }));
   await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
     target: { value: "Rev" },
@@ -609,16 +612,20 @@ it("refreshes the view and tag catalog during recovery", async () => {
     "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
   );
   expect(warning.closest('[role="alert"]')).toBeTruthy();
-  expect(searches).toHaveLength(1);
+  await waitFor(() => expect(searches).toHaveLength(2));
   const readsBeforeCheck = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   expect(await screen.findByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
-  await waitFor(() => expect(searches).toHaveLength(2));
+  await waitFor(() => expect(searches).toHaveLength(3));
+  await fireEvent.click(screen.getByText("Review documents"));
+  expect(screen.getByText("/records/report-2.pdf").closest("tr")?.textContent).toContain(
+    "Couldn't check",
+  );
   await waitFor(() => expect(catalogReads - readsBeforeCheck).toBe(1));
   expect(screen.getByRole("dialog", { name: "Tag selected documents" })).toBeTruthy();
   const readsBeforeClose = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(searches).toHaveLength(2);
+  expect(searches).toHaveLength(3);
   expect(catalogReads).toBe(readsBeforeClose);
   expect(searches[1]).toEqual(searches[0]);
   expect(
@@ -715,19 +722,7 @@ it.each([false, true])(
           revision++;
           assigned = true;
         }
-        return json({
-          version: 1,
-          operation_id: request.operation_id,
-          request_digest: await batchTagRequestDigest(request),
-          tag_id: tag.id,
-          assign: true,
-          tag_revision: 3,
-          assignment_count: 1,
-          completed_at: "2026-09-11T13:00:00.000000000Z",
-          nodes: [
-            { node_id: 1, expected_revision: expected, revision, changed: expected !== revision },
-          ],
-        });
+        return json(await receiptFor(request, expected === revision ? [1] : []));
       }
       throw new Error(`unexpected request: ${url}`);
     });
@@ -753,7 +748,7 @@ it.each([false, true])(
       ),
     );
     await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
-    await waitFor(() => expect(searches).toHaveLength(3));
+    await waitFor(() => expect(searches).toHaveLength(5));
     expect(searches[1]).toEqual(searches[0]);
     if (failRerun) await screen.findByText("Snapshot refresh failed");
     else {

@@ -404,7 +404,7 @@ that already had the tag before an addition.
 **Tag selected…** applies one atomic, revision-checked change to at most 1,000
 documents and reports how many changed. If the result is uncertain, choose **Check tag results** to inspect the selected documents.
 Review current membership, then choose whether to retry readable documents that still need the change. The retry uses their current revisions. Docbank checks the full selection again after a confirmed retry, including documents it couldn't read earlier.
-Closing recovery reruns the snapshot query. If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
+Docbank refreshes the view after an uncertain change and after each successful check or retry. If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
 
 **Tag all…** → **Continue** captures every result, up to 250,000 documents,
 and prepares revision-checked batches of at most 1,000. The captured

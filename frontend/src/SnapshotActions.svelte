@@ -85,10 +85,11 @@
       if (!recovering) {
         receipt = confirmed;
         onchanged?.(confirmed);
-      }
+      } else onchecked?.();
     },
     onunknown: () => {
       recovering = true;
+      onchecked?.();
     },
     unknownMessage:
       "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
@@ -138,7 +139,7 @@
       assign,
       nodes: captured.map((target) => ({ ...target })),
     };
-    void run.submit(request).then((o) => (tagMissing = o.kind === "rejected" && notFound(o.cause)));
+    void run.submit(request);
   }
 
   async function check(): Promise<void> {
@@ -232,9 +233,13 @@
         placeholder="Tag name"
         disabled={locked}
         reopenAfterPick={false}
-        onchange={(id) => (tag = catalog.find((item) => item.id === id))}
+        onchange={(id) => {
+          tag = catalog.find((item) => item.id === id);
+          run.failure = "";
+        }}
         onpick={(picked, created) => {
           tag = picked;
+          run.failure = "";
           if (created) oncreated?.();
         }}
         {onauthfailure}
