@@ -322,7 +322,7 @@ func TestDefinitionBeforeRootHeading(t *testing.T) {
 		separator string
 		headings  []string
 	}{
-		{"", []string{}}, {"\n", []string{"Heading"}},
+		{"", nil}, {"\n", []string{"Heading"}},
 	} {
 		src := "> [r]: target.md\n" + tc.separator + "Heading\n===\n"
 		n, err := Parse(t.Context(), []byte(src), Limits{})
@@ -484,7 +484,7 @@ func TestTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
 		source   string
 		headings []string
 	}{
-		{"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n```\nend\" [code](code.md)\n```\n", []string{}},
+		{"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n```\nend\" [code](code.md)\n```\n", nil},
 		{"> [r]: note.md\n>     \"unclosed [hidden](ghost.md)\n# Outside\nend\"\n", []string{"Outside"}},
 	} {
 		n, err := Parse(t.Context(), []byte(tc.source), Limits{})
