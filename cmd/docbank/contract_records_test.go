@@ -110,6 +110,19 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	after := read()
 	require.Equal(t, before.Revision+1, after.Revision)
 	require.Len(t, after.Parties, 2)
+	out, err = runCLI(t, "contract", "edit", contract.ContractID, "--type", "", "--summary", "", "--purpose", "", "--consideration", "", "--termination", "", "--json")
+	require.NoError(t, err, out)
+	after = read()
+	require.Empty(t, after.ContractType)
+	require.Empty(t, after.Summary)
+	require.Empty(t, after.Purpose)
+	require.Empty(t, after.Consideration)
+	require.Empty(t, after.Termination)
+	for _, flag := range []string{"--title", "--status"} {
+		_, err = runCLI(t, "contract", "edit", contract.ContractID, flag, "")
+		require.Error(t, err)
+		require.Equal(t, after, read())
+	}
 	// A syntactically valid unknown ID can only fail at the server; report the
 	// prior field mutation and retain its new revision for the caller.
 	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--title", "Updated agreement", "--counterparty", "11111111-1111-4111-8111-111111111111")

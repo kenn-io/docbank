@@ -115,16 +115,16 @@ func (p *CreateContractRequest) UnmarshalJSON(raw []byte) error {
 }
 
 type PatchContractRequest struct {
-	Title         *string `json:"title,omitempty"`
-	ContractType  *string `json:"contract_type,omitempty"`
-	Status        *string `json:"status,omitempty"`
-	StartsOn      *string `json:"starts_on,omitempty" nullable:"true"`
-	ExpiresOn     *string `json:"expires_on,omitempty" nullable:"true"`
-	SignedOn      *string `json:"signed_on,omitempty" nullable:"true"`
-	Summary       *string `json:"summary,omitempty"`
-	Purpose       *string `json:"purpose,omitempty"`
-	Consideration *string `json:"consideration,omitempty"`
-	Termination   *string `json:"termination,omitempty"`
+	Title         *string `json:"title,omitzero" nullable:"false"`
+	ContractType  *string `json:"contract_type,omitzero" nullable:"false"`
+	Status        *string `json:"status,omitzero" nullable:"false"`
+	StartsOn      *string `json:"starts_on,omitzero" nullable:"true"`
+	ExpiresOn     *string `json:"expires_on,omitzero" nullable:"true"`
+	SignedOn      *string `json:"signed_on,omitzero" nullable:"true"`
+	Summary       *string `json:"summary,omitzero" nullable:"false"`
+	Purpose       *string `json:"purpose,omitzero" nullable:"false"`
+	Consideration *string `json:"consideration,omitzero" nullable:"false"`
+	Termination   *string `json:"termination,omitzero" nullable:"false"`
 	ClearStarts   bool    `json:"-"`
 	ClearExpires  bool    `json:"-"`
 	ClearSigned   bool    `json:"-"`
