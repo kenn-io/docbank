@@ -216,7 +216,9 @@ func TestPopulationScratchCleanupAndPooledReuse(t *testing.T) {
 	for _, route := range []string{"success", "error", "cancel"} {
 		readCtx, cancel := context.WithCancel(ctx)
 		err := s.withLexicalGenerationRead(readCtx, func(q metadataQuerier, _ LexicalGeneration) error {
-			recording := &populationSizeQuerier{populationQuerier: q.(populationQuerier)}
+			pinned, ok := q.(populationQuerier)
+			require.True(t, ok)
+			recording := &populationSizeQuerier{populationQuerier: pinned}
 			fragment, err := documentSnapshotPopulation(readCtx, recording, compiled, "", CoverageSelection{})
 			require.NoError(t, err, route)
 			require.Positive(t, recording.calls, route)
