@@ -346,10 +346,21 @@ func (s *Store) restoreNodeTx(
 	if err := bumpRevisionTx(ctx, tx, target.destID, now); err != nil {
 		return Node{}, err
 	}
-	if err := recordVaultChangesTx(ctx, tx, "restored", ids...); err != nil {
+	if err := recordRestoredTx(ctx, tx, ids); err != nil {
 		return Node{}, err
 	}
 	return nodeByIDTx(ctx, tx, node.ID)
+}
+
+// recordRestoredTx announces the restored IDs and clears their current terminal
+// note limits. A limit stores no links, so only a retry can see the new placement.
+func recordRestoredTx(ctx context.Context, tx *sql.Tx, ids []int64) error {
+	for _, id := range ids {
+		if err := invalidateMovedNoteLimitTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return recordVaultChangesTx(ctx, tx, "restored", ids...)
 }
 
 // TrashedRoots lists restorable trash roots, newest first.
