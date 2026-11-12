@@ -144,7 +144,7 @@ test("resumes the complete selection and source after a daemon and browser resta
     await writeFile(files[2]!, modified);
     await utimes(files[2]!, times.atime, times.mtime);
     await resumed.page.getByLabel("Choose photo files").setInputFiles(files);
-    await expect(resumed.page.getByText("Files changed", { exact: true })).toBeVisible();
+    await expect(resumed.page.getByText("File changed", { exact: true })).toBeVisible();
     expect(plans).toHaveLength(1);
     await writeFile(files[2]!, original);
     await utimes(files[2]!, times.atime, times.mtime);
