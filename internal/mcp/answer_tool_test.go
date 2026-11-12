@@ -84,15 +84,18 @@ func TestAnswerQuestionPageCoverage(t *testing.T) {
 		check       func(*testing.T, answerOutput, error)
 	}{
 		{name: "unavailable", coverageErr: errors.New("coverage unavailable"), check: func(t *testing.T, out answerOutput, err error) {
+			t.Helper()
 			require.NoError(t, err)
 			require.Len(t, out.Passages, 1)
 			require.Contains(t, out.CoverageReasons, "page_coverage_unavailable")
 			require.False(t, out.CoverageComplete)
 		}},
 		{name: "canceled", coverageErr: context.Canceled, check: func(t *testing.T, _ answerOutput, err error) {
+			t.Helper()
 			require.ErrorIs(t, err, context.Canceled)
 		}},
 		{name: "partial gaps", gaps: []api.PageTextGap{{ContentVersionID: version, Pages: []int{1, 3, 4, 7}}}, check: func(t *testing.T, out answerOutput, err error) {
+			t.Helper()
 			require.NoError(t, err)
 			require.False(t, out.CoverageComplete)
 			require.Contains(t, out.CoverageReasons, "pages_without_text")
