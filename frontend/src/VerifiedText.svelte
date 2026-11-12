@@ -192,7 +192,7 @@
   function stateMessage(state: Exclude<RenditionTextResolution["state"], "ready">): string {
     if (state === "verified_empty")
       return "Processing verified that this document has no readable text.";
-    if (state === "failed") return "Text processing failed for this selected version.";
+    if (state === "failed") return "Text processing failed for the selected profile.";
     if (state === "unprocessed" || state === "unconfigured") return "";
     if (state === "profile_required")
       return "Choose a processing profile before reading rendition text.";
@@ -257,10 +257,15 @@
       {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1
         ? "it is a scan"
         : "they are scans"},
-      <a href="https://docbank.ai/docs/usage/document-processing/#ocr" target="_blank" rel="noreferrer"
-        >OCR can read {missingPages.length === 1 ? "it" : "them"}</a
+      <a
+        href="https://docbank.ai/docs/usage/document-processing/#ocr"
+        target="_blank"
+        rel="noreferrer">OCR can read {missingPages.length === 1 ? "it" : "them"}</a
       >.
     </p>
+  {/if}
+  {#if !loading && resolution?.pageCoverage === "unavailable"}
+    <p class="notice" role="status">PDF page text coverage is unavailable.</p>
   {/if}
   {#if loading}
     <div class="loading" role="status"><Spinner size={14} /> Loading text…</div>
@@ -283,14 +288,14 @@
     {#if marked.truncated}<p class="notice" role="status">
         Showing the first 5,000 non-overlapping matches.
       </p>{/if}
-  {:else if resolution?.state === "unconfigured"}
+  {:else if resolution?.state === "unconfigured" && source.mimeType !== "application/pdf"}
     <p class="setup">
       <span>Text extraction isn't set up.</span>
       <a href="https://docbank.ai/docs/usage/document-processing/" target="_blank" rel="noreferrer"
         >Set up</a
       >
     </p>
-  {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required"}
+  {:else if resolution?.state === "unprocessed" || resolution?.state === "profile_required" || resolution?.state === "unconfigured"}
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
       </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}

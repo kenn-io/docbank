@@ -54,7 +54,7 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
       expect(onprocess).toHaveBeenCalledOnce();
     } else if (state === "failed") {
       expect(
-        await screen.findByText("Text processing failed for this selected version."),
+        await screen.findByText("Text processing failed for the selected profile."),
       ).toBeTruthy();
     } else {
       expect(
@@ -236,4 +236,16 @@ it("retains PDF page gaps when reading the text artifact fails", async () => {
   renderPDF();
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.getByText(/Page 2 has no text layer/)).toBeTruthy();
+});
+it("offers processing instead of setup for an unconfigured PDF", async () => {
+  renderPDF({ state: "unconfigured", pages_without_text: [2] });
+  expect(await screen.findByText(/Page 2 has no text layer/)).toBeTruthy();
+  expect(screen.getByText("This version hasn't been processed.")).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Set up" })).toBeNull();
+});
+
+it("shows unavailable PDF page coverage beside the selected profile state", async () => {
+  renderPDF({ state: "failed", page_coverage: "unavailable" });
+  expect(await screen.findByText("PDF page text coverage is unavailable.")).toBeTruthy();
+  expect(screen.getByText("Text processing failed for the selected profile.")).toBeTruthy();
 });
