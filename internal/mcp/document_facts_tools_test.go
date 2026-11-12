@@ -97,7 +97,7 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 	require.Positive(t, offset)
 	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: strings.Repeat("x", maxToolResponseBytes)}}
 	dates.Claims = nil
-	_, err := documentDatesPage(dates, 0)
+	_, err = documentDatesPage(dates, 0)
 	require.ErrorIs(t, err, errToolResultTooLarge)
 }
 
