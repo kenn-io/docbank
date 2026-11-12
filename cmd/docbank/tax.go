@@ -168,7 +168,7 @@ func newTaxAccountCommand() *cobra.Command {
 	var editIdentifier, editCadence, periodNote, dueNote, currency, editStart, editEnd, note string
 	var editLead, revision int64
 	var clearStart, clearEnd bool
-	edit := &cobra.Command{Use: "edit <account-id>", Short: "Edit a tax account", Long: "Edit account details with a revision fence.\nWithout --revision, inspect once and send one fenced update.\nStale updates are not retried.", Example: "docbank tax account edit 11111111-1111-4111-8111-111111111111 --lead-days 7", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	edit := &cobra.Command{Use: "edit <account-id>", Short: "Edit a tax account", Long: "Edit account details.\nReads the current revision once unless --revision is supplied.\nStale updates are not retried.", Example: "docbank tax account edit 11111111-1111-4111-8111-111111111111 --lead-days 7", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateID(args[0]); err != nil {
 			return err
 		}
@@ -241,7 +241,7 @@ func newTaxAccountCommand() *cobra.Command {
 	edit.Flags().BoolVar(&clearEnd, "clear-effective-end", false, "remove effective end date")
 	edit.Flags().Int64Var(&revision, "revision", 0, "expected revision (default: current)")
 	var retireRevision int64
-	retire := &cobra.Command{Use: "retire <account-id>", Short: "Retire a tax account", Long: "Retire an account with a revision fence.\nWithout --revision, inspect once and send one fenced update.\nStale updates are not retried.", Example: "docbank tax account retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	retire := &cobra.Command{Use: "retire <account-id>", Short: "Retire a tax account", Long: "Retire an account.\nReads the current revision once unless --revision is supplied.\nStale updates are not retried.", Example: "docbank tax account retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateID(args[0]); err != nil {
 			return err
 		}

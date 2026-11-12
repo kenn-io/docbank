@@ -273,7 +273,7 @@ func newTaxRecordCommand() *cobra.Command {
 	_ = create.MarkFlagRequired("title")
 	var change recordFlags
 	var editRev, retireRev int64
-	edit := &cobra.Command{Use: "edit <record-id>", Short: "Edit a tax record", Long: "Edit with a revision fence. Without --revision, inspect once and write once.\nStale writes are not retried.", Example: "docbank tax record edit 11111111-1111-4111-8111-111111111111 --note Example", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	edit := &cobra.Command{Use: "edit <record-id>", Short: "Edit a tax record", Long: "Edit a tax record.\nReads the current revision once unless --revision is supplied.\nStale updates are not retried.", Example: "docbank tax record edit 11111111-1111-4111-8111-111111111111 --note Example", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := taxRecordID(args[0]); err != nil {
 			return err
 		}
@@ -304,7 +304,7 @@ func newTaxRecordCommand() *cobra.Command {
 	}}
 	change.bind(edit, false)
 	edit.Flags().Int64Var(&editRev, "revision", 0, "expected revision (default: current)")
-	retire := &cobra.Command{Use: "retire <record-id>", Short: "Retire a tax record", Long: "Retire with a revision fence. Without --revision, inspect once and write once.\nStale writes are not retried.", Example: "docbank tax record retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	retire := &cobra.Command{Use: "retire <record-id>", Short: "Retire a tax record", Long: "Retire a tax record.\nReads the current revision once unless --revision is supplied.\nStale updates are not retried.", Example: "docbank tax record retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := taxRecordID(args[0]); err != nil {
 			return err
 		}
