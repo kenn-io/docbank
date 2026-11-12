@@ -979,6 +979,76 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	require.NotEmpty(t, recovered.SnapshotID)
 }
 
+func TestPhotoCachedQuerySurvivesFilteringTagDeletion(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			ts, catalog := newTestServer(t, nil)
+			tag, err := catalog.CreateTag(t.Context(), "Synthetic selection")
+			require.NoError(t, err)
+			for _, name := range []string{"sunset-a.jpg", "sunset-b.jpg"} {
+				node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, testHash(name), 10, "image/jpeg")
+				require.NoError(t, err)
+				assignment, err := catalog.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
+				require.NoError(t, err)
+				tag = assignment.Tag
+			}
+			request := api.PhotoBrowseRequest{Query: api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","filters":{"tag_ids":[%q]},"sort":{"field":"name","direction":"asc"}}`, mode, tag.ID)), PageSize: 1}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var first api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &first))
+			require.EqualValues(t, 2, first.Total)
+			require.Equal(t, mode, first.RequestedMode)
+			require.Equal(t, "lexical", first.ActualMode)
+			require.Equal(t, "provider_unavailable", first.FallbackReason)
+			require.NotEmpty(t, first.SnapshotID)
+			require.NotEmpty(t, first.NextCursor)
+			require.Len(t, first.Items, 1)
+			require.Equal(t, "sunset-a.jpg", first.Items[0].Name)
+
+			_, err = catalog.DeleteTag(t.Context(), tag.ID, tag.Revision)
+			require.NoError(t, err)
+			request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var next api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &next))
+			require.Equal(t, first.SnapshotID, next.SnapshotID)
+			require.Equal(t, first.MemberHash, next.MemberHash)
+			require.Equal(t, first.Total, next.Total)
+			require.Equal(t, first.PhotoSearchStatus, next.PhotoSearchStatus)
+			require.Len(t, next.Items, 1)
+			require.Equal(t, "sunset-b.jpg", next.Items[0].Name)
+			require.Empty(t, next.NextCursor)
+
+			request.Cursor = ""
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var again api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &again))
+			require.Equal(t, first.SnapshotID, again.SnapshotID)
+			require.Equal(t, first.MemberHash, again.MemberHash)
+			require.Equal(t, first.Total, again.Total)
+			require.Equal(t, first.PhotoSearchStatus, again.PhotoSearchStatus)
+			require.Len(t, again.Items, 1)
+			require.Equal(t, first.Items[0].AssetID, again.Items[0].AssetID)
+			require.Equal(t, first.NextCursor, again.NextCursor)
+
+			originalQuery := request.Query
+			request.Query = api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"document_date"}}`, mode))
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
+			request.Query = originalQuery
+			request.SnapshotID = ""
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
+		})
+	}
+}
+
 func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
