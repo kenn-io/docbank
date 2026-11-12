@@ -25,5 +25,16 @@ func TestGCPackedRepackGuidance(t *testing.T) {
 
 	out, err = runCLI(t, "vault", "gc", "--run")
 	require.NoError(t, err)
-	assert.Contains(t, out, "repack eligible packs: docbank storage repack")
+	assert.Contains(t, out, "1 packed blob(s), 100 stored byte(s) pending repack\nRun docbank storage repack to reclaim space. Default thresholds can skip recent or small sparse packs; see docbank storage repack --help.\n")
+}
+
+func TestGCWithoutPendingPackedBlobs(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.MarshalWrite(w, api.GCReport{}))
+	})
+
+	out, err := runCLI(t, "vault", "gc", "--run")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "docbank storage repack")
 }

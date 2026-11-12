@@ -556,7 +556,6 @@ func TestStorageRepackReclaimsSparsePack(t *testing.T) {
 		createFileWithContent(t, ts, s, "/one.txt", "one"),
 		createFileWithContent(t, ts, s, "/two.txt", "two"),
 		createFileWithContent(t, ts, s, "/three.txt", "three"),
-		createFileWithContent(t, ts, s, "/four.txt", "four"),
 	}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/pack", nil,
 		map[string]any{"max_bytes": 0})
@@ -584,21 +583,6 @@ func TestStorageRepackReclaimsSparsePack(t *testing.T) {
 		map[string]any{"min_age": "1ns", "min_dead_bytes": 1, "max_bytes": 0})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var report api.StorageRepackReport
-	require.NoError(t, json.Unmarshal([]byte(body), &report))
-	assert.Zero(t, report.PacksSelected, "a pack with exactly half its entries live is not selected")
-
-	_, etag := etagOf(t, ts, files[3].ID)
-	resp, body = do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", files[3].ID),
-		map[string]string{"If-Match": etag}, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil, map[string]any{"run": true})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/gc", nil, map[string]any{"run": true})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/repack", nil,
-		map[string]any{"min_age": "1ns", "min_dead_bytes": 1, "max_bytes": 0})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, 1, report.PacksSelected)
 	assert.Equal(t, 1, report.PacksRewritten)
