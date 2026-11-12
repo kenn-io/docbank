@@ -19,10 +19,6 @@ components:
           maxLength: 3
           type: string
         kind:
-          enum:
-            - note
-            - payment
-            - refund
           type: string
         note:
           maxLength: 8192

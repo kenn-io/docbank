@@ -36,15 +36,6 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
-export type AddTaxEventRequestKind = typeof AddTaxEventRequestKind[keyof typeof AddTaxEventRequestKind];
-
-
-export const AddTaxEventRequestKind = {
-  note: 'note',
-  payment: 'payment',
-  refund: 'refund',
-} as const;
-
 export interface AddTaxEventRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -55,7 +46,7 @@ export interface AddTaxEventRequest {
   amount?: string | null;
   /** @maxLength 3 */
   currency?: string;
-  kind: AddTaxEventRequestKind;
+  kind: string;
   /** @maxLength 8192 */
   note?: string;
   /** @maxLength 10 */
