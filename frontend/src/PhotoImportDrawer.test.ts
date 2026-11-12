@@ -456,6 +456,48 @@ it("keeps a missing saved import unconfirmed", async () => {
   expect(channel.planPhotoImport).not.toHaveBeenCalled();
 });
 
+it("resumes a preview closed before registration", async () => {
+  const selected = [files()[0]];
+  let versionAtUpload: number | undefined;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
+    uploadPhotoGroup: vi.fn(async () => {
+      versionAtUpload = savedImports.get("preview-resume")?.protocolVersion;
+      return { status: "added" as const };
+    }),
+  };
+  const props = {
+    channel,
+    vaultID: "preview-resume",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  };
+  const view = render(PhotoImportDrawer, props);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  view.unmount();
+  render(PhotoImportDrawer, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(versionAtUpload).toBe(3);
+});
+
 it("resumes a checkpoint from before saved imports", async () => {
   const { photoImportManifest } = await import("./photoImportStorage.js");
   const selected = [files()[0]];
@@ -591,7 +633,8 @@ it.each(["conflict", "auth", "abort", "after item failure"])(
       if (outcome === "conflict") await change();
       else
         vi.mocked(channel.uploadPhotoGroup).mockImplementationOnce(async () => {
-          await change();
+          const current = await storage.load();
+          await storage.replace({ ...current!, revision: "other-tab" }, current);
           throw new APIError("Upload failed", 500, "internal");
         });
     } else {
