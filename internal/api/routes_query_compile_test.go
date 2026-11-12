@@ -186,3 +186,38 @@ func TestQueryCompileTimelineErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestTimelineDateErrorKeepsExpressionPosition(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	for _, text := range []string{"date:2026-02-30", "date:2011-12-30"} {
+		input := fmt.Sprintf(`{"syntax":"advanced","text":%q,"timezone":"Pacific/Apia"}`, text)
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, map[string]string{"X-Api-Key": testAPIKey}, input)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+		problem := decodeProblem(t, body)
+		require.NotNil(t, problem.Position)
+		require.Equal(t, 0, problem.Position.Offset)
+		require.Equal(t, len(text), problem.Position.End)
+	}
+	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, map[string]string{"X-Api-Key": testAPIKey}, `{"syntax":"advanced","text":"invalid_date:foo"}`)
+	require.NotEqual(t, http.StatusBadRequest, resp.StatusCode, body)
+}
+
+func TestFullDateDisclosureRequiresNonBrowserAPIKey(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	input := `{"query":{},"disclosure":"full"}`
+	for _, headers := range []map[string]string{
+		{api.WebSessionHeader: session.Token},
+		{api.WebSessionHeader: session.Token, "X-Api-Key": testAPIKey},
+	} {
+		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, input)
+		require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+	}
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, input)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+}

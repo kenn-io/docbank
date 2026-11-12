@@ -5737,6 +5737,7 @@ export interface SavedQueryV1Schema {
   /** @maxLength 8192 */
   text?: string;
   timezone?: string;
+  timezone_defaulted?: boolean;
   v?: SavedQueryV1SchemaV;
 }
 
@@ -6768,6 +6769,7 @@ export interface Query {
   text: string;
   /** @nullable */
   timezone?: string | null;
+  timezone_defaulted?: boolean;
   v: number;
 }
 
@@ -9192,6 +9194,17 @@ export interface WebTabSession {
   upload_secret: string;
 }
 
+/**
+ * Full date disclosure requires an API key
+ */
+export type WorkspaceQueryCreateRequestDisclosure = typeof WorkspaceQueryCreateRequestDisclosure[keyof typeof WorkspaceQueryCreateRequestDisclosure];
+
+
+export const WorkspaceQueryCreateRequestDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -9218,6 +9231,8 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Full date disclosure requires an API key */
+  disclosure?: WorkspaceQueryCreateRequestDisclosure;
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;

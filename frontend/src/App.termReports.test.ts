@@ -147,6 +147,7 @@ it.each(["live", "query page", "missing identity"])(
             reason: "time_budget_exceeded",
             values: [],
           })),
+          timezone_defaulted: false,
           snapshot: true,
           snapshot_id: "0123456789abcdef0123456789abcdef",
           created_at: root.created_at,

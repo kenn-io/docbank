@@ -11,6 +11,7 @@ func checkDocumentDateKeysFollowGeneration(t *testing.T, open func(*testing.T) *
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "date-fixture.txt", fakeHash("a1"), 10, "text/plain")
 	require.NoError(t, err)
+	require.ErrorIs(t, requireDocumentDateIndex(ctx, s.db), ErrDocumentDatesPending)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "d1")
 	record.Events[0].Actors[0].Sensitive = true
@@ -22,6 +23,9 @@ func checkDocumentDateKeysFollowGeneration(t *testing.T, open func(*testing.T) *
 	require.NoError(t, err)
 	require.Equal(t, "2019-03-04", civil)
 	require.Equal(t, 1, sensitive)
+	require.NoError(t, requireDocumentDateIndex(ctx, s.db))
+	_, err = s.db.ExecContext(ctx, `UPDATE document_date_keys SET sensitive=0 WHERE generation_id=$1`, generation.GenerationID)
+	require.Error(t, err)
 	_, err = s.db.ExecContext(ctx, `DELETE FROM document_event_heads WHERE generation_id=$1`, generation.GenerationID)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `DELETE FROM document_event_generations WHERE generation_id=$1`, generation.GenerationID)

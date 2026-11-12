@@ -21,17 +21,12 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
 		}
+		if in.Body.Disclosure == "full" && (ctx.Value(authenticationContextKey{}) != "master" || ctx.Value(browserCredentialContextKey{}) == true) {
+			return nil, NewError(http.StatusForbidden, "forbidden", "full disclosure requires an API key")
+		}
 		value, err := parseWorkspaceQuery(in.Body.Query)
 		if err != nil {
 			return nil, err
-		}
-		defaulted := value.Timezone == nil
-		if defaulted && query.UsesDocumentDate(value) {
-			zone := d.Cfg.Web.TimelineTimezone
-			if zone == "" {
-				zone = "UTC"
-			}
-			value.Timezone = &zone
 		}
 		coverage, err := workspaceQueryCoverage(d, in.Body.Photos, in.Body.Profile)
 		if err != nil {
@@ -41,7 +36,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Photos: in.Body.Photos, Query: value, TimezoneDefaulted: defaulted, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			Photos: in.Body.Photos, FullDisclosure: in.Body.Disclosure == "full", Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		})
 		if err != nil {
 			return nil, workspaceQueryError(err)
@@ -91,6 +86,7 @@ func workspaceQueryCoverage(d Deps, photos bool, profile string) (store.Coverage
 func parseWorkspaceQuery(raw QueryPayload) (query.Query, error) {
 	value, err := query.Parse(raw)
 	if err == nil {
+		value.TimezoneDefaulted = false
 		return value, nil
 	}
 	if problem := dateQueryError(err); problem != nil {
@@ -114,6 +110,8 @@ func workspaceQueryError(err error) error {
 		return problem
 	}
 	switch {
+	case errors.Is(err, store.ErrDocumentDatesPending):
+		return NewError(http.StatusServiceUnavailable, "document_dates_pending", "Document dates are still being indexed; check timeline coverage and retry.")
 	case errors.Is(err, store.ErrInvalidSnapshotRequest):
 		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	case errors.Is(err, store.ErrSnapshotGone):

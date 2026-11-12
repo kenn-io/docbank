@@ -19,6 +19,7 @@ func datePrecisionGroup(values []string) [][]string {
 
 type dateScope struct {
 	ranges          [][2]string
+	rangePositions  []*query.Expression
 	kinds           []string
 	precisionGroups [][]string
 }
@@ -31,6 +32,7 @@ func (scope *dateScope) add(field, value string) error {
 			return err
 		}
 		scope.ranges = append(scope.ranges, [2]string{from, to})
+		scope.rangePositions = append(scope.rangePositions, nil)
 	case "date_kind":
 		if !document.ValidDateKind(document.DateKind(value)) {
 			return fmt.Errorf("unknown date kind %q", value)
@@ -49,6 +51,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 	var scope dateScope
 	if filter != nil {
 		scope.ranges = append(scope.ranges, [2]string{filter.From, filter.To})
+		scope.rangePositions = append(scope.rangePositions, nil)
 		scope.kinds = append(scope.kinds, filter.Kinds...)
 		if len(filter.Precisions) > 0 {
 			scope.precisionGroups = append(scope.precisionGroups, filter.Precisions)
@@ -71,6 +74,9 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 			}
 			if err := scope.add(node.Syntax.Field, node.Children[0].Syntax.Value); err != nil {
 				return &query.ExpressionError{Offset: node.Syntax.Start, End: node.Syntax.End, Message: err.Error(), Cause: err}
+			}
+			if node.Syntax.Field == "date" {
+				scope.rangePositions[len(scope.rangePositions)-1] = node.Syntax
 			}
 			return nil
 		}
@@ -96,17 +102,21 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 
 func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragment, error) {
 	zone := c.dateZone
-	if zone == "" {
-		zone = "UTC"
-	}
 	loc, err := civiltime.LoadZone(zone)
 	if err != nil {
 		return compiledQueryFragment{}, &query.DateError{Code: "invalid_timezone", Err: err}
 	}
-	predicates := []string{"k.generation_id=h.generation_id", "h.content_version_id=cv.version_id", "k.sensitive=0"}
+	predicates := []string{"k.generation_id=h.generation_id", "h.content_version_id=cv.version_id"}
+	if !c.fullDisclosure {
+		predicates = append(predicates, "k.sensitive=0")
+	}
 	var args []any
 	if len(scope.kinds) == 0 && len(scope.ranges) > 0 {
-		predicates = append(predicates, "k.primary_safe=1")
+		if c.fullDisclosure {
+			predicates = append(predicates, "k.primary_full=1")
+		} else {
+			predicates = append(predicates, "k.primary_safe=1")
+		}
 	}
 	if len(scope.kinds) > 0 {
 		var tests []string
@@ -131,12 +141,17 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		predicates = append(predicates, "("+strings.Join(alternatives, " OR ")+")")
 	}
 
-	for _, r := range scope.ranges {
+	for index, r := range scope.ranges {
 		from, _ := civiltime.ParseDate(r[0])
 		to, _ := civiltime.ParseDate(r[1])
 		start, end, err := civiltime.RangeBounds(from, to, loc)
 		if err != nil {
-			return compiledQueryFragment{}, &query.DateError{Code: "date_not_in_zone", Err: err}
+			dateErr := &query.DateError{Code: "date_not_in_zone", Err: err}
+			if index < len(scope.rangePositions) && scope.rangePositions[index] != nil {
+				pos := scope.rangePositions[index]
+				return compiledQueryFragment{}, &query.ExpressionError{Offset: pos.Start, End: pos.End, Message: dateErr.Error(), Cause: dateErr}
+			}
+			return compiledQueryFragment{}, dateErr
 		}
 		format := "2006-01-02T15:04:05.000000000Z"
 		predicates = append(predicates, `((k.utc_key IS NOT NULL AND k.utc_key>=? AND k.utc_key<?) OR

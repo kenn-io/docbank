@@ -46,13 +46,14 @@ func (SavedQueryPayload) Schema(r huma.Registry) *huma.Schema {
 }
 
 type savedQueryV1Schema struct {
-	Timezone *string                 `json:"timezone,omitempty"`
-	V        int                     `json:"v,omitempty" enum:"1" default:"1"`
-	Text     string                  `json:"text,omitempty" maxLength:"8192"`
-	Syntax   string                  `json:"syntax,omitempty" enum:"simple,advanced" default:"simple"`
-	Mode     string                  `json:"mode,omitempty" enum:"lexical,semantic,hybrid" default:"lexical"`
-	Filters  savedQueryFiltersSchema `json:"filters,omitzero"`
-	Sort     savedQuerySortSchema    `json:"sort,omitzero"`
+	Timezone          *string                 `json:"timezone,omitempty"`
+	TimezoneDefaulted bool                    `json:"timezone_defaulted,omitempty"`
+	V                 int                     `json:"v,omitempty" enum:"1" default:"1"`
+	Text              string                  `json:"text,omitempty" maxLength:"8192"`
+	Syntax            string                  `json:"syntax,omitempty" enum:"simple,advanced" default:"simple"`
+	Mode              string                  `json:"mode,omitempty" enum:"lexical,semantic,hybrid" default:"lexical"`
+	Filters           savedQueryFiltersSchema `json:"filters,omitzero"`
+	Sort              savedQuerySortSchema    `json:"sort,omitzero"`
 }
 
 type savedQuerySortSchema struct {

@@ -42,13 +42,14 @@ var (
 
 // Query is a normalized QueryV1 value. Text is retained exactly as entered.
 type Query struct {
-	Timezone *string `json:"timezone,omitzero"`
-	V        int     `json:"v"`
-	Text     string  `json:"text"`
-	Syntax   string  `json:"syntax"`
-	Mode     string  `json:"mode"`
-	Filters  Filters `json:"filters"`
-	Sort     Sort    `json:"sort"`
+	Timezone          *string `json:"timezone,omitzero"`
+	TimezoneDefaulted bool    `json:"timezone_defaulted,omitzero"`
+	V                 int     `json:"v"`
+	Text              string  `json:"text"`
+	Syntax            string  `json:"syntax"`
+	Mode              string  `json:"mode"`
+	Filters           Filters `json:"filters"`
+	Sort              Sort    `json:"sort"`
 }
 
 // Sort identifies the requested result ordering. Execution support is decided
@@ -117,13 +118,14 @@ type Filters struct {
 }
 
 type queryInput struct {
-	Timezone *string       `json:"timezone"`
-	V        *int          `json:"v"`
-	Text     *string       `json:"text"`
-	Syntax   *string       `json:"syntax"`
-	Mode     *string       `json:"mode"`
-	Filters  *filtersInput `json:"filters"`
-	Sort     *sortInput    `json:"sort"`
+	Timezone          *string       `json:"timezone"`
+	TimezoneDefaulted bool          `json:"timezone_defaulted"`
+	V                 *int          `json:"v"`
+	Text              *string       `json:"text"`
+	Syntax            *string       `json:"syntax"`
+	Mode              *string       `json:"mode"`
+	Filters           *filtersInput `json:"filters"`
+	Sort              *sortInput    `json:"sort"`
 }
 
 type sortInput struct {
@@ -204,7 +206,7 @@ func Parse(raw []byte) (Query, error) {
 	if err := json.Unmarshal(raw, &input, json.RejectUnknownMembers(true), json.MatchCaseInsensitiveNames(false)); err != nil {
 		return Query{}, fmt.Errorf("parse query: %w", err)
 	}
-	value := Query{Timezone: input.Timezone, V: 1, Syntax: "simple", Mode: "lexical", Sort: Sort{Field: "name", Direction: "asc"}}
+	value := Query{Timezone: input.Timezone, TimezoneDefaulted: input.TimezoneDefaulted, V: 1, Syntax: "simple", Mode: "lexical", Sort: Sort{Field: "name", Direction: "asc"}}
 	if input.V != nil {
 		value.V = *input.V
 	}
@@ -418,6 +420,9 @@ func normalizeQuery(value Query) (Query, error) {
 	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time", "document_date") ||
 		!oneOf(value.Sort.Direction, "asc", "desc") {
 		return Query{}, errors.New("query sort is invalid")
+	}
+	if value.TimezoneDefaulted && value.Timezone == nil {
+		return Query{}, errors.New("timezone_defaulted requires timezone")
 	}
 	if value.Timezone != nil {
 		if _, err := civiltime.LoadZone(*value.Timezone); err != nil {

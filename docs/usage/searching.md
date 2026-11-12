@@ -629,3 +629,9 @@ days. An omitted zone uses `[web] timeline_timezone`, which defaults to UTC.
 The result echoes the zone and whether it was defaulted. Saved searches retain
 the zone used when saved. Browser sessions see only claims whose event and
 actors are not sensitive.
+
+Date search can return `document_dates_pending` while the timeline
+index is rebuilding; check timeline coverage and retry after indexing. An
+API-key caller may request `"disclosure":"full"` when creating a workspace
+query to include sensitive date claims. Browser sessions always use safe
+disclosure.

@@ -65,6 +65,8 @@ type PhotoSearchStatus = Pick<
 >;
 
 export interface WorkspaceQueryResponse extends PhotoSearchStatus {
+  timezone?: string;
+  timezone_defaulted: boolean;
   query: Query;
   dependencies: { kind: "tag" | "collection" | "saved" | "person"; id: string; revision: number }[];
   query_fingerprint: string;
@@ -508,7 +510,7 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   }
   if (
     expectedQuery !== undefined &&
-    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined ? { ...expectedQuery, timezone: decodedQuery.timezone } : expectedQuery)
+    canonicalQuery(decodedQuery) !== canonicalQuery({ ...expectedQuery, ...(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined ? { timezone: decodedQuery.timezone } : {}), timezone_defaulted: decodedQuery.timezone_defaulted })
   ) {
     malformed("query does not match the request");
   }

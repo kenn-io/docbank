@@ -17420,6 +17420,8 @@ components:
           type:
             - string
             - "null"
+        timezone_defaulted:
+          type: boolean
         v:
           format: int64
           type: integer
@@ -19555,6 +19557,8 @@ components:
           type: string
         timezone:
           type: string
+        timezone_defaulted:
+          type: boolean
         v:
           default: 1
           enum:
@@ -22204,6 +22208,12 @@ components:
             - https://example.com/schemas/WorkspaceQueryCreateRequest.json
           format: uri
           readOnly: true
+          type: string
+        disclosure:
+          description: Full date disclosure requires an API key
+          enum:
+            - safe
+            - full
           type: string
         facets:
           items:

@@ -557,6 +557,7 @@ it("shows the frozen snapshot's search status", async () => {
       query_fingerprint: fingerprint,
       requested_mode: "semantic",
       rows: [],
+      timezone_defaulted: false,
       snapshot: true,
       snapshot_fingerprint: `sha256:${"c".repeat(64)}`,
       snapshot_id: "a".repeat(32),

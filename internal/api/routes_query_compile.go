@@ -63,13 +63,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, queryInputError(err)
 		}
-		if value.Timezone == nil && query.UsesDocumentDate(value) {
-			zone := d.Cfg.Web.TimelineTimezone
-			if zone == "" {
-				zone = "UTC"
-			}
-			value.Timezone = &zone
-		}
+		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
 			if problem := dateQueryError(err); problem != nil {
@@ -107,13 +101,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, queryInputError(err)
 		}
-		if value.Timezone == nil && query.UsesDocumentDate(value) {
-			zone := d.Cfg.Web.TimelineTimezone
-			if zone == "" {
-				zone = "UTC"
-			}
-			value.Timezone = &zone
-		}
+		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
 			if problem := dateQueryError(err); problem != nil {

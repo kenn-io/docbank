@@ -50,8 +50,11 @@ type compiledQueryFragment struct {
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
 // parameterized document-membership predicate.
 type CompiledQuery struct {
-	Query        query.Query
-	Dependencies []query.Dependency
+	Timezone          string
+	TimezoneDefaulted bool
+	FullDisclosure    bool
+	Query             query.Query
+	Dependencies      []query.Dependency
 
 	photoHidden       bool
 	withoutSuggestion bool
@@ -69,6 +72,8 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
+	fullDisclosure       bool
+	requireFreshDates    bool
 	dateZone             string
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
@@ -84,6 +89,16 @@ func (c queryCompiler) compile(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	zone, defaulted := resolveDocumentDateZones(&resolved, queryDefaultZone(ctx))
+	if zone != "" && c.requireFreshDates {
+		if r, ok := resolver.(queryResolver); ok {
+			if q, ok := r.q.(metadataQuerier); ok {
+				if err := requireDocumentDateIndex(ctx, q); err != nil {
+					return CompiledQuery{}, err
+				}
+			}
+		}
+	}
 	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
 		c.photoMetadataDensity = func(value string) (bool, error) {
 			return r.photoMetadataHeadsFirst(ctx, value)
@@ -94,7 +109,7 @@ func (c queryCompiler) compile(
 		return CompiledQuery{}, err
 	}
 	compiled := CompiledQuery{
-		Query: resolved.Query, Dependencies: resolved.Dependencies,
+		Query: resolved.Query, Dependencies: resolved.Dependencies, Timezone: zone, TimezoneDefaulted: defaulted, FullDisclosure: c.fullDisclosure,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTerms(resolved),
@@ -112,7 +127,7 @@ func (compiled CompiledQuery) PositiveTextTerms() []string {
 }
 
 func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {
-	c.dateZone = "UTC"
+	c.dateZone = ""
 	if resolved.Query.Timezone != nil {
 		c.dateZone = *resolved.Query.Timezone
 	}
@@ -344,9 +359,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 	nested, err := c.compileResolvedQuery(*expression.Saved)
 	if err != nil {
 		if expressionErr, ok := errors.AsType[*query.ExpressionError](err); ok {
-			return compiledQueryFragment{}, compileExpressionError(
-				expression.Syntax.Start, expression.Syntax.End, expressionErr.Message,
-			)
+			return compiledQueryFragment{}, &query.ExpressionError{Offset: expression.Syntax.Start, End: expression.Syntax.End, Message: expressionErr.Message, Cause: expressionErr}
 		}
 		return compiledQueryFragment{}, err
 	}

@@ -1,6 +1,9 @@
 package processing
 
-import "testing"
+import (
+	"go.kenn.io/docbank/document"
+	"testing"
+)
 
 func TestEmailDateNumericZeroZone(t *testing.T) {
 	for _, tc := range []struct {
@@ -36,5 +39,19 @@ func TestEmailDateInvalidOffsetRemainsFloating(t *testing.T) {
 		if !ok || event.TimezoneKind != "invalid" || event.ZoneText != zone || event.OffsetSeconds != nil || event.UTCKey != "" {
 			t.Errorf("%s: %+v, parsed %v", zone, event, ok)
 		}
+	}
+}
+
+func TestInvalidEmailOffsetRetainedThroughMetadata(t *testing.T) {
+	raw := "10 Mar 2026 12:30 +1930"
+	record := document.SourceMetadataV1{}
+	collector := metadataCollector{record: &record, seen: make(map[string]bool)}
+	collector.emailTimestamp(document.EmailDateV1{State: document.EmailDateInvalid}, raw)
+	if len(record.Fields) != 1 || record.Fields[0].Key != "email.sent.raw" {
+		t.Fatalf("fields = %+v", record.Fields)
+	}
+	event, err := metadataDateEvent(record.Fields[0])
+	if err != nil || event.TimezoneKind != "invalid" || event.ZoneText != "+1930" || event.RawValue != raw || event.UTCKey != "" {
+		t.Fatalf("event = %+v, err = %v", event, err)
 	}
 }

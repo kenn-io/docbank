@@ -58,7 +58,7 @@ export async function previewQuery(
   }
 
   const rawQuery = object(receipt.query, "query");
-  requireKeys(rawQuery, Object.hasOwn(rawQuery, "timezone") ? ["v", "text", "syntax", "mode", "filters", "sort", "timezone"] : ["v", "text", "syntax", "mode", "filters", "sort"], "query");
+  requireKeys(rawQuery, ["v", "text", "syntax", "mode", "filters", "sort", ...(Object.hasOwn(rawQuery, "timezone") ? ["timezone"] : []), ...(Object.hasOwn(rawQuery, "timezone_defaulted") ? ["timezone_defaulted"] : [])], "query");
   object(rawQuery.filters, "query.filters");
   const rawSort = object(rawQuery.sort, "query.sort");
   requireKeys(rawSort, ["field", "direction"], "query.sort");
@@ -69,9 +69,11 @@ export async function previewQuery(
   } catch {
     malformed("query does not satisfy QueryV1");
   }
-  const comparable = query.timezone === undefined && decoded.timezone !== undefined
-    ? { ...query, timezone: decoded.timezone }
-    : query;
+  const comparable = {
+    ...query,
+    ...(query.timezone === undefined && decoded.timezone !== undefined ? { timezone: decoded.timezone } : {}),
+    timezone_defaulted: decoded.timezone_defaulted,
+  };
   if (canonicalQuery(decoded) !== canonicalQuery(comparable)) malformed("query does not match the request");
   if (receipt.query_fingerprint !== (await queryFingerprint(decoded))) malformed("fingerprint does not match the request");
   if (!Array.isArray(receipt.dependencies) || receipt.dependencies.length > 256) {

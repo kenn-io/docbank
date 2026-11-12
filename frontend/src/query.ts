@@ -191,6 +191,7 @@ export interface Query {
   filters: QueryFilters;
   sort: QuerySort;
   timezone?: string;
+  timezone_defaulted?: boolean;
 }
 
 export interface HighlightTerm {
@@ -207,7 +208,7 @@ export function parseQuery(raw: string): Query {
   preflightJSON(raw, true);
   const input: unknown = JSON.parse(raw);
   const object = requireObject(input, "query");
-  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort", "timezone"], "query");
+  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort", "timezone", "timezone_defaulted"], "query");
 
   const filtersInput = object.filters === undefined ? {} : requireObject(object.filters, "filters");
   requireOnlyKeys(filtersInput, [...optionalFilterFields], "filters");
@@ -221,6 +222,7 @@ export function parseQuery(raw: string): Query {
     mode: optionalString(object.mode, "lexical", "mode") as Query["mode"],
     filters: parseFilters(filtersInput),
     timezone: optionalNullableString(object.timezone, "timezone"),
+    timezone_defaulted: optionalBoolean(object.timezone_defaulted, "timezone_defaulted"),
     sort: {
       field: optionalString(sortInput.field, "name", "sort.field") as QuerySort["field"],
       direction: optionalString(
@@ -300,6 +302,7 @@ export function canonicalQuery(value: Query): string {
     syntax: normalized.syntax,
     text: normalized.text,
     ...(normalized.timezone === undefined ? {} : { timezone: normalized.timezone }),
+    ...(normalized.timezone_defaulted ? { timezone_defaulted: true } : {}),
     v: normalized.v,
   });
   requireCanonicalBound(encoded, "query");
@@ -404,7 +407,11 @@ function parseDocumentDate(value: unknown): DocumentDateFilter {
   requireOnlyKeys(obj, ["from", "to", "kinds", "precisions"], "filters.document_date");
   const from = optionalString(obj.from, "", "filters.document_date.from");
   const to = optionalString(obj.to, "", "filters.document_date.to");
-  const validDate = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
+  const validDate = (date: string) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+    !date.startsWith("0000-") &&
+    !Number.isNaN(Date.parse(date)) &&
+    new Date(date).toISOString().slice(0, 10) === date;
   if (!validDate(from) || !validDate(to) || from > to) throw new Error("document date range is invalid");
   const kinds = normalizeSet(optionalStringArray(obj.kinds, "kinds"), 64, (v) => ["sent", "received", "document_date", "authored", "created", "modified", "captured", "started", "ended", "printed", "accessed", "produced", "exported", "imported", "observed", "vault_recorded"].includes(v), "kinds");
   const precisions = normalizeSet(optionalStringArray(obj.precisions, "precisions"), 64, (v) => ["exact", "day", "coarse"].includes(v), "precisions") as DocumentDateFilter["precisions"];
@@ -416,6 +423,7 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   const syntax = value.syntax;
   const mode = value.mode;
   const sort = value.sort;
+  if (value.timezone_defaulted && value.timezone === undefined) throw new Error("timezone_defaulted requires timezone");
   if (v !== 1) throw new Error("query version must be 1");
   validateUnicode(value.text, "query text");
   if (scalarLength(value.text) > 8192) throw new Error("query text exceeds 8192 Unicode scalars");
@@ -449,6 +457,7 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
     filters: normalizeFilters(value.filters ?? {}),
     sort,
     timezone: value.timezone,
+    timezone_defaulted: value.timezone_defaulted || undefined,
   };
 }
 

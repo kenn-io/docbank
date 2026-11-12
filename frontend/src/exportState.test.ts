@@ -414,6 +414,7 @@ it("copies reactive snapshot inputs before caller changes and never promotes obs
       },
     ],
     facets: [],
+    timezone_defaulted: false,
     snapshot: true,
     snapshot_id: "a".repeat(32),
     created_at: "2026-01-01T00:00:00Z",

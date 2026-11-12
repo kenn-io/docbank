@@ -42,6 +42,7 @@ async function receipt(overrides: Record<string, unknown> = {}): Promise<Record<
     total_bytes: 10,
     rows: [{ ...snapshotRow(2), content_version_id: version, blob_hash: "c".repeat(64), size: 10 }],
     facets: [],
+    timezone_defaulted: false,
     snapshot: true,
     snapshot_id: "0123456789abcdef0123456789abcdef",
     created_at: "2026-09-11T00:00:00Z",

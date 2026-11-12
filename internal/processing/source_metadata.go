@@ -1529,6 +1529,9 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 		return
 	}
 	if date.State != document.EmailDateParsed || date.Civil == nil {
+		if _, ok := rawEmailDateEvent(raw); ok {
+			c.string("email.sent.raw", "email", "Date", raw, false)
+		}
 		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
 		return
 	}

@@ -70,6 +70,7 @@ func pinSavedQueryTimezone(payload []byte, defaultZone string) ([]byte, error) {
 			defaultZone = "UTC"
 		}
 		value.Timezone = &defaultZone
+		value.TimezoneDefaulted = true
 		return query.Canonical(value)
 	}
 	return payload, nil

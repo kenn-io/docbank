@@ -97,6 +97,16 @@ identities in the same transaction, so a stale worker cannot publish over
 changed evidence. Source metadata is decoded before the write transaction.
 Events, actors, and primary choices stay together in the canonical record.
 
+The current recipe adds `iana` and `rfc5322` timezone kinds to
+`document-events/v1`. The version identifies the shape of this disposable
+projection; the recipe fingerprint identifies its derivation. The current
+reader accepts older v1 records and the recipe change rebuilds their keys.
+Older strict v1 codecs reject the new kinds, so consumers decoding these
+records independently must upgrade with the producer. Logical backups do not
+contain these derived records; released-vault upgrades rebuild them from
+retained authority. This is a vocabulary extension, not an assertion that an
+older codec can read newer bytes.
+
 A rebuild advances the input epoch and scans every retained version, including
 history and trash. The current recipe reads active `source-metadata/v1`, exact
 provenance bindings, and the content-version record. It then publishes a fresh

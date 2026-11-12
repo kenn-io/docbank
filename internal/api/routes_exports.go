@@ -101,7 +101,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 					var page store.SnapshotPage
 					var err error
 					if request.Kind == "query" && request.Query != nil {
-						page, err = snapshots.Create(ctx, snapshotOwner, store.SnapshotRequest{Query: *request.Query})
+						value := *request.Query
+						value.TimezoneDefaulted = false
+						page, err = snapshots.Create(ctx, snapshotOwner, store.SnapshotRequest{Query: value})
 					} else {
 						// Source resolution already holds the operation gate below.
 						_, page, err = snapshots.RunSaved(ctx, snapshotOwner, request.SavedQueryID, request.SavedQueryRevision, store.SnapshotRequest{}, nil)
@@ -137,6 +139,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return err
 		})
 		if err != nil {
+			if errors.Is(err, store.ErrDocumentDatesPending) {
+				return nil, workspaceQueryError(err)
+			}
 			if problem := dateQueryError(err); problem != nil {
 				return nil, problem
 			}

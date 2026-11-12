@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -499,6 +500,17 @@ func TestJSONLRestoreRebuildsTimelineFromBoundProvenance(t *testing.T) {
 	assert.Equal(t, originalMtime, modified.RawValue)
 	assert.Equal(t, document.EventEvidenceKind("provenance_binding"), modified.EvidenceKind)
 	assert.Equal(t, "original_mtime", modified.EvidenceLocator)
+	value, err := query.Parse([]byte(`{"syntax":"advanced","text":"date_kind:modified date:2024-01-02"}`))
+	require.NoError(t, err)
+	snapshots := store.NewQuerySnapshotService(restored)
+	t.Cleanup(func() { require.NoError(t, snapshots.Close()) })
+	page, err := snapshots.Create(t.Context(), "restore-test", store.SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	var found bool
+	for _, row := range page.Rows {
+		found = found || row.NodeID == observed.ID
+	}
+	require.True(t, found, "restored date keys must make the retained provenance searchable")
 }
 
 func TestJSONLRestorePreservesAuthorityWhenAggregateTimelineOutputExceedsBound(t *testing.T) {
