@@ -235,10 +235,10 @@ actually removed; packed logical death is pending repack.
 ### Change schema
 
 Layouts that never shipped are disposable. Unreleased schema 49 development
-vaults made by the C1, C2 and C3 builds are not interchangeable; recreate a
-disposable vault when its layout changes. Released schema 48 vaults retain the
-supported upgrade path. v0.9.0 is the first released
-compatibility boundary: incompatible SQLite changes use a tested deterministic
+vaults made by parties-only, contract-record and document-link development builds
+are not interchangeable; recreate a disposable vault when its layout changes.
+Released schema 48 vaults retain the supported upgrade path. v0.9.0 is the first
+released compatibility boundary: incompatible SQLite changes use a tested deterministic
 JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
