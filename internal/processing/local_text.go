@@ -223,6 +223,41 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limi
 	return setup.pendingTargets(ctx, after, limit, sweep)
 }
 
+// InitializeInherited grants consent only when all operations are undecided and no revocation exists.
+func (setup *LocalTextSetup) InitializeInherited(ctx context.Context) error {
+	service := setup.Service
+	return service.gate.MutateContext(ctx, func() error {
+		profile, ok := service.profiles[setup.Selected]
+		if !ok {
+			return ErrProfileNotConfigured
+		}
+		required, active := 0, 0
+		for _, request := range service.profileConsentRequests(profile) {
+			_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
+			state, err := processingConsentState(err)
+			if err != nil {
+				return err
+			}
+			switch state {
+			case "required":
+				required++
+			case "active":
+				active++
+			default:
+				return nil
+			}
+		}
+		if required == 0 || active != 0 {
+			return nil
+		}
+		revoked, err := service.catalog.HasConsentRevocation(ctx, service.principal, service.scope)
+		if err != nil || revoked {
+			return err
+		}
+		return service.grantProfileConsentUngated(ctx, profile, nil)
+	})
+}
+
 // ProfileConsentActive reports whether every operation in a profile has current consent.
 func (s *Service) ProfileConsentActive(ctx context.Context, name string) (bool, error) {
 	profile, ok := s.profiles[name]

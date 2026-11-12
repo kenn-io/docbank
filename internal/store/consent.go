@@ -532,6 +532,28 @@ func consentRevocationFenceTx(
 	return fence, nil
 }
 
+// HasConsentRevocation reports whether the current vault incarnation has a fence.
+func (s *Store) HasConsentRevocation(ctx context.Context, principal, scope string) (bool, error) {
+	principal, err := normalizeConsentLabel("principal", principal)
+	if err != nil {
+		return false, err
+	}
+	scope, err = normalizeConsentLabel("scope", scope)
+	if err != nil {
+		return false, err
+	}
+	var fence int64
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		incarnation, err := currentProcessingIncarnationIDTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		fence, err = consentRevocationFenceTx(ctx, tx, s.vaultID, incarnation, principal, scope)
+		return err
+	})
+	return fence != 0, err
+}
+
 func normalizeConsentAuthority(
 	request ProviderOperationAuthorizationRequest,
 ) (normalizedConsentAuthority, error) {

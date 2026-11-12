@@ -1192,17 +1192,21 @@ func (service *Service) profileConsentRequests(profile configuredProfile) []stor
 
 func (service *Service) grantProfileConsent(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
 	return service.gate.MutateContext(ctx, func() error {
-		requests := service.profileConsentRequests(profile)
-		grants := make([]store.ProcessingConsentGrantRequest, len(requests))
-		for index, request := range requests {
-			grants[index] = store.ProcessingConsentGrantRequest{
-				Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
-				DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
-				RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt}
-		}
-		_, err := service.catalog.GrantConsentSet(ctx, grants)
-		return err
+		return service.grantProfileConsentUngated(ctx, profile, expiresAt)
 	})
+}
+
+func (service *Service) grantProfileConsentUngated(ctx context.Context, profile configuredProfile, expiresAt *time.Time) error {
+	requests := service.profileConsentRequests(profile)
+	grants := make([]store.ProcessingConsentGrantRequest, len(requests))
+	for index, request := range requests {
+		grants[index] = store.ProcessingConsentGrantRequest{
+			Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint,
+			DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses,
+			RetainedArtifactClasses: request.RetainedArtifactClasses, ExpiresAt: expiresAt}
+	}
+	_, err := service.catalog.GrantConsentSet(ctx, grants)
+	return err
 }
 
 type renditionRun struct{ jobID, waiterID, attachmentID, authorizationGrantID string }

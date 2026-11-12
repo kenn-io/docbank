@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -135,6 +136,8 @@ func TestLocalEmbeddingOriginWithRuntime(t *testing.T) {
 }
 
 func TestLocalTextSaveRestartRequired(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	for _, tc := range []struct {
 		name      string
 		failure   error
@@ -152,12 +155,18 @@ func TestLocalTextSaveRestartRequired(t *testing.T) {
 					require.NoError(t, saveLocalText(root, choice))
 				}
 				return tc.failure
-			})
+			}, slog.New(slog.DiscardHandler))
 			err := save(config.LocalTextProfile, "local")
 			if tc.failure == nil {
 				require.NoError(t, err)
 			} else {
 				require.Same(t, tc.failure, err)
+			}
+			recorded, err := embedlocal.ChoiceRecorded()
+			require.NoError(t, err)
+			require.Equal(t, tc.failure == nil, recorded)
+			if recorded {
+				require.NoError(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".kenn", "embeddings", "search-by-meaning")))
 			}
 			require.Equal(t, tc.published, pending.Load())
 			choice, err := readLocalText(root)
@@ -603,4 +612,96 @@ func TestLocalTextStartupActivatesAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, status.Active)
 	require.Equal(t, "local", status.Provider)
+}
+
+func TestLocalTextSaveMarkerFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".kenn"), []byte("blocked"), 0600))
+	var logs bytes.Buffer
+	var pending atomic.Bool
+	save := localTextSave(t.TempDir(), &pending, saveLocalText, slog.New(slog.NewTextHandler(&logs, nil)))
+	require.NoError(t, save(config.LocalTextProfile, "local"))
+	require.True(t, pending.Load())
+	require.Contains(t, logs.String(), "record shared search by meaning choice")
+}
+
+func TestInheritedLocalTextAbsentAndUnreadable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	choice, err := inheritedLocalText(t.Context(), config.LocalTextConfig{}, nil)
+	require.NoError(t, err)
+	require.Empty(t, choice.Profile)
+	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "synthetic-revision", "prefix-free", "DOCBANK_TEST_STATUS_KEY")
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
+	require.NoError(t, err)
+	profiles, err := executableProcessingProfiles(cfg, bundle)
+	require.NoError(t, err)
+	require.NoError(t, embedlocal.RecordChoice())
+	choice, err = inheritedLocalText(t.Context(), config.LocalTextConfig{}, profiles)
+	require.NoError(t, err)
+	require.Empty(t, choice.Profile)
+	choice, err = inheritedLocalText(t.Context(), config.LocalTextConfig{}, nil)
+	require.NoError(t, err)
+	require.Empty(t, choice.Profile)
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(dir, "search-by-meaning")))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "search-by-meaning"), 0700))
+	_, err = inheritedLocalText(t.Context(), config.LocalTextConfig{}, nil)
+	require.Error(t, err)
+	saved := config.LocalTextConfig{Profile: "archive", Server: "auto"}
+	choice, err = inheritedLocalText(t.Context(), saved, nil)
+	require.NoError(t, err)
+	require.Equal(t, saved, choice)
+}
+
+func TestInheritedLocalTextStartsDaemon(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("DO_NOT_TRACK", "1")
+	require.NoError(t, embedlocal.RecordChoice())
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	bundle := filepath.Join(dir, "bin", "v0.48.2-face.6")
+	require.NoError(t, os.MkdirAll(bundle, 0700))
+	names := []string{"kennembed", "libonnxruntime.so.1.23.2"}
+	if runtime.GOOS == "darwin" {
+		names[1] = "libonnxruntime.1.23.2.dylib"
+	}
+	if runtime.GOOS == "windows" {
+		names = []string{"kennembed.exe", "onnxruntime.dll", "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"}
+	}
+	for _, name := range names {
+		require.NoError(t, os.WriteFile(filepath.Join(bundle, name), []byte("fixture"), 0700))
+	}
+	model := filepath.Join(dir, "nomic-embed-text-v1.5", "e9b6763023c676ca8431644204f50c2b100d9aab")
+	require.NoError(t, os.MkdirAll(model, 0700))
+	for name, size := range map[string]int64{"model.onnx": 273859028, "tokenizer.json": 711396} {
+		f, err := os.Create(filepath.Join(model, name))
+		require.NoError(t, err)
+		require.NoError(t, f.Truncate(size))
+		require.NoError(t, f.Close())
+	}
+	server := httptest.NewServer(localTextDiscoveryHandler())
+	defer server.Close()
+	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	stop, _ := startServeReady(t)
+	defer stop()
+	connection, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, connection.Close()) }()
+	status, err := connection.API().GetLocalTextStatus(t.Context())
+	require.NoError(t, err)
+	require.True(t, status.Active)
+	require.Equal(t, "local", status.Provider)
+	require.NoFileExists(t, filepath.Join(root, "local-text.json"))
 }

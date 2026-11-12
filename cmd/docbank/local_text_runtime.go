@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"os"
@@ -46,14 +47,41 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
 }
 
-func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error) func(string, string) error {
+func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error, logger *slog.Logger) func(string, string) error {
 	return func(name, mode string) error {
 		err := save(root, config.LocalTextConfig{Profile: name, Server: mode})
+		if err == nil {
+			if markerErr := embedlocal.RecordChoice(); markerErr != nil {
+				logger.Warn("record shared search by meaning choice", "error", markerErr)
+			}
+		}
 		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
 			restartPending.Store(true)
 		}
 		return err
 	}
+}
+
+func inheritedLocalText(ctx context.Context, choice config.LocalTextConfig, profiles map[string]processing.ProfileConfig) (config.LocalTextConfig, error) {
+	if choice.Profile != "" {
+		return choice, nil
+	}
+	for _, profile := range profiles {
+		for _, binding := range profile.Profile.Embeddings {
+			if provider := profile.EmbeddingProviders[binding.Name]; provider != nil && binding.InputKind != document.EmbeddingInputImage && provider.Descriptor().SupportsTextQuery {
+				return choice, nil
+			}
+		}
+	}
+	recorded, err := embedlocal.ChoiceRecorded()
+	if err != nil || !recorded {
+		return choice, err
+	}
+	files, err := embedlocal.Inspect(ctx, embedlocal.Options{SkipOllama: true})
+	if err != nil || files.DownloadBytes != 0 {
+		return choice, err
+	}
+	return config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}, nil
 }
 
 // localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.

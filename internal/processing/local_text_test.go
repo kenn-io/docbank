@@ -645,3 +645,51 @@ func BenchmarkLocalTextIdleSweep(b *testing.B) {
 		require.Empty(b, targets)
 	}
 }
+
+func TestLocalTextInheritedConsent(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		revoke  bool
+		partial bool
+		active  bool
+	}{
+		{name: "undecided", active: true},
+		{name: "revoked before grant", revoke: true},
+		{name: "partial grant", partial: true},
+		{name: "active", active: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, setup := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+			original := setup.Service.profiles["pdf"]
+			portable := original.portable
+			portable.Rendition = new(*portable.Rendition)
+			portable.Rendition.AuthorizationFingerprint = workerHash(tc.name)
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"inherited": {Profile: portable, RenditionProvider: original.provider, EmbeddingProviders: original.embedders, Tokenizers: original.tokenizers}}})
+			require.NoError(t, err)
+			defer service.Stop()
+			setup = &LocalTextSetup{Service: service, Selected: "inherited"}
+			if tc.revoke {
+				_, err = service.RevokeConsent(t.Context())
+				require.NoError(t, err)
+			}
+			if tc.partial {
+				request := service.profileConsentRequests(service.profiles["inherited"])[0]
+				_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses})
+				require.NoError(t, err)
+			}
+			if tc.name == "active" {
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
+			}
+			require.NoError(t, setup.InitializeInherited(t.Context()))
+			active, err := service.ProfileConsentActive(t.Context(), "inherited")
+			require.NoError(t, err)
+			require.Equal(t, tc.active, active)
+			if tc.revoke {
+				for _, request := range service.profileConsentRequests(service.profiles["inherited"]) {
+					_, err = fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
+					require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
+				}
+			}
+		})
+	}
+}
