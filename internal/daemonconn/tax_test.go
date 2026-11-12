@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -213,43 +214,61 @@ func TestTaxClientTransportErrorClass(t *testing.T) {
 	assert.NotContains(t, err.Error(), "private-synthetic-value")
 }
 
+// Each operation gets an otherwise valid receipt, so only the deleted member can fail it.
 func TestTaxClientRejectsMissingAccountMembers(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
-	for _, field := range []string{"account_id", "filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind", "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note", "revision", "created_at", "updated_at", "retired_at"} {
-		t.Run(field, func(t *testing.T) {
-			var members map[string]any
-			require.NoError(t, json.Unmarshal([]byte(taxAccountFixture), &members))
-			delete(members, field)
-			body, err := json.Marshal(members)
-			require.NoError(t, err)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("ETag", `"1"`)
-				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/accounts" {
-					w.WriteHeader(http.StatusCreated)
+	second := strings.Replace(taxAccountFixture, `"revision":1`, `"revision":2`, 1)
+	for _, receipt := range []struct{ operation, body, etag string }{
+		{"get", taxAccountFixture, `"1"`},
+		{"list", taxAccountFixture, `"1"`},
+		{"create", taxAccountFixture, `"1"`},
+		{"update", second, `"2"`},
+		{"retire", strings.Replace(second, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1), `"2"`},
+	} {
+		// The empty name is the intact control.
+		for _, field := range []string{"", "account_id", "filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind", "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note", "revision", "created_at", "updated_at", "retired_at"} {
+			t.Run(receipt.operation+"/"+field, func(t *testing.T) {
+				var members map[string]any
+				require.NoError(t, json.Unmarshal([]byte(receipt.body), &members))
+				delete(members, field)
+				body, err := json.Marshal(members)
+				require.NoError(t, err)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("ETag", receipt.etag)
+					if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/accounts" {
+						w.WriteHeader(http.StatusCreated)
+					}
+					if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tax/accounts" {
+						_, _ = w.Write([]byte(`{"items":[` + string(body) + `],"limit":100,"offset":0}`))
+						return
+					}
+					_, _ = w.Write(body)
+				}))
+				t.Cleanup(server.Close)
+				c := New(server.URL, "")
+				switch receipt.operation {
+				case "get":
+					_, err = c.TaxAccount(t.Context(), id, false)
+				case "list":
+					_, err = c.TaxAccounts(t.Context(), "", "", "", false, 100, 0)
+				case "create":
+					_, err = c.CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+				case "update":
+					_, err = c.UpdateTaxAccount(t.Context(), id, 1, api.PatchTaxAccountRequest{Note: new("")})
+				default:
+					_, err = c.RetireTaxAccount(t.Context(), id, 1)
 				}
-				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tax/accounts" {
-					_, _ = w.Write([]byte(`{"items":[` + string(body) + `],"limit":100,"offset":0}`))
+				if field == "" {
+					require.NoError(t, err)
 					return
 				}
-				_, _ = w.Write(body)
-			}))
-			t.Cleanup(server.Close)
-			c := New(server.URL, "")
-			_, err = c.TaxAccount(t.Context(), id, false)
-			require.True(t, IsResponseDecodeError(err))
-			_, err = c.TaxAccounts(t.Context(), "", "", "", false, 100, 0)
-			require.True(t, IsResponseDecodeError(err))
-			_, err = c.CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
-			require.True(t, IsResponseDecodeError(err))
-			assert.Contains(t, err.Error(), "may have been applied")
-			_, err = c.UpdateTaxAccount(t.Context(), id, 1, api.PatchTaxAccountRequest{Note: new("")})
-			require.True(t, IsResponseDecodeError(err))
-			assert.Contains(t, err.Error(), "may have been applied")
-			_, err = c.RetireTaxAccount(t.Context(), id, 1)
-			require.True(t, IsResponseDecodeError(err))
-			assert.Contains(t, err.Error(), "may have been applied")
-		})
+				require.True(t, IsResponseDecodeError(err))
+				if receipt.operation != "get" && receipt.operation != "list" {
+					assert.Contains(t, err.Error(), "may have been applied")
+				}
+			})
+		}
 	}
 }
 
@@ -273,7 +292,13 @@ func TestTaxReceiptBoundAndMetadata(t *testing.T) {
 	assert.Greater(t, maxTaxReceiptBytes, 1000*6*(3*8192+2*256+2+6+3)+1000*1000)
 	assert.Greater(t, maxTaxAccountReceiptBytes, 6*(3*8192+2*256+2+6+3)+1000)
 	assert.Less(t, maxTaxAccountReceiptBytes, maxTaxReceiptBytes)
-	large := response(strings.Repeat("x", maxTaxAccountReceiptBytes+1))
+	// Valid JSON padded with whitespace isolates the single-account size limit.
+	padded := body + strings.Repeat(" ", maxTaxAccountReceiptBytes-len(body))
+	exact := response(padded)
+	defer func() { _ = exact.Body.Close() }()
+	_, err = decodeTaxReceipt(t.Context(), exact, false)
+	require.NoError(t, err)
+	large := response(padded + " ")
 	defer func() { _ = large.Body.Close() }()
 	_, err = decodeTaxReceipt(t.Context(), large, false)
 	assert.True(t, IsResponseDecodeError(err))
@@ -347,7 +372,19 @@ func TestTaxMutationMaintenanceIsDefinite(t *testing.T) {
 	assert.Contains(t, err.Error(), "retry this mutation after maintenance finishes")
 	assert.NotContains(t, err.Error(), "may have been applied")
 	assert.NotContains(t, err.Error(), "private-synthetic-value")
-	unknown := taxMutationFailure(apiProblemError(api.Error{Status: http.StatusInternalServerError, Code: "internal", Detail: "private-synthetic-value"}))
-	assert.Contains(t, unknown.Error(), "may have been applied")
-	assert.NotContains(t, unknown.Error(), "private-synthetic-value")
+	// Unknown server failures over real HTTP keep their status and stay uncertain.
+	for _, status := range []int{http.StatusInternalServerError, http.StatusServiceUnavailable} {
+		failure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprintf(w, `{"status":%d,"code":"internal","detail":"private-synthetic-value"}`, status)
+		}))
+		t.Cleanup(failure.Close)
+		_, err = New(failure.URL, "").CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrMaintenanceBusy)
+		assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", status))
+		assert.Contains(t, err.Error(), "may have been applied")
+		assert.NotContains(t, err.Error(), "private-synthetic-value")
+	}
 }
