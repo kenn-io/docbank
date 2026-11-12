@@ -270,6 +270,13 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 				return err
 			}
 		}
+		// A direct explicit zone is a current-request override for the receipt.
+		// Saved runs retain the origin frozen in their saved definition.
+		if options.SavedQuery == nil && request.Query.Timezone != nil {
+			compiled.TimezoneDefaulted = false
+		} else if compiled.Timezone == "" {
+			compiled.TimezoneDefaulted = value.Timezone == nil
+		}
 		resultQuery := compiled.Query
 		resultQuery.Mode = value.Mode
 		projection = SnapshotProjection{
