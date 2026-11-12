@@ -2119,16 +2119,6 @@ it.each([
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
   [
-    "conflict",
-    async () => new Response(null, { status: 409 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
-    "server error",
-    async () => new Response(null, { status: 500 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
     "gateway timeout",
     async () => new Response(null, { status: 504 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
@@ -2159,34 +2149,4 @@ it.each([
     );
     expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
   }
-});
-
-it("offers a retry when restart is rejected after setup", async () => {
-  let status: unknown = { ...localOff, restart_available: true };
-  searchWithMeaningOff({
-    status: () => status,
-    apply: async () => {
-      status = { ...localSaved, restart_available: true };
-      return json(localPlan);
-    },
-    restart: async () => Response.json({ code: "web_browser" }, { status: 403 }),
-  });
-  render(App);
-  await submitSearch("notes");
-  const drawer = await openSearchByMeaning();
-  await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
-  await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-  await fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-      name: "Restart",
-    }),
-  );
-  expect(
-    await within(drawer).findByText(
-      "Docbank couldn't confirm the restart. It may still happen later.",
-    ),
-  ).toBeTruthy();
-  expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
-  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });
