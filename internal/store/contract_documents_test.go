@@ -56,7 +56,11 @@ func checkContractDocumentNodeHighWater(t *testing.T, open func(*testing.T) *Sto
 		var validationErr error
 		rollback := errors.New("rollback corrupted fixture")
 		err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, `UPDATE contract_documents SET node_id=$1 WHERE contract_id=$2`, header.NodeSequence+1, c.ContractID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM contract_documents WHERE contract_id=$1`, c.ContractID); err != nil {
+				return err
+			}
+			d := got.Documents[0]
+			if _, err := tx.ExecContext(ctx, `INSERT INTO contract_documents(contract_id,node_id,content_version_id,blob_sha256,size,role,added_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, c.ContractID, header.NodeSequence+1, d.ContentVersionID, d.BlobSHA256, d.Size, d.Role, d.AddedAt); err != nil {
 				return err
 			}
 			validationErr = s.validateMetadataState(ctx, tx, header.NodeSequence)
