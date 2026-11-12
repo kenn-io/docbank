@@ -6,6 +6,23 @@ import (
 	"fmt"
 )
 
+// documentSnapshotPopulation retains the prepared handoff only for queries
+// whose document predicates use person edges.
+func documentSnapshotPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, profile *string, coverage CoverageSelection) (compiledQueryFragment, error) {
+	if !compiled.predicate.personEdges {
+		return matchedPopulation(compiled, generation, profile)
+	}
+	return materializeDocumentPopulation(ctx, q, compiled, generation, profile, coverage)
+}
+
+// documentReportPopulation uses the same selection without the snapshot handoff.
+func documentReportPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, profile *string, coverage CoverageSelection) (compiledQueryFragment, error) {
+	if !compiled.predicate.personEdges {
+		return matchedPopulation(compiled, generation, profile)
+	}
+	return prepareCompiledPopulation(ctx, q, compiled, generation, profile, coverage)
+}
+
 // prepareCompiledPredicate binds and validates the original predicate before
 // replacing compiler-identified boundaries. q must be the caller's pinned read
 // snapshot; the returned JSON arguments belong to this preparation only.

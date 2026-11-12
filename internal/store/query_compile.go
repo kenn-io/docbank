@@ -48,11 +48,12 @@ type compiledBoundary struct {
 }
 
 type compiledQueryFragment struct {
-	boundaries []compiledBoundary
-	lexical    []lexicalOperand
-	sql        string
-	args       []any
-	relations  compiledQueryRelations
+	boundaries  []compiledBoundary
+	lexical     []lexicalOperand
+	sql         string
+	args        []any
+	relations   compiledQueryRelations
+	personEdges bool
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -759,6 +760,7 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 		}
 		result.args = append(result.args, part.args...)
 		result.relations |= part.relations
+		result.personEdges = result.personEdges || part.personEdges
 		result.lexical = append(result.lexical, part.lexical...)
 	}
 	return result

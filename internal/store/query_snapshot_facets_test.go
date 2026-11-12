@@ -623,7 +623,7 @@ func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
 
 // Both facets must recompute the population after removing their own root
 // filter. The remaining expression selects one duplicate and one unique node.
-func TestPreparedFacetSelfExclusionBeyondRowLimit(t *testing.T) {
+func TestInlineFacetSelfExclusionBeyondRowLimit(t *testing.T) {
 	t.Parallel()
 	fixture := newSnapshotFacetFixture(t)
 	for _, tc := range []struct {

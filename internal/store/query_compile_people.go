@@ -53,7 +53,7 @@ func (c queryCompiler) compilePersonPredicate(id string, roles []string) compile
 			args = append(args, role)
 		}
 	}
-	return compiledQueryFragment{sql: predicate + `)`, args: args}
+	return compiledQueryFragment{sql: predicate + `)`, args: args, personEdges: true}
 }
 
 var betweenPersonRoles = func() []string {

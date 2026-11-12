@@ -412,7 +412,7 @@ func materializeSnapshotRows(
 			}
 		}
 	} else {
-		population, err = materializeDocumentPopulation(ctx, q, compiled, generationID, nil, coverage)
+		population, err = documentSnapshotPopulation(ctx, q, compiled, generationID, nil, coverage)
 	}
 	if err != nil {
 		return err

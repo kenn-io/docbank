@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/query"
 )
 
@@ -204,4 +207,137 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Recording the statements at the existing querier boundary checks the actual
+// consumer route without introducing a second query evaluator.
+type populationRecordingQuerier struct {
+	metadataQuerier
+	statements []string
+}
+
+func (q *populationRecordingQuerier) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
+	q.statements = append(q.statements, statement)
+	return q.metadataQuerier.QueryContext(ctx, statement, args...)
+}
+
+func TestDocumentPopulationPersonEdgeRouting(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Route Person", "operator")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "Route Other", "operator")
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Role saved", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID)))
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Role collapse", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"filters":{"collapse_duplicates":true,"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID)))
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Plain collapse", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"path:/missing","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	collection := createCollectionRun(t, s, "route.txt", "route-population")
+	tests := []struct {
+		name, text, filters string
+		edges               bool
+	}{
+		{"negative role", `NOT author:"Route Person"`, `{}`, true},
+		{"negative saved", `NOT saved:"Role saved"`, `{}`, true},
+		{"saved collapse role", `saved:"Role collapse"`, `{}`, true},
+		{"between", `between:("Route Person", "Route Other")`, `{}`, true},
+		{"person any role", `person:"Route Person"`, `{}`, true},
+		{"root people", ``, fmt.Sprintf(`{"people":[{"person_id":%q,"roles":["author"]}]}`, person.PersonID), true},
+		{"path", `path:/missing`, `{}`, false},
+		{"collection", fmt.Sprintf(`collection:%s`, collection.ID()), `{}`, false},
+		{"coverage", `text_coverage:complete`, `{}`, false},
+		{"duplicates", `has_duplicates:true`, `{}`, false},
+		{"saved collapse plain", `saved:"Plain collapse"`, `{}`, false},
+		{"mentions", `mentions:"Route Person"`, `{}`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":%s}`, tc.text, tc.filters))
+			compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
+			require.NoError(t, err)
+			require.Equal(t, tc.edges, compiled.predicate.personEdges)
+			if tc.name == "negative role" {
+				require.Empty(t, compiled.roleMatches)
+			}
+			rows, err := documentSnapshotPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
+			require.NoError(t, err)
+			require.Equal(t, tc.edges, strings.Contains(rows.sql, "FROM json_each(?)"))
+			reportQueries := &populationRecordingQuerier{metadataQuerier: s.db}
+			report, err := documentReportPopulation(ctx, reportQueries, compiled, "", nil, CoverageSelection{})
+			require.NoError(t, err)
+			if !tc.edges {
+				require.NotContains(t, report.sql, "prepared_member")
+				require.Empty(t, reportQueries.statements)
+			} else if tc.name == "saved collapse role" {
+				require.NotEmpty(t, reportQueries.statements)
+				require.Contains(t, report.sql, "prepared_member")
+			}
+		})
+	}
+}
+
+func TestDocumentFacetPopulationRoutes(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	s, ctx := fixture.store, t.Context()
+	person, err := s.CreatePerson(ctx, "Facet Route", "operator")
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Facet Role", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID)))
+	require.NoError(t, err)
+	for _, text := range []string{`NOT author:"Facet Route"`, `NOT saved:"Facet Role"`} {
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[{"person_id":%q,"roles":["author"]}],"collection_ids":[%q]}}`, text, person.PersonID, fixture.collections[0].ID()))
+		original, err := compileQuery(ctx, value, queryResolver{q: s.db})
+		require.NoError(t, err)
+		facetQueries := &populationRecordingQuerier{metadataQuerier: s.db}
+		_, err = materializeSnapshotFacet(ctx, facetQueries, original, "", fixture.selection, "collections", nil, 1000)
+		require.NoError(t, err)
+		var facetSQL string
+		for _, statement := range facetQueries.statements {
+			if strings.HasPrefix(statement, "WITH matched_members AS (") {
+				facetSQL = statement
+				break
+			}
+		}
+		require.Contains(t, facetSQL, "FROM json_each(?)")
+		for _, dimension := range []string{"person_role", "collections"} {
+			scoped := queryWithoutSnapshotFacet(value, dimension)
+			compiled, err := compileQuery(ctx, scoped, queryResolver{q: s.db})
+			require.NoError(t, err)
+			require.True(t, compiled.predicate.personEdges)
+			population, err := documentSnapshotPopulation(ctx, s.db, compiled, "", nil, fixture.selection)
+			require.NoError(t, err)
+			require.Contains(t, population.sql, "FROM json_each(?)")
+		}
+	}
+	rootOnly := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID))
+	withoutPeople, err := compileQuery(ctx, queryWithoutSnapshotFacet(rootOnly, "person_role"), queryResolver{q: s.db})
+	require.NoError(t, err)
+	require.False(t, withoutPeople.predicate.personEdges)
+	// A generic facet recomputes its own self-excluded population inline.
+	plain := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"path:/missing","filters":{"collection_ids":[%q]}}`, fixture.collections[0].ID()))
+	plainCompiled, err := compileQuery(ctx, plain, queryResolver{q: s.db})
+	require.NoError(t, err)
+	facetQueries := &populationRecordingQuerier{metadataQuerier: s.db}
+	_, err = materializeSnapshotFacet(ctx, facetQueries, plainCompiled, "", fixture.selection, "collections", nil, 1000)
+	require.NoError(t, err)
+	var facetSQL string
+	for _, statement := range facetQueries.statements {
+		if strings.HasPrefix(statement, "WITH matched_members AS (") {
+			facetSQL = statement
+			break
+		}
+	}
+	require.NotEmpty(t, facetSQL)
+	require.NotContains(t, facetSQL, "FROM json_each(?)")
+	// The People facet prepares its own role-free population before joining edges.
+	compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
+	require.False(t, compiled.predicate.personEdges)
+	recording := &populationRecordingQuerier{metadataQuerier: s.db}
+	_, err = materializePersonRoleFacet(ctx, recording, compiled, "", fixture.selection, 1000)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(recording.statements), 2)
+	require.Contains(t, recording.statements[len(recording.statements)-1], "FROM json_each(?)")
 }
