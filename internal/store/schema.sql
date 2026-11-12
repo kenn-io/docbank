@@ -3256,3 +3256,19 @@ BEGIN
     SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
     ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
 END;
+
+CREATE TABLE IF NOT EXISTS parties (
+    party_id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    display_name_folded TEXT NOT NULL,
+    legal_name TEXT NOT NULL,
+    country TEXT,
+    own INTEGER NOT NULL,
+    person_id TEXT REFERENCES persons(person_id) ON DELETE SET NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS parties_name_folded ON parties(display_name_folded);

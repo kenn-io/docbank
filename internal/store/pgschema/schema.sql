@@ -2504,3 +2504,19 @@ CREATE TABLE {{schema}}.storage_operation_stores (
     PRIMARY KEY (operation_id,store_id)
 );
 CREATE INDEX storage_operation_stores_store ON {{schema}}.storage_operation_stores(store_id,operation_id);
+
+CREATE TABLE {{schema}}.parties (
+    party_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    kind TEXT COLLATE "C" NOT NULL,
+    display_name TEXT COLLATE "C" NOT NULL,
+    display_name_folded TEXT COLLATE "C" NOT NULL,
+    legal_name TEXT COLLATE "C" NOT NULL,
+    country TEXT COLLATE "C",
+    own INTEGER NOT NULL,
+    person_id TEXT COLLATE "C" REFERENCES {{schema}}.persons(person_id) ON DELETE SET NULL,
+    revision BIGINT NOT NULL,
+    created_at TEXT COLLATE "C" NOT NULL,
+    updated_at TEXT COLLATE "C" NOT NULL,
+    retired_at TEXT COLLATE "C"
+);
+CREATE INDEX parties_name_folded ON {{schema}}.parties(display_name_folded);
