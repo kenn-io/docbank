@@ -214,7 +214,14 @@ it.each([
   if (state === "ready") {
     await mockReadyText(pdf, [...pages]);
     renderPDF();
-  } else renderPDF({ state, pages_without_text: pages });
+  } else
+    renderPDF({
+      state,
+      pages_without_text: pages,
+      generation_id: "c".repeat(64),
+      attachment_id: "d".repeat(64),
+      build_id: "e".repeat(64),
+    });
   const rendered = await screen.findByText(notice);
   expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
     "https://docbank.ai/docs/usage/document-processing/#ocr",
