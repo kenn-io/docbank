@@ -1,6 +1,6 @@
 ---
 title: Contracts
-description: Register agreements and reusable parties in Docbank.
+description: Register agreements, dates, terms, and reusable parties.
 ---
 
 # Contracts

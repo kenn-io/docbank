@@ -896,5 +896,4 @@ func TestPartyRequestSchemas(t *testing.T) {
 		contractFields = append(contractFields, option.Required...)
 	}
 	assert.ElementsMatch(t, []string{"title", "contract_type", "status", "starts_on", "expires_on", "signed_on", "summary", "purpose", "consideration", "termination"}, contractFields)
-
 }

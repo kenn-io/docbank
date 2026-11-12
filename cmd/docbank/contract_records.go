@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"uuid"
@@ -27,7 +28,10 @@ func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 		parties = append(parties, p.Role+":"+p.DisplayName)
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\t%s\t%s\trevision %d\n", c.ContractID, c.Title, c.ContractType, c.EffectiveStatus, contractDate(c.StartsOn), contractDate(c.ExpiresOn), strings.Join(parties, ", "), c.Revision)
-	return err
+	if err != nil {
+		return fmt.Errorf("write contract: %w", err)
+	}
+	return nil
 }
 func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	if jsonOutput {
@@ -38,11 +42,14 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 	}
 	for _, p := range c.Parties {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Party: %s %s (%s)\n", p.Role, p.DisplayName, p.PartyID); err != nil {
-			return err
+			return fmt.Errorf("write contract party: %w", err)
 		}
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Stored status: %s\nSigned: %s\nCreated: %s\nUpdated: %s\nSummary: %q\nPurpose: %q\nConsideration: %q\nTermination: %q\n", c.Status, contractDate(c.SignedOn), c.CreatedAt, c.UpdatedAt, c.Summary, c.Purpose, c.Consideration, c.Termination)
-	return err
+	if err != nil {
+		return fmt.Errorf("write contract details: %w", err)
+	}
+	return nil
 }
 func resolveLinkedContractParty(c api.Contract, role, name string) (string, error) {
 	if id, err := uuid.Parse(name); err == nil && id.String() == name {
@@ -146,7 +153,7 @@ func newContractCreateCommand() *cobra.Command {
 		b.Parties = nil
 		f := cmd.Flags()
 		if f.Changed("status") && b.Status == "" {
-			return fmt.Errorf("status cannot be empty")
+			return errors.New("status cannot be empty")
 		}
 		if f.Changed("starts") {
 			b.StartsOn = &starts
@@ -202,10 +209,10 @@ func newContractEditCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "edit <contract-id>", Short: "Edit a contract", Example: "docbank contract edit 00000000-0000-4000-8000-000000000001 --title 'Updated agreement'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		f := cmd.Flags()
 		if clearStarts && f.Changed("starts") || clearExpires && f.Changed("expires") || clearSigned && f.Changed("signed") {
-			return fmt.Errorf("cannot set and clear the same date")
+			return errors.New("cannot set and clear the same date")
 		}
 		if f.Changed("revision") && revision < 1 {
-			return fmt.Errorf("revision must be positive")
+			return errors.New("revision must be positive")
 		}
 		b := api.PatchContractRequest{ClearStarts: clearStarts, ClearExpires: clearExpires, ClearSigned: clearSigned}
 		if f.Changed("title") {
@@ -327,7 +334,7 @@ func newContractDeleteCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "delete <contract-id>", Short: "Delete a contract", Example: "docbank contract delete 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("revision") && revision < 1 {
-			return fmt.Errorf("revision must be positive")
+			return errors.New("revision must be positive")
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -347,7 +354,10 @@ func newContractDeleteCommand() *cobra.Command {
 			return writeCLIJSON(cmd.OutOrStdout(), map[string]string{"deleted": args[0]})
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Deleted", args[0])
-		return err
+		if err != nil {
+			return fmt.Errorf("write deletion result: %w", err)
+		}
+		return nil
 	}}
 	cmd.Flags().Int64Var(&revision, "revision", 0, "expected revision")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print JSON")

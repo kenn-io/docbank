@@ -82,7 +82,7 @@ func validateContractInput(in ContractInput) error {
 
 const contractColumns = `contract_id,title,contract_type,status,starts_on,expires_on,signed_on,summary,purpose,consideration,termination,revision,created_at,updated_at`
 
-func scanContract(row interface{ Scan(...any) error }, asOf string) (Contract, error) {
+func scanContract(row interface{ Scan(dest ...any) error }, asOf string) (Contract, error) {
 	var c Contract
 	err := row.Scan(&c.ContractID, &c.Title, &c.ContractType, &c.Status, &c.StartsOn, &c.ExpiresOn, &c.SignedOn, &c.Summary, &c.Purpose, &c.Consideration, &c.Termination, &c.Revision, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -282,11 +282,11 @@ func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Con
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	items := []Contract{}
 	for rows.Next() {
 		c, e := scanContract(rows, o.AsOf)
 		if e != nil {
-			_ = rows.Close()
 			return nil, e
 		}
 		items = append(items, c)

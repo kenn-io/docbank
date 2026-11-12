@@ -220,7 +220,7 @@ func fromStoreContract(c store.Contract) Contract {
 	return out
 }
 func contractResult(c store.Contract) *contractOutput {
-	return &contractOutput{ETag: fmt.Sprintf("%q", fmt.Sprint(c.Revision)), Body: fromStoreContract(c)}
+	return &contractOutput{ETag: revisionETag(c.Revision), Body: fromStoreContract(c)}
 }
 func contractAsOf(v string) string {
 	if v == "" {

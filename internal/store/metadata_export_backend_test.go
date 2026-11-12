@@ -3,18 +3,30 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/pgtest"
+	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
+func checkMetadataExportRecovery(t *testing.T, postgres bool) {
 	t.Helper()
 	t.Parallel()
 	ctx := t.Context()
-	s := open(t)
+	var s *Store
+	var setup *sql.DB
+	if postgres {
+		var owner string
+		setup, owner = pgtest.NewDatabase(t)
+		s = newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	} else {
+		s = newTestStore(t)
+		setup = s.db
+	}
 	run, err := s.BeginIngest(ctx, "cli", "metadata recovery")
 	require.NoError(t, err)
 	file, err := s.IngestFileExact(ctx, run, s.RootID(), "report.txt", fakeHash("a1"), 9, "text/plain", "report.txt", "")
@@ -39,7 +51,12 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	// A wall-clock correction can place an update before creation. Exercise
 	// both native exporters and recovery with the retained contract present.
-	_, err = s.db.ExecContext(ctx, `UPDATE contracts SET created_at=$1 WHERE contract_id=$2`, "2099-01-01T00:00:00.000000000Z", contract.ContractID)
+	// PostgreSQL setup owns immutable timestamp seeding; operations use the runtime role.
+	table := "contracts"
+	if postgres {
+		table = "documents.contracts"
+	}
+	_, err = setup.ExecContext(ctx, `UPDATE `+table+` SET created_at=$1 WHERE contract_id=$2`, "2099-01-01T00:00:00.000000000Z", contract.ContractID)
 	require.NoError(t, err)
 	contract, err = s.GetContract(ctx, contract.ContractID, "2024-01-01")
 	require.NoError(t, err)
