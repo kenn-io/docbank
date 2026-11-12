@@ -99,12 +99,12 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
       main.getByText(text, { exact: true }).evaluate((span) => span.getClientRects().length);
     expect(await lines(longTitle)).toBeGreaterThan(1);
     expect(await lines("Sales tax return, Q1 2031")).toBe(1);
-    const year = await main
+    const yearHeader = await main
       .getByRole("table", { name: "Tax records for Example Ventures Ltd.", exact: true })
       .getByRole("columnheader", { name: "Year" })
       .boundingBox();
     const title = await long.boundingBox();
-    expect(title!.x + title!.width).toBeLessThanOrEqual(year!.x);
+    expect(title!.x + title!.width).toBeLessThanOrEqual(yearHeader!.x);
     await mkdir(output!, { recursive: true });
     await captureThemes(page, output!, "web-taxes-all");
 
