@@ -841,7 +841,7 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		if err := replaceImportedTables(ctx, source, tx, []string{"photo_suggestions"}); err != nil {
 			return err
 		}
-		const derivedUploadJobs = `NOT ` + backedUpRenditionJobs
+		derivedUploadJobs := `NOT ` + backedUpRenditionJobs(metadataJSONDialect{})
 		if err := copyReleasedRows(ctx, source, tx, "rendition_jobs", derivedUploadJobs); err != nil {
 			return err
 		}
