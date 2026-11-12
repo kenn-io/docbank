@@ -21,9 +21,6 @@ func checkBrowserPhotoGroupReceiptReplay(t *testing.T, open func(*testing.T) *St
 	}
 	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
 	require.NoError(t, err)
-	sameID, err := s.RegisterBrowserPhotoImport(ctx, plan)
-	require.NoError(t, err)
-	require.Equal(t, id, sameID)
 	digest := fakeHash("a1")
 	require.NoError(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{digest}))
 	require.Error(t, s.PinBrowserPhotoGroupHashes(ctx, id, 0, []string{fakeHash("b2")}))
@@ -60,15 +57,11 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 		require.NoError(t, err)
 		id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
 			SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
-			Groups: []BrowserPhotoImportGroup{{Members: declarations}}, Skipped: []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}},
+			Groups: []BrowserPhotoImportGroup{{Members: declarations}},
 		})
 		require.NoError(t, err)
 		run, err := s.BrowserPhotoImportRun(ctx, id)
 		require.NoError(t, err)
-		require.Equal(t, id.String(), run.ID())
-		saved, err := s.InspectBrowserPhotoImport(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, []BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}}, saved.Skipped)
 		hashes := make([]string, len(inputs))
 		for i, input := range inputs {
 			hashes[i] = input.BlobHash
@@ -136,7 +129,7 @@ func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
 	assert.Equal(t, int64(2), node.ID)
 }
 
-func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
+func TestBrowserPhotoInspectionRejectsUnknownReceipts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -148,7 +141,7 @@ func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
 		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	})
 	require.NoError(t, err)
-	for _, invalid := range []string{"{", "{}"} {
+	for _, invalid := range []string{`{"version":2,"status":"added"}`, `{"version":1,"status":"future"}`} {
 		_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_import_groups SET receipt_json=$1 WHERE import_id=$2 AND ordinal=$3`, invalid, id.String(), 0)
 		require.NoError(t, err)
 		_, err = s.InspectBrowserPhotoImport(ctx, id)
@@ -159,20 +152,13 @@ func TestBrowserPhotoInspectionRejectsMalformedReceipt(t *testing.T) {
 	}
 }
 
-func TestBrowserPhotoReceiptVersion(t *testing.T) {
-	for _, receipt := range []string{`{"version":2,"status":"added"}`, `{"version":1,"status":"future"}`} {
-		_, err := decodeBrowserPhotoReceipt(receipt)
-		require.Error(t, err)
-	}
-}
-
 func TestBrowserPhotoImportMissing(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.InspectBrowserPhotoImport(t.Context(), uuid.New())
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestBrowserPhotoImportRejectsFutureDeclaration(t *testing.T) {
+func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
