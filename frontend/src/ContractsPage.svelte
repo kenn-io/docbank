@@ -167,7 +167,7 @@
     </IconButton>
   {/snippet}
 
-  <div class="tool-body">
+  <div class="tool-body contracts-body">
     {#if selectedID}
       {#key `${selectedID}:${detailRevision}`}
         <ContractDetail
@@ -263,7 +263,7 @@
                   >
                 </th>
                 <td class="narrow-hidden">{contractTypeLabel(contract.contract_type)}</td>
-                <td>{counterpartyNames(contract)}</td>
+                <td class="wrap-cell">{counterpartyNames(contract)}</td>
                 <td
                   ><Chip size="xs" tone={statusTone(contract.effective_status)}
                     >{contractStatusLabel(contract.effective_status)}</Chip
@@ -289,6 +289,11 @@
 </DrawerShell>
 
 <style>
+  /* The page's single column never grows past the viewport to fit the
+     table's content, so the filters wrap and the table cells wrap. */
+  .contracts-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .filters {
     display: flex;
     flex-wrap: wrap;
@@ -302,7 +307,8 @@
   :global(.contracts) th {
     white-space: nowrap;
   }
-  :global(.contracts) .title-cell {
+  :global(.contracts) .title-cell,
+  :global(.contracts) .wrap-cell {
     white-space: normal;
     font-weight: normal;
   }
@@ -322,7 +328,7 @@
     outline: 2px solid var(--accent-blue);
     outline-offset: 2px;
   }
-  @media (max-width: 720px) {
+  @media (max-width: 760px) {
     .narrow-hidden {
       display: none;
     }
