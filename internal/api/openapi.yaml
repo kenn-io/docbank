@@ -3737,6 +3737,11 @@ components:
             - string
             - "null"
         direction:
+          enum:
+            - payable
+            - refundable
+            - nil
+            - unknown
           type: string
         due_date:
           type:
@@ -3749,6 +3754,14 @@ components:
           maxLength: 256
           type: string
         kind:
+          enum:
+            - filing
+            - payment
+            - penalty
+            - notice
+            - other
+            - audit
+            - review
           type: string
         lead_days:
           format: int64
@@ -12896,6 +12909,11 @@ components:
           maxLength: 3
           type: string
         direction:
+          enum:
+            - payable
+            - refundable
+            - nil
+            - unknown
           type: string
         due_date:
           type:

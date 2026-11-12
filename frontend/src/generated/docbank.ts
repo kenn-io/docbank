@@ -1950,6 +1950,29 @@ export interface CreateTaxAccountRequest {
   tax_kind: string;
 }
 
+export type CreateTaxRecordRequestDirection = typeof CreateTaxRecordRequestDirection[keyof typeof CreateTaxRecordRequestDirection];
+
+
+export const CreateTaxRecordRequestDirection = {
+  payable: 'payable',
+  refundable: 'refundable',
+  nil: 'nil',
+  unknown: 'unknown',
+} as const;
+
+export type CreateTaxRecordRequestKind = typeof CreateTaxRecordRequestKind[keyof typeof CreateTaxRecordRequestKind];
+
+
+export const CreateTaxRecordRequestKind = {
+  filing: 'filing',
+  payment: 'payment',
+  penalty: 'penalty',
+  notice: 'notice',
+  other: 'other',
+  audit: 'audit',
+  review: 'review',
+} as const;
+
 export interface CreateTaxRecordRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1972,13 +1995,13 @@ export interface CreateTaxRecordRequest {
      * @nullable
      */
   currency?: string | null;
-  direction?: string;
+  direction?: CreateTaxRecordRequestDirection;
   /** @nullable */
   due_date?: string | null;
   filer_party_id?: string;
   /** @maxLength 256 */
   form_code?: string;
-  kind: string;
+  kind: CreateTaxRecordRequestKind;
   /**
      * @minimum 0
      * @maximum 366
@@ -5394,6 +5417,16 @@ export type PatchTaxAccountRequest = (unknown & ({
   period_note?: string;
 }));
 
+export type PatchTaxRecordRequestDirection = typeof PatchTaxRecordRequestDirection[keyof typeof PatchTaxRecordRequestDirection];
+
+
+export const PatchTaxRecordRequestDirection = {
+  payable: 'payable',
+  refundable: 'refundable',
+  nil: 'nil',
+  unknown: 'unknown',
+} as const;
+
 export type PatchTaxRecordRequest = (unknown & ({
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5408,7 +5441,7 @@ export type PatchTaxRecordRequest = (unknown & ({
   country?: string;
   /** @maxLength 3 */
   currency?: string;
-  direction?: string;
+  direction?: PatchTaxRecordRequestDirection;
   /** @nullable */
   due_date?: string | null;
   filer_party_id?: string;
