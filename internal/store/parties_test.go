@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -247,4 +249,73 @@ func checkPartyPersonLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "New link", PersonID: &survivor.PersonID})
 	require.ErrorIs(t, err, ErrInvalidParty)
+}
+
+// checkPartyRevisionExhaustion exercises authority imported at the integer limit.
+func checkPartyRevisionExhaustion(t *testing.T, postgres bool) {
+	t.Helper()
+	for _, action := range []string{"update", "retire", "merge", "boundary"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := t.Context()
+			source := newTestStore(t)
+			survivor, err := source.CreatePerson(ctx, "Survivor", "operator")
+			require.NoError(t, err)
+			absorbed, err := source.CreatePerson(ctx, "Absorbed", "operator")
+			require.NoError(t, err)
+			input := PartyInput{Kind: "person", DisplayName: "Linked", PersonID: &absorbed.PersonID}
+			party, err := source.CreateParty(ctx, input)
+			require.NoError(t, err)
+			var original bytes.Buffer
+			require.NoError(t, source.ExportMetadata(ctx, &original))
+			lines := strings.Split(original.String(), "\n")
+			revision := int64(math.MaxInt64)
+			if action == "boundary" {
+				revision--
+			}
+			found := false
+			for i, line := range lines {
+				if strings.Contains(line, `"type":"party"`) && strings.Contains(line, party.PartyID) {
+					lines[i] = strings.Replace(line, `"revision":1`, `"revision":`+strconv.FormatInt(revision, 10), 1)
+					require.NotEqual(t, line, lines[i])
+					found = true
+				}
+			}
+			require.True(t, found)
+			s := newTestStore(t)
+			require.NoError(t, s.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
+			}
+			before, err := s.GetParty(ctx, party.PartyID)
+			require.NoError(t, err)
+			require.Equal(t, revision, before.Revision)
+			var snapshot bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &snapshot))
+			switch action {
+			case "update", "boundary":
+				input.DisplayName = "Changed"
+				_, err = s.UpdateParty(ctx, party.PartyID, revision, input)
+			case "retire":
+				_, err = s.RetireParty(ctx, party.PartyID, revision)
+			case "merge":
+				_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+			}
+			if action == "boundary" {
+				require.NoError(t, err)
+				got, err := s.GetParty(ctx, party.PartyID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(math.MaxInt64), got.Revision)
+			} else {
+				assert.Error(t, err)
+				got, getErr := s.GetParty(ctx, party.PartyID)
+				if assert.NoError(t, getErr) {
+					assert.Equal(t, before, got)
+				}
+				var after bytes.Buffer
+				if assert.NoError(t, s.ExportMetadata(ctx, &after)) {
+					assert.Equal(t, snapshot.Bytes(), after.Bytes())
+				}
+			}
+		})
+	}
 }
