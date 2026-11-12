@@ -227,7 +227,9 @@ func (s *Store) UpdateTaxRecord(ctx context.Context, id string, revision int64, 
 		}
 		r.RecordValues = v
 		r.TaxKindFolded = document.FoldPersonName(v.TaxKind)
-		r.Revision++
+		if err := advanceTaxRevision(&r.Revision); err != nil {
+			return err
+		}
 		r.UpdatedAt = max(nowRFC3339(), r.UpdatedAt)
 		if err := taxUpdate(ctx, tx, "tax_records", taxRecordUpdateColumns, taxRecordUpdateArgs(r), revision); err != nil {
 			return s.taxRecordWriteError(err)
@@ -255,7 +257,9 @@ func (s *Store) RetireTaxRecord(ctx context.Context, id string, revision int64) 
 		now := max(nowRFC3339(), r.UpdatedAt)
 		r.RetiredAt = &now
 		r.UpdatedAt = now
-		r.Revision++
+		if err := advanceTaxRevision(&r.Revision); err != nil {
+			return err
+		}
 		if err := taxUpdate(ctx, tx, "tax_records", taxRecordUpdateColumns, taxRecordUpdateArgs(r), revision); err != nil {
 			return err
 		}

@@ -89,6 +89,17 @@ func TestTaxNewAttachmentsAndHistoricalPartyChanges(t *testing.T) {
 	ri := TaxRecordInput{AccountID: &a.AccountID, Kind: "filing", Title: "Example"}
 	r, err := s.CreateTaxRecord(ctx, ri)
 	require.NoError(t, err)
+	person, err := s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Example Person"})
+	require.NoError(t, err)
+	input := ai
+	input.AuthorityPartyID = &person.PartyID
+	_, err = s.CreateTaxAccount(ctx, input)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "authority_party_id: party is not an organization")
+	input.AuthorityPartyID = new("11111111-1111-4111-8111-111111111111")
+	_, err = s.CreateTaxAccount(ctx, input)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "authority_party_id: party not found")
 	pi.Own = false
 	p, err = s.UpdateParty(ctx, p.PartyID, p.Revision, pi)
 	require.NoError(t, err)
@@ -106,22 +117,4 @@ func TestTaxNewAttachmentsAndHistoricalPartyChanges(t *testing.T) {
 	_, err = s.CreateTaxAccount(ctx, ai)
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
 	require.ErrorContains(t, err, "filer_party_id: party is retired")
-}
-
-func TestTaxPartyAttachmentErrors(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	filer, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Holdings Ltd.", Own: true})
-	require.NoError(t, err)
-	person, err := s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Example Person"})
-	require.NoError(t, err)
-	input := TaxAccountInput{FilerPartyID: filer.PartyID, AuthorityPartyID: &person.PartyID, Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
-	_, err = s.CreateTaxAccount(ctx, input)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "authority_party_id: party is not an organization")
-	input.AuthorityPartyID = new("11111111-1111-4111-8111-111111111111")
-	_, err = s.CreateTaxAccount(ctx, input)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "authority_party_id: party not found")
 }

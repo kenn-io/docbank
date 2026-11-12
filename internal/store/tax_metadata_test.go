@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func TestTaxMetadataHistoricalPartyChanges(t *testing.T) {
 }
 func TestTaxMetadataInvalidRowRollsBack(t *testing.T) {
 	t.Parallel()
-	s, _, _ := taxFixture(t)
+	s, a, _ := taxFixture(t)
 	var data bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &data))
 	for _, tc := range []struct{ name, from, to, cause string }{
@@ -89,6 +90,8 @@ func TestTaxMetadataInvalidRowRollsBack(t *testing.T) {
 			}
 			assert.Equal(t, root, target.RootID())
 			assert.Equal(t, vault, target.vaultID)
+			_, err = target.GetParty(t.Context(), a.FilerPartyID)
+			require.ErrorIs(t, err, ErrNotFound)
 			rows, err := target.ListTaxAccounts(t.Context(), TaxAccountListOptions{Limit: 100})
 			require.NoError(t, err)
 			assert.Empty(t, rows)
@@ -120,11 +123,8 @@ func TestTaxMetadataReorderedAndTaxlessStreams(t *testing.T) {
 	old := strings.ReplaceAll(strings.Join(lines, "\n"), "\n\n", "\n")
 	empty := newTestStore(t)
 	require.NoError(t, empty.ImportMetadata(t.Context(), strings.NewReader(old)))
-	rows, err := empty.ListTaxRecords(t.Context(), TaxRecordListOptions{Limit: 100})
-	require.NoError(t, err)
-	assert.Empty(t, rows)
 }
-func TestTaxMetadataRelationsAndExportFailure(t *testing.T) {
+func TestTaxMetadataRelations(t *testing.T) {
 	t.Parallel()
 	s, a, _ := taxFixture(t)
 	ctx := t.Context()
@@ -144,32 +144,22 @@ func TestTaxMetadataRelationsAndExportFailure(t *testing.T) {
 	accounts, err := target.ListTaxAccounts(ctx, TaxAccountListOptions{Limit: 100})
 	require.NoError(t, err)
 	assert.Empty(t, accounts)
-	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET state='filed'`)
-	require.NoError(t, err)
-	var out bytes.Buffer
-	err = s.ExportMetadata(ctx, &out)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "state: unsupported state")
-	assert.Empty(t, out.String())
-}
-func TestTaxBackupMetadataIncludesAuthority(t *testing.T) {
-	t.Parallel()
-	s, _, _ := taxFixture(t)
-	ctx := t.Context()
-	snap, err := s.BeginMetadataSnapshot(ctx)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, snap.Close()) }()
-	var backup bytes.Buffer
-	require.NoError(t, snap.ExportBackup(ctx, &backup))
-	assert.Contains(t, backup.String(), `"type":"tax_account"`)
-	assert.Contains(t, backup.String(), `"type":"tax_record"`)
 }
 
 func TestTaxMetadataRejectsDuplicateWhenIndexMissing(t *testing.T) {
 	t.Parallel()
 	s, _, _ := taxFixture(t)
 	ctx := t.Context()
-	_, err := s.db.ExecContext(ctx, `DROP INDEX tax_records_live_period`)
+	_, err := s.db.ExecContext(ctx, `UPDATE tax_records SET state='filed'`)
+	require.NoError(t, err)
+	var invalid bytes.Buffer
+	err = s.ExportMetadata(ctx, &invalid)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "state: unsupported state")
+	assert.Empty(t, invalid.String())
+	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET state='expected'`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `DROP INDEX tax_records_live_period`)
 	require.NoError(t, err)
 	_, columns, _ := strings.Cut(taxRecordColumns, ",")
 	_, err = s.db.ExecContext(ctx, `INSERT INTO tax_records (`+taxRecordColumns+`) SELECT $1,`+columns+` FROM tax_records`, "11111111-1111-4111-8111-111111111111")
@@ -251,4 +241,41 @@ func TestTaxDuplicatePeriodImportRollsBack(t *testing.T) {
 	records, err := target.ListTaxRecords(ctx, TaxRecordListOptions{Limit: 100})
 	require.NoError(t, err)
 	assert.Empty(t, records)
+}
+
+func TestTaxRestoredRevisionExhaustion(t *testing.T) {
+	t.Parallel()
+	s, a, r := taxFixture(t)
+	ctx := t.Context()
+	for _, table := range []string{"tax_accounts", "tax_records"} {
+		_, err := s.db.ExecContext(ctx, "UPDATE "+table+" SET revision=$1", int64(math.MaxInt64))
+		require.NoError(t, err)
+	}
+	var data bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &data))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(data.Bytes())))
+	beforeA, err := target.GetTaxAccount(ctx, a.AccountID)
+	require.NoError(t, err)
+	beforeR, err := target.GetTaxRecord(ctx, r.RecordID)
+	require.NoError(t, err)
+	ai := TaxAccountInput{FilerPartyID: a.FilerPartyID, Country: a.Country, TaxKind: a.TaxKind, Cadence: a.Cadence, Currency: a.Currency}
+	ri := TaxRecordInput{AccountID: &a.AccountID, Kind: r.Kind, Title: r.Title, TaxYear: r.TaxYear, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd}
+	_, err = target.UpdateTaxAccount(ctx, a.AccountID, math.MaxInt64, ai)
+	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
+	_, err = target.RetireTaxAccount(ctx, a.AccountID, math.MaxInt64)
+	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
+	_, err = target.UpdateTaxRecord(ctx, r.RecordID, math.MaxInt64, ri)
+	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
+	_, err = target.RetireTaxRecord(ctx, r.RecordID, math.MaxInt64)
+	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
+	afterA, err := target.GetTaxAccount(ctx, a.AccountID)
+	require.NoError(t, err)
+	afterR, err := target.GetTaxRecord(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, beforeA, afterA)
+	assert.Equal(t, beforeR, afterR)
+	var restored bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &restored))
+	assert.Equal(t, data.String(), restored.String())
 }

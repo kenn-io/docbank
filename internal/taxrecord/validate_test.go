@@ -29,6 +29,7 @@ func TestTaxTextBoundsAndCanonicalForms(t *testing.T) {
 	if err != nil || got.TaxKind != "Café" || got.Country != "ZZ" || got.Currency != "USD" {
 		t.Fatalf("normalization: %+v, %v", got, err)
 	}
+	v.Country, v.Currency = "ZZ", "USD"
 	if err := ValidateAccount(v); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("retained noncanonical input: %v", err)
 	}
@@ -36,9 +37,29 @@ func TestTaxTextBoundsAndCanonicalForms(t *testing.T) {
 	if _, err := NormalizeAccount(v); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("oversized label: %v", err)
 	}
+	base := AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
+	base.Identifier = strings.Repeat("x", 256)
+	base.Note = strings.Repeat("x", 8189) + "\r\ny"
+	got, err = NormalizeAccount(base)
+	if err != nil || got.Note != strings.Repeat("x", 8189)+"\ny" {
+		t.Fatalf("boundary normalization: %v", err)
+	}
+	base.Identifier += "x"
+	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("identifier bound: %v", err)
+	}
+	base.Identifier = "x"
+	base.Note = strings.Repeat("x", 8193)
+	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("note bound: %v", err)
+	}
+	base.Note = "bad\x01"
+	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("control: %v", err)
+	}
 }
 
-func TestTaxInitialStateAndVerification(t *testing.T) {
+func TestTaxInitialState(t *testing.T) {
 	for _, kind := range []string{"filing", "payment", "audit", "review", "penalty", "notice", "other"} {
 		state, err := InitialState(kind)
 		if err != nil || state != map[bool]string{true: "opened", false: "expected"}[kind == "audit" || kind == "review"] {
@@ -59,6 +80,9 @@ func TestTaxDateAndRawLocationErrorsNameFields(t *testing.T) {
 		{"country", func(v *AccountValues) { v.Country = strings.Repeat("z", 100) }},
 		{"subdivision", func(v *AccountValues) { v.Subdivision = strings.Repeat("z", 100) }},
 		{"currency", func(v *AccountValues) { v.Currency = strings.Repeat("u", 100) }},
+		{"country", func(v *AccountValues) { v.Country = "ſ" }},
+		{"subdivision", func(v *AccountValues) { v.Subdivision = "zz-ſ" }},
+		{"currency", func(v *AccountValues) { v.Currency = "uſ" }},
 		{"effective_start", func(v *AccountValues) { v.EffectiveStart = new("2026-02-30") }},
 		{"effective_end", func(v *AccountValues) { v.EffectiveStart = new("2026-02-01"); v.EffectiveEnd = new("2026-01-01") }},
 	} {
@@ -75,6 +99,11 @@ func TestTaxDateAndRawLocationErrorsNameFields(t *testing.T) {
 	var field *FieldError
 	if !errors.As(err, &field) || field.Field != "period_end" {
 		t.Errorf("period_end: %v", err)
+	}
+	r = RecordValues{FilerPartyID: "filer", Country: "ZZ", Subdivision: "zz-ſ", TaxKind: "example", Kind: "filing", Title: "Example", State: "expected", Direction: "unknown", Verification: "unverified"}
+	_, err = NormalizeRecord(r)
+	if !errors.As(err, &field) || field.Field != "subdivision" {
+		t.Fatalf("record: %v", err)
 	}
 }
 
@@ -114,56 +143,5 @@ func TestTaxDatesYearLeadDaysVocabulary(t *testing.T) {
 	base.Currency = "JPY"
 	if err := ValidateRecord(base); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestTaxTextPinnedBoundaries(t *testing.T) {
-	base := AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
-	base.Identifier = strings.Repeat("x", 256)
-	base.Note = strings.Repeat("x", 8189) + "\r\ny"
-	got, err := NormalizeAccount(base)
-	if err != nil || got.Note != strings.Repeat("x", 8189)+"\ny" {
-		t.Fatalf("boundary normalization: %v", err)
-	}
-	base.Identifier += "x"
-	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("identifier bound: %v", err)
-	}
-	base.Identifier = "x"
-	base.Note = strings.Repeat("x", 8193)
-	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("note bound: %v", err)
-	}
-	base.Note = "bad\x01"
-	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("control: %v", err)
-	}
-}
-
-func TestTaxRawLocationsRejectUnicodeCaseMapping(t *testing.T) {
-	base := AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
-	for _, tc := range []struct {
-		field  string
-		change func(*AccountValues)
-	}{
-		{"country", func(v *AccountValues) { v.Country = "ſ" }},
-		{"subdivision", func(v *AccountValues) { v.Subdivision = "zz-ſ" }},
-		{"currency", func(v *AccountValues) { v.Currency = "uſ" }},
-	} {
-		t.Run(tc.field, func(t *testing.T) {
-			v := base
-			tc.change(&v)
-			_, err := NormalizeAccount(v)
-			var field *FieldError
-			if !errors.As(err, &field) || field.Field != tc.field {
-				t.Fatalf("field: %v", err)
-			}
-		})
-	}
-	r := RecordValues{FilerPartyID: "filer", Country: "ZZ", Subdivision: "zz-ſ", TaxKind: "example", Kind: "filing", Title: "Example", State: "expected", Direction: "unknown", Verification: "unverified"}
-	_, err := NormalizeRecord(r)
-	var field *FieldError
-	if !errors.As(err, &field) || field.Field != "subdivision" {
-		t.Fatalf("record: %v", err)
 	}
 }

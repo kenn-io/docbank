@@ -42,6 +42,8 @@ func checkTaxRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 	_, err = s.RetireTaxRecord(ctx, record.RecordID, updated.Revision)
 	require.NoError(t, err)
+	_, err = s.UpdateTaxRecord(ctx, record.RecordID, updated.Revision+1, input)
+	require.ErrorIs(t, err, ErrTaxRetired)
 	_, err = s.CreateTaxRecord(ctx, input)
 	require.NoError(t, err)
 	incomplete := input
@@ -62,11 +64,31 @@ func TestTaxListFiltersAndRetirement(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, r.RecordID, rows[0].RecordID)
+	for _, tc := range []struct {
+		input  TaxRecordInput
+		filter TaxRecordListOptions
+	}{
+		{TaxRecordInput{FilerPartyID: &a.FilerPartyID, Country: new("CA"), TaxKind: new("example"), Kind: "filing", Title: "Other country", TaxYear: new(int64(2026))}, TaxRecordListOptions{Country: "ZZ", Limit: 100}},
+		{TaxRecordInput{FilerPartyID: &a.FilerPartyID, Country: new("ZZ"), TaxKind: new("other"), Kind: "filing", Title: "Other kind", TaxYear: new(int64(2026))}, TaxRecordListOptions{TaxKind: "example", Limit: 100}},
+		{TaxRecordInput{FilerPartyID: &a.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "filing", Title: "Other year", TaxYear: new(int64(2025))}, TaxRecordListOptions{TaxYear: new(int64(2026)), Limit: 100}},
+		{TaxRecordInput{FilerPartyID: &a.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "notice", Title: "Other record kind", TaxYear: new(int64(2026))}, TaxRecordListOptions{Kind: "filing", Limit: 100}},
+	} {
+		candidate, err := s.CreateTaxRecord(ctx, tc.input)
+		require.NoError(t, err)
+		filtered, err := s.ListTaxRecords(ctx, tc.filter)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(filtered))
+		for _, row := range filtered {
+			ids = append(ids, row.RecordID)
+		}
+		assert.Contains(t, ids, r.RecordID)
+		assert.NotContains(t, ids, candidate.RecordID)
+	}
 	_, err = s.RetireTaxRecord(ctx, other.RecordID, other.Revision)
 	require.NoError(t, err)
 	rows, err = s.ListTaxRecords(ctx, TaxRecordListOptions{IncludeRetired: true, Limit: 100})
 	require.NoError(t, err)
-	assert.Len(t, rows, 2)
+	assert.Len(t, rows, 6)
 	rows, err = s.ListTaxRecords(ctx, TaxRecordListOptions{State: "filed", Limit: 100})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
@@ -210,13 +232,4 @@ func TestTaxSuccessfulNoOpUpdatesAdvanceRevision(t *testing.T) {
 	updatedR, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, ri)
 	require.NoError(t, err)
 	assert.Equal(t, r.Revision+1, updatedR.Revision)
-}
-
-func TestTaxRecordRejectsNonASCIICurrencyWithAmount(t *testing.T) {
-	t.Parallel()
-	s, a, _ := taxFixture(t)
-	_, err := s.CreateTaxRecord(t.Context(), TaxRecordInput{AccountID: &a.AccountID, Kind: "notice", Title: "Example", Currency: new("uſ"), Direction: "payable", Amount: new("1")})
-	var field *taxrecord.FieldError
-	require.ErrorAs(t, err, &field)
-	assert.Equal(t, "currency", field.Field)
 }

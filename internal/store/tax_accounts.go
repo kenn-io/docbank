@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -13,6 +14,17 @@ import (
 
 // ErrTaxRetired indicates that a retired item cannot accept a mutation.
 var ErrTaxRetired = errors.New("tax item is retired")
+
+// ErrTaxRevisionExhausted indicates that a tax revision cannot advance.
+var ErrTaxRevisionExhausted = errors.New("tax revision exhausted")
+
+func advanceTaxRevision(revision *int64) error {
+	if *revision == math.MaxInt64 {
+		return ErrTaxRevisionExhausted
+	}
+	*revision++
+	return nil
+}
 
 // TaxAccount is a retained tax account and its revision.
 type TaxAccount struct {
@@ -197,7 +209,9 @@ func (s *Store) UpdateTaxAccount(ctx context.Context, id string, revision int64,
 			return fmt.Errorf("%w: account identity is immutable", taxrecord.ErrInvalid)
 		}
 		a.AccountValues = v
-		a.Revision++
+		if err := advanceTaxRevision(&a.Revision); err != nil {
+			return err
+		}
 		a.UpdatedAt = max(nowRFC3339(), a.UpdatedAt)
 		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountUpdateColumns, taxAccountUpdateArgs(a), revision); err != nil {
 			return err
@@ -225,7 +239,9 @@ func (s *Store) RetireTaxAccount(ctx context.Context, id string, revision int64)
 		now := max(nowRFC3339(), a.UpdatedAt)
 		a.RetiredAt = &now
 		a.UpdatedAt = now
-		a.Revision++
+		if err := advanceTaxRevision(&a.Revision); err != nil {
+			return err
+		}
 		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountUpdateColumns, taxAccountUpdateArgs(a), revision); err != nil {
 			return err
 		}

@@ -22,6 +22,7 @@ for inheritance from its account's current value, or 14 days without an
 account. Its currency snapshots the account default when created and can be
 overridden. A tax year defaults to the year of the period end. Amounts are exact
 nonnegative minor units; direction records whether an amount is payable or refundable.
+Currencies missing from the pinned currency catalog are rejected.
 
 Records start in their kind's initial state and unverified. Event transitions,
 payments, document evidence, deadlines, and verification operations are not
