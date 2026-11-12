@@ -55,6 +55,7 @@ func buildDocbank(tb testing.TB) string {
 // buildDocbankVersion builds the binary, stamping internal/version.Version
 // when v is non-empty (an unstamped build reports "dev").
 func buildDocbankVersion(tb testing.TB, v string) string {
+	tb.Helper()
 	return buildDocbankWithWebOverlay(tb, v, false)
 }
 
@@ -675,7 +676,7 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		_, port, err := net.SplitHostPort(address)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("split host and port: %w", err)
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
 	}}
