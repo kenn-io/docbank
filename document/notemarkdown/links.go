@@ -628,7 +628,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (string, int, s
 	if finish < end && s.src[finish] == '[' {
 		j := finish + 1
 		for j < end && j-finish <= 4*999+1 && s.src[j] != ']' && s.src[j] != '[' {
-			if err := s.b.step(s.ctx, 1); err != nil {
+			if err := s.b.step(s.ctx, 2); err != nil {
 				return "", 0, "", false, err
 			}
 			if s.src[j] == '\\' && j+1 < end {
@@ -637,7 +637,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (string, int, s
 			j++
 		}
 		if j < end && s.src[j] == ']' {
-			if j > finish+1 {
+			if !util.IsBlank(s.src[finish+1 : j]) {
 				labelStart, labelEnd = finish+1, j
 			}
 			finish = j + 1
