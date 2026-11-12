@@ -708,7 +708,7 @@
           setState(item, state);
           item.error =
             state === "unconfirmed"
-              ? "Import outcome is unconfirmed."
+              ? undefined
               : cause instanceof Error
                 ? cause.message
                 : String(cause);

@@ -2141,7 +2141,7 @@ it.each([
     expect(savedImports.has("vault-test")).toBe(!sessionOnly);
     expect(screen.queryByText("Keep this tab open until the import finishes.")).toBeNull();
     expect(screen.getByText("The verified upload channel ended.")).toBeTruthy();
-    expect(screen.getByText(/Import outcome is unconfirmed\./)).toBeTruthy();
+    expect(screen.getByText("Unconfirmed", { exact: true })).toBeTruthy();
     await view.rerender({ disabledReason: undefined });
     expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
       "disabled",
