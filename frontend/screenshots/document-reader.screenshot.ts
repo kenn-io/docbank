@@ -407,6 +407,23 @@ for (const [filename, module] of [
     await page.evaluate(() => {
       window.onbeforeunload = null;
     });
+    await reader.getByRole("button", { name: "Keep working" }).click();
+    await reader.getByRole("button", { name: "Close" }).click();
+    await page
+      .locator(".browser-toolbar")
+      .getByRole("button", { name: "Add", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Upload files", exact: true }).click();
+    await page.getByLabel("Choose local files", { exact: true }).setInputFiles({
+      name: "after-canceled-reload.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("synthetic upload after canceled reload"),
+    });
+    await page.getByRole("button", { name: "Upload 1 file", exact: true }).click();
+    await expect(page.getByText("Added", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Close upload documents" }).click();
+    await row.dblclick();
+    await reader.getByRole("button", { name: "Reload Docbank" }).click();
     await reader.getByRole("button", { name: "Reload anyway" }).click();
     await expect(row).toBeVisible();
     expect(new URL(page.url()).hash).not.toContain("web_session");

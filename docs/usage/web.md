@@ -1070,9 +1070,11 @@ accepts that key and exchanges it for the same limited browser credentials
 issued by `docbank web`. The input clears after submission. Docbank never
 stores the key in browser storage, returns it in a response, or uses it for
 subsequent browser requests. Each tab keeps its scoped credentials in memory.
-Sign in again after a reload or daemon restart. If a PDF or Markdown reader fails to load, **Reload Docbank** asks before discarding unsaved work. Recovery keeps a command-line session signed in; API-key sign-in requires signing in again. If a later request finds the
-session expired or revoked, Docbank clears that tab's selection and open
-dialogs and returns it to sign-in.
+Sign in again after a reload or daemon restart. If a PDF or Markdown reader
+fails to load, **Reload Docbank** asks before discarding unsaved work. Recovery
+keeps a command-line session signed in; API-key sign-in requires signing in
+again. If a later request finds the session expired or revoked, Docbank clears
+that tab's selection and open dialogs and returns it to sign-in.
 
 ![The Open your Docbank page asking for an API key](https://docbank.ai/assets/generated/web-signin.png)
 
