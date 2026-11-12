@@ -282,6 +282,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if photoAlbumBrowserRequestAllowed(r) {
 		return true
 	}
+	if taxBrowserReadAllowed(r) {
+		return true
+	}
 	if r.URL.Path == "/api/v1/photos/rejects/preflight" || r.URL.Path == "/api/v1/photos/rejects/trash" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
@@ -609,6 +612,32 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	return len(parts) == 1 || parts[1] == "children" ||
 		parts[1] == "versions" || parts[1] == "provenance" ||
 		parts[1] == "tags"
+}
+
+// taxBrowserReadAllowed admits only the Taxes page's two list reads: masked
+// record pages by filer and year, and the parties that name its filers. Tax
+// accounts, get-one reads (and so reveal) and every write keep requiring the
+// API key.
+func taxBrowserReadAllowed(r *http.Request) bool {
+	var keys []string
+	switch r.URL.Path {
+	case "/api/v1/tax/records":
+		keys = []string{"limit", "offset", "filer", "year"}
+	case "/api/v1/parties":
+		keys = []string{"include_retired", "limit", "offset"}
+	default:
+		return false
+	}
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if r.Method != http.MethodGet || err != nil {
+		return false
+	}
+	for key, entries := range values {
+		if !slices.Contains(keys, key) || len(entries) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func photoAlbumBrowserRequestAllowed(r *http.Request) bool {

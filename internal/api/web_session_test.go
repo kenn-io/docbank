@@ -158,3 +158,31 @@ func TestWebPages(t *testing.T) {
 		require.Equal(t, status, response.Code, tc.path)
 	}
 }
+
+func TestWebSessionAllowsOnlyTaxListReads(t *testing.T) {
+	t.Parallel()
+	record := "/api/v1/tax/records/11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodGet, "/api/v1/tax/records?limit=50&offset=0", true},
+		{http.MethodGet, "/api/v1/tax/records?limit=50&offset=50&filer=11111111-1111-4111-8111-111111111111&year=2031", true},
+		{http.MethodGet, "/api/v1/parties?include_retired=true&limit=1000&offset=0", true},
+		{http.MethodGet, "/api/v1/tax/records?limit=50&reveal=true", false},
+		{http.MethodGet, "/api/v1/tax/records?state=expected", false},
+		{http.MethodGet, "/api/v1/tax/records?year=2031&year=2032", false},
+		{http.MethodGet, "/api/v1/tax/records?year=%zz", false},
+		{http.MethodGet, "/api/v1/parties?own=true", false},
+		{http.MethodGet, record, false},
+		{http.MethodGet, record + "?reveal=true", false},
+		{http.MethodGet, "/api/v1/tax/accounts", false},
+		{http.MethodGet, "/api/v1/tax/accounts/11111111-1111-4111-8111-111111111111?reveal=true", false},
+		{http.MethodPost, "/api/v1/tax/records", false},
+		{http.MethodPatch, record, false},
+		{http.MethodPost, "/api/v1/parties", false},
+		{http.MethodGet, "/api/v1/parties/11111111-1111-4111-8111-111111111111", false},
+	} {
+		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.method+" "+tc.path)
+	}
+}

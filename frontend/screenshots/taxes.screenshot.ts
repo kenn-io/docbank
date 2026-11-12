@@ -53,10 +53,14 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
     const url = new URL(await fixture.run("web", "--no-browser"));
     url.pathname = "/taxes";
     await page.setViewportSize({ width: 1440, height: 800 });
-    const listed = page.waitForResponse(
-      (response) => new URL(response.url()).pathname === "/api/v1/tax/records",
-    );
+    const read = (pathname: string) =>
+      page.waitForResponse((response) => new URL(response.url()).pathname === pathname);
+    const [listed, named] = [read("/api/v1/tax/records"), read("/api/v1/parties")];
     await page.goto(url.href);
+    // The browser session must be admitted to both list reads; a refusal is
+    // a problem document, so report it instead of reading a missing page.
+    for (const response of [await listed, await named])
+      expect(response.status(), await response.text()).toBe(200);
     // Record IDs are random, and the list returns them in ID order, so the
     // expected order comes from the page's own response, not creation order.
     const { items } = (await (await listed).json()) as TaxRecordPage;

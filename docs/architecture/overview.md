@@ -100,7 +100,9 @@ kind must match the existing record.
 A successful update advances the revision even when supplied values are
 unchanged. Tax writes use the logical audit gate.
 
-The web Taxes page reads only the record and party lists. It groups loaded rows
+The web Taxes page reads only the record and party lists. Browser sessions may
+call only those two lists, with the page's filter and paging parameters; tax
+accounts, single-record reads and every tax write require the API key. It groups loaded rows
 by their filer without counting them, shows amounts as exact minor-unit
 integers, derives no summaries, and reports no telemetry screen.
 
