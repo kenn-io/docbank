@@ -130,7 +130,7 @@ func checkSchemaIndexes(records []schemaContract, version int, digest string, cu
 		}
 		for name, hash := range record.Indexes {
 			if current[name] != hash {
-				return fmt.Errorf("non-unique index %q was changed or removed; set currentStorageSchemaVersion to %d", name, version+1)
+				return fmt.Errorf("non-unique index %q was changed or removed; if the record is yours and unmerged, remove it, rerun this test, and add its replacement; if main already records it, preserve main's record and set currentStorageSchemaVersion to %d", name, version+1)
 			}
 			baseline[name] = hash
 		}
@@ -411,7 +411,9 @@ func TestStorageSchemaNonUniqueIndexChanges(t *testing.T) {
 			require.NoError(t, err)
 			t.Run("replacement", func(t *testing.T) {
 				require.Equal(t, digest, schemaCatalogDigest(t, db))
-				require.ErrorContains(t, checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db)), "set currentStorageSchemaVersion to 50")
+				err := checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db))
+				require.ErrorContains(t, err, "if the record is yours and unmerged, remove it, rerun this test, and add its replacement")
+				require.ErrorContains(t, err, "if main already records it, preserve main's record and set currentStorageSchemaVersion to 50")
 			})
 			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_index`)
 			require.NoError(t, err)

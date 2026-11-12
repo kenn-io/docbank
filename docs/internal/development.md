@@ -250,8 +250,10 @@ TestStorageSchemaVersionContract` and add a file under
 and layout hash. The summary slug has 1–48 characters: lowercase ASCII letters
 or digits, with words separated by single hyphens. The test also prints sorted
 `name digest` lines for non-unique indexes to put in the record. New indexes
-need another record with their lines; changing or removing a recorded index
-requires the next version. Preserve existing records and their contents.
+need another record with their lines. If you change or remove an index in your
+own unmerged record, remove the record, rerun the test, and add its replacement.
+If `main` already records the index, preserve its record and bump
+`currentStorageSchemaVersion`.
 If you change your own unmerged layout, replace its record with the newly named
 file. If `main` already records that version, preserve its record, remove your
 old record, bump `currentStorageSchemaVersion`, rerun the test against the
