@@ -22,7 +22,7 @@ jobs:
       - name: Require successful CI
         if: needs.run.result != 'success'
         run: exit 1
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Preserve base schema records
