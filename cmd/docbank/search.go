@@ -287,7 +287,7 @@ func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underP
 		if underPath != "" {
 			filters = append(filters, fmt.Sprintf("directory %q", underPath))
 		} else if rep.UnderNodeID != 0 {
-			filters = append(filters, fmt.Sprintf("directory ID %s", formatNodeSelector(rep.UnderNodeID)))
+			filters = append(filters, "directory ID "+formatNodeSelector(rep.UnderNodeID))
 		}
 		if rep.ModifiedSince != "" {
 			filters = append(filters, fmt.Sprintf("modified since %q", rep.ModifiedSince))

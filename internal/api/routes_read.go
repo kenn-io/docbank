@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -162,13 +163,11 @@ func streamContentVersionRange(ctx context.Context, d Deps, version store.Conten
 func registerReadRoutes(api huma.API, d Deps) {
 	rejectEmptyUnderPath := func(ctx huma.Context, next func(huma.Context)) {
 		url := ctx.URL()
-		for _, path := range url.Query()["under_path"] {
-			if path == "" {
-				if err := huma.WriteErr(api, ctx, http.StatusUnprocessableEntity, "under_path must not be empty"); err != nil {
-					d.Logger.DebugContext(ctx.Context(), "write empty search path rejection", "error", err)
-				}
-				return
+		if slices.Contains(url.Query()["under_path"], "") {
+			if err := huma.WriteErr(api, ctx, http.StatusUnprocessableEntity, "under_path must not be empty"); err != nil {
+				d.Logger.DebugContext(ctx.Context(), "write empty search path rejection", "error", err)
 			}
+			return
 		}
 		next(ctx)
 	}

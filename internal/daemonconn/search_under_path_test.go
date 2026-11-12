@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -16,15 +17,15 @@ import (
 
 func TestSearchUnderPathTransport(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/Café", r.URL.Query().Get("under_path"))
-		require.NotContains(t, r.URL.Query(), "under_node_id")
+		assert.Equal(t, "/Café", r.URL.Query().Get("under_path"))
+		assert.NotContains(t, r.URL.Query(), "under_node_id")
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/search/text-coverage" {
-			require.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1}))
+			assert.NoError(t, json.MarshalWrite(w, api.SearchTextCoverage{NoText: 1}))
 			return
 		}
-		require.Equal(t, "/api/v1/search", r.URL.Path)
-		require.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10,
+		assert.Equal(t, "/api/v1/search", r.URL.Path)
+		assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10,
 			UnderPath: "/Café", UnderNodeID: 42}))
 	}))
 	t.Cleanup(ts.Close)
@@ -79,9 +80,9 @@ func TestSearchUnderPathReceiptAuthority(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, tc.options.UnderPath, r.URL.Query().Get("under_path"))
+				assert.Equal(t, tc.options.UnderPath, r.URL.Query().Get("under_path"))
 				w.Header().Set("Content-Type", "application/json")
-				require.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10,
+				assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Hits: []api.SearchHit{}, Limit: 10,
 					UnderPath: tc.path, UnderNodeID: tc.id}))
 			}))
 			t.Cleanup(ts.Close)

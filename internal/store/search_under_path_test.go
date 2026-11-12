@@ -7,11 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSearchUnderPathNormalization(t *testing.T) {
-	t.Parallel()
-	checkSearchUnderPathNormalization(t, newTestStore)
-}
-
 // This contract qualifies directory normalization, not PostgreSQL ranking.
 func checkSearchUnderPathNormalization(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
