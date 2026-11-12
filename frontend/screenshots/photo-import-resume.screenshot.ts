@@ -130,7 +130,7 @@ test("resumes the complete selection and source after a daemon and browser resta
     const resumed = await open();
     expect(resumed.url.origin).not.toBe(first.url.origin);
     await resumed.page.getByRole("button", { name: "Saved imports", exact: true }).click();
-    await resumed.page.getByLabel("Saved import").selectOption({ index: 1 });
+    await resumed.page.getByLabel("Saved import").selectOption({ index: 0 });
     await resumed.page.getByRole("button", { name: "Inspect import", exact: true }).click();
     await expect(resumed.page.getByText("Imported earlier").first()).toBeVisible();
     await resumed.page.screenshot({

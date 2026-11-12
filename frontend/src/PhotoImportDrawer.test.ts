@@ -590,9 +590,13 @@ it("keeps one inspect action for the selected pending import", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("Still finishing");
   expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(1);
-  const options = screen.getAllByRole("option");
-  expect(options[1].textContent).not.toContain("/photos");
-  expect(options[2].textContent).toContain("/photos");
+  const options = screen.getAllByRole("option") as HTMLOptionElement[];
+  const selected = options.find((option) => option.value === "saved");
+  const other = options.find((option) => option.value === "other");
+  expect(selected).toBeDefined();
+  expect(other).toBeDefined();
+  expect(selected?.textContent).not.toContain("/photos");
+  expect(other?.textContent).toContain("/photos");
   await fireEvent.change(screen.getByLabelText("Saved import"), { target: { value: "other" } });
   expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(2);
 });
