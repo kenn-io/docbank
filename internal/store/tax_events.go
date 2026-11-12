@@ -114,9 +114,6 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 		}
 		v := taxrecord.EventValues{Kind: in.Kind, OccurredOn: in.OccurredOn, Currency: in.Currency, Reference: in.Reference, Note: in.Note}
 		if advance {
-			if in.Kind == "note" {
-				return &taxrecord.FieldError{Field: "state", Reason: "unsupported event"}
-			}
 			v.SetsState = in.Kind
 		}
 		if in.Amount != nil {
