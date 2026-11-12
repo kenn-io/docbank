@@ -3652,6 +3652,7 @@ components:
           maxLength: 3
           type: string
         due_note:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 8192
           type: string
         effective_end:
@@ -3666,6 +3667,7 @@ components:
           format: uuid
           type: string
         identifier:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 256
           type: string
         lead_days:
@@ -3674,15 +3676,18 @@ components:
           minimum: 0
           type: integer
         note:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 8192
           type: string
         period_note:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 8192
           type: string
         subdivision:
           maxLength: 6
           type: string
         tax_kind:
+          description: At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
           maxLength: 256
           type: string
       required:
@@ -12702,6 +12707,7 @@ components:
           maxLength: 3
           type: string
         due_note:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 8192
           type: string
         effective_end:
@@ -12713,6 +12719,7 @@ components:
             - string
             - "null"
         identifier:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 256
           type: string
         lead_days:
@@ -12721,9 +12728,11 @@ components:
           minimum: 0
           type: integer
         note:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 8192
           type: string
         period_note:
+          description: The limit also applies to UTF-8 bytes.
           maxLength: 8192
           type: string
       type: object
@@ -21335,6 +21344,7 @@ components:
         subdivision:
           type: string
         tax_kind:
+          maxLength: 64
           type: string
         updated_at:
           type: string

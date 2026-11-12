@@ -1911,27 +1911,42 @@ export interface CreateTaxAccountRequest {
   country: string;
   /** @maxLength 3 */
   currency: string;
-  /** @maxLength 8192 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
   due_note?: string;
   /** @nullable */
   effective_end?: string | null;
   /** @nullable */
   effective_start?: string | null;
   filer_party_id: string;
-  /** @maxLength 256 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 256
+     */
   identifier?: string;
   /**
      * @minimum 0
      * @maximum 366
      */
   lead_days?: number;
-  /** @maxLength 8192 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
   note?: string;
-  /** @maxLength 8192 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
   period_note?: string;
   /** @maxLength 6 */
   subdivision?: string;
-  /** @maxLength 256 */
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
   tax_kind: string;
 }
 
@@ -5286,22 +5301,34 @@ export type PatchTaxAccountRequest = (unknown & ({
   cadence?: PatchTaxAccountRequestCadence;
   /** @maxLength 3 */
   currency?: string;
-  /** @maxLength 8192 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
   due_note?: string;
   /** @nullable */
   effective_end?: string | null;
   /** @nullable */
   effective_start?: string | null;
-  /** @maxLength 256 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 256
+     */
   identifier?: string;
   /**
      * @minimum 0
      * @maximum 366
      */
   lead_days?: number;
-  /** @maxLength 8192 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
   note?: string;
-  /** @maxLength 8192 */
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
   period_note?: string;
 }));
 
@@ -8894,6 +8921,7 @@ export interface TaxAccount {
   retired_at: string | null;
   revision: number;
   subdivision: string;
+  /** @maxLength 64 */
   tax_kind: string;
   updated_at: string;
 }
