@@ -394,11 +394,24 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
+func requestLogPath(path string) string {
+	if strings.HasPrefix(path, "/api/v1/tax/accounts/") {
+		return "/api/v1/tax/accounts/{account_id}"
+	}
+	if path == "/api/v1/tax/accounts" {
+		return path
+	}
+	if strings.HasPrefix(path, "/api/v1/tax/") {
+		return "/api/v1/tax/{redacted}"
+	}
+	return path
+}
+
 func logMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("request", "method", r.Method, "path", r.URL.Path,
+		logger.Info("request", "method", r.Method, "path", requestLogPath(r.URL.Path),
 			"remote", r.RemoteAddr, "duration", time.Since(start))
 	})
 }
@@ -410,7 +423,11 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(v)
 				}
-				logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
+				if strings.HasPrefix(r.URL.Path, "/api/v1/tax/") {
+					logger.Error("panic in tax handler", "path", requestLogPath(r.URL.Path))
+				} else {
+					logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
+				}
 				writeError(w, NewError(http.StatusInternalServerError, "internal", "internal server error"))
 			}
 		}()

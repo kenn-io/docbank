@@ -876,3 +876,45 @@ func TestPartyRequestSchemas(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"kind", "display_name", "legal_name", "country", "person_id", "own"}, fields)
 }
+
+func TestTaxOpenAPIContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	collection := doc.Paths["/api/v1/tax/accounts"]
+	require.NotNil(t, collection)
+	require.NotNil(t, collection.Get)
+	require.NotNil(t, collection.Post)
+	item := doc.Paths["/api/v1/tax/accounts/{account_id}"]
+	require.NotNil(t, item)
+	require.NotNil(t, item.Get)
+	require.NotNil(t, item.Patch)
+	retire := doc.Paths["/api/v1/tax/accounts/{account_id}/retire"]
+	require.NotNil(t, retire)
+	require.NotNil(t, retire.Post)
+	for _, operation := range []*huma.Operation{item.Patch, retire.Post} {
+		required := false
+		for _, parameter := range operation.Parameters {
+			if parameter.In == "header" && parameter.Name == "If-Match" {
+				required = parameter.Required
+			}
+		}
+		assert.True(t, required)
+	}
+	patch := doc.Components.Schemas.Map()["PatchTaxAccountRequest"]
+	require.NotNil(t, patch)
+	assert.NotContains(t, patch.Properties, "country")
+	assert.NotContains(t, patch.Properties, "clear_effective_start")
+	assert.Equal(t, false, patch.AdditionalProperties)
+	account := doc.Components.Schemas.Map()["TaxAccount"]
+	require.NotNil(t, account)
+	for _, field := range []string{"authority_party_id", "effective_start", "effective_end", "retired_at"} {
+		require.Contains(t, account.Properties, field)
+		assert.True(t, account.Properties[field].Nullable, field)
+	}
+	identifier := account.Properties["identifier"]
+	require.NotNil(t, identifier)
+	assert.Nil(t, identifier.MaxLength)
+	assert.Empty(t, identifier.Pattern)
+	assert.Contains(t, collection.Post.Responses, "201")
+	assert.Contains(t, item.Get.Responses, "200")
+}

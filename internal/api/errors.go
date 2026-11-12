@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 // Error is the wire error envelope: RFC 7807 fields plus a machine-readable
@@ -83,6 +84,12 @@ func installErrorFormatter() {
 		}
 		return e
 	}
+	huma.NewErrorWithContext = func(ctx huma.Context, status int, msg string, errs ...error) huma.StatusError {
+		if isTaxOperation(ctx) {
+			return taxValidationError(ctx, status, msg, errs...)
+		}
+		return huma.NewError(status, msg, errs...)
+	}
 }
 
 func privateMediaValidation(detail *huma.ErrorDetail) bool {
@@ -122,6 +129,8 @@ var storeErrCodes = []struct {
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},
 	{store.ErrInvalidParty, http.StatusUnprocessableEntity, "invalid_party"},
+	{taxrecord.ErrInvalid, http.StatusUnprocessableEntity, "invalid_tax"},
+	{store.ErrTaxRetired, http.StatusConflict, "tax_retired"},
 	{store.ErrPartyRetired, http.StatusConflict, "party_retired"},
 	{store.ErrInvalidTag, http.StatusUnprocessableEntity, "invalid_tag"},
 	{store.ErrInvalidSavedQuery, http.StatusUnprocessableEntity, "invalid_saved_query"},
