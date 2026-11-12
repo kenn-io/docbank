@@ -25,16 +25,7 @@ type schemaContract struct {
 
 func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	rows := releasedSchemaCatalogRows(t, db, true)
-	rows = slices.DeleteFunc(rows, func(row [4]string) bool {
-		if row[0] != "index" {
-			return false
-		}
-		var unique bool
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, row[2], row[1]).Scan(&unique))
-		return !unique
-	})
-	data, err := canonical.Marshal(rows)
+	data, err := canonical.Marshal(releasedSchemaCatalogRows(t, db, true))
 	require.NoError(t, err)
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
@@ -77,9 +68,8 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 }
 
 func checkSchemaContract(records []schemaContract, version int, digest string) error {
-	highest, matches, mismatches := 0, 0, 0
+	matches, mismatches := 0, 0
 	for _, record := range records {
-		highest = max(highest, record.Version)
 		if record.Version == version {
 			if record.Digest == digest {
 				matches++
@@ -90,11 +80,8 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 	}
 	name := schemaContractFile(schemaContract{Version: version, Digest: digest}, "<summary-sha256>")
 	guidance := "write a one-line summary, hash its exact file bytes with sha256sum, and replace <summary-sha256> in " + name
-	if version < highest {
-		return fmt.Errorf("schema version %d conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, highest+1)
-	}
 	if mismatches > 0 {
-		return fmt.Errorf("schema version %d differs from recorded layouts; if the records are yours and unmerged, remove the old records and %s; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, guidance, highest+1)
+		return fmt.Errorf("schema version %d differs from recorded layouts; if the records are yours and unmerged, remove the old records and %s; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, guidance, version+1)
 	}
 	if matches == 0 {
 		return fmt.Errorf("add a schema contract under testdata/schema-contracts: %s", guidance)
@@ -180,7 +167,6 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	err := checkSchemaContract(records[:1], 49, next)
 	require.ErrorContains(t, err, "000049-"+next+"-<summary-sha256>.schema")
 	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
-	require.ErrorContains(t, checkSchemaContract(records, 49, digest), "set currentStorageSchemaVersion to 51")
 	require.NoError(t, checkSchemaContract(records, 50, next))
 	err = checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, digest)
 	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
@@ -204,7 +190,22 @@ func TestStorageSchemaCatalogDigest(t *testing.T) {
 	trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
 	require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
 	digest := schemaCatalogDigest(t, db)
-	require.Equal(t, digest, probe(`CREATE INDEX contract_probe ON nodes(id)`))
+	dir := t.TempDir()
+	name := schemaContractFile(schemaContract{Version: 49, Digest: digest}, "9b6914ea954e6023e027151042eab8f33e298aa5aa83dec9f421427f14ded361")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("Add documents table\n"), 0600))
+	records, err := loadSchemaContracts(dir)
+	require.NoError(t, err)
+	require.NoError(t, checkSchemaContract(records, 49, digest))
+	for _, statement := range []string{
+		`CREATE INDEX contract_probe ON nodes(id)`,
+		`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
+		`DROP INDEX nodes_parent`,
+	} {
+		changed := probe(statement)
+		require.NotEqual(t, digest, changed, statement)
+		require.ErrorContains(t, checkSchemaContract(records, 49, changed), "set currentStorageSchemaVersion to 50")
+		require.NoError(t, checkSchemaContract(append(slices.Clone(records), schemaContract{Version: 50, Digest: changed}), 50, changed))
+	}
 	for _, statement := range []string{
 		`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
 		`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
