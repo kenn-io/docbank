@@ -27587,6 +27587,22 @@ const (
 	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
 )
 
+type ListPartiesQueryKind string
+
+const (
+	ListPartiesQueryKindEmpty  ListPartiesQueryKind = ""
+	ListPartiesQueryKindPerson ListPartiesQueryKind = "person"
+	Organization               ListPartiesQueryKind = "organization"
+)
+
+type ListPartiesQueryOwn string
+
+const (
+	False                    ListPartiesQueryOwn = "false"
+	ListPartiesQueryOwnEmpty ListPartiesQueryOwn = ""
+	True                     ListPartiesQueryOwn = "true"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -29112,11 +29128,11 @@ type ReadPageImageQuery struct {
 }
 
 type ListPartiesQuery struct {
-	Kind           *string `json:"kind,omitempty"`
-	Own            *string `json:"own,omitempty"`
-	IncludeRetired *bool   `json:"include_retired,omitempty"`
-	Limit          *int64  `json:"limit,omitempty"`
-	Offset         *int64  `json:"offset,omitempty"`
+	Kind           *ListPartiesQueryKind `json:"kind,omitempty"`
+	Own            *ListPartiesQueryOwn  `json:"own,omitempty"`
+	IncludeRetired *bool                 `json:"include_retired,omitempty"`
+	Limit          *int64                `json:"limit,omitempty"`
+	Offset         *int64                `json:"offset,omitempty"`
 }
 
 type ResolvePathQuery struct {

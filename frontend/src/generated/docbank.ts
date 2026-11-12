@@ -1787,13 +1787,26 @@ export interface CreateNodeRequest {
   parent_id: number;
 }
 
+export type CreatePartyRequestKind = typeof CreatePartyRequestKind[keyof typeof CreatePartyRequestKind];
+
+
+export const CreatePartyRequestKind = {
+  person: 'person',
+  organization: 'organization',
+} as const;
+
 export interface CreatePartyRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @nullable */
   country?: string | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
   display_name: string;
-  kind: string;
+  kind: CreatePartyRequestKind;
+  /** @maxLength 300 */
   legal_name?: string;
   own?: boolean;
   /** @nullable */
@@ -5181,18 +5194,31 @@ export interface PartyPage {
   offset: number;
 }
 
-export interface PatchPartyRequest {
+export type PatchPartyRequestKind = typeof PatchPartyRequestKind[keyof typeof PatchPartyRequestKind];
+
+
+export const PatchPartyRequestKind = {
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export type PatchPartyRequest = (unknown & ({
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @nullable */
   country?: string | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
   display_name?: string;
-  kind?: string;
+  kind?: PatchPartyRequestKind;
+  /** @maxLength 300 */
   legal_name?: string;
   own?: boolean;
   /** @nullable */
   person_id?: string | null;
-}
+}));
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 
@@ -10023,8 +10049,8 @@ image_sha256?: string;
 };
 
 export type ListPartiesParams = {
-kind?: string;
-own?: string;
+kind?: ListPartiesKind;
+own?: ListPartiesOwn;
 include_retired?: boolean;
 /**
  * @minimum 1
@@ -10036,6 +10062,24 @@ limit?: number;
  */
 offset?: number;
 };
+
+export type ListPartiesKind = typeof ListPartiesKind[keyof typeof ListPartiesKind];
+
+
+export const ListPartiesKind = {
+  '': '',
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export type ListPartiesOwn = typeof ListPartiesOwn[keyof typeof ListPartiesOwn];
+
+
+export const ListPartiesOwn = {
+  '': '',
+  true: 'true',
+  false: 'false',
+} as const;
 
 export type UpdatePartyHeaders = {
 'If-Match': string;

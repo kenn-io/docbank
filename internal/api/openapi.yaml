@@ -3470,14 +3470,21 @@ components:
             - string
             - "null"
         display_name:
+          maxLength: 200
+          minLength: 1
           type: string
         kind:
+          enum:
+            - person
+            - organization
           type: string
         legal_name:
+          maxLength: 300
           type: string
         own:
           type: boolean
         person_id:
+          format: uuid
           type:
             - string
             - "null"
@@ -12527,6 +12534,19 @@ components:
         name: api
     PatchPartyRequest:
       additionalProperties: false
+      anyOf:
+        - required:
+            - kind
+        - required:
+            - display_name
+        - required:
+            - legal_name
+        - required:
+            - country
+        - required:
+            - person_id
+        - required:
+            - own
       properties:
         $schema:
           description: A URL to the JSON Schema for this object.
@@ -12540,14 +12560,21 @@ components:
             - string
             - "null"
         display_name:
+          maxLength: 200
+          minLength: 1
           type: string
         kind:
+          enum:
+            - person
+            - organization
           type: string
         legal_name:
+          maxLength: 300
           type: string
         own:
           type: boolean
         person_id:
+          format: uuid
           type:
             - string
             - "null"
@@ -28241,11 +28268,19 @@ paths:
           in: query
           name: kind
           schema:
+            enum:
+              - ""
+              - person
+              - organization
             type: string
         - explode: false
           in: query
           name: own
           schema:
+            enum:
+              - ""
+              - "true"
+              - "false"
             type: string
         - explode: false
           in: query

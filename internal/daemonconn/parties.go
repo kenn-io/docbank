@@ -25,15 +25,17 @@ func (c *Connection) Parties(ctx context.Context, kind string, own *bool, includ
 		return api.PartyPage{}, errors.New("invalid party page")
 	}
 	lim, off := int64(limit), int64(offset)
-	var ownValue *string
+	kindValue := apiclient.ListPartiesQueryKind(kind)
+	var ownValue *apiclient.ListPartiesQueryOwn
 	if own != nil {
 		value := "false"
 		if *own {
 			value = "true"
 		}
-		ownValue = &value
+		typedValue := apiclient.ListPartiesQueryOwn(value)
+		ownValue = &typedValue
 	}
-	options := &apiclient.ListPartiesRequestOptions{Query: &apiclient.ListPartiesQuery{Kind: &kind, Own: ownValue, IncludeRetired: &includeRetired, Limit: &lim, Offset: &off}}
+	options := &apiclient.ListPartiesRequestOptions{Query: &apiclient.ListPartiesQuery{Kind: &kindValue, Own: ownValue, IncludeRetired: &includeRetired, Limit: &lim, Offset: &off}}
 	page, err := c.API().ListParties(ctx, options)
 	if err != nil {
 		return api.PartyPage{}, err
