@@ -139,8 +139,14 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET display_name=$1 WHERE actor_key=$2`, "Private Name", "email:sender@example.test")
-	require.NoError(t, err)
+	// Exact email actors are auto-provisioned, so seed the unresolved candidate
+	// whose mixed-disclosure occurrences this test exercises.
+	senderCandidate := candidateForTest(t, "email:sender@example.test", "Private Name", "", []PersonCandidateOccurrence{
+		{ContentVersionID: version.ID, Role: "blind_copy", EvidenceKind: "source_metadata", EvidenceID: record.Events[0].EvidenceID},
+		{ContentVersionID: version.ID, Role: "sender", EvidenceKind: "source_metadata", EvidenceID: record.Events[0].EvidenceID},
+	})
+	senderCandidate.Reason = "identifier_conflict"
+	openCandidateForTest(t, s, senderCandidate)
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:unmatched", "Unmatched", "", []PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "missing"}}))
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)

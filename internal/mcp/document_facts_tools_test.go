@@ -1,7 +1,7 @@
 package mcp
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -55,7 +55,7 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) {
 	dates := api.VersionDates{ContentVersionID: "00000000-0000-4000-8000-000000000001", NodeID: 1, State: "published", Primary: &api.VersionDatePrimary{EventID: "primary"}}
 	for i := range 12 {
-		dates.Claims = append(dates.Claims, api.VersionDateClaim{EventID: fmt.Sprint(i), RawValue: strings.Repeat("\\\"", 50000)})
+		dates.Claims = append(dates.Claims, api.VersionDateClaim{EventID: strconv.Itoa(i), RawValue: strings.Repeat("\\\"", 50000)})
 	}
 	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: "synthetic"}}
 	var claims []api.VersionDateClaim
@@ -78,7 +78,7 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 	}
 	require.Equal(t, dates.Claims, claims)
 	require.Equal(t, dates.Diagnostics, diagnostics)
-	require.Greater(t, offset, 0)
+	require.Positive(t, offset)
 	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: strings.Repeat("x", maxToolResponseBytes)}}
 	dates.Claims = nil
 	_, err := documentDatesPage(dates, 0)
@@ -88,7 +88,7 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 	people := api.VersionPeople{ContentVersionID: "00000000-0000-4000-8000-000000000001", State: "published", Open: &api.FactOpen{Web: "https://example.test"}}
 	for i := range 105 {
-		people.Edges = append(people.Edges, api.VersionPersonEdge{PersonID: fmt.Sprint(i), RawLabel: strings.Repeat("x", 10000)})
+		people.Edges = append(people.Edges, api.VersionPersonEdge{PersonID: strconv.Itoa(i), RawLabel: strings.Repeat("x", 10000)})
 	}
 	people.Assertions = []api.VersionPersonAssertion{{DisplayName: "assertion"}}
 	people.Unresolved = []api.VersionUnresolvedName{{RawLabel: "unresolved"}}

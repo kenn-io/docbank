@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"uuid"
 
 	"go.kenn.io/docbank/document"
@@ -30,12 +31,14 @@ func documentFactsSelection(raw []byte) (documentFactsInput, error) {
 type documentDatesOutput struct {
 	privateCache
 	api.VersionDates
+
 	Offset     int  `json:"offset"`
 	NextOffset *int `json:"next_offset,omitzero"`
 }
 type documentPeopleOutput struct {
 	privateCache
 	api.VersionPeople
+
 	Offset     int  `json:"offset"`
 	NextOffset *int `json:"next_offset,omitzero"`
 }
@@ -45,37 +48,49 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 	if err != nil {
 		return nil, err
 	}
-	return daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (any, error) {
+	type factsResponse struct {
+		dates     *api.VersionDates
+		people    *api.VersionPeople
+		noVersion bool
+	}
+	response, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (factsResponse, error) {
 		id := in.ContentVersionID
 		if in.NodeID > 0 {
 			node, err := c.API().GetNode(ctx, &apiclient.GetNodeRequestOptions{PathParams: &apiclient.GetNodePath{ID: in.NodeID}})
 			if err != nil {
-				return nil, err
+				return factsResponse{}, err
 			}
 			id = node.CurrentVersionID
 			if id == "" {
-				return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
+				return factsResponse{noVersion: true}, nil
 			}
 		}
 		version, err := uuid.Parse(id)
 		if err != nil {
-			return nil, invalidToolArgumentsError()
+			return factsResponse{}, err
 		}
 		if kind == "dates" {
 			d := apiclient.GetVersionDatesQueryDisclosure("safe")
 			result, err := c.API().GetVersionDates(ctx, &apiclient.GetVersionDatesRequestOptions{PathParams: &apiclient.GetVersionDatesPath{VersionID: version}, Query: &apiclient.GetVersionDatesQuery{Disclosure: &d}})
-			if err != nil {
-				return nil, err
-			}
-			return documentDatesPage(*result, in.Offset)
+			return factsResponse{dates: result}, err
 		}
 		d := apiclient.GetVersionPeopleQueryDisclosure("safe")
 		result, err := c.API().GetVersionPeople(ctx, &apiclient.GetVersionPeopleRequestOptions{PathParams: &apiclient.GetVersionPeoplePath{VersionID: version}, Query: &apiclient.GetVersionPeopleQuery{Disclosure: &d}})
-		if err != nil {
-			return nil, err
-		}
-		return documentPeoplePage(*result, in.Offset)
+		return factsResponse{people: result}, err
 	})
+	if err != nil {
+		return nil, err
+	}
+	if response.dates != nil {
+		return documentDatesPage(*response.dates, in.Offset)
+	}
+	if response.people != nil {
+		return documentPeoplePage(*response.people, in.Offset)
+	}
+	if response.noVersion {
+		return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
+	}
+	return nil, errors.New("document facts response is empty")
 }
 
 // documentDatesPage pages claims followed by diagnostics, retaining the primary
