@@ -81,7 +81,10 @@ func writeVersionDatesTable(out io.Writer, result *apiclient.VersionDates) error
 		}
 		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%q (state=%s, zone=%q)\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.When.State, claim.When.ZoneState, claim.Precision, documentFactLabel(claim.ClaimBasis))
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing dates table: %w", err)
+	}
+	return nil
 }
 
 func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) error {
@@ -109,7 +112,10 @@ func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) err
 	for _, unresolved := range result.Unresolved {
 		_, _ = fmt.Fprintf(w, "%s\t%q\tunresolved\n", unresolved.Role, unresolved.RawLabel)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing people table: %w", err)
+	}
+	return nil
 }
 
 func documentFactLabel(value string) string {
