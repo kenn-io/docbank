@@ -121,10 +121,6 @@
       : `${assign ? "Adds a tag to" : "Removes a tag from"} ${documentCount(count)}.`,
   );
 
-  function notFound(cause: unknown): cause is APIError {
-    return cause instanceof APIError && cause.status === 404;
-  }
-
   function apply(): void {
     if (locked || !tag || count === 0) return;
     readFailure = "";
@@ -166,7 +162,7 @@
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
-      else if (notFound(cause)) {
+      else if (cause instanceof APIError && cause.status === 404) {
         tagMissing = true;
         run.failure = cause.message;
       } else run.failure = cause instanceof Error ? cause.message : String(cause);

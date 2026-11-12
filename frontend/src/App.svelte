@@ -3066,14 +3066,9 @@
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
-  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
-    // A replay describes a historical success. Reload current observations
-    // instead of overwriting newer rows with the receipt's old revisions.
-    refreshCurrentView();
-    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
-  }
-
-  function refreshCheckedTags(): void {
+  // A replay describes a historical success, so reload current observations
+  // instead of overwriting newer rows with the receipt's old revisions.
+  function refreshTaggedViews(): void {
     refreshCurrentView();
     const source = selectedSource;
     if (source) void loadSelectedTags(source.nodeID, source.key);
@@ -5538,9 +5533,9 @@
         targets={batchTagsTargets}
         catalog={tagCatalog}
         disabled={loading}
-        onchanged={handleBatchTagsChanged}
+        onchanged={refreshTaggedViews}
         oncreated={() => void loadTagCatalog(false, true)}
-        onchecked={refreshCheckedTags}
+        onchecked={refreshTaggedViews}
         onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
       />
@@ -5561,7 +5556,7 @@
         onchanged={handleSnapshotSelectionTagged}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onchecked={refreshCheckedTags}
+        onchecked={refreshTaggedViews}
         onclose={() => snapshot.cancelAction()}
         onauthfailure={handleFailure}
       />
