@@ -8,11 +8,13 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/notemarkdown"
 )
 
@@ -551,6 +553,38 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00.000000000Z')`)
 			require.NoError(t, err)
+			// Preserve an empty completion and a separate sealed, explicit request.
+			at := time.Now().UTC().Add(time.Minute)
+			faceAsset := albumAsset(t, legacy, "empty-scan.jpg")
+			faceNode, err := legacy.NodeByID(ctx, faceAsset.Files[0].NodeID)
+			require.NoError(t, err)
+			faceRequest := photoVisionJobRequest(t, legacy, faceNode.CurrentVersionID, producerB, false, document.FaceDetectionProviderID)
+			grantRenditionJobConsent(t, legacy, faceRequest)
+			faceJob, faceWaiter, faceClaim := startPhotoDescription(t, legacy, faceRequest, at)
+			publication, err := legacy.PublishPhotoDescription(ctx, faceClaim, faceDetectionResult(t), at)
+			require.NoError(t, err)
+			require.Equal(t, 1, publication.PublishedWaiterCount)
+			completed, err := legacy.RenditionJobByID(ctx, faceJob.ID)
+			require.NoError(t, err)
+			require.Equal(t, RenditionJobCompleted, completed.State)
+			published, err := legacy.RenditionJobWaiterByID(ctx, faceWaiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, "published", published.State)
+			explicitAsset := albumAsset(t, legacy, "explicit-request.jpg")
+			explicitNode, err := legacy.NodeByID(ctx, explicitAsset.Files[0].NodeID)
+			require.NoError(t, err)
+			request := photoDescriptionJobRequest(t, legacy, explicitNode.CurrentVersionID, producerB, true)
+			grantRenditionJobConsent(t, legacy, request)
+			job, waiter, claim := startPhotoDescription(t, legacy, request, at)
+			require.NoError(t, legacy.CheckpointRenditionProvider(ctx, claim, "synthetic-upgrade-handle", at.Add(time.Second)))
+			work, err := legacy.RenditionJobWorkByClaim(ctx, claim, at.Add(time.Second))
+			require.NoError(t, err)
+			require.Equal(t, RenditionJobRunning, work.Job.State)
+			require.Equal(t, RenditionPhaseProvider, work.Job.Phase)
+			require.Equal(t, 1, work.Job.ProviderAttempts)
+			require.EqualValues(t, 1, claim.Epoch)
+			require.Equal(t, waiter.ID, work.Waiter.ID)
+			require.NotNil(t, work.ExecutionSnapshot)
 			// Match released Open's lexical startup before freezing its snapshot.
 			_, err = legacy.MigrateLegacyPlainText(ctx)
 			require.NoError(t, err)
@@ -558,6 +592,21 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			require.NoError(t, err)
 			var before bytes.Buffer
 			require.NoError(t, exportReleasedMetadataSnapshot(ctx, tx, &before, 48))
+			tables := []string{"photo_face_scans", "rendition_jobs", "rendition_job_waiters", "photo_description_explicit_waiters"}
+			operational := make(map[string][]string)
+			for i, table := range tables {
+				var rows strings.Builder
+				dumpReleasedTable(t, tx, table, &rows)
+				operational[table] = strings.Split(strings.TrimSpace(rows.String()), "\n")
+				slices.Sort(operational[table])
+				require.Len(t, operational[table], []int{1, 2, 2, 1}[i], table)
+			}
+			require.Contains(t, operational["photo_face_scans"][0], faceNode.CurrentVersionID)
+			for _, id := range []string{faceJob.ID, job.ID, faceWaiter.ID, waiter.ID} {
+				require.NotEmpty(t, id)
+				require.Contains(t, strings.Join(append(slices.Clone(operational["rendition_jobs"]), operational["rendition_job_waiters"]...), "\n"), id)
+			}
+			require.Contains(t, operational["photo_description_explicit_waiters"][0], waiter.ID)
 			require.NoError(t, tx.Rollback())
 			require.NoError(t, db.Close())
 			s, err := Open(ctx, dbPath, driver.driver)
@@ -566,6 +615,16 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			var after bytes.Buffer
 			require.NoError(t, s.ExportMetadata(ctx, &after))
 			require.Equal(t, before.String(), after.String(), "cutover preserves deterministic logical authority")
+			for _, table := range tables {
+				var rows strings.Builder
+				dumpReleasedTable(t, s.db, table, &rows)
+				restored := strings.Split(strings.TrimSpace(rows.String()), "\n")
+				slices.Sort(restored)
+				require.Equal(t, operational[table], restored, "cutover preserves complete operational rows: %s", table)
+			}
+			var faces int
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM photo_faces WHERE content_version_id=$1`, faceNode.CurrentVersionID).Scan(&faces))
+			require.Zero(t, faces, "the scan completion represents a genuine empty result")
 			require.FileExists(t, dbPath+".schema-v48.bak")
 			require.NoError(t, s.ValidateMetadata(ctx))
 			pending, err := s.NoteByPath(ctx, "/released.md", notemarkdown.Recipe)
@@ -578,6 +637,34 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			view, err := s.NoteByPath(ctx, "/released.md", notemarkdown.Recipe)
 			require.NoError(t, err)
 			require.Equal(t, "Title", view.Summary.Title)
+			// Only after exact preservation checks, exercise the retained lease/fence.
+			_, err = s.ClaimRenditionJob(ctx, job.ID, "upgrade-resume", at.Add(30*time.Minute), time.Hour)
+			require.ErrorIs(t, err, ErrRenditionJobLeaseHeld)
+			resumeAt := at.Add(2 * time.Hour)
+			resumed, err := s.ClaimRenditionJob(ctx, job.ID, "upgrade-resume", resumeAt, time.Hour)
+			require.NoError(t, err)
+			require.Equal(t, claim.Epoch+1, resumed.Epoch)
+			require.Equal(t, work.Job.ProviderAttempts, resumed.ProviderAttempts)
+			require.Equal(t, "synthetic-upgrade-handle", resumed.ResumeHandle)
+			require.ErrorIs(t, s.CheckpointRenditionProvider(ctx, claim, "stale-handle", resumeAt), ErrRenditionJobFenced)
+			resumedWork, err := s.RenditionJobWorkByClaim(ctx, resumed, resumeAt)
+			require.NoError(t, err)
+			require.Equal(t, work.ExecutionSnapshot, resumedWork.ExecutionSnapshot)
+			require.Equal(t, work.Waiter, resumedWork.Waiter)
+			authorization, err := s.BeginRenditionProvider(ctx, resumed, waiter.ID, resumeAt)
+			require.NoError(t, err, "resume uses the stored snapshot without starting another attempt")
+			require.Equal(t, work.Waiter.AuthorizationGrantID, authorization.GrantID)
+			require.Equal(t, work.Waiter.AuthorizationIncarnationID, authorization.ProcessingIncarnationID)
+			require.Equal(t, work.Waiter.AuthorizationRevocationFence, authorization.RevocationFence)
+			resumedWork, err = s.RenditionJobWorkByClaim(ctx, resumed, resumeAt)
+			require.NoError(t, err)
+			require.Equal(t, work.Job.ProviderAttempts, resumedWork.Job.ProviderAttempts)
+			require.Equal(t, work.ExecutionSnapshot, resumedWork.ExecutionSnapshot)
+			require.Equal(t, work.Waiter, resumedWork.Waiter)
+			var handle string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT provider_resume_handle FROM rendition_jobs WHERE job_id=$1`, job.ID).Scan(&handle))
+			require.Equal(t, resumed.ResumeHandle, handle)
+			require.NoError(t, s.ValidateMetadata(ctx))
 		})
 	}
 }
