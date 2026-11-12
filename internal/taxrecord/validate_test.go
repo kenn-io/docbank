@@ -145,3 +145,15 @@ func TestTaxDatesYearLeadDaysVocabulary(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAccountCadencesAreIndependent(t *testing.T) {
+	cadences := AccountCadences()
+	if len(cadences) == 0 {
+		t.Fatal("no account cadences")
+	}
+	original := cadences[0]
+	cadences[0] = "private-synthetic-value"
+	if AccountCadences()[0] != original {
+		t.Fatal("cadence vocabulary was mutated")
+	}
+}

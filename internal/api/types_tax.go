@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 // TaxAccount is a tax registration. Identifiers are masked except on explicit reveal.
@@ -82,7 +83,10 @@ func taxAccountRequestSchema(schema *huma.Schema) *huma.Schema {
 	if kind := schema.Properties["tax_kind"]; kind != nil {
 		kind.Description = "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization."
 	}
-	schema.Properties["cadence"].Enum = []any{"monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other"}
+	schema.Properties["cadence"].Enum = nil
+	for _, cadence := range taxrecord.AccountCadences() {
+		schema.Properties["cadence"].Enum = append(schema.Properties["cadence"].Enum, cadence)
+	}
 	schema.Properties["lead_days"].Minimum = new(float64(0))
 	schema.Properties["lead_days"].Maximum = new(float64(366))
 	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "identifier": 256, "period_note": 8192, "due_note": 8192, "note": 8192} {

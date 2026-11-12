@@ -95,3 +95,51 @@ func TestTaxOversizeWriteFailureOmitsPath(t *testing.T) {
 	assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
 	assert.NotContains(t, logs.String(), sentinel)
 }
+
+// These inputs reach account admission; record-only reasons are owned by T3b.
+func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
+	base := taxrecord.AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
+	cases := []struct {
+		field, reason string
+		change        func(*taxrecord.AccountValues)
+	}{
+		{"filer_party_id", "required", func(v *taxrecord.AccountValues) { v.FilerPartyID = "" }},
+		{"tax_kind", "not canonical", func(v *taxrecord.AccountValues) { v.TaxKind = " example " }},
+		{"identifier", "control character", func(v *taxrecord.AccountValues) { v.Identifier = "\x00" }},
+		{"note", "invalid length or text", func(v *taxrecord.AccountValues) { v.Note = string(make([]byte, 8193)) }},
+		{"country", "invalid country", func(v *taxrecord.AccountValues) { v.Country = "AA" }},
+		{"subdivision", "invalid subdivision", func(v *taxrecord.AccountValues) { v.Subdivision = "AA-A" }},
+		{"currency", "invalid currency", func(v *taxrecord.AccountValues) { v.Currency = "???" }},
+		{"cadence", "unknown cadence", func(v *taxrecord.AccountValues) { v.Cadence = "future" }},
+		{"lead_days", "out of range", func(v *taxrecord.AccountValues) { v.LeadDays = 367 }},
+		{"effective_start", "invalid date", func(v *taxrecord.AccountValues) { v.EffectiveStart = new("2025-02-30") }},
+		{"effective_end", "precedes effective_start", func(v *taxrecord.AccountValues) {
+			v.EffectiveStart = new("2025-02-01")
+			v.EffectiveEnd = new("2025-01-01")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field+"/"+tc.reason, func(t *testing.T) {
+			v := base
+			tc.change(&v)
+			var field *taxrecord.FieldError
+			require.ErrorAs(t, taxrecord.ValidateAccount(v), &field)
+			assert.Equal(t, tc.field, field.Field)
+			assert.Equal(t, tc.reason, field.Reason)
+			var problem *Error
+			require.ErrorAs(t, taxRouteError(field), &problem)
+			assert.Equal(t, field.Error(), problem.Detail)
+		})
+	}
+	// These are the store's account party-admission outcomes.
+	for _, reason := range []string{"party not found", "party is retired", "party is not own", "party is not an organization"} {
+		name := "filer_party_id"
+		if reason == "party is not an organization" {
+			name = "authority_party_id"
+		}
+		field := &taxrecord.FieldError{Field: name, Reason: reason}
+		var problem *Error
+		require.ErrorAs(t, taxRouteError(field), &problem)
+		assert.Equal(t, field.Error(), problem.Detail)
+	}
+}

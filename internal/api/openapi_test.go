@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func TestOpenAPIDocumentOffline(t *testing.T) {
@@ -908,8 +909,12 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	assert.Equal(t, 256, *create.Properties["tax_kind"].MaxLength)
 	patch := doc.Components.Schemas.Map()["PatchTaxAccountRequest"]
 	require.NotNil(t, patch)
+	var cadences []any
+	for _, cadence := range taxrecord.AccountCadences() {
+		cadences = append(cadences, cadence)
+	}
 	for _, schema := range []*huma.Schema{create, patch} {
-		assert.ElementsMatch(t, []any{"monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other"}, schema.Properties["cadence"].Enum)
+		assert.ElementsMatch(t, cadences, schema.Properties["cadence"].Enum)
 		assert.Equal(t, new(float64(0)), schema.Properties["lead_days"].Minimum)
 		assert.Equal(t, new(float64(366)), schema.Properties["lead_days"].Maximum)
 		assert.Equal(t, 3, *schema.Properties["currency"].MaxLength)

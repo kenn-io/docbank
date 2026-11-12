@@ -4,6 +4,7 @@ package taxrecord
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -234,6 +235,11 @@ func NormalizeAccount(v AccountValues) (AccountValues, error) {
 	return v, ValidateAccount(v)
 }
 
+var accountCadences = []string{"monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other"}
+
+// AccountCadences returns the supported filing cadences in schema order.
+func AccountCadences() []string { return slices.Clone(accountCadences) }
+
 // ValidateAccount checks canonical retained account values.
 func ValidateAccount(v AccountValues) error {
 	if err := rawLocation(v.Country, v.Subdivision, v.Currency); err != nil {
@@ -257,9 +263,7 @@ func ValidateAccount(v AccountValues) error {
 	if err := location(v.Country, v.Subdivision, v.Currency, true); err != nil {
 		return err
 	}
-	switch v.Cadence {
-	case "monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other":
-	default:
+	if !slices.Contains(accountCadences, v.Cadence) {
 		return invalid("cadence", "unknown cadence")
 	}
 	if v.LeadDays < 0 || v.LeadDays > 366 {

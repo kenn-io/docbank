@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 // taxClientError keeps transport and response classification without printing request values.
@@ -76,15 +78,28 @@ func taxMutationFailure(err error) error {
 	return err
 }
 
+// A maximum page has 1,000 accounts. Three 8,192-byte notes, two
+// 256-byte fields and location codes expand by at most six JSON bytes per
+// source byte; 4,096 bytes per row covers names, IDs, dates and framing.
+// The remaining space covers the page envelope and harmless metadata.
+const maxTaxReceiptBytes = 1000*(6*(3*8192+2*256+2+6+3)+4096) + 1024*1024
+
 // decodeTaxReceipt checks wire presence before zero values can hide omissions.
 func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxAccountPage, error) {
+	return decodeTaxReceiptLimit(ctx, response, page, maxTaxReceiptBytes)
+}
+
+func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, limit int64) (api.TaxAccountPage, error) {
 	defer func() { _ = response.Body.Close() }()
 	if err := ctx.Err(); err != nil {
 		return api.TaxAccountPage{}, &responseDecodeError{err: err}
 	}
-	data, err := io.ReadAll(response.Body)
+	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		return api.TaxAccountPage{}, &responseDecodeError{err: err}
+	}
+	if int64(len(data)) > limit {
+		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("tax account response exceeds size limit")}
 	}
 	invalid := func() (api.TaxAccountPage, error) {
 		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account response")}
@@ -128,7 +143,21 @@ func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (
 }
 
 func validTaxAccount(a api.TaxAccount) bool {
-	return validUUIDv4(a.AccountID) && validUUIDv4(a.FilerPartyID) && (a.AuthorityPartyID == nil || validUUIDv4(*a.AuthorityPartyID)) && a.Country != "" && a.TaxKind != "" && a.Cadence != "" && a.Currency != "" && a.Revision > 0 && a.CreatedAt != "" && a.UpdatedAt != ""
+	if !validUUIDv4(a.AccountID) || !validUUIDv4(a.FilerPartyID) || (a.AuthorityPartyID != nil && !validUUIDv4(*a.AuthorityPartyID)) || a.Revision < 1 {
+		return false
+	}
+	values := taxrecord.AccountValues{FilerPartyID: a.FilerPartyID, AuthorityPartyID: a.AuthorityPartyID, Country: a.Country, Subdivision: a.Subdivision, TaxKind: a.TaxKind, Cadence: a.Cadence, PeriodNote: a.PeriodNote, DueNote: a.DueNote, LeadDays: a.LeadDays, Currency: a.Currency, EffectiveStart: a.EffectiveStart, EffectiveEnd: a.EffectiveEnd, Note: a.Note}
+	if taxrecord.ValidateAccount(values) != nil {
+		return false
+	}
+	for _, timestamp := range []*string{&a.CreatedAt, &a.UpdatedAt, a.RetiredAt} {
+		if timestamp != nil {
+			if _, err := time.Parse(time.RFC3339Nano, *timestamp); err != nil {
+				return false
+			}
+		}
+	}
+	return true
 }
 func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id string) (api.TaxAccount, error) {
 	if a == nil || response == nil || !validTaxAccount(*a) || (id != "" && a.AccountID != id) || response.Header.Get("ETag") != revisionIfMatch(a.Revision) {

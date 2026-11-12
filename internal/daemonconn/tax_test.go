@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -95,6 +96,12 @@ func TestTaxClientRejectsMalformedAccounts(t *testing.T) {
 		{"different identity", strings.Replace(taxAccountFixture, id, "33333333-3333-4333-8333-333333333333", 1), `"1"`},
 		{"zero revision", strings.Replace(taxAccountFixture, `"revision":1`, `"revision":0`, 1), `"0"`},
 		{"missing etag", taxAccountFixture, ""},
+		{"unknown cadence", strings.Replace(taxAccountFixture, `"annual"`, `"future"`, 1), `"1"`},
+		{"noncanonical country", strings.Replace(taxAccountFixture, `"ZZ"`, `"zz"`, 1), `"1"`},
+		{"invalid currency", strings.Replace(taxAccountFixture, `"USD"`, `"???"`, 1), `"1"`},
+		{"noncanonical kind", strings.Replace(taxAccountFixture, `"Example"`, `" Example "`, 1), `"1"`},
+		{"invalid date", strings.Replace(taxAccountFixture, `"effective_start":null`, `"effective_start":"2025-02-30"`, 1), `"1"`},
+		{"invalid timestamp", strings.Replace(taxAccountFixture, `2025-01-01T00:00:00Z`, `private-synthetic-value`, 1), `"1"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -241,4 +248,20 @@ func TestTaxClientRejectsMissingAccountMembers(t *testing.T) {
 			assert.Contains(t, err.Error(), "may have been applied")
 		})
 	}
+}
+
+func TestTaxReceiptBoundAndMetadata(t *testing.T) {
+	body := strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":"****1234","$schema":"example","extension":true`, 1)
+	response := func(s string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(s))} }
+	page, err := decodeTaxReceiptLimit(t.Context(), response(body), false, int64(len(body)))
+	require.NoError(t, err)
+	assert.True(t, validTaxAccount(page.Items[0]))
+	_, err = decodeTaxReceiptLimit(t.Context(), response(body), false, int64(len(body)-1))
+	require.True(t, IsResponseDecodeError(err))
+	err = taxMutationFailure(err)
+	assert.Contains(t, err.Error(), "may have been applied")
+	assert.NotContains(t, err.Error(), "1234")
+	// Every byte of the largest legal text fields could take six JSON bytes.
+	// The remaining allowance must hold IDs, dates, field names and the envelope.
+	assert.Greater(t, maxTaxReceiptBytes, 1000*6*(3*8192+2*256+2+6+3)+1000*1000)
 }
