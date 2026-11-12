@@ -278,21 +278,28 @@ func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
 
 func TestTaxCashAppendVoidAtomic(t *testing.T) {
 	t.Parallel()
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("USD")}
-	r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
-	require.NoError(t, err)
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
-	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
-	require.NoError(t, err)
-	cash.Amount = new("0.01")
-	_, err = s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	assert.Len(t, d.Events, 1)
-	assert.Equal(t, first.Record.Revision, d.Record.Revision)
+	for _, tc := range []struct{ direction, kind string }{
+		{"payable", "payment"},
+		{"refundable", "refund"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			s, _, r := taxFixture(t)
+			ctx := t.Context()
+			in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: tc.direction, Amount: new("1"), Currency: new("USD")}
+			r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
+			require.NoError(t, err)
+			cash := TaxEventInput{Kind: tc.kind, OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
+			first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+			require.NoError(t, err)
+			cash.Amount = new("0.01")
+			_, err = s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
+			require.ErrorIs(t, err, taxrecord.ErrInvalid)
+			d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+			require.NoError(t, err)
+			assert.Len(t, d.Events, 1)
+			assert.Equal(t, first.Record.Revision, d.Record.Revision)
+		})
+	}
 }
 
 func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
