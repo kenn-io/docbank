@@ -446,7 +446,15 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     await expect(dialog.getByText("Text extracted.")).toBeVisible({ timeout: 30000 });
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(notice).toBeVisible({ timeout: 30000 });
-    if (file.startsWith("mixed")) await expect(inspector.locator("pre")).toBeVisible();
+    if (file.startsWith("mixed")) {
+      await expect(notice).toContainText("Page 2 has no text layer");
+      await expect(inspector.locator("pre")).toContainText(
+        "Mixed synthetic pages contain readable text",
+      );
+    } else {
+      await expect(notice).toContainText("Pages 1–3 have no text layer");
+      await expect(inspector.locator("pre")).toHaveCount(0);
+    }
     await page.screenshot({
       path: path.join(output!, `${file}-text.png`),
       clip: { x: 976, y: 56, width: 464, height: 554 },
@@ -460,6 +468,25 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await expect(page.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
+    clip: { x: 231, y: 56, width: 746, height: 700 },
+  });
+  await page.getByRole("button", { name: "Advanced" }).click();
+  const editor = page.getByRole("dialog", { name: "Filters and sort" });
+  await editor.getByText("More", { exact: true }).click();
+  await editor.getByLabel("Filters JSON").fill('{"size_min":10}');
+  await expect(editor.getByRole("status", { name: "Query valid" })).toBeVisible();
+  await editor.getByRole("button", { name: "Search", exact: true }).click();
+  const frozen = page.getByRole("region", { name: "Frozen query results" });
+  await expect(frozen.getByText("No matching documents")).toBeVisible();
+  await expect(frozen.getByText(/Across the current vault:.*without a text layer/)).toBeVisible();
+  await expect(frozen.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
+  await page.screenshot({
+    path: path.join(output!, "pdf-frozen-search-empty-dark.png"),
+    clip: { x: 231, y: 56, width: 746, height: 700 },
+  });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({
+    path: path.join(output!, "pdf-frozen-search-empty-light.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
   });
 });

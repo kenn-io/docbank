@@ -1247,7 +1247,7 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const pdfCoverageDescription = $derived(
     pdfCoverage?.pdfs_without_text
-      ? `${activeTagID ? "With this tag" : "Across the current vault"}: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.` +
+      ? `${activeTagID && !snapshotActive ? "With this tag" : "Across the current vault"}: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.` +
           " OCR can read scanned pages."
       : pdfCoverageIncomplete
         ? "PDF text coverage is incomplete; some pages may not be searchable."
@@ -2171,16 +2171,23 @@
   $effect(() => {
     const query = activeQuery;
     const frozen = snapshotActive;
+    const frozenReady = snapshot.state.status === "ready";
+    const frozenPage = snapshotPage;
     const tag = activeTagID;
     const session = webSession;
-    const eligible = !frozen && !!query && !loading && !searchPending && rows.length === 0;
+    const eligible = frozen
+      ? frozenReady && frozenPage?.rows.length === 0
+      : !!query && !loading && !searchPending && rows.length === 0;
     pdfCoverage = null;
     pdfCoverageUnavailable = false;
     if (!eligible) return;
     const controller = new AbortController();
     let current = true;
     void generated
-      .searchTextCoverage(tag ? { tag_id: tag } : {}, { session, signal: controller.signal })
+      .searchTextCoverage(tag && !frozen ? { tag_id: tag } : {}, {
+        session,
+        signal: controller.signal,
+      })
       .then((coverage) => {
         if (current) pdfCoverage = coverage;
       })
@@ -4618,7 +4625,13 @@
                     data-member-hash={snapshotPage.member_hash}
                   >
                     {#if snapshotPage.rows.length === 0}
-                      <EmptyState title="No matching documents">
+                      <EmptyState
+                        title="No matching documents"
+                        description={pdfCoverageDescription}
+                        children={pdfCoverage?.pdfs_without_text || pdfCoverageIncomplete
+                          ? pdfOCRGuide
+                          : undefined}
+                      >
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
                     {:else}

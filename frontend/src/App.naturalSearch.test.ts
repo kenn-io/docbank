@@ -2111,6 +2111,38 @@ function renderEmptySearch(coverage: () => Promise<Response>) {
   return harness;
 }
 
+it("shows vault coverage for an empty Advanced search after a tagged search", async () => {
+  const { fetchMock } = renderEmptySearch(async () =>
+    json(textCoverage({ pdfs_without_text: 2, pages_without_text: 3 })),
+  );
+  await screen.findAllByText("report.txt");
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
+  await submitSearch("missing");
+  await screen.findByText(
+    "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
+    target: { value: '{"size_min":10}' },
+  });
+  await screen.findByRole("status", { name: "Query valid" });
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("region", { name: "Frozen query results" });
+  expect(
+    await screen.findByText(
+      "Across the current vault: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
+    ),
+  ).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
+  const requests = fetchMock.mock.calls
+    .map(([url]) => String(url))
+    .filter((url) => url.startsWith("/api/v1/search/text-coverage"));
+  expect(new URL(requests.at(-1)!, "https://example.com").searchParams.has("tag_id")).toBe(false);
+});
+
 it.each([
   [
     "singular",
