@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -692,7 +695,21 @@ func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T)
 	require.NoError(t, os.WriteFile(index, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0600))
 	target, err := filepath.Abs("../../internal/web/dist/index.html")
 	require.NoError(t, err)
-	overlayData, err := json.Marshal(map[string]map[string]string{"Replace": {target: index}})
+	opener := filepath.Join(dir, "opener.go")
+	require.NoError(t, os.WriteFile(opener, []byte(`package main
+import ("context"; "os")
+func openWebBrowser(_ context.Context, rawURL string) error {
+	path := os.Getenv("DOCBANK_TEST_BROWSER_OPEN")
+	if err := os.WriteFile(path + ".tmp", []byte(rawURL), 0600); err != nil { return err }
+	return os.Rename(path + ".tmp", path)
+}`), 0600))
+	openerTarget, err := filepath.Abs("web_" + runtime.GOOS + ".go")
+	require.NoError(t, err)
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		openerTarget, err = filepath.Abs("web_other.go")
+		require.NoError(t, err)
+	}
+	overlayData, err := json.Marshal(map[string]map[string]string{"Replace": {target: index, openerTarget: opener}})
 	require.NoError(t, err)
 	overlay := filepath.Join(dir, "overlay.json")
 	require.NoError(t, os.WriteFile(overlay, overlayData, 0600))
@@ -701,6 +718,8 @@ func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T)
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
 	t.Setenv("DOCBANK_HOME", root)
 	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
+	openedPath := filepath.Join(dir, "opened")
+	t.Setenv("DOCBANK_TEST_BROWSER_OPEN", openedPath)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
 
 	start := exec.CommandContext(t.Context(), bin, "ls", "/")
@@ -708,13 +727,79 @@ func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T)
 	require.NoError(t, err, string(out))
 	old := waitForDaemon(t, root)
 	require.False(t, daemonconn.Explicit(old))
-	restart := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
-	restart.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
-	out, err = restart.CombinedOutput()
-	require.NoError(t, err, string(out))
+	connection, err := daemonconn.ConnectWeb(t.Context(), old)
+	require.NoError(t, err)
+	launch, err := connection.WebSessionURL(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, connection.Close())
+	oldURL, err := url.Parse(launch)
+	require.NoError(t, err)
+	oldSession, err := url.ParseQuery(oldURL.Fragment)
+	require.NoError(t, err)
+	origin := oldURL.Scheme + "://" + oldURL.Host
+	watcher, err := fsnotify.NewWatcher()
+	require.NoError(t, err)
+	defer func() { _ = watcher.Close() }()
+	require.NoError(t, watcher.Add(dir))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, origin+"/api/v1/processing/local/restart", nil)
+	require.NoError(t, err)
+	request.Header.Set(api.WebSessionHeader, oldSession.Get("web_session"))
+	request.Header.Set("Origin", origin)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	_ = response.Body.Close()
+	require.Equal(t, http.StatusAccepted, response.StatusCode)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+waitForBrowser:
+	for {
+		select {
+		case event := <-watcher.Events:
+			if event.Name == openedPath && event.Has(fsnotify.Create) {
+				break waitForBrowser
+			}
+		case err := <-watcher.Errors:
+			require.NoError(t, err)
+		case <-ctx.Done():
+			t.Fatal("restart did not reopen the browser")
+		}
+	}
 	restarted := waitForDaemon(t, root)
 	require.NotEqual(t, old.PID, restarted.PID)
 	require.False(t, daemonconn.Explicit(restarted))
+	openedURL, err := os.ReadFile(openedPath)
+	require.NoError(t, err)
+	openedFile, err := url.Parse(string(openedURL))
+	require.NoError(t, err)
+	require.Equal(t, "file", openedFile.Scheme)
+	openedFilePath := openedFile.Path
+	if runtime.GOOS == "windows" {
+		openedFilePath = strings.TrimPrefix(openedFilePath, "/")
+	}
+	require.Equal(t, filepath.Join(root, "web-launch", "index.html"), filepath.FromSlash(openedFilePath))
+	bootstrap, err := os.ReadFile(filepath.Join(root, "web-launch", "index.html"))
+	require.NoError(t, err)
+	match := regexp.MustCompile(`location.replace\(("[^"]+")\)`).FindSubmatch(bootstrap)
+	require.Len(t, match, 2)
+	var newLaunch string
+	require.NoError(t, json.Unmarshal(match[1], &newLaunch))
+	newURL, err := url.Parse(newLaunch)
+	require.NoError(t, err)
+	newSession, err := url.ParseQuery(newURL.Fragment)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldSession.Get("web_session"))
+	require.NotEmpty(t, newSession.Get("web_session"))
+	require.NotEqual(t, oldSession.Get("web_session"), newSession.Get("web_session"))
+	newOrigin := newURL.Scheme + "://" + newURL.Host
+	for token, status := range map[string]int{oldSession.Get("web_session"): http.StatusUnauthorized, newSession.Get("web_session"): http.StatusOK} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, newOrigin+"/api/v1/processing/local/status", nil)
+		require.NoError(t, err)
+		request.Header.Set(api.WebSessionHeader, token)
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		_ = response.Body.Close()
+		require.Equal(t, status, response.StatusCode)
+	}
 
 	opened := false
 	open := func(_ context.Context, _ string) error {
