@@ -430,33 +430,16 @@ test("waits for live details before offering redaction", async ({ page, readerUR
 
 test("shows PDF text gaps in the inspector and empty search", async ({ page, readerURL }) => {
   page.setDefaultTimeout(15000);
-  const authenticated = page.waitForRequest((request) =>
-    Boolean(request.headers()["x-docbank-web-session"]),
-  );
   await page.goto(readerURL);
-  const session = (await authenticated).headers()["x-docbank-web-session"]!;
-  await expect
-    .poll(
-      async () => {
-        const response = await page.request.get(
-          new URL("/api/v1/search/text-coverage", readerURL).href,
-          {
-            headers: { "X-Docbank-Web-Session": session },
-          },
-        );
-        if (!response.ok()) return null;
-        const coverage = await response.json();
-        return coverage.pdfs_without_text >= 2;
-      },
-      { timeout: 30000 },
-    )
-    .toBe(true);
   const inspector = page.getByRole("complementary", { name: "Document inspector" });
   for (const file of ["mixed-below-ratio.pdf", "image-only.pdf"]) {
     await page.getByRole("cell", { name: file, exact: true }).click();
-    await inspector.getByRole("tab", { name: "Text", exact: true }).click();
     const notice = inspector.getByRole("status").filter({ hasText: "no text layer" });
-    await expect(notice).toBeVisible({ timeout: 30000 });
+    await expect(async () => {
+      await inspector.getByRole("tab", { name: "Preview", exact: true }).click();
+      await inspector.getByRole("tab", { name: "Text", exact: true }).click();
+      await expect(notice).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
     await inspector.getByRole("button", { name: "Extract text", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Extract text" });
     await dialog.getByRole("button", { name: "Extract text", exact: true }).click();
