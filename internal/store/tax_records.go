@@ -238,11 +238,11 @@ func (s *Store) UpdateTaxRecord(ctx context.Context, id string, revision int64, 
 		if err := checkTaxParties(ctx, tx, v.FilerPartyID, v.AuthorityPartyID, r.FilerPartyID, r.AuthorityPartyID); err != nil {
 			return err
 		}
-		events, err := getTaxRecordEvents(ctx, tx, id)
+		facts, err := getTaxBalanceFacts(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if _, err = taxrecord.CalculateBalance(v, taxEventFacts(events)); err != nil {
+		if _, err = taxrecord.CalculateBalance(v, facts); err != nil {
 			return err
 		}
 		r.RecordValues = v

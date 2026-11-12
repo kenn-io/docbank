@@ -86,6 +86,26 @@ func getTaxRecordEvents(ctx context.Context, q metadataQuerier, id string) ([]Ta
 	return events, rows.Err()
 }
 
+// getTaxBalanceFacts reads only the event fields needed to validate a balance.
+func getTaxBalanceFacts(ctx context.Context, q metadataQuerier, id string) ([]taxrecord.EventFact, error) {
+	rows, err := q.QueryContext(ctx, `SELECT kind,amount_minor,currency,voided_at FROM tax_events WHERE record_id=$1 ORDER BY record_revision`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var facts []taxrecord.EventFact
+	for rows.Next() {
+		var fact taxrecord.EventFact
+		var voidedAt *string
+		if err := rows.Scan(&fact.Kind, &fact.AmountMinor, &fact.Currency, &voidedAt); err != nil {
+			return nil, err
+		}
+		fact.Voided = voidedAt != nil
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
+}
+
 // GetTaxRecordDetail reads the parent and children from one snapshot.
 func (s *Store) GetTaxRecordDetail(ctx context.Context, id string) (TaxRecordDetail, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
@@ -163,11 +183,11 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 			return err
 		}
 		if v.Kind == "payment" || v.Kind == "refund" {
-			events, err := getTaxRecordEvents(ctx, tx, id)
+			facts, err := getTaxBalanceFacts(ctx, tx, id)
 			if err != nil {
 				return err
 			}
-			if _, err = taxrecord.CalculateBalance(r.RecordValues, taxEventFacts(events)); err != nil {
+			if _, err = taxrecord.CalculateBalance(r.RecordValues, facts); err != nil {
 				return err
 			}
 		}

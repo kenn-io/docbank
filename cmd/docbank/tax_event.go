@@ -99,7 +99,7 @@ func newTaxRecordAdvanceCommand() *cobra.Command {
 func newTaxEventCommand() *cobra.Command {
 	group := &cobra.Command{Use: "event", Short: "Manage tax record events", Long: "Append notes, payments or refunds, or void events. Writes use a revision fence and are not retried.", Args: taxGroupArgs, Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var f eventFlags
-	add := &cobra.Command{Use: "add <record-id>", Short: "Append a tax event", Example: "docbank tax event add 11111111-1111-4111-8111-111111111111 --kind note --occurred-on 2026-01-01", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	add := &cobra.Command{Use: "add <record-id>", Short: "Append a tax event", Example: "docbank tax event add 11111111-1111-4111-8111-111111111111 --kind note --occurred-on 2026-01-01\ndocbank tax event add 11111111-1111-4111-8111-111111111111 --kind payment --occurred-on 2026-01-01 --amount 100.00 --currency USD", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, rev, err := eventConnection(cmd, args[0], f.revision)
 		if err != nil {
 			return err
