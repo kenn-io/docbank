@@ -37,7 +37,6 @@ type photoCheckpointHeader struct {
 	Revision      uuid.UUID `json:"revision,omitzero"`
 }
 type photoImportCheckpoint struct {
-	ProtocolVersion int       `json:"protocolVersion,omitzero"`
 	SourceID        uuid.UUID `json:"sourceID"`
 	Revision        uuid.UUID `json:"revision"`
 	Destination     string    `json:"destination"`
@@ -145,7 +144,7 @@ func (s *photoCheckpointStore) read(profile string, full bool) (*photoCheckpoint
 	if err := json.Unmarshal(data, &checkpoint, json.RejectUnknownMembers(true)); err != nil {
 		return nil, nil, formatErr
 	}
-	if checkpoint.SourceID != header.SourceID || checkpoint.Revision != header.Revision || (checkpoint.ProtocolVersion != 0 && checkpoint.ProtocolVersion != 3) || checkpoint.ManifestVersion != 2 || !isCanonicalHash(checkpoint.ManifestHash) || (checkpoint.PickerKind != "files" && checkpoint.PickerKind != "folder") || !strings.HasPrefix(checkpoint.Destination, "/") {
+	if checkpoint.SourceID != header.SourceID || checkpoint.Revision != header.Revision || checkpoint.ManifestVersion != 2 || !isCanonicalHash(checkpoint.ManifestHash) || (checkpoint.PickerKind != "files" && checkpoint.PickerKind != "folder") || !strings.HasPrefix(checkpoint.Destination, "/") {
 		return nil, nil, formatErr
 	}
 	return &header, &checkpoint, nil
@@ -287,7 +286,7 @@ func registerPhotoImportCheckpoint(mux *http.ServeMux, api huma.API, d Deps) {
 				return
 			}
 			if next := change.Next; next != nil {
-				if next.SourceID == uuid.Nil() || next.Revision == uuid.Nil() || (next.ProtocolVersion != 0 && next.ProtocolVersion != 3) || next.ManifestVersion != 2 || !isCanonicalHash(next.ManifestHash) || (next.PickerKind != "files" && next.PickerKind != "folder") || !strings.HasPrefix(next.Destination, "/") {
+				if next.SourceID == uuid.Nil() || next.Revision == uuid.Nil() || next.ManifestVersion != 2 || !isCanonicalHash(next.ManifestHash) || (next.PickerKind != "files" && next.PickerKind != "folder") || !strings.HasPrefix(next.Destination, "/") {
 					writeError(w, NewError(400, "bad_request", "invalid import checkpoint"))
 					return
 				}
