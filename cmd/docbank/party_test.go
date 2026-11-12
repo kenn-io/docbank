@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 )
 
 func TestPartyCommandsExposeJSONAndFields(t *testing.T) {
@@ -27,4 +29,48 @@ func TestPartyExplicitRevisionMustBePositive(t *testing.T) {
 		cmd.SetArgs(args)
 		require.ErrorContains(t, cmd.Execute(), "revision must be positive")
 	}
+}
+
+func TestPartyCLIShowsPopulatedAndRetiredParties(t *testing.T) {
+	setupVaultHome(t)
+	out, err := runCLI(t, "people", "create", "Synthetic Person")
+	require.NoError(t, err, out)
+	var person api.Person
+	require.NoError(t, json.Unmarshal([]byte(out), &person))
+
+	out, err = runCLI(t, "party", "create", "Synthetic Holdings", "--kind", "organization", "--legal-name", "Synthetic Holdings Limited", "--country", "CA", "--person", person.PersonID, "--own", "--json")
+	require.NoError(t, err, out)
+	var party api.Party
+	require.NoError(t, json.Unmarshal([]byte(out), &party))
+	require.NotEmpty(t, party.PartyID)
+	out, err = runCLI(t, "party", "create", "Synthetic Counterparty", "--json")
+	require.NoError(t, err, out)
+
+	out, err = runCLI(t, "party", "show", party.PartyID)
+	require.NoError(t, err, out)
+	for _, field := range []string{party.PartyID, "organization", "Synthetic Holdings", "legal name: Synthetic Holdings Limited", "country: CA", "own: true", "person: " + person.PersonID, "retired: ", "revision 1", "created: " + party.CreatedAt, "updated: " + party.UpdatedAt} {
+		assert.Contains(t, out, field)
+	}
+
+	out, err = runCLI(t, "party", "retire", party.PartyID, "--revision", "1", "--json")
+	require.NoError(t, err, out)
+	var retired api.Party
+	require.NoError(t, json.Unmarshal([]byte(out), &retired))
+	require.NotNil(t, retired.RetiredAt)
+	out, err = runCLI(t, "party", "show", party.PartyID)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "retired: "+*retired.RetiredAt)
+	assert.Contains(t, out, "revision 2")
+	assert.Contains(t, out, "person: "+person.PersonID)
+	out, err = runCLI(t, "party", "list")
+	require.NoError(t, err, out)
+	assert.NotContains(t, out, party.PartyID)
+	assert.Contains(t, out, "Synthetic Counterparty")
+	assert.Contains(t, out, "own: false")
+	out, err = runCLI(t, "party", "list", "--include-retired")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, party.PartyID)
+	assert.Contains(t, out, "retired: "+*retired.RetiredAt)
+	assert.Contains(t, out, "own: true")
+	assert.Contains(t, out, "Synthetic Counterparty")
 }
