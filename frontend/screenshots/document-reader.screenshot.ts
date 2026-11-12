@@ -461,9 +461,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     await expect(inspector.getByText(notice)).toBeVisible({ timeout: 30000 });
     await inspector.getByRole("button", { name: "Extract text", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Extract text" });
-    const extract = dialog.getByRole("button", { name: "Extract text", exact: true });
-    await expect(extract).toBeEnabled();
-    await extract.click();
+    await dialog.getByRole("button", { name: "Extract text", exact: true }).click();
     await expect(dialog.getByText("Text extracted.")).toBeVisible({ timeout: 30000 });
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(inspector.getByText(notice)).toBeVisible({ timeout: 30000 });

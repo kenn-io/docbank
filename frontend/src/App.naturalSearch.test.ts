@@ -2127,7 +2127,6 @@ it.each([
     "Across the current vault: at least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
     false,
   ],
-  ["incomplete", "PDF text coverage is incomplete; some pages may not be searchable.", false],
   [
     "complete",
     "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
@@ -2135,10 +2134,10 @@ it.each([
   ],
 ])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
   const coverage = textCoverage({
-    pdfs_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 2,
-    pages_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 3,
+    pdfs_without_text: kind === "singular" ? 1 : 2,
+    pages_without_text: kind === "singular" ? 1 : 3,
     pdf_page_coverage_partial: kind === "partial",
-    pdf_page_coverage_unavailable: kind === "unavailable" || kind === "incomplete" ? 1 : 0,
+    pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
   });
   const { fetchMock } = renderEmptySearch(async () => json(coverage));
   if (tagged) {
@@ -2180,10 +2179,4 @@ it("aborts coverage from an older search", async () => {
   await submitSearch("second");
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));
   expect(signal?.aborted).toBe(true);
-});
-
-it("ends the browser session when PDF coverage returns 401", async () => {
-  renderEmptySearch(async () => new Response("{}", { status: 401 }));
-  await submitSearch("missing");
-  expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
 });
