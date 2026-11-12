@@ -123,12 +123,7 @@ export interface WorkspaceQueryResponse extends PhotoSearchStatus {
   next_cursor?: string;
 }
 
-// The existing sidebar exhaustively names its supported dimensions. The UI
-// follow-up will widen SnapshotPage to include the new People presentation.
-type SidebarFacet = WorkspaceQueryResponse["facets"][number] & {
-  dimension: Exclude<WorkspaceQueryResponse["facets"][number]["dimension"], "person_role">;
-};
-export type SnapshotPage = Omit<WorkspaceQueryResponse, "facets"> & { facets: SidebarFacet[] };
+export type SnapshotPage = WorkspaceQueryResponse;
 export type SnapshotMember = Pick<
   SnapshotRow,
   "flag" | "asset_id" | "node_id" | "content_version_id" | "blob_hash" | "size" | "revision"
@@ -720,7 +715,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     total,
     total_bytes: totalBytes,
     rows,
-    facets: facets as SidebarFacet[],
+    facets,
     snapshot: true,
     snapshot_id: snapshotID,
     created_at: createdAt,

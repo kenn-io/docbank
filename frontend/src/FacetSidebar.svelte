@@ -2,6 +2,7 @@
   import { canonicalQuery, parseQuery, type Query, type QueryFilters } from "./query.js";
   import type { SnapshotPage } from "./snapshots.js";
   import { facetFilterFields } from "./facetFilters.js";
+  import { roleListLabel } from "./personRoles.js";
 
   type Facet = SnapshotPage["facets"][number];
   type FacetValue = Facet["values"][number];
@@ -43,6 +44,7 @@
     size: "Size",
     text_coverage: "Text coverage",
     duplicates: "Duplicates",
+    person_role: "People",
   };
   // media_family, size, text_coverage, and duplicates have zero missing and other counts by construction because their fixed value lists cover every row in internal/store/query_snapshot_facets.go.
   const summary: Partial<
@@ -83,6 +85,10 @@
     modified: {
       missing: "with no modified date",
       other: (n) => `${n} in unlisted ${n === 1 ? "month" : "months"}`,
+    },
+    person_role: {
+      missing: "with no people",
+      other: (n) => `${n} ${n === 1 ? "appearance" : "appearances"} of unlisted people`,
     },
   };
   const arrayFields = {
@@ -132,6 +138,7 @@
   const [hasDuplicates] = facetFilterFields.duplicates;
   const [captureAfter, captureBefore] = facetFilterFields.year;
   const [ratingMin, ratingMax] = facetFilterFields.rating;
+  const [people] = facetFilterFields.person_role;
   const sizeRanges: Record<string, { min?: number; max?: number; label: string }> = {
     lt_1_mib: { max: (1 << 20) - 1, label: "Less than 1 MiB" },
     "1_mib_to_10_mib": { min: 1 << 20, max: (10 << 20) - 1, label: "1 MiB to 10 MiB" },
@@ -142,6 +149,17 @@
 
   function changed(filters: QueryFilters): Query {
     return parseQuery(canonicalQuery({ ...query, filters }));
+  }
+
+  // A People value adds one root entry with the roles it shows, so the result
+  // keeps only documents where that person held one of them. Deselecting drops
+  // only that person's root entries; other entries keep the roles they name.
+  function personQuery(value: FacetValue): Query {
+    const current = query.filters[people] ?? [];
+    const next = current.some((entry) => entry.person_id === value.key)
+      ? current.filter((entry) => entry.person_id !== value.key)
+      : [...current, { person_id: value.key, roles: value.roles ?? [] }];
+    return changed({ ...query.filters, [people]: next.length ? next : undefined });
   }
 
   function arrayQuery(dimension: keyof typeof arrayFields, key: string): Query {
@@ -188,6 +206,9 @@
     }
     if (dimension === "duplicates")
       return value.key === "duplicate" && query.filters[hasDuplicates] === true;
+    // The root entries decide, so the button always shows what a click undoes.
+    if (dimension === "person_role")
+      return Boolean(query.filters[people]?.some((entry) => entry.person_id === value.key));
     return value.selected;
   }
 
@@ -206,6 +227,7 @@
     if (dimension === "size" && sizeRanges[value.key]) return sizeRanges[value.key].label;
     if (dimension === "collections")
       return collectionNames[value.key] ?? `Import ${value.key.slice(0, 8)}`;
+    if (dimension === "person_role") return value.label || `Person ${value.key.slice(0, 8)}`;
     if (["camera", "lens", "location", "set"].includes(dimension)) return value.label;
     return value.label.replaceAll("_", " ");
   }
@@ -252,6 +274,10 @@
       onchange(arrayQuery(dimension as keyof typeof arrayFields, value.key));
       return;
     }
+    if (dimension === "person_role") {
+      onchange(personQuery(value));
+      return;
+    }
     if (dimension === "modified") {
       const range = monthRange(value.key);
       if (!range) return;
@@ -289,9 +315,10 @@
   }
 
   function actionable(dimension: Facet["dimension"], value: FacetValue): boolean {
-    if (dimension in arrayFields) {
+    if (dimension in arrayFields || dimension === "person_role") {
       try {
-        arrayQuery(dimension as keyof typeof arrayFields, value.key);
+        if (dimension === "person_role") personQuery(value);
+        else arrayQuery(dimension as keyof typeof arrayFields, value.key);
         return true;
       } catch {
         return false;
@@ -323,7 +350,9 @@
   // unless a filter on it is active. Documents also hide a group that can't
   // narrow anything: no values, or one value that covers every result.
   function empty(facet: Facet): boolean {
-    if (!facet.available) return unit !== "photos";
+    // An unavailable People group stays while it filters, so its people are explained.
+    if (!facet.available)
+      return unit !== "photos" && !(facet.dimension === "person_role" && query.filters[people]);
     if (facet.dimension === "tags" && query.filters.no_tags) return false;
     const values = shown(facet);
     if (values.some((value) => selected(facet.dimension, value))) return false;
@@ -360,6 +389,7 @@
             <div class="values">
               {#each shown(facet) as value (value.key)}
                 {@const valueLabel = label(facet.dimension, value)}
+                {@const roles = value.roles?.length ? roleListLabel(value.roles) : ""}
                 {#if actionable(facet.dimension, value)}
                   <button
                     type="button"
@@ -368,10 +398,13 @@
                     {disabled}
                     aria-label={facet.selectedOnly
                       ? `${valueLabel}, selected`
-                      : `${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
+                      : `${valueLabel}${roles ? `, ${roles}` : ""}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
                     onclick={() => apply(facet.dimension, value)}
                   >
-                    <span>{valueLabel}</span>{#if !facet.selectedOnly}<strong>{value.count}</strong
+                    {#if roles}<span class="value-text"
+                        ><span>{valueLabel}</span><span class="roles">{roles}</span></span
+                      >{:else}<span>{valueLabel}</span>{/if}{#if !facet.selectedOnly}<strong
+                        >{value.count}</strong
                       >{/if}
                   </button>
                 {:else}
@@ -464,6 +497,18 @@
   }
   strong {
     font-variant-numeric: tabular-nums;
+  }
+  .value-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .value-text > span {
+    overflow-wrap: anywhere;
+  }
+  .roles {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
   .summary {
     display: flex;

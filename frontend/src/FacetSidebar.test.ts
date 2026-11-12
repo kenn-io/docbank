@@ -545,3 +545,97 @@ it("omits the whole Filters panel when no group can narrow one result", () => {
   expect(screen.queryByRole("complementary", { name: "Snapshot facets" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Filters" })).toBeNull();
 });
+
+const jory = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const mara = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const typed = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const peopleFacet = (values: SnapshotPage["facets"][number]["values"]) =>
+  facet("person_role", { total: 3, missing: 0, other: 0, values });
+const peopleValues = [
+  { key: jory, label: "Jory Pellham", count: 2, selected: false, roles: ["author", "sender"] },
+  { key: mara, label: "Mara Okonkwo-Fell", count: 1, selected: false, roles: ["copied"] },
+] satisfies SnapshotPage["facets"][number]["values"];
+
+it("narrows by a person with the roles the People group shows and keeps typed entries", async () => {
+  const onchange = vi.fn();
+  const query: Query = {
+    ...originalQuery,
+    filters: {
+      ...originalQuery.filters,
+      person_ids: [mara],
+      people: [{ person_id: typed, roles: ["custodian"] }],
+    },
+  };
+  const view = render(FacetSidebar, {
+    facets: [peopleFacet(peopleValues)],
+    query,
+    onchange,
+  });
+  const group = screen.getByRole("group", { name: "People facet" });
+  expect(within(group).getByText("Author, Sender")).toBeTruthy();
+  expect(within(group).getByText("Cc")).toBeTruthy();
+  await fireEvent.click(
+    within(group).getByRole("button", { name: "Jory Pellham, Author, Sender, 2 documents" }),
+  );
+  const added = onchange.mock.lastCall?.[0] as Query;
+  expect(added.text).toBe(originalQuery.text);
+  expect(added.filters.person_ids).toEqual([mara]);
+  expect(added.filters.people).toEqual([
+    { person_id: typed, roles: ["custodian"] },
+    { person_id: jory, roles: ["author", "sender"] },
+  ]);
+
+  await view.rerender({ query: added });
+  const joryButton = screen.getByRole("button", {
+    name: "Jory Pellham, Author, Sender, 2 documents, selected",
+  });
+  expect(joryButton.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.click(screen.getByRole("button", { name: /^Mara Okonkwo-Fell, Cc, 1/ }));
+  expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
+    { person_id: typed, roles: ["custodian"] },
+    { person_id: jory, roles: ["author", "sender"] },
+    { person_id: mara, roles: ["copied"] },
+  ]);
+
+  await fireEvent.click(joryButton);
+  const removed = onchange.mock.lastCall?.[0] as Query;
+  expect(removed.filters.people).toEqual([{ person_id: typed, roles: ["custodian"] }]);
+  expect(removed.filters.person_ids).toEqual([mara]);
+  expect(removed.filters.paths).toEqual(originalQuery.filters.paths);
+});
+
+it("keeps a selected person with no documents left and explains an unavailable People group", async () => {
+  const selectedQuery: Query = {
+    ...originalQuery,
+    filters: { ...originalQuery.filters, people: [{ person_id: jory, roles: ["author"] }] },
+  };
+  const view = render(FacetSidebar, {
+    facets: [
+      peopleFacet([
+        { ...peopleValues[0]!, count: 0, selected: true, roles: ["author"] },
+        peopleValues[1],
+      ]),
+    ],
+    query: selectedQuery,
+    onchange: vi.fn(),
+  });
+  expect(
+    screen.getByRole("button", { name: "Jory Pellham, Author, 0 documents, selected" }),
+  ).toBeTruthy();
+
+  const unavailable = facet("person_role", {
+    available: false,
+    reason: "member_budget_exceeded",
+    total: undefined,
+    missing: undefined,
+    other: undefined,
+  });
+  await view.rerender({ facets: [unavailable], query: selectedQuery });
+  expect(
+    within(screen.getByRole("group", { name: "People facet" })).getByText(
+      "Unavailable · member budget exceeded",
+    ),
+  ).toBeTruthy();
+  await view.rerender({ facets: [unavailable], query: originalQuery });
+  expect(screen.queryByRole("group", { name: "People facet" })).toBeNull();
+});

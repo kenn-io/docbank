@@ -126,6 +126,7 @@ it("runs the complete locally valid draft with explicit snapshot options", async
         "size",
         "text_coverage",
         "duplicates",
+        "person_role",
       ],
     },
   );
