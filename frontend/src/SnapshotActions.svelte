@@ -222,7 +222,7 @@
         class="tag-change__picker"
         {session}
         value={tag?.id ?? ""}
-        tags={catalog}
+        tags={tag ? [tag, ...catalog.filter((item) => item.id !== tag?.id)] : catalog}
         title="Tag"
         placeholder="Tag name"
         disabled={locked}
@@ -268,7 +268,7 @@
     {#if receipt && recovering}
       <p class="status done" role="status">
         <CheckIcon size={14} aria-hidden="true" />
-        {tagChangeDone(
+        Earlier retry: {tagChangeDone(
           receipt.assign,
           tag?.name ?? "",
           receipt.nodes.filter((node) => node.changed).length,

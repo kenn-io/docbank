@@ -360,6 +360,10 @@ it.each([true, false])(
         const request = JSON.parse(String(init?.body)) as BatchTagRequest;
         writes.push(request);
         if (writes.length === 1) throw new TypeError("Lost response");
+        if (writes.length === 3) {
+          if (assign) throw new TypeError("Lost retry response");
+          return Response.json({ detail: "Retry refused" }, { status: 400 });
+        }
         return Response.json(await receiptFor(request));
       }
       if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
@@ -392,10 +396,19 @@ it.each([true, false])(
       }),
     );
     await screen.findByText(
-      assign ? "Added “Review” to 1 document." : "Removed “Review” from 1 document.",
+      assign
+        ? "Earlier retry: Added “Review” to 1 document."
+        : "Earlier retry: Removed “Review” from 1 document.",
     );
     await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
     await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
+    expect(
+      screen.getByText(
+        assign
+          ? "Earlier retry: Added “Review” to 1 document."
+          : "Earlier retry: Removed “Review” from 1 document.",
+      ),
+    ).toBeTruthy();
     expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
     await fireEvent.click(screen.getByText("Review documents"));
@@ -403,6 +416,19 @@ it.each([true, false])(
       assign ? "Doesn't have “Review”" : "Has “Review”",
     );
     expect(screen.getByText("File 3").parentElement?.textContent).toContain("Couldn't check");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
+      }),
+    );
+    await screen.findByText(assign ? /couldn't confirm the tag change/ : "Retry refused");
+    expect(
+      screen.getByText(
+        assign
+          ? "Earlier retry: Added “Review” to 1 document."
+          : "Earlier retry: Removed “Review” from 1 document.",
+      ),
+    ).toBeTruthy();
   },
 );
 
@@ -448,6 +474,32 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
   expect(writes).toBe(afterCheck ? 2 : 1);
 });
 
+it("shows the current tag name throughout recovery after a rename", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/batch/tags") throw new TypeError("Lost response");
+    if (url.endsWith(`/tags/${catalog[0].id}`))
+      return Response.json({ ...catalog[0], name: "Reviewed" });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: catalog[0].id,
+        tag_revision: 3,
+        nodes: nodes.map((node: object) => ({ ...node, assigned: false })),
+      });
+    }
+    return Response.json({ id: 7, name: "File 7", revision: 5 });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]] }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await screen.findByRole("button", { name: "Add “Reviewed” to 1 document" });
+  expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).value).toBe(
+    "Reviewed",
+  );
+});
+
 it("keeps the confirmed retry visible when a later check fails", async () => {
   let writes = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -474,10 +526,10 @@ it("keeps the confirmed retry visible when a later check fails", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
-  await screen.findByText("Added “Review” to 1 document.");
+  await screen.findByText("Earlier retry: Added “Review” to 1 document.");
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   await screen.findByText("Check failed");
-  expect(screen.getByText("Added “Review” to 1 document.")).toBeTruthy();
+  expect(screen.getByText("Earlier retry: Added “Review” to 1 document.")).toBeTruthy();
 });
 
 it("keeps recovery controls usable while the surrounding view loads", async () => {

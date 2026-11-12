@@ -16,6 +16,35 @@ const request: BatchTagRequest & { nodes: SelectionTarget[] } = {
 };
 afterEach(() => vi.restoreAllMocks());
 
+it("checks readable documents in one preview", async () => {
+  const previews: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith(`/tags/${request.tag_id}`))
+      return Response.json({ id: request.tag_id, name: "Review" });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      previews.push(nodes);
+      return Response.json({
+        tag_id: request.tag_id,
+        tag_revision: 2,
+        nodes: nodes.map((node: object) => ({ ...node, assigned: true })),
+      });
+    }
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    return Response.json({ id, name: `File ${id}`, revision: id + 1 });
+  });
+  const { rows } = await checkTagResults("session", request, () => {});
+  expect(rows.map((row) => row.status)).toEqual(["matched", "matched", "matched"]);
+  expect(previews).toEqual([
+    [
+      { node_id: 1, revision: 2 },
+      { node_id: 2, revision: 3 },
+      { node_id: 3, revision: 4 },
+    ],
+  ]);
+});
+
 it("keeps matched and unavailable documents", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
