@@ -149,6 +149,43 @@ func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
 	}
 }
 
+func TestUpgradeReleasedV0170KeepsLocalState(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0170SQL, 48)
+			node := seedWatchRebind(t, legacy, "note.txt", "note.txt")
+			_, err := db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('notes','note.txt','2026-10-05T12:00:00Z')`)
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO vault_change_head(singleton,epoch) VALUES(1,'10000000-0000-4000-8000-000000000001')`)
+			require.NoError(t, err)
+			// The fixture helper's temporary feed table shadows the released one.
+			_, err = db.ExecContext(ctx, `INSERT INTO main.vault_changes(seq,kind,node_id,node_revision) VALUES(1,'updated',?,1)`, node.ID)
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO vector_membership_epochs(vector_space_id,revision) VALUES('space-a',7)`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			s, err := Open(ctx, path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			changes, head, err := s.VaultChanges(ctx, changeCursor("10000000-0000-4000-8000-000000000001", 0), 10)
+			require.NoError(t, err)
+			require.Equal(t, changeCursor("10000000-0000-4000-8000-000000000001", 1), head)
+			require.Equal(t, []VaultChange{{Cursor: head, Kind: "updated", NodeID: node.ID, Revision: 1}}, changes)
+			var absentSince string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT absent_since FROM watch_source_absences WHERE watch_name='notes' AND source_ref='note.txt'`).Scan(&absentSince))
+			require.Equal(t, "2026-10-05T12:00:00Z", absentSince)
+			var revision int
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT revision FROM vector_membership_epochs WHERE vector_space_id='space-a'`).Scan(&revision))
+			require.Equal(t, 7, revision)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+
 // seedV0150PendingWork records a photo, consent with a retrying rendition
 // job, a queued photo import, its cleanup record, and every pending deletion.
 func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID int64, jobID, operationID string) {
