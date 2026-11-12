@@ -23,6 +23,7 @@ func TestDocuSealUnconfigured(t *testing.T) {
 }
 
 func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
+	templateBody := `{"data":[{"id":1,"name":"Lease","submitters":[{"name":"Tenant"}]}],"pagination":{"next":1}}`
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Auth-Token") != "synthetic-key" {
 			t.Error("missing credential")
@@ -31,7 +32,7 @@ func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 		case "/api/user":
 			_, _ = w.Write([]byte(`{"id":7,"email":"private@example.test"}`))
 		case "/api/templates":
-			_, _ = w.Write([]byte(`{"data":[{"id":1,"name":"Lease","submitters":[{"name":"Tenant"}]}],"pagination":{"next":1}}`))
+			_, _ = w.Write([]byte(templateBody))
 		default:
 			http.NotFound(w, r)
 		}
@@ -46,6 +47,12 @@ func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 		require.Equal(t, 200, resp.StatusCode, body)
 		require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 		require.NotContains(t, body, "synthetic-key")
+	}
+	for _, malformed := range []string{`{"data":[{"id":1,"submitters":[]}]}`, `{"data":[{"id":1,"name":null,"submitters":[]}]}`, `{"data":[{"name":"Lease","submitters":[]}]}`, `{"data":[{"id":null,"name":"Lease","submitters":[]}]}`, `{"data":[{"id":1,"name":"Lease","submitters":[{}]}]}`, `{"data":[{"id":1,"name":"Lease","submitters":[{"name":null}]}]}`, `{"data":[{"id":1,"name":"Lease","submitters":[null]}]}`} {
+		templateBody = malformed
+		resp, body := do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/templates", nil, nil)
+		require.Equal(t, 502, resp.StatusCode, body)
+		require.Contains(t, body, "docuseal_invalid_response")
 	}
 }
 

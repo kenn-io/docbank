@@ -3,14 +3,14 @@ package config
 import (
 	"context"
 	"errors"
-	"io"
 	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 	"unicode"
+
+	"go.kenn.io/kit/secretref"
 )
 
 // DocuSealConfig defers optional connection validation until use.
@@ -24,15 +24,20 @@ type DocuSealConfig struct {
 	APIKeyFile       string   `toml:"api_key_file"`
 	TrustBoundary    string   `toml:"trust_boundary"`
 	AllowedCIDRs     []string `toml:"allowed_cidrs"`
-	decodeInvalid    bool
+	decodeInvalid    string
 	enabledInvalid   bool
 	explicitDisabled bool
 }
 
 func (d *DocuSealConfig) UnmarshalTOML(value any) error {
+	invalid := func(category string) {
+		if d.decodeInvalid == "" || category < d.decodeInvalid {
+			d.decodeInvalid = category
+		}
+	}
 	table, ok := value.(map[string]any)
 	if !ok {
-		d.decodeInvalid = true
+		invalid("configuration")
 		return nil
 	}
 	for k, v := range table {
@@ -42,7 +47,9 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 			d.Enabled, ok = v.(bool)
 			d.enabledInvalid = !ok
 			d.explicitDisabled = ok && !d.Enabled
-			d.decodeInvalid = d.decodeInvalid || !ok
+			if !ok {
+				invalid("enabled")
+			}
 		case "endpoint", "api_path", "api_key_env", "api_key_file", "trust_boundary":
 			var target *string
 			switch k {
@@ -58,26 +65,35 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 				target = &d.TrustBoundary
 			}
 			value, valid := v.(string)
-			d.decodeInvalid = d.decodeInvalid || !valid
+			if !valid {
+				category := k
+				switch k {
+				case "api_path":
+					category = "API path"
+				case "api_key_env", "api_key_file":
+					category = "credential"
+				}
+				invalid(category)
+			}
 			*target = value
 		case "allowed_cidrs":
 			values, ok := v.([]any)
 			if !ok {
-				d.decodeInvalid = true
+				invalid("allowed CIDR")
 				continue
 			}
 			var out []string
 			for _, item := range values {
 				s, ok := item.(string)
 				if !ok {
-					d.decodeInvalid = true
+					invalid("allowed CIDR")
 					continue
 				}
 				out = append(out, s)
 			}
 			d.AllowedCIDRs = out
 		default:
-			d.decodeInvalid = true
+			invalid("unknown setting")
 		}
 	}
 	return nil
@@ -85,7 +101,7 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 
 // DocuSealDisabled reports an absent or explicitly disabled integration.
 func (d DocuSealConfig) DocuSealDisabled() bool {
-	return !d.Enabled && !d.enabledInvalid && (d.explicitDisabled || !d.decodeInvalid)
+	return !d.Enabled && !d.enabledInvalid && (d.explicitDisabled || d.decodeInvalid == "")
 }
 
 // DocuSealConnection holds per-operation secret material and must not be logged or serialized.
@@ -101,11 +117,12 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 	if ctx.Err() != nil {
 		return DocuSealConnection{}, ctx.Err()
 	}
-	if !d.Enabled || d.decodeInvalid {
+	if d.decodeInvalid != "" {
+		return fail(d.decodeInvalid)
+	}
+	if !d.Enabled {
 		return fail("configuration")
 	}
-	var prefixes []netip.Prefix
-	egress := ProviderEgressConfig{Endpoint: d.Endpoint, AllowedCIDRs: d.AllowedCIDRs, ProxyMode: "disabled", ConnectTimeout: Duration(30 * time.Second), KeepAlive: Duration(30 * time.Second), TLSHandshakeTimeout: Duration(10 * time.Second)}
 	u, err := validateProviderEndpoint(d.Endpoint, "docuseal")
 	if err != nil || u.Path != "" && u.Path != "/" || u.RawPath != "" {
 		return fail("endpoint")
@@ -113,7 +130,11 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 	if d.TrustBoundary != "operator_network" && d.TrustBoundary != "hosted_provider" || d.TrustBoundary == "hosted_provider" && u.Scheme != "https" {
 		return fail("trust_boundary")
 	}
-	if _, err := validateProviderEgressConfigWithPrefixes(egress, "docuseal", &prefixes); err != nil {
+	if len(d.AllowedCIDRs) == 0 {
+		return fail("allowed CIDR")
+	}
+	prefixes, err := parseAllowedCIDRs(d.AllowedCIDRs, "docuseal")
+	if err != nil {
 		return fail("allowed CIDR")
 	}
 	for _, prefix := range prefixes {
@@ -127,33 +148,21 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 	if (d.APIKeyEnv == "") == (d.APIKeyFile == "") {
 		return fail("credential")
 	}
-	var key string
-	if d.APIKeyEnv != "" {
-		key = os.Getenv(d.APIKeyEnv)
-	} else {
-		file := d.APIKeyFile
-		if !filepath.IsAbs(file) {
-			file = filepath.Join(root, file)
+	ref := secretref.Ref{Env: d.APIKeyEnv, File: d.APIKeyFile}
+	if ref.File != "" {
+		if !filepath.IsAbs(ref.File) {
+			ref.File = filepath.Join(root, ref.File)
 		}
-		f, e := openSecret(file)
-		if e != nil {
+		info, err := os.Stat(ref.File)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
 			return fail("credential")
 		}
-		info, e := f.Stat()
-		if e != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
-			_ = f.Close()
-			return fail("credential")
-		}
-		b, e := io.ReadAll(io.LimitReader(f, 4097))
-		_ = f.Close()
-		if e != nil || len(b) > 4096 {
-			return fail("credential")
-		}
-		key = string(b)
 	}
-	if len(key) > 4096 {
+	secret, err := ref.Resolve()
+	if err != nil || len(secret.Value) > 4096 {
 		return fail("credential")
 	}
+	key := secret.Value
 	key = strings.TrimSpace(key)
 	if !validSecret(key) {
 		return fail("credential")

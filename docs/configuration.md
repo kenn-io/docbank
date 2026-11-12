@@ -306,7 +306,7 @@ the vault unless absolute; it must be owner-only and at most 4,096 bytes.
 For `hosted_provider`, use HTTPS and explicit `allowed_cidrs`. Maintain those
 CIDRs as the hosted provider changes its addresses. Connections use
 only the configured origin and CIDRs, without proxies or redirects. See
-[DocuSeal connection](usage/contracts.md) for the commands. Invalid enabled settings report the setting category without exposing values.
+[DocuSeal connection](usage/contracts.md) for the commands. Invalid enabled settings report the setting category without exposing values. Keys for later signing features are unsupported until those features are available.
 Provider authentication, API path, response and connection failures use distinct
 safe error codes.
 

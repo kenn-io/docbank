@@ -22,10 +22,10 @@ func (c *Connection) DocuSealStatus(ctx context.Context) (docusealclient.Status,
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &result, 3<<20); err != nil {
+	if err := decodeBoundedResponse(response, &result, 3<<20); err != nil {
 		return docusealclient.Status{}, &responseDecodeError{err: err}
 	}
-	if !result.Configured || !result.Enabled || result.Endpoint == "" || result.Capability != "template_submission" {
+	if result.Endpoint == "" {
 		return docusealclient.Status{}, &responseDecodeError{err: errors.New("invalid DocuSeal status response")}
 	}
 	return result.Status, nil
@@ -46,7 +46,7 @@ func (c *Connection) DocuSealTemplates(ctx context.Context, after int64) (docuse
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &result, 3<<20); err != nil {
+	if err := decodeBoundedResponse(response, &result, 3<<20); err != nil {
 		return docusealclient.TemplatePage{}, &responseDecodeError{err: err}
 	}
 	if !docusealclient.ValidTemplatePage(result.TemplatePage) {

@@ -1306,10 +1306,6 @@ func validateRenditionOrigin(parsed *url.URL, boundary document.RenditionTrustBo
 }
 
 func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (*url.URL, error) {
-	return validateProviderEgressConfigWithPrefixes(runtime, prefix, nil)
-}
-
-func validateProviderEgressConfigWithPrefixes(runtime ProviderEgressConfig, prefix string, prefixes *[]netip.Prefix) (*url.URL, error) {
 	parsed, err := validateProviderEndpoint(runtime.Endpoint, prefix)
 	if err != nil {
 		return nil, err
@@ -1320,14 +1316,8 @@ func validateProviderEgressConfigWithPrefixes(runtime ProviderEgressConfig, pref
 	if runtime.ProxyMode != "disabled" || len(runtime.AllowedCIDRs) == 0 {
 		return nil, fmt.Errorf("%s runtime egress must be proxy-disabled with allowed CIDRs", prefix)
 	}
-	for _, value := range runtime.AllowedCIDRs {
-		network, err := netip.ParsePrefix(value)
-		if err != nil {
-			return nil, fmt.Errorf("%s runtime allowed CIDR %q is invalid", prefix, value)
-		}
-		if prefixes != nil {
-			*prefixes = append(*prefixes, network)
-		}
+	if _, err := parseAllowedCIDRs(runtime.AllowedCIDRs, prefix); err != nil {
+		return nil, err
 	}
 	for _, value := range runtime.SPKISHA256 {
 		if !lowercaseSHA256Pattern.MatchString(value) {
@@ -1340,6 +1330,18 @@ func validateProviderEgressConfigWithPrefixes(runtime ProviderEgressConfig, pref
 		return nil, fmt.Errorf("%s runtime transport time bounds are invalid", prefix)
 	}
 	return parsed, nil
+}
+
+func parseAllowedCIDRs(values []string, prefix string) ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, value := range values {
+		network, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("%s runtime allowed CIDR %q is invalid", prefix, value)
+		}
+		prefixes = append(prefixes, network)
+	}
+	return prefixes, nil
 }
 
 func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix string) error {

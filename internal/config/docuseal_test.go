@@ -146,3 +146,25 @@ func TestDocuSealResolveReportsSafeField(t *testing.T) {
 		})
 	}
 }
+
+func TestDocuSealMalformedFieldsReportSafeCategories(t *testing.T) {
+	for _, tc := range []struct {
+		key      string
+		value    any
+		category string
+	}{
+		{"enabled", "yes", "enabled"}, {"endpoint", 7, "endpoint"}, {"api_path", 7, "API path"}, {"api_key_env", 7, "credential"}, {"api_key_file", 7, "credential"}, {"trust_boundary", 7, "trust_boundary"}, {"allowed_cidrs", []any{7}, "allowed CIDR"}, {"synthetic-secret", true, "unknown setting"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			var cfg DocuSealConfig
+			if err := cfg.UnmarshalTOML(map[string]any{"enabled": true, tc.key: tc.value}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := cfg.Resolve(t.Context(), t.TempDir())
+			want := "invalid DocuSeal " + tc.category + " settings"
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %s", err, want)
+			}
+		})
+	}
+}

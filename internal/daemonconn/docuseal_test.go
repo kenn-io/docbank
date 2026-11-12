@@ -14,7 +14,7 @@ func TestDocuSealRejectsInvalidDaemonResponses(t *testing.T) {
 		status     bool
 	}{
 		{"missing status fields", `{}`, true},
-		{"oversized status", `{"configured":true,"enabled":true,"endpoint":"` + strings.Repeat("x", 3<<20) + `","capability":"template_submission"}`, true},
+		{"oversized status", `{"endpoint":"` + strings.Repeat("x", 3<<20) + `"}`, true},
 		{"invalid template", `{"templates":[{"id":0,"name":"Lease","roles":[]}],"next":0}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

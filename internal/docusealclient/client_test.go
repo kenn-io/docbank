@@ -59,7 +59,7 @@ func TestConnectionRejectsMalformedProviderShapes(t *testing.T) {
 			}
 		})
 	}
-	for _, body := range []string{`{}`, `{"data":null}`, `{"Data":[]}`, `{"data":[],"data":[]}`} {
+	for _, body := range []string{`{}`, `{"data":null}`, `{"Data":[]}`, `{"data":[],"data":[]}`, `{"data":[{"id":1,"submitters":[]}]}`, `{"data":[{"id":1,"name":null,"submitters":[]}]}`, `{"data":[{"name":"Lease","submitters":[]}]}`, `{"data":[{"id":null,"name":"Lease","submitters":[]}]}`, `{"data":[{"id":1,"name":"Lease","submitters":[{}]}]}`, `{"data":[{"id":1,"name":"Lease","submitters":[{"name":null}]}]}`, `{"data":[{"id":1,"name":"Lease","submitters":[null]}]}`} {
 		t.Run("templates/"+body, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
 			defer s.Close()
@@ -352,5 +352,15 @@ func TestConnectionRefusesRedirect(t *testing.T) {
 	_, err = c.Check(t.Context())
 	if err == nil || err.Error() != "docuseal_provider_error" || reached {
 		t.Fatalf("err=%v reached=%v", err, reached)
+	}
+}
+
+func TestTemplatesEmptyNameUsesPlaceholder(t *testing.T) {
+	c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"id":1,"name":"","submitters":[]}]}`))}, nil
+	})}}
+	page, err := c.Templates(t.Context(), 0)
+	if err != nil || len(page.Templates) != 1 || page.Templates[0].Name != "(unnamed)" {
+		t.Fatalf("page=%+v err=%v", page, err)
 	}
 }

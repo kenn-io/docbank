@@ -32,7 +32,7 @@ func (c *Connection) GetTextOutline(
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &transport, 256<<10); err != nil {
+	if err := decodeBoundedResponse(response, &transport, 256<<10); err != nil {
 		return document.TextOutlinePage{}, err
 	}
 	if err := validateTextOutlinePage(request, transport.TextOutlinePage); err != nil {
@@ -60,7 +60,7 @@ func (c *Connection) ReadTextSection(
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := decodeCitationResponse(response, &transport, 256<<10); err != nil {
+	if err := decodeBoundedResponse(response, &transport, 256<<10); err != nil {
 		return document.TextSectionPage{}, err
 	}
 	if err := validateTextSectionPage(request, transport.TextSectionPage); err != nil {

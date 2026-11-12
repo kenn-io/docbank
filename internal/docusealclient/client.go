@@ -24,10 +24,7 @@ const maxResponse = 2 << 20
 var errResponseTooLarge = errors.New("docuseal_response_too_large")
 
 type Status struct {
-	Configured bool   `json:"configured"`
-	Enabled    bool   `json:"enabled"`
-	Endpoint   string `json:"endpoint"`
-	Capability string `json:"capability"`
+	Endpoint string `json:"endpoint"`
 }
 type Template struct {
 	ID    int64    `json:"id"`
@@ -141,7 +138,7 @@ func (c *Client) Check(ctx context.Context) (Status, error) {
 			endpoint = "?"
 		}
 	}
-	return Status{Configured: true, Enabled: true, Endpoint: endpoint, Capability: "template_submission"}, nil
+	return Status{Endpoint: endpoint}, nil
 }
 func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, error) {
 	if cursor < 0 {
@@ -151,8 +148,8 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 	defer cancel()
 	var wire struct {
 		Data *[]struct {
-			ID         int64  `json:"id"`
-			Name       string `json:"name"`
+			ID         int64   `json:"id"`
+			Name       *string `json:"name"`
 			Submitters []struct {
 				Name string `json:"name"`
 			} `json:"submitters"`
@@ -194,13 +191,13 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
 		previous = t.ID
-		if t.Submitters == nil {
+		if t.Name == nil || t.Submitters == nil {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
-		if strings.Contains(t.Name, c.connection.APIKey) {
+		if strings.Contains(*t.Name, c.connection.APIKey) {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
-		name := displayText(t.Name)
+		name := displayText(*t.Name)
 		item := Template{ID: t.ID, Name: name, Roles: make([]string, 0, len(t.Submitters))}
 		for _, role := range t.Submitters {
 			if strings.Contains(role.Name, c.connection.APIKey) {
