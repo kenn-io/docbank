@@ -191,6 +191,7 @@
   function stateLabel(item: Item): string {
     if (item.importedEarlier && item.state === "added") return "Imported earlier";
     if (item.importedEarlier && item.state === "skipped") return "Already in vault at import";
+    if (item.importedEarlier && item.state === "ambiguous") return "In vault · Ambiguous";
     const single = (item.names ?? item.files).length === 1;
     if (item.state === "missing" && single) return "File missing";
     if (item.state === "changed" && single) return "File changed";

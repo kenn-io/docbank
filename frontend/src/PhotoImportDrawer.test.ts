@@ -111,6 +111,7 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("done.JPG");
+  expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
   expect(refresh).toHaveBeenCalledOnce();
   const replacement = {
     ...channel,
@@ -273,6 +274,7 @@ it("refreshes a group committed between inspection and resume", async () => {
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
   await screen.findByText("Multiple RAW files share this name.");
+  expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
