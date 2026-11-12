@@ -275,6 +275,8 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 				require.NotEqual(t, baseDigest, probe(statement), statement)
 			}
 			first := probe(`CREATE TABLE contract_a (id INTEGER)`)
+			sameName := probe(`CREATE TABLE contract_a (id INTEGER); CREATE TRIGGER contract_a AFTER INSERT ON contract_a BEGIN SELECT 1; END`)
+			require.NotEqual(t, first, sameName)
 			second := probe(`CREATE TABLE contract_b (id INTEGER)`)
 			combined := probe(`CREATE TABLE contract_a (id INTEGER); CREATE TABLE contract_b (id INTEGER)`)
 			records := []schemaContract{{Version: 49, Digest: first}, {Version: 49, Digest: second}}
