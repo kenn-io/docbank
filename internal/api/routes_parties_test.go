@@ -27,6 +27,8 @@ func TestPartyLifecycleHTTP(t *testing.T) {
 	path := "/api/v1/parties/" + party.PartyID
 	resp, body = do(t, ts, http.MethodPatch, path, nil, map[string]any{"legal_name": "Northwind Ltd"})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, path+"/retire", nil, nil)
+	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": "invalid"}, map[string]any{"legal_name": "Northwind Ltd"})
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"legal_name": "Future"})

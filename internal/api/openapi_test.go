@@ -668,6 +668,8 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
 		doc.Paths["/api/v1/tags/{tag_id}"].Delete,
+		doc.Paths["/api/v1/parties/{party_id}"].Patch,
+		doc.Paths["/api/v1/parties/{party_id}/retire"].Post,
 	} {
 		require.NotNil(t, operation)
 		required := map[string]bool{}
