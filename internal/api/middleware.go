@@ -45,8 +45,6 @@ func clearRequestReadDeadline(ctx context.Context) error {
 }
 
 type authenticationContextKey struct{}
-type browserLoginContextKey struct{}
-
 type remoteAddressContextKey struct{}
 type workspaceSnapshotOwnerContextKey struct{}
 
@@ -294,7 +292,7 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			return
 		}
 		webToken := r.Header.Get(WebSessionHeader)
-		if owner, sessionCtx, login, ok := sessions.authenticate(webToken); sessions != nil && ok {
+		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
 			if !sessions.authorizeBrowser(r, webToken) {
 				writeError(w, NewError(http.StatusForbidden, "web_browser", "browser cookie, Host or Origin rejected"))
 				return
@@ -309,7 +307,6 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			defer stop()
 			defer cancel()
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
-			ctx = context.WithValue(ctx, browserLoginContextKey{}, login)
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return

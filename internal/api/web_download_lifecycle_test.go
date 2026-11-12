@@ -16,7 +16,7 @@ func TestWebDownloadSessionRevocationFencesTicketIssuance(t *testing.T) {
 	sessions := newWebSessionRegistry(downloads.revokeOwner)
 	token, _, err := sessions.issue()
 	require.NoError(t, err)
-	owner, _, _, ok := sessions.authenticate(token)
+	owner, _, ok := sessions.authenticate(token)
 	require.True(t, ok)
 
 	sessions.revoke(token)
@@ -54,7 +54,7 @@ func TestWebDownloadConcurrentRevocationRemovesTicketIssuedBeforeRevokeWins(t *t
 	sessions := newWebSessionRegistry(downloads.revokeOwner)
 	token, _, err := sessions.issue()
 	require.NoError(t, err)
-	owner, _, _, ok := sessions.authenticate(token)
+	owner, _, ok := sessions.authenticate(token)
 	require.True(t, ok)
 	staged := filepath.Join(t.TempDir(), "staged")
 	require.NoError(t, os.WriteFile(staged, []byte("verified"), 0o600))

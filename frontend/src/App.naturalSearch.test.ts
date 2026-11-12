@@ -1290,18 +1290,32 @@ it("keeps the restart step after setup when the first re-read fails", async () =
   expect(within(drawer).getByText("Restart required")).toBeTruthy();
 });
 
-it.each(["reading status", "turning on"])(
+it.each(["reading status", "turning on", "restarting"])(
   "hands a rejected session to sign-in while %s",
   async (step) => {
     searchWithMeaningOff({
-      status: () => (step === "reading status" ? new Response("{}", { status: 401 }) : localOff),
+      status: () =>
+        step === "reading status"
+          ? new Response("{}", { status: 401 })
+          : step === "restarting"
+            ? { ...localSaved, restart_available: true }
+            : localOff,
       apply: () => Promise.resolve(new Response("{}", { status: 401 })),
+      restart: () => Promise.resolve(new Response("{}", { status: 401 })),
     });
     render(App);
     await submitSearch("notes");
     const drawer = await openSearchByMeaning();
     if (step === "turning on")
       await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+    if (step === "restarting") {
+      await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart" }));
+      await fireEvent.click(
+        within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+          name: "Restart",
+        }),
+      );
+    }
     expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "System" })).toBeNull();
   },
@@ -2104,35 +2118,7 @@ it.each([
     },
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
-  [
-    "failed",
-    async () => Response.json({ code: "restart_failed", detail: "spawn failed" }, { status: 500 }),
-    "Docbank couldn't start the restart.",
-  ],
-  [
-    "timed out",
-    async () => new Response(null, { status: 408 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
-    "server error",
-    async () => new Response(null, { status: 500 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
-    "rejected",
-    async () =>
-      Response.json(
-        { code: "web_browser", detail: "browser cookie, Host or Origin rejected" },
-        { status: 403 },
-      ),
-    "Restart rejected. Sign in again, then retry.",
-  ],
-  [
-    "forbidden",
-    async () => Response.json({ code: "forbidden" }, { status: 403 }),
-    "Restart rejected. Try again.",
-  ],
+  ["rejected", async () => new Response(null, { status: 500 }), "Restart rejected. Try again."],
 ])("keeps the workspace after an %s response", async (kind, restart, notice) => {
   const request = vi.fn(restart);
   const harness = searchWithMeaningOff({
@@ -2150,7 +2136,7 @@ it.each([
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(notice)).toBeTruthy();
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
-  if (kind === "failed" || kind === "rejected" || kind === "forbidden")
+  if (kind === "rejected")
     expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
   else expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
   if (kind === "accepted") {
@@ -2183,8 +2169,6 @@ it("offers a retry when restart is rejected after setup", async () => {
       name: "Restart",
     }),
   );
-  expect(
-    await within(drawer).findByText("Restart rejected. Sign in again, then retry."),
-  ).toBeTruthy();
+  expect(await within(drawer).findByText("Restart rejected. Try again.")).toBeTruthy();
   expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });

@@ -385,7 +385,6 @@
   );
   let keySignInEnabled = $state(false);
   let keySession = $state(false);
-  let restartAttempt: object | undefined;
   let apiKey = $state("");
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
@@ -1584,7 +1583,6 @@
   });
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
-    restartAttempt = undefined;
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -2024,43 +2022,23 @@
 
   async function restartDocbank(): Promise<void> {
     const session = webSession;
-    const attempt = (restartAttempt = {});
     localText.error = "";
     localText.notice = "";
     let notice = "Restart requested. Docbank may restart later.";
     try {
       await generated.restartDaemon({ session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
-      if (!mounted || restartAttempt !== attempt) return;
-      if (webSession === session && cause instanceof APIError) {
+      if (!mounted || webSession !== session) return;
+      if (cause instanceof APIError) {
         if (cause.status === 401) {
-          restartAttempt = undefined;
           return handleFailure(cause);
         }
-        if (cause.code === "restart_failed") {
-          restartAttempt = undefined;
-          localText.error = "Docbank couldn't start the restart.";
-          return;
-        }
-        if (cause.code === "restart_unavailable") {
-          restartAttempt = undefined;
-          readLocalTextStatus();
-          return;
-        }
-        if (cause.status >= 400 && cause.status < 500 && cause.status !== 408) {
-          restartAttempt = undefined;
-          localText.error =
-            cause.code === "web_browser"
-              ? "Restart rejected. Sign in again, then retry."
-              : "Restart rejected. Try again.";
-          return;
-        }
+        localText.error = "Restart rejected. Try again.";
+        return;
       }
       notice = "Docbank couldn't confirm the restart. It may still happen later.";
     }
-    if (!mounted || restartAttempt !== attempt) return;
-    restartAttempt = undefined;
-    if (webSession === session) {
+    if (mounted && webSession === session) {
       localText.notice = notice;
     }
   }

@@ -92,9 +92,9 @@ func (r *webSessionRegistry) issue() (string, string, error) {
 	return token, base64.RawURLEncoding.EncodeToString(uploadSecret[:]), nil
 }
 
-func (r *webSessionRegistry) authenticate(token string) (string, context.Context, bool, bool) {
+func (r *webSessionRegistry) authenticate(token string) (string, context.Context, bool) {
 	if r == nil || token == "" {
-		return "", nil, false, false
+		return "", nil, false
 	}
 	digest := sha256.Sum256([]byte(token))
 	r.mu.Lock()
@@ -104,9 +104,9 @@ func (r *webSessionRegistry) authenticate(token string) (string, context.Context
 	}
 	r.mu.Unlock()
 	if !ok {
-		return "", nil, false, false
+		return "", nil, false
 	}
-	return hex.EncodeToString(digest[:]), state.ctx, state.login, true
+	return hex.EncodeToString(digest[:]), state.ctx, true
 }
 
 // withActiveOwner serializes a browser-owned publication with revocation.

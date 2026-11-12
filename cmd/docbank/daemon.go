@@ -725,7 +725,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	var restartDaemon func(context.Context, bool) error
 	if background {
-		restartDaemon = webRestartLauncher(layout.Root, logger, kitdaemon.StartDetached)
+		restartDaemon = webRestartLauncher(layout.Root, kitdaemon.StartDetached)
 	}
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
@@ -804,15 +804,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}, srv.Shutdown)
 }
 
-func webRestartLauncher(root string, logger *slog.Logger, start func(context.Context, kitdaemon.StartDetachedOptions) error) func(context.Context, bool) error {
-	var mu sync.Mutex
-	launched := false
+func webRestartLauncher(root string, start func(context.Context, kitdaemon.StartDetachedOptions) error) func(context.Context, bool) error {
 	return func(ctx context.Context, openTab bool) error {
-		mu.Lock()
-		defer mu.Unlock()
-		if launched {
-			return nil
-		}
 		exe, err := os.Executable()
 		if err != nil {
 			return err
@@ -821,18 +814,10 @@ func webRestartLauncher(root string, logger *slog.Logger, start func(context.Con
 		if openTab {
 			args = append(args, "--open-web")
 		}
-		err = start(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+root), Stdout: io.Discard, Stderr: io.Discard, Exited: func(err error) {
-			mu.Lock()
-			launched = false
-			mu.Unlock()
-			if err != nil {
-				logger.Error("web restart helper failed", "error", err)
-			}
-		}})
+		err = start(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+root), Stdout: io.Discard, Stderr: io.Discard})
 		if err != nil {
 			return fmt.Errorf("starting web restart helper: %w", err)
 		}
-		launched = true
 		return nil
 	}
 }

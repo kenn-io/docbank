@@ -238,7 +238,7 @@ func handleWebUploadConnection(
 		_ = conn.Close(websocket.StatusPolicyViolation, "upload session unavailable")
 		return
 	}
-	owner, sessionCtx, _, ok := sessions.authenticate(auth.Token)
+	owner, sessionCtx, ok := sessions.authenticate(auth.Token)
 	if !ok {
 		_ = conn.Close(websocket.StatusPolicyViolation, "upload session unavailable")
 		return

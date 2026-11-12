@@ -125,26 +125,16 @@ func TestRestartDaemonBrowserSession(t *testing.T) {
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 }
 
-func TestRestartDaemonLoginOrigin(t *testing.T) {
+func TestRestartDaemonPublicOrigin(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, publicOrigin, requestOrigin string
-		openTab                           bool
-	}{
-		{"public", signInOrigin, signInOrigin, false},
-		{"per-run key", "", strings.TrimSuffix(testWebURL, "/"), true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var calls []bool
-			_, catalog := newTestServer(t, func(deps *api.Deps) {
-				deps.WebLoginEnabled = true
-				deps.Cfg.Web.PublicOrigin = tc.publicOrigin
-				deps.RestartDaemon = func(_ context.Context, openTab bool) error { calls = append(calls, openTab); return nil }
-			})
-			status, cookie := loginBrowser(t, catalog.Server, tc.requestOrigin)
-			response := signInCall(t, catalog.Server, tc.requestOrigin, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
-			require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
-			require.Equal(t, []bool{tc.openTab}, calls)
-		})
-	}
+	var calls []bool
+	_, catalog := newTestServer(t, func(deps *api.Deps) {
+		deps.WebLoginEnabled = true
+		deps.Cfg.Web.PublicOrigin = signInOrigin
+		deps.RestartDaemon = func(_ context.Context, openTab bool) error { calls = append(calls, openTab); return nil }
+	})
+	status, cookie := loginBrowser(t, catalog.Server)
+	response := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
+	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	require.Equal(t, []bool{false}, calls)
 }

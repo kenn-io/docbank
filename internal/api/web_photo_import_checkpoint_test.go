@@ -328,7 +328,7 @@ func TestPhotoImportCheckpointCookieOrigin(t *testing.T) {
 			var token string
 			var loginCookie *http.Cookie
 			if tc.proxy {
-				status, cookie := loginBrowser(t, catalog.Server, signInOrigin)
+				status, cookie := loginBrowser(t, catalog.Server)
 				token, loginCookie = status.Session.Token, cookie
 			} else {
 				token = issueWebSession(t, ts)
