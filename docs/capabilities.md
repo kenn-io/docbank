@@ -42,7 +42,6 @@ explains how.
 - Move several nodes in one operation that either applies the whole plan or
   changes nothing.
 - Watch local inbox folders and import files once they stop changing.
-- [Check a DocuSeal connection and list templates](usage/contracts.md) without sending documents.
 
 Start with [Importing documents](usage/importing.md) and
 [Organizing and tagging](usage/organizing.md). For photos, see
@@ -251,6 +250,10 @@ also transcribe audio and convert documents through Docling, run Mistral OCR, an
 Installing a provider package does not register it with the daemon, and does
 not prepare an import for semantic search. The default configuration has no
 processing profiles, and new imports do not run this workflow automatically.
+
+## Connect to DocuSeal
+
+[Check a DocuSeal connection and list templates](usage/contracts.md) without sending documents.
 
 ## What Docbank does not do
 

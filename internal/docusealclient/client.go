@@ -219,7 +219,7 @@ func ValidTemplatePage(page TemplatePage) bool {
 		return false
 	}
 	for _, item := range page.Templates {
-		if item.ID <= 0 || !safeText(item.Name, 512) || len(item.Roles) > 1024 {
+		if item.ID <= 0 || !safeText(item.Name, 512) || item.Roles == nil || len(item.Roles) > 1024 {
 			return false
 		}
 		for _, role := range item.Roles {
