@@ -247,7 +247,7 @@ func TestTaxReceiptBoundAndMetadata(t *testing.T) {
 	body := strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":"****1234","$schema":"example","extension":true`, 1)
 	response := func(s string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(s))} }
 	// Valid JSON padded with whitespace isolates the single-account size limit.
-	padded := body + strings.Repeat(" ", maxTaxAccountReceiptBytes-len(body))
+	padded := body + strings.Repeat(" ", maxTaxSingleReceiptBytes-len(body))
 	exact := response(padded)
 	defer func() { _ = exact.Body.Close() }()
 	_, err := decodeTaxReceipt(t.Context(), exact, false)
@@ -321,6 +321,11 @@ func TestTaxMutationMaintenanceIsDefinite(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	_, err := New(server.URL, "").CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+	require.ErrorIs(t, err, ErrMaintenanceBusy)
+	assert.Contains(t, err.Error(), "retry this mutation after maintenance finishes")
+	assert.NotContains(t, err.Error(), "may have been applied")
+	assert.NotContains(t, err.Error(), "private-synthetic-value")
+	_, err = New(server.URL, "").CreateTaxRecord(t.Context(), api.CreateTaxRecordRequest{})
 	require.ErrorIs(t, err, ErrMaintenanceBusy)
 	assert.Contains(t, err.Error(), "retry this mutation after maintenance finishes")
 	assert.NotContains(t, err.Error(), "may have been applied")

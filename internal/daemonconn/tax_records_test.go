@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,6 +150,14 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 	_, err = c.RetireTaxRecord(t.Context(), id, 1)
 	require.True(t, IsResponseDecodeError(err))
 
+	// The same complete record is too large as a single receipt but fits a page.
+	padded := strings.TrimSuffix(taxRecordFixture, "}") + `,"padding":"` + strings.Repeat("x", maxTaxSingleReceiptBytes) + `"}`
+	response := func(body string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(body))} }
+	_, err = decodeTaxRecordReceipt(t.Context(), response(padded), false)
+	require.True(t, IsResponseDecodeError(err))
+	page, err := decodeTaxRecordReceipt(t.Context(), response(`{"items":[`+padded+`],"limit":1,"offset":0}`), true)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
 	for _, body := range []string{`{}`, `{"items":[],"offset":0}`, `{"items":[],"limit":1}`, `{"items":null,"limit":1,"offset":0}`, `{"items":[],"limit":null,"offset":0}`, `{"items":[],"limit":1,"offset":null}`} {
 		t.Run(body, func(t *testing.T) {
 			t.Parallel()

@@ -95,9 +95,11 @@ const maxTaxSingleReceiptBytes = maxTaxReceiptRowBytes + 1024*1024
 const maxTaxReceiptBytes = 1000*maxTaxReceiptRowBytes + 1024*1024
 
 func readTaxReceipt(ctx context.Context, response *http.Response, page bool, fields []string, nullable map[string]bool) ([]byte, error) {
- limit := int64(maxTaxSingleReceiptBytes)
- if page { limit = maxTaxReceiptBytes }
- return readTaxReceiptLimit(ctx, response, page, fields, nullable, limit)
+	limit := int64(maxTaxSingleReceiptBytes)
+	if page {
+		limit = maxTaxReceiptBytes
+	}
+	return readTaxReceiptLimit(ctx, response, page, fields, nullable, limit)
 }
 
 func readTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, fields []string, nullable map[string]bool, limit int64) ([]byte, error) {
@@ -139,8 +141,10 @@ func readTaxReceiptLimit(ctx context.Context, response *http.Response, page bool
 
 func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxAccountPage, error) {
 	limit := int64(maxTaxSingleReceiptBytes)
- if page { limit = maxTaxReceiptBytes }
- return decodeTaxReceiptLimit(ctx, response, page, limit)
+	if page {
+		limit = maxTaxReceiptBytes
+	}
+	return decodeTaxReceiptLimit(ctx, response, page, limit)
 }
 
 func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, limit int64) (api.TaxAccountPage, error) {
