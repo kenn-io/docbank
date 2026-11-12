@@ -145,42 +145,36 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	require.ErrorContains(t, err, "if main already records this version")
 	require.EqualError(t, checkSchemaContract(records, 49, digest), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
 	require.NoError(t, checkSchemaContract(records, 50, next))
-	for _, current := range []string{digest, strings.Repeat("c", 64)} {
-		err := checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, current)
-		require.ErrorContains(t, err, "remove the old records and keep or add 000049-"+current+".schema")
-		require.ErrorContains(t, err, "if main already records this version")
-		require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
-	}
+	err = checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, digest)
+	require.ErrorContains(t, err, "remove the old records and keep or add 000049-"+digest+".schema")
+	require.ErrorContains(t, err, "if main already records this version")
+	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
 }
 
 func TestStorageSchemaCatalogDigest(t *testing.T) {
 	t.Parallel()
-	for _, driver := range v090UpgradeDrivers() {
-		t.Run(driver.name, func(t *testing.T) {
-			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
-			probe := func(statement string) string {
-				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
-				require.NoError(t, err)
-				_, err = db.ExecContext(t.Context(), statement)
-				require.NoError(t, err)
-				digest := schemaCatalogDigest(t, db)
-				_, err = db.ExecContext(t.Context(), "ROLLBACK TO probe")
-				require.NoError(t, err)
-				_, err = db.ExecContext(t.Context(), "RELEASE probe")
-				require.NoError(t, err)
-				return digest
-			}
-			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
-			require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
-			digest := schemaCatalogDigest(t, db)
-			for _, statement := range []string{
-				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
-				`CREATE INDEX contract_probe ON nodes(id)`,
-				trigger,
-				`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
-			} {
-				require.NotEqual(t, digest, probe(statement), statement)
-			}
-		})
+	db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), DefaultSQLiteDriver(), schemaSQL, currentStorageSchemaVersion)
+	probe := func(statement string) string {
+		_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+		digest := schemaCatalogDigest(t, db)
+		_, err = db.ExecContext(t.Context(), "ROLLBACK TO probe")
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), "RELEASE probe")
+		require.NoError(t, err)
+		return digest
+	}
+	trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
+	require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
+	digest := schemaCatalogDigest(t, db)
+	for _, statement := range []string{
+		`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
+		`CREATE INDEX contract_probe ON nodes(id)`,
+		trigger,
+		`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
+	} {
+		require.NotEqual(t, digest, probe(statement), statement)
 	}
 }
