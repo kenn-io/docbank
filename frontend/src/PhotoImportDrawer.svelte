@@ -185,6 +185,14 @@
   };
   const warningStates: Item["state"][] = ["failed", "unconfirmed", "missing", "changed"];
 
+  function stateLabel(item: Item): string {
+    if (item.importedEarlier && item.state === "added") return "Imported earlier";
+    if (item.importedEarlier && item.state === "skipped") return "Already in vault at import";
+    const single = (item.names ?? item.files).length === 1;
+    if (item.state === "missing" && single) return "File missing";
+    if (item.state === "changed" && single) return "File changed";
+    return labels[item.state];
+  }
   function itemName(item: Item): string {
     return (item.names ?? item.files.map(localFilePath)).join(", ");
   }
@@ -871,11 +879,7 @@
           <li>
             <strong>{itemName(item)}</strong><span
               class:warning={warningStates.includes(item.state)}
-              >{item.importedEarlier && item.state === "added"
-                ? "Imported earlier"
-                : item.importedEarlier && item.state === "skipped"
-                  ? "Already in vault at import"
-                  : labels[item.state]}</span
+              class:ready={item.state === "ready"}>{stateLabel(item)}</span
             >
             {#if item.state === "hashing" || item.state === "uploading"}<progress
                 max={item.progress.total || 1}
@@ -905,7 +909,8 @@
         {#if !savedImport || items.some((item) => !["added", "skipped", "ambiguous"].includes(item.state))}
           <Button
             size="sm"
-            surface="soft"
+            tone="info"
+            surface="solid"
             disabled={!checkpointReady ||
               running ||
               planning ||
@@ -913,9 +918,9 @@
               !!disabledReason ||
               registrationUncertain}
             onclick={() => void start()}
-            >{savedImport
-              ? "Resume remaining"
-              : `Add ${pending} group${pending === 1 ? "" : "s"}`}</Button
+            >{#if savedImport}<RotateCcwIcon size="14" />Resume remaining{:else}<PlusIcon
+                size="14"
+              />Add {pending} group{pending === 1 ? "" : "s"}{/if}</Button
           >
         {/if}
         {#if running}<Button
@@ -978,8 +983,10 @@
   [role="alert"] {
     color: var(--accent-red);
   }
-  /* Match the small soft buttons beside it. */
+  /* Match the small soft buttons beside it, including their rendered height. */
   select {
+    box-sizing: border-box;
+    align-self: stretch;
     min-height: 24px;
     padding: 2px var(--space-2);
     border: var(--border-width) solid color-mix(in srgb, var(--border-default) 80%, transparent);
@@ -1001,6 +1008,10 @@
   }
   .totals .zero {
     color: var(--text-muted);
+  }
+  li span.ready {
+    color: color-mix(in srgb, var(--accent-blue) 72%, var(--text-primary));
+    font-weight: var(--font-weight-medium, 500);
   }
   li span.warning {
     color: var(--accent-amber);

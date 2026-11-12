@@ -280,7 +280,7 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
     target: { value: "saved-import" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
-  await screen.findByText("Files missing");
+  await screen.findByText("File missing");
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: {
       files: [
@@ -290,7 +290,7 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
       ],
     },
   });
-  await screen.findByText("Files changed");
+  await screen.findByText("File changed");
   await screen.findByText("Outside this import");
   await screen.findByText("Files changed since this group was imported.");
   expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
@@ -333,11 +333,11 @@ it("refuses an unattempted file with a different modified time", async () => {
     target: { value: "saved-import" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
-  await screen.findByText("Files missing");
+  await screen.findByText("File missing");
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: [new File(["x"], "left.JPG", { lastModified: 2000 })] },
   });
-  await screen.findByText("Files changed");
+  await screen.findByText("File changed");
   expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
 });
 
