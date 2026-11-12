@@ -1511,7 +1511,7 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
       import_id: "first",
       groups: [[0], [1]],
       unsupported: [],
-      hashes: new Map([[files[1], "cached-hash"]]),
+      hashes: new Map([[files[1], "41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61"]]),
     })),
     uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress) => {
       progress("uploading", { processed: 1, total: 1 });
@@ -1556,7 +1556,7 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
     expect.anything(),
     expect.anything(),
     expect.anything(),
-    ["cached-hash"],
+    ["41e5787e9f28562d07b891b1816b492309d646c0f2829743fa4963a9f9cc1d61"],
   );
 });
 

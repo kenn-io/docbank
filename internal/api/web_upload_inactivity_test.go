@@ -17,14 +17,6 @@ import (
 
 type slowVerificationReader struct{ remaining int }
 
-type stalledVerificationReader struct{ started, release chan struct{} }
-
-func (r *stalledVerificationReader) Read([]byte) (int, error) {
-	close(r.started)
-	<-r.release
-	return 0, io.EOF
-}
-
 func (r *slowVerificationReader) Read(p []byte) (int, error) {
 	if r.remaining == 0 {
 		return 0, io.EOF
@@ -77,37 +69,6 @@ func TestWebUploadVerificationSlotsFull(t *testing.T) {
 		return nil, 0, nil
 	})
 	require.ErrorIs(t, err, errWebVerifyBusy)
-}
-
-func TestAbandonedWebVerificationReleasesMaintenance(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		g := NewOperationGate()
-		started := make(chan struct{})
-		release := make(chan struct{})
-		finished := make(chan error, 1)
-		conn := dialBubbleWebSocket(t, func(w http.ResponseWriter, r *http.Request) {
-			server, err := websocket.Accept(w, r, nil)
-			if err != nil {
-				finished <- err
-				return
-			}
-			defer func() { _ = server.CloseNow() }()
-			finished <- g.mutate(r.Context(), func() error {
-				return verifyWebUpload(r.Context(), server, "retry", 1, g.verification, func(context.Context) (io.ReadCloser, int64, error) {
-					return io.NopCloser(&stalledVerificationReader{started, release}), 1, nil
-				})
-			})
-		})
-		<-started
-		require.NoError(t, conn.CloseNow())
-		time.Sleep(webUploadInactivity)
-		synctest.Wait()
-		require.ErrorIs(t, <-finished, errWebVerifyStalled)
-		require.NoError(t, g.MaintainContext(t.Context(), func() error { return nil }))
-		close(release)
-		synctest.Wait()
-	})
 }
 
 // dialBubbleWebSocket serves handler over the bubble's in-memory network, so
