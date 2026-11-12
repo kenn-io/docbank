@@ -79,6 +79,17 @@ func TestTaxEventRevisionsAndRejection(t *testing.T) {
 	path := "/api/v1/tax/records/" + r.RecordID
 	secret := "synthetic-sensitive-value"
 	for _, tc := range []struct {
+		path string
+		body map[string]any
+	}{
+		{path + "/advance", map[string]any{"state": "filed", "occurred_on": "2026-01-01"}},
+		{path + "/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01"}},
+		{path + "/events/11111111-1111-4111-8111-111111111111/void", map[string]any{"reason": "example"}},
+	} {
+		resp, body := do(t, ts, http.MethodPost, tc.path, nil, tc.body)
+		assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
+	}
+	for _, tc := range []struct {
 		header map[string]string
 		body   map[string]any
 		status int
