@@ -13,7 +13,7 @@ export GIT_CONFIG_GLOBAL="$test_root/gitconfig" GIT_CONFIG_NOSYSTEM=1
 cd "$test_root"
 git init -q
 git config user.name "Docbank Test"
-git config user.email "docbank-test@example.invalid"
+git config user.email "docbank-test@example.com"
 records=internal/store/testdata/schema-contracts
 mkdir -p "$records"
 touch "$records/base.schema"
