@@ -151,7 +151,7 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 		{"no readable text", "candidate_empty", nil, false, 1, 0, 0},
 		{"missing evidence", "candidate_empty", nil, true, 1, 1, 0},
 		{"searchable with missing evidence", "candidate_serving", nil, true, 0, 1, 0},
-		{"known scan", "candidate_empty", []int{2, 4}, false, 0, 0, 2},
+		{"known scan", "candidate_empty", []int{1}, false, 0, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, pdfs, profile := collectionCoverageFixture(t, 1)
@@ -185,24 +185,30 @@ func TestSearchTextCoverageLimitsEvidenceReads(t *testing.T) {
 	t.Parallel()
 	s, _, nodes, profile := collectionCoverageFixture(t, 17)
 	var expected []string
+	pages := make(map[string]int)
 	for i, node := range nodes {
 		state := "candidate_empty"
 		if i%2 == 0 {
 			state = "candidate_serving"
 		}
 		collectionCoveragePublish(t, s, node, profile, state)
-		expected = append(expected, testSHA256([]byte(node.CurrentVersionID+state)))
+		build := testSHA256([]byte(node.CurrentVersionID + state))
+		expected = append(expected, build)
+		pages[build] = 1
+		if state == "candidate_serving" {
+			pages[build] = 2
+		}
 	}
 	slices.Sort(expected)
 	var read []string
 	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(_ context.Context, buildID string) ([]int, error) {
 		read = append(read, buildID)
-		return []int{2, 4}, nil
+		return []int{pages[buildID]}, nil
 	}, nil)
 	require.NoError(t, err)
 	require.Equal(t, expected[:16], read)
 	require.True(t, got.PDFPageCoveragePartial)
 	require.Equal(t, 16, got.PDFsWithoutText)
-	require.Equal(t, 32, got.PagesWithoutText)
+	require.Equal(t, 16, got.PagesWithoutText)
 	require.Zero(t, got.NoText)
 }

@@ -168,7 +168,7 @@ func TestEmptySearchHints(t *testing.T) {
 				require.Empty(t, stderr.String())
 			} else {
 				if tc.unavailable {
-					require.NotContains(t, stderr.String(), "OCR")
+					require.Equal(t, 1, strings.Count(stderr.String(), "Hint:"))
 				} else {
 					require.Contains(t, stderr.String(), "Hint: 1 PDF has 2 pages with no text layer")
 				}

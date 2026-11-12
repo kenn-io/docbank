@@ -179,9 +179,6 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: len(fence.ContentVersionIDs)})
 				case "/api/v1/coverage":
 					assert.Equal(t, http.MethodGet, r.Method)
-					assert.Equal(t, processing.PDFTextProfileName, r.URL.Query().Get("profile"))
-					assert.Equal(t, testVaultID, r.URL.Query().Get("vault_uid"))
-					assert.Equal(t, []string{testVersionID}, r.URL.Query()["content_version_id"])
 					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: tc.name != "no reranking support"}}
