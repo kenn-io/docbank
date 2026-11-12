@@ -19,6 +19,10 @@ docbank party edit <party-id> --legal-name "Northwind Storage Limited"
 docbank party retire <party-id>
 ```
 
+`party list` shows up to 100 parties by default. When a page is full, it prints
+the `--offset` to use for the next page; that page may turn out to be empty.
+`--json` output stays plain JSON.
+
 Kinds are `person` and `organization`. Country is an uppercase ISO 3166-1
 alpha-2 code. Display names contain 1–200 characters and legal names at most
 300. Both reject control characters. Docbank rejects a new or renamed active

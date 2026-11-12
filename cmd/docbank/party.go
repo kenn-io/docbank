@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
@@ -58,7 +59,7 @@ func newPartyCommand() *cobra.Command {
 				return err
 			}
 		}
-		return nil
+		return writePartyContinuation(cmd.OutOrStdout(), page)
 	}}
 	list.Flags().StringVar(&kind, "kind", "", "filter person or organization")
 	list.Flags().BoolVar(&own, "own", false, "filter own entities")
@@ -189,4 +190,17 @@ func newPartyCommand() *cobra.Command {
 	root.AddCommand(list, show, create, edit, retire)
 	return root
 }
+
+// writePartyContinuation hints at the next page after a full one. The API
+// reports no total, so a full page only means more parties may exist.
+func writePartyContinuation(w io.Writer, page api.PartyPage) error {
+	if page.Limit <= 0 || len(page.Items) < page.Limit {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "limit reached: more parties may exist; repeat this command with --offset %d to continue\n", page.Offset+len(page.Items)); err != nil {
+		return fmt.Errorf("write continuation: %w", err)
+	}
+	return nil
+}
+
 func init() { rootCmd.AddCommand(newPartyCommand()) }
