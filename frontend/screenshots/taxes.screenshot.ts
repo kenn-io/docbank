@@ -12,8 +12,7 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
   test.setTimeout(300_000);
   await mkdir(path.join(repository, ".superpowers"), { recursive: true });
   const fixture = photoFixture(
-    process.env.DOCBANK_TAXES_WORKSPACE ??
-      (await mkdtemp(path.join(repository, ".superpowers", "taxes-proof-"))),
+    await mkdtemp(path.join(repository, ".superpowers", "taxes-proof-")),
   );
   try {
     await fixture.seed(1);

@@ -88,7 +88,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
     name: Browser PDF redaction review
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -123,18 +123,6 @@ jobs:
           find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
           cp -R frontend/dist/. internal/web/dist/
           node frontend/screenshots/redaction-review.run.mjs
-      # PR media only: the Taxes images go in the pull request body after
-      # inspection, never into the published docs assets.
-      - name: Upload Taxes screenshots
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: taxes-screenshots-attempt-${{ github.run_attempt }}
-          path: .superpowers/taxes-shots/*.png
-          # The capture directory is hidden, which the action skips by default.
-          include-hidden-files: true
-          retention-days: 14
-          if-no-files-found: error
 
   bates-browser-recovery:
     needs: changes
