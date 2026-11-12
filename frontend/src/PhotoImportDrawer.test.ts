@@ -730,6 +730,79 @@ it.each([
   }
 });
 
+it("checks attempted content but accepts matching metadata for untouched files", async () => {
+  const original = new File(["x"], "untouched.JPG", { lastModified: 1000 });
+  const changedAttempt = new File(["y"], "attempted.JPG", { lastModified: 1000 });
+  const changedUntouched = new File(["y"], "untouched.JPG", { lastModified: 1000 });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "attempted.JPG", size: 1, modified_time: 1000 }],
+        hashes: ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+      },
+      {
+        status: "remaining" as const,
+        files: [
+          {
+            relative_path: original.name,
+            size: original.size,
+            modified_time: original.lastModified,
+          },
+        ],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "lazy-hashes",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [changedAttempt, changedUntouched] },
+  });
+  await screen.findByText("File changed");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      1,
+      [changedUntouched],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [""],
+    ),
+  );
+  expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce();
+});
+
 it("retains separately selected members of a remaining photo group", async () => {
   const image = new File(["x"], "a.JPG", { lastModified: 1000 });
   const sidecar = new File(["y"], "a.XMP", { lastModified: 1000 });
