@@ -336,6 +336,22 @@ func saveBrowserPhotoReceiptTx(ctx context.Context, tx *sql.Tx, ref BrowserPhoto
 	return nil
 }
 
+func sameBrowserPhotoMembers(encoded string, proposed []BrowserPhotoGroupMember) bool {
+	var existing []BrowserPhotoGroupMember
+	if json.Unmarshal([]byte(encoded), &existing) != nil || len(existing) != len(proposed) {
+		return false
+	}
+	for i := range existing {
+		if existing[i].DeclaredHash == "" {
+			existing[i].DeclaredHash = proposed[i].DeclaredHash
+		}
+		if existing[i] != proposed[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // RegisterBrowserPhotoImport saves the complete plan before any upload starts.
 func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhotoImport) (uuid.UUID, error) {
 	if plan.SourceID == uuid.Nil() || len(plan.Groups) == 0 {
@@ -388,11 +404,7 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 				if index >= len(plan.Groups) {
 					return errors.New("browser photo import declaration changed")
 				}
-				members, err := json.Marshal(plan.Groups[index].Members)
-				if err != nil {
-					return err
-				}
-				if existing != string(members) {
+				if !sameBrowserPhotoMembers(existing, plan.Groups[index].Members) {
 					return errors.New("browser photo import declaration changed")
 				}
 				index++
