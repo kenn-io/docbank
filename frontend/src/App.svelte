@@ -3356,7 +3356,9 @@
   }
 
   let snapshotTagRefreshPending = false;
+  let batchTagRefreshPending = false;
   function handleUnknownTagging(): void {
+    batchTagRefreshPending = true;
     refreshCurrentView();
   }
 
@@ -5537,7 +5539,14 @@
         onchanged={handleBatchTagsChanged}
         onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
-        onclose={() => (batchTagsTargets = null)}
+        onclose={() => {
+          batchTagsTargets = null;
+          if (batchTagRefreshPending) {
+            batchTagRefreshPending = false;
+            refreshCurrentView();
+            if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
+          }
+        }}
         onauthfailure={handleFailure}
       />
     {/if}

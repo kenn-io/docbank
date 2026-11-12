@@ -60,6 +60,25 @@ it("propagates authentication failure", async () => {
   });
 });
 
+it("stops pending reads and schedules no more documents when canceled", async () => {
+  const controller = new AbortController();
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(
+    (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      }),
+  );
+  const many = {
+    ...request,
+    nodes: Array.from({ length: 20 }, (_, i) => ({ node_id: i + 1, revision: 1 })),
+  };
+  const checking = checkTagResults("session", many, () => {}, controller.signal);
+  expect(fetch).toHaveBeenCalledTimes(8);
+  controller.abort();
+  await expect(checking).rejects.toMatchObject({ name: "AbortError" });
+  expect(fetch).toHaveBeenCalledTimes(8);
+});
+
 it("orders remaining documents before matches", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);

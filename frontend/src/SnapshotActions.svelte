@@ -21,6 +21,7 @@
   import { checkTagResults, type TagResult } from "./checkTagResults.js";
   import { TagChangeRun } from "./tagChangeRun.svelte.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
+  import DocumentPager from "./DocumentPager.svelte";
 
   interface Props {
     session: string;
@@ -70,6 +71,8 @@
   let checking = $state(false);
   let checked = $state(0);
   let results = $state<TagResult[]>();
+  let retryResults: TagResult[] | undefined;
+  let checkController: AbortController | undefined;
   let offset = $state(0);
   const remaining = $derived(results?.filter((row) => row.status === "remaining") ?? []);
   const unavailable = $derived(results?.filter((row) => row.status === "unavailable").length ?? 0);
@@ -78,7 +81,12 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      receipt = confirmed;
+      if (retryResults?.some((row) => row.status === "unavailable")) {
+        results = retryResults.map((row) =>
+          row.status === "remaining" ? { ...row, status: "matched" } : row,
+        );
+      } else receipt = confirmed;
+      retryResults = undefined;
       onchanged?.(confirmed);
     },
     onunknown: () => {
@@ -103,6 +111,7 @@
   let alive = true;
   onDestroy(() => {
     alive = false;
+    checkController?.abort();
     run.destroy();
   });
 
@@ -137,10 +146,17 @@
     checked = 0;
     results = undefined;
     run.failure = "";
+    const controller = new AbortController();
+    checkController = controller;
     try {
-      const rows = await checkTagResults(session, request, (value) => {
-        if (alive) checked = value;
-      });
+      const rows = await checkTagResults(
+        session,
+        request,
+        (value) => {
+          if (alive) checked = value;
+        },
+        controller.signal,
+      );
       if (!alive) return;
       results = rows;
       offset = 0;
@@ -156,6 +172,7 @@
   function retry(): void {
     if (!request || !remaining.length || busy) return;
     const nodes = remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! }));
+    retryResults = results;
     results = undefined;
     void run.submit({
       ...request,
@@ -302,19 +319,7 @@
             {/snippet}
           </Table>
         </div>
-        {#if results.length > 50}
-          <nav class="pager" aria-label="Document pages">
-            <span>{offset + 1}–{Math.min(offset + 50, results.length)} of {results.length}</span>
-            <Button size="sm" disabled={offset === 0} onclick={() => (offset -= 50)}
-              >Previous</Button
-            >
-            <Button
-              size="sm"
-              disabled={offset + 50 >= results.length}
-              onclick={() => (offset += 50)}>Next</Button
-            >
-          </nav>
-        {/if}
+        <DocumentPager total={results.length} bind:offset />
       </Disclosure>
     {/if}
   </div>
@@ -412,13 +417,6 @@
   }
   .footer-start {
     margin-inline-end: auto;
-  }
-  .pager {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    font-size: var(--font-size-sm);
   }
   .tag-change :global(.kit-disclosure--plain > .kit-disclosure__content) {
     padding-block-end: 0;

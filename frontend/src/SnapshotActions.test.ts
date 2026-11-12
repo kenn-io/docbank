@@ -231,6 +231,7 @@ it.each([true, false])(
   "checks current tag state before an explicit retry (assign=%s)",
   async (assign) => {
     const writes: BatchTagRequest[] = [];
+    let unavailable = true;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (init?.method === "POST") {
@@ -247,7 +248,7 @@ it.each([true, false])(
           offset: 0,
         });
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-      if (id === 7) throw new TypeError("Network error");
+      if (id === 7 && unavailable) throw new TypeError("Network error");
       return Response.json({ id, name: `Document ${id}`, revision: 12 });
     });
     render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
@@ -262,11 +263,37 @@ it.each([true, false])(
     await fireEvent.click(screen.getByText("Review documents"));
     expect(screen.getByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeTruthy();
     await fireEvent.click(retry);
-    await screen.findByRole("button", { name: "Done" });
+    await screen.findByText("1 couldn't be checked and are left out.");
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
     expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
+    unavailable = false;
+    await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await screen.findByRole("button", { name: "Done" });
   },
 );
+
+it("cancels an in-progress check when the dialog closes", async () => {
+  let signal: AbortSignal | null | undefined;
+  vi.spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError("Lost response"))
+    .mockImplementation((_input, init) => {
+      signal = init?.signal;
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal?.reason));
+      });
+    });
+  const view = render(
+    SnapshotActions,
+    props({ scope: "selection", count: 2, targets, onclose: () => view.unmount() }),
+  );
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(signal?.aborted).toBe(true);
+});
 
 it.each(["unknown", "rejected", "stale"])(
   "keeps the original selection after a %s retry",

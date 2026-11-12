@@ -13,6 +13,7 @@ export async function checkTagResults(
   session: string,
   request: BatchTagRequest,
   progress: (count: number) => void,
+  signal?: AbortSignal,
 ): Promise<TagResult[]> {
   const rows: TagResult[] = new Array(request.nodes.length);
   let next = 0;
@@ -20,10 +21,11 @@ export async function checkTagResults(
   let authFailure: unknown;
   async function worker(): Promise<void> {
     while (next < request.nodes.length && !authFailure) {
+      signal?.throwIfAborted();
       const index = next++;
       const id = request.nodes[index].node_id;
       try {
-        const { node, items } = await liveNodeTags(session, id);
+        const { node, items } = await liveNodeTags(session, id, signal);
         rows[index] = {
           node_id: id,
           name: node.path || `${node.name} (Document ${id})`,
@@ -34,6 +36,7 @@ export async function checkTagResults(
               : "remaining",
         };
       } catch (cause) {
+        signal?.throwIfAborted();
         if (cause instanceof APIError && cause.status === 401) {
           authFailure = cause;
           throw cause;

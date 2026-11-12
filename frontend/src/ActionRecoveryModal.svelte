@@ -19,6 +19,7 @@
   import { encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
+  import DocumentPager from "./DocumentPager.svelte";
 
   interface Props {
     session: string;
@@ -285,22 +286,7 @@
           {/snippet}
         </Table>
       </div>
-      {#if batch.members.length > 50}
-        <nav class="pager" aria-label="Document pages">
-          <span
-            >{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members
-              .length}</span
-          >
-          <Button size="sm" disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}
-            >Previous</Button
-          >
-          <Button
-            size="sm"
-            disabled={targetOffset + 50 >= batch.members.length}
-            onclick={() => (targetOffset += 50)}>Next</Button
-          >
-        </nav>
-      {/if}
+      <DocumentPager total={batch.members.length} bind:offset={targetOffset} />
     </Disclosure>
 
     {#if abandonWarning}
@@ -378,8 +364,7 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
-  .confirm,
-  .pager {
+  .confirm {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
