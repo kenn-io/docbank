@@ -11,7 +11,7 @@ import (
 )
 
 type TaxRecord struct {
-	RecordID         string  `json:"record_id"`
+	RecordID         string  `json:"record_id" format:"uuid"`
 	AccountID        *string `json:"account_id" nullable:"true"`
 	FilerPartyID     string  `json:"filer_party_id"`
 	AuthorityPartyID *string `json:"authority_party_id" nullable:"true"`
@@ -46,9 +46,9 @@ type TaxRecordPage struct {
 	Offset int         `json:"offset"`
 }
 type CreateTaxRecordRequest struct {
-	AccountID        *string `json:"account_id,omitzero" nullable:"true"`
-	FilerPartyID     *string `json:"filer_party_id,omitzero"`
-	AuthorityPartyID *string `json:"authority_party_id,omitzero" nullable:"true"`
+	AccountID        *string `json:"account_id,omitzero" nullable:"true" format:"uuid"`
+	FilerPartyID     *string `json:"filer_party_id,omitzero" nullable:"false" format:"uuid"`
+	AuthorityPartyID *string `json:"authority_party_id,omitzero" nullable:"true" format:"uuid"`
 	Kind             string  `json:"kind"`
 	Title            string  `json:"title"`
 	Country          *string `json:"country,omitzero"`
@@ -68,8 +68,8 @@ type CreateTaxRecordRequest struct {
 	present          map[string]bool
 }
 type PatchTaxRecordRequest struct {
-	FilerPartyID     *string `json:"filer_party_id,omitzero" nullable:"false"`
-	AuthorityPartyID *string `json:"authority_party_id,omitzero" nullable:"true"`
+	FilerPartyID     *string `json:"filer_party_id,omitzero" nullable:"false" format:"uuid"`
+	AuthorityPartyID *string `json:"authority_party_id,omitzero" nullable:"true" format:"uuid"`
 	Title            *string `json:"title,omitzero" nullable:"false"`
 	Country          *string `json:"country,omitzero" nullable:"false"`
 	Subdivision      *string `json:"subdivision,omitzero" nullable:"false"`
@@ -161,6 +161,17 @@ func (p CreateTaxRecordRequest) MarshalJSON() ([]byte, error) {
 	if p.ClearAuthority || (p.present["authority_party_id"] && p.AuthorityPartyID == nil) {
 		members["authority_party_id"] = jsontext.Value("null")
 	}
+	for _, field := range []struct {
+		name  string
+		isNil bool
+	}{
+		{"account_id", p.AccountID == nil}, {"tax_year", p.TaxYear == nil}, {"period_start", p.PeriodStart == nil},
+		{"period_end", p.PeriodEnd == nil}, {"due_date", p.DueDate == nil}, {"lead_days", p.LeadDays == nil}, {"amount", p.Amount == nil},
+	} {
+		if p.present[field.name] && field.isNil {
+			members[field.name] = jsontext.Value("null")
+		}
+	}
 	return json.Marshal(members)
 }
 func (p *PatchTaxRecordRequest) UnmarshalJSON(raw []byte) error {
@@ -216,22 +227,25 @@ func (p PatchTaxRecordRequest) MarshalJSON() ([]byte, error) {
 func (p CreateTaxRecordRequest) input() store.TaxRecordInput {
 	return store.TaxRecordInput{AccountID: p.AccountID, FilerPartyID: p.FilerPartyID, AuthorityPartyID: p.AuthorityPartyID, Kind: p.Kind, Title: p.Title, Country: p.Country, Subdivision: p.Subdivision, TaxKind: p.TaxKind, FormCode: p.FormCode, TaxYear: p.TaxYear, PeriodStart: p.PeriodStart, PeriodEnd: p.PeriodEnd, DueDate: p.DueDate, LeadDays: p.LeadDays, Direction: p.Direction, Amount: p.Amount, Currency: p.Currency, Note: p.Note, AuthoritySet: p.ClearAuthority || p.present["authority_party_id"]}
 }
+func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
+	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "title": 1200, "form_code": 256, "amount": 32, "note": 8192} {
+		if property := schema.Properties[field]; property != nil {
+			property.MaxLength = new(length)
+		}
+	}
+	schema.Properties["tax_year"].Minimum = new(float64(1))
+	schema.Properties["tax_year"].Maximum = new(float64(9999))
+	schema.Properties["lead_days"].Minimum = new(float64(0))
+	schema.Properties["lead_days"].Maximum = new(float64(366))
+	return schema
+}
+func (CreateTaxRecordRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	return taxRecordRequestSchema(schema)
+}
 func (PatchTaxRecordRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"filer_party_id"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"authority_party_id"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"title"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"country"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"subdivision"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"tax_kind"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"form_code"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"tax_year"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"period_start"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"period_end"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"due_date"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"lead_days"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"direction"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"amount"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"currency"}})
-	schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{"note"}})
+	taxRecordRequestSchema(schema)
+	for _, field := range []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"} {
+		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
+	}
 	return schema
 }

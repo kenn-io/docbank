@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
@@ -38,8 +37,14 @@ func taxAmountText(minor *int64, code string) (*string, error) {
 }
 func mergeTaxRecordPatch(r store.TaxRecord, p PatchTaxRecordRequest) (store.TaxRecordInput, error) {
 	in := store.TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, FormCode: r.FormCode, TaxYear: r.TaxYear, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, DueDate: r.DueDate, LeadDays: r.LeadDays, Direction: r.Direction, Note: r.Note, AuthorityPartyID: r.AuthorityPartyID}
-	if p.Currency != nil && !strings.EqualFold(*p.Currency, r.Currency) && r.AmountMinor != nil && p.Amount == nil && !p.ClearAmount && !p.present["amount"] {
-		return in, &taxrecord.FieldError{Field: "amount", Reason: "amount required when currency changes"}
+	if p.Currency != nil {
+		code, err := taxrecord.NormalizeCurrency(*p.Currency)
+		if err != nil {
+			return in, err
+		}
+		if code != r.Currency && r.AmountMinor != nil && p.Amount == nil && !p.ClearAmount && !p.present["amount"] {
+			return in, &taxrecord.FieldError{Field: "amount", Reason: "amount required when currency changes"}
+		}
 	}
 	var err error
 	in.Amount, err = taxAmountText(r.AmountMinor, r.Currency)
@@ -102,7 +107,7 @@ func registerTaxRecordRoutes(api huma.API, d Deps, g *gate) {
 		Filer          string `query:"filer"`
 		Country        string `query:"country"`
 		TaxKind        string `query:"taxkind"`
-		Year           *int64 `query:"year"`
+		Year           int64  `query:"year" minimum:"1" maximum:"9999"`
 		State          string `query:"state"`
 		Kind           string `query:"kind"`
 		IncludeRetired bool   `query:"include_retired"`
@@ -115,7 +120,11 @@ func registerTaxRecordRoutes(api huma.API, d Deps, g *gate) {
 				country[i] = c - ('a' - 'A')
 			}
 		}
-		rows, err := d.Store.ListTaxRecords(ctx, store.TaxRecordListOptions{FilerPartyID: in.Filer, Country: string(country), TaxKind: in.TaxKind, TaxYear: in.Year, State: in.State, Kind: in.Kind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
+		var year *int64
+		if in.Year != 0 {
+			year = &in.Year
+		}
+		rows, err := d.Store.ListTaxRecords(ctx, store.TaxRecordListOptions{FilerPartyID: in.Filer, Country: string(country), TaxKind: in.TaxKind, TaxYear: year, State: in.State, Kind: in.Kind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
 		if err != nil {
 			return nil, taxRouteError(err)
 		}

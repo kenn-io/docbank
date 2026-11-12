@@ -981,8 +981,21 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	for _, option := range rp.AnyOf {
 		recordPresence = append(recordPresence, option.Required...)
 	}
-	assert.Contains(t, recordPresence, "amount")
-	assert.Contains(t, recordPresence, "title")
+	assert.ElementsMatch(t, []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"}, recordPresence)
+	for _, schema := range []*huma.Schema{doc.Components.Schemas.Map()["CreateTaxRecordRequest"], rp} {
+		require.NotNil(t, schema)
+		assert.Equal(t, 1200, *schema.Properties["title"].MaxLength)
+		assert.Equal(t, 256, *schema.Properties["form_code"].MaxLength)
+		assert.Equal(t, 32, *schema.Properties["amount"].MaxLength)
+		assert.Equal(t, 8192, *schema.Properties["note"].MaxLength)
+		assert.Equal(t, new(float64(1)), schema.Properties["tax_year"].Minimum)
+		assert.Equal(t, new(float64(9999)), schema.Properties["tax_year"].Maximum)
+		assert.Equal(t, new(float64(0)), schema.Properties["lead_days"].Minimum)
+		assert.Equal(t, new(float64(366)), schema.Properties["lead_days"].Maximum)
+	}
+	for _, name := range []string{"account_id", "authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", "amount_minor", "verified_on", "verified_revision", "retired_at"} {
+		assert.True(t, doc.Components.Schemas.Map()["TaxRecord"].Properties[name].Nullable, name)
+	}
 	output := doc.Components.Schemas.Map()["TaxRecord"]
 	require.NotNil(t, output)
 	assert.True(t, output.Properties["amount_minor"].Nullable)

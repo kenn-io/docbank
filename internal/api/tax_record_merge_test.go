@@ -40,3 +40,13 @@ func TestTaxPatchOmissionNullAndMoney(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, merged.Amount)
 }
+
+func TestTaxRecordCreateAuthorityInput(t *testing.T) {
+	id := "22222222-2222-4222-8222-222222222222"
+	input := (CreateTaxRecordRequest{AuthorityPartyID: &id}).input()
+	assert.Equal(t, &id, input.AuthorityPartyID)
+	assert.False(t, input.AuthoritySet)
+	input = (CreateTaxRecordRequest{ClearAuthority: true}).input()
+	assert.True(t, input.AuthoritySet)
+	assert.Nil(t, input.AuthorityPartyID)
+}

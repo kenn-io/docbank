@@ -186,3 +186,10 @@ func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
 		assert.Equal(t, field.Error(), problem.Detail)
 	}
 }
+
+func TestRecordSafeTaxDiagnostics(t *testing.T) {
+	for _, detail := range []string{"title: invalid length or text", "kind: unknown kind", "state: unknown state", "direction: unknown direction", "amount: invalid precision", "amount: invalid length", "amount: invalid decimal or overflow", "amount: overflow", "amount: amount required", "amount: zero required", "amount: unknown amount must be null", "amount: amount required when currency changes", "period_end: precedes period_start", "form_code: invalid value", "tax_year: out of range", "year: invalid value", "record_id: invalid value"} {
+		assert.Equal(t, detail, SafeTaxDiagnostic("untrusted "+detail+" trailing private"))
+	}
+	assert.Empty(t, SafeTaxDiagnostic("private: private-synthetic-value"))
+}
