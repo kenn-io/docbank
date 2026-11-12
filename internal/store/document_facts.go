@@ -23,11 +23,8 @@ func (s *Store) DocumentDateFacts(ctx context.Context, versionID string) (Docume
 		return DocumentDateFacts{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
+	version, _, err := s.factsVersionTx(ctx, tx, versionID)
 	if err != nil {
-		return DocumentDateFacts{}, err
-	}
-	if err := s.fenceFactsVersionTx(ctx, tx, versionID); err != nil {
 		return DocumentDateFacts{}, err
 	}
 	state, view, err := s.freshEventsInTx(ctx, tx, versionID)
@@ -94,11 +91,8 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		return DocumentPeopleFacts{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
+	version, hideLocked, err := s.factsVersionTx(ctx, tx, versionID)
 	if err != nil {
-		return DocumentPeopleFacts{}, err
-	}
-	if err := s.fenceFactsVersionTx(ctx, tx, versionID); err != nil {
 		return DocumentPeopleFacts{}, err
 	}
 	eventState, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
@@ -144,6 +138,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		events := eventView.Events.Events
 		for i := range facts.Candidates {
 			c := &facts.Candidates[i]
+			c.SafeLabels = make(map[PersonCandidateOccurrence]string)
 			c.Occurrences = slices.DeleteFunc(c.Occurrences, func(o PersonCandidateOccurrence) bool {
 				if o.Role == "blind_copy" {
 					return true
@@ -160,6 +155,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 								return true
 							}
 							found = true
+							c.SafeLabels[o] = actor.DisplayName
 						}
 					}
 				}
@@ -167,14 +163,6 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			})
 		}
 
-	}
-	hideLocked := false
-	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); visible {
-		_, err := s.hiddenSession(ctx, tx)
-		if err != nil && !errors.Is(err, ErrHiddenLocked) {
-			return DocumentPeopleFacts{}, err
-		}
-		hideLocked = errors.Is(err, ErrHiddenLocked)
 	}
 	ids := map[string]bool{}
 	for _, e := range facts.Edges {
@@ -188,14 +176,18 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	for id := range ids {
 		person, _, err := personByIDTx(ctx, tx, id)
 		if errors.Is(err, ErrNotFound) {
-			return DocumentPeopleFacts{}, ErrDocumentPeopleCorrupt
+			// Retired persons remain the owners of historical assertions.
+			err = tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=$1 AND state='retired'`, id).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin, &person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
+			if errors.Is(err, sql.ErrNoRows) {
+				return DocumentPeopleFacts{}, ErrDocumentPeopleCorrupt
+			}
 		}
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
 		fp := FactPerson{Person: person, Visible: true, External: []PersonExternalIdentity{}}
 		if safe && person.State == "provisional" {
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1 AND `+personVisibleAssertionSQL("a", "$2")+`) OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1 AND `+personVisibleActorSQL("p", "$2")+`)`, id, boolInt(hideLocked)).Scan(&fp.Visible); err != nil {
+			if err := tx.QueryRowContext(ctx, visiblePersonByIDSQL, id, boolInt(hideLocked)).Scan(&fp.Visible); err != nil {
 				return DocumentPeopleFacts{}, err
 			}
 		}
@@ -216,25 +208,29 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	return facts, nil
 }
 
-// Browser sessions must hold the existing Hidden authorization for a hidden version.
-func (s *Store) fenceFactsVersionTx(ctx context.Context, tx *sql.Tx, versionID string) error {
+// factsVersionTx reads the version and applies the caller's Hidden scope once.
+func (s *Store) factsVersionTx(ctx context.Context, tx *sql.Tx, versionID string) (ContentVersion, bool, error) {
+	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1`, versionID))
+	if err != nil {
+		return ContentVersion{}, false, err
+	}
 	visible, _ := ctx.Value(visiblePersonContextKey{}).(bool)
 	if !visible {
-		return nil
+		return version, false, nil
 	}
-	_, err := s.hiddenSession(ctx, tx)
+	_, err = s.hiddenSession(ctx, tx)
 	if err == nil {
-		return nil
+		return version, false, nil
 	}
 	if !errors.Is(err, ErrHiddenLocked) {
-		return err
+		return ContentVersion{}, false, err
 	}
 	var allowed bool
 	if err := tx.QueryRowContext(ctx, `SELECT `+personVersionVisibleSQL("$1"), versionID).Scan(&allowed); err != nil {
-		return err
+		return ContentVersion{}, false, err
 	}
 	if !allowed {
-		return ErrNotFound
+		return ContentVersion{}, false, ErrNotFound
 	}
-	return nil
+	return version, true, nil
 }

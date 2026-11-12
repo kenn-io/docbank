@@ -80,7 +80,7 @@ func versionDatesAPI(f store.DocumentDateFacts, disclosure, origin string) Versi
 }
 
 func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) VersionPeople {
-	out := VersionPeople{ContentVersionID: f.Version.ID, NodeID: f.Version.NodeID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(origin, f.Version.NodeID, f.Version.ID)}
+	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(origin, f.Version.NodeID, f.Version.ID)}
 	for _, e := range f.Edges {
 		p, ok := f.Persons[e.PersonID]
 		if !ok || safe && (e.Sensitive || e.Role == "blind_copy" || !p.Visible) {
@@ -102,7 +102,11 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 	}
 	for _, c := range f.Candidates {
 		for _, o := range c.Occurrences {
-			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: c.DisplayName, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
+			label := c.DisplayName
+			if safe {
+				label = c.SafeLabels[o]
+			}
+			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: label, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
 		}
 	}
 	return out

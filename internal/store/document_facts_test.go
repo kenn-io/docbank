@@ -41,6 +41,16 @@ func checkDocumentPeopleFactsFiltersBlindCopyAssertion(t *testing.T, newStore fu
 	full, err := s.DocumentPeopleFacts(t.Context(), versionID, false)
 	require.NoError(t, err)
 	require.Len(t, full.Assertions, 1)
+	visible, err := s.CreatePerson(t.Context(), "Retired Author", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: versionID, PersonID: visible.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = s.RetirePerson(t.Context(), visible.PersonID, visible.Revision)
+	require.NoError(t, err)
+	safe, err = s.DocumentPeopleFacts(t.Context(), versionID, true)
+	require.NoError(t, err)
+	require.Len(t, safe.Assertions, 1)
+	require.Equal(t, "Retired Author", safe.Persons[visible.PersonID].Person.DisplayName)
 }
 
 func checkDocumentDateFactsNeverReturnsStaleClaims(t *testing.T, newStore func(*testing.T) *Store) {
@@ -96,6 +106,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	require.Equal(t, "pending", facts.State)
 	require.Empty(t, facts.Edges)
+	target.InputEpoch++
 	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
 	require.NoError(t, err)
 	input, err = s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
@@ -111,6 +122,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	require.Equal(t, "pending", facts.State)
 	require.Empty(t, facts.Edges)
+	s = newStore(t)
 	failedVersion := seedDocumentPeopleEvent(t, s, "people-failed.txt", "c5", nil)
 	failedInput, err := s.PrepareDocumentPeopleInputs(t.Context(), failedVersion.ID)
 	require.NoError(t, err)
@@ -123,23 +135,29 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 
 func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	s := newTestStore(t)
-	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "blind_copy", Sensitive: true}
+	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "recipient", Sensitive: true}
 	version, target := ingestDocumentEventTarget(t, s, "sensitive.txt", "d9")
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
 	record.Events[0].Actors = []document.DocumentEventActorV1{actor,
-		{ActorKey: "name_alias:public sender", Claim: `"Public Sender"`, DisplayName: "Public Sender", Role: "sender", Ordinal: 1}}
+		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `"Private Name" <sender@example.test>`, DisplayName: "Private Name", Role: "blind_copy", Sensitive: true},
+		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `"Public Sender" <sender@example.test>`, DisplayName: "Public Sender", Role: "sender"}}
 	raw, _, err := document.MarshalDocumentEventsV1(record)
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
 	require.NoError(t, err)
 	_, err = s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET display_name=$1 WHERE actor_key=$2`, "Private Name", "email:sender@example.test")
+	require.NoError(t, err)
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:unmatched", "Unmatched", "", []PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "missing"}}))
 	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
 	require.NoError(t, err)
 	foundSender := false
 	for _, c := range safe.Candidates {
-		if c.ActorKey == "name_alias:public sender" {
+		if c.ActorKey == "email:sender@example.test" {
 			require.Len(t, c.Occurrences, 1)
+			require.Equal(t, "Private Name", c.DisplayName)
+			require.Equal(t, "Public Sender", c.SafeLabels[c.Occurrences[0]])
 			foundSender = true
 		} else {
 			require.Empty(t, c.Occurrences)
@@ -148,7 +166,7 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	require.True(t, foundSender)
 	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
-	require.Len(t, full.Candidates, 2)
+	require.Len(t, full.Candidates, 3)
 }
 
 func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) {
@@ -168,6 +186,17 @@ func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) 
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE persons SET state='provisional' WHERE person_id=$1`, person.PersonID)
 	require.NoError(t, err)
+	visible, _ := ingestDocumentEventTarget(t, s, "visible.txt", "e2")
+	tx, err := s.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, hideLocked, err := s.factsVersionTx(WithVisiblePeopleOnly(ctx), tx, visible.ID)
+	require.NoError(t, err)
+	require.True(t, hideLocked)
+	var personVisible bool
+	require.NoError(t, tx.QueryRowContext(ctx, visiblePersonByIDSQL, person.PersonID, boolInt(hideLocked)).Scan(&personVisible))
+	require.False(t, personVisible)
+	require.NoError(t, tx.Rollback())
 	facts, err := s.DocumentPeopleFacts(ctx, photo.CurrentVersionID, true)
 	require.NoError(t, err)
 	require.True(t, facts.Persons[person.PersonID].Visible)

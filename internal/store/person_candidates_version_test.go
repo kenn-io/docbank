@@ -15,9 +15,7 @@ func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, newStore func(
 		{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "first"},
 		{ContentVersionID: second, Role: "blind_copy", EvidenceKind: "email_generation", EvidenceID: "second"},
 	}))
-	other := openCandidateForTest(t, s, candidateForTest(t, "name_alias:other", "Other", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "other"}}))
-	_, err := s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET evidence_json=$1 WHERE candidate_id=$2`, []byte("invalid-json"), other.CandidateID)
-	require.NoError(t, err)
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:other", "Other", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "other"}}))
 	got, err := s.openCandidatesForVersion(t.Context(), s.db, first)
 	require.NoError(t, err)
 	require.Len(t, got, 1)

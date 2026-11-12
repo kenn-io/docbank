@@ -22004,9 +22004,6 @@ components:
           items:
             $ref: "#/components/schemas/VersionPersonEdge"
           type: array
-        node_id:
-          format: int64
-          type: integer
         open:
           $ref: "#/components/schemas/FactOpen"
         state:
@@ -22017,7 +22014,6 @@ components:
           type: array
       required:
         - content_version_id
-        - node_id
         - state
         - edges
         - assertions
