@@ -1513,7 +1513,7 @@ Failures retry on input after 30 seconds, including after screen changes. Six
 failed attempts pause this process's reports until UTC rollover, covering file,
 lock, discovery, POST, and receipt errors. Data operations can start daemons.
 
-Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
+Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`, `contracts`.
 
 Each event carries these fields:
 

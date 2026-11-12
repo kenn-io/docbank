@@ -273,6 +273,15 @@ export async function readRelatedSource(
   signal: AbortSignal,
 ): Promise<RelatedSelectedSource> {
   identity(target);
+  return readExactSource(session, target, signal);
+}
+// readExactSource binds a reader source to one recorded node, version, hash
+// and size. It never substitutes the node's current content.
+export async function readExactSource(
+  session: string,
+  target: AttachmentIdentity,
+  signal: AbortSignal,
+): Promise<RelatedSelectedSource> {
   const version = object(
     await readBoundedJSON(session, generated.getGetContentVersionUrl(target.version_id), signal),
   );

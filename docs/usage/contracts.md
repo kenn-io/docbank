@@ -124,3 +124,27 @@ with `role` and optional `content_version_id` query parameters and an `If-Match`
 revision. `GET /api/v1/nodes/{node_id}/contracts` lists linked contracts even
 when that node has been purged. Metadata backup retains links even when the
 existing backup rules omit their document bytes.
+
+## In the web app
+
+**Contracts** in the Documents sidebar opens the register at `/contracts`. The
+page reads contracts; create, edit and link them with the CLI.
+
+The table shows each agreement's title, type, counterparties, status, start
+date and expiry date, sorted by title. Filter it by status, including
+**Expired**, by type, and by **Expires** within 30, 90 or 365 days. A window of
+N days shows agreements expiring from the page's date through N days later, in
+any status; add **Active** to see only current agreements. **Clear filters**
+returns to the whole register.
+
+Dates and expiry use the daemon's date, shown under the filters. The page keeps
+that date while you filter, load more rows and open contracts; **Refresh**
+takes the current date. Rows load 100 at a time with **Load more**. On a narrow
+screen the type and start columns are hidden.
+
+Select a title to open the contract: its type, status and dates, its parties
+and their roles, its terms, and its linked documents. **Open** shows the exact
+linked version in the document reader, never a later version of the file. An
+older version is marked **Older version**. An unavailable link shows its
+recorded hash and size and cannot be opened. **All contracts** returns to the
+table with your filters.

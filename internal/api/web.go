@@ -38,7 +38,7 @@ type webMapTiles struct {
 	MaxZoom     int    `json:"max_zoom"`
 }
 
-var documentPages = []string{"/searches", "/productions", "/imports", "/trash"}
+var documentPages = []string{"/searches", "/productions", "/imports", "/contracts", "/trash"}
 
 // registerWeb serves the embedded SPA without granting it a privileged data
 // path. JavaScript and styles are public static bytes; every vault read still
