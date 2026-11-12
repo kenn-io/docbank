@@ -28,5 +28,4 @@ func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	assert.Equal(t, &date, in.EffectiveEnd)
 	require.NotNil(t, in.LeadDays)
 	assert.Zero(t, *in.LeadDays)
-
 }

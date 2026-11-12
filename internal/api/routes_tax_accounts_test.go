@@ -271,5 +271,4 @@ func TestTaxKindNormalizedLength(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, map[string]any{"tax_kind": " " + strings.Repeat("x", 64) + " "})
 	assert.Equal(t, strings.Repeat("x", 64), account.TaxKind)
-
 }
