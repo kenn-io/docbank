@@ -354,7 +354,7 @@ export async function highlightSetFingerprint(value: HighlightSet): Promise<stri
 
 function parsePeople(value: unknown): PersonFilter[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value)) throw new Error("filters.people must be an array");
+  if (!Array.isArray(value)) throw new Error("People filters must be a list.");
   return value.map((item) => {
     const entry = requireObject(item, "filters.people");
     requireOnlyKeys(entry, ["person_id", "roles"], "filters.people");
@@ -369,8 +369,8 @@ function parsePeople(value: unknown): PersonFilter[] | undefined {
 
 function normalizePeople(value: PersonFilter[] | undefined): PersonFilter[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value) || value.length > 64)
-    throw new Error("filters.people exceeds its bound");
+  if (!Array.isArray(value)) throw new Error("People filters must be a list.");
+  if (value.length > 64) throw new Error("Use at most 64 people filters.");
   const entries = value.map((entry) => {
     if (!entry || !uuidV4Pattern.test(entry.person_id))
       throw new Error("filters.people.person_id is invalid");
