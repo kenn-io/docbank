@@ -24,24 +24,19 @@ func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicate
 	predicate = joinCompiledFragments([]compiledQueryFragment{
 		compiledLiveCurrentPredicate(), predicate,
 	}, ` AND `)
-	matched := `SELECT n.id AS node_id,cv.version_id AS content_version_id,
+	prefix := `SELECT n.id AS node_id,cv.version_id AS content_version_id,
 		cv.blob_hash,n.modified_at
 		FROM nodes n JOIN content_versions cv ON cv.node_id=n.id
-		WHERE ` + predicate.sql
+		WHERE `
 	if !collapseDuplicates {
-		return compiledQueryFragment{
-			sql:  `SELECT DISTINCT node_id,content_version_id FROM (` + matched + `) matched_members`,
-			args: predicate.args, relations: predicate.relations,
-		}
+		return wrapCompiledFragment(predicate, `SELECT DISTINCT node_id,content_version_id FROM (`+prefix, `) matched_members`)
 	}
-	return compiledQueryFragment{
-		sql: `SELECT node_id,content_version_id FROM (
+	return wrapCompiledFragment(predicate, `SELECT node_id,content_version_id FROM (
 			SELECT node_id,content_version_id,
-				ROW_NUMBER() OVER (PARTITION BY blob_hash ORDER BY ` + DuplicateRepresentativeOrder + `) duplicate_rank
-			FROM (` + matched + `) matched_members
-		) ranked_members WHERE duplicate_rank=1`,
-		args: predicate.args, relations: predicate.relations,
-	}
+				ROW_NUMBER() OVER (PARTITION BY blob_hash ORDER BY `+DuplicateRepresentativeOrder+`) duplicate_rank
+			FROM (`+prefix, `) matched_members
+		) ranked_members WHERE duplicate_rank=1`)
+
 }
 
 // bindQueryPopulation supplies every shared relation requested by a population

@@ -40,11 +40,19 @@ type lexicalOperand struct {
 	negated bool
 }
 
+// compiledBoundary identifies a predicate in SQL and its corresponding argument range.
+// Ranges are half-open and can nest when a saved query collapses duplicates.
+type compiledBoundary struct {
+	sqlStart, sqlEnd, argStart, argEnd int
+	relations                          compiledQueryRelations
+}
+
 type compiledQueryFragment struct {
-	lexical   []lexicalOperand
-	sql       string
-	args      []any
-	relations compiledQueryRelations
+	boundaries []compiledBoundary
+	lexical    []lexicalOperand
+	sql        string
+	args       []any
+	relations  compiledQueryRelations
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -398,12 +406,9 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 		}, ` AND `)
 	}
 	population := selectCompiledPopulation(nested, true)
-	return compiledQueryFragment{
-		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
+	return markCompiledBoundary(wrapCompiledFragment(population, `EXISTS (SELECT 1 FROM (`, `) saved_population
 			WHERE saved_population.node_id=n.id
-			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations, lexical: nested.lexical,
-	}, nil
+			  AND saved_population.content_version_id=cv.version_id)`), 0), nil
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
@@ -535,11 +540,11 @@ func compileSizePredicate(field string, bound int64) compiledQueryFragment {
 func compileTextCoveragePredicate(value string, start, end int) (compiledQueryFragment, error) {
 	switch value {
 	case "complete", "partial", "failed", "unprocessed", "none", "unavailable":
-		return compiledQueryFragment{
+		return markCompiledBoundary(compiledQueryFragment{
 			sql: `EXISTS (SELECT 1 FROM processing_coverage pc
 				WHERE pc.node_id=n.id AND pc.version_id=cv.version_id AND pc.state=?)`,
 			args: []any{value}, relations: compiledRelationProcessingCoverage,
-		}, nil
+		}, compiledRelationProcessingCoverage), nil
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "invalid text_coverage operand")
 	}
@@ -554,13 +559,13 @@ func compileHasDuplicatesPredicate(value string, start, end int) (compiledQueryF
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "has_duplicates operand must be true or false")
 	}
-	return compiledQueryFragment{
+	return markCompiledBoundary(compiledQueryFragment{
 		sql: negate + `EXISTS (SELECT 1 FROM current_content_members duplicate_member
 			WHERE duplicate_member.blob_hash=cv.blob_hash
 			  AND duplicate_member.size=cv.size
 			  AND duplicate_member.node_id<>n.id)`,
 		relations: compiledRelationCurrentContent,
-	}, nil
+	}, compiledRelationCurrentContent), nil
 }
 
 func compileValuePredicates(
@@ -577,7 +582,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 	if path == "/" {
 		return trueCompiledFragment()
 	}
-	return compiledQueryFragment{
+	return markCompiledBoundary(compiledQueryFragment{
 		sql: `EXISTS (
 			WITH RECURSIVE query_ancestry(id,parent_id,path) AS (
 				SELECT n.id,n.parent_id,n.name
@@ -593,7 +598,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 			  AND (path=? OR substr(path,1,length(?)+1)=? || '/')
 		)`,
 		args: []any{path, path, path},
-	}
+	}, 0)
 }
 
 func compileTagPredicate(id string) compiledQueryFragment {
@@ -604,11 +609,11 @@ func compileTagPredicate(id string) compiledQueryFragment {
 }
 
 func compileCollectionPredicate(id string) compiledQueryFragment {
-	return compiledQueryFragment{
+	return markCompiledBoundary(compiledQueryFragment{
 		sql: `EXISTS (WITH ` + CollectionMembershipCTE + `
 			SELECT 1 FROM collection_members cm WHERE cm.node_id=n.id AND cm.ingest_id=?)`,
 		args: []any{id},
-	}
+	}, 0)
 }
 
 func compileMIMEPredicate(value string) compiledQueryFragment {
@@ -701,9 +706,9 @@ func negateCompiledFragment(fragment compiledQueryFragment) compiledQueryFragmen
 	for i := range lexical {
 		lexical[i].negated = !lexical[i].negated
 	}
-	return compiledQueryFragment{
-		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations, lexical: lexical,
-	}
+	fragment = wrapCompiledFragment(fragment, `NOT (`, `)`)
+	fragment.lexical = lexical
+	return fragment
 }
 
 func compiledLiveCurrentPredicate() compiledQueryFragment {
@@ -716,21 +721,47 @@ func trueCompiledFragment() compiledQueryFragment {
 	return compiledQueryFragment{sql: `1`}
 }
 
+// wrapCompiledFragment relocates boundaries without interpreting SQL text.
+func wrapCompiledFragment(fragment compiledQueryFragment, prefix, suffix string) compiledQueryFragment {
+	fragment.sql = prefix + fragment.sql + suffix
+	fragment.boundaries = slices.Clone(fragment.boundaries)
+	for i := range fragment.boundaries {
+		fragment.boundaries[i].sqlStart += len(prefix)
+		fragment.boundaries[i].sqlEnd += len(prefix)
+	}
+	return fragment
+}
+
+func markCompiledBoundary(fragment compiledQueryFragment, relations compiledQueryRelations) compiledQueryFragment {
+	fragment.boundaries = append(slices.Clone(fragment.boundaries), compiledBoundary{
+		sqlEnd: len(fragment.sql), argEnd: len(fragment.args), relations: relations,
+	})
+	return fragment
+}
+
 func joinCompiledFragments(parts []compiledQueryFragment, operator string) compiledQueryFragment {
-	var sqlParts []string
-	var args []any
-	var relations compiledQueryRelations
-	var lexical []lexicalOperand
+	var result compiledQueryFragment
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
 		}
-		sqlParts = append(sqlParts, `(`+part.sql+`)`)
-		args = append(args, part.args...)
-		relations |= part.relations
-		lexical = append(lexical, part.lexical...)
+		if result.sql != "" {
+			result.sql += operator
+		}
+		offset, argOffset := len(result.sql)+1, len(result.args)
+		result.sql += `(` + part.sql + `)`
+		for _, boundary := range part.boundaries {
+			boundary.sqlStart += offset
+			boundary.sqlEnd += offset
+			boundary.argStart += argOffset
+			boundary.argEnd += argOffset
+			result.boundaries = append(result.boundaries, boundary)
+		}
+		result.args = append(result.args, part.args...)
+		result.relations |= part.relations
+		result.lexical = append(result.lexical, part.lexical...)
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical}
+	return result
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
