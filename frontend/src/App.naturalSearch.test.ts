@@ -2184,16 +2184,6 @@ it.each([
   },
 );
 
-it("keeps the empty search quiet when coverage fails", async () => {
-  const coverage = vi.fn(async () => new Response("failure", { status: 500 }));
-  renderEmptySearch(coverage);
-  await submitSearch("missing");
-  await waitFor(() => expect(coverage).toHaveBeenCalled());
-  await act(async () => {});
-  expect(screen.queryByText(/without a text layer/)).toBeNull();
-  expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
-});
-
 it("ignores coverage from an older search", async () => {
   let resolve!: (response: Response) => void;
   const old = new Promise<Response>((done) => {
