@@ -744,6 +744,19 @@ async function photoChannel(): Promise<{ socket: DaemonSocket; channel: Verified
   return { socket, channel };
 }
 
+it("rejects an unsupported saved photo group status", async () => {
+  const { socket, channel } = await photoChannel();
+  const inspection = channel.inspectPhotoImport("saved", new AbortController().signal);
+  const request = JSON.parse(socket.frames.at(-1) as string);
+  socket.emit({
+    type: "photo_import_inspection",
+    request_id: request.request_id,
+    saved_import: { import_id: "saved", groups: [{ status: "unconfirmed", files: [] }] },
+  });
+  await expect(inspection).rejects.toBeInstanceOf(UploadChannelError);
+  channel.close();
+});
+
 it("reports a server error that arrives while photo bytes are still sending", async () => {
   const { socket, channel } = await photoChannel();
   socket.onbinary = () => {
