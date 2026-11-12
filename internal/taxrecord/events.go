@@ -42,7 +42,8 @@ func NormalizeEvent(recordKind string, v EventValues) (EventValues, error) {
 
 // ValidateEvent validates canonical authority accepted at this stage.
 func ValidateEvent(recordKind string, v EventValues) error {
-	if v.Kind == "note" {
+	cash := v.Kind == "payment" || v.Kind == "refund"
+	if v.Kind == "note" || cash {
 		if v.SetsState != "" {
 			return invalid("sets_state", "invalid state")
 		}
@@ -62,11 +63,14 @@ func ValidateEvent(recordKind string, v EventValues) error {
 		return invalid("note", "not canonical")
 	}
 	if v.AmountMinor == nil {
+		if cash {
+			return invalid("amount", "amount required")
+		}
 		if v.Currency != "" {
 			return invalid("currency", "requires amount")
 		}
 	} else {
-		if *v.AmountMinor < 0 || (v.Kind != "assessed" && v.Kind != "decision_issued") {
+		if *v.AmountMinor < 0 || (cash && *v.AmountMinor == 0) || (!cash && v.Kind != "assessed" && v.Kind != "decision_issued") {
 			return invalid("amount", "unsupported amount")
 		}
 		if err := location("ZZ", "", v.Currency, true); err != nil {

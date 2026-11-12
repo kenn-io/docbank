@@ -238,6 +238,13 @@ func (s *Store) UpdateTaxRecord(ctx context.Context, id string, revision int64, 
 		if err := checkTaxParties(ctx, tx, v.FilerPartyID, v.AuthorityPartyID, r.FilerPartyID, r.AuthorityPartyID); err != nil {
 			return err
 		}
+		detail, err := getTaxRecordDetail(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if _, err = taxrecord.CalculateBalance(v, taxEventFacts(detail.Events)); err != nil {
+			return err
+		}
 		r.RecordValues = v
 		r.TaxKindFolded = document.FoldPersonName(v.TaxKind)
 		if err := advanceTaxRevision(&r.Revision); err != nil {

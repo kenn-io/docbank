@@ -34,8 +34,9 @@ type TaxEventMutation struct {
 
 // TaxRecordDetail contains a parent and its events in append order.
 type TaxRecordDetail struct {
-	Record TaxRecord
-	Events []TaxEvent
+	Record  TaxRecord
+	Events  []TaxEvent
+	Balance taxrecord.Balance
 }
 
 const taxEventColumns = `event_id,record_id,kind,occurred_on,sets_state,amount_minor,currency,reference,note,recorded_at,voided_at,void_reason,record_revision`
@@ -70,7 +71,11 @@ func getTaxRecordDetail(ctx context.Context, q metadataQuerier, id string) (TaxR
 		}
 		d.Events = append(d.Events, e)
 	}
-	return d, rows.Err()
+	if err := rows.Err(); err != nil {
+		return TaxRecordDetail{}, err
+	}
+	d.Balance, err = taxrecord.CalculateBalance(r.RecordValues, taxEventFacts(d.Events))
+	return d, err
 }
 
 // GetTaxRecordDetail reads the parent and children from one snapshot.
@@ -95,7 +100,7 @@ func (s *Store) AdvanceTaxRecord(ctx context.Context, id string, revision int64,
 	return s.appendTaxEvent(ctx, id, revision, in, true)
 }
 
-// AddTaxEvent appends a note without changing state.
+// AddTaxEvent appends a non-state event.
 func (s *Store) AddTaxEvent(ctx context.Context, id string, revision int64, in TaxEventInput) (TaxEventMutation, error) {
 	return s.appendTaxEvent(ctx, id, revision, in, false)
 }
@@ -147,6 +152,9 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 		}
 		e := TaxEvent{EventValues: v, EventID: eventID, RecordID: id, RecordedAt: r.UpdatedAt, RecordRevision: r.Revision}
 		if err = taxInsert(ctx, tx, "tax_events", taxEventColumns, []any{e.EventID, e.RecordID, e.Kind, e.OccurredOn, e.SetsState, e.AmountMinor, e.Currency, e.Reference, e.Note, e.RecordedAt, e.VoidedAt, e.VoidReason, e.RecordRevision}); err != nil {
+			return err
+		}
+		if _, err = getTaxRecordDetail(ctx, tx, id); err != nil {
 			return err
 		}
 		if err = updateTaxEventParent(ctx, tx, r, revision); err != nil {

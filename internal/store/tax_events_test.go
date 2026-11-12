@@ -109,7 +109,7 @@ func TestTaxEventExportRejectsInvalidAuthority(t *testing.T) {
 		update, cause string
 		invalid       bool
 	}{
-		{`UPDATE tax_events SET kind='refund'`, "kind: unsupported event", true},
+		{`UPDATE tax_events SET kind='refund'`, "sets_state: invalid state", true},
 		{`UPDATE tax_events SET voided_at='0001-01-01T00:00:00.000000000Z', void_reason='Correction'`, "tax event void precedes recording", false},
 	} {
 		t.Run(tc.cause, func(t *testing.T) {
@@ -191,4 +191,74 @@ func TestTaxEventConcurrentWritersRejectStaleRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, d.Events, 1)
 	assert.Equal(t, r.Revision+1, d.Record.Revision)
+}
+
+func checkTaxEventsAuthorityAndBalance(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	p, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example", Own: true})
+	require.NoError(t, err)
+	in := TaxRecordInput{FilerPartyID: &p.PartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "filing", Title: "Example", Direction: "payable", Amount: new("10"), Currency: new("USD")}
+	r, err := s.CreateTaxRecord(ctx, in)
+	require.NoError(t, err)
+	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("2"), Currency: "USD"})
+	require.NoError(t, err)
+	other, err := s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, TaxEventInput{Kind: "refund", OccurredOn: "2026-01-01", Amount: new("1"), Currency: "EUR"})
+	require.NoError(t, err)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, new(int64(800)), d.Balance.OutstandingMinor)
+	assert.Equal(t, int64(1), d.Balance.OtherCurrencyEvents)
+	require.NoError(t, validateTaxMetadataState(ctx, s.db))
+	voided, err := s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, other.Record.Revision, "correction")
+	require.NoError(t, err)
+	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, new(int64(1000)), d.Balance.OutstandingMinor)
+	assert.Equal(t, voided.Record.Revision, d.Record.Revision)
+}
+
+func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	m, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("12.34"), Currency: "USD"})
+	require.NoError(t, err)
+	_, err = s.VoidTaxEvent(ctx, r.RecordID, m.Event.EventID, m.Record.Revision, "correction")
+	require.NoError(t, err)
+	var data bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &data))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(data.Bytes())))
+	var restored bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &restored))
+	assert.Equal(t, data.String(), restored.String())
+	for _, replacement := range []struct{ old, new string }{
+		{`"amount_minor":1234`, `"amount_minor":0`}, {`"currency":"USD"`, `"currency":""`}, {`"sets_state":""`, `"sets_state":"filed"`},
+	} {
+		corrupted := strings.Replace(data.String(), replacement.old, replacement.new, 1)
+		require.NotEqual(t, data.String(), corrupted)
+		dest := newTestStore(t)
+		require.Error(t, dest.ImportMetadata(ctx, strings.NewReader(corrupted)))
+		_, err = dest.GetTaxRecord(ctx, r.RecordID)
+		require.ErrorIs(t, err, ErrNotFound)
+	}
+}
+
+func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	a, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+	require.NoError(t, err)
+	cash.Amount = new("0.01")
+	b, err := s.AddTaxEvent(ctx, r.RecordID, a.Record.Revision, cash)
+	require.NoError(t, err)
+	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, TaxYear: r.TaxYear, Direction: "payable", Amount: new("1"), Currency: new("USD")}
+	_, err = s.UpdateTaxRecord(ctx, r.RecordID, b.Record.Revision, in)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, b.Record.Revision, d.Record.Revision)
+	assert.Len(t, d.Events, 2)
 }

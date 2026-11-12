@@ -2226,9 +2226,11 @@ var backendSuites = []backendSuite{
 		{"TaxEventsAuthority", func(t *testing.T) {
 			t.Helper()
 			checkTaxEventsAuthority(t, newTestStore)
+			checkTaxEventsAuthorityAndBalance(t, newTestStore)
 		}, func(t *testing.T) {
 			t.Helper()
 			checkTaxEventsAuthority(t, newPostgresQueryStore)
+			checkTaxEventsAuthorityAndBalance(t, newPostgresQueryStore)
 		}},
 		{"TaxEventsLifecycle", func(t *testing.T) {
 			t.Helper()

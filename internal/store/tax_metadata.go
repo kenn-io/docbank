@@ -211,9 +211,11 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		state    string
 		revision int64
 		derived  taxrecord.EventState
+		record   taxrecord.RecordValues
+		events   []taxrecord.EventFact
 	}
 	parents := map[string]*authority{}
-	parentRows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,revision FROM tax_records`)
+	parentRows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,revision,direction,amount_minor,currency FROM tax_records`)
 	if err != nil {
 		return err
 	}
@@ -221,7 +223,7 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	for parentRows.Next() {
 		var id, kind string
 		var p authority
-		if err = parentRows.Scan(&id, &kind, &p.state, &p.revision); err != nil {
+		if err = parentRows.Scan(&id, &kind, &p.state, &p.revision, &p.record.Direction, &p.record.AmountMinor, &p.record.Currency); err != nil {
 			return err
 		}
 		p.derived, err = taxrecord.NewEventState(kind)
@@ -256,7 +258,9 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 			return errors.New("duplicate tax event revision")
 		}
 		previousID, previousRevision = event.RecordID, event.RecordRevision
-		if err = p.derived.Apply(taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}); err != nil {
+		fact := taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}
+		p.events = append(p.events, fact)
+		if err = p.derived.Apply(fact); err != nil {
 			return err
 		}
 	}
@@ -264,6 +268,9 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		return err
 	}
 	for _, p := range parents {
+		if _, err := taxrecord.CalculateBalance(p.record, p.events); err != nil {
+			return err
+		}
 		if p.state != p.derived.State {
 			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
 		}
