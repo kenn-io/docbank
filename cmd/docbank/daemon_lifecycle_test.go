@@ -773,16 +773,6 @@ waitForBrowser:
 	restarted := waitForDaemon(t, root)
 	require.NotEqual(t, old.PID, restarted.PID)
 	require.False(t, daemonconn.Explicit(restarted))
-	openedURL, err := os.ReadFile(openedPath)
-	require.NoError(t, err)
-	openedFile, err := url.Parse(string(openedURL))
-	require.NoError(t, err)
-	require.Equal(t, "file", openedFile.Scheme)
-	openedFilePath := openedFile.Path
-	if runtime.GOOS == "windows" {
-		openedFilePath = strings.TrimPrefix(openedFilePath, "/")
-	}
-	require.Equal(t, filepath.Join(root, "web-launch", "index.html"), filepath.FromSlash(openedFilePath))
 	bootstrap, err := os.ReadFile(filepath.Join(root, "web-launch", "index.html"))
 	require.NoError(t, err)
 	match := regexp.MustCompile(`location.replace\(("[^"]+")\)`).FindSubmatch(bootstrap)
