@@ -308,7 +308,7 @@ func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Con
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT `+contractColumns+` FROM contracts WHERE ($1='' OR CASE WHEN status='active' AND expires_on IS NOT NULL AND expires_on<$2 THEN 'expired' ELSE status END=$3) AND ($4='' OR contract_type=$5) AND ($6='' OR EXISTS(SELECT 1 FROM contract_parties cp WHERE cp.contract_id=contracts.contract_id AND cp.party_id=$7)) AND ($8='' OR `+contains+`) AND ($10='' OR expires_on<$11) AND ($14=0 OR EXISTS(SELECT 1 FROM contract_documents cd WHERE cd.contract_id=contracts.contract_id AND cd.node_id=$15)) ORDER BY title,contract_id LIMIT $12 OFFSET $13`, o.Status, o.AsOf, o.Status, o.ContractType, o.ContractType, o.PartyID, o.PartyID, o.Q, o.Q, o.ExpiringBefore, o.ExpiringBefore, o.Limit, o.Offset, o.NodeID, o.NodeID)
+	rows, err := tx.QueryContext(ctx, `SELECT `+contractColumns+` FROM contracts WHERE ($1='' OR CASE WHEN status='active' AND expires_on IS NOT NULL AND expires_on<$2 THEN 'expired' ELSE status END=$3) AND ($4='' OR contract_type=$5) AND ($6='' OR EXISTS(SELECT 1 FROM contract_parties cp WHERE cp.contract_id=contracts.contract_id AND cp.party_id=$7)) AND ($8='' OR `+contains+`) AND ($10='' OR expires_on<$11) AND (CAST($14 AS BIGINT)=0 OR EXISTS(SELECT 1 FROM contract_documents cd WHERE cd.contract_id=contracts.contract_id AND cd.node_id=$15)) ORDER BY title,contract_id LIMIT $12 OFFSET $13`, o.Status, o.AsOf, o.Status, o.ContractType, o.ContractType, o.PartyID, o.PartyID, o.Q, o.Q, o.ExpiringBefore, o.ExpiringBefore, o.Limit, o.Offset, o.NodeID, o.NodeID)
 	if err != nil {
 		return nil, err
 	}
