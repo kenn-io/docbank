@@ -3774,6 +3774,7 @@ components:
             - string
             - "null"
         tax_kind:
+          description: At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
           maxLength: 256
           type:
             - string
@@ -12928,6 +12929,7 @@ components:
           maxLength: 6
           type: string
         tax_kind:
+          description: At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
           maxLength: 256
           type: string
         tax_year:
@@ -21678,6 +21680,7 @@ components:
         subdivision:
           type: string
         tax_kind:
+          maxLength: 64
           type: string
         tax_year:
           format: int64

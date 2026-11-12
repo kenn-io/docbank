@@ -1997,6 +1997,7 @@ export interface CreateTaxRecordRequest {
      */
   subdivision?: string | null;
   /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
      * @maxLength 256
      * @nullable
      */
@@ -5427,7 +5428,10 @@ export type PatchTaxRecordRequest = (unknown & ({
   period_start?: string | null;
   /** @maxLength 6 */
   subdivision?: string;
-  /** @maxLength 256 */
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
   tax_kind?: string;
   /**
      * @minimum 1
@@ -9072,6 +9076,7 @@ export interface TaxRecord {
   revision: number;
   state: string;
   subdivision: string;
+  /** @maxLength 64 */
   tax_kind: string;
   /** @nullable */
   tax_year: number | null;
