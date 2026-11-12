@@ -226,7 +226,7 @@ func findPeopleSchemas() (schema, schema) {
 func personSchemaProperties() schema {
 	return schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
-		schemaStateField: stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
+		"state": stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
 	}
 }
@@ -261,7 +261,7 @@ func personDetailProperties() schema {
 
 func getPersonSchemas() (schema, schema) {
 	return rootObjectSchema(schema{personIDField: uuidSchema(), "assertion_cursor": uuidSchema(), "assertion_limit": integerSchema(1, 1000)}, personIDField), rootObjectSchema(withPrivateCache(personDetailProperties()), cacheRequired(
-		personIDField, "display_name", "origin", schemaStateField, schemaRevisionField, "created_at", "updated_at", "identities", "external_identities")...)
+		personIDField, "display_name", "origin", "state", schemaRevisionField, "created_at", "updated_at", "identities", "external_identities")...)
 }
 
 func resolvePackageCustodianSchemas() (schema, schema) {
@@ -925,10 +925,10 @@ func photoFileSchema() schema {
 		"id":                 uuidSchema(),
 		"asset_id":           uuidSchema(),
 		"node_id":            integerSchema(1, 0),
-		schemaRoleField:      enumSchema("raw", "image", "video", "sidecar"),
+		"role":               enumSchema("raw", "image", "video", "sidecar"),
 		"sidecar_of_file_id": uuidSchema(),
 		schemaCreatedAtField: dateTimeSchema(),
-	}, "id", "asset_id", "node_id", schemaRoleField, schemaCreatedAtField)
+	}, "id", "asset_id", "node_id", "role", schemaCreatedAtField)
 }
 
 func photoAssetOutputSchema() schema {
@@ -990,12 +990,12 @@ func personAssertionSchema(role schema) schema {
 		"assertion_id":       uuidSchema(),
 		"content_version_id": uuidSchema(),
 		"person_id":          uuidSchema(),
-		schemaRoleField:      role,
+		"role":               role,
 		"action":             enumSchema("assert", "suppress", "withdrawn"),
 		"note":               stringSchema(maxToolResponseBytes),
 		"recorded_at":        dateTimeSchema(),
 		schemaRevisionField:  integerSchema(1, 0),
-	}, "assertion_id", "content_version_id", "person_id", schemaRoleField, "action", "note", "recorded_at", schemaRevisionField)
+	}, "assertion_id", "content_version_id", "person_id", "role", "action", "note", "recorded_at", schemaRevisionField)
 }
 
 func getPhotoFacesSchemas() (schema, schema) {
@@ -1021,9 +1021,9 @@ func getPhotoFacesSchemas() (schema, schema) {
 
 func createPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id":       integerSchema(1, 0),
-		"kind":          enumSchema("photo", "video"),
-		schemaRoleField: enumSchema("raw", "image", "video", "sidecar"),
+		"node_id": integerSchema(1, 0),
+		"kind":    enumSchema("photo", "video"),
+		"role":    enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }
 
@@ -1032,7 +1032,7 @@ func attachPhotoFileSchemas() (schema, schema) {
 		"asset_id":           uuidSchema(),
 		schemaRevisionField:  integerSchema(1, 0),
 		"node_id":            integerSchema(1, 0),
-		schemaRoleField:      enumSchema("raw", "image", "video", "sidecar"),
+		"role":               enumSchema("raw", "image", "video", "sidecar"),
 		"sidecar_of_file_id": uuidSchema(),
 	}, "asset_id", schemaRevisionField, "node_id")
 }
@@ -1059,7 +1059,7 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"node_id":           integerSchema(1, 0),
 		schemaRevisionField: integerSchema(1, 0),
 		"kind":              enumSchema("photo", "video"),
-		schemaRoleField:     enumSchema("raw", "image", "video", "sidecar"),
+		"role":              enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }
 
