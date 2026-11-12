@@ -237,7 +237,7 @@ Document queries include current published person links and direct assertions. S
 
 ## Find documents by person and role
 
-Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters.
+Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters. Photo queries reject role operands and `filters.people`; use `person:` or `filters.person_ids` for depicted people.
 
 | Operand | Document roles |
 | --- | --- |

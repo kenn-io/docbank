@@ -108,7 +108,7 @@ func prepareBoundPredicate(ctx context.Context, q metadataQuerier, predicate com
 		if err := ctx.Err(); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		replacement := `EXISTS (SELECT 1 FROM json_each(?) prepared_member WHERE json_extract(prepared_member.value,'$.node_id')=n.id AND json_extract(prepared_member.value,'$.content_version_id')=cv.version_id)`
+		replacement := `(n.id,cv.version_id) IN (SELECT json_extract(prepared_member.value,'$.node_id'),json_extract(prepared_member.value,'$.content_version_id') FROM json_each(?) prepared_member)`
 		predicate.sql = predicate.sql[:b.sqlStart] + replacement + predicate.sql[b.sqlEnd:]
 		newArgs := make([]any, 0, len(predicate.args)-(b.argEnd-b.argStart)+1)
 		newArgs = append(newArgs, predicate.args[:b.argStart]...)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -864,4 +865,64 @@ func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
 	facet := facetByDimension(t, projection, "person_role")
 	require.EqualValues(t, 1, *facet.Total)
 	require.Equal(t, map[string]int64{anchor.PersonID: 1, other.PersonID: 1, selected.PersonID: 0}, facetCounts(facet))
+}
+
+func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Linden Vale", "operator")
+	require.NoError(t, err)
+	person, _ = addTestPersonIdentity(t, s, person, "name_alias", "Willow Finch", "willow-finch")
+	for i, name := range []string{"Linden Vale.txt", "Willow Finch.txt"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(fmt.Sprintf("mention-name-%d", i))), 20, "text/plain")
+		require.NoError(t, err)
+		seedCompiledLegacyText(t, s, node, "unrelated indexed body")
+	}
+	body, err := s.CreateFile(ctx, s.RootID(), "neutral.txt", fakeHash("ce03"), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, body, "A note for Willow Finch")
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Linden Vale\""}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, "neutral.txt", result.Rows[0].Name)
+	require.Equal(t, []string{"mentioned"}, result.Rows[0].MatchedRoles)
+	value = snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Linden Vale\" OR name:Vale"}`)
+	result, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	for _, row := range result.Rows {
+		if row.Name == "Linden Vale.txt" {
+			require.Empty(t, row.MatchedRoles)
+		} else {
+			require.Equal(t, []string{"mentioned"}, row.MatchedRoles)
+		}
+	}
+}
+
+func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Linden Vale", "operator")
+	require.NoError(t, err)
+	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Willow Finch", "willow-finch")
+	profile := catalogProcessingProfile(t, false)
+	build := lexicalSearchBuild(s, profile, catalogBuildID, "A note for Willow Finch")
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	generation, err := s.StageLexicalGeneration(ctx, fakeHash("ce04"))
+	require.NoError(t, err)
+	attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, attachment, RenditionHeadRecord{ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint, AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
+	filename, err := s.CreateFile(ctx, s.RootID(), "Linden Vale.txt", fakeHash("ce05"), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, filename, "unrelated indexed body")
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	compiled := compileFixtureQuery(t, s, `mentions:"Linden Vale"`, query.Filters{})
+	require.NoError(t, s.withLexicalGenerationRead(ctx, func(q metadataQuerier, selected LexicalGeneration) error {
+		require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, q, compiled, selected.ID))
+		return nil
+	}))
 }

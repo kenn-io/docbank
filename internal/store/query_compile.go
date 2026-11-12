@@ -343,7 +343,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		}
 		parts := make([]compiledQueryFragment, 0, len(names))
 		for _, name := range names {
-			parts = append(parts, c.compileLexicalPredicate(quoteFTSOperand(name, false), true))
+			parts = append(parts, compileDocumentContentPredicate(quoteFTSOperand(name, false)))
 		}
 		return joinCompiledFragments(parts, ` OR `), nil
 	case field == "tag":
@@ -649,8 +649,18 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	if !includeContent {
 		return name
 	}
+	content := compileDocumentContentPredicate(fts)
+	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
+	parts := []compiledQueryFragment{name, content}
+	if c.photoDisplayMetadata {
+		parts = append(parts, metadata, photoAssetTextPredicate(fts))
+	}
+	return joinCompiledFragments(parts, ` OR `)
+}
+
+func compileDocumentContentPredicate(fts string) compiledQueryFragment {
 	marker := compiledGenerationArgument{}
-	content := compiledQueryFragment{
+	return compiledQueryFragment{
 		sql: `(
 			(?='' AND cv.blob_hash IN (
 				SELECT content_fts.blob_hash FROM content_fts WHERE content_fts MATCH ?
@@ -672,12 +682,6 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 		)`,
 		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
-	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
-	parts := []compiledQueryFragment{name, content}
-	if c.photoDisplayMetadata {
-		parts = append(parts, metadata, photoAssetTextPredicate(fts))
-	}
-	return joinCompiledFragments(parts, ` OR `)
 }
 
 // photoAssetTextPredicate matches a photo when any live, non-sidecar file of

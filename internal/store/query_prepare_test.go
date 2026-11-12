@@ -341,3 +341,35 @@ func TestDocumentFacetPopulationRoutes(t *testing.T) {
 	require.GreaterOrEqual(t, len(recording.statements), 2)
 	require.Contains(t, recording.statements[len(recording.statements)-1], "FROM json_each(?)")
 }
+
+func TestPreparedMembershipExactPairsAndEmptyNot(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "pair-first.txt", fakeHash("ce01"), 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "pair-second.txt", fakeHash("ce02"), 10, "text/plain")
+	require.NoError(t, err)
+	compiled := compileFixtureQuery(t, s, `path:/pair-first.txt OR path:/pair-second.txt`, query.Filters{})
+	predicate, err := prepareCompiledPredicate(ctx, s.db, compiled, "", nil, CoverageSelection{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		node    int64
+		version string
+		want    bool
+	}{{first.ID, first.CurrentVersionID, true}, {second.ID, second.CurrentVersionID, true}, {first.ID, second.CurrentVersionID, false}, {second.ID, first.CurrentVersionID, false}} {
+		args := append(append([]any(nil), predicate.args...), tc.node, tc.version)
+		var got bool
+		err := s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id) n, (SELECT ? AS version_id) cv`, args...).Scan(&got)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got)
+	}
+	empty := compileFixtureQuery(t, s, `NOT path:/absent`, query.Filters{})
+	predicate, err = prepareCompiledPredicate(ctx, s.db, empty, "", nil, CoverageSelection{})
+	require.NoError(t, err)
+	args := append(append([]any(nil), predicate.args...), first.ID, first.CurrentVersionID)
+	var got bool
+	err = s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id) n, (SELECT ? AS version_id) cv`, args...).Scan(&got)
+	require.NoError(t, err)
+	require.True(t, got)
+}
