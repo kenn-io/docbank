@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -33,7 +34,7 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		if browserSessionRequest(ctx) && in.Disclosure == "full" {
 			return nil, NewError(http.StatusForbidden, "disclosure_forbidden", "Browser sessions may only request safe disclosure")
 		}
-		f, err := d.Store.DocumentDateFacts(ctx, in.VersionID)
+		f, err := d.Store.DocumentDateFacts(browserPeopleScope(ctx), in.VersionID)
 		if err != nil {
 			return nil, factsError(err)
 		}
@@ -45,7 +46,7 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 			return nil, NewError(http.StatusForbidden, "disclosure_forbidden", "Browser sessions may only request safe disclosure")
 		}
 		safe := in.Disclosure != "full"
-		f, err := d.Store.DocumentPeopleFacts(ctx, in.VersionID, safe)
+		f, err := d.Store.DocumentPeopleFacts(browserPeopleScope(ctx), in.VersionID, safe)
 		if err != nil {
 			return nil, factsError(err)
 		}
@@ -65,7 +66,7 @@ func versionDatesAPI(f store.DocumentDateFacts, disclosure, origin string) Versi
 			}
 		}
 		for _, e := range f.View.Events.Events {
-			if disclosure != "full" && !safeDocumentEvent(e) {
+			if disclosure != "full" && document.EventHasSensitiveEvidence(e) {
 				continue
 			}
 			out.Claims = append(out.Claims, VersionDateClaim{EventID: e.EventID, DateKind: e.DateKind, Primary: out.Primary != nil && out.Primary.EventID == e.EventID, DateValue: e.DateValue, RawValue: e.RawValue, Precision: e.Precision, TimezoneKind: e.TimezoneKind, ZoneText: e.ZoneText, OffsetSeconds: e.OffsetSeconds, AxisKey: e.AxisKey, UTCKey: e.UTCKey, ClaimBasis: e.ClaimBasis, ParseConfidence: e.ParseConfidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, SourceKindRaw: e.SourceKindRaw, When: whenFromClaim(e)})
@@ -105,9 +106,6 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 			}
 			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: c.DisplayName, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
 		}
-	}
-	if safe {
-		filterSafePeople(&out)
 	}
 	return out
 }

@@ -555,3 +555,9 @@ func testDigest(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
 }
+
+func TestMetadataTimestampRetainsUTCSourceSpelling(t *testing.T) {
+	event, err := metadataTimestampEvent(document.SourceMetadataTimestampV1{Normalized: "2026-03-10T23:50:00Z", Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC})
+	require.NoError(t, err)
+	require.Equal(t, "Z", event.ZoneText)
+}

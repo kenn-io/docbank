@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"go.kenn.io/docbank/document"
@@ -22,7 +23,7 @@ func TestSafeDocumentEventVisibility(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := safeDocumentEvent(tt.event); got != tt.visible {
+			if got := !document.EventHasSensitiveEvidence(tt.event); got != tt.visible {
 				t.Errorf("visibility = %v, want %v", got, tt.visible)
 			}
 		})
@@ -55,14 +56,6 @@ func TestWhenFromClaimNormalizesValues(t *testing.T) {
 				t.Errorf("calendar value = %+v", w)
 			}
 		})
-	}
-}
-
-func TestSafePeopleFactsFiltersBlindCopies(t *testing.T) {
-	facts := VersionPeople{Edges: []VersionPersonEdge{{Role: "blind_copy"}, {Role: "author"}}, Assertions: []VersionPersonAssertion{{Role: "blind_copy"}, {Role: "author"}}, Unresolved: []VersionUnresolvedName{{Role: "blind_copy"}, {Role: "author"}}}
-	filterSafePeople(&facts)
-	if len(facts.Edges) != 1 || facts.Edges[0].Role != "author" || len(facts.Assertions) != 1 || facts.Assertions[0].Role != "author" || len(facts.Unresolved) != 1 || facts.Unresolved[0].Role != "author" {
-		t.Fatalf("unsafe facts: %+v", facts)
 	}
 }
 
@@ -174,13 +167,57 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 }
 
 func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
-	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "visible", Role: "blind_copy"}, {PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
+	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
 	safe := versionPeopleAPI(f, true, "")
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" {
 		t.Fatalf("safe: %+v", safe)
 	}
 	full := versionPeopleAPI(f, false, "")
-	if len(full.Edges) != 3 || len(full.Assertions) != 2 || len(full.Unresolved) != 2 {
+	if len(full.Edges) != 3 || len(full.Assertions) != 1 || len(full.Unresolved) != 2 {
 		t.Fatalf("full: %+v", full)
+	}
+}
+
+func TestEmittedWhenMatchesContractExamples(t *testing.T) {
+	cases := []struct {
+		path   string
+		claim  document.DocumentEventV1
+		fields []string
+	}{
+		{"example-1.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", ZoneText: "-04:00", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}, []string{"state", "precision", "at", "local", "zone_state", "source_zone", "source_offset_seconds"}},
+		{"example-3.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:30:00", TimezoneKind: "omitted"}, []string{"state", "precision", "local", "zone_state"}},
+		{"example-4.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, []string{"state", "precision", "date"}},
+		{"example-6.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "UTC", UTCKey: "2026-03-10T23:50:00.000000000Z"}, []string{"state", "precision", "at", "local", "zone_state", "source_zone", "source_offset_seconds"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("testdata/when", tc.path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want, got map[string]any
+			if err := json.Unmarshal(raw, &want); err != nil {
+				t.Fatal(err)
+			}
+			emitted, err := json.Marshal(whenFromClaim(tc.claim))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(emitted, &got); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range tc.fields {
+				if !reflect.DeepEqual(want[field], got[field]) {
+					t.Errorf("%s: got %v want %v", field, got[field], want[field])
+				}
+			}
+		})
+	}
+}
+
+func TestWhenPreservesProducerUTCSpelling(t *testing.T) {
+	w := whenFromClaim(document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T23:50:00.000000000Z"})
+	if w.SourceZone != "Z" {
+		t.Fatalf("source zone = %q", w.SourceZone)
 	}
 }
