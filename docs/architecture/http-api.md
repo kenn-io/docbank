@@ -1533,6 +1533,7 @@ query arguments.
 `GET /api/v1/tax/accounts` filters by `filer`, `country`, and `taxkind`
 using AND semantics. `include_retired` defaults to false; `limit` defaults to
 100 (1–1000) and `offset` defaults to zero. Items are ordered by account ID.
+Pages reflect live data, so concurrent changes can shift or skip items between offsets.
 Get-one includes retired accounts. Create returns 201; edit and retire return
 200 and require `If-Match`. A missing, malformed, or stale revision returns
 428, 400, or 412 respectively. One-account responses carry an `ETag`.
