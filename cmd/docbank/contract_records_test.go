@@ -102,13 +102,17 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	// must be disambiguated by ID before detaching either of them.
 	out, err = runCLI(t, "party", "retire", supplier.PartyID)
 	require.NoError(t, err, out)
+	out, err = runCLI(t, "contract", "show", second.ContractID, "--json")
+	require.NoError(t, err, out)
+	var baseline api.Contract
+	require.NoError(t, json.Unmarshal([]byte(out), &baseline))
 	_, err = runCLI(t, "contract", "edit", second.ContractID, "--title", "Should not apply", "--own", supplier.PartyID)
 	require.ErrorContains(t, err, "retired")
 	out, err = runCLI(t, "contract", "show", second.ContractID, "--json")
 	require.NoError(t, err, out)
 	var unchanged api.Contract
 	require.NoError(t, json.Unmarshal([]byte(out), &unchanged))
-	require.Equal(t, second, unchanged)
+	require.Equal(t, baseline, unchanged)
 	out, err = runCLI(t, "contract", "edit", second.ContractID, "--remove-counterparty", "Synthetic Supplier", "--json")
 	require.NoError(t, err, out)
 	var detached api.Contract
