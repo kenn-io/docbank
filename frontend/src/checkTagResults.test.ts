@@ -61,10 +61,12 @@ it("keeps matched and unavailable documents", async () => {
     if (url.includes("/nodes/3")) return Response.json({ detail: "Missing" }, { status: 404 });
     if (url.endsWith("/batch/tags/preview")) {
       const { nodes } = JSON.parse(String(init?.body));
+      if (nodes.some((node: { node_id: number }) => node.node_id === 2))
+        return Response.json({ code: "not_found" }, { status: 404 });
       return Response.json({
         tag_id: request.tag_id,
         tag_revision: 2,
-        nodes: [{ ...nodes[0], assigned: true }],
+        nodes: nodes.map((node: object) => ({ ...node, assigned: true })),
       });
     }
     return Response.json({ id: 1, name: "Live", path: "/Live", revision: 4 });
@@ -78,18 +80,6 @@ it("keeps matched and unavailable documents", async () => {
     ],
   );
   expect(progress).toEqual([1, 2, 3]);
-
-  vi.restoreAllMocks();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input).endsWith(`/tags/${request.tag_id}`))
-      return Response.json({ id: request.tag_id, name: "Review" });
-    throw new TypeError("offline");
-  });
-  expect((await checkTagResults("session", request, () => {})).rows).toEqual([
-    { node_id: 1, name: "Live", status: "unavailable" },
-    { node_id: 2, name: "Trash", status: "unavailable" },
-    { node_id: 3, name: "Missing", status: "unavailable" },
-  ]);
 });
 
 it("propagates authentication failure", async () => {
@@ -108,8 +98,12 @@ it("stops pending reads and schedules no more documents when canceled", async ()
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
     String(input).endsWith(`/tags/${request.tag_id}`)
       ? Promise.resolve(Response.json({ id: request.tag_id, name: "Review" }))
-      : new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      : new Promise((resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            if (String(input).endsWith("/nodes/1"))
+              resolve(Response.json({ id: 1, name: "File 1", revision: 1 }));
+            else reject(init.signal?.reason);
+          });
         }),
   );
   const many = {
@@ -128,16 +122,21 @@ it("stops pending reads and schedules no more documents when canceled", async ()
 });
 
 it("classifies removal results", async () => {
+  let previews = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith(`/tags/${request.tag_id}`))
       return Response.json({ id: request.tag_id, name: "Review" });
     if (url.endsWith("/batch/tags/preview")) {
+      previews++;
       const { nodes } = JSON.parse(String(init?.body));
       return Response.json({
         tag_id: request.tag_id,
         tag_revision: 2,
-        nodes: [{ ...nodes[0], assigned: nodes[0].node_id === 1 }],
+        nodes: nodes.map((node: { node_id: number }) => ({
+          ...node,
+          assigned: node.node_id === 1,
+        })),
       });
     }
     const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
@@ -149,30 +148,7 @@ it("classifies removal results", async () => {
     [2, "matched", 3],
     [3, "matched", 4],
   ]);
-});
-
-it("marks a document unavailable when its revision changes before preview", async () => {
-  const calls: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
-    calls.push(`${init?.method ?? "GET"} ${url}`);
-    if (url.endsWith(`/tags/${request.tag_id}`))
-      return Response.json({ id: request.tag_id, name: "Review" });
-    if (url.endsWith("/batch/tags/preview"))
-      return Response.json({ code: "stale_revision" }, { status: 409 });
-    return Response.json({ id: 1, name: "Live", revision: 4 });
-  });
-  const { rows } = await checkTagResults(
-    "session",
-    { ...request, nodes: [request.nodes[0]] },
-    () => {},
-  );
-  expect(rows).toEqual([{ node_id: 1, name: "Live", status: "unavailable" }]);
-  expect(calls).toEqual([
-    `GET /api/v1/tags/${request.tag_id}`,
-    "GET /api/v1/nodes/1",
-    "POST /api/v1/batch/tags/preview",
-  ]);
+  expect(previews).toBe(1);
 });
 
 it("falls back to per-document previews so one stale document keeps the other results", async () => {

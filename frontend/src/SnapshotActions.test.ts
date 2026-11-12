@@ -349,6 +349,8 @@ it.each([true, false])(
   "offers a fresh check after a confirmed retry (assign=%s)",
   async (assign) => {
     const writes: BatchTagRequest[] = [];
+    let tagReads = 0;
+    let previews = 0;
     const selected = [1, 2, 3].map((node_id) => ({
       node_id,
       revision: 1,
@@ -366,14 +368,20 @@ it.each([true, false])(
         }
         return Response.json(await receiptFor(request));
       }
-      if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
+      if (url.endsWith(`/tags/${catalog[0].id}`)) {
+        if (writes.length > 1 && tagReads++ > 0) throw new TypeError("Check failed");
+        return Response.json(catalog[0]);
+      }
       if (url.endsWith("/batch/tags/preview")) {
+        previews++;
         const { nodes } = JSON.parse(String(init?.body));
-        const matched = writes.length === 1 ? nodes[0].node_id === 1 : nodes[0].node_id === 2;
         return Response.json({
           tag_id: catalog[0].id,
           tag_revision: 2,
-          nodes: [{ ...nodes[0], assigned: matched === assign }],
+          nodes: nodes.map((node: { node_id: number }) => ({
+            ...node,
+            assigned: (writes.length === 1 ? node.node_id === 1 : node.node_id === 2) === assign,
+          })),
         });
       }
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
@@ -409,6 +417,7 @@ it.each([true, false])(
           : "Earlier retry: Removed “Review” from 1 document.",
       ),
     ).toBeTruthy();
+    expect(previews).toBe(2);
     expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
     await fireEvent.click(screen.getByText("Review documents"));
@@ -422,6 +431,15 @@ it.each([true, false])(
       }),
     );
     await screen.findByText(assign ? /couldn't confirm the tag change/ : "Retry refused");
+    expect(
+      screen.getByText(
+        assign
+          ? "Earlier retry: Added “Review” to 1 document."
+          : "Earlier retry: Removed “Review” from 1 document.",
+      ),
+    ).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
+    await screen.findByText("Check failed");
     expect(
       screen.getByText(
         assign
@@ -498,38 +516,6 @@ it("shows the current tag name throughout recovery after a rename", async () => 
   expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).value).toBe(
     "Reviewed",
   );
-});
-
-it("keeps the confirmed retry visible when a later check fails", async () => {
-  let writes = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input) === "/api/v1/batch/tags") {
-      if (++writes === 1) throw new TypeError("Lost response");
-      return Response.json(await receiptFor(JSON.parse(String(init?.body))));
-    }
-    if (String(input).endsWith(`/tags/${catalog[0].id}`)) {
-      if (writes > 1) throw new TypeError("Check failed");
-      return Response.json(catalog[0]);
-    }
-    if (String(input).endsWith("/batch/tags/preview")) {
-      const { nodes } = JSON.parse(String(init?.body));
-      return Response.json({
-        tag_id: catalog[0].id,
-        tag_revision: 2,
-        nodes: nodes.map((node: object) => ({ ...node, assigned: false })),
-      });
-    }
-    return Response.json({ id: 7, name: "File 7", revision: 5 });
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]] }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
-  await screen.findByText("Earlier retry: Added “Review” to 1 document.");
-  await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
-  await screen.findByText("Check failed");
-  expect(screen.getByText("Earlier retry: Added “Review” to 1 document.")).toBeTruthy();
 });
 
 it("keeps recovery controls usable while the surrounding view loads", async () => {

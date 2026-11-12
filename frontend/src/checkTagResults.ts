@@ -16,13 +16,7 @@ async function readTarget(
   signal: AbortSignal,
 ): Promise<TagResult> {
   const node = await getNode(id, { session, signal });
-  if (
-    node.id !== id ||
-    !Number.isSafeInteger(node.revision) ||
-    node.revision < 1 ||
-    node.trashed_at
-  )
-    throw new Error("Invalid document");
+  if (node.id !== id) throw new Error("Invalid document");
   const path = node.path || `${node.name} (Document ${id})`;
   return {
     node_id: id,

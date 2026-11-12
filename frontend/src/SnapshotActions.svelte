@@ -226,7 +226,6 @@
         onchange={(id) => (tag = catalog.find((item) => item.id === id))}
         onpick={(picked, created) => {
           tag = picked;
-          run.failure = "";
           if (created) oncreated?.();
         }}
         {onauthfailure}
@@ -243,28 +242,18 @@
       />
     </div>
 
-    {#if receipt && !recovering}
-      <p class="status done" role="status">
-        <CheckIcon size={14} aria-hidden="true" />
-        {tagChangeDone(
-          receipt.assign,
-          tag?.name ?? "",
-          receipt.nodes.filter((node) => node.changed).length,
-          receipt.nodes.length,
-        )}
-      </p>
-    {:else if results && tag}
+    {#if results && tag}
       <p class="consequence">Last check</p>
       <p class="status">
         {matched} matched · {remaining.length} remaining · {unavailable} couldn't be checked
       </p>
-    {:else if !failure && !receipt}
+    {:else if !receipt}
       <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
-    {#if receipt && recovering}
+    {#if receipt}
       <p class="status done" role="status">
         <CheckIcon size={14} aria-hidden="true" />
-        Earlier retry: {tagChangeDone(
+        {recovering ? "Earlier retry: " : ""}{tagChangeDone(
           receipt.assign,
           tag?.name ?? "",
           receipt.nodes.filter((node) => node.changed).length,
@@ -414,9 +403,6 @@
   .footer-start {
     margin-inline-end: auto;
   }
-  .tag-change :global(.kit-disclosure--plain > .kit-disclosure__content) {
-    padding-block-end: 0;
-  }
   .target-list {
     overflow: auto;
     max-height: 240px;
@@ -424,7 +410,6 @@
   .target-list :global(.target-table .kit-table) {
     table-layout: fixed;
     font-size: var(--font-size-xs);
-    margin-block-end: 0;
   }
   .target-list :global(.target-table th),
   .target-list :global(.target-table td) {
@@ -432,10 +417,6 @@
     text-align: left;
     overflow-wrap: anywhere;
     border-bottom: 1px solid var(--border-default);
-  }
-  .target-list :global(.target-table th:first-child),
-  .target-list :global(.target-table td:first-child) {
-    padding-inline-start: 0;
   }
   .pager {
     display: flex;
