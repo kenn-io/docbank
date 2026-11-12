@@ -33,6 +33,12 @@ type TaxAccount struct {
 	RetiredAt        *string `json:"retired_at" nullable:"true"`
 }
 
+// TransformSchema describes the normalized tax kind returned by the store.
+func (TaxAccount) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["tax_kind"].MaxLength = new(64)
+	return schema
+}
+
 type TaxAccountPage struct {
 	Items  []TaxAccount `json:"items"`
 	Limit  int          `json:"limit"`
@@ -71,12 +77,20 @@ type PatchTaxAccountRequest struct {
 }
 
 func taxAccountRequestSchema(schema *huma.Schema) *huma.Schema {
+	// Raw input can include whitespace or decomposed Unicode that normalizes to
+	// at most 64 runes. JSON Schema lengths count runes; store limits also count bytes.
+	if kind := schema.Properties["tax_kind"]; kind != nil {
+		kind.Description = "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization."
+	}
 	schema.Properties["cadence"].Enum = []any{"monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other"}
 	schema.Properties["lead_days"].Minimum = new(float64(0))
 	schema.Properties["lead_days"].Maximum = new(float64(366))
 	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "identifier": 256, "period_note": 8192, "due_note": 8192, "note": 8192} {
 		if property := schema.Properties[field]; property != nil {
 			property.MaxLength = new(length)
+			if field == "identifier" || field == "period_note" || field == "due_note" || field == "note" {
+				property.Description = "The limit also applies to UTF-8 bytes."
+			}
 		}
 	}
 	return schema

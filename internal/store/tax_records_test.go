@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,10 +114,16 @@ func TestTaxListFiltersAndRetirement(t *testing.T) {
 	require.ErrorContains(t, err, "country")
 	_, err = s.ListTaxAccounts(ctx, TaxAccountListOptions{FilerPartyID: "invalid", Limit: 100})
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "filer: invalid value")
+	field, ok := errors.AsType[*taxrecord.FieldError](err)
+	require.True(t, ok)
+	assert.Equal(t, "filer", field.Field)
+	assert.Equal(t, "invalid value", field.Reason)
 	_, err = s.ListTaxRecords(ctx, TaxRecordListOptions{FilerPartyID: "invalid", Limit: 100})
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "filer: invalid value")
+	field, ok = errors.AsType[*taxrecord.FieldError](err)
+	require.True(t, ok)
+	assert.Equal(t, "filer", field.Field)
+	assert.Equal(t, "invalid value", field.Reason)
 	_, err = s.ListTaxRecords(ctx, TaxRecordListOptions{TaxYear: new(int64(10000)), Limit: 100})
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
 	require.ErrorContains(t, err, "tax year selector")

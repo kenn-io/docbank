@@ -8,7 +8,9 @@ description: How Docbank preserves tax accounts and their initial records.
 Docbank preserves tax accounts and initial tax records alongside
 [parties](contracts.md). An account identifies a filer, an optional authority,
 a jurisdiction, and an owner-chosen tax kind. Manage accounts through the CLI
-or HTTP API. Record operations are not yet exposed through those interfaces,
+or HTTP API. Tax kinds accept up to 256 UTF-8 bytes before trimming and NFC
+normalization, and up to 64 Unicode characters afterward. Identifiers are
+limited to 256 UTF-8 bytes; each account note is limited to 8,192 UTF-8 bytes. Record operations are not yet exposed through those interfaces,
 MCP, or the web application.
 
 ## Manage an account

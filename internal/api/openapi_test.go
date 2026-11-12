@@ -939,6 +939,7 @@ func TestTaxOpenAPIContract(t *testing.T) {
 		require.Contains(t, account.Properties, field)
 		assert.True(t, account.Properties[field].Nullable, field)
 	}
+	assert.Equal(t, 64, *account.Properties["tax_kind"].MaxLength)
 	identifier := account.Properties["identifier"]
 	require.NotNil(t, identifier)
 	assert.Nil(t, identifier.MaxLength)

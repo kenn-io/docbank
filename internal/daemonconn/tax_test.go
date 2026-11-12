@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const taxAccountFixture = `{"account_id":"11111111-1111-4111-8111-111111111111","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","cadence":"annual","currency":"USD","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`
+const taxAccountFixture = `{"account_id":"11111111-1111-4111-8111-111111111111","filer_party_id":"22222222-2222-4222-8222-222222222222","authority_party_id":null,"country":"ZZ","subdivision":"","tax_kind":"Example","identifier":"","cadence":"annual","period_note":"","due_note":"","lead_days":0,"currency":"USD","effective_start":null,"effective_end":null,"note":"","retired_at":null,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`
 
 func TestTaxClientRequestContracts(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
@@ -201,4 +201,44 @@ func TestTaxClientTransportErrorClass(t *testing.T) {
 	assert.Contains(t, err.Error(), "deadline exceeded")
 	assert.Contains(t, err.Error(), "may have been applied")
 	assert.NotContains(t, err.Error(), "private-synthetic-value")
+}
+
+func TestTaxClientRejectsMissingAccountMembers(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	for _, field := range []string{"account_id", "filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind", "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note", "revision", "created_at", "updated_at", "retired_at"} {
+		t.Run(field, func(t *testing.T) {
+			var members map[string]any
+			require.NoError(t, json.Unmarshal([]byte(taxAccountFixture), &members))
+			delete(members, field)
+			body, err := json.Marshal(members)
+			require.NoError(t, err)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"1"`)
+				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/accounts" {
+					w.WriteHeader(http.StatusCreated)
+				}
+				if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tax/accounts" {
+					_, _ = w.Write([]byte(`{"items":[` + string(body) + `],"limit":100,"offset":0}`))
+					return
+				}
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(server.Close)
+			c := New(server.URL, "")
+			_, err = c.TaxAccount(t.Context(), id, false)
+			require.True(t, IsResponseDecodeError(err))
+			_, err = c.TaxAccounts(t.Context(), "", "", "", false, 100, 0)
+			require.True(t, IsResponseDecodeError(err))
+			_, err = c.CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+			require.True(t, IsResponseDecodeError(err))
+			assert.Contains(t, err.Error(), "may have been applied")
+			_, err = c.UpdateTaxAccount(t.Context(), id, 1, api.PatchTaxAccountRequest{Note: new("")})
+			require.True(t, IsResponseDecodeError(err))
+			assert.Contains(t, err.Error(), "may have been applied")
+			_, err = c.RetireTaxAccount(t.Context(), id, 1)
+			require.True(t, IsResponseDecodeError(err))
+			assert.Contains(t, err.Error(), "may have been applied")
+		})
+	}
 }

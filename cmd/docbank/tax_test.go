@@ -134,7 +134,7 @@ func TestTaxCLIRevisionInspectAndNoRetry(t *testing.T) {
 			reads++
 			assert.NotEqual(t, "true", r.URL.Query().Get("reveal"))
 			w.Header().Set("ETag", `"1"`)
-			_, _ = w.Write([]byte(`{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","cadence":"annual","currency":"USD","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
+			_, _ = w.Write([]byte(`{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","authority_party_id":null,"country":"ZZ","subdivision":"","tax_kind":"Example","identifier":"","cadence":"annual","period_note":"","due_note":"","lead_days":0,"currency":"USD","effective_start":null,"effective_end":null,"note":"","retired_at":null,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
 		case http.MethodPatch:
 			writes++
 			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
@@ -156,7 +156,7 @@ func TestTaxCLICommittedOutputFailure(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/accounts" {
 			w.WriteHeader(http.StatusCreated)
 		}
-		_, _ = w.Write([]byte(`{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","cadence":"annual","currency":"USD","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
+		_, _ = w.Write([]byte(`{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","authority_party_id":null,"country":"ZZ","subdivision":"","tax_kind":"Example","identifier":"","cadence":"annual","period_note":"","due_note":"","lead_days":0,"currency":"USD","effective_start":null,"effective_end":null,"note":"","retired_at":null,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
 	})
 	for _, args := range [][]string{{"account", "add", "--filer", id, "--country", "ZZ", "--tax-kind", "Example", "--cadence", "annual", "--currency", "USD"}, {"account", "edit", id, "--note", "example", "--revision=1"}, {"account", "retire", id, "--revision=1"}} {
 		cmd := newTaxCommand()

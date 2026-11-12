@@ -264,3 +264,12 @@ func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
 	assert.NotContains(t, string(content), sentinel)
 	assert.NotContains(t, string(content), "Example Holdings Ltd.")
 }
+
+func TestTaxKindNormalizedLength(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	_, account := createTaxTestAccount(t, ts, map[string]any{"tax_kind": " " + strings.Repeat("x", 64) + " "})
+	assert.Equal(t, strings.Repeat("x", 64), account.TaxKind)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": account.FilerPartyID, "country": "ZZ", "tax_kind": strings.Repeat("x", 65), "cadence": "annual", "currency": "USD"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
