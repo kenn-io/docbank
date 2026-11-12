@@ -240,15 +240,14 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
-For a Docbank SQLite vault layout change, bump `currentStorageSchemaVersion`.
-For an unreleased version, run `make schema-contract-check` and add the
+For every catalog change under an unreleased Docbank SQLite schema version, bump
+`currentStorageSchemaVersion`. Run `make schema-contract-check` and add the
 empty record file named by the test under
 `internal/store/testdata/schema-contracts/`, without changing earlier records.
 The digest covers the SQLite catalog SQL of every table, trigger, view, and
-index, so any change under an unreleased version needs a version bump. When the
-test reports a collision, keep `main`'s records, remove your old record, bump
-the version, rerun the test against the combined layout, and add the record it
-prints. After release, `TestReleasedSchemaFixturesMatchVersions` still allows
+index. When the test reports a collision, keep `main`'s records, remove your old
+record, bump the version, rerun the test against the combined layout, and add the
+record it prints. After release, `TestReleasedSchemaFixturesMatchVersions` still allows
 compatible non-unique indexes to be added in place.
 
 Every release's storage schema version belongs in
