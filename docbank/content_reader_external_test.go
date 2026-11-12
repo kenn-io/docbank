@@ -14,10 +14,22 @@ import (
 
 	"github.com/stretchr/testify/require"
 	docbank "go.kenn.io/docbank/docbank"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/store"
+	docsqlite "go.kenn.io/docbank/sqlite"
+	"go.kenn.io/kit/packstore"
 )
 
 func TestContentReader(t *testing.T) {
 	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "missing")
+	for range 2 {
+		_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: missing})
+		require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		_, err = os.Lstat(missing)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
 	root := t.TempDir()
 	_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
@@ -55,6 +67,63 @@ func TestContentReader(t *testing.T) {
 	require.Equal(t, before, snapshotReaderTree(t, root))
 }
 
+func TestContentReaderRefusesInvalidIdentityAndSchema(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, query, message string }{
+		{"newer schema", "UPDATE vault_metadata SET schema_version = 999999", "newer than binary"},
+		{"development schema", "UPDATE vault_metadata SET schema_version = 4", "development schema"},
+		{"invalid identity", "UPDATE vault_metadata SET vault_uid = 'invalid'", "vault identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+			require.NoError(t, err)
+			require.NoError(t, vault.Close())
+			db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), tc.query)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			before := snapshotReaderTree(t, root)
+			for range 2 {
+				_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+				require.ErrorContains(t, err, tc.message)
+				require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+				lock, err := (home.Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				require.NoError(t, lock.Release())
+				require.Equal(t, before, snapshotReaderTree(t, root))
+			}
+		})
+	}
+}
+
+func TestContentReaderRefusesWrongOwnership(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+	require.NoError(t, err)
+	require.NoError(t, vault.Close())
+	backend, err := blob.NewFilesystemBackend(filepath.Join(root, "blobs"), nil)
+	require.NoError(t, err)
+	prior, err := backend.Ownership(t.Context())
+	require.NoError(t, err)
+	wrong := prior
+	wrong.Epoch = "50000000-0000-4000-8000-000000000001"
+	require.NoError(t, backend.ReplaceOwnership(t.Context(), wrong, &prior))
+	require.NoError(t, backend.Close())
+	before := snapshotReaderTree(t, root)
+	for range 2 {
+		_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+		require.ErrorIs(t, err, packstore.ErrStoreFenced)
+		require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		lock, err := (home.Layout{Root: root}).TryLockExclusive()
+		require.NoError(t, err)
+		require.NoError(t, lock.Release())
+		require.Equal(t, before, snapshotReaderTree(t, root))
+	}
+}
+
 func TestContentReaderPackedAndSidecars(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -73,6 +142,12 @@ func TestContentReaderPackedAndSidecars(t *testing.T) {
 		before := snapshotReaderTree(t, root)
 		_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 		require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		require.Equal(t, before, snapshotReaderTree(t, root))
+		_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+		require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		lock, err := (home.Layout{Root: root}).TryLockExclusive()
+		require.NoError(t, err)
+		require.NoError(t, lock.Release())
 		require.Equal(t, before, snapshotReaderTree(t, root))
 		require.NoError(t, os.Remove(path))
 	}
@@ -165,6 +240,45 @@ func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
 			_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 			require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
 			require.Equal(t, before, snapshotReaderTree(t, root))
+			_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+			require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+			require.Equal(t, before, snapshotReaderTree(t, root))
+			lock, err := (home.Layout{Root: root}).TryLockExclusive()
+			require.NoError(t, err)
+			require.NoError(t, lock.Release())
+		})
+	}
+}
+
+func TestContentReaderRefusesNonRegularPaths(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"database directory", "database symlink", "handoff directory", "handoff symlink"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+			require.NoError(t, err)
+			require.NoError(t, vault.Close())
+			path := filepath.Join(root, "docbank.db")
+			if strings.HasPrefix(name, "handoff") {
+				path = filepath.Join(root, "blobs", "tmp", "primary-restore-handoff.json")
+			} else {
+				require.NoError(t, os.Remove(path))
+			}
+			if strings.HasSuffix(name, "directory") {
+				require.NoError(t, os.Mkdir(path, 0o700))
+			} else if err := os.Symlink(filepath.Join(t.TempDir(), "target"), path); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			before := snapshotReaderTree(t, root)
+			for range 2 {
+				_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+				require.Error(t, err)
+				require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+				require.Equal(t, before, snapshotReaderTree(t, root))
+				lock, err := (home.Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				require.NoError(t, lock.Release())
+			}
 		})
 	}
 }

@@ -73,14 +73,18 @@ func TestOpenExistingScratchBoundary(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(root, alias); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
 	path := filepath.Join(root, "docbank.db")
 	for _, scratch := range []string{"", root, filepath.Join(root, "missing"), alias} {
-		_, err := OpenExisting(t.Context(), path, DefaultSQLiteDriver(), scratch)
-		require.Error(t, err)
-		require.NotErrorIs(t, err, ErrNeedsOwner)
+		t.Run(scratch, func(t *testing.T) {
+			if scratch == alias {
+				if err := os.Symlink(root, alias); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			}
+			_, err := OpenExisting(t.Context(), path, DefaultSQLiteDriver(), scratch)
+			require.Error(t, err)
+			require.NotErrorIs(t, err, ErrNeedsOwner)
+		})
 	}
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)

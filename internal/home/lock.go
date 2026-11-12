@@ -104,7 +104,11 @@ var ErrExistingVaultMissing = errors.New("existing vault root or lock is missing
 
 // OpenExistingAndLockExclusiveNoCreate returns the validated registry used for locking.
 func (l Layout) OpenExistingAndLockExclusiveNoCreate() (*os.Root, *Lock, string, error) {
-	registry, err := targetLockRegistryPath()
+	return l.openExistingAndLockExclusiveNoCreate(targetLockRegistryPath)
+}
+
+func (l Layout) openExistingAndLockExclusiveNoCreate(resolveRegistry func() (string, error)) (*os.Root, *Lock, string, error) {
+	registry, err := resolveRegistry()
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -939,13 +943,17 @@ func directoryIdentityChain(target string) ([]string, error) {
 }
 
 func targetLockRegistryPath() (string, error) {
+	return targetLockRegistryPathWithBase(targetLockRegistryBase)
+}
+
+func targetLockRegistryPathWithBase(base func() (string, error)) (string, error) {
 	dir := os.Getenv("DOCBANK_LOCK_DIR")
 	if dir != "" && !filepath.IsAbs(dir) {
 		return "", fmt.Errorf("DOCBANK_LOCK_DIR must be absolute: %q", dir)
 	}
 	if dir == "" {
 		var err error
-		dir, err = targetLockRegistryBase()
+		dir, err = base()
 		if err != nil {
 			return "", err
 		}

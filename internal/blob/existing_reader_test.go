@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,6 +11,40 @@ import (
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
+
+func TestExistingReaderLocations(t *testing.T) {
+	metadata, blobs, runner, secondary := placementTestVault(t)
+	want := []byte("synthetic placement content")
+	_, hash := placementTestFile(t, metadata, blobs, want)
+	registry := NewRegistry(t.Context(), metadata.VaultID(), nil, nil)
+	reader, err := NewExistingReader(store.NewPackCatalog(metadata), blobs.dir, registry)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	for _, retire := range []bool{false, true} {
+		plan, err := metadata.PlanPlacement(t.Context(), store.PlacementRequest{
+			TargetNodeID: metadata.RootID(), SourceStoreID: metadata.PrimaryBlobStoreID(),
+			DestinationStoreID: secondary.ID, RetireSource: retire, AllowAuditedRemoteOnly: retire,
+		})
+		require.NoError(t, err)
+		require.NoError(t, runner.Run(t.Context(), createPlacementOperation(t, metadata, plan)))
+		locations, err := metadata.ResolveBlobLocations(t.Context(), packstore.Hash(hash))
+		require.NoError(t, err)
+		if retire {
+			require.Len(t, locations.Candidates, 1)
+			_, _, err = reader.OpenStreamContext(t.Context(), hash)
+			require.Error(t, err)
+		} else {
+			require.Len(t, locations.Candidates, 2)
+			stream, _, err := reader.OpenStreamContext(t.Context(), hash)
+			require.NoError(t, err)
+			got, err := io.ReadAll(stream)
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+			require.NoError(t, stream.Verify())
+			require.NoError(t, stream.Close())
+		}
+	}
+}
 
 func TestExistingReaderOwnership(t *testing.T) {
 	t.Run("missing marker", func(t *testing.T) {
