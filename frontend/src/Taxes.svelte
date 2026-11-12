@@ -58,9 +58,11 @@
 {#snippet records(rows: TaxRecord[], label: string)}
   <Table unsorted ariaLabel={label} scroll="page" zebra={false}>
     {#snippet header()}
-      <th scope="col">Title</th><th scope="col">Year</th><th scope="col">Due</th><th scope="col"
-        >State</th
-      ><th scope="col" class="amount">Amount (minor units)</th>
+      <th scope="col">Title</th><th scope="col" class="year">Year</th><th scope="col" class="due"
+        >Due</th
+      ><th scope="col" class="state">State</th><th scope="col" class="amount"
+        >Amount (minor units)</th
+      >
     {/snippet}
     {#each rows as row (row.record_id)}
       {@const amount = formatTaxAmount(row.amount_minor, row.currency, row.direction)}
@@ -203,6 +205,41 @@
   td,
   th {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* The app's table-head look, padded like kit-ui's body cells so header and
+     cell edges line up. */
+  th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-align: start;
+    white-space: nowrap;
+  }
+
+  /* Fixed widths keep every filer group's columns on the same edges; Title
+     takes the rest. */
+  .year {
+    width: 4.5rem;
+  }
+
+  .due {
+    width: 7rem;
+  }
+
+  .state {
+    width: 11rem;
+  }
+
+  th.amount {
+    width: 12rem;
+  }
+
+  td:not(.title) {
+    white-space: nowrap;
   }
 
   .title {

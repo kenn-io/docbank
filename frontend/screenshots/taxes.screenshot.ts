@@ -93,6 +93,9 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
       .click();
     await expect(rowTitles("Tax records")).toHaveText(titlesOf(holdings));
     await expect(main.getByRole("heading", { level: 3 })).toHaveCount(0);
+    // Hover outranks the current-item fill, so show the selection as a user
+    // sees it once the pointer leaves the rail.
+    await page.mouse.move(0, 0);
     await captureThemes(page, output!, "web-taxes-filer");
 
     const year = main.getByLabel("Tax year");
