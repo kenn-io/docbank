@@ -49,7 +49,7 @@ func newContractSignCommand() *cobra.Command {
 			for i, role := range item.Roles {
 				roles[i] = strconv.Quote(role)
 			}
-			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\n", item.ID, item.Name, strings.Join(roles, ", ")); err != nil {
+			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%d\t%q\t%s\n", item.ID, item.Name, strings.Join(roles, ", ")); err != nil {
 				return fmt.Errorf("write DocuSeal template: %w", err)
 			}
 		}

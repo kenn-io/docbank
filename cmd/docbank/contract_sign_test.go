@@ -79,7 +79,7 @@ func TestContractSignDaemonWalk(t *testing.T) {
 		t.Fatalf("final JSON page: %q: %v", out, err)
 	}
 	out, err = runCLI(t, "contract", "sign", "templates", "--after", "101")
-	if err != nil || !strings.Contains(out, "100\tFinal") || strings.Contains(out, "Continue with") || <-queries != "after=101" {
+	if err != nil || !strings.Contains(out, "100\t\"Final\"") || strings.Contains(out, "Continue with") || <-queries != "after=101" {
 		t.Fatalf("final page: %q: %v", out, err)
 	}
 

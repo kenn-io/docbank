@@ -194,10 +194,10 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 		if t.Name == nil || t.Submitters == nil {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
-		if strings.Contains(*t.Name, c.connection.APIKey) {
+		name := displayText(*t.Name)
+		if strings.Contains(*t.Name, c.connection.APIKey) || strings.Contains(name, c.connection.APIKey) {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
-		name := displayText(*t.Name)
 		item := Template{ID: t.ID, Name: name, Roles: make([]string, 0, len(t.Submitters))}
 		for _, role := range t.Submitters {
 			if strings.Contains(role.Name, c.connection.APIKey) {
