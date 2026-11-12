@@ -812,9 +812,9 @@ var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces
 
 // VersionCandidate contains only the occurrences belonging to the requested version.
 type VersionCandidate struct {
-	CandidateID, DisplayName, ActorKey string
-	Occurrences                        []PersonCandidateOccurrence
-	OccurrenceLabels                   map[PersonCandidateOccurrence]string
+	CandidateID, ActorKey string
+	Occurrences           []PersonCandidateOccurrence
+	OccurrenceLabels      map[PersonCandidateOccurrence]string
 }
 
 func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string, actorKeys []string) ([]VersionCandidate, error) {
@@ -843,7 +843,7 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 		}
 		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `)`
-		columns := `candidate_id,display_name,actor_key,evidence_json,created_at`
+		columns := `candidate_id,actor_key,evidence_json,created_at`
 		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
 			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
 		rows, err := q.QueryContext(ctx, query, args...)
@@ -853,7 +853,7 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 		for rows.Next() {
 			var c orderedCandidate
 			var raw []byte
-			if err := rows.Scan(&c.CandidateID, &c.DisplayName, &c.ActorKey, &raw, &c.createdAt); err != nil {
+			if err := rows.Scan(&c.CandidateID, &c.ActorKey, &raw, &c.createdAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
