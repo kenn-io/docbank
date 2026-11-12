@@ -5,16 +5,18 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 type taxAccountOutput struct {
-	ETag string `header:"ETag"`
-	Body TaxAccount
+	ETag         string `header:"ETag"`
+	CacheControl string `header:"Cache-Control"`
+	Body         TaxAccount
 }
-type taxAccountPageOutput struct{ Body TaxAccountPage }
+type taxAccountPageOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         TaxAccountPage
+}
 
 func maskTaxIdentifier(value string) string {
 	runes := []rune(value)
@@ -36,7 +38,7 @@ func fromStoreTaxAccount(a store.TaxAccount, reveal bool) TaxAccount {
 func taxAccountResult(a store.TaxAccount, reveal bool) *taxAccountOutput {
 	return &taxAccountOutput{ETag: revisionETag(a.Revision), Body: fromStoreTaxAccount(a, reveal)}
 }
-func mergeTaxAccountPatch(a store.TaxAccount, p PatchTaxAccountRequest) (store.TaxAccountInput, error) {
+func mergeTaxAccountPatch(a store.TaxAccount, p PatchTaxAccountRequest) store.TaxAccountInput {
 	in := store.TaxAccountInput{FilerPartyID: a.FilerPartyID, AuthorityPartyID: a.AuthorityPartyID, Country: a.Country, Subdivision: a.Subdivision, TaxKind: a.TaxKind, Identifier: a.Identifier, Cadence: a.Cadence, PeriodNote: a.PeriodNote, DueNote: a.DueNote, LeadDays: new(a.LeadDays), Currency: a.Currency, EffectiveStart: a.EffectiveStart, EffectiveEnd: a.EffectiveEnd, Note: a.Note}
 	if p.Identifier != nil {
 		in.Identifier = *p.Identifier
@@ -65,7 +67,7 @@ func mergeTaxAccountPatch(a store.TaxAccount, p PatchTaxAccountRequest) (store.T
 	if p.endPresent || p.ClearEffectiveEnd {
 		in.EffectiveEnd = p.EffectiveEnd
 	}
-	return in, nil
+	return in
 }
 func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listTaxAccounts", Method: http.MethodGet, Path: "/api/v1/tax/accounts", Summary: "List tax accounts"}, func(ctx context.Context, in *struct {
@@ -76,9 +78,6 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" default:"0" minimum:"0"`
 	}) (*taxAccountPageOutput, error) {
-		if in.Filer != "" && canonical.ValidateUUIDv4(in.Filer) != nil {
-			return nil, taxRouteError(&taxrecord.FieldError{Field: "filer", Reason: "invalid value"})
-		}
 		country := []byte(in.Country)
 		for i, c := range country {
 			if c >= 'a' && c <= 'z' {
@@ -89,7 +88,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, taxRouteError(err)
 		}
-		out := &taxAccountPageOutput{Body: TaxAccountPage{Items: []TaxAccount{}, Limit: in.Limit, Offset: in.Offset}}
+		out := &taxAccountPageOutput{CacheControl: "no-store", Body: TaxAccountPage{Items: []TaxAccount{}, Limit: in.Limit, Offset: in.Offset}}
 		for _, a := range rows {
 			out.Body.Items = append(out.Body.Items, fromStoreTaxAccount(a, false))
 		}
@@ -103,7 +102,9 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, taxRouteError(err)
 		}
-		return taxAccountResult(a, in.Reveal), nil
+		out := taxAccountResult(a, in.Reveal)
+		out.CacheControl = "no-store"
+		return out, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createTaxAccount", Method: http.MethodPost, Path: "/api/v1/tax/accounts", Summary: "Create a tax account", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreateTaxAccountRequest }) (*taxAccountOutput, error) {
 		var out *taxAccountOutput
@@ -132,10 +133,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return err
 			}
-			input, err := mergeTaxAccountPatch(a, in.Body)
-			if err != nil {
-				return err
-			}
+			input := mergeTaxAccountPatch(a, in.Body)
 			a, err = d.Store.UpdateTaxAccount(ctx, in.AccountID, revision, input)
 			if err != nil {
 				return err

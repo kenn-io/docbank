@@ -39,8 +39,8 @@ type TaxAccountPage struct {
 	Offset int          `json:"offset"`
 }
 type CreateTaxAccountRequest struct {
-	FilerPartyID     string  `json:"filer_party_id"`
-	AuthorityPartyID *string `json:"authority_party_id,omitempty" nullable:"true"`
+	FilerPartyID     string  `json:"filer_party_id" format:"uuid"`
+	AuthorityPartyID *string `json:"authority_party_id,omitempty" nullable:"true" format:"uuid"`
 	Country          string  `json:"country"`
 	Subdivision      string  `json:"subdivision,omitzero"`
 	TaxKind          string  `json:"tax_kind"`
@@ -70,8 +70,25 @@ type PatchTaxAccountRequest struct {
 	startPresent, endPresent bool
 }
 
+func taxAccountRequestSchema(schema *huma.Schema) *huma.Schema {
+	schema.Properties["cadence"].Enum = []any{"monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other"}
+	schema.Properties["lead_days"].Minimum = new(float64(0))
+	schema.Properties["lead_days"].Maximum = new(float64(366))
+	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "identifier": 256, "period_note": 8192, "due_note": 8192, "note": 8192} {
+		if property := schema.Properties[field]; property != nil {
+			property.MaxLength = new(length)
+		}
+	}
+	return schema
+}
+
+func (CreateTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	return taxAccountRequestSchema(schema)
+}
+
 // TransformSchema requires at least one editable account field.
 func (PatchTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	taxAccountRequestSchema(schema)
 	for _, field := range []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note"} {
 		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
 	}
@@ -87,6 +104,7 @@ func taxAccountMembers(raw []byte, patch bool) (map[string]jsontext.Value, error
 	if err := json.Unmarshal(raw, &members); err != nil {
 		return nil, err
 	}
+	delete(members, "$schema")
 	if patch && len(members) == 0 {
 		return nil, fmt.Errorf("empty patch")
 	}

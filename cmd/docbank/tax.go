@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -53,10 +54,28 @@ func newTaxAccountCommand() *cobra.Command {
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %q\tidentifier: %q\tcadence: %s\tperiod: %q\tdue: %q\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %q\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, value(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, value(a.EffectiveStart), value(a.EffectiveEnd), a.Note, value(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
 		return err
 	}
+	printMutation := func(cmd *cobra.Command, a api.TaxAccount) error {
+		if err := printAccount(cmd, a); err != nil {
+			return errors.New("tax account change was committed, but output failed; inspect the account before trying again")
+		}
+		return nil
+	}
+	validateID := func(id string) error {
+		if canonical.ValidateUUIDv4(id) != nil {
+			return usageError(errors.New("invalid account ID"))
+		}
+		return nil
+	}
 	var filer, country, taxkind string
 	var includeRetired bool
 	var limit, offset int
 	list := &cobra.Command{Use: "list", Short: "List tax accounts", Example: "docbank tax account list --country ZZ", Args: taxNoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if limit < 1 || limit > 1000 {
+			return usageError(errors.New("limit must be between 1 and 1000"))
+		}
+		if offset < 0 {
+			return usageError(errors.New("offset must be nonnegative"))
+		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -87,6 +106,9 @@ func newTaxAccountCommand() *cobra.Command {
 	list.Flags().IntVar(&offset, "offset", 0, "number of accounts to skip")
 	var reveal bool
 	show := &cobra.Command{Use: "show <account-id>", Short: "Inspect a tax account", Example: "docbank tax account show 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateID(args[0]); err != nil {
+			return err
+		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -122,7 +144,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printAccount(cmd, a)
+		return printMutation(cmd, a)
 	}}
 	create.Flags().StringVar(&add.FilerPartyID, "filer", "", "filer party ID")
 	create.Flags().StringVar(&authority, "authority", "", "authority party ID")
@@ -145,6 +167,9 @@ func newTaxAccountCommand() *cobra.Command {
 	var editLead, revision int64
 	var clearStart, clearEnd bool
 	edit := &cobra.Command{Use: "edit <account-id>", Short: "Edit a tax account", Long: "Edit account details with a revision fence.\nWithout --revision, inspect once and send one fenced update.\nStale updates are not retried.", Example: "docbank tax account edit 11111111-1111-4111-8111-111111111111 --lead-days 7", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateID(args[0]); err != nil {
+			return err
+		}
 		f := cmd.Flags()
 		in := api.PatchTaxAccountRequest{ClearEffectiveStart: clearStart, ClearEffectiveEnd: clearEnd}
 		if f.Changed("identifier") {
@@ -199,7 +224,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printAccount(cmd, a)
+		return printMutation(cmd, a)
 	}}
 	edit.Flags().StringVar(&editIdentifier, "identifier", "", "account identifier")
 	edit.Flags().StringVar(&editCadence, "cadence", "", "filing cadence")
@@ -215,6 +240,9 @@ func newTaxAccountCommand() *cobra.Command {
 	edit.Flags().Int64Var(&revision, "revision", 0, "expected revision (default: current)")
 	var retireRevision int64
 	retire := &cobra.Command{Use: "retire <account-id>", Short: "Retire a tax account", Long: "Retire an account with a revision fence.\nWithout --revision, inspect once and send one fenced update.\nStale updates are not retried.", Example: "docbank tax account retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateID(args[0]); err != nil {
+			return err
+		}
 		if cmd.Flags().Changed("revision") && retireRevision < 1 {
 			return usageError(errors.New("revision must be positive"))
 		}
@@ -234,7 +262,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printAccount(cmd, a)
+		return printMutation(cmd, a)
 	}}
 	retire.Flags().Int64Var(&retireRevision, "revision", 0, "expected revision (default: current)")
 	account.AddCommand(create, edit, list, show, retire)

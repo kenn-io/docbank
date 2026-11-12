@@ -247,7 +247,7 @@ func (s *Store) RetireTaxAccount(ctx context.Context, id string, revision int64)
 }
 func validateTaxSelectors(filer, country, kind string) error {
 	if filer != "" && validateUUIDv4(filer) != nil {
-		return fmt.Errorf("%w: filer selector", taxrecord.ErrInvalid)
+		return &taxrecord.FieldError{Field: "filer", Reason: "invalid value"}
 	}
 	if country != "" {
 		if err := taxrecord.ValidateCountry(country); err != nil {

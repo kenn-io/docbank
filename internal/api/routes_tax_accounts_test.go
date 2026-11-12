@@ -44,7 +44,7 @@ func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	require.Equal(t, http.StatusCreated, authorityResp.StatusCode, authorityBody)
 	var authority api.Party
 	require.NoError(t, json.Unmarshal([]byte(authorityBody), &authority))
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "authority_party_id": authority.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD", "identifier": "synthetic12345", "effective_start": "2025-01-01"})
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"$schema": "https://example.com/schema.json", "filer_party_id": party.PartyID, "authority_party_id": authority.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD", "identifier": "synthetic12345", "effective_start": "2025-01-01"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var account api.TaxAccount
 	require.NoError(t, json.Unmarshal([]byte(body), &account))
@@ -56,11 +56,14 @@ func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	path := "/api/v1/tax/accounts/" + account.AccountID
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"$schema": "https://example.com/schema.json"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	resp, body = get(t, ts, path+"?reveal=true", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	require.NoError(t, json.Unmarshal([]byte(body), &account))
 	assert.Equal(t, "synthetic12345", account.Identifier)
-	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"effective_start": nil, "lead_days": 0})
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"$schema": "https://example.com/schema.json", "effective_start": nil, "lead_days": 0})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &account))
 	assert.Nil(t, account.EffectiveStart)
@@ -74,6 +77,7 @@ func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	assert.NotContains(t, body, "synthetic12345")
 	resp, body = get(t, ts, "/api/v1/tax/accounts", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	assert.Contains(t, body, `"items":[]`)
 	resp, body = get(t, ts, "/api/v1/tax/accounts?include_retired=true", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -81,6 +85,7 @@ func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	assert.NotContains(t, body, "synthetic12345")
 	resp, body = get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	assert.Contains(t, body, `"retired_at":`)
 	assert.NotContains(t, body, "synthetic12345")
 }
@@ -92,6 +97,7 @@ func TestTaxHTTPValidationRedaction(t *testing.T) {
 	for _, input := range []any{
 		map[string]any{"identifier": sentinel, sentinel: sentinel},
 		map[string]any{"identifier": sentinel, "lead_days": sentinel},
+		map[string]any{"cadence": sentinel, "lead_days": 367, "country": sentinel},
 		map[string]any{"identifier": nil},
 		map[string]any{"identifier": strings.Repeat(sentinel, 20)},
 		[]any{sentinel},

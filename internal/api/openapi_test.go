@@ -900,8 +900,21 @@ func TestTaxOpenAPIContract(t *testing.T) {
 		}
 		assert.True(t, required)
 	}
+	create := doc.Components.Schemas.Map()["CreateTaxAccountRequest"]
+	require.NotNil(t, create)
+	assert.Equal(t, "uuid", create.Properties["filer_party_id"].Format)
+	assert.Equal(t, "uuid", create.Properties["authority_party_id"].Format)
+	assert.Equal(t, 2, *create.Properties["country"].MaxLength)
+	assert.Equal(t, 256, *create.Properties["tax_kind"].MaxLength)
 	patch := doc.Components.Schemas.Map()["PatchTaxAccountRequest"]
 	require.NotNil(t, patch)
+	for _, schema := range []*huma.Schema{create, patch} {
+		assert.ElementsMatch(t, []any{"monthly", "bimonthly", "quarterly", "semiannual", "annual", "event", "other"}, schema.Properties["cadence"].Enum)
+		assert.Equal(t, new(float64(0)), schema.Properties["lead_days"].Minimum)
+		assert.Equal(t, new(float64(366)), schema.Properties["lead_days"].Maximum)
+		assert.Equal(t, 3, *schema.Properties["currency"].MaxLength)
+		assert.Equal(t, 8192, *schema.Properties["note"].MaxLength)
+	}
 	assert.NotContains(t, patch.Properties, "country")
 	assert.NotContains(t, patch.Properties, "clear_effective_start")
 	assert.Equal(t, false, patch.AdditionalProperties)

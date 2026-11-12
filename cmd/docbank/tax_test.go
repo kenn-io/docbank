@@ -18,7 +18,7 @@ func TestTaxCLIUsageErrors(t *testing.T) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = w.Write([]byte(`{"status":422,"code":"invalid_tax","detail":"cadence: unknown cadence"}`))
 	})
-	for _, args := range [][]string{{"account", "edit", "id", "--note", "x", "--revision=0"}, {"account", "retire", "id", "--revision=-1"}, {"account", "edit", "id"}, {"account", "edit", "id", "--effective-start", "2025-01-01", "--clear-effective-start"}} {
+	for _, args := range [][]string{{"account", "list", "--limit=0"}, {"account", "list", "--offset=-1"}, {"account", "show", "private-id"}, {"account", "edit", "private-id", "--note=x"}, {"account", "retire", "private-id"}, {"account", "edit", "11111111-1111-4111-8111-111111111111", "--note", "x", "--revision=0"}, {"account", "retire", "11111111-1111-4111-8111-111111111111", "--revision=-1"}, {"account", "edit", "11111111-1111-4111-8111-111111111111"}, {"account", "edit", "11111111-1111-4111-8111-111111111111", "--effective-start", "2025-01-01", "--clear-effective-start"}} {
 		cmd := newTaxCommand()
 		cmd.SetArgs(args)
 		err := cmd.Execute()
@@ -106,7 +106,7 @@ func TestTaxCLIFlagErrorsArePrivate(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "limit")
-	for _, args := range [][]string{{"account", "list", "--limit", "private-synthetic"}, {"account", "edit", "id", "--revision", "private-synthetic"}, {"account", "add", "--private-synthetic"}} {
+	for _, args := range [][]string{{"account", "list", "--limit", "private-synthetic"}, {"account", "edit", "11111111-1111-4111-8111-111111111111", "--revision", "private-synthetic"}, {"account", "add", "--private-synthetic"}} {
 		cmd := newTaxCommand()
 		cmd.SilenceErrors = true
 		cmd.SilenceUsage = true
@@ -143,4 +143,28 @@ func TestTaxCLIRevisionInspectAndNoRetry(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 1, reads)
 	assert.Equal(t, 1, writes)
+}
+
+func TestTaxCLICommittedOutputFailure(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/accounts" {
+			w.WriteHeader(http.StatusCreated)
+		}
+		_, _ = w.Write([]byte(`{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","country":"ZZ","tax_kind":"Example","cadence":"annual","currency":"USD","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`))
+	})
+	for _, args := range [][]string{{"account", "add", "--filer", id, "--country", "ZZ", "--tax-kind", "Example", "--cadence", "annual", "--currency", "USD"}, {"account", "edit", id, "--note", "example", "--revision=1"}, {"account", "retire", id, "--revision=1"}} {
+		cmd := newTaxCommand()
+		cmd.SetOut(searchFailingWriter{})
+		cmd.SilenceErrors = true
+		cmd.SilenceUsage = true
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "committed")
+		assert.Contains(t, err.Error(), "inspect")
+		assert.NotContains(t, err.Error(), "output closed")
+	}
 }
