@@ -44,9 +44,9 @@ func exportOutputCountsSchema() schema {
 
 func retainedExportPlanSchema() schema {
 	roles := arraySchema(objectSchema(schema{
-		schemaRoleField: exportRoleSchema(), "allow_unavailable": booleanSchema(),
+		"role": exportRoleSchema(), "allow_unavailable": booleanSchema(),
 		"profile_fingerprint": sha256Schema(), "recipe_sha256": sha256Schema(),
-	}, schemaRoleField), 6)
+	}, "role"), 6)
 	roles["minItems"] = 1
 	return exportPlanSchema(schema{
 		"toolchain": stringSchema(bundle.MaxMemberBytes), "source": exportSourceSchema(),
@@ -77,9 +77,9 @@ func getExportPlanSchemas() (schema, schema) {
 func getExportProblemsSchemas() (schema, schema) {
 	problem := objectSchema(schema{
 		"node_id": integerSchema(1, math.MaxInt64), "version_id": uuidSchema(),
-		schemaRoleField: exportRoleSchema(), "reason": stringSchema(bundle.MaxMemberBytes),
+		"role": exportRoleSchema(), "reason": stringSchema(bundle.MaxMemberBytes),
 		"part_path": stringSchema(bundle.MaxMemberBytes),
-	}, "node_id", "version_id", schemaRoleField, "reason")
+	}, "node_id", "version_id", "role", "reason")
 	page := objectSchema(schema{
 		"plan_id": uuidSchema(), "fingerprint": sha256Schema(),
 		"after":          integerSchema(0, bundle.MaxOutputProblems),
