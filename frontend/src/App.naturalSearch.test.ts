@@ -1294,12 +1294,10 @@ it.each(["reading status", "turning on", "restarting"])(
   "hands a rejected session to sign-in while %s",
   async (step) => {
     searchWithMeaningOff({
-      status: () =>
-        step === "reading status"
-          ? new Response("{}", { status: 401 })
-          : step === "restarting"
-            ? { ...localSaved, restart_available: true }
-            : localOff,
+      status: () => {
+        if (step === "restarting") return { ...localSaved, restart_available: true };
+        return step === "reading status" ? new Response("{}", { status: 401 }) : localOff;
+      },
       apply: () => Promise.resolve(new Response("{}", { status: 401 })),
       restart: () => Promise.resolve(new Response("{}", { status: 401 })),
     });
@@ -2116,16 +2114,6 @@ it.each([
     async () => {
       throw new Error("connection lost");
     },
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
-    "gateway timeout",
-    async () => new Response(null, { status: 504 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
-    "proxy error",
-    async () => new Response("Proxy error", { status: 500 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
   [

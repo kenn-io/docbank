@@ -209,7 +209,7 @@ it("reads status on entering the tab and stops when leaving it", async () => {
 it("confirms a restart and disables both actions while it is pending", async () => {
   let finish!: () => void;
   const props = openSearchTab({
-    status: { ...off, restart_required: true, restart_available: true },
+    status: { ...off, download_bytes: 0, restart_required: true, restart_available: true },
   });
   props.onrestart.mockImplementation(
     () =>
@@ -239,7 +239,7 @@ it("confirms a restart and disables both actions while it is pending", async () 
 
 it("offers terminal recovery after an uncertain restart", () => {
   openSearchTab({
-    status: { ...off, restart_required: true, restart_available: true },
+    status: { ...off, download_bytes: 0, restart_required: true, restart_available: true },
     notice: "Restart requested. Docbank may restart later.",
   });
   expect(screen.getByText("docbank web --no-browser")).toBeTruthy();

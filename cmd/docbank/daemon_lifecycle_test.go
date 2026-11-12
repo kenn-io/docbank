@@ -619,27 +619,6 @@ func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 	}
 }
 
-func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
-	bin := buildDocbank(t)
-	root := t.TempDir()
-	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	t.Setenv("DOCBANK_HOME", root)
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
-	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-	start := exec.CommandContext(t.Context(), bin, "ls", "/")
-	out, err := start.CombinedOutput()
-	require.NoError(t, err, string(out))
-	old := waitForDaemon(t, root)
-	require.False(t, daemonconn.Explicit(old))
-	restart := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
-	restart.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
-	out, err = restart.CombinedOutput()
-	require.NoError(t, err, string(out))
-	replacement := waitForDaemon(t, root)
-	require.NotEqual(t, old.PID, replacement.PID)
-	require.False(t, daemonconn.Explicit(replacement))
-}
-
 func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {
 	bin := buildDocbank(t)
 	for _, replace := range []bool{false, true} {
@@ -698,7 +677,7 @@ func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {
 	}
 }
 
-func TestWebReopenUsesRestartedDaemon(t *testing.T) {
+func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T) {
 	bin := buildDocbank(t)
 	root := t.TempDir()
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
@@ -710,6 +689,7 @@ func TestWebReopenUsesRestartedDaemon(t *testing.T) {
 	out, err := start.CombinedOutput()
 	require.NoError(t, err, string(out))
 	old := waitForDaemon(t, root)
+	require.False(t, daemonconn.Explicit(old))
 	restart := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
 	restart.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
 	out, err = restart.CombinedOutput()
