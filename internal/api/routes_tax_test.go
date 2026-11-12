@@ -23,23 +23,13 @@ func TestTaxValuesAbsentFromLogs(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	const sentinel = "private-synthetic-value"
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(sentinel) })
-	handler := logMiddleware(recoverMiddleware(next, logger), logger)
+	handler := logMiddleware(recoverMiddleware(next, logger, ""), logger, "")
 	for _, path := range []string{"/api/v1/tax/accounts/", "/api/v1//tax/accounts/"} {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path+sentinel+"?country="+sentinel, nil)
 		handler.ServeHTTP(httptest.NewRecorder(), req)
 	}
 	assert.NotContains(t, logs.String(), sentinel)
-	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tax/"+sentinel, nil).URL))
-}
-
-func TestTaxLoggingPreservesOtherRoutes(t *testing.T) {
-	t.Parallel()
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	handler := logMiddleware(recoverMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("ordinary panic") }), logger), logger)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/other", nil))
-	assert.Contains(t, logs.String(), "/api/v1/other")
-	assert.Contains(t, logs.String(), "ordinary panic")
+	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tax/"+sentinel, nil).URL, ""))
 }
 
 func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
@@ -71,32 +61,43 @@ func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
 	assert.NotContains(t, problem.Error(), secret)
 }
 
+// Mounted cases wire the server.go middleware order around the base-path boundary.
 func TestTaxMalformedPathMuxRedirectIsRedacted(t *testing.T) {
 	t.Parallel()
 	const secret = "private-synthetic-value"
-	for _, raw := range []string{
-		"/api/v1//tax/accounts/" + secret,
-		"/api/v1/tax/accounts/..%2F..%2F" + secret,
-		"/%61pi/v1/%74ax/accounts/%2e%2e%2F" + secret,
-	} {
-		t.Run(raw, func(t *testing.T) {
-			t.Parallel()
-			var logs bytes.Buffer
-			logger := slog.New(slog.NewTextHandler(&logs, nil))
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/v1/tax/accounts/{id}", func(http.ResponseWriter, *http.Request) { panic(secret) })
-			handler := logMiddleware(recoverMiddleware(mux, logger), logger)
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, raw, nil))
-			assert.NotContains(t, logs.String(), secret)
-			assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
-			if strings.Contains(raw, "//tax/") {
-				assert.Equal(t, http.StatusTemporaryRedirect, recorder.Code)
-			} else {
-				assert.Equal(t, http.StatusInternalServerError, recorder.Code)
-				assert.Contains(t, logs.String(), "panic in tax handler")
-			}
-		})
+	for _, base := range []string{"", "/archive", "/tools/archive"} {
+		for _, raw := range []string{
+			"/api/v1/tax/accounts/" + secret,
+			"/api/v1//tax/accounts/" + secret,
+			"/api/v1/tax/accounts/..%2F..%2F" + secret,
+			"/%61pi/v1/%74ax/accounts/%2e%2e%2F" + secret,
+			"/api/v1/other/" + secret,
+		} {
+			t.Run(base+raw, func(t *testing.T) {
+				t.Parallel()
+				var logs bytes.Buffer
+				logger := slog.New(slog.NewTextHandler(&logs, nil))
+				mux := http.NewServeMux()
+				mux.HandleFunc("/api/v1/tax/accounts/{id}", func(http.ResponseWriter, *http.Request) { panic(secret) })
+				mux.HandleFunc("/api/v1/other/{id}", func(http.ResponseWriter, *http.Request) { panic("ordinary panic") })
+				handler := logMiddleware(recoverMiddleware(webBasePathMiddleware(mux, base), logger, base), logger, base)
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, base+raw, nil))
+				if strings.HasPrefix(raw, "/api/v1/other/") {
+					assert.Contains(t, logs.String(), base+raw)
+					assert.Contains(t, logs.String(), "ordinary panic")
+					return
+				}
+				assert.NotContains(t, logs.String(), secret)
+				assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
+				if strings.Contains(raw, "//tax/") {
+					assert.Equal(t, http.StatusTemporaryRedirect, recorder.Code)
+				} else {
+					assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+					assert.Contains(t, logs.String(), "panic in tax handler")
+				}
+			})
+		}
 	}
 }
 

@@ -302,8 +302,8 @@ func NewServer(d Deps) *Server {
 	h = timeoutMiddleware(h)
 	h = webBasePathMiddleware(h, d.Cfg.Web.BasePath)
 	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
-	h = recoverMiddleware(h, d.Logger)
-	h = logMiddleware(h, d.Logger)
+	h = recoverMiddleware(h, d.Logger, d.Cfg.Web.BasePath)
+	h = logMiddleware(h, d.Logger, d.Cfg.Web.BasePath)
 	h = trackMiddleware(h, d.Tracker)
 	s.handler = h
 	return s
