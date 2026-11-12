@@ -1,0 +1,163 @@
+// Package docusealclient implements the bounded DocuSeal connection.
+package docusealclient
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"go.kenn.io/docbank/document/providerhttp"
+	"go.kenn.io/docbank/internal/config"
+)
+
+const maxResponse = 2 << 20
+
+type Status struct {
+	Configured bool   `json:"configured"`
+	Enabled    bool   `json:"enabled"`
+	Endpoint   string `json:"endpoint"`
+	Capability string `json:"capability"`
+}
+type Template struct {
+	ID    int64    `json:"id"`
+	Name  string   `json:"name"`
+	Roles []string `json:"roles"`
+}
+type TemplatePage struct {
+	Templates []Template `json:"templates"`
+	Next      int64      `json:"next"`
+}
+type Client struct {
+	connection config.DocuSealConnection
+	http       *http.Client
+}
+
+func New(c config.DocuSealConnection) (*Client, error) {
+	u, err := url.Parse(c.Endpoint)
+	if err != nil || u.Hostname() == "" {
+		return nil, errors.New("invalid DocuSeal endpoint")
+	}
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n == 0 {
+		return nil, errors.New("invalid DocuSeal endpoint")
+	}
+	transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{Scheme: u.Scheme, Host: u.Hostname(), Port: uint16(n), AllowedCIDRs: c.AllowedCIDRs, ProxyMode: providerhttp.ProxyDisabled}, nil)
+	if err != nil {
+		return nil, errors.New("invalid DocuSeal egress policy")
+	}
+	return &Client{connection: c, http: providerhttp.IsolateClient(&http.Client{Transport: transport, Timeout: 10 * time.Second})}, nil
+}
+func (c *Client) get(ctx context.Context, suffix string, dst any) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.connection.Endpoint+c.connection.APIPath+suffix, nil)
+	if err != nil {
+		return errors.New("docuseal_request_failed")
+	}
+	req.Header.Set("X-Auth-Token", c.connection.APIKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("docuseal_request_failed")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
+	if err != nil {
+		return errors.New("docuseal_response_failed")
+	}
+	if len(data) > maxResponse {
+		return errors.New("docuseal_response_too_large")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("docuseal_request_failed")
+	}
+	if !utf8.Valid(data) || json.Unmarshal(data, dst) != nil {
+		return errors.New("docuseal_invalid_response")
+	}
+	return nil
+}
+func (c *Client) Check(ctx context.Context) (Status, error) {
+	var user map[string]any
+	if err := c.get(ctx, "/user", &user); err != nil {
+		return Status{}, err
+	}
+	return Status{Configured: true, Enabled: true, Endpoint: c.connection.Endpoint, Capability: "template_submission"}, nil
+}
+func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, error) {
+	if cursor < 0 {
+		return TemplatePage{}, errors.New("invalid cursor")
+	}
+	suffix := "/templates"
+	if cursor > 0 {
+		suffix += fmt.Sprintf("?after=%d", cursor)
+	}
+	var wire struct {
+		Data []struct {
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			Submitters []struct {
+				Name string `json:"name"`
+			} `json:"submitters"`
+		} `json:"data"`
+		Pagination struct {
+			Next *int64 `json:"next"`
+		} `json:"pagination"`
+	}
+	if err := c.get(ctx, suffix, &wire); err != nil {
+		return TemplatePage{}, err
+	}
+	if len(wire.Data) > 100 {
+		return TemplatePage{}, errors.New("docuseal_invalid_response")
+	}
+	page := TemplatePage{Templates: make([]Template, 0, len(wire.Data))}
+	if wire.Pagination.Next != nil {
+		page.Next = *wire.Pagination.Next
+	}
+	for _, t := range wire.Data {
+		if t.ID <= 0 || !safeText(t.Name, c.connection.APIKey) || len(t.Submitters) > 20 {
+			return TemplatePage{}, errors.New("docuseal_invalid_response")
+		}
+		item := Template{ID: t.ID, Name: t.Name, Roles: make([]string, 0, len(t.Submitters))}
+		for _, role := range t.Submitters {
+			if !safeText(role.Name, c.connection.APIKey) {
+				return TemplatePage{}, errors.New("docuseal_invalid_response")
+			}
+			item.Roles = append(item.Roles, role.Name)
+		}
+		page.Templates = append(page.Templates, item)
+	}
+	if page.Next < 0 {
+		return TemplatePage{}, errors.New("docuseal_invalid_response")
+	}
+	return page, nil
+}
+func safeText(s, key string) bool {
+	if s == "" || len(s) > 512 || !utf8.ValidString(s) || key != "" && strings.Contains(s, key) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}

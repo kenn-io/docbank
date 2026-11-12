@@ -1,0 +1,54 @@
+name: DocuSeal generated API artifact
+
+on:
+  push:
+    branches: [feat/contracts-d1-docuseal]
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - run: kit-retry 3 5 npm ci --prefix frontend
+      - name: Generate API artifacts
+        run: |
+          mkdir -p .superpowers/openapi-bootstrap
+          cat > .superpowers/openapi-bootstrap/main.go <<'GO'
+          package main
+          import (
+            "os"
+            "go.kenn.io/docbank/internal/api"
+          )
+          func main() {
+            data, err := api.OpenAPIYAML()
+            if err != nil { panic(err) }
+            if _, err = os.Stdout.Write(data); err != nil { panic(err) }
+          }
+          GO
+          go run -tags fts5 ./.superpowers/openapi-bootstrap > internal/api/openapi.yaml
+          make generate-photo-policy
+          go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
+          npm --prefix frontend run generate:api
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: docuseal-generated-api-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            internal/api/openapi.yaml
+            internal/apiclient/client.gen.go
+            frontend/src/generated/docbank.ts
+            frontend/src/generated/photoSourceExtensions.ts

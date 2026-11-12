@@ -1561,3 +1561,28 @@ max_zoom = 19
 ```
 
 The URL must have a fixed HTTPS origin and all three placeholders in its path. The host must be a hostname, an IPv4 address or a bracketed IPv6 address. Attribution is plain text. Docbank connects directly to the configured host and ignores proxy settings. The daemon fetches tiles for signed-in browsers, so the URL and any key in it stay on the server and the web page carries only the provider's host name. The provider sees the daemon host's IP address and the viewed map areas, with no Referer. Docbank refuses redirects, accepts only responses up to 2 MiB whose bytes identify them as PNG, JPEG, GIF or WebP, and gives up after 10 seconds. The daemon does not cache tiles. Tiles carry a one-hour private cache lifetime that varies by browser session, except under key login, where responses are never cached. Provider failures log only a status code or error class, never the URL. Choose a provider that permits this; the [public OpenStreetMap tile service requires a Referer](https://operations.osmfoundation.org/policies/tiles/) and is incompatible with this policy.
+
+### DocuSeal connection
+
+DocuSeal is optional and disabled by default. Configure `[integrations.docuseal]`
+only when you want to check a server or list its templates. Changes take effect
+when the daemon restarts. The integration reads its API key for each operation.
+
+```toml
+[integrations.docuseal]
+enabled = true
+endpoint = "http://10.0.0.20:3000"
+api_path = "/api"
+api_key_env = "DOCBANK_DOCUSEAL_API_KEY"
+trust_boundary = "operator_network"
+allowed_cidrs = ["10.0.0.20/32"]
+```
+
+The endpoint is a root origin without credentials or a path. Set `api_path` to
+`/api` for a self-hosted server, or to an empty string for the hosted API.
+Select exactly one of `api_key_env` or `api_key_file`. A key file is relative to
+the vault unless absolute; it must be owner-only and at most 4,096 bytes.
+`operator_network` allows HTTP and requires private, shared, or loopback CIDRs.
+For `hosted_provider`, use HTTPS and explicit `allowed_cidrs`. Connections use
+only the configured origin and CIDRs, without proxies or redirects. See
+[DocuSeal connection](usage/contracts.md) for the commands.

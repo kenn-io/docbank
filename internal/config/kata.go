@@ -13,7 +13,8 @@ import (
 
 // IntegrationsConfig holds optional connections, validated only by their users.
 type IntegrationsConfig struct {
-	Kata KataConfig `toml:"kata"`
+	Kata     KataConfig     `toml:"kata"`
+	DocuSeal DocuSealConfig `toml:"docuseal"`
 }
 
 // KataConfig never contains a literal credential. Relative key files are vault-relative.
