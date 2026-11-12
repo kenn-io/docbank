@@ -1027,8 +1027,10 @@
   select {
     box-sizing: border-box;
     align-self: stretch;
+    flex-shrink: 0;
+    max-width: 100%;
     min-height: 24px;
-    padding: 2px var(--space-2);
+    padding: 2px var(--space-4) 2px var(--space-2);
     border: var(--border-width) solid color-mix(in srgb, var(--border-default) 80%, transparent);
     border-radius: var(--kit-control-radius, var(--radius-md));
     background: color-mix(in srgb, var(--text-muted) 8%, var(--bg-raised, var(--bg-inset)));
