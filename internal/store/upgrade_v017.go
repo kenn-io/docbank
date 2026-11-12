@@ -5,14 +5,27 @@ import (
 	"database/sql"
 )
 
-// Upgrade preserves absence observations; backup/restore intentionally omits
-// them. Their watch_sources parents have already been restored from metadata.
+// Upgrade preserves absence observations and photo work omitted by backup.
+// Their parents have already been restored from metadata and the v41 chain.
 func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	if err := restoreV41SourceState(ctx, source, target); err != nil {
 		return err
 	}
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return copyReleasedRowsOrdered(ctx, source, tx, "watch_source_absences", "", "watch_name,source_ref")
+		if err := copyReleasedRowsOrdered(ctx, source, tx, "watch_source_absences", "", "watch_name,source_ref"); err != nil {
+			return err
+		}
+		if err := copyReleasedRowsOrdered(ctx, source, tx, "photo_face_scans", "", "content_version_id,detector_fingerprint"); err != nil {
+			return err
+		}
+		omitted := "NOT (" + backedUpRenditionJobs(metadataJSONDialect{}) + ")"
+		if err := copyReleasedRowsOrdered(ctx, source, tx, "rendition_jobs", omitted, "job_id"); err != nil {
+			return err
+		}
+		if err := copyReleasedRowsOrdered(ctx, source, tx, "rendition_job_waiters", omitted, "job_id,waiter_id"); err != nil {
+			return err
+		}
+		return copyReleasedRowsOrdered(ctx, source, tx, "photo_description_explicit_waiters", "", "waiter_id")
 	})
 }
 

@@ -107,6 +107,8 @@ from metadata JSONL. Storage schema 49 upgrades the released v0.17.0 schema 48
 through the existing fresh-database cutover and preserves the logical format.
 The cutover also preserves watch source absence observations, which are local
 operational state omitted from metadata JSONL.
+The v0.17.0 upgrade retains completed face scans and admitted photo work with its processing authority.
+Backup restore still requires fresh consent for outbound requests.
 PostgreSQL mirrors these catalogs using its canonical schema fingerprint.
 
 The bounded worker starts with the daemon and uses the shared `WriteRevision`
