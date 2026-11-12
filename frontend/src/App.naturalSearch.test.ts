@@ -2110,13 +2110,28 @@ it.each([
     "Docbank couldn't start the restart.",
   ],
   [
+    "timed out",
+    async () => new Response(null, { status: 408 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
+    "server error",
+    async () => new Response(null, { status: 500 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
     "rejected",
     async () =>
       Response.json(
         { code: "web_browser", detail: "browser cookie, Host or Origin rejected" },
         { status: 403 },
       ),
-    "Docbank couldn't confirm the restart. It may still happen later.",
+    "Restart rejected. Sign in again, then retry.",
+  ],
+  [
+    "forbidden",
+    async () => Response.json({ code: "forbidden" }, { status: 403 }),
+    "Restart rejected. Try again.",
   ],
 ])("keeps the workspace after an %s response", async (kind, restart, notice) => {
   const request = vi.fn(restart);
@@ -2135,7 +2150,8 @@ it.each([
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(notice)).toBeTruthy();
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
-  if (kind === "failed") expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  if (kind === "failed" || kind === "rejected" || kind === "forbidden")
+    expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
   else expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
   if (kind === "accepted") {
     expect(request).toHaveBeenCalledOnce();
@@ -2144,4 +2160,31 @@ it.each([
     );
     expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
   }
+});
+
+it("offers a retry when restart is rejected after setup", async () => {
+  let status: unknown = { ...localOff, restart_available: true };
+  searchWithMeaningOff({
+    status: () => status,
+    apply: async () => {
+      status = { ...localSaved, restart_available: true };
+      return json(localPlan);
+    },
+    restart: async () => Response.json({ code: "web_browser" }, { status: 403 }),
+  });
+  render(App);
+  await submitSearch("notes");
+  const drawer = await openSearchByMeaning();
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+      name: "Restart",
+    }),
+  );
+  expect(
+    await within(drawer).findByText("Restart rejected. Sign in again, then retry."),
+  ).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });

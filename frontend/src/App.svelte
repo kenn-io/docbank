@@ -2047,6 +2047,14 @@
           readLocalTextStatus();
           return;
         }
+        if (cause.status >= 400 && cause.status < 500 && cause.status !== 408) {
+          restartAttempt = undefined;
+          localText.error =
+            cause.code === "web_browser"
+              ? "Restart rejected. Sign in again, then retry."
+              : "Restart rejected. Try again.";
+          return;
+        }
       }
       notice = "Docbank couldn't confirm the restart. It may still happen later.";
     }
