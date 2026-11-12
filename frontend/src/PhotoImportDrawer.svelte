@@ -4,6 +4,10 @@
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import { Button, TextInput } from "@kenn-io/kit-ui";
+  import ClockIcon from "@lucide/svelte/icons/clock";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
+  import SearchIcon from "@lucide/svelte/icons/search";
   import DrawerShell from "./DrawerShell.svelte";
   import { APIError } from "./api-transport.js";
   import {
@@ -179,6 +183,31 @@
     missing: "Files missing",
     changed: "Files changed",
   };
+  const warningStates: Item["state"][] = ["failed", "unconfirmed", "missing", "changed"];
+
+  function itemName(item: Item): string {
+    return (item.names ?? item.files.map(localFilePath)).join(", ");
+  }
+  function savedImportLabel(saved: SavedPhotoImport): string {
+    const created = new Date(saved.created_at).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const groups = `${saved.group_count} group${saved.group_count === 1 ? "" : "s"}`;
+    const suggested = checkpoint?.sourceID === saved.source_id ? "Suggested · " : "";
+    return `${suggested}${created} · ${groups} → ${saved.destination}`;
+  }
+  // Explains a disabled "Resume remaining" after files were chosen again.
+  const resumeHint = $derived.by(() => {
+    if (!savedImport || pending) return "";
+    const missing = items.filter((item) => item.state === "missing").map(itemName);
+    if (missing.length) return `Choose ${missing.join(", ")} again to resume.`;
+    const changed = items.filter((item) => item.state === "changed").map(itemName);
+    if (changed.length) return `Choose the original ${changed.join(", ")} to resume.`;
+    return "";
+  });
 
   function receiptReason(reason: string | undefined): string | undefined {
     if (reason === "multiple_raw") return "Multiple RAW files share this name.";
@@ -747,11 +776,15 @@
     >
     <div class="controls">
       <Button
+        size="sm"
+        surface="soft"
         disabled={running || planning || !!disabledReason}
-        onclick={() => void listSavedImports()}>Saved imports</Button
+        onclick={() => void listSavedImports()}><ClockIcon size="14" />Saved imports</Button
       >
       {#if savedImports.length}
         {#if moreImports}<Button
+            size="sm"
+            surface="soft"
             disabled={running || planning || !!disabledReason}
             onclick={() => void listSavedImports(true)}>Load more</Button
           >{/if}
@@ -762,22 +795,20 @@
         >
           <option value="">Choose an import</option>
           {#each savedImports as saved}
-            <option value={saved.import_id}
-              >{checkpoint?.sourceID === saved.source_id ? "Suggested · " : ""}{saved.label.replace(
-                /^browser: /,
-                "",
-              )} · {saved.destination} · {new Date(saved.created_at).toLocaleString()} · {saved.group_count}
-              groups</option
-            >
+            <option value={saved.import_id}>{savedImportLabel(saved)}</option>
           {/each}
         </select>
         <Button
+          size="sm"
+          surface="soft"
           disabled={!selectedImport || running || planning || !!disabledReason}
-          onclick={() => void inspectSavedImport()}>Inspect import</Button
+          onclick={() => void inspectSavedImport()}><SearchIcon size="14" />Inspect import</Button
         >
       {/if}
       {#if savedImport || registered || registrationUncertain}
         <Button
+          size="sm"
+          surface="soft"
           disabled={running || planning}
           onclick={() => {
             savedImport = undefined;
@@ -788,17 +819,19 @@
             registered = false;
             registrationUncertain = false;
             for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
-          }}>Start new import</Button
+          }}><PlusIcon size="14" />Start new import</Button
         >
       {/if}
       {#if checkpoint && !items.length && !savedImport && !registered && !registrationUncertain}
         <Button
+          size="sm"
+          surface="soft"
           disabled={running || planning || !!disabledReason}
           onclick={() => {
             resuming = true;
             destination = checkpoint!.destination;
             picker.choose(checkpoint!.pickerKind === "folder" ? "folder" : "files");
-          }}>Resume import</Button
+          }}><RotateCcwIcon size="14" />Resume import</Button
         >
       {/if}
       <LocalFilePicker
@@ -828,14 +861,16 @@
     {#if items.length || unsupported.length}
       <div class="totals" aria-live="polite">
         {#each ["added", "skipped", "ambiguous", "failed", "unconfirmed"] as state}<span
+            class:zero={!counts[state as Item["state"]]}
             >{labels[state as keyof typeof labels]}: {counts[state as Item["state"]]}</span
           >{/each}
-        <span>Skipped: {unsupported.length}</span>
+        <span class:zero={!unsupported.length}>Skipped: {unsupported.length}</span>
       </div>
       <ul>
         {#each items as item}
           <li>
-            <strong>{(item.names ?? item.files.map(localFilePath)).join(", ")}</strong><span
+            <strong>{itemName(item)}</strong><span
+              class:warning={warningStates.includes(item.state)}
               >{item.importedEarlier && item.state === "added"
                 ? "Imported earlier"
                 : item.importedEarlier && item.state === "skipped"
@@ -860,12 +895,17 @@
       <div class="controls">
         {#if (registered && (counts.unconfirmed > 0 || counts.pending > 0)) || registrationUncertain}
           <Button
+            size="sm"
+            surface="soft"
             disabled={running || planning || !!disabledReason}
-            onclick={() => void inspectCurrentImport()}>Inspect import</Button
+            onclick={() => void inspectCurrentImport()}
+            ><SearchIcon size="14" />Inspect import</Button
           >
         {/if}
         {#if !savedImport || items.some((item) => !["added", "skipped", "ambiguous"].includes(item.state))}
           <Button
+            size="sm"
+            surface="soft"
             disabled={!checkpointReady ||
               running ||
               planning ||
@@ -878,10 +918,15 @@
               : `Add ${pending} group${pending === 1 ? "" : "s"}`}</Button
           >
         {/if}
-        {#if running}<Button disabled={stopping} onclick={() => (stopping = true)}
+        {#if running}<Button
+            size="sm"
+            surface="soft"
+            disabled={stopping}
+            onclick={() => (stopping = true)}
             >{stopping ? "Stopping after this group" : "Stop after this group"}</Button
           >{/if}
       </div>
+      {#if resumeHint}<p role="status">{resumeHint}</p>{/if}
     {/if}
   </div>
 </DrawerShell>
@@ -932,6 +977,34 @@
   }
   [role="alert"] {
     color: var(--accent-red);
+  }
+  /* Match the small soft buttons beside it. */
+  select {
+    min-height: 24px;
+    padding: 2px var(--space-2);
+    border: var(--border-width) solid color-mix(in srgb, var(--border-default) 80%, transparent);
+    border-radius: var(--kit-control-radius, var(--radius-md));
+    background: color-mix(in srgb, var(--text-muted) 8%, var(--bg-raised, var(--bg-inset)));
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+  }
+  .totals {
+    gap: var(--space-1) var(--space-2);
+  }
+  .totals span:not(:first-child)::before {
+    content: "·";
+    margin-right: var(--space-2);
+    color: var(--text-muted);
+  }
+  .totals span:not(.zero) {
+    color: var(--text-primary);
+  }
+  .totals .zero {
+    color: var(--text-muted);
+  }
+  li span.warning {
+    color: var(--accent-amber);
+    font-weight: var(--font-weight-medium, 500);
   }
   progress {
     width: 100%;
