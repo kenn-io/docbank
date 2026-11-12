@@ -2,8 +2,6 @@ import type { ProcessingFlowHop, ProcessingPlan } from "./generated/docbank.js";
 
 export type ProcessingPurpose = "extract" | "transcribe" | "describe" | "detect" | "index";
 
-export const ocrGuideURL = "https://docbank.ai/docs/usage/document-processing/#ocr";
-
 export const processingSetupURL = "https://docbank.ai/docs/configuration/";
 
 export const purposeLabels: Record<

@@ -6,7 +6,6 @@
   import { APIError } from "./api-transport.js";
   import { previewEligibility, readVerifiedPreview } from "./download.js";
   import type { HighlightTerm } from "./query.js";
-  import { ocrGuideURL } from "./processing-summary.js";
   import {
     resolveRenditionText,
     readVerifiedRenditionText,
@@ -201,19 +200,6 @@
   }
 </script>
 
-{#snippet pdfNotice()}
-  <p class="notice" role="status">
-    {missingPages.length === 1 ? "Page" : "Pages"}
-    {pageRanges(missingPages)}
-    {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1
-      ? "it is a scan"
-      : "they are scans"},
-    <a href={ocrGuideURL} target="_blank" rel="noreferrer"
-      >OCR can read {missingPages.length === 1 ? "it" : "them"}</a
-    >.
-  </p>
-{/snippet}
-
 <div class="verified-text">
   {#if text || resolution?.state === "verified_empty"}
     <div class="text-controls">
@@ -265,7 +251,16 @@
       Query highlights unavailable: {queryHighlightError}
     </p>{/if}
   {#if !loading && missingPages.length}
-    {@render pdfNotice()}
+    <p class="notice" role="status">
+      {missingPages.length === 1 ? "Page" : "Pages"}
+      {pageRanges(missingPages)}
+      {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1
+        ? "it is a scan"
+        : "they are scans"},
+      <a href="https://docbank.ai/docs/usage/document-processing/#ocr" target="_blank" rel="noreferrer"
+        >OCR can read {missingPages.length === 1 ? "it" : "them"}</a
+      >.
+    </p>
   {/if}
   {#if loading}
     <div class="loading" role="status"><Spinner size={14} /> Loading text…</div>

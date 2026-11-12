@@ -2171,23 +2171,19 @@
     pdfCoverage = null;
     if (!eligible) return;
     const controller = new AbortController();
-    let current = true;
     void generated
       .searchTextCoverage(tag ? { tag_id: tag } : {}, {
         session,
         signal: controller.signal,
       })
       .then((coverage) => {
-        if (current) pdfCoverage = coverage;
+        if (!controller.signal.aborted) pdfCoverage = coverage;
       })
       .catch((cause: unknown) => {
-        if (!current) return;
+        if (controller.signal.aborted) return;
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       });
-    return () => {
-      current = false;
-      controller.abort();
-    };
+    return () => controller.abort();
   });
 
   async function runSearch(
