@@ -744,7 +744,11 @@ func (s *Store) OpenCandidatesForVersion(ctx context.Context, versionID string) 
 	if err := validateUUIDv4(versionID); err != nil {
 		return nil, ErrNotFound
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT candidate_id,display_name,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' ORDER BY created_at,candidate_id`)
+	return openCandidatesForVersion(ctx, s.db, versionID)
+}
+
+func openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
+	rows, err := q.QueryContext(ctx, `SELECT candidate_id,display_name,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' ORDER BY created_at,candidate_id`)
 	if err != nil {
 		return nil, err
 	}

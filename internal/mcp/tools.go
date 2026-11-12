@@ -94,6 +94,8 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
 	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
 	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by prefix of any word in the folded name.", schemas: findPeopleSchemas},
+	{name: "get_document_dates", title: "Get document dates", description: "Read safe date claims for one version or current node.", schemas: getDocumentDatesSchemas},
+	{name: "get_document_people", title: "Get document people", description: "Read safe people claims for one version or current node.", schemas: getDocumentPeopleSchemas},
 	{name: "get_person", title: "Get person", description: "Read one canonical person and its split selectors.", schemas: getPersonSchemas},
 	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},
 	{name: "get_package", title: "Get package", description: "Read one load-file package and its retained source authority.", schemas: getPackageSchemas},
@@ -303,6 +305,10 @@ func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 
 func validToolSemantics(name string, arguments map[string]any) bool {
 	switch name {
+	case "get_document_dates", "get_document_people":
+		_, node := arguments["node_id"]
+		_, version := arguments["content_version_id"]
+		return node != version
 	case "get_photo_asset":
 		assetID, assetPresent := arguments["asset_id"]
 		nodeID, nodePresent := arguments["node_id"]

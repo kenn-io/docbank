@@ -94,6 +94,10 @@ func executeReadTool(
 		output, err = listPackageCustodians(ctx, lease, raw)
 	case "find_people":
 		output, err = findPeople(ctx, lease, raw)
+	case "get_document_dates":
+		output, err = getDocumentFacts(ctx, lease, raw, "dates")
+	case "get_document_people":
+		output, err = getDocumentFacts(ctx, lease, raw, "people")
 	case "get_person":
 		output, err = getPerson(ctx, lease, raw)
 	case "list_packages":
