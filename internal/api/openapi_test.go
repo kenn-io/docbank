@@ -863,7 +863,8 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 
 func TestPartyRequestSchemas(t *testing.T) {
 	t.Parallel()
-	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas.Map()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
 	for _, name := range []string{"CreatePartyRequest", "PatchPartyRequest"} {
 		schema := schemas[name]
 		require.NotNil(t, schema)
@@ -896,4 +897,16 @@ func TestPartyRequestSchemas(t *testing.T) {
 		contractFields = append(contractFields, option.Required...)
 	}
 	assert.ElementsMatch(t, []string{"title", "contract_type", "status", "starts_on", "expires_on", "signed_on", "summary", "purpose", "consideration", "termination"}, contractFields)
+	assert.ElementsMatch(t, []any{"own", "counterparty"}, schemas["ContractPartyInput"].Properties["role"].Enum)
+	links := doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"]
+	for _, op := range []*huma.Operation{links.Put, links.Delete} {
+		found := false
+		for _, parameter := range op.Parameters {
+			if parameter.Name == "role" {
+				found = true
+				assert.ElementsMatch(t, []any{"own", "counterparty"}, parameter.Schema.Enum)
+			}
+		}
+		assert.True(t, found)
+	}
 }

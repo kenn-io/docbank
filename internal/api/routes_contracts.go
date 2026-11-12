@@ -14,7 +14,7 @@ import (
 
 type ContractPartyInput struct {
 	PartyID string `json:"party_id"`
-	Role    string `json:"role"`
+	Role    string `json:"role" enum:"own,counterparty"`
 }
 
 func (p *ContractPartyInput) UnmarshalJSON(raw []byte) error {
@@ -350,7 +350,7 @@ func registerContractRoutes(api huma.API, d Deps, g *gate) {
 	type linkInput struct {
 		ContractID string `path:"contract_id"`
 		PartyID    string `path:"party_id"`
-		Role       string `query:"role" required:"true"`
+		Role       string `query:"role" required:"true" enum:"own,counterparty"`
 		IfMatch    string `header:"If-Match"`
 	}
 	for _, attach := range []bool{true, false} {

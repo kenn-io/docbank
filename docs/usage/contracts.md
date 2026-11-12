@@ -77,7 +77,7 @@ Each short term is limited to 8,192 bytes.
 An own-party link requires an own entity. Retired parties remain on existing
 contracts but cannot be newly attached. Edit party links with `--own`,
 `--counterparty`, `--remove-own`, and `--remove-counterparty`. Names for removals match linked parties in the requested role, including retired parties; use an ID when a name is ambiguous. Each change
-uses the contract revision. If a later change fails, the command reports the
+uses the contract revision. The CLI checks requested party links before changing fields. If a later change fails, the command reports the
 steps already applied. Deleting a contract removes its party links, not
 stored documents. Contract mutations are refused in audited vaults. Metadata
 backups include contracts and their links.
@@ -89,7 +89,7 @@ revision in `If-Match`; a stale revision fails without changing that operation.
 Contract party links use `PUT` and `DELETE` on
 `/api/v1/contracts/{contract_id}/parties/{party_id}?role=own|counterparty`.
 A repeated PUT is a revision-fenced no-op; deleting a missing link returns
-404. An unknown party or invalid role returns `invalid_contract`, a non-own
+404. An unknown party returns `invalid_contract`; an invalid role is rejected by request validation. A non-own
 party in the own role returns `party_not_own`, and a retired party returns
 `party_retired`. List filters include type, party ID and exclusive expiry;
 `limit` and `offset` select pages, with a short page indicating the end.

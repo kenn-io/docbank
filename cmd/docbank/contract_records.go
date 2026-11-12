@@ -53,7 +53,12 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 }
 func resolveLinkedContractParty(c api.Contract, role, name string) (string, error) {
 	if id, err := uuid.Parse(name); err == nil && id.String() == name {
-		return name, nil
+		for _, p := range c.Parties {
+			if p.PartyID == name && p.Role == role {
+				return name, nil
+			}
+		}
+		return "", fmt.Errorf("linked party %q not found for role %s", name, role)
 	}
 	var found string
 	for _, p := range c.Parties {
@@ -69,27 +74,42 @@ func resolveLinkedContractParty(c api.Contract, role, name string) (string, erro
 	}
 	return found, nil
 }
-func resolveContractParty(ctx context.Context, c *daemonconn.Connection, name string) (string, error) {
-	// A canonical ID may be used directly; names are matched against active parties.
+func resolveContractParty(ctx context.Context, c *daemonconn.Connection, name, role string) (api.Party, error) {
+	var party api.Party
 	if id, err := uuid.Parse(name); err == nil && id.String() == name {
-		return name, nil
-	}
-	for offset := 0; ; offset += 1000 {
-		page, err := c.Parties(ctx, "", nil, false, 1000, offset)
+		party, err = c.Party(ctx, name)
 		if err != nil {
-			return "", err
+			return api.Party{}, err
 		}
-		for _, p := range page.Items {
-			if document.FoldPersonName(p.DisplayName) == document.FoldPersonName(name) {
-				return p.PartyID, nil
+	} else {
+		for offset := 0; ; offset += 1000 {
+			page, err := c.Parties(ctx, "", nil, false, 1000, offset)
+			if err != nil {
+				return api.Party{}, err
+			}
+			for _, candidate := range page.Items {
+				if document.FoldPersonName(candidate.DisplayName) == document.FoldPersonName(name) {
+					party = candidate
+					break
+				}
+			}
+			if party.PartyID != "" || len(page.Items) < 1000 {
+				break
 			}
 		}
-		if len(page.Items) < 1000 {
-			break
+		if party.PartyID == "" {
+			return api.Party{}, fmt.Errorf("party %q not found", name)
 		}
 	}
-	return "", fmt.Errorf("party %q not found", name)
+	if party.RetiredAt != nil {
+		return api.Party{}, fmt.Errorf("party %q is retired", name)
+	}
+	if role == "own" && !party.Own {
+		return api.Party{}, fmt.Errorf("party %q is not an own entity", name)
+	}
+	return party, nil
 }
+
 func newContractListCommand() *cobra.Command {
 	var status, kind, party, expires, q, asOf string
 	var limit, offset int
@@ -173,11 +193,11 @@ func newContractCreateCommand() *cobra.Command {
 			names []string
 		}{{"own", own}, {"counterparty", other}} {
 			for _, name := range group.names {
-				id, err := resolveContractParty(cmd.Context(), c, name)
+				party, err := resolveContractParty(cmd.Context(), c, name, group.role)
 				if err != nil {
 					return err
 				}
-				b.Parties = append(b.Parties, api.ContractPartyInput{PartyID: id, Role: group.role})
+				b.Parties = append(b.Parties, api.ContractPartyInput{PartyID: party.PartyID, Role: group.role})
 			}
 		}
 		v, err := c.CreateContract(cmd.Context(), b)
@@ -273,8 +293,10 @@ func newContractEditCommand() *cobra.Command {
 		}{{"own", own, true}, {"counterparty", other, true}, {"own", removeOwn, false}, {"counterparty", removeOther, false}} {
 			for _, name := range group.names {
 				var id string
+				var party api.Party
 				if group.attach {
-					id, err = resolveContractParty(cmd.Context(), c, name)
+					party, err = resolveContractParty(cmd.Context(), c, name, group.role)
+					id = party.PartyID
 				} else {
 					id, err = resolveLinkedContractParty(v, group.role, name)
 				}
@@ -282,6 +304,20 @@ func newContractEditCommand() *cobra.Command {
 					return err
 				}
 				changes = append(changes, change{group.role, name, id, group.attach})
+				// Track the planned link state so later removals can refer to earlier attaches.
+				linked := false
+				for i := 0; i < len(v.Parties); i++ {
+					if v.Parties[i].PartyID == id && v.Parties[i].Role == group.role {
+						linked = true
+						if !group.attach {
+							v.Parties = append(v.Parties[:i], v.Parties[i+1:]...)
+						}
+						break
+					}
+				}
+				if group.attach && !linked {
+					v.Parties = append(v.Parties, api.ContractParty{PartyID: id, Role: group.role, DisplayName: party.DisplayName})
+				}
 			}
 		}
 		var applied []string

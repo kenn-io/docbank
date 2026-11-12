@@ -83,6 +83,16 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--counterparty", "Missing supplier")
 	require.ErrorContains(t, err, "not found")
 	require.Equal(t, contract, read())
+	for _, tc := range []struct{ flag, party string }{
+		{"--counterparty", "11111111-1111-4111-8111-111111111111"},
+		{"--own", supplier.PartyID},
+		{"--own", "Synthetic Supplier"},
+		{"--remove-own", "11111111-1111-4111-8111-111111111111"},
+	} {
+		_, err = runCLI(t, "contract", "edit", contract.ContractID, "--title", "Should not apply", tc.flag, tc.party)
+		require.Error(t, err)
+		require.Equal(t, contract, read())
+	}
 	out, err = runCLI(t, "contract", "create", "Second agreement", "--counterparty", supplier.PartyID, "--json")
 	require.NoError(t, err, out)
 	var second api.Contract
@@ -92,6 +102,13 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	// must be disambiguated by ID before detaching either of them.
 	out, err = runCLI(t, "party", "retire", supplier.PartyID)
 	require.NoError(t, err, out)
+	_, err = runCLI(t, "contract", "edit", second.ContractID, "--title", "Should not apply", "--own", supplier.PartyID)
+	require.ErrorContains(t, err, "retired")
+	out, err = runCLI(t, "contract", "show", second.ContractID, "--json")
+	require.NoError(t, err, out)
+	var unchanged api.Contract
+	require.NoError(t, json.Unmarshal([]byte(out), &unchanged))
+	require.Equal(t, second, unchanged)
 	out, err = runCLI(t, "contract", "edit", second.ContractID, "--remove-counterparty", "Synthetic Supplier", "--json")
 	require.NoError(t, err, out)
 	var detached api.Contract
@@ -124,12 +141,6 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, after, read())
 	}
-	// A syntactically valid unknown ID can only fail at the server; report the
-	// prior field mutation and retain its new revision for the caller.
-	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--title", "Updated agreement", "--counterparty", "11111111-1111-4111-8111-111111111111")
-	require.ErrorContains(t, err, "applied [contract fields]")
-	after = read()
-	require.Equal(t, "Updated agreement", after.Title)
 	out, err = runCLI(t, "contract", "delete", contract.ContractID)
 	require.NoError(t, err, out)
 	_, err = runCLI(t, "contract", "show", contract.ContractID)

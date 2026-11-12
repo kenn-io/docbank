@@ -55,7 +55,7 @@ func validContractStatus(s string) bool {
 	return false
 }
 func validateContractInput(in ContractInput) error {
-	if !document.ValidPersonIdentityText(in.Title) || strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 300 || strings.ContainsRune(in.Title, 0) {
+	if !document.ValidPersonIdentityText(in.Title) || strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 300 {
 		return fmt.Errorf("%w: title", ErrInvalidContract)
 	}
 	if in.ContractType != "" && !contractTypePattern.MatchString(in.ContractType) {
