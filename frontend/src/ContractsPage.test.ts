@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { tick } from "svelte";
 import ContractsPage from "./ContractsPage.svelte";
 import { drawerPage } from "./drawerNavigation.js";
+import { formatBytes } from "./format.js";
 import type { Contract } from "./generated/docbank.js";
 import {
   contract,
@@ -306,6 +307,7 @@ describe("contract detail", () => {
     contractLink({
       role: "audit_trail",
       node_id: 414,
+      blob_sha256: "d".repeat(64),
       available: false,
       current: false,
       size: 4096,
@@ -362,7 +364,15 @@ describe("contract detail", () => {
     expect(await screen.findByText("id:77")).toBeTruthy();
     expect(screen.getByText("Older version")).toBeTruthy();
     expect(screen.getByText("Unavailable")).toBeTruthy();
-    expect(screen.getByText(/sha256 aaaaaaaaaaaa/)).toBeTruthy();
+    // An unavailable link shows its whole recorded hash and size as evidence.
+    const hash = "d".repeat(64);
+    const evidence = screen.getByText(
+      (_, element) =>
+        !!element?.textContent?.includes(hash) &&
+        ![...element.children].some((child) => child.textContent?.includes(hash)),
+    );
+    expect(evidence.textContent).toContain(`sha256 ${hash}`);
+    expect(evidence.closest("li")?.textContent).toContain(formatBytes(4096));
     expect(
       screen.getByRole("button", { name: "Open Audit trail id:414" }).hasAttribute("disabled"),
     ).toBe(true);

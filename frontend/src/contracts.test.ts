@@ -146,6 +146,30 @@ describe("contract document source", () => {
     });
   });
 
+  it("accepts a legal 16,384-byte node path and refuses a longer one", async () => {
+    const link = contractLink();
+    const path = "/" + "x".repeat(16383);
+    const fetch = serve(versionFixture(link), nodeFixture({ path }));
+    await expect(
+      contractDocumentSource("synthetic", link, new AbortController().signal),
+    ).resolves.toMatchObject({
+      nodeID: link.node_id,
+      versionID: link.content_version_id,
+      blobHash: link.blob_sha256,
+      size: link.size,
+      path,
+    });
+    expect(fetch.mock.calls.map(([url]) => String(url))).toStrictEqual([
+      `/api/v1/versions/${link.content_version_id}`,
+      `/api/v1/nodes/${link.node_id}`,
+    ]);
+    vi.restoreAllMocks();
+    serve(versionFixture(link), nodeFixture({ path: path + "x" }));
+    await expect(
+      contractDocumentSource("synthetic", link, new AbortController().signal),
+    ).rejects.toThrow("no longer matches its saved version");
+  });
+
   it("refuses changed, trashed and unavailable sources", async () => {
     const link = contractLink();
     serve({ ...versionFixture(link), blob_hash: "c".repeat(64) }, nodeFixture());
