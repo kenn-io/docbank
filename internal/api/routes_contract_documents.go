@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
@@ -19,9 +20,8 @@ type contractDocumentLinkInput struct {
 }
 
 func (in *contractDocumentLinkInput) Resolve(ctx huma.Context) []error {
-	url := ctx.URL()
-	values, ok := url.Query()["content_version_id"]
-	in.emptyVersion = ok && len(values) > 0 && values[0] == ""
+	values, err := url.ParseQuery(ctx.URL().RawQuery)
+	in.emptyVersion = err != nil || (len(values["content_version_id"]) > 0 && values["content_version_id"][0] == "")
 	return nil
 }
 

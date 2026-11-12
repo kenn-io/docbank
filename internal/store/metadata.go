@@ -1678,7 +1678,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= contractsStorageSchemaVersion {
-			if err := validateContractMetadataState(ctx, tx); err != nil {
+			if err := validateContractMetadataState(ctx, tx, nodeSequence); err != nil {
 				return err
 			}
 		}

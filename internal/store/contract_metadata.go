@@ -55,7 +55,7 @@ func validateMetadataContractParty(p metadataContractParty) error {
 	}
 	return nil
 }
-func validateContractMetadataState(ctx context.Context, q metadataQuerier) error {
+func validateContractMetadataState(ctx context.Context, q metadataQuerier, nodeSequence int64) error {
 	if err := contractMetadata.validateRows(ctx, q); err != nil {
 		return err
 	}
@@ -66,11 +66,11 @@ func validateContractMetadataState(ctx context.Context, q metadataQuerier) error
 		return err
 	}
 	var mismatch bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM contract_documents cd JOIN content_versions v ON v.version_id=cd.content_version_id WHERE v.node_id<>cd.node_id OR v.blob_hash<>cd.blob_sha256 OR v.size<>cd.size)`).Scan(&mismatch); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM contract_documents cd LEFT JOIN content_versions v ON v.version_id=cd.content_version_id WHERE cd.node_id>$1 OR v.node_id<>cd.node_id OR v.blob_hash<>cd.blob_sha256 OR v.size<>cd.size)`, nodeSequence).Scan(&mismatch); err != nil {
 		return err
 	}
 	if mismatch {
-		return errors.New("contract document does not match retained version")
+		return errors.New("contract document is above the node high-water mark or does not match retained version")
 	}
 	return nil
 }
