@@ -1,4 +1,5 @@
 import * as actions from "./action-events.js";
+import * as upload from "./upload.js";
 import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
@@ -892,6 +893,58 @@ it("retains separately selected members of a remaining photo group", async () =>
       expect.any(Array),
     ),
   );
+});
+
+it("cancels saved-file verification when the drawer closes", async () => {
+  let verificationSignal: AbortSignal | undefined;
+  vi.spyOn(upload, "hashFile").mockImplementation((_file, signal) => {
+    verificationSignal = signal;
+    return new Promise((_resolve, reject) =>
+      signal.addEventListener("abort", () => reject(new DOMException("Canceled", "AbortError"))),
+    );
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "a.JPG", size: 1 }],
+        hashes: ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "cancel-verification",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("File missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "a.JPG")] },
+  });
+  await waitFor(() => expect(verificationSignal).toBeDefined());
+  view.unmount();
+  expect(verificationSignal?.aborted).toBe(true);
 });
 
 it("refuses an unattempted file with a different modified time", async () => {
