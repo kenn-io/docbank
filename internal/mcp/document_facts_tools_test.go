@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -35,6 +37,7 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 		for _, name := range []string{"get_document_dates", "get_document_people"} {
 			output := exportCall(t, server, name, selector)
 			require.Equal(t, file.VersionID, output["content_version_id"])
+			assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{}))[name].OutputSchema, output)
 			if name == "get_document_people" {
 				assertions, ok := output["assertions"].([]any)
 				require.True(t, ok)
@@ -119,4 +122,41 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 	people.Edges = []api.VersionPersonEdge{{RawLabel: strings.Repeat("x", maxToolResponseBytes)}}
 	_, err := documentPeoplePage(people, 0)
 	require.ErrorIs(t, err, errToolResultTooLarge)
+}
+
+func TestDocumentFactsOutputSchemaBounds(t *testing.T) {
+	_, dates := getDocumentDatesSchemas()
+	_, people := getDocumentPeopleSchemas()
+	properties := func(s schema) schema { return s["properties"].(map[string]any) }
+	items := func(s schema) schema { return s["items"].(map[string]any) }
+	for _, tc := range []struct {
+		root  schema
+		field string
+	}{
+		{dates, "claims"}, {dates, "diagnostics"}, {people, "edges"}, {people, "assertions"}, {people, "unresolved"},
+	} {
+		array := properties(tc.root)[tc.field].(map[string]any)
+		// Isolate the catalog array bound from its item requirements.
+		bound := maps.Clone(array)
+		bound["items"] = schema{}
+		assertSchemaAccepts(t, bound, make([]any, 100))
+		assertSchemaRejects(t, bound, make([]any, 101))
+	}
+	claim := properties(items(properties(dates)["claims"].(map[string]any)))
+	edge := properties(items(properties(people)["edges"].(map[string]any)))
+	external := properties(items(edge["external"].(map[string]any)))
+	for _, tc := range []struct {
+		field any
+		limit int
+	}{
+		{claim["raw_value"], document.MaxDocumentEventRawValueBytes},
+		{edge["display_name"], document.MaxPersonDisplayNameBytes},
+		{edge["raw_label"], document.MaxPersonDisplayNameBytes},
+		{external["archive_id"], document.MaxPersonArchiveIDBytes},
+		{external["uid"], document.MaxPersonExternalUIDBytes},
+	} {
+		assertSchemaAccepts(t, tc.field, strings.Repeat("x", tc.limit))
+		assertSchemaRejects(t, tc.field, strings.Repeat("x", tc.limit+1))
+	}
+	require.Equal(t, document.MaxPersonExternalIdentities, edge["external"].(map[string]any)["maxItems"])
 }
