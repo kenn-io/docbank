@@ -668,6 +668,8 @@ Schema 43 adds `photo_suggestions`, one row per content version and producer fin
 
 `photo_description_explicit_waiters` marks the waiters an explicit start created. Admission reads it to let explicit work request a new producer fingerprint while automatic work leaves settled descriptions alone. Publication refreshes only rotation for settled rows and preserves text decisions. A rotation refresh keeps the text producer fingerprint, so repeated explicit requests under a different fingerprint can ask again. The waiter marker records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
 
+Released v0.17.0 upgrades preserve provider answers and completed face-scan markers verbatim; suggestion triggers rebuild the search projection without changing backup filtering.
+
 `visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
@@ -775,6 +777,45 @@ in history but cannot receive new assignments or assertions. The derived
 `document_people` generations, heads, and state tables stay out of JSONL and
 rebuild after restore. An audited vault refuses ordinary person mutations
 until audit-aware mutation records exist.
+
+### Party authority
+
+Schema 49 stores each party's UUID, kind, display and folded names, legal name,
+optional country and person link, own flag, revision, creation and update times,
+and optional retirement time. Active parties have unique folded display names.
+Retirement advances the revision and hides the party from default lists while
+retaining its record and releasing its name for reuse.
+
+A new person link requires a live person; an existing link survives that
+person's retirement and unrelated party edits. A person merge relinks parties
+to the survivor and advances each affected party's revision and update time.
+Party records round-trip through metadata JSONL; restore validates their values,
+references, and active-name uniqueness. Audited vaults refuse party mutations.
+
+### Contract authority
+
+Schema 50 stores contracts in `contracts` (UUID, title, type, stored
+status, optional start, expiry and signing dates, four free-text terms,
+revision, and creation and update times) and their party links in
+`contract_parties`. A link's primary key is the contract, party, and role, so a
+party can hold both roles; deleting a contract cascades to its links, while the
+party reference does not cascade. `contracts_expires_on` serves expiry filters.
+The effective status (`expired`) is derived on read from the stored status and
+expiry date and is never stored. Contracts and links round-trip through metadata
+JSONL as `contract` and `contract_party` records, which restore validates.
+
+Admission and retention differ. A new link requires an active party, and the own
+role also requires an own entity; both checks run in the mutation transaction.
+A link already present is retained after its party retires: attaching it again
+is a revision-fenced no-op that skips admission, and detaching it works. Link and
+field changes each advance the contract revision. Contract and link mutations
+use that single revision as their guard. Audited vaults refuse contract
+mutations.
+
+`contract_documents` identifies each link by contract, content version and
+role, and records the node ID, hash and size. It has no foreign key to the
+source node or version, so the evidence survives their removal. Metadata JSONL
+exports and restores these links even when the source is unavailable.
 
 ### People search
 

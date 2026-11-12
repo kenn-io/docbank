@@ -11,6 +11,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const jsonNull = "null"
+
 const (
 	openAPIStringType   = "string"
 	openAPIBinaryFormat = "binary"

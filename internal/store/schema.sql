@@ -3256,3 +3256,40 @@ BEGIN
     SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
     ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
 END;
+
+CREATE TABLE IF NOT EXISTS parties (
+    party_id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    display_name_folded TEXT NOT NULL,
+    legal_name TEXT NOT NULL,
+    country TEXT,
+    own INTEGER NOT NULL,
+    person_id TEXT REFERENCES persons(person_id) ON DELETE SET NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS parties_name_folded ON parties(display_name_folded);
+
+CREATE TABLE IF NOT EXISTS contracts (
+ contract_id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, contract_type TEXT NOT NULL,
+ status TEXT NOT NULL, starts_on TEXT, expires_on TEXT, signed_on TEXT,
+ summary TEXT NOT NULL, purpose TEXT NOT NULL, consideration TEXT NOT NULL, termination TEXT NOT NULL,
+ revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS contracts_expires_on ON contracts(expires_on);
+CREATE TABLE IF NOT EXISTS contract_parties (
+ contract_id TEXT NOT NULL REFERENCES contracts(contract_id) ON DELETE CASCADE,
+ party_id TEXT NOT NULL REFERENCES parties(party_id), role TEXT NOT NULL,
+ PRIMARY KEY(contract_id, party_id, role)
+);
+
+CREATE TABLE IF NOT EXISTS contract_documents (
+ contract_id TEXT NOT NULL REFERENCES contracts(contract_id) ON DELETE CASCADE,
+ node_id INTEGER NOT NULL, content_version_id TEXT NOT NULL, blob_sha256 TEXT NOT NULL,
+ size INTEGER NOT NULL, role TEXT NOT NULL, added_at TEXT NOT NULL,
+ PRIMARY KEY(contract_id,content_version_id,role)
+);
+CREATE INDEX IF NOT EXISTS contract_documents_node ON contract_documents(node_id);
