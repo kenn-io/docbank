@@ -9734,18 +9734,40 @@ export type UpdateContractHeaders = {
 };
 
 export type UnlinkContractDocumentParams = {
-role: string;
+role: UnlinkContractDocumentRole;
 content_version_id?: string;
 };
+
+export type UnlinkContractDocumentRole = typeof UnlinkContractDocumentRole[keyof typeof UnlinkContractDocumentRole];
+
+
+export const UnlinkContractDocumentRole = {
+  draft: 'draft',
+  signed: 'signed',
+  audit_trail: 'audit_trail',
+  amendment: 'amendment',
+  attachment: 'attachment',
+} as const;
 
 export type UnlinkContractDocumentHeaders = {
 'If-Match': string;
 };
 
 export type LinkContractDocumentParams = {
-role: string;
+role: LinkContractDocumentRole;
 content_version_id?: string;
 };
+
+export type LinkContractDocumentRole = typeof LinkContractDocumentRole[keyof typeof LinkContractDocumentRole];
+
+
+export const LinkContractDocumentRole = {
+  draft: 'draft',
+  signed: 'signed',
+  audit_trail: 'audit_trail',
+  amendment: 'amendment',
+  attachment: 'attachment',
+} as const;
 
 export type LinkContractDocumentHeaders = {
 'If-Match': string;

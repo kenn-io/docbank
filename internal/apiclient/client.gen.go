@@ -28453,6 +28453,26 @@ const (
 	Under1M RevokeWebSessionQueryDurationBucket = "under_1m"
 )
 
+type UnlinkContractDocumentQueryRole string
+
+const (
+	Amendment  UnlinkContractDocumentQueryRole = "amendment"
+	Attachment UnlinkContractDocumentQueryRole = "attachment"
+	AuditTrail UnlinkContractDocumentQueryRole = "audit_trail"
+	Draft      UnlinkContractDocumentQueryRole = "draft"
+	Signed     UnlinkContractDocumentQueryRole = "signed"
+)
+
+type LinkContractDocumentQueryRole string
+
+const (
+	LinkContractDocumentQueryRoleAmendment  LinkContractDocumentQueryRole = "amendment"
+	LinkContractDocumentQueryRoleAttachment LinkContractDocumentQueryRole = "attachment"
+	LinkContractDocumentQueryRoleAuditTrail LinkContractDocumentQueryRole = "audit_trail"
+	LinkContractDocumentQueryRoleDraft      LinkContractDocumentQueryRole = "draft"
+	LinkContractDocumentQueryRoleSigned     LinkContractDocumentQueryRole = "signed"
+)
+
 type DetachContractPartyQueryRole string
 
 const (
@@ -29964,13 +29984,13 @@ type GetContractQuery struct {
 }
 
 type UnlinkContractDocumentQuery struct {
-	Role             string  `json:"role"`
-	ContentVersionID *string `json:"content_version_id,omitempty"`
+	Role             UnlinkContractDocumentQueryRole `json:"role"`
+	ContentVersionID *string                         `json:"content_version_id,omitempty"`
 }
 
 type LinkContractDocumentQuery struct {
-	Role             string  `json:"role"`
-	ContentVersionID *string `json:"content_version_id,omitempty"`
+	Role             LinkContractDocumentQueryRole `json:"role"`
+	ContentVersionID *string                       `json:"content_version_id,omitempty"`
 }
 
 type DetachContractPartyQuery struct {

@@ -90,7 +90,7 @@ func (c *Connection) LinkContractDocument(ctx context.Context, id string, rev, n
 		version = &versionID
 	}
 	var r *http.Response
-	p, err := c.apiWithResponse(&r).LinkContractDocument(ctx, &apiclient.LinkContractDocumentRequestOptions{PathParams: &apiclient.LinkContractDocumentPath{ContractID: id, NodeID: nodeID}, Header: &apiclient.LinkContractDocumentHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.LinkContractDocumentQuery{Role: role, ContentVersionID: version}})
+	p, err := c.apiWithResponse(&r).LinkContractDocument(ctx, &apiclient.LinkContractDocumentRequestOptions{PathParams: &apiclient.LinkContractDocumentPath{ContractID: id, NodeID: nodeID}, Header: &apiclient.LinkContractDocumentHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.LinkContractDocumentQuery{Role: apiclient.LinkContractDocumentQueryRole(role), ContentVersionID: version}})
 	if err != nil {
 		return api.Contract{}, mutationRequestError(r, err)
 	}
@@ -105,7 +105,7 @@ func (c *Connection) UnlinkContractDocument(ctx context.Context, id string, rev,
 		version = &versionID
 	}
 	var r *http.Response
-	p, err := c.apiWithResponse(&r).UnlinkContractDocument(ctx, &apiclient.UnlinkContractDocumentRequestOptions{PathParams: &apiclient.UnlinkContractDocumentPath{ContractID: id, NodeID: nodeID}, Header: &apiclient.UnlinkContractDocumentHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.UnlinkContractDocumentQuery{Role: role, ContentVersionID: version}})
+	p, err := c.apiWithResponse(&r).UnlinkContractDocument(ctx, &apiclient.UnlinkContractDocumentRequestOptions{PathParams: &apiclient.UnlinkContractDocumentPath{ContractID: id, NodeID: nodeID}, Header: &apiclient.UnlinkContractDocumentHeaders{IfMatch: revisionIfMatch(rev)}, Query: &apiclient.UnlinkContractDocumentQuery{Role: apiclient.UnlinkContractDocumentQueryRole(role), ContentVersionID: version}})
 	if err != nil {
 		return api.Contract{}, mutationRequestError(r, err)
 	}

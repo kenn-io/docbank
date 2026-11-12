@@ -24757,6 +24757,12 @@ paths:
           name: role
           required: true
           schema:
+            enum:
+              - draft
+              - signed
+              - audit_trail
+              - amendment
+              - attachment
             type: string
         - explode: false
           in: query
@@ -24806,6 +24812,12 @@ paths:
           name: role
           required: true
           schema:
+            enum:
+              - draft
+              - signed
+              - audit_trail
+              - amendment
+              - attachment
             type: string
         - explode: false
           in: query
