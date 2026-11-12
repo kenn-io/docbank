@@ -273,6 +273,9 @@ func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
 		assert.GreaterOrEqual(t, resp.StatusCode, 400)
 		assert.NotContains(t, body, sentinel)
 	}
+	resp, body = do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "amount": "1.00", "currency": "USD", "reference": sentinel})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	assert.NotContains(t, body, sentinel)
 	resp, body = do(t, ts, http.MethodPost, path+"/events/"+sentinel+"/void?reveal="+sentinel, map[string]string{"If-Match": sentinel}, map[string]any{"reason": sentinel})
 	assert.GreaterOrEqual(t, resp.StatusCode, 400)
 	assert.NotContains(t, body, sentinel)

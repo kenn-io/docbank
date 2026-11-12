@@ -55,7 +55,7 @@ func TestTaxEventReferenceBoundariesAndWriteRejection(t *testing.T) {
 	path := "/api/v1/tax/records/" + r.RecordID
 	refs := []struct{ raw, masked string }{{"", ""}, {"a", "****"}, {"abcd", "****"}, {"abcde", "****bcde"}, {"一二三四五", "****二三四五"}}
 	for i, ref := range refs {
-		resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": fmt.Sprintf(`"%d"`, i+1)}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": ref.raw})
+		resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": fmt.Sprintf(`"%d"`, i+1)}, map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "amount": "1.00", "currency": "USD", "reference": ref.raw})
 		require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 		if len([]rune(ref.raw)) > 4 {
 			assert.NotContains(t, body, ref.raw)
