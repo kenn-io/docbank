@@ -430,6 +430,7 @@ test("waits for live details before offering redaction", async ({ page, readerUR
 
 test("shows PDF text gaps in the inspector and empty search", async ({ page, readerURL }) => {
   page.setDefaultTimeout(15000);
+  await page.setViewportSize({ width: 1440, height: 1016 });
   await page.goto(readerURL);
   const inspector = page.getByRole("complementary", { name: "Document inspector" });
   for (const file of ["mixed-below-ratio.pdf", "image-only.pdf"]) {
@@ -467,7 +468,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await expect(page.getByText(/without a text layer/)).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
-    clip: { x: 231, y: 56, width: 746, height: 700 },
+    clip: { x: 231, y: 56, width: 746, height: 960 },
   });
   await page.getByRole("button", { name: "Advanced" }).click();
   const editor = page.getByRole("dialog", { name: "Filters and sort" });
@@ -480,11 +481,11 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await expect(frozen.getByText(/Across the current vault:.*without a text layer/)).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-frozen-search-empty-dark.png"),
-    clip: { x: 231, y: 56, width: 746, height: 700 },
+    clip: { x: 231, y: 56, width: 746, height: 960 },
   });
   await page.emulateMedia({ colorScheme: "light" });
   await page.screenshot({
     path: path.join(output!, "pdf-frozen-search-empty-light.png"),
-    clip: { x: 231, y: 56, width: 746, height: 700 },
+    clip: { x: 231, y: 56, width: 746, height: 960 },
   });
 });
