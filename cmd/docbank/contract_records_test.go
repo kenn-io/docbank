@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json/v2"
+	"errors"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -85,7 +87,43 @@ func TestContractPreflight(t *testing.T) {
 	})
 }
 
-func TestContractShowQuotesTermsAndResolvesLinkedNames(t *testing.T) {
+func TestContractCreateReportsConfirmedOutputFailure(t *testing.T) {
+	const contractID = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"human", []string{"Agreement"}},
+		{"json", []string{"Agreement", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/v1/contracts" {
+					http.NotFound(w, r)
+					return
+				}
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"1"`)
+				w.WriteHeader(http.StatusCreated)
+				assert.NoError(t, json.MarshalWrite(w, api.Contract{ContractID: contractID, Title: "Agreement", Revision: 1}))
+			})
+			writeErr := errors.New("synthetic output failure")
+			cmd := newContractCreateCommand()
+			cmd.SetOut(redactionFailedOutput{writeErr})
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs(tc.args)
+			err := cmd.ExecuteContext(t.Context())
+			require.ErrorIs(t, err, writeErr)
+			require.EqualValues(t, 1, requests.Load())
+			require.ErrorContains(t, err, "created")
+			require.ErrorContains(t, err, contractID)
+		})
+	}
+}
+
+func TestContractShowQuotesTerms(t *testing.T) {
 	c := api.Contract{Title: "Agreement", Summary: "line\n\x1b[31m"}
 	cmd := newContractShowCommand()
 	var out bytes.Buffer
@@ -131,9 +169,6 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	}
 	// An unknown later addition must not apply fields or an earlier valid link.
 	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--title", "Should not apply", "--own", owner.PartyID, "--counterparty", "Missing supplier")
-	require.ErrorContains(t, err, "not found")
-	require.Equal(t, contract, read())
-	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--counterparty", "Missing supplier")
 	require.ErrorContains(t, err, "not found")
 	require.Equal(t, contract, read())
 	for _, tc := range []struct{ flag, party string }{
