@@ -355,7 +355,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
 		}
-		if err == nil && choice.Profile != "" {
+		if err == nil {
 			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
 		}
 		if err != nil {
