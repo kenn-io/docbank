@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 func TestLinksCommonMarkForms(t *testing.T) {
@@ -85,6 +84,27 @@ func TestLinksSyntaxDecodeOnly(t *testing.T) {
 	n, err := Parse(t.Context(), src, Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"n(x).md?x=&", "a%2Fb.md", "&amp;%2F"}, linkTargets(n.Links))
+}
+
+func TestTargetDecoderParity(t *testing.T) {
+	for _, tc := range []struct{ name, raw, decoded string }{
+		{"named", "&amp;&acE;", "&\u223e\u0333"},
+		{"numeric", "&#65;&#x41;&#X1F600;", "AA😀"},
+		{"invalid runes", "&#0;&#xD800;&#x110000;", "���"},
+		{"invalid digits", "&#;&#x;&#12z;&#12345678;&#x1234567;", "&#;&#x;&#12z;&#12345678;&#x1234567;"},
+		{"invalid names", "&bogus;&AMPx;&amp", "&bogus;&AMPx;&amp"},
+		{"nested", "&bad&amp;&&amp;", "&bad&&&"},
+		{"escaped ampersands", `\&amp;&bad\&amp;`, "&amp;&bad&amp;"},
+		{"escaped punctuation", `&bad\!&amp;\\&amp;`, `&bad!&\&`},
+		{"decode once", "&amp;amp;", "&amp;"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := linkScanner{ctx: t.Context(), b: &budget{}}
+			decoded, err := s.decodeTarget(tc.raw, false)
+			require.NoError(t, err)
+			require.Equal(t, tc.decoded, decoded)
+		})
+	}
 }
 
 func TestBareDestinationsRejectASCIIControls(t *testing.T) {
@@ -176,20 +196,6 @@ func TestLinksNestedAndCodeRuns(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("`` ` [bad](x.md) `` [outer [inner](inner.md)](outer.md) [![alt](image.png)](note.md)"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"inner.md", "note.md", "image.png"}, linkTargets(n.Links))
-}
-
-func TestPropertyLinkOccurrences(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		count := hegel.Draw(ht, hegel.Integers[int](1, 128))
-		src := []byte(strings.Repeat("[x](note.md) ", count))
-		n, err := Parse(ht.Context(), src, Limits{})
-		require.NoError(ht, err)
-		require.Len(ht, n.Links, count)
-		for i, l := range n.Links {
-			require.Equal(ht, Span{Start: i * 13, End: i*13 + 12}, linkSpan(l))
-			require.Equal(ht, "note.md", l.Target)
-		}
-	}, hegel.WithTestCases(1000))
 }
 
 func linkTargets(links []Link) []string {

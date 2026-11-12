@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 // Splitting physical container lines loses valid logical links. Merging raw
@@ -58,19 +57,6 @@ func TestContainerMultilineBoundaries(t *testing.T) {
 	require.Len(t, n.Headings, 1)
 	require.Equal(t, "Root [two](two.md)", n.Headings[0].Text)
 	require.Equal(t, "# Root [two](two.md)\n", string(src[headingSpan(n.Headings[0]).Start:headingSpan(n.Headings[0]).End]))
-}
-
-func TestPropertyContainerMultilineLinks(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		prefix := hegel.Draw(ht, hegel.SampledFrom([]string{"> ", "> > ", "- ", "> - "}))
-		continued := strings.ReplaceAll(prefix, "-", " ")
-		label := strings.Repeat("é", hegel.Draw(ht, hegel.Integers[int](1, 20)))
-		src := []byte(prefix + "[" + label + "\n" + continued + "tail](n&amp;amp;.md)\n")
-		n, err := Parse(ht.Context(), src, Limits{})
-		require.NoError(ht, err)
-		require.Equal(ht, []string{"n&amp;.md"}, linkTargets(n.Links))
-		require.Equal(ht, "["+label+"\n"+continued+"tail](n&amp;amp;.md)", string(src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End]))
-	}, hegel.WithTestCases(1000))
 }
 
 func TestContainerReferenceLabelLimit(t *testing.T) {

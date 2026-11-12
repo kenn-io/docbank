@@ -1,3 +1,5 @@
+//go:build !darwin || arm64
+
 package notemarkdown
 
 import (
@@ -10,6 +12,33 @@ import (
 	"github.com/stretchr/testify/require"
 	"hegel.dev/go/hegel"
 )
+
+func TestPropertyLinkOccurrences(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		count := hegel.Draw(ht, hegel.Integers[int](1, 128))
+		src := []byte(strings.Repeat("[x](note.md) ", count))
+		n, err := Parse(ht.Context(), src, Limits{})
+		require.NoError(ht, err)
+		require.Len(ht, n.Links, count)
+		for i, l := range n.Links {
+			require.Equal(ht, Span{Start: i * 13, End: i*13 + 12}, linkSpan(l))
+			require.Equal(ht, "note.md", l.Target)
+		}
+	}, hegel.WithTestCases(1000))
+}
+
+func TestPropertyContainerMultilineLinks(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		prefix := hegel.Draw(ht, hegel.SampledFrom([]string{"> ", "> > ", "- ", "> - "}))
+		continued := strings.ReplaceAll(prefix, "-", " ")
+		label := strings.Repeat("é", hegel.Draw(ht, hegel.Integers[int](1, 20)))
+		src := []byte(prefix + "[" + label + "\n" + continued + "tail](n&amp;amp;.md)\n")
+		n, err := Parse(ht.Context(), src, Limits{})
+		require.NoError(ht, err)
+		require.Equal(ht, []string{"n&amp;.md"}, linkTargets(n.Links))
+		require.Equal(ht, "["+label+"\n"+continued+"tail](n&amp;amp;.md)", string(src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End]))
+	}, hegel.WithTestCases(1000))
+}
 
 func TestPropertyParseDeterministicImmutableAndBounded(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {

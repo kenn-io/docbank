@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yuin/goldmark/v2/text"
 	"github.com/yuin/goldmark/v2/util"
 )
 
@@ -402,8 +403,7 @@ func (s *linkScanner) targetParts(authored string) (string, string, error) {
 }
 
 func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
-	// The decoded byte count is bounded before constructing the result. HTML
-	// entities are individually tiny; one entity can expand to at most 8 bytes.
+	// Bound the decoded byte count before constructing the final result.
 	var size int
 	walk := func(write func(string)) error {
 		for i := 0; i < len(raw); {
@@ -418,11 +418,23 @@ func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
 			} else if !wiki && raw[i] == '&' {
 				if semi := strings.IndexByte(raw[i:min(len(raw), i+34)], ';'); semi >= 0 {
 					candidateEnd := i + semi + 1
-					decoded := decodeEntity(raw[i:candidateEnd])
-					if decoded != raw[i:candidateEnd] {
-						j = candidateEnd
-						value = decoded
+					width := candidateEnd - i
+					if err := s.ctx.Err(); err != nil {
+						return err
 					}
+					// Pinned Decode scans/copies a <=34-byte chunk. Its sole
+					// reference can expand by <=2 bytes; COW capacity is n+20.
+					if err := s.b.step(s.ctx, 9*width+10); err != nil {
+						return err
+					}
+					if err := s.b.reserveStrings(3*width + 28); err != nil {
+						return err
+					}
+					value = string(text.NewDecoder().Decode([]byte(raw[i:candidateEnd])))
+					if err := s.ctx.Err(); err != nil {
+						return err
+					}
+					j = candidateEnd
 				}
 			}
 			write(value)
