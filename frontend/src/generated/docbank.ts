@@ -9670,7 +9670,7 @@ offset?: number;
 };
 
 export type DeleteContractHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type GetContractParams = {
@@ -9678,7 +9678,7 @@ as_of?: string;
 };
 
 export type UpdateContractHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type DetachContractPartyParams = {
@@ -9686,7 +9686,7 @@ role: string;
 };
 
 export type DetachContractPartyHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type AttachContractPartyParams = {
@@ -9694,7 +9694,7 @@ role: string;
 };
 
 export type AttachContractPartyHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type GetDocumentProcessingCoverageParams = {
@@ -12678,7 +12678,7 @@ export const getDeleteContractUrl = (contractId: string,) => {
  * @summary Delete a contract
  */
 export const deleteContract = async (contractId: string,
-    headers?: DeleteContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+    headers: DeleteContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12751,7 +12751,7 @@ export const getUpdateContractUrl = (contractId: string,) => {
  */
 export const updateContract = async (contractId: string,
     patchContractRequest: NonReadonly<PatchContractRequest>,
-    headers?: UpdateContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+    headers: UpdateContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12801,7 +12801,7 @@ export const getDetachContractPartyUrl = (contractId: string,
 export const detachContractParty = async (contractId: string,
     partyId: string,
     params: DetachContractPartyParams,
-    headers?: DetachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+    headers: DetachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -12851,7 +12851,7 @@ export const getAttachContractPartyUrl = (contractId: string,
 export const attachContractParty = async (contractId: string,
     partyId: string,
     params: AttachContractPartyParams,
-    headers?: AttachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+    headers: AttachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};

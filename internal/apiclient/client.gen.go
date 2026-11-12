@@ -28243,19 +28243,19 @@ type SetCollectionLabelHeaders struct {
 }
 
 type DeleteContractHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type UpdateContractHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type DetachContractPartyHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type AttachContractPartyHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type SetLaneControlHeaders struct {
