@@ -141,9 +141,7 @@
       {/if}
       {#if meaning?.restart_required}
         {#if meaning.restart_available}
-          {#if !searchByMeaning.notice}
-            <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
-          {/if}
+          <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
         {:else}
           <p>
             If you started Docbank in a terminal, press Ctrl+C and repeat the original command. If

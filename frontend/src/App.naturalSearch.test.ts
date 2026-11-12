@@ -2118,7 +2118,21 @@ it.each([
     },
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
-  ["rejected", async () => new Response(null, { status: 500 }), "Restart rejected. Try again."],
+  [
+    "conflict",
+    async () => new Response(null, { status: 409 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
+    "server error",
+    async () => new Response(null, { status: 500 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
+    "gateway timeout",
+    async () => new Response(null, { status: 504 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
 ])("keeps the workspace after an %s response", async (kind, restart, notice) => {
   const request = vi.fn(restart);
   const harness = searchWithMeaningOff({
@@ -2136,11 +2150,10 @@ it.each([
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(notice)).toBeTruthy();
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
-  if (kind === "rejected")
-    expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
-  else expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
+  expect(request).toHaveBeenCalledOnce();
   if (kind === "accepted") {
-    expect(request).toHaveBeenCalledOnce();
     const call = harness.fetchMock.mock.calls.find(
       ([input]) => String(input) === "/api/v1/processing/local/restart",
     );
@@ -2169,6 +2182,11 @@ it("offers a retry when restart is rejected after setup", async () => {
       name: "Restart",
     }),
   );
-  expect(await within(drawer).findByText("Restart rejected. Try again.")).toBeTruthy();
+  expect(
+    await within(drawer).findByText(
+      "Docbank couldn't confirm the restart. It may still happen later.",
+    ),
+  ).toBeTruthy();
+  expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
   expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });

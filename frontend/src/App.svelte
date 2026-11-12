@@ -2029,13 +2029,7 @@
       await generated.restartDaemon({ session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
       if (!mounted || webSession !== session) return;
-      if (cause instanceof APIError) {
-        if (cause.status === 401) {
-          return handleFailure(cause);
-        }
-        localText.error = "Restart rejected. Try again.";
-        return;
-      }
+      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
       notice = "Docbank couldn't confirm the restart. It may still happen later.";
     }
     if (mounted && webSession === session) {
