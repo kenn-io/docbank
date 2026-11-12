@@ -96,43 +96,46 @@ func contractMutationError(operation string, err error) error {
 	return fmt.Errorf("%s: %w", operation, err)
 }
 
-// linked is a same-role retained link matching name; it yields to no active namesake.
-func resolveContractParty(ctx context.Context, c *daemonconn.Connection, name, role, linked string) (api.Party, error) {
-	var party api.Party
-	if id, err := uuid.Parse(name); err == nil && id.String() == name {
-		party, err = c.Party(ctx, name)
+// activePartyByName returns the first active party with the folded display name, or a zero party.
+func activePartyByName(ctx context.Context, c *daemonconn.Connection, name string) (api.Party, error) {
+	for offset := 0; ; offset += 1000 {
+		page, err := c.Parties(ctx, "", nil, false, 1000, offset)
 		if err != nil {
 			return api.Party{}, err
 		}
+		for _, candidate := range page.Items {
+			if document.FoldPersonName(candidate.DisplayName) == document.FoldPersonName(name) {
+				return candidate, nil
+			}
+		}
+		if len(page.Items) < 1000 {
+			return api.Party{}, nil
+		}
+	}
+}
+
+// linked is a same-role retained link matching name: it is kept without new admission unless
+// a different active party now uses that name.
+func resolveContractParty(ctx context.Context, c *daemonconn.Connection, name, role, linked string) (api.Party, error) {
+	var party api.Party
+	var err error
+	if id, perr := uuid.Parse(name); perr == nil && id.String() == name {
+		party, err = c.Party(ctx, name)
 	} else {
-		for offset := 0; ; offset += 1000 {
-			page, err := c.Parties(ctx, "", nil, false, 1000, offset)
-			if err != nil {
-				return api.Party{}, err
-			}
-			for _, candidate := range page.Items {
-				if document.FoldPersonName(candidate.DisplayName) == document.FoldPersonName(name) {
-					party = candidate
-					break
-				}
-			}
-			if party.PartyID != "" || len(page.Items) < 1000 {
-				break
-			}
-		}
-		switch {
-		case party.PartyID == "" && linked != "":
-			return api.Party{PartyID: linked}, nil
-		case party.PartyID == "":
-			return api.Party{}, fmt.Errorf("party %q not found", name)
-		case linked != "" && party.PartyID != linked:
-			return api.Party{}, fmt.Errorf("party %q is ambiguous; use an ID", name)
-		}
+		party, err = activePartyByName(ctx, c, name)
 	}
-	if party.RetiredAt != nil {
+	switch {
+	case err != nil:
+		return api.Party{}, err
+	case linked != "" && (party.PartyID == "" || party.PartyID == linked):
+		return api.Party{PartyID: linked}, nil
+	case linked != "":
+		return api.Party{}, fmt.Errorf("party %q is ambiguous; use an ID", name)
+	case party.PartyID == "":
+		return api.Party{}, fmt.Errorf("party %q not found", name)
+	case party.RetiredAt != nil:
 		return api.Party{}, fmt.Errorf("party %q is retired", name)
-	}
-	if role == "own" && !party.Own {
+	case role == "own" && !party.Own:
 		return api.Party{}, fmt.Errorf("party %q is not an own entity", name)
 	}
 	return party, nil
@@ -324,7 +327,7 @@ func newContractEditCommand() *cobra.Command {
 				var party api.Party
 				if group.attach {
 					id, _, err = findLinkedContractParty(v, group.role, name)
-					if err == nil && id != name {
+					if err == nil && (id == "" || id != name) {
 						party, err = resolveContractParty(cmd.Context(), c, name, group.role, id)
 						id = party.PartyID
 					}
