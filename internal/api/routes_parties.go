@@ -194,6 +194,9 @@ func registerPartyRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return FromStoreError(err)
 			}
+			if p.Revision != revision {
+				return FromStoreError(store.ErrStaleRevision)
+			}
 			input := store.PartyInput{Kind: p.Kind, DisplayName: p.DisplayName, LegalName: p.LegalName, Country: p.Country, PersonID: p.PersonID, Own: p.Own}
 			if in.Body.Kind != nil {
 				input.Kind = *in.Body.Kind

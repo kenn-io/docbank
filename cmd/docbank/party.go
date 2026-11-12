@@ -9,9 +9,9 @@ import (
 )
 
 func newPartyCommand() *cobra.Command {
-	root := &cobra.Command{Use: "party", Short: "Manage reusable entities and counterparties", GroupID: groupDocuments}
+	root := &cobra.Command{Use: "party", Short: "Manage reusable entities and counterparties", Long: "Create, inspect, edit, and retire entities and counterparties.\nUse filters to find active or retired parties.", GroupID: groupDocuments}
 	var jsonOutput bool
-	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "print JSON")
 	printParty := func(cmd *cobra.Command, p api.Party) error {
 		if jsonOutput {
 			return writeCLIJSON(cmd.OutOrStdout(), p)
@@ -33,7 +33,7 @@ func newPartyCommand() *cobra.Command {
 	var own bool
 	var retired bool
 	var limit, offset int
-	list := &cobra.Command{Use: "list", Short: "List parties", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: "List parties", Example: "docbank party list --own", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -56,12 +56,12 @@ func newPartyCommand() *cobra.Command {
 		}
 		return nil
 	}}
-	list.Flags().StringVar(&kind, "kind", "", "Filter person or organization")
-	list.Flags().BoolVar(&own, "own", false, "Filter own entities")
-	list.Flags().BoolVar(&retired, "include-retired", false, "Include retired parties")
-	list.Flags().IntVar(&limit, "limit", 100, "Maximum number of parties")
-	list.Flags().IntVar(&offset, "offset", 0, "Number of parties to skip")
-	show := &cobra.Command{Use: "show <party-id>", Short: "Inspect a party", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	list.Flags().StringVar(&kind, "kind", "", "filter person or organization")
+	list.Flags().BoolVar(&own, "own", false, "filter own entities")
+	list.Flags().BoolVar(&retired, "include-retired", false, "include retired parties")
+	list.Flags().IntVar(&limit, "limit", 100, "maximum number of parties")
+	list.Flags().IntVar(&offset, "offset", 0, "number of parties to skip")
+	show := &cobra.Command{Use: "show <party-id>", Short: "Inspect a party", Example: "docbank party show 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -74,7 +74,7 @@ func newPartyCommand() *cobra.Command {
 	}}
 	var createKind, createLegal, createCountry, createPerson string
 	var createOwn bool
-	create := &cobra.Command{Use: "create <display-name>", Short: "Create a party", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	create := &cobra.Command{Use: "create <display-name>", Short: "Create a party", Example: "docbank party create \"Northwind Storage\" --country CA", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		input := api.CreatePartyRequest{Kind: createKind, DisplayName: args[0], LegalName: createLegal, Own: createOwn}
 		if cmd.Flags().Changed("country") {
 			input.Country = &createCountry
@@ -92,16 +92,16 @@ func newPartyCommand() *cobra.Command {
 		}
 		return printParty(cmd, p)
 	}}
-	create.Flags().StringVar(&createKind, "kind", "organization", "Party kind: person or organization")
-	create.Flags().StringVar(&createLegal, "legal-name", "", "Legal name")
-	create.Flags().StringVar(&createCountry, "country", "", "ISO 3166-1 alpha-2 country")
-	create.Flags().StringVar(&createPerson, "person", "", "Linked person ID")
-	create.Flags().BoolVar(&createOwn, "own", false, "This party is one of my entities")
+	create.Flags().StringVar(&createKind, "kind", "organization", "party kind: person or organization")
+	create.Flags().StringVar(&createLegal, "legal-name", "", "legal name")
+	create.Flags().StringVar(&createCountry, "country", "", "country code (ISO 3166-1 alpha-2)")
+	create.Flags().StringVar(&createPerson, "person", "", "linked person ID")
+	create.Flags().BoolVar(&createOwn, "own", false, "this party is one of my entities")
 	var editKind, editName, editLegal, editCountry, editPerson string
 	var editOwn bool
 	var clearCountry, clearPerson bool
 	var editRevision int64
-	edit := &cobra.Command{Use: "edit <party-id>", Short: "Edit a party", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	edit := &cobra.Command{Use: "edit <party-id>", Short: "Edit a party", Example: "docbank party edit 11111111-1111-4111-8111-111111111111 --name Northwind", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		f := cmd.Flags()
 		input := api.PatchPartyRequest{ClearCountry: clearCountry, ClearPerson: clearPerson}
 		if f.Changed("kind") {
@@ -149,17 +149,17 @@ func newPartyCommand() *cobra.Command {
 		}
 		return printParty(cmd, p)
 	}}
-	edit.Flags().StringVar(&editKind, "kind", "", "Party kind")
-	edit.Flags().StringVar(&editName, "name", "", "Display name")
-	edit.Flags().StringVar(&editLegal, "legal-name", "", "Legal name")
-	edit.Flags().StringVar(&editCountry, "country", "", "ISO country")
-	edit.Flags().StringVar(&editPerson, "person", "", "Linked person ID")
-	edit.Flags().BoolVar(&editOwn, "own", false, "Whether this is one of my entities")
-	edit.Flags().BoolVar(&clearCountry, "clear-country", false, "Remove country")
-	edit.Flags().BoolVar(&clearPerson, "clear-person", false, "Remove linked person")
-	edit.Flags().Int64Var(&editRevision, "revision", 0, "Expected revision (default: current)")
+	edit.Flags().StringVar(&editKind, "kind", "", "party kind")
+	edit.Flags().StringVar(&editName, "name", "", "display name")
+	edit.Flags().StringVar(&editLegal, "legal-name", "", "legal name")
+	edit.Flags().StringVar(&editCountry, "country", "", "country code (ISO 3166-1 alpha-2)")
+	edit.Flags().StringVar(&editPerson, "person", "", "linked person ID")
+	edit.Flags().BoolVar(&editOwn, "own", false, "whether this is one of my entities")
+	edit.Flags().BoolVar(&clearCountry, "clear-country", false, "remove country")
+	edit.Flags().BoolVar(&clearPerson, "clear-person", false, "remove linked person")
+	edit.Flags().Int64Var(&editRevision, "revision", 0, "expected revision (default: current)")
 	var retireRevision int64
-	retire := &cobra.Command{Use: "retire <party-id>", Short: "Retire a party", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	retire := &cobra.Command{Use: "retire <party-id>", Short: "Retire a party", Example: "docbank party retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		revision := retireRevision
 		if cmd.Flags().Changed("revision") && revision <= 0 {
 			return fmt.Errorf("revision must be positive")
@@ -181,7 +181,7 @@ func newPartyCommand() *cobra.Command {
 		}
 		return printParty(cmd, p)
 	}}
-	retire.Flags().Int64Var(&retireRevision, "revision", 0, "Expected revision (default: current)")
+	retire.Flags().Int64Var(&retireRevision, "revision", 0, "expected revision (default: current)")
 	root.AddCommand(list, show, create, edit, retire)
 	return root
 }

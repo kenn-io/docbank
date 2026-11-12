@@ -175,6 +175,11 @@ func (s *Store) UpdateParty(ctx context.Context, id string, revision int64, inpu
 		if p.RetiredAt != nil {
 			return ErrPartyRetired
 		}
+		if p.Kind == input.Kind && p.DisplayName == input.DisplayName && p.LegalName == input.LegalName &&
+			p.Own == input.Own && equalOptionalStrings(p.Country, input.Country) && equalOptionalStrings(p.PersonID, input.PersonID) {
+			updated = p
+			return nil
+		}
 		if err := checkPartyReferences(ctx, tx, input, id, p.PersonID); err != nil {
 			return err
 		}

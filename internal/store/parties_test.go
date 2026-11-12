@@ -16,13 +16,20 @@ func checkPartyLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
-	input := PartyInput{Kind: "organization", DisplayName: "Northwind Storage", Own: true}
+	input := PartyInput{Kind: "organization", DisplayName: "Northwind Storage", Country: new("CA"), Own: true}
 	created, err := s.CreateParty(ctx, input)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), created.Revision)
 	got, err := s.GetParty(ctx, created.PartyID)
 	require.NoError(t, err)
 	assert.Equal(t, created, got)
+
+	input.Country = new("CA") // Equal value, different pointer.
+	unchanged, err := s.UpdateParty(ctx, created.PartyID, created.Revision, input)
+	require.NoError(t, err)
+	assert.Equal(t, created, unchanged)
+	_, err = s.UpdateParty(ctx, created.PartyID, created.Revision+1, input)
+	require.ErrorIs(t, err, ErrStaleRevision)
 
 	input.LegalName = "Northwind Storage Ltd"
 	updated, err := s.UpdateParty(ctx, created.PartyID, created.Revision, input)
@@ -132,6 +139,12 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 	ctx := t.Context()
 	p, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example", Country: new("CA"), Own: true})
 	require.NoError(t, err)
+	// A clock correction may put creation or retirement after the latest update.
+	_, err = source.db.ExecContext(ctx, `UPDATE parties SET created_at=$1, retired_at=$2 WHERE party_id=$3`,
+		"2099-01-01T00:00:00.000000000Z", "2098-01-01T00:00:00.000000000Z", p.PartyID)
+	require.NoError(t, err)
+	p, err = source.GetParty(ctx, p.PartyID)
+	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &backup))
 	target := newTestStore(t)
@@ -149,6 +162,7 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 	}
 	require.NotEqual(t, -1, partyLine)
 	duplicate := append([]string(nil), lines...)
+	duplicate[partyLine] = strings.Replace(duplicate[partyLine], `"retired_at":"2098-01-01T00:00:00.000000000Z"`, `"retired_at":null`, 1)
 	duplicateLine := strings.Replace(duplicate[partyLine], p.PartyID, uuid.NewString(), 1)
 	require.NotEqual(t, duplicate[partyLine], duplicateLine)
 	duplicate = append(duplicate[:partyLine+1], append([]string{duplicateLine}, duplicate[partyLine+1:]...)...)
@@ -156,6 +170,8 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 	require.Error(t, empty.ImportMetadata(ctx, strings.NewReader(strings.Join(duplicate, "\n"))))
 	for _, tc := range []struct{ name, from, to string }{
 		{"country", `"country":"CA"`, `"country":"ZZ"`},
+		{"created time", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`},
+		{"retired time", `"retired_at":"2098-01-01T00:00:00.000000000Z"`, `"retired_at":"invalid"`},
 		{"NUL", `"display_name":"Example"`, `"display_name":"Exam\u0000ple"`},
 		{"own", `"own":1`, `"own":2`},
 		{"folded", `"display_name_folded":"example"`, `"display_name_folded":"wrong"`},

@@ -29,6 +29,8 @@ func TestPartyLifecycleHTTP(t *testing.T) {
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": "invalid"}, map[string]any{"legal_name": "Northwind Ltd"})
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"legal_name": "Future"})
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"legal_name": "Northwind Ltd", "country": nil})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &party))

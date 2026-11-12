@@ -25,7 +25,7 @@ type metadataParty struct {
 }
 
 var partyMetadata = newMetadataTable(metadataTable[metadataParty]{
-	record: metadataParty{Type: "party"}, table: "parties", suffix: "ORDER BY party_id", validate: validateMetadataParty, checkExport: true,
+	record: metadataParty{Type: "party"}, table: "parties", suffix: "ORDER BY party_id", validate: validateMetadataParty,
 })
 
 func validateMetadataParty(p metadataParty) error {
@@ -44,15 +44,9 @@ func validateMetadataParty(p metadataParty) error {
 	if err := validateMetadataTime("party updated_at", p.UpdatedAt); err != nil {
 		return err
 	}
-	if p.UpdatedAt < p.CreatedAt {
-		return errors.New("party update precedes creation")
-	}
 	if p.RetiredAt != nil {
 		if err := validateMetadataTime("party retired_at", *p.RetiredAt); err != nil {
 			return err
-		}
-		if *p.RetiredAt < p.CreatedAt || *p.RetiredAt > p.UpdatedAt {
-			return errors.New("invalid party retirement time")
 		}
 	}
 	return nil
@@ -66,5 +60,5 @@ func validatePartyMetadataState(ctx context.Context, q metadataQuerier) error {
 	if invalid {
 		return errors.New("duplicate active party name")
 	}
-	return partyMetadata.export(ctx, q, func(any) error { return nil })
+	return partyMetadata.validateRows(ctx, q)
 }
