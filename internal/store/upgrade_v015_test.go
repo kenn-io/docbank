@@ -103,6 +103,60 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 	require.NoError(t, rows.Err())
 }
 
+func TestUpgradeReleasedV0170PreservesPhotoSuggestions(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0170SQL, 48)
+			asset := albumAsset(t, legacy, "suggested.jpg")
+			node, err := legacy.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			request := photoDescriptionJobRequest(t, legacy, node.CurrentVersionID, producerB, false)
+			grantRenditionJobConsent(t, legacy, request)
+			at := time.Now().UTC().Add(time.Minute)
+			job, _, claim := startPhotoDescription(t, legacy, request, at)
+			result := &document.RenditionResult{Artifacts: []document.RenditionArtifact{{Role: document.EvidenceArtifactStructured,
+				Payload: []byte(`{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAYSIDE","rotation":90}`)}}}
+			publication, err := legacy.PublishPhotoDescription(ctx, claim, result, at)
+			require.NoError(t, err)
+			require.Equal(t, 1, publication.PublishedWaiterCount)
+			before := photoSuggestionValues(t, legacy, asset.ID)
+			require.Len(t, before, 2)
+			require.Equal(t, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAYSIDE"}, before[0].Value)
+			require.Equal(t, new(90), before[1].Rotation)
+			settled, err := legacy.photoDescriptionSettled(ctx, node.CurrentVersionID, request.Profile.RenditionRequestFingerprint, false)
+			require.NoError(t, err)
+			require.True(t, settled)
+			completed, err := legacy.RenditionJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			require.Equal(t, RenditionJobCompleted, completed.State)
+			var released strings.Builder
+			dumpReleasedTable(t, db, "photo_suggestions", &released)
+			require.NoError(t, db.Close())
+
+			s, err := Open(ctx, path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			assert.Equal(t, before, photoSuggestionValues(t, s, asset.ID), "upgrades keep pending photo suggestions readable without regeneration")
+			var upgraded strings.Builder
+			dumpReleasedTable(t, s.db, "photo_suggestions", &upgraded)
+			assert.Equal(t, released.String(), upgraded.String(), "upgrades preserve every photo suggestion column")
+			settled, err = s.photoDescriptionSettled(ctx, node.CurrentVersionID, request.Profile.RenditionRequestFingerprint, false)
+			require.NoError(t, err)
+			assert.True(t, settled, "upgrades keep automatic photo descriptions settled")
+			joined, waiter, err := s.EnqueueRenditionJob(ctx, request)
+			require.NoError(t, err)
+			assert.Equal(t, job.ID, joined.ID)
+			assert.Equal(t, RenditionJobCompleted, joined.State, "upgrades must not reopen completed photo description jobs")
+			assert.Equal(t, "published", waiter.State)
+			assert.Equal(t, completed.ProviderAttempts, joined.ProviderAttempts)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+
 func TestUpgradeReleasedV0160KeepsPhotoCheckoutState(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
