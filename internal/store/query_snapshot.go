@@ -71,7 +71,8 @@ type SnapshotTag struct {
 type SnapshotRow struct {
 	SnapshotMember
 
-	SuggestionMatch bool `json:"suggestion_match,omitzero"`
+	SuggestionMatch bool     `json:"suggestion_match,omitzero"`
+	MatchedRoles    []string `json:"matched_roles,omitzero"`
 
 	Flag                   *string       `json:"flag,omitzero"`
 	Name                   string        `json:"name"`
@@ -98,10 +99,11 @@ type SnapshotGeneration struct {
 
 // SnapshotFacetValue is one counted and optionally selected facet value.
 type SnapshotFacetValue struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Count    int64  `json:"count"`
-	Selected bool   `json:"selected"`
+	Key      string   `json:"key"`
+	Label    string   `json:"label"`
+	Count    int64    `json:"count"`
+	Selected bool     `json:"selected"`
+	Roles    []string `json:"roles,omitzero"`
 }
 
 // SnapshotFacet is either a complete count projection or an explicit unavailable result.
@@ -227,6 +229,10 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 
 	var projection SnapshotProjection
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		ctx, err := s.scopeQueryPeople(ctx, q)
+		if err != nil {
+			return err
+		}
 		value := request.Query
 		if options.SavedQuery != nil {
 			resolved, resolveErr := (queryResolver{q: q}).Resolve(
@@ -555,6 +561,32 @@ func materializeSnapshotRows(
 				return fmt.Errorf("%w: row %d encodes to %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
 			}
 			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, rowBytes-photoRowBytes[i]); err != nil {
+				return err
+			}
+		}
+	}
+	if !options.Photos && len(compiled.roleMatches) > 0 {
+		before := make([]int64, len(projection.Rows))
+		for i, row := range projection.Rows {
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				return err
+			}
+			before[i] = int64(len(encoded))
+		}
+		if err := annotateMatchedRoles(ctx, q, compiled, generationID, coverage, projection.Rows); err != nil {
+			return err
+		}
+		for i, row := range projection.Rows {
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				return err
+			}
+			size := int64(len(encoded))
+			if size > options.MaxRowBytes {
+				return ErrQuerySnapshotTooLarge
+			}
+			if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, size-before[i]); err != nil {
 				return err
 			}
 		}

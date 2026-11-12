@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-01
+last_edited: 2026-11-11
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -234,6 +234,38 @@ modification time or the age of an older version.
 QueryV1 advanced expressions accept `person:"Ada Lovelace"` or `person:<person-id>`. Names match exactly after Unicode folding. Duplicate names require an ID; merged IDs resolve to the surviving person. Structured queries use `filters.person_ids`.
 
 Document queries include current published person links and direct assertions. Stale published links stay out until rebuilt. Photo queries match depicted-person assertions across the asset's live image and RAW members, using each member's current version and keep Hidden photos locked.
+
+## Find documents by person and role
+
+Advanced QueryV1 expressions can select what a person did on a current document version. Use a quoted exact name or person ID. Combine the operands with `AND`, `OR`, `NOT`, and other filters.
+
+| Operand | Document roles |
+| --- | --- |
+| `author:` | Author |
+| `from:` | Sender or organizer |
+| `to:` | Recipient, copied or attendee; full access also includes blind copy |
+| `cc:` | Copied |
+| `bcc:` | Blind copy; API-key access only |
+| `custodian:`, `participant:`, `organizer:`, `attendee:` | The named role |
+| `between:(A, B)` | Both people have a non-custodian role on the same version |
+| `mentions:` | Text contains the person's display name or a name alias |
+
+For example, `from:"Mara Okonkwo-Fell"`, `custodian:"Mara Okonkwo-Fell"`, and `between:("Mara Okonkwo-Fell", "Ines Albarrán")` are ordinary queries that can be saved and exported. `between:` accepts exactly two distinct people, separated by a comma or whitespace; invalid pairs report `between: needs two different people`. `mentions:` searches at most 16 distinct names as literal phrases and labels a matched result `Mentioned`.
+
+When document-date search is available, these expressions can be combined with it:
+
+```text
+author:"Jory Pellham" date:2026-03-01..2026-03-31
+from:"Mara Okonkwo-Fell" date:2026-03-01..2026-03-31
+to:"Teodor Vask" date:2026-03-01..2026-03-31
+between:("Mara Okonkwo-Fell", "Ines Albarrán") date:2026-03-01..2026-03-31
+custodian:"Mara Okonkwo-Fell"
+mentions:"Jory Pellham" date:2026-03-01..2026-03-31
+```
+
+Browser sessions see only authorized people evidence. A person known solely through concealed evidence resolves as unknown; a visible person's hidden Bcc edge does not match. Browsers refuse `bcc:` and structured `blind_copy` role filters. API-key queries retain full disclosure. `person:` still means any role within the caller's visibility.
+
+Structured queries can use `"people":[{"person_id":"00000000-0000-4000-8000-000000000001","roles":["sender","organizer"]}]` inside `filters`. Each entry is required, while its roles are alternatives. The People facet uses safe evidence for every caller and ignores only root `filters.people` entries when counting. Result roles, facet names and counts are frozen with the snapshot; later renames or republishing do not change it. PostgreSQL search is not yet qualified.
 
 ## Can I search with filters alone?
 

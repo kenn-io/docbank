@@ -20,7 +20,7 @@ import (
 var photoFacetDimensions = []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField, snapshotFacetRating, snapshotFacetFlag, snapshotFacetLabel}
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, snapshotFacetDuplicates, "capture_day",
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, snapshotFacetDuplicates, "person_role", "capture_day",
 }
 
 const (
@@ -74,6 +74,8 @@ func materializeSnapshotFacets(
 		var facet SnapshotFacet
 		var err error
 		switch {
+		case dimension == "person_role":
+			facet, err = materializePersonRoleFacet(facetCtx, q, compiled, generationID, coverage, options.FacetMemberLimit)
 		case dimension == "capture_day":
 			facet, err = materializeCaptureDayFacet(facetCtx, q, compiled, generationID, coverage, options.FacetMemberLimit)
 		case options.MaterializeFacet != nil:
@@ -366,6 +368,8 @@ func finishSnapshotFacet(
 // nested saved queries retain their constraints in the same read transaction.
 func queryWithoutSnapshotFacet(value query.Query, dimension string) query.Query {
 	switch dimension {
+	case "person_role":
+		value.Filters.People = nil
 	case snapshotFacetRating:
 		value.Filters.RatingMin, value.Filters.RatingMax = nil, nil
 	case snapshotFacetFlag:

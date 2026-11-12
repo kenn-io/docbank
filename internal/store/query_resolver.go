@@ -58,11 +58,24 @@ func (r queryResolver) Resolve(
 	switch kind {
 	case query.ReferencePerson:
 		ref.Dependency.Kind = kind
+		safe, _ := ctx.Value(visiblePersonContextKey{}).(bool)
 		if byID {
-			err = r.q.QueryRowContext(ctx, `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND state<>'retired'`, value, value).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
+			sql := `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND state<>'retired'`
+			args := []any{value, value}
+			if safe {
+				sql += ` AND ` + personVisibleSQL("persons.person_id", 3)
+				args = append(args, 1, boolInt(queryPeopleHideLocked(ctx)))
+			}
+			err = r.q.QueryRowContext(ctx, sql, args...).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
 		} else {
 			var count int
-			err = r.q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=? AND state<>'retired'`, value).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
+			sql := `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=? AND state<>'retired'`
+			args := []any{value}
+			if safe {
+				sql += ` AND ` + personVisibleSQL("persons.person_id", 2)
+				args = append(args, 1, boolInt(queryPeopleHideLocked(ctx)))
+			}
+			err = r.q.QueryRowContext(ctx, sql, args...).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
 			if err == nil && count == 0 {
 				err = query.ErrUnknownReference
 			}
@@ -131,3 +144,37 @@ func (r queryResolver) saved(ctx context.Context, value string, byID bool) (quer
 }
 
 var _ query.Resolver = queryResolver{}
+
+// personMentionNames returns a bounded, stable list of literal search phrases.
+func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]string, error) {
+	var name string
+	if err := r.q.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, id).Scan(&name); err != nil {
+		return nil, err
+	}
+	names := []string{name}
+	seen := map[string]bool{document.FoldPersonName(name): true}
+	q, ok := r.q.(rowsQuerier)
+	if !ok {
+		return nil, errors.New("person aliases require a rows querier")
+	}
+	rows, err := q.QueryContext(ctx, `SELECT value_display FROM person_identities WHERE person_id=? AND kind='name_alias' ORDER BY value_normalized,identity_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for len(names) < 16 && rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return nil, err
+		}
+		folded := document.FoldPersonName(alias)
+		if folded != "" && !seen[folded] {
+			names = append(names, alias)
+			seen[folded] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
+}

@@ -252,7 +252,7 @@ func personVisibleAssertionSQL(alias, hideLocked string) string {
 }
 
 func personVisibleActorSQL(alias, hideLocked string) string {
-	return alias + `.sensitive=0 AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
+	return alias + `.sensitive=0 AND ` + alias + `.role<>'blind_copy' AND (` + hideLocked + `=0 OR ` + personVersionVisibleSQL(alias+".content_version_id") + `)`
 }
 
 func personDerivedExactIdentitySQL(alias string) string {
@@ -624,6 +624,25 @@ type visiblePersonContextKey struct{}
 
 func WithVisiblePeopleOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, visiblePersonContextKey{}, true)
+}
+
+// queryPeopleHiddenKey carries the Hidden lock decision from the owner read view.
+type queryPeopleHiddenKey struct{}
+
+func (s *Store) scopeQueryPeople(ctx context.Context, q metadataQuerier) (context.Context, error) {
+	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); !visible {
+		return ctx, nil
+	}
+	_, err := s.hiddenSession(ctx, q)
+	if err != nil && !errors.Is(err, ErrHiddenLocked) {
+		return ctx, err
+	}
+	return context.WithValue(ctx, queryPeopleHiddenKey{}, errors.Is(err, ErrHiddenLocked)), nil
+}
+
+func queryPeopleHideLocked(ctx context.Context) bool {
+	locked, ok := ctx.Value(queryPeopleHiddenKey{}).(bool)
+	return !ok || locked
 }
 
 // visiblePersonByIDSQL is personVisibleSQL for the person bound as $1, with

@@ -1,22 +1,85 @@
 package store
 
-import "go.kenn.io/docbank/document"
+import (
+	"fmt"
+	"strings"
+
+	"go.kenn.io/docbank/document"
+)
 
 // currentPhotoSourcePredicate limits face evidence to a live image or RAW member.
-// kind='file' is implied: the nodes CHECK requires a file for a non-null current_version_id.
 func currentPhotoSourcePredicate(file, node, version string) string {
 	return file + `.role IN ('image','raw') AND ` + node + `.trashed_at IS NULL AND ` + node + `.current_version_id=` + version
 }
 
-func (c queryCompiler) compilePersonPredicate(id string) compiledQueryFragment {
-	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
-	predicate := `(EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.content_version_id=cv.version_id AND a.action='assert' AND a.person_id=` + person + `) OR EXISTS(SELECT 1 FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=cv.version_id AND p.person_id=` + person + ` AND h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=?))`
-	args := []any{id, id, id, id, document.PersonResolverFingerprint()}
-	if c.photoDisplayMetadata {
-		predicate = `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person + `)`
-		args = []any{id, id}
+// currentDocumentPersonEdgesSQL is correlated to the current node and version.
+// Its sole parameter is the current resolver fingerprint.
+func currentPersonAssertionFence(safe bool, hideLocked string) string {
+	fence := `a.action='assert'`
+	if safe {
+		fence += ` AND ` + personVisibleAssertionSQL("a", hideLocked)
 	}
-	return compiledQueryFragment{sql: predicate, args: args}
+	return fence
+}
+
+func currentPersonPublishedFence(safe bool, hideLocked string) string {
+	fence := `h.state='published' AND h.event_generation_id=eh.generation_id AND h.binding_epoch=ps.binding_epoch AND h.node_revision=n.revision AND h.resolver_fingerprint=?`
+	if safe {
+		fence += ` AND ` + personVisibleActorSQL("p", hideLocked)
+	}
+	return fence
+}
+
+func currentDocumentPersonEdgesSQL(version string, safe bool, hideLocked string) string {
+	return `(SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id) AS person_id,a.role FROM person_document_assertions a WHERE a.content_version_id=` + version + ` AND ` + currentPersonAssertionFence(safe, hideLocked) + `
+ UNION SELECT COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role FROM document_people p JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id CROSS JOIN document_people_state ps WHERE p.content_version_id=` + version + ` AND ` + currentPersonPublishedFence(safe, hideLocked) + `)`
+}
+
+func (c queryCompiler) compilePersonPredicate(id string, roles []string) compiledQueryFragment {
+	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
+	if c.photoDisplayMetadata {
+		predicate := `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person
+		if c.safePeople {
+			predicate += ` AND ` + personVisibleAssertionSQL("a", c.hideLocked)
+		}
+		return compiledQueryFragment{sql: predicate + `)`, args: []any{id, id}}
+	}
+	edges := currentDocumentPersonEdgesSQL("cv.version_id", c.safePeople, c.hideLocked)
+	predicate := `EXISTS(SELECT 1 FROM ` + edges + ` edge WHERE edge.person_id=` + person
+	args := []any{document.PersonResolverFingerprint(), id, id}
+	if len(roles) > 0 {
+		predicate += ` AND edge.role IN (` + strings.TrimSuffix(strings.Repeat("?,", len(roles)), ",") + `)`
+		for _, role := range roles {
+			args = append(args, role)
+		}
+	}
+	return compiledQueryFragment{sql: predicate + `)`, args: args}
+}
+
+func rolesForOperand(field string, safe bool) ([]string, error) {
+	switch field {
+	case "author", "custodian", "participant", "organizer", "attendee":
+		return []string{field}, nil
+	case "from":
+		return []string{"sender", "organizer"}, nil
+	case "to":
+		roles := []string{"recipient", "copied", "attendee"}
+		if !safe {
+			roles = append(roles, "blind_copy")
+		}
+		return roles, nil
+	case "cc":
+		return []string{"copied"}, nil
+	case "bcc":
+		if safe {
+			return nil, fmt.Errorf("bcc: is not available in browser sessions")
+		}
+		return []string{"blind_copy"}, nil
+	case "between":
+		return []string{"author", "last_saved_by", "sender", "recipient", "copied", "blind_copy", "organizer", "attendee", "participant"}, nil
+	default:
+		return nil, fmt.Errorf("unknown role operand")
+	}
 }
 
 func personVersionVisibleSQL(version string) string {

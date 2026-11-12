@@ -29,6 +29,10 @@ func (s *Store) CompileQuery(ctx context.Context, value query.Query) (compiled C
 		return CompiledQuery{}, fmt.Errorf("starting query preview: %w", err)
 	}
 	active = true
+	ctx, err = s.scopeQueryPeople(ctx, conn)
+	if err != nil {
+		return CompiledQuery{}, err
+	}
 	compiled, err = compileQuery(ctx, value, queryResolver{q: conn})
 	if err != nil {
 		return CompiledQuery{}, err

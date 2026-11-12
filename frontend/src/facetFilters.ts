@@ -1,7 +1,6 @@
 import type { QueryFilters } from "./query.js";
-import type { SnapshotPage } from "./snapshots.js";
 
-export type FacetDimension = SnapshotPage["facets"][number]["dimension"];
+export type FacetDimension = keyof typeof facetFilterFields;
 
 // The query filters each facet group sets. FacetSidebar writes them, and the Photos Filters
 // badge counts them, so a new facet must declare its filters here before either can use it.
@@ -14,6 +13,7 @@ export const facetFilterFields = {
   size: ["size_min", "size_max"],
   text_coverage: ["text_coverage"],
   duplicates: ["has_duplicates"],
+  person_role: ["people"],
   camera: ["cameras"],
   lens: ["lenses"],
   year: ["capture_after", "capture_before"],
@@ -22,4 +22,4 @@ export const facetFilterFields = {
   rating: ["rating_min", "rating_max"],
   flag: ["flags"],
   label: ["labels"],
-} as const satisfies Record<FacetDimension, readonly (keyof QueryFilters)[]>;
+} as const satisfies Record<string, readonly (keyof QueryFilters)[]>;

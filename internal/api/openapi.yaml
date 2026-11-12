@@ -7382,6 +7382,10 @@ components:
           items:
             type: string
           type: array
+        people:
+          items:
+            $ref: "#/components/schemas/PersonFilter"
+          type: array
         person_ids:
           items:
             type: string
@@ -12837,6 +12841,23 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PersonFilter:
+      additionalProperties: false
+      properties:
+        person_id:
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+      required:
+        - person_id
+        - roles
+      type: object
+      x-go-type: query.PersonFilter
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/query
+        name: query
     PersonIdentity:
       additionalProperties: false
       properties:
@@ -19411,6 +19432,11 @@ components:
             type: string
           maxItems: 64
           type: array
+        people:
+          items:
+            $ref: "#/components/schemas/SavedQueryPersonFilterSchema"
+          maxItems: 64
+          type: array
         person_ids:
           items:
             format: uuid
@@ -19511,6 +19537,22 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SavedQueryPersonFilterSchema:
+      additionalProperties: false
+      properties:
+        person_id:
+          format: uuid
+          type: string
+        roles:
+          items:
+            type: string
+          maxItems: 64
+          minItems: 1
+          type: array
+      required:
+        - person_id
+        - roles
+      type: object
     SavedQueryRun:
       additionalProperties: false
       properties:
@@ -19624,8 +19666,9 @@ components:
               - size
               - text_coverage
               - duplicates
+              - person_role
             type: string
-          maxItems: 8
+          maxItems: 9
           type: array
           uniqueItems: true
         page_size:
@@ -22384,6 +22427,11 @@ components:
           type: string
         label:
           type: string
+        roles:
+          items:
+            type: string
+          maxItems: 10
+          type: array
         selected:
           type: boolean
       required:
@@ -22436,8 +22484,9 @@ components:
               - size
               - text_coverage
               - duplicates
+              - person_role
             type: string
-          maxItems: 8
+          maxItems: 9
           type: array
           uniqueItems: true
         page_size:
@@ -22581,7 +22630,7 @@ components:
               - available
               - values
             type: object
-          maxItems: 8
+          maxItems: 9
           type: array
         fallback_reason:
           type: string
@@ -22696,6 +22745,11 @@ components:
             - pick
             - reject
           type: string
+        matched_roles:
+          items:
+            type: string
+          maxItems: 16
+          type: array
         media_family:
           type: string
         mime_type:

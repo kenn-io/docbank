@@ -622,3 +622,32 @@ it("retains photo ranking status on snapshot continuation pages", async () => {
   expect(result).toMatchObject(status);
   expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/v1/workspace/queries/${snapshotID}/pages`);
 });
+
+it("validates frozen person roles and the People facet", async () => {
+  const person = { key: tagID, label: "Synthetic", count: 1, selected: false, roles: ["sender"] };
+  const good = { ...row(2, version2, blob2, 20), matched_roles: ["sender"] };
+  const facet = {
+    dimension: "person_role",
+    available: true,
+    values: [person],
+    total: 1,
+    missing: 0,
+    other: 0,
+  };
+  const fetcher = vi.spyOn(globalThis, "fetch");
+  fetcher.mockResolvedValueOnce(jsonResponse(await page({ rows: [good], facets: [facet] })));
+  const receipt = await createSnapshot(
+    "session",
+    query,
+    { page_size: 50 },
+    new AbortController().signal,
+  );
+  expect(receipt.rows[0]!.matched_roles).toEqual(["sender"]);
+  expect(receipt.facets[0]!.values[0]!.roles).toEqual(["sender"]);
+  fetcher.mockResolvedValueOnce(
+    jsonResponse(await page({ rows: [{ ...good, matched_roles: ["bogus"] }], facets: [facet] })),
+  );
+  await expect(
+    createSnapshot("session", query, { page_size: 50 }, new AbortController().signal),
+  ).rejects.toThrow();
+});

@@ -59,6 +59,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		Description:  "Returns canonical query intent and observed dependency revisions, without executing a search.",
 		MaxBodyBytes: query.MaxInputBytes,
 	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryPreview }, error) {
+		ctx = browserPeopleScope(ctx)
 		value, err := query.Parse(in.Body)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
@@ -93,6 +94,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		Description:  "Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.",
 		MaxBodyBytes: query.MaxInputBytes,
 	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryHighlightPreview }, error) {
+		ctx = browserPeopleScope(ctx)
 		value, err := query.Parse(in.Body)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())

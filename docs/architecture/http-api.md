@@ -1162,6 +1162,7 @@ fields, not additional parameters for `GET /search`:
 | `focus_min`, `focus_max`, `blur_min`, `blur_max`, `brightness_min`, `brightness_max`, `framing_min`, `framing_max`, `aesthetics_min`, `aesthetics_max`, `color_red_min`, `color_red_max`, `color_green_min`, `color_green_max`, `color_blue_min`, `color_blue_max` | Inclusive 0..1 decimal-string bounds, each at most 64 characters; each minimum must be <= its maximum. Numeric JSON bounds return 422. Missing measurements fail numeric comparisons |
 | `unevaluated` | `true` selects live, included photo display versions with pending or unavailable measurements; structured `false` acts as omission |
 | `person_ids` | At most 64 canonical person UUIDv4 values |
+| `people` | At most 64 person-and-role entries, each with a canonical UUIDv4 `person_id` and a nonempty `roles` list. Entries are ANDed; roles within an entry are ORed. Browser sessions reject `blind_copy`. |
 | `asset_ids` | At most 64 canonical UUIDv4 values |
 | `set_ids` | At most 64 canonical album UUIDv4 values |
 
