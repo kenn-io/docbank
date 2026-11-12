@@ -319,6 +319,27 @@ func checkNoteMoveAndPresence(t *testing.T, newStore func(*testing.T) *Store) {
 		_, err = s.BatchMove(ctx, []BatchMoveRequest{{SourcePath: deepPath + "/note.md", DestinationPath: deepPath + "/note.md"}})
 		require.NoError(t, err)
 		require.Empty(t, noteTargets(t, s, notemarkdown.Recipe))
+		// Restore the limited descendant with its subtree before a worker can
+		// prune it. Its separately trashed origin forces a shorter root path.
+		parent, err := s.NodeByPath(ctx, deepPath)
+		require.NoError(t, err)
+		trashed, _, err := s.Trash(ctx, parent.ID, parent.Revision)
+		require.NoError(t, err)
+		_, _, err = s.Trash(ctx, long.ID, UnconditionalRev)
+		require.NoError(t, err)
+		_, restoredPath, err := s.Restore(ctx, trashed.ID, trashed.Revision)
+		require.NoError(t, err)
+		require.Equal(t, "/moved", restoredPath)
+		targets = noteTargets(t, s, notemarkdown.Recipe)
+		require.Len(t, targets, 1, "restored subtree must rediscover its limited descendant")
+		require.Equal(t, n.ID, targets[0].NodeID)
+		require.Equal(t, n.CurrentVersionID, targets[0].VersionID)
+		require.Equal(t, "/moved/note.md", targets[0].Path)
+		require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
+		publishNoteFixture(t, s, targets[0], src, notemarkdown.Recipe)
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT target_path FROM note_links WHERE version_id=$1`, n.CurrentVersionID).Scan(&resolved))
+		require.Equal(t, "/moved/next.md", resolved)
+		require.Empty(t, noteTargets(t, s, notemarkdown.Recipe))
 	})
 }
 
