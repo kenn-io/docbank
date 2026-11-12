@@ -96,6 +96,9 @@ function start(path = "/", fragment = "", packages?: Promise<Response>) {
         limit: 100,
         offset: 0,
       });
+    // The contracts list always returns the daemon date it used.
+    if (url.startsWith("/api/v1/contracts?"))
+      return Response.json({ items: [], as_of: "2026-09-20", limit: 100, offset: 0 });
     if (url.startsWith("/api/v1/packages?")) {
       if (packages) return (await packages).clone();
       return Response.json({
@@ -118,6 +121,7 @@ it.each([
   ["Searches", "Searches", "/searches"],
   ["Productions", "Productions", "/productions"],
   ["Imports", "Imports", "/imports"],
+  ["Contracts", "Contracts", "/contracts"],
   ["Recoverable trash", "Trash", "/trash"],
 ])("navigates to %s and restores it with browser history", async (label, title, path) => {
   start();
@@ -157,6 +161,7 @@ it.each([
   ["Searches", "/searches", "/api/v1/saved-queries?"],
   ["Productions", "/productions", "/api/v1/bates/exports?"],
   ["Imports", "/imports", "/api/v1/collections?"],
+  ["Contracts", "/contracts", "/api/v1/contracts?"],
   ["Recoverable trash", "/trash", "/api/v1/trash?"],
 ])("keeps %s at %s when %s returns 401", async (label, path, endpoint) => {
   const fetch = start();
@@ -278,4 +283,16 @@ it("seeds Run report from the current search", async () => {
     "value",
     "alpha",
   );
+});
+
+it("opens Contracts directly between Imports and Trash", async () => {
+  start("/contracts");
+  expect(await screen.findByText(/No contracts yet/)).toBeTruthy();
+  expect(screen.getByText(/Dates as of/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Contracts" }).getAttribute("aria-current")).toBe(
+    "page",
+  );
+  const sidebar = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+  expect(sidebar.indexOf("Contracts")).toBeGreaterThan(sidebar.indexOf("Imports"));
+  expect(sidebar.indexOf("Contracts")).toBeLessThan(sidebar.indexOf("Recoverable trash"));
 });

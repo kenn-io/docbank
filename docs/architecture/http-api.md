@@ -128,6 +128,9 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
+| `GET\|POST /contracts` · `GET\|PATCH\|DELETE /contracts/{contract_id}` · `PUT\|DELETE /contracts/{contract_id}/parties/{party_id}` | list and manage contracts and their party links | Implemented |
+| `PUT\|DELETE /contracts/{contract_id}/documents/{node_id}` · `GET /nodes/{node_id}/contracts` | link or unlink exact document versions and list contracts by node | Implemented |
+| `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
@@ -1216,7 +1219,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/searches`, `/productions`, `/imports`, `/contracts`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 `[web] base_path` mounts the browser app and its API requests under a configured
 prefix. The daemon removes that prefix before authorization, loopback checks,
@@ -1572,7 +1575,7 @@ A face conflict returns `409 person_merge_conflict` with up to 20 visible `face_
 
 Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, mark an existing person or create a person by name in a whole photo, and name, clear, or remove a face through revision-fenced `name`, `retract`, or `dismiss` decisions. They can clear an existing whole-photo mark with `retract`, its `assertion_id`, and its assertion `revision`. `reject`, `withdraw_rejection`, and `key` require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. [Automatic face detection](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#automatic-face-detection) adds unnamed faces when configured and consent is granted. Face suggestions remain unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
 
-`POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`, limited to 200 UTF-8 bytes. `retract` accepts exactly one `face_id` or whole-photo `assertion_id`. Clearing a whole-photo mark keeps its assertion active while named faces still use it; otherwise it becomes withdrawn. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undoing a face's new-name decision retires the new person unless it was edited or has other evidence. Undoing that undo returns not found once the person is retired. Clearing a name or a whole-photo mark leaves the person. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`; dismissed records remain in the API for undo and disappear from browser rows, boxes, and closeups.
+`POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`, limited to 200 UTF-8 bytes. `retract` accepts exactly one `face_id` or whole-photo `assertion_id`. Clearing a whole-photo mark keeps its assertion active while named faces still use it; otherwise it becomes withdrawn. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undoing a face's new-name decision retires the new person unless it was edited, has other evidence, or is linked to an active party. Undoing that undo returns not found once the person is retired. Clearing a name or a whole-photo mark leaves the person. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`; dismissed records remain in the API for undo and disappear from browser rows, boxes, and closeups.
 
 Person detail accepts `assertion_cursor` and `assertion_limit` (1–1,000) and returns `assertions_next_cursor`, `key_face_id`, and document and photo assertion selectors. Hidden filtering precedes pagination. Merge conflicts include up to 20 visible `face_ids`, `more`, and `hidden_face_conflict`; retained versions can be corrected through the same Hidden gate.
 
@@ -1741,6 +1744,8 @@ and maintenance are exceptions:
 | `POST /nodes/{id}/trash` | required: target node's revision |
 | `POST /nodes/{id}/restore` | required: target node's revision |
 | `POST /nodes/{id}/verify` | required: binds the evidence to the node state the caller inspected |
+| `PATCH` or `DELETE /contracts/{contract_id}`, `PUT` or `DELETE /contracts/{contract_id}/parties/{party_id}` | required: contract revision |
+| `PATCH /parties/{party_id}`, `POST /parties/{party_id}/retire` | required: party revision |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required: tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required: saved-definition revision |
 | `POST /saved-queries/{saved_query_id}/runs` | required: executes the saved definition revision the caller inspected |
@@ -2463,7 +2468,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/searches`, `/productions`, `/imports`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/searches`, `/productions`, `/imports`, `/contracts`, `/trash`, `/photos`, `/photos/people`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping
@@ -2524,6 +2529,9 @@ include a `position` span:
 | `snapshot_unavailable` | 503 | query snapshot exceeded its resource budget or its build was canceled |
 | `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
 | `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
+| `party_exists` | 409 | An active folded name exists; the `party_id` problem extension identifies the existing party |
+| `party_retired` | 409 | The party is retired |
+| `invalid_party` | 422 | The party input or reference is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

@@ -1174,7 +1174,7 @@ func checkPhotoFaceDecisionUndoClearRefusesRetiredPerson(t *testing.T, newStore 
 
 func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"untouched", "renamed", "second face"} {
+	for _, mode := range []string{"untouched", "renamed", "second face", "party"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -1184,7 +1184,11 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 			})
 			require.NoError(t, err)
 			personID := named.After.Assertions[0].PersonID
+			var party Party
 			switch mode {
+			case "party":
+				party, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Zed party", PersonID: &personID})
+				require.NoError(t, err)
 			case "renamed":
 				person, _, err := s.PersonByID(ctx, personID)
 				require.NoError(t, err)
@@ -1197,6 +1201,22 @@ func TestPhotoFaceUndoRetiresUnusedCreatedPerson(t *testing.T) {
 			}
 			undo, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 			require.NoError(t, err)
+			if mode == "party" {
+				person, _, err := s.PersonByID(ctx, personID)
+				require.NoError(t, err)
+				require.Equal(t, personID, person.PersonID)
+				people, _, err := s.PeopleByDisplayName(ctx, "Zed", "", "", 10, false, PeopleSearchOptions{})
+				require.NoError(t, err)
+				require.Len(t, people, 1)
+				require.Equal(t, personID, people[0].PersonID)
+				gotParty, err := s.GetParty(ctx, party.PartyID)
+				require.NoError(t, err)
+				require.Equal(t, party, gotParty)
+				_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Another Zed party", PersonID: &personID})
+				require.NoError(t, err)
+				require.NoError(t, s.ValidateMetadata(ctx))
+				return
+			}
 			var state string
 			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT state FROM persons WHERE person_id=$1`, personID).Scan(&state))
 			if mode == "untouched" {

@@ -49,8 +49,8 @@ Photos shows **Library**, **Map**, **Albums**, **People**, and your album list i
 Documents/Photos switches keep your place until the session locks. Leaving an album resets its view. Open Library at `/photos`, the
 album index at `/photos/albums`, People at `/photos/people`, or an album at `/photos/albums/{id}`. Map requires [tile configuration](../configuration.md#photo-map-tiles) and a restart. See [Browse photos](photos.md#browse-in-the-web-app).
 
-Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**, and
-**Trash**. Searches, Productions, Imports, and Trash open full pages at `/searches`, `/productions`, `/imports`, and `/trash`. Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
+Use the sidebar for **All files**, **Searches**, **Productions** when sets exist, **Imports**,
+**Contracts**, and **Trash**. Searches, Productions, Imports, Contracts, and Trash open full pages at `/searches`, `/productions`, `/imports`, `/contracts`, and `/trash`. See [Contracts in the web app](contracts.md#in-the-web-app). Back and Forward keep the page. Reload keeps the page with API-key sign-in; `docbank web` starts at the root. **Export** offers **Download files…** and
 **Bates-numbered PDFs…**. **System** groups **Disk use**, **Running now**, **Backups**,
 **Protected folders**, **Usage reporting**, and **Search by meaning**. On a narrow screen, **Open navigation** reveals the
 same menu.

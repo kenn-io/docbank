@@ -273,6 +273,15 @@ export async function readRelatedSource(
   signal: AbortSignal,
 ): Promise<RelatedSelectedSource> {
   identity(target);
+  return readExactSource(session, target, signal);
+}
+// readExactSource binds a reader source to one recorded node, version, hash
+// and size. It never substitutes the node's current content.
+export async function readExactSource(
+  session: string,
+  target: AttachmentIdentity,
+  signal: AbortSignal,
+): Promise<RelatedSelectedSource> {
   const version = object(
     await readBoundedJSON(session, generated.getGetContentVersionUrl(target.version_id), signal),
   );
@@ -292,7 +301,7 @@ export async function readRelatedSource(
   if (node.trashed_at !== undefined && node.trashed_at !== null)
     throw new APIError("The related document is in trash.", 404, "not_found");
   const name = text(node.name, 4096),
-    path = text(node.path),
+    path = text(node.path, 16 * 1024),
     modifiedAt = text(node.modified_at);
   if (!name || !path.startsWith("/") || !Number.isFinite(Date.parse(modifiedAt)))
     invalid("invalid current document observations");

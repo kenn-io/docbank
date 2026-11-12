@@ -14,6 +14,7 @@
   import FileIcon from "@lucide/svelte/icons/file";
   import FolderIcon from "@lucide/svelte/icons/folder";
   import HistoryIcon from "@lucide/svelte/icons/history";
+  import ScrollTextIcon from "@lucide/svelte/icons/scroll-text";
   import FoldersIcon from "@lucide/svelte/icons/folders";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import HouseIcon from "@lucide/svelte/icons/house";
@@ -65,6 +66,7 @@
   import { copyExportMembers } from "./exports.js";
   import type { ExportInput } from "./exportState.js";
   import CollectionsDrawer from "./CollectionsDrawer.svelte";
+  import ContractsPage from "./ContractsPage.svelte";
   import FacetSidebar from "./FacetSidebar.svelte";
   import FileTypeIcon, { fileTypeLabel } from "./FileTypeIcon.svelte";
   import ManageTagsModal from "./ManageTagsModal.svelte";
@@ -504,11 +506,12 @@
     event.preventDefault();
     event.returnValue = "";
   }
-  type DocsPage = "searches" | "productions" | "imports" | "trash";
+  type DocsPage = "searches" | "productions" | "imports" | "contracts" | "trash";
   function pageAt(path: string): DocsPage | null {
     return path === "/searches" ||
       path === "/productions" ||
       path === "/imports" ||
+      path === "/contracts" ||
       path === "/trash"
       ? (path.slice(1) as DocsPage)
       : null;
@@ -518,6 +521,7 @@
     searches: "saved_queries",
     productions: "bates",
     imports: "collections",
+    contracts: "contracts",
     trash: "trash",
   } as const;
   function openDocsPage(page: DocsPage | null) {
@@ -4071,6 +4075,15 @@
           <button
             type="button"
             class="nav-item"
+            aria-label="Contracts"
+            aria-current={docsPage === "contracts" ? "page" : undefined}
+            onclick={() => openDocsPage("contracts")}
+          >
+            <ScrollTextIcon size="16" aria-hidden="true" />Contracts
+          </button>
+          <button
+            type="button"
+            class="nav-item"
             aria-label="Recoverable trash"
             aria-current={docsPage === "trash" ? "page" : undefined}
             onclick={() => openDocsPage("trash")}
@@ -4460,7 +4473,9 @@
               ? "Productions"
               : docsPage === "imports"
                 ? "Imports"
-                : "Trash"}
+                : docsPage === "contracts"
+                  ? "Contracts"
+                  : "Trash"}
         >
           {#if docsPage === "searches"}
             {@render savedQueries(false, () => {})}
@@ -4487,6 +4502,11 @@
               onnewquery={(id) =>
                 openQueryEditor(parseQuery(JSON.stringify({ filters: { collection_ids: [id] } })))}
             />
+          {:else if docsPage === "contracts"}
+            {#key webSession}<ContractsPage
+                session={webSession}
+                onauthfailure={handleFailure}
+              />{/key}
           {:else if docsPage === "trash"}
             {@render trash(() => {})}
           {/if}

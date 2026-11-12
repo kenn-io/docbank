@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 )
 
 const (
@@ -34,7 +35,8 @@ const (
 // the deliberately limited routes used by the built-in browser. Most are
 // reads; mutations cover verified upload, revision-bound trash, restore, and
 // tag assignment, tag and saved-definition management, processing execution,
-// and operator-scope processing consent.
+// and operator-scope processing consent. Contract register reads are allowed;
+// contract and party writes are not.
 type webSessionRegistry struct {
 	mu          sync.Mutex
 	tokens      map[[sha256.Size]byte]webSessionState
@@ -508,6 +510,13 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if after, ok := strings.CutPrefix(path, webMapTilePath+"/"); ok {
 		return r.URL.RawQuery == "" && len(strings.Split(after, "/")) == 3
 	}
+	if path == "/api/v1/contracts" {
+		return singleValuedQuery(r.URL.RawQuery, "status", "type", "expiring_before", "as_of", webLimitQuery, "offset")
+	}
+	if id, ok := strings.CutPrefix(path, "/api/v1/contracts/"); ok {
+		parsed, err := uuid.Parse(id)
+		return err == nil && parsed.String() == id && singleValuedQuery(r.URL.RawQuery, "as_of")
+	}
 	if path == "/api/v1/duplicates" {
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
@@ -633,6 +642,21 @@ func photoAlbumBrowserRequestAllowed(r *http.Request) bool {
 		return parts[1] == "cover" && r.Method == http.MethodPut || parts[1] == "duplicate" && r.Method == http.MethodPost
 	}
 	return len(parts) == 3 && parts[1] == "members" && (parts[2] == "add" || parts[2] == "remove") && r.Method == http.MethodPost
+}
+
+// singleValuedQuery admits only the named keys, each at most once. The route
+// validates the values.
+func singleValuedQuery(rawQuery string, keys ...string) bool {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return false
+	}
+	for key, entries := range values {
+		if !slices.Contains(keys, key) || len(entries) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func boundedFormatCoverageQuery(rawQuery string) bool {
