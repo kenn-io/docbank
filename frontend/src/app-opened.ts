@@ -41,7 +41,8 @@ export function startTelemetryReporting(session: string) {
   window.addEventListener("focus", windowFocus, true);
   return {
     ...reporter,
-    reportScreen(screen: string) {
+    // An undefined screen, such as Taxes, clears the pending report.
+    reportScreen(screen: string | undefined) {
       latestScreen = screen;
       reportVisibleScreen();
     },

@@ -143,7 +143,9 @@ func TestWebPages(t *testing.T) {
 		{"/productions", true},
 		{"/imports", true},
 		{"/trash", true},
+		{"/taxes", true},
 		{"/searches/x", false},
+		{"/taxes/x", false},
 	} {
 		require.Equal(t, tc.allowed, authExempt(tc.path), tc.path)
 		response := httptest.NewRecorder()
