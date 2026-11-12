@@ -792,6 +792,19 @@ to the survivor and advances each affected party's revision and update time.
 Party records round-trip through metadata JSONL; restore validates their values,
 references, and active-name uniqueness. Audited vaults refuse party mutations.
 
+### Tax authority
+
+Schema 50 stores tax accounts and records; schema 51 adds dated events. An
+advance or note appends an event and advances its parent revision atomically.
+Voiding retains the event and reason and recalculates state from the latest
+non-void state event by append revision, not occurrence date. Account and
+record retirement retains their metadata and makes them read-only.
+
+Metadata export writes party, account, record, and event authority in that order.
+Import validates the fields and relationships, including that events explain
+record state, before installing the snapshot. Export refuses inconsistent
+retained authority before writing a header. Audited vaults refuse tax mutations.
+
 ### People search
 
 Person name search evaluates `docbank_person_name_starts_with_word_v1` at read time against folded display names, preserving literal punctuation and Unicode word starts. It stores no derived search rows. Browser search conceals automatically provisioned exact-identifier people during pending or failed processing until visible assertions or non-sensitive published document links support them.

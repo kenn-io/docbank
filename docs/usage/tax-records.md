@@ -139,4 +139,4 @@ returns complete references. Empty references stay empty; masking follows the
 account identifier rule. Events and records share a revision: advance, add and
 void inspect once unless `--revision` is supplied, then send one fenced write
 without retry. Retired records are read-only. Payments and document evidence
-are planned for later slices.
+are not available.
