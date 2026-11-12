@@ -212,7 +212,6 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		revision int64
 		derived  taxrecord.EventState
 		record   taxrecord.RecordValues
-		events   []taxrecord.EventFact
 	}
 	parents := map[string]*authority{}
 	parentRows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,revision,direction,amount_minor,currency FROM tax_records`)
@@ -244,10 +243,17 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	defer func() { _ = rows.Close() }()
 	var previousID string
 	var previousRevision int64
+	var cash []taxrecord.EventFact
 	for rows.Next() {
 		event, err := scanTaxEvent(rows)
 		if err != nil {
 			return err
+		}
+		if previousID != "" && event.RecordID != previousID {
+			if _, err = taxrecord.CalculateBalance(parents[previousID].record, cash); err != nil {
+				return err
+			}
+			cash = nil
 		}
 		p := parents[event.RecordID]
 		if p == nil || event.RecordRevision > p.revision {
@@ -259,7 +265,9 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		}
 		previousID, previousRevision = event.RecordID, event.RecordRevision
 		fact := taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}
-		p.events = append(p.events, fact)
+		if !fact.Voided && (event.Kind == "payment" || event.Kind == "refund") {
+			cash = append(cash, taxrecord.EventFact{EventValues: taxrecord.EventValues{Kind: event.Kind, Currency: event.Currency, AmountMinor: event.AmountMinor}})
+		}
 		if err = p.derived.Apply(fact); err != nil {
 			return err
 		}
@@ -267,10 +275,12 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	if err = rows.Err(); err != nil {
 		return err
 	}
-	for _, p := range parents {
-		if _, err := taxrecord.CalculateBalance(p.record, p.events); err != nil {
+	if previousID != "" {
+		if _, err = taxrecord.CalculateBalance(parents[previousID].record, cash); err != nil {
 			return err
 		}
+	}
+	for _, p := range parents {
 		if p.state != p.derived.State {
 			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
 		}

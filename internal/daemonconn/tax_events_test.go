@@ -129,3 +129,22 @@ func TestTaxCashDetailRejectsWrongBalance(t *testing.T) {
 		server.Close()
 	}
 }
+
+func TestTaxCashOverflowClientDiagnostic(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":422,"code":"invalid_tax","detail":"amount: invalid cash sum private-synthetic"}`))
+	}))
+	t.Cleanup(server.Close)
+	c := New(server.URL, "")
+	_, err := c.AddTaxEvent(t.Context(), id, 1, api.AddTaxEventRequest{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("1")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "amount: invalid cash sum")
+	assert.NotContains(t, err.Error(), "private-synthetic")
+	_, err = c.UpdateTaxRecord(t.Context(), id, 1, api.PatchTaxRecordRequest{Direction: new("payable"), Amount: new("1")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "amount: invalid cash sum")
+	assert.NotContains(t, err.Error(), "private-synthetic")
+}

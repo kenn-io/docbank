@@ -17,7 +17,13 @@ func printTaxRecordDetail(cmd *cobra.Command, d api.TaxRecordDetail) error {
 	if err := printTaxRecord(cmd, d.TaxRecord); err != nil {
 		return err
 	}
-	for _, e := range d.Events {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "outstanding minor: %v\tcurrency: %s\tother currency events: %d\n", taxValue(d.Balance.OutstandingMinor), d.Balance.Currency, d.Balance.OtherCurrencyEvents); err != nil {
+		return fmt.Errorf("print tax balance: %w", err)
+	}
+	return printTaxEvents(cmd, d.Events)
+}
+func printTaxEvents(cmd *cobra.Command, events []api.TaxEvent) error {
+	for _, e := range events {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "event %s\tkind: %s\toccurred: %s\tstate: %s\tamount minor: %v\tcurrency: %s\treference: %q\tnote: %q\tvoided: %v\treason: %q\trevision %d\n", e.EventID, e.Kind, e.OccurredOn, e.SetsState, taxValue(e.AmountMinor), e.Currency, e.Reference, e.Note, taxValue(e.VoidedAt), e.VoidReason, e.RecordRevision); err != nil {
 			return fmt.Errorf("print tax event: %w", err)
 		}
@@ -28,7 +34,10 @@ func printTaxEventMutation(cmd *cobra.Command, m api.TaxEventMutation) error {
 	if v, _ := cmd.Flags().GetBool("json"); v {
 		return writeCLIJSON(cmd.OutOrStdout(), m)
 	}
-	return printTaxRecordDetail(cmd, api.TaxRecordDetail{TaxRecord: m.Record, Events: []api.TaxEvent{m.Event}})
+	if err := printTaxRecord(cmd, m.Record); err != nil {
+		return err
+	}
+	return printTaxEvents(cmd, []api.TaxEvent{m.Event})
 }
 
 type eventFlags struct {

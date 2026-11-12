@@ -249,11 +249,6 @@ func newTaxRecordCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if v, _ := cmd.Flags().GetBool("json"); !v {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "outstanding minor: %v\tcurrency: %s\tother currency events: %d\n", taxValue(r.Balance.OutstandingMinor), r.Balance.Currency, r.Balance.OtherCurrencyEvents); err != nil {
-				return err
-			}
-		}
 		return printTaxRecordDetail(cmd, r)
 	}}
 	show.Flags().Bool("reveal", false, "reveal event references")

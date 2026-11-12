@@ -43,7 +43,7 @@ var taxDiagnosticPairs = map[string]string{
 	"unknown kind": "kind", "unknown state": "state", "unknown direction": "direction",
 	"amount required when currency changes": taxAmountField, "amount required": taxAmountField, "zero required": taxAmountField,
 	"unknown amount must be null": taxAmountField, "invalid length": taxAmountField, "invalid precision": taxAmountField,
-	"invalid decimal or overflow": taxAmountField, "overflow": taxAmountField,
+	"invalid decimal or overflow": taxAmountField, "overflow": taxAmountField, "invalid cash sum": taxAmountField,
 	"unsupported event": "kind state", "requires amount": "currency", "unsupported amount": taxAmountField,
 }
 

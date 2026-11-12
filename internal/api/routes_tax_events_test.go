@@ -220,3 +220,36 @@ func TestTaxCashHTTPWorkflow(t *testing.T) {
 		assert.NotContains(t, body, secret)
 	}
 }
+
+func TestTaxCashOverflowDiagnostics(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	_, account := createTaxTestAccount(t, ts, nil)
+	for _, tc := range []struct {
+		name    string
+		payable bool
+	}{{"append", true}, {"edit", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"}
+			if tc.payable {
+				input["direction"] = "payable"
+				input["amount"] = "1.00"
+			}
+			r := createTaxTestRecord(t, ts, input)
+			path := "/api/v1/tax/records/" + r.RecordID
+			cash := map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "amount": "92233720368547758.07", "currency": "USD", "reference": "  "}
+			resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, cash)
+			require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+			cash["amount"] = "0.01"
+			resp, body = do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"2"`}, cash)
+			if !tc.payable {
+				require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+				resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"3"`}, map[string]any{"direction": "payable", "amount": "1.00"})
+			}
+			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+			assert.Contains(t, body, "amount: invalid cash sum")
+			assert.NotContains(t, body, "92233720368547758.07")
+			assert.NotContains(t, body, "0.01")
+		})
+	}
+}

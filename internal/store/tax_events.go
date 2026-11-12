@@ -58,24 +58,32 @@ func getTaxRecordDetail(ctx context.Context, q metadataQuerier, id string) (TaxR
 	if err != nil {
 		return TaxRecordDetail{}, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events WHERE record_id=$1 ORDER BY record_revision`, id)
+	events, err := getTaxRecordEvents(ctx, q, id)
 	if err != nil {
 		return TaxRecordDetail{}, err
 	}
+	balance, err := taxrecord.CalculateBalance(r.RecordValues, taxEventFacts(events))
+	if err != nil {
+		return TaxRecordDetail{}, err
+	}
+	return TaxRecordDetail{Record: r, Events: events, Balance: balance}, nil
+}
+
+func getTaxRecordEvents(ctx context.Context, q metadataQuerier, id string) ([]TaxEvent, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events WHERE record_id=$1 ORDER BY record_revision`, id)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = rows.Close() }()
-	d := TaxRecordDetail{Record: r, Events: []TaxEvent{}}
+	events := []TaxEvent{}
 	for rows.Next() {
 		e, err := scanTaxEvent(rows)
 		if err != nil {
-			return TaxRecordDetail{}, err
+			return nil, err
 		}
-		d.Events = append(d.Events, e)
+		events = append(events, e)
 	}
-	if err := rows.Err(); err != nil {
-		return TaxRecordDetail{}, err
-	}
-	d.Balance, err = taxrecord.CalculateBalance(r.RecordValues, taxEventFacts(d.Events))
-	return d, err
+	return events, rows.Err()
 }
 
 // GetTaxRecordDetail reads the parent and children from one snapshot.
@@ -154,8 +162,10 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 		if err = taxInsert(ctx, tx, "tax_events", taxEventColumns, []any{e.EventID, e.RecordID, e.Kind, e.OccurredOn, e.SetsState, e.AmountMinor, e.Currency, e.Reference, e.Note, e.RecordedAt, e.VoidedAt, e.VoidReason, e.RecordRevision}); err != nil {
 			return err
 		}
-		if _, err = getTaxRecordDetail(ctx, tx, id); err != nil {
-			return err
+		if v.Kind == "payment" || v.Kind == "refund" {
+			if _, err = getTaxRecordDetail(ctx, tx, id); err != nil {
+				return err
+			}
 		}
 		if err = updateTaxEventParent(ctx, tx, r, revision); err != nil {
 			return err

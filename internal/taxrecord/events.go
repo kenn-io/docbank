@@ -1,9 +1,6 @@
 package taxrecord
 
-import (
-	"slices"
-	"strings"
-)
+import "slices"
 
 // EventValues is the canonical, retained content of a dated event.
 type EventValues struct {
@@ -55,9 +52,6 @@ func ValidateEvent(recordKind string, v EventValues) error {
 	}
 	if err := date("occurred_on", &v.OccurredOn); err != nil {
 		return err
-	}
-	if cash && v.Reference != "" && strings.TrimSpace(v.Reference) == "" {
-		return invalid("reference", "invalid text")
 	}
 	if err := text(v.Reference, "reference", 256, 0, false, false); err != nil {
 		return err

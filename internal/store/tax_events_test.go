@@ -13,6 +13,8 @@ import (
 	"go.kenn.io/docbank/internal/taxrecord"
 )
 
+const maxTaxCashAmount = "92233720368547758.07"
+
 func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -25,7 +27,7 @@ func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	assert.Equal(t, "filed", first.Record.State)
 	assert.Equal(t, int64(2), first.Record.Revision)
-	second, err := s.AdvanceTaxRecord(ctx, r.RecordID, first.Record.Revision, TaxEventInput{Kind: "assessed", OccurredOn: "2024-01-01", Amount: new("12.34"), Currency: "USD"})
+	second, err := s.AdvanceTaxRecord(ctx, r.RecordID, first.Record.Revision, TaxEventInput{Kind: "assessed", OccurredOn: "2024-01-01", Amount: new("12.34"), Currency: "USD", Reference: "  "})
 	require.NoError(t, err)
 	assert.Equal(t, new(int64(1234)), second.Event.AmountMinor)
 	assert.Equal(t, r.AmountMinor, second.Record.AmountMinor)
@@ -240,6 +242,7 @@ func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, detail.Events, 1)
 		assert.Equal(t, "payment", detail.Events[0].Kind)
+		assert.Equal(t, "  ", detail.Events[0].Reference)
 		assert.NotNil(t, detail.Events[0].VoidedAt)
 	}
 	for _, replacement := range []struct{ old, new string }{
@@ -257,7 +260,7 @@ func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
 func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
 	a, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
 	require.NoError(t, err)
 	cash.Amount = new("0.01")
@@ -278,7 +281,7 @@ func TestTaxCashAppendVoidAtomic(t *testing.T) {
 	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("USD")}
 	r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
 	require.NoError(t, err)
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
 	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
 	require.NoError(t, err)
 	cash.Amount = new("0.01")
@@ -301,7 +304,7 @@ func TestTaxCashAppendVoidAtomic(t *testing.T) {
 func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
 	a, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
 	require.NoError(t, err)
 	cash.Amount = new("0.01")
@@ -352,7 +355,7 @@ func TestTaxRecordCurrencyEditChecksBalance(t *testing.T) {
 	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("EUR")}
 	r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
 	require.NoError(t, err)
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
 	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
 	require.NoError(t, err)
 	cash.Amount = new("0.01")
@@ -366,4 +369,42 @@ func TestTaxRecordCurrencyEditChecksBalance(t *testing.T) {
 	assert.Equal(t, "EUR", d.Record.Currency)
 	assert.Equal(t, second.Record.Revision, d.Record.Revision)
 	assert.Len(t, d.Events, 2)
+}
+
+func TestTaxCashMetadataPerRecordBalance(t *testing.T) {
+	s, _, first := taxFixture(t)
+	ctx := t.Context()
+	input := TaxRecordInput{FilerPartyID: &first.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "filing", Title: "Independent", Direction: "payable", Amount: new("1"), Currency: new("USD")}
+	for range 2 {
+		r, err := s.CreateTaxRecord(ctx, input)
+		require.NoError(t, err)
+		m, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount), Note: strings.Repeat("a", 8192)})
+		require.NoError(t, err)
+		_, err = s.AddTaxEvent(ctx, r.RecordID, m.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01", Note: strings.Repeat("n", 8192)})
+		require.NoError(t, err)
+	}
+	require.NoError(t, validateTaxMetadataState(ctx, s.db))
+	var output bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &output))
+	dest := newTestStore(t)
+	require.NoError(t, dest.ImportMetadata(ctx, bytes.NewReader(output.Bytes())))
+}
+
+func TestTaxRecordEditValidatesProposedBalance(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
+	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+	require.NoError(t, err)
+	cash.Amount = new("0.01")
+	second, err := s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET direction='payable',amount_minor=100 WHERE record_id=$1`, r.RecordID)
+	require.NoError(t, err)
+	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "unknown"}
+	updated, err := s.UpdateTaxRecord(ctx, r.RecordID, second.Record.Revision, in)
+	require.NoError(t, err)
+	assert.Equal(t, "unknown", updated.Direction)
+	_, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
 }

@@ -23,8 +23,8 @@ func TestTaxCashEventValidation(t *testing.T) {
 			}
 		}
 	}
-	if err := ValidateEvent("filing", EventValues{Kind: "payment", OccurredOn: "2026-01-01", AmountMinor: new(int64(1)), Currency: "USD", Reference: "  "}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("blank reference: %v", err)
+	if err := ValidateEvent("filing", EventValues{Kind: "payment", OccurredOn: "2026-01-01", AmountMinor: new(int64(1)), Currency: "USD", Reference: "  "}); err != nil {
+		t.Fatalf("spaces in reference: %v", err)
 	}
 }
 

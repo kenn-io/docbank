@@ -87,11 +87,13 @@ func TestTaxCLICashWorkflow(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(strings.TrimSuffix(current, "}") + `,"events":[` + event + `],"balance":{"outstanding_minor":113400,"currency":"USD","other_currency_events":0}}`))
 	})
-	_, err := runCLI(t, "tax", "event", "add", id, "--kind", "payment", "--occurred-on", "2026-01-01", "--amount", "100.00", "--currency", "USD", "--revision", "1")
+	out, err := runCLI(t, "tax", "event", "add", id, "--kind", "payment", "--occurred-on", "2026-01-01", "--amount", "100.00", "--currency", "USD", "--revision", "1")
 	require.NoError(t, err)
-	out, err := runCLI(t, "tax", "record", "show", id)
+	assert.NotContains(t, out, "outstanding minor")
+	out, err = runCLI(t, "tax", "record", "show", id)
 	require.NoError(t, err)
 	assert.Contains(t, out, "outstanding minor: 113400")
+	assert.Less(t, strings.Index(out, id), strings.Index(out, "outstanding minor"))
 }
 
 func TestTaxCLICashRefundVoidAndPrivacy(t *testing.T) {

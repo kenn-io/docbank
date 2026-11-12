@@ -275,7 +275,10 @@ func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
 	}
 	resp, body = do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "amount": "1.00", "currency": "USD", "reference": sentinel})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	assert.NotContains(t, body, sentinel)
+	var receipt api.TaxEventMutation
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, "****alue", receipt.Event.Reference)
+	assert.Equal(t, sentinel, receipt.Record.TaxKind)
 	resp, body = do(t, ts, http.MethodPost, path+"/events/"+sentinel+"/void?reveal="+sentinel, map[string]string{"If-Match": sentinel}, map[string]any{"reason": sentinel})
 	assert.GreaterOrEqual(t, resp.StatusCode, 400)
 	assert.NotContains(t, body, sentinel)
