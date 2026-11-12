@@ -108,6 +108,7 @@ func parseSchemaIndexes(data []byte) (map[string]string, error) {
 	}
 	last := ""
 	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		pos := strings.LastIndexByte(line, ' ')
 		if pos < 1 {
 			return nil, fmt.Errorf("invalid index record %q", line)
@@ -269,6 +270,10 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	records, err = loadSchemaContracts(dir)
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"index_a": digest}, records[0].Indexes)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("index_a "+digest+"\r\nindex_b "+digest+"\r\n"), 0600))
+	records, err = loadSchemaContracts(dir)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"index_a": digest, "index_b": digest}, records[0].Indexes)
 
 	for _, name := range []string{
 		"49-" + digest + "-valid.schema",
