@@ -20,7 +20,12 @@ type TaxRecord struct {
 	RetiredAt                                     *string
 }
 
-// TaxRecordInput contains the editable tax record fields.
+// TaxRecordInput replaces content and nullable fields on update: nil dates,
+// year, lead days and amount clear those fields. Identity and currency pointers
+// retain their current values when nil. A non-nil authority is applied;
+// AuthoritySet with a nil authority explicitly clears it. Kind and AccountID
+// must match the existing record. Direction retains its value when empty; a
+// cleared amount still has to agree with the resulting direction.
 type TaxRecordInput struct {
 	AccountID                                             *string
 	FilerPartyID, Country, Subdivision, TaxKind, Currency *string
@@ -52,6 +57,12 @@ func scanTaxRecord(row interface{ Scan(...any) error }) (TaxRecord, error) {
 		return TaxRecord{}, ErrNotFound
 	}
 	return r, err
+}
+
+const taxRecordUpdateColumns = `record_id,filer_party_id,authority_party_id,title,country,subdivision,tax_kind,tax_kind_folded,form_code,tax_year,period_start,period_end,due_date,lead_days,direction,amount_minor,currency,note,revision,updated_at,retired_at`
+
+func taxRecordUpdateArgs(r TaxRecord) []any {
+	return []any{r.RecordID, r.FilerPartyID, r.AuthorityPartyID, r.Title, r.Country, r.Subdivision, r.TaxKind, r.TaxKindFolded, r.FormCode, r.TaxYear, r.PeriodStart, r.PeriodEnd, r.DueDate, r.LeadDays, r.Direction, r.AmountMinor, r.Currency, r.Note, r.Revision, r.UpdatedAt, r.RetiredAt}
 }
 func taxRecordArgs(r TaxRecord) []any {
 	return []any{r.RecordID, r.AccountID, r.FilerPartyID, r.AuthorityPartyID, r.Kind, r.Title, r.Country, r.Subdivision, r.TaxKind, r.TaxKindFolded, r.FormCode, r.TaxYear, r.PeriodStart, r.PeriodEnd, r.DueDate, r.LeadDays, r.State, r.Direction, r.AmountMinor, r.Currency, r.Verification, r.VerifiedOn, r.VerifiedRevision, r.VerificationNote, r.Note, r.Revision, r.CreatedAt, r.UpdatedAt, r.RetiredAt}
@@ -101,7 +112,7 @@ func taxRecordValues(in TaxRecordInput, old *TaxRecord, account *TaxAccount) (ta
 	v.Subdivision = chooseTaxString(in.Subdivision, v.Subdivision)
 	v.TaxKind = chooseTaxString(in.TaxKind, v.TaxKind)
 	v.Currency = chooseTaxString(in.Currency, v.Currency)
-	if in.AuthoritySet {
+	if in.AuthoritySet || in.AuthorityPartyID != nil {
 		v.AuthorityPartyID = in.AuthorityPartyID
 	}
 	v.Title = in.Title
@@ -218,7 +229,7 @@ func (s *Store) UpdateTaxRecord(ctx context.Context, id string, revision int64, 
 		r.TaxKindFolded = document.FoldPersonName(v.TaxKind)
 		r.Revision++
 		r.UpdatedAt = nowRFC3339()
-		if err := taxUpdate(ctx, tx, "tax_records", taxRecordColumns, taxRecordArgs(r), revision); err != nil {
+		if err := taxUpdate(ctx, tx, "tax_records", taxRecordUpdateColumns, taxRecordUpdateArgs(r), revision); err != nil {
 			return s.taxRecordWriteError(err)
 		}
 		result = r
@@ -245,7 +256,7 @@ func (s *Store) RetireTaxRecord(ctx context.Context, id string, revision int64) 
 		r.RetiredAt = &now
 		r.UpdatedAt = now
 		r.Revision++
-		if err := taxUpdate(ctx, tx, "tax_records", taxRecordColumns, taxRecordArgs(r), revision); err != nil {
+		if err := taxUpdate(ctx, tx, "tax_records", taxRecordUpdateColumns, taxRecordUpdateArgs(r), revision); err != nil {
 			return err
 		}
 		result = r
@@ -270,10 +281,8 @@ func (s *Store) ListTaxRecords(ctx context.Context, o TaxRecordListOptions) ([]T
 			return nil, err
 		}
 	}
-	switch o.State {
-	case "", "expected", "gathering", "ready", "filed", "assessed", "settled", "amended", "disputed", "not_required", "opened", "information_requested", "responding", "decision_issued", "appealed", "closed":
-	default:
-		return nil, fmt.Errorf("%w: state selector", taxrecord.ErrInvalid)
+	if o.State != "" && !taxrecord.ValidState(o.State) {
+		return nil, &taxrecord.FieldError{Field: "state", Reason: "unknown state"}
 	}
 	year := int64(0)
 	if o.TaxYear != nil {

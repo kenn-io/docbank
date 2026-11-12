@@ -143,6 +143,16 @@ func InitialState(kind string) (string, error) {
 	}
 }
 
+// ValidState reports whether state is in the tax record vocabulary.
+func ValidState(state string) bool {
+	switch state {
+	case "expected", "gathering", "ready", "filed", "assessed", "settled", "amended", "disputed", "not_required", "opened", "information_requested", "responding", "decision_issued", "appealed", "closed":
+		return true
+	default:
+		return false
+	}
+}
+
 // NormalizeAccount canonicalizes and validates account input.
 func NormalizeAccount(v AccountValues) (AccountValues, error) {
 	if err := rawLocation(v.Country, v.Subdivision, v.Currency); err != nil {

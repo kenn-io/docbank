@@ -22,7 +22,8 @@ type TaxAccount struct {
 	RetiredAt                                      *string
 }
 
-// TaxAccountInput contains the editable tax account fields.
+// TaxAccountInput replaces account fields on update; identity must match and
+// a nil LeadDays retains the current value.
 type TaxAccountInput struct {
 	FilerPartyID                                                            string
 	AuthorityPartyID                                                        *string
@@ -49,6 +50,12 @@ func scanTaxAccount(row interface{ Scan(...any) error }) (TaxAccount, error) {
 		return TaxAccount{}, ErrNotFound
 	}
 	return a, err
+}
+
+const taxAccountUpdateColumns = `account_id,identifier,cadence,period_note,due_note,lead_days,currency,effective_start,effective_end,note,revision,updated_at,retired_at`
+
+func taxAccountUpdateArgs(a TaxAccount) []any {
+	return []any{a.AccountID, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, a.EffectiveStart, a.EffectiveEnd, a.Note, a.Revision, a.UpdatedAt, a.RetiredAt}
 }
 func taxAccountArgs(a TaxAccount) []any {
 	return []any{a.AccountID, a.FilerPartyID, a.AuthorityPartyID, a.Country, a.Subdivision, a.TaxKind, a.TaxKindFolded, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, a.EffectiveStart, a.EffectiveEnd, a.Note, a.Revision, a.CreatedAt, a.UpdatedAt, a.RetiredAt}
@@ -96,15 +103,25 @@ func taxUpdate(ctx context.Context, tx *sql.Tx, table, columns string, args []an
 }
 func sameString(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 func checkTaxParty(ctx context.Context, tx *sql.Tx, id string, filer bool) error {
+	field := "authority_party_id"
+	if filer {
+		field = "filer_party_id"
+	}
 	p, err := getPartyQuery(ctx, tx, id)
+	if errors.Is(err, ErrNotFound) {
+		return &taxrecord.FieldError{Field: field, Reason: "party not found"}
+	}
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("%w: party reference", taxrecord.ErrInvalid)
-		}
 		return err
 	}
-	if p.RetiredAt != nil || (filer && !p.Own) || (!filer && p.Kind != "organization") {
-		return fmt.Errorf("%w: party attachment", taxrecord.ErrInvalid)
+	if p.RetiredAt != nil {
+		return &taxrecord.FieldError{Field: field, Reason: "party is retired"}
+	}
+	if filer && !p.Own {
+		return &taxrecord.FieldError{Field: field, Reason: "party is not own"}
+	}
+	if !filer && p.Kind != "organization" {
+		return &taxrecord.FieldError{Field: field, Reason: "party is not an organization"}
 	}
 	return nil
 }
@@ -181,7 +198,7 @@ func (s *Store) UpdateTaxAccount(ctx context.Context, id string, revision int64,
 		a.AccountValues = v
 		a.Revision++
 		a.UpdatedAt = nowRFC3339()
-		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountColumns, taxAccountArgs(a), revision); err != nil {
+		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountUpdateColumns, taxAccountUpdateArgs(a), revision); err != nil {
 			return err
 		}
 		result = a
@@ -208,7 +225,7 @@ func (s *Store) RetireTaxAccount(ctx context.Context, id string, revision int64)
 		a.RetiredAt = &now
 		a.UpdatedAt = now
 		a.Revision++
-		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountColumns, taxAccountArgs(a), revision); err != nil {
+		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountUpdateColumns, taxAccountUpdateArgs(a), revision); err != nil {
 			return err
 		}
 		result = a

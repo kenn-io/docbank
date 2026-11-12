@@ -32,7 +32,7 @@ type metadataTaxAccount struct {
 	RetiredAt        *string `json:"retired_at" db:"retired_at"`
 }
 
-var taxAccountMetadata = newMetadataTable(metadataTable[metadataTaxAccount]{record: metadataTaxAccount{Type: "tax_account"}, table: "tax_accounts", suffix: "ORDER BY account_id", validate: validateTaxAccountMetadata, checkExport: true})
+var taxAccountMetadata = newMetadataTable(metadataTable[metadataTaxAccount]{record: metadataTaxAccount{Type: "tax_account"}, table: "tax_accounts", suffix: "ORDER BY account_id", validate: validateTaxAccountMetadata})
 
 func validateTaxAccountMetadata(m metadataTaxAccount) error {
 	if m.Type != "tax_account" || validateUUIDv4(m.AccountID) != nil || m.Revision < 1 {
@@ -87,7 +87,7 @@ type metadataTaxRecord struct {
 	RetiredAt        *string `json:"retired_at" db:"retired_at"`
 }
 
-var taxRecordMetadata = newMetadataTable(metadataTable[metadataTaxRecord]{record: metadataTaxRecord{Type: "tax_record"}, table: "tax_records", suffix: "ORDER BY record_id", validate: validateTaxRecordMetadata, checkExport: true})
+var taxRecordMetadata = newMetadataTable(metadataTable[metadataTaxRecord]{record: metadataTaxRecord{Type: "tax_record"}, table: "tax_records", suffix: "ORDER BY record_id", validate: validateTaxRecordMetadata})
 
 func validateTaxRecordMetadata(m metadataTaxRecord) error {
 	if m.Type != "tax_record" || validateUUIDv4(m.RecordID) != nil || m.Revision < 1 {
@@ -148,6 +148,8 @@ func validateTaxMetadataState(ctx context.Context, q metadataQuerier) error {
 	if invalid {
 		return errors.New("tax record account identity mismatch")
 	}
+	// Validate retained authority even if an already-open database has lost
+	// its unique index; startup checks columns, not index presence.
 	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_records WHERE account_id IS NOT NULL AND period_start IS NOT NULL AND period_end IS NOT NULL AND retired_at IS NULL GROUP BY account_id,period_start,period_end,kind HAVING COUNT(*)>1)`).Scan(&invalid)
 	if err != nil {
 		return err

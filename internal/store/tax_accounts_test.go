@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func checkTaxAccountLifecycle(t *testing.T, open func(*testing.T) *Store) {
@@ -19,6 +21,11 @@ func checkTaxAccountLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	account, err := s.CreateTaxAccount(ctx, input)
 	require.NoError(t, err)
 	assert.Equal(t, int64(14), account.LeadDays)
+	changed := input
+	changed.TaxKind = "different"
+	_, err = s.UpdateTaxAccount(ctx, account.AccountID, account.Revision, changed)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "identity is immutable")
 	input.Note = "Updated"
 	updated, err := s.UpdateTaxAccount(ctx, account.AccountID, account.Revision, input)
 	require.NoError(t, err)
@@ -29,8 +36,12 @@ func checkTaxAccountLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	rows, err := s.ListTaxAccounts(ctx, TaxAccountListOptions{Limit: 100})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
+	rows, err = s.ListTaxAccounts(ctx, TaxAccountListOptions{IncludeRetired: true, Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.NotNil(t, rows[0].RetiredAt)
 }
-func TestTaxAccountLifecycleDefaultsAndIdentity(t *testing.T) {
+func TestTaxAccountLifecycle(t *testing.T) {
 	t.Parallel()
 	checkTaxAccountLifecycle(t, newTestStore)
 }
@@ -85,7 +96,8 @@ func TestTaxNewAttachmentsAndHistoricalPartyChanges(t *testing.T) {
 	p, err = s.UpdateParty(ctx, p.PartyID, p.Revision, pi)
 	require.NoError(t, err)
 	_, err = s.CreateTaxRecord(ctx, ri)
-	require.Error(t, err)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "filer_party_id: party is not own")
 	ai.Note = "retained"
 	_, err = s.UpdateTaxAccount(ctx, a.AccountID, a.Revision, ai)
 	require.NoError(t, err)
@@ -95,5 +107,24 @@ func TestTaxNewAttachmentsAndHistoricalPartyChanges(t *testing.T) {
 	_, err = s.RetireParty(ctx, p.PartyID, p.Revision)
 	require.NoError(t, err)
 	_, err = s.CreateTaxAccount(ctx, ai)
-	require.Error(t, err)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "filer_party_id: party is retired")
+}
+
+func TestTaxPartyAttachmentErrors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	filer, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Holdings Ltd.", Own: true})
+	require.NoError(t, err)
+	person, err := s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Example Person"})
+	require.NoError(t, err)
+	input := TaxAccountInput{FilerPartyID: filer.PartyID, AuthorityPartyID: &person.PartyID, Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
+	_, err = s.CreateTaxAccount(ctx, input)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "authority_party_id: party is not an organization")
+	input.AuthorityPartyID = new("11111111-1111-4111-8111-111111111111")
+	_, err = s.CreateTaxAccount(ctx, input)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "authority_party_id: party not found")
 }

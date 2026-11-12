@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func checkTaxRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
@@ -24,41 +26,30 @@ func checkTaxRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	assert.Equal(t, int64(2026), *record.TaxYear)
 	_, err = s.CreateTaxRecord(ctx, input)
 	require.ErrorIs(t, err, ErrExists)
+	input.TaxYear = record.TaxYear
 	input.Title = "Updated filing"
 	updated, err := s.UpdateTaxRecord(ctx, record.RecordID, record.Revision, input)
 	require.NoError(t, err)
+	assert.Equal(t, record.PeriodStart, updated.PeriodStart)
+	assert.Equal(t, record.PeriodEnd, updated.PeriodEnd)
+	assert.Equal(t, record.TaxYear, updated.TaxYear)
 	_, err = s.UpdateTaxRecord(ctx, record.RecordID, record.Revision, input)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	_, err = s.RetireTaxRecord(ctx, record.RecordID, updated.Revision)
 	require.NoError(t, err)
+	_, err = s.CreateTaxRecord(ctx, input)
+	require.NoError(t, err)
+	incomplete := input
+	incomplete.PeriodEnd = nil
+	incomplete.TaxYear = nil
+	_, err = s.CreateTaxRecord(ctx, incomplete)
+	require.NoError(t, err)
+	_, err = s.CreateTaxRecord(ctx, incomplete)
+	require.NoError(t, err)
 }
-func TestTaxRecordDefaultsAndConsistency(t *testing.T) {
+func TestTaxRecordLifecycle(t *testing.T) {
 	t.Parallel()
 	checkTaxRecordLifecycle(t, newTestStore)
-}
-
-func TestTaxCompletePeriodUniqueness(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	p, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example", Own: true})
-	require.NoError(t, err)
-	a, err := s.CreateTaxAccount(ctx, TaxAccountInput{FilerPartyID: p.PartyID, Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"})
-	require.NoError(t, err)
-	input := TaxRecordInput{AccountID: &a.AccountID, Kind: "filing", Title: "Example", PeriodStart: new("2026-01-01")}
-	_, err = s.CreateTaxRecord(ctx, input)
-	require.NoError(t, err)
-	_, err = s.CreateTaxRecord(ctx, input)
-	require.NoError(t, err)
-	input.PeriodEnd = new("2026-12-31")
-	r, err := s.CreateTaxRecord(ctx, input)
-	require.NoError(t, err)
-	_, err = s.CreateTaxRecord(ctx, input)
-	require.ErrorIs(t, err, ErrExists)
-	_, err = s.RetireTaxRecord(ctx, r.RecordID, r.Revision)
-	require.NoError(t, err)
-	_, err = s.CreateTaxRecord(ctx, input)
-	require.NoError(t, err)
 }
 
 func TestTaxListFiltersAndRetirement(t *testing.T) {
@@ -76,15 +67,22 @@ func TestTaxListFiltersAndRetirement(t *testing.T) {
 	rows, err = s.ListTaxRecords(ctx, TaxRecordListOptions{IncludeRetired: true, Limit: 100})
 	require.NoError(t, err)
 	assert.Len(t, rows, 2)
+	rows, err = s.ListTaxRecords(ctx, TaxRecordListOptions{State: "filed", Limit: 100})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+	_, err = s.ListTaxRecords(ctx, TaxRecordListOptions{State: "invalid", Limit: 100})
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "state: unknown state")
 	_, err = s.ListTaxRecords(ctx, TaxRecordListOptions{Country: "EU", Limit: 100})
-	require.Error(t, err)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "country")
 	accounts, err := s.ListTaxAccounts(ctx, TaxAccountListOptions{FilerPartyID: a.FilerPartyID, Country: "ZZ", TaxKind: "EXAMPLE", Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, accounts, 1)
 	assert.Equal(t, a.AccountID, accounts[0].AccountID)
 }
 
-func TestTaxRecordAccountDefaultsAreSnapshotAndDynamicLead(t *testing.T) {
+func TestTaxRecordCurrencySnapshotAndNullableLead(t *testing.T) {
 	t.Parallel()
 	s, a, r := taxFixture(t)
 	ctx := t.Context()
@@ -119,9 +117,59 @@ func TestTaxOneOffAndRetiredAccountReferences(t *testing.T) {
 	assert.Equal(t, p.PartyID, record.FilerPartyID)
 	_, err = s.RetireTaxAccount(ctx, a.AccountID, a.Revision)
 	require.NoError(t, err)
-	attached := TaxRecordInput{AccountID: &a.AccountID, Kind: "filing", Title: "Updated"}
-	_, err = s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, attached)
+	attached := TaxRecordInput{AccountID: &a.AccountID, Kind: "filing", Title: "Updated", PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, TaxYear: r.TaxYear}
+	got, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, attached)
 	require.NoError(t, err)
+	assert.Equal(t, r.PeriodStart, got.PeriodStart)
+	assert.Equal(t, r.PeriodEnd, got.PeriodEnd)
+	assert.Equal(t, r.TaxYear, got.TaxYear)
 	_, err = s.CreateTaxRecord(ctx, TaxRecordInput{AccountID: &a.AccountID, Kind: "notice", Title: "New"})
 	require.ErrorIs(t, err, ErrTaxRetired)
+}
+
+func TestTaxRecordAuthorityAndReplacement(t *testing.T) {
+	t.Parallel()
+	s, a, r := taxFixture(t)
+	ctx := t.Context()
+	authority, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Revenue Agency"})
+	require.NoError(t, err)
+	input := TaxRecordInput{FilerPartyID: &a.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), AuthorityPartyID: &authority.PartyID, Kind: "notice", Title: "Example", Currency: new("USD"), Direction: "payable", Amount: new("12.34"), PeriodEnd: new("2026-12-31"), DueDate: new("2027-01-31"), LeadDays: new(int64(7)), FormCode: "EXAMPLE"}
+	one, err := s.CreateTaxRecord(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, &authority.PartyID, one.AuthorityPartyID)
+	require.NotNil(t, one.AmountMinor)
+	require.Equal(t, int64(1234), *one.AmountMinor)
+	other, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Other Example Agency"})
+	require.NoError(t, err)
+	input.AuthorityPartyID = &other.PartyID
+	input.TaxYear = one.TaxYear
+	one, err = s.UpdateTaxRecord(ctx, one.RecordID, one.Revision, input)
+	require.NoError(t, err)
+	assert.Equal(t, &other.PartyID, one.AuthorityPartyID)
+	input.AuthorityPartyID = nil
+	input.AuthoritySet = true
+	input.Direction = "unknown"
+	input.Amount = nil
+	input.PeriodEnd = nil
+	input.DueDate = nil
+	input.LeadDays = nil
+	input.FormCode = ""
+	input.TaxYear = nil
+	one, err = s.UpdateTaxRecord(ctx, one.RecordID, one.Revision, input)
+	require.NoError(t, err)
+	assert.Nil(t, one.AuthorityPartyID)
+	assert.Nil(t, one.AmountMinor)
+	assert.Nil(t, one.PeriodEnd)
+	assert.Nil(t, one.DueDate)
+	assert.Nil(t, one.LeadDays)
+	assert.Empty(t, one.FormCode)
+	assert.Nil(t, one.TaxYear)
+	attached := TaxRecordInput{AccountID: &a.AccountID, AuthorityPartyID: &authority.PartyID, Kind: "notice", Title: "Mismatch"}
+	_, err = s.CreateTaxRecord(ctx, attached)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "account identity mismatch")
+	attached.Kind = r.Kind
+	_, err = s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, attached)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "account identity is immutable")
 }
