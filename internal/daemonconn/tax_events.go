@@ -6,9 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/docbank/internal/api"
@@ -38,7 +36,7 @@ func validEvent(e api.TaxEvent, r api.TaxRecord, reveal bool) bool {
 	}
 	ref := e.Reference
 	if !reveal && ref != "" {
-		if !strings.HasPrefix(ref, "****") || (utf8.RuneCountInString(ref) != 4 && utf8.RuneCountInString(ref) != 8) {
+		if !validMaskedTaxIdentifier(ref) {
 			return false
 		}
 		ref = ""

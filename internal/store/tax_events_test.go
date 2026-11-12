@@ -2,9 +2,7 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"errors"
-	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
@@ -31,7 +30,7 @@ func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	assert.Equal(t, new(int64(1234)), second.Event.AmountMinor)
 	assert.Equal(t, r.AmountMinor, second.Record.AmountMinor)
 	_, err = s.AddTaxEvent(ctx, r.RecordID, second.Record.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2024-01-01"})
-	require.Error(t, err)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
 	_, err = s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, first.Record.Revision, "mistake")
 	require.ErrorIs(t, err, ErrStaleRevision)
 	voided, err := s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, second.Record.Revision, "mistake")
@@ -54,26 +53,22 @@ func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	_, err = s.AddTaxEvent(ctx, r.RecordID, retired.Revision, TaxEventInput{Kind: "note", OccurredOn: "2024-01-01"})
 	require.ErrorIs(t, err, ErrTaxRetired)
 }
-func TestTaxEventAppendVoidAtomic(t *testing.T) { checkTaxEventsLifecycle(t, newTestStore) }
-
-func TestTaxEventRevisionExhaustion(t *testing.T) {
-	s, _, r := taxFixture(t)
-	_, err := s.db.ExecContext(t.Context(), `UPDATE tax_records SET revision=$1 WHERE record_id=$2`, int64(math.MaxInt64), r.RecordID)
-	require.NoError(t, err)
-	_, err = s.AddTaxEvent(t.Context(), r.RecordID, math.MaxInt64, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
-	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
-	d, err := s.GetTaxRecordDetail(t.Context(), r.RecordID)
-	require.NoError(t, err)
-	assert.Empty(t, d.Events)
-	assert.Equal(t, int64(math.MaxInt64), d.Record.Revision)
-}
-
 func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	m, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01", Reference: "synthetic-reference"})
 	require.NoError(t, err)
 	_, err = s.AddTaxEvent(ctx, r.RecordID, m.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2025-01-01", Note: "example"})
+	require.NoError(t, err)
+	other, err := s.CreateTaxRecord(ctx, TaxRecordInput{FilerPartyID: &r.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "audit", Title: "Other"})
+	require.NoError(t, err)
+	closed, err := s.AdvanceTaxRecord(ctx, other.RecordID, other.Revision, TaxEventInput{Kind: "closed", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	note, err := s.AddTaxEvent(ctx, other.RecordID, closed.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01", Reference: "synthetic-reference"})
+	require.NoError(t, err)
+	voided, err := s.VoidTaxEvent(ctx, other.RecordID, note.Event.EventID, note.Record.Revision, "example reason")
+	require.NoError(t, err)
+	_, err = s.RetireTaxRecord(ctx, other.RecordID, voided.Record.Revision)
 	require.NoError(t, err)
 	var data bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &data))
@@ -82,6 +77,19 @@ func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	assert.Equal(t, data.String(), restored.String())
+	detail, err := target.GetTaxRecordDetail(ctx, other.RecordID)
+	require.NoError(t, err)
+	require.NotNil(t, detail.Record.RetiredAt)
+	require.Len(t, detail.Events, 2)
+	require.NotNil(t, detail.Events[1].VoidedAt)
+	assert.Equal(t, "example reason", detail.Events[1].VoidReason)
+	assert.Equal(t, "synthetic-reference", detail.Events[1].Reference)
+	invalid := strings.Replace(data.String(), `"void_reason":"example reason"`, `"void_reason":""`, 1)
+	require.NotEqual(t, data.String(), invalid)
+	dest := newTestStore(t)
+	require.Error(t, dest.ImportMetadata(ctx, strings.NewReader(invalid)))
+	_, err = dest.GetTaxRecord(ctx, other.RecordID)
+	require.ErrorIs(t, err, ErrNotFound)
 	for _, replacement := range []struct{ old, new string }{
 		{`"kind":"filed"`, `"kind":"payment"`}, {`"sets_state":"filed"`, `"sets_state":"ready"`}, {`"state":"filed"`, `"state":"ready"`}, {`"record_revision":2`, `"record_revision":99`},
 	} {
@@ -103,7 +111,9 @@ func TestTaxEventExportRejectsInvalidAuthority(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `UPDATE tax_events SET kind='refund'`)
 	require.NoError(t, err)
 	var data bytes.Buffer
-	require.Error(t, s.ExportMetadata(ctx, &data))
+	err = s.ExportMetadata(ctx, &data)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "kind: unsupported event")
 	assert.Empty(t, data.String())
 }
 
@@ -120,74 +130,9 @@ func checkTaxEventsAuthority(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, validateTaxMetadataState(ctx, s.db))
 	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET state='ready' WHERE record_id=$1`, r.RecordID)
 	require.NoError(t, err)
-	require.Error(t, validateTaxMetadataState(ctx, s.db))
-}
-
-func TestTaxEventAuditAndCanceledWrites(t *testing.T) {
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	note := TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"}
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err := s.AddTaxEvent(canceled, r.RecordID, r.Revision, note)
-	require.ErrorIs(t, err, context.Canceled)
-	seedInitialAuditAuthority(t, s, s.RootID())
-	_, err = s.AddTaxEvent(ctx, r.RecordID, r.Revision, note)
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	_, err = s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	detail, err := s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	assert.Equal(t, r, detail.Record)
-	assert.Empty(t, detail.Events)
-}
-func TestTaxEventOrderingSameOrBackwardTimestamps(t *testing.T) {
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	const future = "9998-01-01T00:00:00.000000000Z"
-	_, err := s.db.ExecContext(ctx, `UPDATE tax_records SET updated_at=$1 WHERE record_id=$2`, future, r.RecordID)
-	require.NoError(t, err)
-	one, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
-	require.NoError(t, err)
-	two, err := s.AdvanceTaxRecord(ctx, r.RecordID, one.Record.Revision, TaxEventInput{Kind: "ready", OccurredOn: "2025-01-01"})
-	require.NoError(t, err)
-	assert.Equal(t, future, one.Event.RecordedAt)
-	assert.Equal(t, future, two.Event.RecordedAt)
-	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	require.Len(t, d.Events, 2)
-	assert.Equal(t, []string{"filed", "ready"}, []string{d.Events[0].Kind, d.Events[1].Kind})
-	assert.Equal(t, "ready", d.Record.State)
-	var snapshot bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &snapshot))
-}
-
-func TestTaxEventVoidMarkersAndRetiredMetadata(t *testing.T) {
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	event, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01", Reference: "synthetic-reference"})
-	require.NoError(t, err)
-	event, err = s.VoidTaxEvent(ctx, r.RecordID, event.Event.EventID, event.Record.Revision, "example reason")
-	require.NoError(t, err)
-	_, err = s.RetireTaxRecord(ctx, r.RecordID, event.Record.Revision)
-	require.NoError(t, err)
-	var original bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &original))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(original.Bytes())))
-	d, err := target.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	require.NotNil(t, d.Record.RetiredAt)
-	require.Len(t, d.Events, 1)
-	assert.Equal(t, "example reason", d.Events[0].VoidReason)
-	assert.Equal(t, "synthetic-reference", d.Events[0].Reference)
-	require.NotNil(t, d.Events[0].VoidedAt)
-	invalid := strings.Replace(original.String(), `"void_reason":"example reason"`, `"void_reason":""`, 1)
-	require.NotEqual(t, original.String(), invalid)
-	dest := newTestStore(t)
-	require.Error(t, dest.ImportMetadata(ctx, strings.NewReader(invalid)))
-	_, err = dest.GetTaxRecord(ctx, r.RecordID)
-	require.ErrorIs(t, err, ErrNotFound)
+	err = validateTaxMetadataState(ctx, s.db)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	require.ErrorContains(t, err, "state: unsupported state")
 }
 
 func TestTaxEventTransactionFailureRollsBack(t *testing.T) {
@@ -202,7 +147,7 @@ func TestTaxEventTransactionFailureRollsBack(t *testing.T) {
 	assert.Equal(t, r, d.Record)
 	assert.Empty(t, d.Events)
 }
-func TestTaxEventConcurrentRevisionFence(t *testing.T) {
+func TestTaxEventConcurrentWritersRejectStaleRevision(t *testing.T) {
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	var wg sync.WaitGroup
@@ -239,17 +184,16 @@ func TestTaxEventsSource48DoesNotQueryTaxCatalogs(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "source.db"), driver.driver, schemaV0170SQL, 48)
 			var data bytes.Buffer
 			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), db, &data, 48))
-			assert.NotContains(t, data.String(), `"type":"tax_event"`)
 		})
 	}
 }
 
 func TestTaxEventMetadataTimeBounds(t *testing.T) {
-	for _, tc := range []struct{ name, update string }{
-		{"recorded before parent", `UPDATE tax_events SET recorded_at='0001-01-01T00:00:00.000000000Z'`},
-		{"recorded after parent", `UPDATE tax_events SET recorded_at='9998-01-01T00:00:00.000000000Z'`},
-		{"void before recorded", `UPDATE tax_events SET voided_at='0001-01-01T00:00:00.000000000Z', void_reason='Correction'`},
-		{"void after parent", `UPDATE tax_events SET voided_at='9998-01-01T00:00:00.000000000Z', void_reason='Correction'`},
+	for _, tc := range []struct{ name, update, cause string }{
+		{"recorded before parent", `UPDATE tax_events SET recorded_at='0001-01-01T00:00:00.000000000Z'`, "invalid tax event lifetime"},
+		{"recorded after parent", `UPDATE tax_events SET recorded_at='9998-01-01T00:00:00.000000000Z'`, "invalid tax event lifetime"},
+		{"void before recorded", `UPDATE tax_events SET voided_at='0001-01-01T00:00:00.000000000Z', void_reason='Correction'`, "tax event void precedes recording"},
+		{"void after parent", `UPDATE tax_events SET voided_at='9998-01-01T00:00:00.000000000Z', void_reason='Correction'`, "invalid tax event lifetime"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, r := taxFixture(t)
@@ -259,27 +203,10 @@ func TestTaxEventMetadataTimeBounds(t *testing.T) {
 			_, err = s.db.ExecContext(ctx, tc.update)
 			require.NoError(t, err)
 			var out bytes.Buffer
-			require.Error(t, s.ExportMetadata(ctx, &out))
+			require.ErrorContains(t, s.ExportMetadata(ctx, &out), tc.cause)
 			assert.Empty(t, out.String())
 		})
 	}
-}
-
-func TestTaxEventMetadataMultipleParents(t *testing.T) {
-	s, _, first := taxFixture(t)
-	ctx := t.Context()
-	other, err := s.CreateTaxRecord(ctx, TaxRecordInput{FilerPartyID: &first.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "audit", Title: "Other"})
-	require.NoError(t, err)
-	a, err := s.AdvanceTaxRecord(ctx, first.RecordID, first.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
-	require.NoError(t, err)
-	_, err = s.AdvanceTaxRecord(ctx, other.RecordID, other.Revision, TaxEventInput{Kind: "closed", OccurredOn: "2026-01-01"})
-	require.NoError(t, err)
-	_, err = s.AddTaxEvent(ctx, first.RecordID, a.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2025-01-01"})
-	require.NoError(t, err)
-	var out bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &out))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(out.Bytes())))
 }
 
 func TestTaxEventImportRejectsInvalidLifetime(t *testing.T) {

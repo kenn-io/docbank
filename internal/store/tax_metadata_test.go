@@ -66,7 +66,7 @@ func TestTaxMetadataInvalidRowRollsBack(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(t.Context(), &data))
 	for _, tc := range []struct{ name, from, to, cause string }{
 		{"fold", `"tax_kind_folded":"example"`, `"tax_kind_folded":"wrong"`, "invalid tax folded kind"},
-		{"state", `"state":"expected"`, `"state":"filed"`, "state: unsupported state"},
+		{"derived state", `"state":"expected"`, `"state":"filed"`, "state: unsupported state"},
 		{"revision", `"revision":1,"created_at"`, `"revision":0,"created_at"`, "invalid tax account identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestTaxMetadataInvalidRowRollsBack(t *testing.T) {
 			vault := target.vaultID
 			err := target.ImportMetadata(t.Context(), strings.NewReader(strings.Join(lines, "\n")))
 			require.ErrorContains(t, err, tc.cause)
-			if tc.name == "state" {
+			if tc.name == "derived state" {
 				require.ErrorIs(t, err, taxrecord.ErrInvalid)
 			}
 			assert.Equal(t, root, target.RootID())
@@ -187,6 +187,18 @@ func TestTaxFutureTimestampsSurviveMutationsAndRestore(t *testing.T) {
 	r, err = s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, ri)
 	require.NoError(t, err)
 	require.Equal(t, future, r.UpdatedAt)
+	one, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	two, err := s.AdvanceTaxRecord(ctx, r.RecordID, one.Record.Revision, TaxEventInput{Kind: "ready", OccurredOn: "2025-01-01"})
+	require.NoError(t, err)
+	assert.Equal(t, future, one.Event.RecordedAt)
+	assert.Equal(t, future, two.Event.RecordedAt)
+	detail, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	require.Len(t, detail.Events, 2)
+	assert.Equal(t, []string{"filed", "ready"}, []string{detail.Events[0].Kind, detail.Events[1].Kind})
+	assert.Equal(t, "ready", detail.Record.State)
+	r = two.Record
 	r, err = s.RetireTaxRecord(ctx, r.RecordID, r.Revision)
 	require.NoError(t, err)
 	require.Equal(t, future, *r.RetiredAt)
@@ -269,6 +281,11 @@ func TestTaxRestoredRevisionExhaustion(t *testing.T) {
 	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
 	_, err = target.RetireTaxRecord(ctx, r.RecordID, math.MaxInt64)
 	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
+	_, err = target.AddTaxEvent(ctx, r.RecordID, math.MaxInt64, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
+	require.ErrorIs(t, err, ErrTaxRevisionExhausted)
+	detail, err := target.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Empty(t, detail.Events)
 	afterA, err := target.GetTaxAccount(ctx, a.AccountID)
 	require.NoError(t, err)
 	afterR, err := target.GetTaxRecord(ctx, r.RecordID)

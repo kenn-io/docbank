@@ -115,9 +115,9 @@ available yet. Mutations are refused when the vault
 has audited authority. Revisions reject stale updates. Retired accounts and records are read-only
 and cannot be unretired; create a new row when needed.
 
-Metadata backups preserve accounts and records, including retired entries and
-historical party references. Restore validates their fields and relationships
-and installs the snapshot atomically. A snapshot from before these catalogs
+Metadata backups preserve accounts, records, and events, including retired entries and
+historical party references. Restore validates their fields and relationships, rejects
+unknown event kinds and record states not explained by events, and installs the snapshot atomically. A snapshot from before these catalogs
 restores them empty. See [backup and restore](backup.md) for vault recovery.
 
 ## Record events

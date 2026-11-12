@@ -50,7 +50,7 @@ func scanTaxEvent(row interface{ Scan(...any) error }) (TaxEvent, error) {
 func taxEventFacts(events []TaxEvent) []taxrecord.EventFact {
 	facts := make([]taxrecord.EventFact, 0, len(events))
 	for _, e := range events {
-		facts = append(facts, taxrecord.EventFact{EventValues: e.EventValues, EventID: e.EventID, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
+		facts = append(facts, taxrecord.EventFact{EventValues: e.EventValues, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
 	}
 	return facts
 }
@@ -134,12 +134,11 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 			}
 			v.AmountMinor = &amount
 		}
+		if advance && !taxrecord.ValidStateForKind(r.Kind, in.Kind) {
+			return &taxrecord.FieldError{Field: "state", Reason: "unsupported event"}
+		}
 		v, err = taxrecord.NormalizeEvent(r.Kind, v)
 		if err != nil {
-			var field *taxrecord.FieldError
-			if advance && errors.As(err, &field) && field.Field == "kind" && field.Reason == "unsupported event" {
-				return &taxrecord.FieldError{Field: "state", Reason: field.Reason}
-			}
 			return err
 		}
 		if err = advanceTaxRevision(&r.Revision); err != nil {

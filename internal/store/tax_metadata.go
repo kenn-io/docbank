@@ -206,39 +206,26 @@ func validateTaxEventMetadata(m metadataTaxEvent) error {
 }
 
 func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
-	var invalid bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_events e LEFT JOIN tax_records r ON r.record_id=e.record_id WHERE r.record_id IS NULL OR e.record_revision>r.revision)`).Scan(&invalid)
-	if err != nil {
-		return err
-	}
-	if invalid {
-		return errors.New("invalid tax event parent or revision")
-	}
-	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_events GROUP BY record_id,record_revision HAVING COUNT(*)>1)`).Scan(&invalid)
-	if err != nil {
-		return err
-	}
-	if invalid {
-		return errors.New("duplicate tax event revision")
-	}
 	// Read each catalog once; state follows append revision, not event time.
 	type authority struct {
-		kind, state, derived, created, updated string
-		retired                                *string
+		state, created, updated string
+		retired                 *string
+		revision                int64
+		derived                 taxrecord.EventState
 	}
 	parents := map[string]*authority{}
-	rows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,created_at,updated_at,retired_at FROM tax_records`)
+	rows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,created_at,updated_at,retired_at,revision FROM tax_records`)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
-		var id string
+		var id, kind string
 		var p authority
-		if err = rows.Scan(&id, &p.kind, &p.state, &p.created, &p.updated, &p.retired); err != nil {
+		if err = rows.Scan(&id, &kind, &p.state, &p.created, &p.updated, &p.retired, &p.revision); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		p.derived, err = taxrecord.InitialState(p.kind)
+		p.derived, err = taxrecord.NewEventState(kind)
 		if err != nil {
 			_ = rows.Close()
 			return err
@@ -255,30 +242,33 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		return err
 	}
 	defer rows.Close()
+	var previousID string
+	var previousRevision int64
 	for rows.Next() {
 		event, err := scanTaxEvent(rows)
 		if err != nil {
 			return err
 		}
 		p := parents[event.RecordID]
-		if p == nil {
+		if p == nil || event.RecordRevision > p.revision {
 			return errors.New("invalid tax event parent or revision")
 		}
+		if event.RecordID == previousID && event.RecordRevision == previousRevision {
+			return errors.New("duplicate tax event revision")
+		}
+		previousID, previousRevision = event.RecordID, event.RecordRevision
 		if event.RecordedAt < p.created || event.RecordedAt > p.updated || (p.retired != nil && event.RecordedAt > *p.retired) || (event.VoidedAt != nil && (*event.VoidedAt < event.RecordedAt || *event.VoidedAt > p.updated || (p.retired != nil && *event.VoidedAt > *p.retired))) {
 			return errors.New("invalid tax event lifetime")
 		}
-		if err = taxrecord.ValidateEvent(p.kind, event.EventValues); err != nil {
+		if err = p.derived.Apply(taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}); err != nil {
 			return err
-		}
-		if event.VoidedAt == nil && event.SetsState != "" {
-			p.derived = event.SetsState
 		}
 	}
 	if err = rows.Err(); err != nil {
 		return err
 	}
 	for _, p := range parents {
-		if p.state != p.derived {
+		if p.state != p.derived.State() {
 			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
 		}
 	}

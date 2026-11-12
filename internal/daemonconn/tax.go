@@ -184,10 +184,14 @@ func validTaxAccount(a api.TaxAccount, reveal bool) bool {
 	if taxrecord.ValidateAccount(values) != nil {
 		return false
 	}
-	if !reveal && a.Identifier != "" && (!utf8.ValidString(a.Identifier) || !strings.HasPrefix(a.Identifier, "****") || (utf8.RuneCountInString(a.Identifier) != 4 && utf8.RuneCountInString(a.Identifier) != 8) || !document.ValidPersonIdentityText(strings.TrimPrefix(a.Identifier, "****"))) {
+	if !reveal && !validMaskedTaxIdentifier(a.Identifier) {
 		return false
 	}
 	return validTaxTimestamps(a.CreatedAt, a.UpdatedAt, a.RetiredAt)
+}
+
+func validMaskedTaxIdentifier(value string) bool {
+	return value == "" || (utf8.ValidString(value) && strings.HasPrefix(value, "****") && (utf8.RuneCountInString(value) == 4 || utf8.RuneCountInString(value) == 8) && document.ValidPersonIdentityText(strings.TrimPrefix(value, "****")))
 }
 
 func validTaxTimestamps(created, updated string, retired *string) bool {

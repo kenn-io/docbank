@@ -11,7 +11,6 @@ type EventValues struct {
 // EventFact supplies append order and void status for state derivation.
 type EventFact struct {
 	EventValues
-	EventID        string
 	RecordRevision int64
 	Voided         bool
 }
@@ -22,16 +21,13 @@ func ValidStateForKind(kind, state string) bool {
 		return false
 	}
 	if kind == "audit" || kind == "review" {
-		return slices.Contains(recordStates[9:], state)
+		return slices.Contains(auditStates, state)
 	}
-	return slices.Contains(recordStates[:9], state)
+	return slices.Contains(filingStates, state)
 }
 
 // NormalizeEvent bounds and canonicalizes event input.
 func NormalizeEvent(recordKind string, v EventValues) (EventValues, error) {
-	if err := text(v.Reference, "reference", 256, 0, false, false); err != nil {
-		return v, err
-	}
 	if len(v.Note) > 8192 {
 		return v, invalid("note", "invalid length or text")
 	}
@@ -82,22 +78,41 @@ func ValidateEvent(recordKind string, v EventValues) error {
 	return nil
 }
 
+// EventState incrementally derives state from validated event facts.
+type EventState struct {
+	kind, state string
+	latest      int64
+}
+
+func NewEventState(kind string) (EventState, error) {
+	state, err := InitialState(kind)
+	return EventState{kind: kind, state: state}, err
+}
+
+func (s *EventState) Apply(event EventFact) error {
+	if err := ValidateEvent(s.kind, event.EventValues); err != nil {
+		return err
+	}
+	if !event.Voided && event.SetsState != "" && event.RecordRevision > s.latest {
+		s.latest, s.state = event.RecordRevision, event.SetsState
+	}
+	return nil
+}
+
+func (s *EventState) State() string { return s.state }
+
 // StateFromEvents derives state from surviving events by append revision.
 func StateFromEvents(recordKind string, events []EventFact) (string, error) {
-	state, err := InitialState(recordKind)
+	state, err := NewEventState(recordKind)
 	if err != nil {
 		return "", err
 	}
-	var latest int64
 	for _, event := range events {
-		if err := ValidateEvent(recordKind, event.EventValues); err != nil {
+		if err := state.Apply(event); err != nil {
 			return "", err
 		}
-		if !event.Voided && event.SetsState != "" && event.RecordRevision > latest {
-			latest, state = event.RecordRevision, event.SetsState
-		}
 	}
-	return state, nil
+	return state.State(), nil
 }
 
 // NormalizeVoidReason validates a nonblank canonical reason for voiding.

@@ -11,47 +11,38 @@ import (
 
 const taxRecordTestReceipt = `{"record_id":"11111111-1111-4111-8111-111111111111","filer_party_id":"22222222-2222-4222-8222-222222222222","account_id":null,"authority_party_id":null,"subdivision":"","form_code":"","tax_year":null,"period_start":null,"period_end":null,"due_date":null,"lead_days":null,"amount_minor":null,"currency":"","verified_on":null,"verified_revision":null,"verification_note":"","note":"","retired_at":null,"country":"ZZ","tax_kind":"Example","kind":"filing","title":"Example","state":"expected","direction":"unknown","verification":"unverified","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`
 
-func TestTaxCLIEventRevisionNoRetry(t *testing.T) {
+func TestTaxCLIEventRevision(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
-	var reads, writes int
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			reads++
-			w.Header().Set("ETag", `"1"`)
-			_, _ = w.Write([]byte(strings.TrimSuffix(taxRecordTestReceipt, "}") + `,"events":[]}`))
-			return
-		}
-		writes++
-		assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
-		w.WriteHeader(412)
-		_, _ = w.Write([]byte(`{"status":412,"code":"stale_revision"}`))
-	})
-	_, err := runCLI(t, "tax", "event", "add", id, "--kind", "note", "--occurred-on", "2026-01-01", "--reference", "private-synthetic")
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "private-synthetic")
-	assert.Equal(t, 1, reads)
-	assert.Equal(t, 1, writes)
-}
-
-func TestTaxCLIEventExplicitRevisionSkipsRead(t *testing.T) {
-	const id = "11111111-1111-4111-8111-111111111111"
-	var reads, writes int
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			reads++
-			return
-		}
-		writes++
-		assert.Equal(t, `"7"`, r.Header.Get("If-Match"))
-		w.WriteHeader(412)
-		_, _ = w.Write([]byte(`{"status":412,"code":"stale_revision"}`))
-	})
-	_, err := runCLI(t, "tax", "record", "advance", id, "--state", "filed", "--occurred-on", "2026-01-01", "--revision", "7")
-	require.Error(t, err)
-	assert.Equal(t, 0, reads)
-	assert.Equal(t, 1, writes)
+	for _, tc := range []struct {
+		name, match string
+		args        []string
+		reads       int
+	}{
+		{"implicit", `"1"`, []string{"tax", "event", "add", id, "--kind", "note", "--occurred-on", "2026-01-01", "--reference", "private-synthetic"}, 1},
+		{"explicit", `"7"`, []string{"tax", "record", "advance", id, "--state", "filed", "--occurred-on", "2026-01-01", "--revision", "7"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var reads, writes int
+			setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					reads++
+					w.Header().Set("ETag", `"1"`)
+					_, _ = w.Write([]byte(strings.TrimSuffix(taxRecordTestReceipt, "}") + `,"events":[]}`))
+					return
+				}
+				writes++
+				assert.Equal(t, tc.match, r.Header.Get("If-Match"))
+				w.WriteHeader(412)
+				_, _ = w.Write([]byte(`{"status":412,"code":"stale_revision"}`))
+			})
+			_, err := runCLI(t, tc.args...)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "private-synthetic")
+			assert.Equal(t, tc.reads, reads)
+			assert.Equal(t, 1, writes)
+		})
+	}
 }
 
 func TestTaxCLIEventReveal(t *testing.T) {
@@ -64,7 +55,7 @@ func TestTaxCLIEventReveal(t *testing.T) {
 		if r.URL.Query().Get("reveal") == "true" {
 			e = strings.Replace(e, "****1234", "private-synthetic-1234", 1)
 		}
-		record := strings.Replace(taxRecordTestReceipt, `"revision":1`, `"revision":2`, 1)
+		record := strings.Replace(strings.Replace(taxRecordTestReceipt, `"revision":1`, `"revision":2`, 1), `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"2026-01-01T00:00:00Z"`, 1)
 		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + e + `]}`))
 	})
 	out, err := runCLI(t, "tax", "record", "show", id)
@@ -78,6 +69,11 @@ func TestTaxCLIEventReveal(t *testing.T) {
 
 func TestTaxEventInvalidIDs(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
+	requests := 0
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	})
 	for _, tc := range []struct{ record, event, want string }{{"bad", id, "invalid record ID"}, {id, "bad", "invalid event ID"}} {
 		cmd := newTaxCommand()
 		cmd.SilenceErrors = true
@@ -86,5 +82,7 @@ func TestTaxEventInvalidIDs(t *testing.T) {
 		err := cmd.Execute()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), tc.want)
+		assert.Equal(t, exitUsage, commandExitCode(err, true))
 	}
+	assert.Zero(t, requests)
 }

@@ -165,12 +165,13 @@ func dates(startName, endName string, start, end *string) error {
 
 var recordKinds = []string{"filing", "payment", "penalty", "notice", "other", "audit", "review"}
 var recordDirections = []string{"payable", "refundable", "nil", "unknown"}
-var recordStates = []string{"expected", "gathering", "ready", "filed", "assessed", "settled", "amended", "disputed", "not_required", "opened", "information_requested", "responding", "decision_issued", "appealed", "closed"}
+var filingStates = []string{"expected", "gathering", "ready", "filed", "assessed", "settled", "amended", "disputed", "not_required"}
+var auditStates = []string{"opened", "information_requested", "responding", "decision_issued", "appealed", "closed"}
 
 // RecordKinds, RecordDirections and RecordStates return supported values as defensive copies.
 func RecordKinds() []string      { return slices.Clone(recordKinds) }
 func RecordDirections() []string { return slices.Clone(recordDirections) }
-func RecordStates() []string     { return slices.Clone(recordStates) }
+func RecordStates() []string     { return append(slices.Clone(filingStates), auditStates...) }
 
 // InitialState returns the only state accepted on creation.
 func InitialState(kind string) (string, error) {
@@ -184,7 +185,7 @@ func InitialState(kind string) (string, error) {
 }
 
 // ValidState reports whether state is in the tax record vocabulary.
-func ValidState(state string) bool { return slices.Contains(recordStates, state) }
+func ValidState(state string) bool { return slices.Contains(filingStates, state) || slices.Contains(auditStates, state) }
 
 // NormalizeTaxKind bounds and canonicalizes a tax kind.
 func NormalizeTaxKind(s string) (string, error) {
