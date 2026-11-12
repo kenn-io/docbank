@@ -529,13 +529,15 @@ func TestLocalTextStatusProvider(t *testing.T) {
 		pending                  bool
 		moveFirst                bool
 		inherited                bool
+		startupFailed            bool
 	}{
-		{"off", "", "", false, false, false},
-		{"restart_pending", "", "", true, false, false},
-		{"ollama", "http://127.0.0.1:11434", "ollama", false, false, false},
-		{"configured", "http://127.0.0.1:12345", "configured", false, false, false},
-		{"shared_binding_after_move", "http://127.0.0.1:11434", "local", false, true, false},
-		{"inherited_revoked", "", "", false, false, true},
+		{"off", "", "", false, false, false, false},
+		{"restart_pending", "", "", true, false, false, false},
+		{"ollama", "http://127.0.0.1:11434", "ollama", false, false, false, false},
+		{"configured", "http://127.0.0.1:12345", "configured", false, false, false, false},
+		{"shared_binding_after_move", "http://127.0.0.1:11434", "local", false, true, false, false},
+		{"inherited_revoked", "", "", false, false, true, false},
+		{"inherited_startup_failed", "", "", false, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			layout := home.Layout{Root: t.TempDir()}
@@ -574,18 +576,28 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
 			require.NoError(t, err)
 			defer service.Stop()
+			inheritedReady := false
 			if tc.inherited {
 				setup := &processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, string) error { return nil }}
 				active, err := setup.InitializeInherited(t.Context())
 				require.NoError(t, err)
 				require.True(t, active)
-				_, err = service.RevokeConsent(t.Context())
-				require.NoError(t, err)
+				inheritedReady = active
+				if tc.startupFailed {
+					setup.Startup = func(context.Context, bool, string) error { return errors.New("startup failed") }
+					active, err = setup.InitializeInherited(t.Context())
+					require.Error(t, err)
+					require.False(t, active)
+					inheritedReady = active
+				} else {
+					_, err = service.RevokeConsent(t.Context())
+					require.NoError(t, err)
+				}
 			}
 			var restartPending atomic.Bool
 			restartPending.Store(tc.pending)
 
-			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load(), tc.inherited)
+			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load(), tc.inherited, inheritedReady)
 			require.NoError(t, err)
 			require.Equal(t, tc.provider, status.Provider)
 			require.Equal(t, tc.pending, status.RestartRequired)

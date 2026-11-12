@@ -416,7 +416,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 
 	tracker := api.NewActivityTracker()
-	var restartPending atomic.Bool
+	var restartPending, inheritedReady atomic.Bool
 	localText := &processing.LocalTextSetup{Service: processingService, Selected: choice.Profile,
 		ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
 		Startup: localTextStartup,
@@ -736,7 +736,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, LocalText: localText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
-			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load(), inherited)
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load(), inherited, inheritedReady.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
@@ -795,13 +795,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	if choice.Profile != "" {
 		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error {
-			if inherited {
-				active, err := localText.InitializeInherited(ctx)
-				if err != nil || !active {
-					return err
-				}
-			}
-			return localText.Backfill(ctx, logger)
+			return runLocalText(ctx, localText, inherited, &inheritedReady, logger)
 		}); err != nil {
 			return err
 		}

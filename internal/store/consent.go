@@ -167,9 +167,22 @@ func (s *Store) GrantConsent(
 
 // GrantConsentSet atomically records the independently scoped grants produced
 // by one reviewed processing plan and gives them one status association.
-func (s *Store) GrantConsentSet(ctx context.Context,
-	requests []ProcessingConsentGrantRequest,
-) ([]ProcessingConsentGrant, error) {
+func (s *Store) GrantConsentSet(ctx context.Context, requests []ProcessingConsentGrantRequest) ([]ProcessingConsentGrant, error) {
+	return s.grantConsentSet(ctx, requests, false)
+}
+
+// GrantConsentSetIfUndecided grants only if every operation is undecided and the scope has no revocation.
+func (s *Store) GrantConsentSetIfUndecided(ctx context.Context, requests []ProcessingConsentGrantRequest) (bool, error) {
+	_, err := s.grantConsentSet(ctx, requests, true)
+	if errors.Is(err, errConsentNotUndecided) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+var errConsentNotUndecided = errors.New("processing consent is already decided")
+
+func (s *Store) grantConsentSet(ctx context.Context, requests []ProcessingConsentGrantRequest, undecided bool) ([]ProcessingConsentGrant, error) {
 	if len(requests) == 0 || len(requests) > 100 {
 		return nil, errors.New("processing consent set must contain between 1 and 100 grants")
 	}
@@ -214,6 +227,11 @@ func (s *Store) GrantConsentSet(ctx context.Context,
 				IssuedAt: issuedAt, ExpiresAt: expiresAt}}
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if undecided {
+			if err := s.checkConsentUndecidedTx(ctx, tx, requests, issuedAt); err != nil {
+				return err
+			}
+		}
 		for index := range prepared {
 			item := &prepared[index]
 			if err := s.grantConsentTx(ctx, tx, item.authority, issuedRaw,
@@ -231,6 +249,35 @@ func (s *Store) GrantConsentSet(ctx context.Context,
 		grants[index] = prepared[index].grant
 	}
 	return grants, nil
+}
+
+func (s *Store) checkConsentUndecidedTx(ctx context.Context, tx *sql.Tx, requests []ProcessingConsentGrantRequest, now time.Time) error {
+	incarnation, err := currentProcessingIncarnationIDTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	for _, request := range requests {
+		authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses})
+		if err != nil {
+			return err
+		}
+		fence, err := consentRevocationFenceTx(ctx, tx, s.vaultID, incarnation, authority.principal, authority.scope)
+		if err != nil {
+			return err
+		}
+		if fence != 0 {
+			return errConsentNotUndecided
+		}
+		_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, ProviderOperationAuthorizationRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses}, now)
+		if errors.Is(err, ErrProcessingConsentRequired) {
+			continue
+		}
+		if err == nil || errors.Is(err, ErrProcessingConsentExpired) || errors.Is(err, ErrProcessingConsentRevoked) {
+			return errConsentNotUndecided
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Store) grantConsentTx(

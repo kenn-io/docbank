@@ -167,7 +167,18 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	return cfg, nil
 }
 
-func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending, inherited bool) (api.LocalTextStatus, error) {
+func runLocalText(ctx context.Context, setup *processing.LocalTextSetup, inherited bool, ready *atomic.Bool, logger *slog.Logger) error {
+	if inherited {
+		active, err := setup.InitializeInherited(ctx)
+		if err != nil || !active {
+			return err
+		}
+		ready.Store(true)
+	}
+	return setup.Backfill(ctx, logger)
+}
+
+func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending, inherited, inheritedReady bool) (api.LocalTextStatus, error) {
 	status := api.LocalTextStatus{RestartRequired: restartPending}
 	for _, profile := range service.Profiles() {
 		if len(profile.QueryEmbeddingBindings) == 0 {
@@ -178,7 +189,7 @@ func localTextStatus(ctx context.Context, profiles map[string]processing.Profile
 			if err != nil {
 				return status, err
 			}
-			if !active {
+			if !active || !inheritedReady {
 				continue
 			}
 		}

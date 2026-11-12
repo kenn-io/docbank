@@ -247,8 +247,8 @@ func (setup *LocalTextSetup) inheritedConsent(ctx context.Context) (bool, bool, 
 			return false, false, nil
 		}
 	}
-	if required != 0 && active != 0 {
-		return false, false, nil
+	if active != 0 {
+		return required == 0, false, nil
 	}
 	revoked, err := service.catalog.HasConsentRevocation(ctx, service.principal, service.scope)
 	return !revoked && err == nil, required != 0, err
@@ -260,7 +260,7 @@ func (setup *LocalTextSetup) InitializeInherited(ctx context.Context) (bool, err
 	if err != nil || !eligible {
 		return false, err
 	}
-	if err := setup.Startup(ctx, true, "local"); err != nil {
+	if err := setup.inheritedStartup(ctx); err != nil {
 		return false, err
 	}
 	active := false
@@ -270,14 +270,23 @@ func (setup *LocalTextSetup) InitializeInherited(ctx context.Context) (bool, err
 			return err
 		}
 		if undecided {
-			if err := setup.Service.grantProfileConsentUngated(ctx, setup.Service.profiles[setup.Selected], nil); err != nil {
-				return err
-			}
+			active, err = setup.Service.catalog.GrantConsentSetIfUndecided(ctx, setup.Service.profileConsentGrants(setup.Service.profiles[setup.Selected], nil))
+			return err
 		}
 		active = true
 		return nil
 	})
 	return active, err
+}
+
+func (setup *LocalTextSetup) inheritedStartup(ctx context.Context) error {
+	if setup.ActivityBegin != nil {
+		setup.ActivityBegin()
+	}
+	if setup.ActivityEnd != nil {
+		defer setup.ActivityEnd()
+	}
+	return setup.Startup(ctx, true, "local")
 }
 
 // ProfileConsentActive reports whether every operation in a profile has current consent.
