@@ -40,12 +40,13 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			saved, _ := createSavedQuery(t, ts.URL, "Matrix "+tc.name, tc.payload)
 			nested := fmt.Sprintf(`{"syntax":"advanced","text":%q}`, `saved:"Matrix `+tc.name+`"`)
+			exportQuery := fmt.Sprintf(`{"v":1,"syntax":"advanced","mode":"lexical","filters":{},"sort":{"field":"name","direction":"asc"},"text":%q}`, `saved:"Matrix `+tc.name+`"`)
 			routes := []struct{ name, path, body string }{
 				{"parse", queryParsePath, tc.payload},
 				{"highlights", queryHighlightsPath, nested},
 				{"workspace", "/api/v1/workspace/queries", `{"query":` + tc.payload + `}`},
 				{"saved run", "/api/v1/saved-queries/" + saved.ID + "/runs", `{}`},
-				{"query export", "/api/v1/exports/sources", `{"operation_id":"33333333-3333-4333-8333-333333333333","kind":"query","query":` + nested + `}`},
+				{"query export", "/api/v1/exports/sources", `{"operation_id":"33333333-3333-4333-8333-333333333333","kind":"query","query":` + exportQuery + `}`},
 				{"saved export", "/api/v1/exports/sources", fmt.Sprintf(`{"operation_id":"44444444-4444-4444-8444-444444444444","kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, saved.ID)},
 				{"report", "/api/v1/search-exports", fmt.Sprintf(`{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":%q,"syntax":"advanced","dates":{"start":"2020-01-01","end":"2100-01-01"}}]}`, `saved:"Matrix `+tc.name+`"`)},
 			}
@@ -70,6 +71,7 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 	// A visible person resolves in both scopes, but their hidden edge must not
 	// contribute to a browser snapshot or an export source.
 	payload := `{"syntax":"advanced","text":"person:\"Matrix Visible\""}`
+	exportQuery := `{"v":1,"syntax":"advanced","mode":"lexical","filters":{},"sort":{"field":"name","direction":"asc"},"text":"person:\"Matrix Visible\""}`
 	saved, _ := createSavedQuery(t, ts.URL, "Matrix public", payload)
 	for _, tc := range []struct {
 		name    string
@@ -101,7 +103,7 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(body), &run))
 			require.Equal(t, tc.want, run.Snapshot.Total)
 			for _, request := range []string{
-				`{"operation_id":"55555555-5555-4555-8555-555555555555","kind":"query","query":` + payload + `}`,
+				`{"operation_id":"55555555-5555-4555-8555-555555555555","kind":"query","query":` + exportQuery + `}`,
 				fmt.Sprintf(`{"operation_id":"66666666-6666-4666-8666-666666666666","kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, saved.ID),
 			} {
 				resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/exports/sources", tc.headers, request)

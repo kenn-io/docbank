@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { inspect, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { getGlobalOrigin, setGlobalOrigin } from "undici";
 import { APIError } from "../src/api-transport.js";
 import {
   createWorkspaceQuery,
@@ -158,6 +157,13 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     ).stdout.trim();
   let started = false;
   let failure: unknown;
+  const originalFetch = globalThis.fetch;
+  let baseURL = "";
+  globalThis.fetch = (input, init) =>
+    originalFetch(
+      typeof input === "string" && input.startsWith("/") ? baseURL + input : input,
+      init,
+    );
   const stop = async () => {
     if (!started) return;
     const before = JSON.parse(await run("daemon", "status", "--json"));
@@ -184,26 +190,21 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     const issued = new URL(await run("web", "--no-browser"));
     const session = new URLSearchParams(issued.hash.slice(1)).get("web_session");
     if (!session) throw new Error("Synthetic web session missing");
+    baseURL = `http://127.0.0.1:${issued.port}`;
     // People are provisioned from the addresses in the background; wait for the
     // browser session's own frozen result before driving the page.
     const freeze = async (
       value: ReturnType<typeof advanced>,
       facets: WorkspaceQueryCreateRequestFacetsItem[],
     ): Promise<SnapshotPage | undefined> => {
-      const previousOrigin = getGlobalOrigin();
-      setGlobalOrigin(`http://127.0.0.1:${issued.port}`);
-      try {
-        const response = await createWorkspaceQuery(
-          { query: value, page_size: 50, facets },
-          { session, signal: AbortSignal.timeout(30_000), headers: { Host: issued.host } },
-        ).catch((cause: unknown) => {
-          if (cause instanceof APIError) return undefined;
-          throw cause;
-        });
-        return response ? ((await response.json()) as SnapshotPage) : undefined;
-      } finally {
-        setGlobalOrigin(previousOrigin);
-      }
+      const response = await createWorkspaceQuery(
+        { query: value, page_size: 50, facets },
+        { session, signal: AbortSignal.timeout(30_000), headers: { Host: issued.host } },
+      ).catch((cause: unknown) => {
+        if (cause instanceof APIError) return undefined;
+        throw cause;
+      });
+      return response ? ((await response.json()) as SnapshotPage) : undefined;
     };
     const summary = (page?: SnapshotPage) => ({
       rows: page?.rows.map((row) => [row.name, row.matched_roles]),
@@ -368,6 +369,7 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     failure = error;
     throw error;
   } finally {
+    globalThis.fetch = originalFetch;
     try {
       await stop();
       await rm(scratch, { recursive: true, force: true });

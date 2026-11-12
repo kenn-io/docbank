@@ -112,7 +112,14 @@ func TestRoleSearchFrozenMatchesAndPeopleFacet(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, projection.Rows, 2)
 	for _, row := range projection.Rows {
-		require.Equal(t, []string{"sender"}, row.MatchedRoles)
+		switch row.Name {
+		case "message.txt":
+			require.Equal(t, []string{"organizer", "sender"}, row.MatchedRoles)
+		case "portrait.jpg":
+			require.Equal(t, []string{"sender"}, row.MatchedRoles)
+		default:
+			t.Fatalf("unexpected row %q", row.Name)
+		}
 	}
 	require.Len(t, projection.Facets, 1)
 	require.True(t, projection.Facets[0].Available)
@@ -128,19 +135,27 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	s := newStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "relation.txt", "c1", nil)
+	direct, err := s.CreatePerson(ctx, "Direct Relation", "operator")
+	require.NoError(t, err)
+	for _, role := range []string{"blind_copy", "speaker"} {
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: direct.PersonID, Role: role, Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
 	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
 	require.NoError(t, err)
 	publication := documentPeoplePublicationForInput(t, input)
 	_, err = s.PublishDocumentPeople(ctx, publication)
 	require.NoError(t, err)
-	direct, err := s.CreatePerson(ctx, "Direct Relation", "operator")
-	require.NoError(t, err)
-	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: direct.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
-	require.NoError(t, err)
 	check := func(safe bool, person, role string, want bool) {
-		relation := strings.ReplaceAll(currentDocumentPersonEdgesSQL("cv.version_id", safe, "1"), "?", "$1")
+		relation := currentDocumentPersonEdgesSQL("cv.version_id", safe, "1")
+		statement := `SELECT EXISTS(SELECT 1 FROM ` + relation + ` edge WHERE edge.person_id=? AND edge.role=?) FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.id=?`
+		if s.postgresSchema != "" {
+			for i := 1; i <= 4; i++ {
+				statement = strings.Replace(statement, "?", fmt.Sprintf("$%d", i), 1)
+			}
+		}
 		var found bool
-		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM `+relation+` edge WHERE edge.person_id=$3 AND edge.role=$4) FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.id=$2`, document.PersonResolverFingerprint(), version.NodeID, person, role).Scan(&found)
+		err := s.db.QueryRowContext(ctx, statement, document.PersonResolverFingerprint(), person, role, version.NodeID).Scan(&found)
 		require.NoError(t, err)
 		require.Equal(t, want, found)
 	}
@@ -148,13 +163,12 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	check(false, published.PersonID, published.Role, true)
 	check(false, direct.PersonID, "blind_copy", true)
 	check(true, direct.PersonID, "blind_copy", false)
-	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: direct.PersonID, Role: "speaker", Action: "assert", Revision: 1})
-	require.NoError(t, err)
 	check(true, direct.PersonID, "speaker", true)
 	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
 	require.NoError(t, err)
 	check(false, published.PersonID, published.Role, false)
 	check(false, direct.PersonID, "blind_copy", true)
+	check(true, direct.PersonID, "speaker", true)
 }
 
 func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
@@ -568,12 +582,18 @@ func TestRoleSearchNearCompilerBudget(t *testing.T) {
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 
+	block := strings.TrimSuffix(strings.Repeat(`from:"Budget Sender" OR `, 100), " OR ")
+	_, err = s.CreateSavedQuery(ctx, "Budget block", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"syntax":"advanced","text":%q}`, block)))
+	require.NoError(t, err)
+	textFor := func(count int) string {
+		return strings.TrimSuffix(strings.Repeat(`saved:"Budget block" OR `, count/100)+strings.Repeat(`from:"Budget Sender" OR `, count%100), " OR ")
+	}
 	var bestText string
-	var bestSize int
-	low, high := 1, 255
+	var bestSize, bestCount int
+	low, high := 1, 1200
 	for low <= high {
 		count := (low + high) / 2
-		text := strings.TrimSuffix(strings.Repeat(`from:"Budget Sender" OR `, count), " OR ")
+		text := textFor(count)
 		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
 		compiled, err := s.CompileQuery(ctx, value)
 		if err != nil {
@@ -583,10 +603,13 @@ func TestRoleSearchNearCompilerBudget(t *testing.T) {
 		}
 		predicate, err := compiled.bind("", nil)
 		require.NoError(t, err)
-		bestText, bestSize = text, len(predicate.sql)
+		bestText, bestSize, bestCount = text, len(predicate.sql), count
 		low = count + 1
 	}
 	require.Greater(t, bestSize, maxCompiledQuerySQL-8192)
+	next := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(bestCount+1)))
+	_, err = s.CompileQuery(ctx, next)
+	require.ErrorContains(t, err, "compiled query exceeds")
 	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, bestText))
 	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.NoError(t, err)
