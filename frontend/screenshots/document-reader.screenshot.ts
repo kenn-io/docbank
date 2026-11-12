@@ -477,6 +477,9 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.fill("unfindable synthetic phrase");
   await search.press("Enter");
   await expect(page.getByText("No matching documents")).toBeVisible();
+  await expect(
+    page.getByText("2 PDFs have 4 pages without a text layer. If scanned, OCR can read them."),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
@@ -488,11 +491,22 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.press("Enter");
   const frozen = page.getByRole("region", { name: "Frozen query results" });
   await expect(
-    frozen.getByText("Across the current vault: 4 pages lack a text layer in 2 PDFs."),
+    frozen.getByText(
+      "Across the current vault: 4 pages lack a text layer in 2 PDFs. If scanned, OCR can read them.",
+    ),
   ).toBeVisible();
   await expect(frozen.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-frozen.png"),
+    clip: { x: 231, y: 56, width: 746, height: 700 },
+  });
+  await page.route("**/api/v1/search/text-coverage**", (route) => route.fulfill({ status: 500 }));
+  await search.fill("another unfindable phrase");
+  await search.press("Enter");
+  await expect(frozen.getByText("No matching documents")).toBeVisible();
+  await expect(frozen.getByText("PDF text coverage is unavailable.")).toBeVisible();
+  await page.screenshot({
+    path: path.join(output!, "pdf-search-unavailable.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
   });
 });

@@ -2112,11 +2112,19 @@ function renderEmptySearch(coverage: () => Promise<Response>) {
 }
 
 it.each([
-  ["singular", "1 PDF has 1 page without a text layer.", false],
-  ["partial", "At least 2 PDFs have at least 3 pages without a text layer.", false],
-  ["unavailable", "At least 2 PDFs have at least 3 pages without a text layer.", false],
+  ["singular", "1 PDF has 1 page without a text layer. If scanned, OCR can read it.", false],
+  [
+    "partial",
+    "At least 2 PDFs have at least 3 pages without a text layer. If scanned, OCR can read them.",
+    false,
+  ],
+  [
+    "unavailable",
+    "At least 2 PDFs have at least 3 pages without a text layer. If scanned, OCR can read them.",
+    false,
+  ],
   ["incomplete", "PDF text coverage is incomplete; some pages may not be searchable.", false],
-  ["complete", "2 PDFs have 3 pages without a text layer.", true],
+  ["complete", "2 PDFs have 3 pages without a text layer. If scanned, OCR can read them.", true],
 ])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
   const coverage = textCoverage({
     pdfs_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 2,
@@ -2144,8 +2152,18 @@ it.each([
 });
 
 it.each([
-  [2, 3, false, "Across the current vault: 3 pages lack a text layer in 2 PDFs."],
-  [1, 1, false, "Across the current vault: 1 page lacks a text layer in 1 PDF."],
+  [
+    2,
+    3,
+    false,
+    "Across the current vault: 3 pages lack a text layer in 2 PDFs. If scanned, OCR can read them.",
+  ],
+  [
+    1,
+    1,
+    false,
+    "Across the current vault: 1 page lacks a text layer in 1 PDF. If scanned, OCR can read it.",
+  ],
   [
     0,
     0,
@@ -2181,6 +2199,21 @@ it.each([
       .filter((url) => url.startsWith("/api/v1/search/text-coverage"))
       .at(-1);
     expect(new URL(request!, "https://example.com").search).toBe("");
+  },
+);
+
+it.each(["live", "frozen"])(
+  "shows unavailable PDF coverage for an empty %s search",
+  async (mode) => {
+    renderEmptySearch(async () => new Response("{}", { status: 500 }));
+    if (mode === "frozen") {
+      await screen.findAllByText("report.txt");
+      await fireEvent.click(screen.getByRole("combobox", { name: "Search syntax: Plain words" }));
+      await fireEvent.click(screen.getByRole("option", { name: "Query syntax" }));
+    }
+    await submitSearch("missing");
+    expect(await screen.findByText("PDF text coverage is unavailable.")).toBeTruthy();
+    expect(screen.getByText("No matching documents")).toBeTruthy();
   },
 );
 

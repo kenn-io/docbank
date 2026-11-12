@@ -1109,6 +1109,7 @@
   let searchQuery = $state("");
   let activeQuery = $state("");
   let pdfCoverage = $state<generated.SearchTextCoverage | null>(null);
+  let pdfCoverageUnavailable = $state(false);
   const pdfCoverageIncomplete = $derived(
     !!pdfCoverage &&
       (pdfCoverage.pdf_page_coverage_partial || pdfCoverage.pdf_page_coverage_unavailable > 0),
@@ -1246,12 +1247,15 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const pdfCoverageDescription = $derived(
     pdfCoverage?.pdfs_without_text
-      ? snapshotActive
-        ? `Across the current vault: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? " lacks" : "s lack"} a text layer in ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? "" : "s"}.`
-        : `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`
+      ? (snapshotActive
+          ? `Across the current vault: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? " lacks" : "s lack"} a text layer in ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? "" : "s"}.`
+          : `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`) +
+          ` If scanned, OCR can read ${pdfCoverage.pages_without_text === 1 ? "it" : "them"}.`
       : pdfCoverageIncomplete
         ? `${snapshotActive ? "Across the current vault, PDF" : "PDF"} text coverage is incomplete; some pages may not be searchable.`
-        : undefined,
+        : pdfCoverageUnavailable
+          ? "PDF text coverage is unavailable."
+          : undefined,
   );
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
@@ -2175,6 +2179,7 @@
       ? snapshot.state.status === "ready" && snapshot.state.firstPage?.total === 0
       : !!query && !loading && !searchPending && rows.length === 0;
     pdfCoverage = null;
+    pdfCoverageUnavailable = false;
     if (!eligible) return;
     const controller = new AbortController();
     let current = true;
@@ -2184,7 +2189,9 @@
         if (current) pdfCoverage = coverage;
       })
       .catch((cause: unknown) => {
-        if (current && cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        if (!current) return;
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
+        else pdfCoverageUnavailable = true;
       });
     return () => {
       current = false;
@@ -4618,7 +4625,9 @@
                       <EmptyState
                         title="No matching documents"
                         description={pdfCoverageDescription}
-                        children={pdfCoverageDescription ? pdfOCRGuide : undefined}
+                        children={pdfCoverage?.pdfs_without_text || pdfCoverageIncomplete
+                          ? pdfOCRGuide
+                          : undefined}
                       >
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
