@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"go.kenn.io/docbank/document"
 
@@ -176,27 +177,30 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
  JOIN content_versions cv ON cv.blob_hash=rootcv.blob_hash
  JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
  JOIN (` + members.sql + `) matched ON matched.node_id=n.id AND matched.content_version_id=cv.version_id
- WHERE n.id=root.id OR ` + fmt.Sprint(boolInt(compiled.Query.Filters.CollapseDuplicates)) + `=1`, args: append([]any{string(encoded)}, members.args...), relations: members.relations}
+ WHERE n.id=root.id OR ` + strconv.Itoa(boolInt(compiled.Query.Filters.CollapseDuplicates)) + `=1`, args: append([]any{string(encoded)}, members.args...), relations: members.relations}
 	statement, args, err := bindQueryPopulation(population, coverage, generation)
 	if err != nil {
 		return err
 	}
-	found, err := q.QueryContext(ctx, statement, args...)
-	if err != nil {
-		return fmt.Errorf("loading matched role members: %w", err)
-	}
-	for found.Next() {
-		var root, member int64
-		if err := found.Scan(&root, &member); err != nil {
-			_ = found.Close()
-			return err
+	err = func() (err error) {
+		found, err := q.QueryContext(ctx, statement, args...)
+		if err != nil {
+			return fmt.Errorf("loading matched role members: %w", err)
 		}
-		roots[member] = append(roots[member], rowIndex[root])
-	}
-	err = found.Err()
-	if closeErr := found.Close(); err == nil {
-		err = closeErr
-	}
+		defer func() {
+			if closeErr := found.Close(); err == nil {
+				err = closeErr
+			}
+		}()
+		for found.Next() {
+			var root, member int64
+			if err := found.Scan(&root, &member); err != nil {
+				return err
+			}
+			roots[member] = append(roots[member], rowIndex[root])
+		}
+		return found.Err()
+	}()
 	if err != nil {
 		return err
 	}
@@ -228,23 +232,26 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 			if err != nil {
 				return err
 			}
-			found, err := q.QueryContext(ctx, statement, args...)
-			if err != nil {
-				return fmt.Errorf("annotating roles: %w", err)
-			}
 			var selected []int64
-			for found.Next() {
-				var id int64
-				if err := found.Scan(&id); err != nil {
-					_ = found.Close()
-					return err
+			err = func() (err error) {
+				found, err := q.QueryContext(ctx, statement, args...)
+				if err != nil {
+					return fmt.Errorf("annotating roles: %w", err)
 				}
-				selected = append(selected, id)
-			}
-			err = found.Err()
-			if closeErr := found.Close(); err == nil {
-				err = closeErr
-			}
+				defer func() {
+					if closeErr := found.Close(); err == nil {
+						err = closeErr
+					}
+				}()
+				for found.Next() {
+					var id int64
+					if err := found.Scan(&id); err != nil {
+						return err
+					}
+					selected = append(selected, id)
+				}
+				return found.Err()
+			}()
 			if err != nil {
 				return err
 			}
@@ -323,7 +330,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	selected := map[string]bool{}
 	for _, entry := range compiled.Query.Filters.People {
 		var id, name string
-		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
+		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL(3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

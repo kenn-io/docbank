@@ -573,7 +573,7 @@ func (parser *expressionParser) parseBetween(name expressionToken) (*Expression,
 		return nil, err
 	}
 	var children []*Expression
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		tok := parser.current
 		if tok.kind != expressionTokenWord && tok.kind != expressionTokenPhrase {
 			return fail()

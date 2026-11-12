@@ -1,7 +1,7 @@
 package store
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -15,7 +15,7 @@ func currentPhotoSourcePredicate(file, node, version string) string {
 func currentPersonAssertionFence(safe bool, hideLocked string) string {
 	fence := `a.action='assert'`
 	if safe {
-		fence += ` AND ` + personVisibleAssertionSQL("a", hideLocked)
+		fence += ` AND ` + personVisibleAssertionSQL(hideLocked)
 	}
 	return fence
 }
@@ -40,7 +40,7 @@ func (c queryCompiler) compilePersonPredicate(id string, roles []string) compile
 	if c.photoDisplayMetadata {
 		predicate := `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person
 		if c.safePeople {
-			predicate += ` AND ` + personVisibleAssertionSQL("a", c.hideLocked)
+			predicate += ` AND ` + personVisibleAssertionSQL(c.hideLocked)
 		}
 		return compiledQueryFragment{sql: predicate + `)`, args: []any{id, id}}
 	}
@@ -82,11 +82,11 @@ func rolesForOperand(field string, safe bool) ([]string, error) {
 		return []string{"copied"}, nil
 	case "bcc":
 		if safe {
-			return nil, fmt.Errorf("bcc: is not available in browser sessions")
+			return nil, errors.New("bcc: is not available in browser sessions")
 		}
 		return []string{"blind_copy"}, nil
 	default:
-		return nil, fmt.Errorf("unknown role operand")
+		return nil, errors.New("unknown role operand")
 	}
 }
 

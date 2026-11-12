@@ -16,6 +16,7 @@ import (
 // Every snapshot-building route must resolve on the browser's visibility scope,
 // including when the restricted definition is reached through a saved query.
 func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	private := createFileWithContent(t, ts, s, "/matrix-private.txt", "synthetic private")

@@ -12,6 +12,7 @@ import (
 )
 
 func TestRoleSearchOperandSets(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	email := seedDocumentPeopleEvent(t, s, "email.txt", "a1", nil)
@@ -85,6 +86,7 @@ func TestRoleSearchOperandSets(t *testing.T) {
 }
 
 func TestRoleSearchFrozenMatchesAndPeopleFacet(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "message.txt", "b1", nil)
@@ -143,7 +145,7 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 		require.Equal(t, want, found)
 	}
 	published := publication.People.Edges[0]
-	check(false, published.PersonID, string(published.Role), true)
+	check(false, published.PersonID, published.Role, true)
 	check(false, direct.PersonID, "blind_copy", true)
 	check(true, direct.PersonID, "blind_copy", false)
 	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: direct.PersonID, Role: "speaker", Action: "assert", Revision: 1})
@@ -151,11 +153,12 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	check(true, direct.PersonID, "speaker", true)
 	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
 	require.NoError(t, err)
-	check(false, published.PersonID, string(published.Role), false)
+	check(false, published.PersonID, published.Role, false)
 	check(false, direct.PersonID, "blind_copy", true)
 }
 
 func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Jory Pellham", "operator")
@@ -228,7 +231,7 @@ func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
 	require.NotContains(t, visibleArgs, `"Hidden Derived Alias"`)
 	require.NotContains(t, visibleCompiled.PositiveTextTerms(), "Hidden Derived Alias")
 	require.NotContains(t, compiledFixtureIDs(t, s.db, visibleCompiled, ""), mentionNode.ID)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		person, _ = addTestPersonIdentity(t, s, person, "name_alias", fmt.Sprintf("Alias %02d", i), fmt.Sprintf("alias-%02d", i))
 	}
 	names, err := (queryResolver{q: s.db}).personMentionNames(ctx, person.PersonID)
@@ -248,11 +251,12 @@ func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
 }
 
 func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first := seedDocumentPeopleEvent(t, s, "meeting.txt", "d1", nil)
 	second := seedDocumentPeopleEvent(t, s, "other.txt", "d2", nil)
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		p, err := s.CreatePerson(ctx, fmt.Sprintf("Person %02d", i), "operator")
 		require.NoError(t, err)
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: first.ID, PersonID: p.PersonID, Role: "attendee", Action: "assert", Revision: 1})
@@ -298,6 +302,7 @@ func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {
 }
 
 func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	old := seedDocumentPeopleEvent(t, s, "versions.txt", "e1", nil)
@@ -325,6 +330,7 @@ func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
 }
 
 func TestRoleSearchBrowserHiddenLock(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	public := browsePhotoNode(t, s, "open.txt", fakeHash("open"), "text/plain")
@@ -384,6 +390,7 @@ func TestRoleSearchBrowserHiddenLock(t *testing.T) {
 }
 
 func TestRoleSearchMergedFilterReturnsSurvivor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "merged.txt", "ef", nil)
@@ -405,6 +412,7 @@ func TestRoleSearchMergedFilterReturnsSurvivor(t *testing.T) {
 }
 
 func TestPublishedBccActorQueryPrivacy(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "bcc.txt", "f1", []document.DocumentEventActorV1{{
@@ -435,6 +443,7 @@ func TestPublishedBccActorQueryPrivacy(t *testing.T) {
 }
 
 func TestRoleSearchCollapsedDuplicateAnnotationsIncludeOtherMembers(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first := seedDocumentPeopleEvent(t, s, "one.txt", "fa", nil)
@@ -465,6 +474,7 @@ func TestRoleSearchCollapsedDuplicateAnnotationsIncludeOtherMembers(t *testing.T
 }
 
 func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "saved-merged.txt", "f2", nil)
@@ -491,6 +501,7 @@ func TestRoleSearchSavedRunPreservesMergedDefinitionReceipt(t *testing.T) {
 }
 
 func TestRoleSearchNestedSavedAndNegatedAttribution(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "nested.txt", "f3", nil)
@@ -521,6 +532,7 @@ func TestRoleSearchNestedSavedAndNegatedAttribution(t *testing.T) {
 // The base query fits its compiler budget even though combining all role
 // annotations with that population would exceed the statement bind budget.
 func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "many-people.txt", "ab2", nil)
@@ -547,6 +559,7 @@ func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
 // Exercise the compiler boundary with real role operands, including the
 // population wrapper that is added after the predicate has been bound.
 func TestRoleSearchNearCompilerBudget(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := WithVisiblePeopleOnly(t.Context())
 	version := seedDocumentPeopleEvent(t, s, "budget.txt", "b7", nil)
@@ -582,6 +595,7 @@ func TestRoleSearchNearCompilerBudget(t *testing.T) {
 }
 
 func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	version := seedDocumentPeopleEvent(t, s, "budget.txt", "aabb", nil)
@@ -613,6 +627,7 @@ func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
 }
 
 func TestRoleSearchNegationBranchMembership(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first := seedDocumentPeopleEvent(t, s, "branch-one.txt", "ccdd", nil)
@@ -650,6 +665,7 @@ func TestRoleSearchNegationBranchMembership(t *testing.T) {
 }
 
 func TestRoleSearchSavedHiddenPersonScope(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	hidden := browsePhotoNode(t, s, "saved-hidden.jpg", fakeHash("saved-hidden"), "image/jpeg")
