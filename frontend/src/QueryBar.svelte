@@ -70,6 +70,7 @@
     { value: "name", label: "Name" },
     { value: "path", label: "Path" },
     { value: "modified_at", label: "Modified" },
+    { value: "document_date", label: "Document date" },
     { value: "size", label: "Size" },
     { value: "media_type", label: "File type" },
   ];

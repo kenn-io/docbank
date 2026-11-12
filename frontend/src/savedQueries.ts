@@ -108,6 +108,35 @@ function definition(kind: unknown, payload: unknown): Definition {
   throw new Error("Unknown saved definition kind.");
 }
 
+// Mirrors internal/api pinSavedQueryTimezone and query.UsesDocumentDate: a
+// saved query with date operands and no timezone is stored with the server's
+// timeline zone, so its receipt may add that one zone and nothing else.
+const advancedDateField = /(?:^|[\s()])date(?:_kind|_precision)?\s*:/u;
+const assignableZone = /^(?:UTC|[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)+)$/;
+
+function usesDocumentDate(query: Query): boolean {
+  return (
+    query.filters.document_date !== undefined ||
+    query.sort.field === "document_date" ||
+    (query.syntax === "advanced" && advancedDateField.test(query.text))
+  );
+}
+
+type ExpectedDefinition = Definition & { name: string; description: string };
+
+function withPinnedZone(expected: ExpectedDefinition, saved: Definition): ExpectedDefinition {
+  if (
+    expected.kind !== "query" ||
+    saved.kind !== "query" ||
+    expected.payload.timezone !== undefined ||
+    saved.payload.timezone === undefined ||
+    !assignableZone.test(saved.payload.timezone) ||
+    !usesDocumentDate(expected.payload)
+  )
+    return expected;
+  return { ...expected, payload: { ...expected.payload, timezone: saved.payload.timezone } };
+}
+
 function canonical(value: Definition): string {
   return value.kind === "query"
     ? canonicalQuery(value.payload)
@@ -230,15 +259,12 @@ export async function createSavedQuery(
     description: descriptionValue(input.description ?? ""),
   };
   const saved = await readResponse(await generated.createSavedQuery(expected, { session }));
-  requireReceipt(saved.revision === 1 && sameDefinition(saved, expected));
+  requireReceipt(saved.revision === 1 && sameDefinition(saved, withPinnedZone(expected, saved)));
   definitionsChanged(session);
   return saved;
 }
 
-function sameDefinition(
-  left: SavedQuery,
-  right: Definition & { name: string; description: string },
-): boolean {
+function sameDefinition(left: SavedQuery, right: ExpectedDefinition): boolean {
   return (
     left.kind === right.kind &&
     left.name === right.name &&
@@ -271,11 +297,13 @@ export async function updateSavedQuery(
   const saved = await readResponse(
     await generated.updateSavedQuery(observed.id, body, headers, { session }),
   );
+  // Only a submitted payload is pinned; a rename keeps the stored payload.
+  const accepted = body.payload === undefined ? expected : withPinnedZone(expected, saved);
   requireReceipt(
     saved.id === observed.id &&
       saved.revision === revision &&
       saved.created_at === observed.created_at &&
-      sameDefinition(saved, expected),
+      sameDefinition(saved, accepted),
   );
   definitionsChanged(session);
   return saved;

@@ -131,6 +131,24 @@ it("runs the complete locally valid draft with explicit snapshot options", async
   );
 });
 
+it("runs a Document date sort with the chosen direction", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) =>
+    response(String(init?.body)),
+  );
+  const { onrun } = open();
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort by: Size" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Document date" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Descending" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Ascending" }));
+  expect(screen.getByRole("combobox", { name: "Sort by: Document date" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(onrun).toHaveBeenCalledOnce();
+  expect(onrun.mock.calls[0][0]).toEqual({
+    ...query,
+    sort: { field: "document_date", direction: "asc" },
+  });
+});
+
 it.each([
   { mode: "semantic", sort: query.sort, message: /unsupported search method/ },
   { mode: "hybrid", sort: query.sort, message: /unsupported search method/ },
