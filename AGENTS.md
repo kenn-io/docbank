@@ -341,8 +341,7 @@ release, from a breaking change to `feat` to `fix`.
   released-schema fixture and direct oldest-supported-to-current coverage in
   both SQLite modes. Register each release's schema version and fixture as
   described in the development guide's "Change schema" section; CI fails
-  otherwise. Keep schema-contract records after release. The unreleased-version
-  test skips them; released-schema fixtures enforce compatibility. Every
+  otherwise. Keep released schema-contract records; released fixtures check compatibility. Every
   post-v0.9 layout records an explicit monotonically increasing storage schema
   version; v0.9 is the only layout recognized by an inferred structural
   fingerprint. Keep source-version readers available for

@@ -245,10 +245,10 @@ includes tables, views, triggers, and indexes. It ignores SQL whitespace and
 comments while preserving token spellings. Adding, changing, or removing an
 index under a version already recorded on `main` requires the next version. Run
 `make schema-contract-check` and add a file under
-`internal/store/testdata/schema-contracts/` with a one-line summary of the change.
-Its name is `NNNNNN-<layout-sha256>-<summary-sha256>.schema`. The test prints
-the version and layout hash. Compute the summary hash from the exact file bytes
-with `sha256sum`, including the final newline if present.
+`internal/store/testdata/schema-contracts/`. Name the empty file
+`NNNNNN-<layout-sha256>-<summary-slug>.schema`. The test prints the version
+and layout hash. The summary slug has 1–48 characters: lowercase ASCII letters
+or digits, with words separated by single hyphens.
 If you change your own unmerged layout, replace its record with the newly named
 file. If `main` already records that version, preserve its record, remove your
 old record, bump `currentStorageSchemaVersion`, rerun the test against the
