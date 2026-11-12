@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -221,4 +222,63 @@ func TestRoleSearchBetweenCurrentVersionAndMergedPeople(t *testing.T) {
 	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"between:(%s,%s)"}`, a.PersonID, b.PersonID))
 	_, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
 	require.ErrorContains(t, err, "between: needs two different people")
+}
+
+func TestRoleSearchBrowserHiddenLock(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	public := browsePhotoNode(t, s, "open.txt", fakeHash("open"), "text/plain")
+	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("hidden"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Visible Sender", "operator")
+	require.NoError(t, err)
+	concealed, err := s.CreatePerson(ctx, "Hidden Sender", "operator")
+	require.NoError(t, err)
+	for _, edge := range []struct{ version, id string }{{public.CurrentVersionID, person.PersonID}, {hidden.CurrentVersionID, person.PersonID}, {hidden.CurrentVersionID, concealed.PersonID}} {
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.id, Role: "sender", Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	visibleQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Visible Sender\""}`)
+	hiddenQuery := snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"Hidden Sender\""}`)
+	for _, tc := range []struct {
+		name        string
+		ctx         context.Context
+		names       []string
+		hiddenKnown bool
+	}{
+		{"locked", WithVisiblePeopleOnly(ctx), []string{"open.txt"}, false},
+		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), []string{"hidden.jpg", "open.txt"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projection, err := s.MaterializeQuerySnapshot(tc.ctx, SnapshotRequest{Query: visibleQuery, Facets: []string{"person_role"}})
+			require.NoError(t, err)
+			var names []string
+			for _, row := range projection.Rows {
+				names = append(names, row.Name)
+			}
+			require.ElementsMatch(t, tc.names, names)
+			var facetPeople []string
+			for _, value := range projection.Facets[0].Values {
+				facetPeople = append(facetPeople, value.Key)
+			}
+			if tc.hiddenKnown {
+				require.Contains(t, facetPeople, concealed.PersonID)
+			} else {
+				require.NotContains(t, facetPeople, concealed.PersonID)
+			}
+			_, err = s.MaterializeQuerySnapshot(tc.ctx, SnapshotRequest{Query: hiddenQuery})
+			if tc.hiddenKnown {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "unknown person reference")
+			}
+		})
+	}
 }
