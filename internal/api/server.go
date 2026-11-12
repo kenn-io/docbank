@@ -236,6 +236,7 @@ func NewServer(d Deps) *Server {
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
+	registerPartyRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
