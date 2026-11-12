@@ -163,27 +163,28 @@ func dates(startName, endName string, start, end *string) error {
 	return nil
 }
 
+var recordKinds = []string{"filing", "payment", "penalty", "notice", "other", "audit", "review"}
+var recordDirections = []string{"payable", "refundable", "nil", "unknown"}
+var recordStates = []string{"expected", "gathering", "ready", "filed", "assessed", "settled", "amended", "disputed", "not_required", "opened", "information_requested", "responding", "decision_issued", "appealed", "closed"}
+
+// RecordKinds, RecordDirections and RecordStates return supported values as defensive copies.
+func RecordKinds() []string      { return slices.Clone(recordKinds) }
+func RecordDirections() []string { return slices.Clone(recordDirections) }
+func RecordStates() []string     { return slices.Clone(recordStates) }
+
 // InitialState returns the only state accepted on creation.
 func InitialState(kind string) (string, error) {
-	switch kind {
-	case "filing", "payment", "penalty", "notice", "other":
-		return "expected", nil
-	case "audit", "review":
-		return "opened", nil
-	default:
+	if !slices.Contains(recordKinds, kind) {
 		return "", invalid("kind", "unknown kind")
 	}
+	if kind == "audit" || kind == "review" {
+		return "opened", nil
+	}
+	return "expected", nil
 }
 
 // ValidState reports whether state is in the tax record vocabulary.
-func ValidState(state string) bool {
-	switch state {
-	case "expected", "gathering", "ready", "filed", "assessed", "settled", "amended", "disputed", "not_required", "opened", "information_requested", "responding", "decision_issued", "appealed", "closed":
-		return true
-	default:
-		return false
-	}
-}
+func ValidState(state string) bool { return slices.Contains(recordStates, state) }
 
 // NormalizeTaxKind bounds and canonicalizes a tax kind.
 func NormalizeTaxKind(s string) (string, error) {
@@ -357,6 +358,9 @@ func ValidateRecord(v RecordValues) error {
 	}
 	if v.LeadDays != nil && (*v.LeadDays < 0 || *v.LeadDays > 366) {
 		return invalid("lead_days", "out of range")
+	}
+	if !slices.Contains(recordDirections, v.Direction) {
+		return invalid("direction", "unknown direction")
 	}
 	switch v.Direction {
 	case "unknown":

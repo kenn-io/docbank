@@ -70,6 +70,15 @@ Omitted edit fields retain their values; `--clear-authority`, `--clear-tax-year`
 A period edit does not recalculate an existing tax year.
 
 Amounts use exact decimal text in the selected currency, never floating point.
+Record kinds are `filing`, `payment`, `penalty`, `notice`, `other`, `audit`,
+and `review`. The direction values are `payable`, `refundable`, `nil`, and
+`unknown`. The `--state` filter accepts `expected`, `gathering`, `ready`,
+`filed`, `assessed`, `settled`, `amended`, `disputed`, `not_required`,
+`opened`, `information_requested`, `responding`, `decision_issued`, `appealed`,
+and `closed`. Lists use stable record ID order; the later deadline read will
+order by date. Text and JSON outputs show `amount_minor` in the currency's
+minor units: for USD, `1234.00` is `123400` minor units.
+
 `payable` and `refundable` require an amount; `nil` requires zero; `unknown`
 requires no amount. When changing the currency of a non-null amount, resend the
 amount in the new currency or clear it and choose a compatible direction. Even

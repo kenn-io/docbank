@@ -1,13 +1,12 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 type TaxRecord struct {
@@ -101,45 +100,13 @@ type PatchTaxRecordRequest struct {
 	present          map[string]bool
 }
 
-func recordMembers(raw []byte, patch bool) (map[string]jsontext.Value, error) {
-	raw = bytes.TrimSpace(raw)
+func recordMembers(raw []byte) (map[string]jsontext.Value, error) {
 	var members map[string]jsontext.Value
-	if len(raw) == 0 || raw[0] != '{' {
-		return nil, fmt.Errorf("expected object")
-	}
-	if err := json.Unmarshal(raw, &members); err != nil {
-		return nil, err
-	}
-	delete(members, "$schema")
-	if patch && len(members) == 0 {
-		return nil, fmt.Errorf("empty patch")
-	}
-	for name, value := range members {
-		nullable := false
-		switch name {
-		case "authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", "amount":
-			nullable = true
-		case "account_id":
-			if patch {
-				return nil, fmt.Errorf("invalid field")
-			}
-			nullable = true
-		case "kind":
-			if patch {
-				return nil, fmt.Errorf("invalid field")
-			}
-		case "filer_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "direction", "currency", "note":
-		default:
-			return nil, fmt.Errorf("invalid field")
-		}
-		if string(value) == "null" && !nullable {
-			return nil, fmt.Errorf("invalid field")
-		}
-	}
-	return members, nil
+	err := json.Unmarshal(raw, &members)
+	return members, err
 }
 func (p *CreateTaxRecordRequest) UnmarshalJSON(raw []byte) error {
-	members, err := recordMembers(raw, false)
+	members, err := recordMembers(raw)
 	if err != nil {
 		return err
 	}
@@ -182,7 +149,7 @@ func (p CreateTaxRecordRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(members)
 }
 func (p *PatchTaxRecordRequest) UnmarshalJSON(raw []byte) error {
-	members, err := recordMembers(raw, true)
+	members, err := recordMembers(raw)
 	if err != nil {
 		return err
 	}
@@ -232,9 +199,17 @@ func (p PatchTaxRecordRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(members)
 }
 func (p CreateTaxRecordRequest) input() store.TaxRecordInput {
-	return store.TaxRecordInput{AccountID: p.AccountID, FilerPartyID: p.FilerPartyID, AuthorityPartyID: p.AuthorityPartyID, Kind: p.Kind, Title: p.Title, Country: p.Country, Subdivision: p.Subdivision, TaxKind: p.TaxKind, FormCode: p.FormCode, TaxYear: p.TaxYear, PeriodStart: p.PeriodStart, PeriodEnd: p.PeriodEnd, DueDate: p.DueDate, LeadDays: p.LeadDays, Direction: p.Direction, Amount: p.Amount, Currency: p.Currency, Note: p.Note, AuthoritySet: p.ClearAuthority || p.present["authority_party_id"]}
+	return store.TaxRecordInput{AccountID: p.AccountID, FilerPartyID: p.FilerPartyID, AuthorityPartyID: p.AuthorityPartyID, Kind: p.Kind, Title: p.Title, Country: p.Country, Subdivision: p.Subdivision, TaxKind: p.TaxKind, FormCode: p.FormCode, TaxYear: p.TaxYear, PeriodStart: p.PeriodStart, PeriodEnd: p.PeriodEnd, DueDate: p.DueDate, LeadDays: p.LeadDays, Direction: p.Direction, Amount: p.Amount, Currency: p.Currency, Note: p.Note, AuthoritySet: p.present["authority_party_id"]}
 }
 func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
+	for field, values := range map[string][]string{"kind": taxrecord.RecordKinds(), "direction": taxrecord.RecordDirections()} {
+		if property := schema.Properties[field]; property != nil {
+			for _, value := range values {
+				property.Enum = append(property.Enum, value)
+			}
+		}
+	}
+
 	if kind := schema.Properties["tax_kind"]; kind != nil {
 		kind.Description = "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization."
 	}

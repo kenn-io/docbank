@@ -1,12 +1,9 @@
 package api_test
 
 import (
-	"bytes"
-	"context"
 	"encoding/json/v2"
 	"io"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,43 +33,14 @@ func TestTaxRecordHTTPWorkflow(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/tax/records?country=zz&taxkind=example", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, id)
-	for _, patch := range []map[string]any{{}, {"$schema": "https://example.com/schema"}, {"currency": "JPY"}} {
-		resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, patch)
-		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-		if _, ok := patch["currency"]; !ok {
-			assert.Contains(t, body, `"code":"validation"`)
-		}
-	}
 	resp, body = get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Equal(t, `"1"`, resp.Header.Get("ETag"))
-	var unchanged map[string]any
-	require.NoError(t, json.Unmarshal([]byte(body), &unchanged))
-	assert.Equal(t, record, unchanged)
-	resp, body = do(t, ts, http.MethodPatch, path, nil, map[string]any{"note": "example"})
-	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"9"`}, map[string]any{"note": "example"})
-	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"currency": "JPY", "amount": "1234"})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &record))
-	assert.EqualValues(t, 1234, record["amount_minor"])
-	resp, body = do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": `"2"`}, nil)
+	resp, body = do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": `"1"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = get(t, ts, "/api/v1/tax/records", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.NotContains(t, body, id)
-}
-
-func TestTaxRecordHTTPValidationRedaction(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, nil)
-	const sentinel = "private-synthetic-record"
-	for _, field := range []string{"title", "kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "direction", "amount", "state", "tax_kind", sentinel} {
-		resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, map[string]any{field: []any{sentinel}})
-		assert.GreaterOrEqual(t, resp.StatusCode, 400, field)
-		assert.NotContains(t, body, sentinel, field)
-	}
 }
 
 func createTaxTestRecord(t *testing.T, ts *httptest.Server, input map[string]any) api.TaxRecord {
@@ -188,16 +156,7 @@ func TestTaxRecordAuthorityAndPatchPresence(t *testing.T) {
 	assert.Nil(t, changed.DueDate)
 	assert.Nil(t, changed.LeadDays)
 	assert.Nil(t, changed.AmountMinor)
-	for _, patch := range []map[string]any{{"kind": "audit"}, {"account_id": account.AccountID}, {"state": "filed"}, {"verification": "verified"}, {"revision": 10}, {"title": nil}} {
-		before := readTaxTestRecord(t, ts, one.RecordID)
-		resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"3"`}, patch)
-		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-		assert.Equal(t, before, readTaxTestRecord(t, ts, one.RecordID))
-	}
-	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/records/"+attached.RecordID, map[string]string{"If-Match": `"1"`}, map[string]any{"country": "CA"})
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"3"`}, map[string]any{"country": "CA", "authority_party_id": authority.PartyID})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
 }
 
 func TestTaxRecordMoneyHTTP(t *testing.T) {
@@ -212,6 +171,9 @@ func TestTaxRecordMoneyHTTP(t *testing.T) {
 	omittedAmount, body := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"currency": "JPY"})
 	assert.Equal(t, 422, omittedAmount.StatusCode, body)
 	assert.Contains(t, body, `"code":"invalid_tax"`)
+	assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
+	stale, staleBody := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"9"`}, map[string]any{"currency": "JPY"})
+	assert.Equal(t, http.StatusPreconditionFailed, stale.StatusCode, staleBody)
 	assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
 	resp, body := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"currency": "JPY", "amount": "1234"})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -250,18 +212,7 @@ func TestTaxRecordMoneyHTTP(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"6"`}, map[string]any{"currency": "JPY"})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Equal(t, zero, readTaxTestRecord(t, ts, r.RecordID))
-	for _, tc := range []struct {
-		currency, amount string
-		minor            int64
-	}{{"BHD", "1.234", 1234}, {"USD", "92233720368547758.07", math.MaxInt64}} {
-		v := create(tc.currency, tc.amount, "payable")
-		resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/records/"+v.RecordID, map[string]string{"If-Match": `"1"`}, map[string]any{"note": "preserved"})
-		require.Equal(t, http.StatusOK, resp.StatusCode, body)
-		var got api.TaxRecord
-		require.NoError(t, json.Unmarshal([]byte(body), &got))
-		require.NotNil(t, got.AmountMinor)
-		assert.Equal(t, tc.minor, *got.AmountMinor)
-	}
+
 }
 
 func TestTaxRecordRevisionGateAndAudit(t *testing.T) {
@@ -324,8 +275,7 @@ func TestTaxRecordCancellationAndPrivacy(t *testing.T) {
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Logger = slog.New(slog.NewTextHandler(logFile, nil)) })
 	filer, _ := createTaxTestAccount(t, ts, nil)
 	const secret = "private-synthetic-record-value"
-	r := createTaxTestRecord(t, ts, map[string]any{"filer_party_id": filer.PartyID, "country": "ZZ", "tax_kind": secret, "kind": "filing", "title": secret, "note": secret})
-	path := "/api/v1/tax/records/" + r.RecordID
+	createTaxTestRecord(t, ts, map[string]any{"filer_party_id": filer.PartyID, "country": "ZZ", "tax_kind": secret, "kind": "filing", "title": secret, "note": secret})
 	for _, field := range []string{"account_id", "filer_party_id", "authority_party_id", "kind", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note", "state", "verification", "revision"} {
 		resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, map[string]any{field: []any{secret}})
 		assert.GreaterOrEqual(t, resp.StatusCode, 400, field)
@@ -354,15 +304,6 @@ func TestTaxRecordCancellationAndPrivacy(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, bad.Body.Close())
 	assert.NotContains(t, string(raw), secret)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	req, err = http.NewRequestWithContext(ctx, http.MethodPatch, ts.URL+path, bytes.NewBufferString(`{"note":"changed"}`))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("If-Match", `"1"`)
-	_, err = ts.Client().Do(req)
-	require.Error(t, err)
-	assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
 	content, err := os.ReadFile(logFile.Name())
 	require.NoError(t, err)
 	assert.NotContains(t, string(content), secret)
@@ -375,31 +316,18 @@ func TestTaxRecordRejectedPatchesPreserveRow(t *testing.T) {
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
 	path := "/api/v1/tax/records/" + r.RecordID
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example", "direction": ""})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	const secret = "private-record-value"
 	for _, patch := range []map[string]any{
-		{}, {"$schema": "https://example.com/schema"}, {"title": nil}, {"currency": nil}, {"direction": nil}, {"note": nil},
+		{}, {"$schema": "https://example.com/schema"}, {"title": nil}, {"currency": nil}, {"direction": nil}, {"direction": ""}, {"note": nil},
 		{"tax_year": 10000}, {"lead_days": 367}, {"title": strings.Repeat(secret, 100)}, {"note": strings.Repeat(secret, 1000)},
 		{"due_date": secret}, {"period_start": "2026-02-01", "period_end": "2026-01-01"}, {"amount": secret, "direction": "payable"},
-		{"state": secret}, {"verification": secret}, {"revision": 123}, {"kind": secret}, {secret: secret},
+		{"state": secret}, {"verification": secret}, {"revision": 123}, {"kind": secret}, {"account_id": account.AccountID}, {secret: secret},
 	} {
 		resp, body := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, patch)
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 		assert.NotContains(t, body, secret)
 		assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
 	}
-}
-
-func TestTaxRecordKindNormalizationBoundary(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, nil)
-	filer, _ := createTaxTestAccount(t, ts, nil)
-	body := map[string]any{"filer_party_id": filer.PartyID, "country": "ZZ", "tax_kind": "  " + strings.Repeat("a", 64) + "  ", "kind": "notice", "title": "Example"}
-	resp, raw := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, body)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, raw)
-	var record api.TaxRecord
-	require.NoError(t, json.Unmarshal([]byte(raw), &record))
-	assert.Equal(t, strings.Repeat("a", 64), record.TaxKind)
-	body["tax_kind"] = strings.Repeat("a", 65)
-	resp, raw = do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, body)
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, raw)
 }

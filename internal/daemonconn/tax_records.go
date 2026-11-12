@@ -5,11 +5,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func decodeTaxRecordReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxRecordPage, error) {
@@ -34,7 +36,21 @@ func decodeTaxRecordReceipt(ctx context.Context, response *http.Response, page b
 }
 
 func validTaxRecord(r api.TaxRecord) bool {
-	return validUUIDv4(r.RecordID) && validUUIDv4(r.FilerPartyID) && (r.AccountID == nil || validUUIDv4(*r.AccountID)) && (r.AuthorityPartyID == nil || validUUIDv4(*r.AuthorityPartyID)) && r.Kind != "" && r.Title != "" && r.Country != "" && r.TaxKind != "" && r.State != "" && r.Direction != "" && r.Verification != "" && r.Revision > 0 && r.CreatedAt != "" && r.UpdatedAt != ""
+	if !validUUIDv4(r.RecordID) || !validUUIDv4(r.FilerPartyID) || (r.AccountID != nil && !validUUIDv4(*r.AccountID)) || (r.AuthorityPartyID != nil && !validUUIDv4(*r.AuthorityPartyID)) || r.Revision < 1 {
+		return false
+	}
+	v := taxrecord.RecordValues{AccountID: r.AccountID, FilerPartyID: r.FilerPartyID, AuthorityPartyID: r.AuthorityPartyID, Kind: r.Kind, Title: r.Title, Country: r.Country, Subdivision: r.Subdivision, TaxKind: r.TaxKind, FormCode: r.FormCode, TaxYear: r.TaxYear, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, DueDate: r.DueDate, LeadDays: r.LeadDays, State: r.State, Direction: r.Direction, AmountMinor: r.AmountMinor, Currency: r.Currency, Verification: r.Verification, VerifiedOn: r.VerifiedOn, VerifiedRevision: r.VerifiedRevision, VerificationNote: r.VerificationNote, Note: r.Note}
+	if taxrecord.ValidateRecord(v) != nil {
+		return false
+	}
+	for _, timestamp := range []*string{&r.CreatedAt, &r.UpdatedAt, r.RetiredAt} {
+		if timestamp != nil {
+			if _, err := time.Parse(time.RFC3339Nano, *timestamp); err != nil {
+				return false
+			}
+		}
+	}
+	return true
 }
 func validateTaxRecordResponse(r *api.TaxRecord, response *http.Response, id string) (api.TaxRecord, error) {
 	if r == nil || response == nil || !validTaxRecord(*r) || (id != "" && r.RecordID != id) || response.Header.Get("ETag") != revisionIfMatch(r.Revision) {

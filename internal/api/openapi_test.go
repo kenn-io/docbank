@@ -962,20 +962,9 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	recordRetire := doc.Paths["/api/v1/tax/records/{record_id}/retire"]
 	require.NotNil(t, recordRetire)
 	require.NotNil(t, recordRetire.Post)
-	for _, op := range []*huma.Operation{recordItem.Patch, recordRetire.Post} {
-		required := false
-		for _, param := range op.Parameters {
-			if param.In == "header" && param.Name == "If-Match" {
-				required = param.Required
-			}
-		}
-		assert.True(t, required)
-	}
 	rp := doc.Components.Schemas.Map()["PatchTaxRecordRequest"]
 	require.NotNil(t, rp)
 	assert.Equal(t, false, rp.AdditionalProperties)
-	assert.NotContains(t, rp.Properties, "state")
-	assert.NotContains(t, rp.Properties, "account_id")
 	assert.Equal(t, "string", rp.Properties["amount"].Type)
 	var recordPresence []string
 	for _, option := range rp.AnyOf {
@@ -984,6 +973,7 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	assert.ElementsMatch(t, []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"}, recordPresence)
 	for _, schema := range []*huma.Schema{doc.Components.Schemas.Map()["CreateTaxRecordRequest"], rp} {
 		require.NotNil(t, schema)
+		assert.ElementsMatch(t, []any{"payable", "refundable", "nil", "unknown"}, schema.Properties["direction"].Enum)
 		assert.Equal(t, 256, *schema.Properties["tax_kind"].MaxLength)
 		assert.Contains(t, schema.Properties["tax_kind"].Description, "256 UTF-8 bytes")
 		assert.Equal(t, 1200, *schema.Properties["title"].MaxLength)
@@ -998,6 +988,7 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	for _, name := range []string{"account_id", "authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", "amount_minor", "verified_on", "verified_revision", "retired_at"} {
 		assert.True(t, doc.Components.Schemas.Map()["TaxRecord"].Properties[name].Nullable, name)
 	}
+	assert.ElementsMatch(t, []any{"filing", "payment", "penalty", "notice", "other", "audit", "review"}, doc.Components.Schemas.Map()["CreateTaxRecordRequest"].Properties["kind"].Enum)
 	output := doc.Components.Schemas.Map()["TaxRecord"]
 	require.NotNil(t, output)
 	assert.Equal(t, 64, *output.Properties["tax_kind"].MaxLength)

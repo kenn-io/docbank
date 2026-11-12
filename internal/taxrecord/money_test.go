@@ -8,6 +8,20 @@ import (
 
 func TestTaxMoneyExponents(t *testing.T) {
 	for _, tc := range []struct {
+		code, want string
+		minor      int64
+	}{{"USD", "1234.00", 123400}, {"JPY", "1234", 1234}, {"BHD", "1.234", 1234}, {"USD", "92233720368547758.07", math.MaxInt64}} {
+		got, err := FormatMoney(tc.minor, tc.code)
+		if err != nil || got != tc.want {
+			t.Errorf("FormatMoney(%d, %q) = %q, %v", tc.minor, tc.code, got, err)
+		}
+		parsed, err := ParseMoney(got, tc.code)
+		if err != nil || parsed != tc.minor {
+			t.Errorf("roundtrip = %d, %v", parsed, err)
+		}
+	}
+
+	for _, tc := range []struct {
 		text, code string
 		want       int64
 	}{{"1234.5", "USD", 123450}, {"1.234", "KWD", 1234}, {"1234", "JPY", 1234}, {"9223372036854775807", "JPY", math.MaxInt64}} {

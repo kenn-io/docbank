@@ -64,7 +64,7 @@ non-goals.
 | Import a local tree or upload from another machine | [Create and ingest safely](agents/integration.md#create-and-ingest-safely) |
 | Find existing content or download a version | [Read a tree without unbounded responses](agents/integration.md#read-a-tree-without-unbounded-responses) |
 | Replace content, adopt a prior version, or reorganize inspected nodes | [Use revisions for read-modify-write](agents/integration.md#use-revisions-for-read-modify-write) |
-| Manage tax accounts and records with revision fences | [Tax accounts](usage/tax-records.md) · [HTTP contract](architecture/http-api.md#tax-accounts) |
+| Manage tax accounts and records with revision fences | [Tax accounts and records](usage/tax-records.md) · [HTTP accounts](architecture/http-api.md#tax-accounts) · [HTTP records](architecture/http-api.md#tax-records) |
 | Capture a backup and check its final result | [Follow backup progress](agents/integration.md#follow-backup-progress-without-scraping-a-cli) |
 | Preview placement, repair storage, or evacuate a store | [Multi-store storage](usage/storage.md) |
 

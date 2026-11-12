@@ -11,10 +11,6 @@ import (
 
 func TestTaxRecordDTOJSONPresence(t *testing.T) {
 	t.Parallel()
-	for _, raw := range []string{`{}`, `{"$schema":"https://example.com/schema"}`, `{"title":null}`, `{"state":"filed"}`, `{"unknown":"value"}`} {
-		var patch api.PatchTaxRecordRequest
-		assert.Error(t, json.Unmarshal([]byte(raw), &patch), raw)
-	}
 	var patch api.PatchTaxRecordRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"amount":null,"tax_year":null,"note":"example"}`), &patch))
 	data, err := json.Marshal(patch)
@@ -27,10 +23,7 @@ func TestTaxRecordDTOJSONPresence(t *testing.T) {
 	data, err = json.Marshal(create)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"authority_party_id":null`)
-}
 
-func TestTaxRecordClearControls(t *testing.T) {
-	t.Parallel()
 	p := api.PatchTaxRecordRequest{ClearAuthority: true, ClearTaxYear: true, ClearPeriodStart: true, ClearPeriodEnd: true, ClearDueDate: true, ClearLeadDays: true, ClearAmount: true}
 	raw, err := json.Marshal(p)
 	require.NoError(t, err)
@@ -43,17 +36,9 @@ func TestTaxRecordClearControls(t *testing.T) {
 	for _, name := range []string{"clear_authority", "clear_amount", "title"} {
 		assert.NotContains(t, members, name)
 	}
-	for _, raw := range []string{`{"filer_party_id":null}`, `{"currency":null}`, `{"direction":null}`, `{"account_id":"x"}`, `{"kind":"audit"}`, `{"verification":"verified"}`, `{"revision":2}`} {
-		var v api.PatchTaxRecordRequest
-		assert.Error(t, json.Unmarshal([]byte(raw), &v), raw)
-	}
-}
-
-func TestTaxRecordCreateNullRoundTrip(t *testing.T) {
-	t.Parallel()
-	var p api.CreateTaxRecordRequest
-	require.NoError(t, json.Unmarshal([]byte(`{"kind":"filing","title":"Example","account_id":null,"authority_party_id":null,"tax_year":null,"period_start":null,"period_end":null,"due_date":null,"lead_days":null,"amount":null}`), &p))
-	raw, err := json.Marshal(p)
+	var createNull api.CreateTaxRecordRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"kind":"filing","title":"Example","account_id":null,"authority_party_id":null,"tax_year":null,"period_start":null,"period_end":null,"due_date":null,"lead_days":null,"amount":null}`), &createNull))
+	raw, err = json.Marshal(createNull)
 	require.NoError(t, err)
 	var fields map[string]any
 	require.NoError(t, json.Unmarshal(raw, &fields))

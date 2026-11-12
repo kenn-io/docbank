@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 type recordFlags struct {
@@ -20,7 +22,7 @@ func (f *recordFlags) bind(cmd *cobra.Command, create bool) {
 	flags := cmd.Flags()
 	if create {
 		flags.StringVar(&f.account, "account", "", "account ID")
-		flags.StringVar(&f.kind, "kind", "", "record kind")
+		flags.StringVar(&f.kind, "kind", "", "record kind: "+strings.Join(taxrecord.RecordKinds(), ", "))
 	}
 	flags.StringVar(&f.filer, "filer", "", "filer party ID")
 	flags.StringVar(&f.authority, "authority", "", "authority party ID")
@@ -34,7 +36,7 @@ func (f *recordFlags) bind(cmd *cobra.Command, create bool) {
 	flags.StringVar(&f.periodEnd, "period-end", "", "period end date")
 	flags.StringVar(&f.due, "due-date", "", "due date")
 	flags.Int64Var(&f.lead, "lead-days", 0, "lead days")
-	flags.StringVar(&f.direction, "direction", "", "amount direction")
+	flags.StringVar(&f.direction, "direction", "", "amount direction: "+strings.Join(taxrecord.RecordDirections(), ", "))
 	flags.StringVar(&f.amount, "amount", "", "exact decimal amount")
 	flags.StringVar(&f.currency, "currency", "", "currency code")
 	flags.StringVar(&f.note, "note", "", "record note")
@@ -117,6 +119,9 @@ func (f *recordFlags) patch(cmd *cobra.Command) (api.PatchTaxRecordRequest, erro
 	return p, nil
 }
 func (f *recordFlags) create(cmd *cobra.Command) (api.CreateTaxRecordRequest, error) {
+	if cmd.Flags().Changed("direction") && f.direction == "" {
+		return api.CreateTaxRecordRequest{}, usageError(errors.New("direction: unknown direction"))
+	}
 	if f.clearAuthority && cmd.Flags().Changed("authority") {
 		return api.CreateTaxRecordRequest{}, usageError(errors.New("cannot set and clear the same field"))
 	}
@@ -230,8 +235,8 @@ func newTaxRecordCommand() *cobra.Command {
 	list.Flags().StringVar(&country, "country", "", "filter by country")
 	list.Flags().StringVar(&taxkind, "taxkind", "", "filter by tax kind")
 	list.Flags().Int64Var(&year, "year", 0, "filter by tax year")
-	list.Flags().StringVar(&state, "state", "", "filter by state")
-	list.Flags().StringVar(&kind, "kind", "", "filter by record kind")
+	list.Flags().StringVar(&state, "state", "", "filter by state: "+strings.Join(taxrecord.RecordStates(), ", "))
+	list.Flags().StringVar(&kind, "kind", "", "filter by record kind: "+strings.Join(taxrecord.RecordKinds(), ", "))
 	list.Flags().BoolVar(&include, "include-retired", false, "include retired records")
 	list.Flags().IntVar(&limit, "limit", 100, "maximum number of records")
 	list.Flags().IntVar(&offset, "offset", 0, "number of records to skip")
