@@ -27,6 +27,12 @@ func TestDocumentFactsCommands(t *testing.T) {
 	require.NoError(t, err)
 	_, err = catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: f.nodes["notes.txt"].CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
+	blind, err := catalog.CreatePerson(t.Context(), "Synthetic Blind Recipient", "operator")
+	require.NoError(t, err)
+	_, err = catalog.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: f.nodes["notes.txt"].CurrentVersionID, PersonID: blind.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = catalog.Mkdir(t.Context(), catalog.RootID(), "empty")
+	require.NoError(t, err)
 	require.NoError(t, catalog.Close())
 	t.Setenv("DOCBANK_HOME", f.root)
 	stop := startServe(t)
@@ -41,6 +47,16 @@ func TestDocumentFactsCommands(t *testing.T) {
 			require.Contains(t, table, "author")
 			require.Contains(t, table, "assert")
 		}
+		safeOutput, err := runCLI(t, "document", noun, "/notes.txt", "--json")
+		require.NoError(t, err)
+		if noun == "people" {
+			var safe api.VersionPeople
+			require.NoError(t, json.Unmarshal([]byte(safeOutput), &safe))
+			require.Len(t, safe.Assertions, 1)
+			require.Equal(t, person.PersonID, safe.Assertions[0].PersonID)
+		}
+		_, err = runCLI(t, "document", noun, "/empty")
+		require.ErrorContains(t, err, "document has no current content version")
 		output, err := runCLI(t, "document", noun, "/notes.txt", "--json", "--full")
 		require.NoError(t, err)
 		if noun == "dates" {
@@ -51,6 +67,13 @@ func TestDocumentFactsCommands(t *testing.T) {
 			var got api.VersionPeople
 			require.NoError(t, json.Unmarshal([]byte(output), &got))
 			require.Equal(t, f.nodes["notes.txt"].CurrentVersionID, got.ContentVersionID)
+			require.Len(t, got.Assertions, 2)
+			roles := map[string]string{}
+			for _, assertion := range got.Assertions {
+				roles[assertion.PersonID] = assertion.Role
+			}
+			require.Equal(t, "author", roles[person.PersonID])
+			require.Equal(t, "blind_copy", roles[blind.PersonID])
 		}
 	}
 }
