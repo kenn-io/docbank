@@ -335,6 +335,37 @@ async function submitSearch(value: string): Promise<void> {
 }
 
 it.each([
+  [
+    "web_browser",
+    "Browser cookie required",
+    "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues.",
+  ],
+  ["invalid_request", "Invalid request", "Docbank couldn't restart: Invalid request"],
+])("shows a restart refusal for %s and keeps the workspace", async (code, detail, message) => {
+  searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    apply: async () => json(localPlan),
+    restart: async () =>
+      new Response(JSON.stringify({ code, detail }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+  });
+  render(App);
+  const search = await screen.findByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "unfinished draft" } });
+  const drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
+  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
+  expect((await within(drawer).findByRole("alert")).textContent).toContain(message);
+  expect(within(drawer).queryByText(/may still happen later/)).toBeNull();
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  expect((search as HTMLInputElement).value).toBe("unfinished draft");
+});
+
+it.each([
   [true, false],
   [true, true],
   [false, false],

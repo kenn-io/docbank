@@ -2030,6 +2030,13 @@
     } catch (cause) {
       if (!mounted || webSession !== session) return;
       if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
+      if (cause instanceof APIError && cause.status >= 400 && cause.status < 500) {
+        localText.error =
+          cause.code === "web_browser"
+            ? "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues."
+            : `Docbank couldn't restart: ${cause.message}`;
+        return;
+      }
       notice =
         cause instanceof APIError && cause.code === "restart_failed"
           ? `Docbank couldn't restart: ${cause.message}`
