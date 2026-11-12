@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,30 +278,54 @@ func TestDaemonAutomaticPDFText(t *testing.T) {
 			defer stop()
 			waitForDaemon(t, home)
 			require.NoError(t, os.WriteFile(path, data, 0600))
-			var deadline context.Context
 			if !test.existing {
-				settleDaemon(t)
-				var cancel context.CancelFunc
-				deadline, cancel = context.WithTimeout(t.Context(), 10*time.Second)
-				defer cancel()
 				_, err := runCLI(t, "document", "add", path, "--dest", "/pdfs")
 				require.NoError(t, err)
 			}
-			if test.existing {
-				settleDaemon(t)
-			} else {
-				value, ok := testDaemons.Load(home)
-				require.True(t, ok)
-				daemon, ok := value.(serveReady)
-				require.True(t, ok)
-				require.NoError(t, daemon.jobs.Settle(deadline))
-			}
+			// Drain real PDF work without making host CPU speed a correctness assertion.
+			settleDaemon(t)
 			out, err := runCLI(t, "search", "distinctivequartz", "--mode", "lexical")
 			require.NoError(t, err)
 			require.Contains(t, out, "/pdfs/source.pdf")
-			if deadline != nil {
-				require.NoError(t, deadline.Err(), "import and search exceeded ten seconds")
-			}
+			out, err = runCLI(t, "rendition", "window", "/pdfs/source.pdf")
+			require.NoError(t, err)
+			require.Contains(t, out, "distinctivequartz on page two")
 		})
 	}
+}
+
+func TestDaemonWindowRetainedPDFProfiles(t *testing.T) {
+	if !isolatedPDFTextRuntime(t) {
+		return
+	}
+	fixture := newReportRenditionFixture(t)
+	home := t.TempDir()
+	layout := vaulthome.Layout{Root: home}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
+	require.NoError(t, err)
+	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+	require.NoError(t, err)
+	data := mediatest.PDFTextPages([]string{""}, false)
+	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "text.pdf", written.Hash, written.Size, "application/pdf", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+	require.NoError(t, err)
+	fixture.publish(t, catalog, blobs, node, document.SourceEvidenceV1{ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete, Family: "pdf", UnitKind: document.EvidenceUnitPage, Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: "retained distinctive text", Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage, IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1}}}})
+	require.NoError(t, blobs.Close())
+	require.NoError(t, catalog.Close())
+	var configData bytes.Buffer
+	require.NoError(t, toml.NewEncoder(&configData).Encode(map[string]any{"rendition_profiles": fixture.config.RenditionProfiles, "retrieval_profiles": fixture.config.RetrievalProfiles, "processing_profiles": fixture.config.ProcessingProfiles}))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), configData.Bytes(), 0600))
+	t.Setenv("DOCBANK_HOME", home)
+	stop := startServe(t)
+	defer stop()
+	waitForDaemon(t, home)
+	settleDaemon(t)
+	id := fmt.Sprintf("id:%d", node.ID)
+	output, err := runCLI(t, "rendition", "window", id, "--profile", "archive")
+	require.NoError(t, err)
+	require.Contains(t, output, "retained distinctive text")
 }

@@ -326,8 +326,8 @@ Check the displayed range, opt in to keeping the unredacted original indefinitel
 and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
 a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
 points. The server verifies the content and footer before publication.
-**Download numbered PDF** downloads the retained PDF, and **Open Productions**
-opens its recovery view. After editing masks, create another preview to number
+Each kept PDF shows its label range. Under **Download**, **PDF** downloads the
+retained PDF; the open icon beside the range opens Productions. After editing masks, create another preview to number
 the new review with a separate range. Earlier published PDFs stay downloadable
 until you close the review. Downloads check the retained file
 identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
@@ -433,6 +433,22 @@ redactions. Load-file exports accept ordinary
 stamped allocations only. Use `redaction package` for a recipient delivery of numbered redactions.
 
 ### Package completed numbered PDFs for a recipient
+
+In the browser review, choose **Download** › **Recipient ZIP** beside a completed
+numbered PDF. Each completed delivery keeps its own action, even after you edit
+masks or publish another range. The ZIP contains that retained PDF, its reviewed
+text without footer labels, and DAT/OPT load files for recipient import. Private
+preparation, masks and review files stay outside the ZIP.
+
+The server rechecks masks, text and numbers before offering the download. It does
+not render again or need the original to remain live. The page runtime is not
+required; the recorded renderer and writer must still be supported for full
+verification. No weaker check is substituted. The package holds no rendering
+slot while waiting for download, but only one package can wait or transfer at a
+time. Its unused download link expires after two minutes. Keep the review open until
+the transfer finishes: closing it cancels the package and any transfer in
+progress. If cleanup fails, choose **Release recipient ZIP** before retrying. The completed PDF remains in
+Productions, while preparing a new recipient ZIP needs its open private review.
 
 `redaction package` puts completed numbered redactions into one ZIP for import
 by a recipient. It preserves each retained PDF and its numbers, verifies masks,
@@ -756,10 +772,15 @@ docbank processing coverage <version-uuid> --profile <name> --json
 docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
 ```
 
-Both commands require a profile listed by `docbank processing profiles --json`.
-A configured profile whose runtime is unavailable is not enough, even if its
-renditions are retained. Reports can still use retained evidence under such a
-configured profile. A profile error here does not mean that evidence is missing.
+For an indexed PDF with one readable profile, omit the version and profile:
+
+```bash
+docbank rendition window /inbox/report.pdf
+```
+
+Coverage requires a profile listed by `docbank processing profiles --json`.
+Window reads can also use a configured profile whose runtime is unavailable.
+Reports can use retained evidence under such a profile.
 
 Coverage reports rendition and embedding counters for the one requested
 version. JSON contains `content_version_id` and the complete `coverage` object.
@@ -775,8 +796,13 @@ succeed.
 
 ### Read and continue a text window
 
-`rendition window` requires the selected version to remain current and live.
-It discovers the active rendition for the named profile and returns at most
+`rendition window` reads the current version and selects the one active
+rendition with readable text. If several have text, it lists their names and
+exits with a usage error; pass `--profile` to choose one. When a profile was
+removed or edited, its retained rendition is identified by fingerprint; pass
+the listed `--attachment` to choose it. `--version` pins
+the current version, and the selected version must remain current and live.
+It returns at most
 8,000 characters by default. Use `--max-chars` for 1–16,000 characters and
 `--json` for the text, full rendition identity, offsets, and EOF flag.
 The text is stored Markdown, including its metadata envelope and escaped
@@ -802,7 +828,7 @@ components, with a path longer than 16 KiB in UTF-8 bytes, or with a filename
 longer than 255 Unicode scalar values. The filename cap does not apply to
 ancestor directories. The CLI names the exceeded limit. Refreshing the
 selection does not solve it. If you know the active attachment, pass
-`--attachment` to skip discovery. The version and profile checks still apply.
+`--attachment` to skip discovery. The version and any supplied profile are still checked.
 
 Each unpinned discovery scans the traversable live vault tree. Pinned calls
 skip that scan. The text reader still reads from the beginning to reach the

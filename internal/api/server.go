@@ -191,6 +191,7 @@ func NewServer(d Deps) *Server {
 		}
 		s.webDownloads.revokeOwner(owner)
 		d.Processing.RevokeRedactionPreviews(owner)
+		d.Processing.RevokeRecipientPackages(owner)
 		if d.Store != nil {
 			// Hidden unlocks are vault-wide, so ending any browser session locks Hidden.
 			if err := d.Store.LockPhotoHidden(context.Background()); err != nil {
@@ -232,6 +233,7 @@ func NewServer(d Deps) *Server {
 	registerContentWriteRoute(mux, humaAPI, d, g)
 	registerRedactionRoutes(mux, humaAPI, d)
 	s.registerRedactionPreviews(mux)
+	s.registerRecipientPackages(mux)
 	registerContentRevertRoute(humaAPI, d, g)
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
@@ -290,6 +292,7 @@ func NewServer(d Deps) *Server {
 	registerPhotoImportCheckpoint(mux, humaAPI, d)
 	registerTelemetryEvents(mux, d.TelemetryCapture)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
+	registerOriginalDownload(humaAPI, d, s.webDownloads)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := photoHiddenMiddleware(http.Handler(mux))

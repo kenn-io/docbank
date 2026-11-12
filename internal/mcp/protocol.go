@@ -64,6 +64,7 @@ func NewServerWithConnection(connection *daemonconn.Connection, options ServerOp
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return connection, nil
 	}, func(c *daemonconn.Connection) error { return c.Close() })
+	lease.suppliedConnection = connection
 	return newServerWithOptionsAndDaemon(defaultImplementation(), options, lease)
 }
 

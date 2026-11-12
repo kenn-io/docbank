@@ -240,6 +240,27 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
+An unreleased `currentStorageSchemaVersion` needs a record. Its layout hash
+includes tables, views, triggers, and unique indexes. It excludes non-unique
+indexes and ignores SQL whitespace and comments while preserving token
+spellings. Run `go test -tags fts5 ./internal/store -run
+TestStorageSchemaVersionContract` and add a file under
+`internal/store/testdata/schema-contracts/`. Name the file
+`NNNNNN-<layout-sha256>-<summary-slug>.schema`. The test prints the version
+and layout hash. The summary slug has 1–48 characters: lowercase ASCII letters
+or digits, with words separated by single hyphens. The test also prints sorted
+`name digest` lines for non-unique indexes to put in the record. New indexes
+need another record with their lines. If you change or remove an index in your
+own unmerged record, remove the record, rerun the test, and add its replacement.
+If `main` already records the index, preserve its record and bump
+`currentStorageSchemaVersion`.
+If you change your own unmerged layout, replace its record with the newly named
+file. If `main` already records that version, preserve its record, remove your
+old record, bump `currentStorageSchemaVersion`, rerun the test against the
+combined layout, and add the new record.
+
+Keep the record after release; the unreleased-version test then skips it.
+
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
 `schema.sql` saved as `internal/store/testdata/schema-<tag>.sql` and registered
@@ -367,9 +388,9 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer and backup recovery remain unqualified. Native multi-store catalog
-operations are qualified below; deployment adapters and filesystem workers
-remain separate from public PostgreSQL vault opening.
+PostgreSQL metadata import and physical backup recovery remain unqualified.
+Native multi-store catalog operations are qualified below; deployment adapters
+and filesystem workers remain separate from public PostgreSQL vault opening.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -866,6 +887,40 @@ remove expired plans between read statements, and recheck explicit photo inputs
 before publication. Runtime grants permit only inserts into members, chunks,
 planned documents and roots; source, plan and job updates are limited to their
 existing mutable columns. These grants do not replace Store lifecycle checks.
+
+#### Logical metadata snapshots and SQLite recovery
+
+The internal Store exports deterministic logical metadata on either backend
+through `ExportMetadata`. `BeginMetadataSnapshot` pins the database view before
+returning; its `Export`, `ExportBackup` and blob-authority queries keep that same
+view while writers continue. PostgreSQL uses a read-only `REPEATABLE READ`
+transaction from the runtime pool. Closing the snapshot releases its connection
+and leaves the pool open. SQLite keeps its dedicated deferred connection so a
+backup does not take its writer lock.
+
+Both streams use the existing metadata JSONL format, validators and dependency
+order. The header carries the vault UUID and transactional node allocation
+high-water mark, including IDs whose nodes were deleted. `ExportBackup` includes
+only the retained document and artifact blob closure; uncommitted provider
+staging is excluded. Full export keeps the complete logical blob catalog.
+Neither stream contains physical pack placements or rebuildable search indexes.
+An export validates the retained metadata before writing its header. Treat a
+destination error as a failed export and discard the partial output.
+
+PostgreSQL metadata can be imported through `ImportMetadata` into a fresh SQLite
+Store. The source stays unchanged. Logical identities, retained processing
+authority and canonical audit history survive this transfer; `VerifyAudit`
+replays the history and can compare previously recorded evidence on either
+backend. Copying the metadata stream alone does not recover blob bytes or
+physical pack authority. PostgreSQL import, filesystem backup/restore and public
+PostgreSQL vault opening remain separate boundaries.
+
+The `metadata-export` contracts cover native audited transfer, deterministic
+exports of retained catalogs, backup blob selection, snapshot isolation, canceled
+calls and failed destinations. They recover through the existing SQLite importer
+and re-export the restored metadata. Retained catalog fixtures qualify the
+exporter, not their producers. Existing runtime SELECT grants cover this path;
+no schema changes or extra write privileges are required.
 
 #### PostgreSQL reference implementations
 
@@ -2199,8 +2254,9 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
-The exception is the `CI gate` job in `ci-pr.yml`, which only checks the CI
-run's result. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
+The exception is the `CI gate` job in `ci-pr.yml`, which checks the CI
+run's result and preserves schema records from the pull request or merge-group
+base. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
 it does not wait in the GitHub-hosted queue after CI finishes.
 
 Go test jobs run `go test` through gotestsum, which the module pins as a Go

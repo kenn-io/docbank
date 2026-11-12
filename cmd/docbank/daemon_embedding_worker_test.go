@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/embedclient"
 )
 
 func TestDaemonRecoversSemanticSpaceEmbeddingJob(t *testing.T) {
@@ -317,6 +318,9 @@ func TestEmbeddingRuntimeClassifiesOpenAIResponseFailures(t *testing.T) {
 		require.Zero(t, delay)
 	}
 	classification, delay := classifyOpenAIEmbeddingError(fmt.Errorf("%w: local request envelope", openaicompat.ErrCapacityResponse))
+	require.Equal(t, processing.EmbeddingProviderCapacity, classification)
+	require.Zero(t, delay)
+	classification, delay = classifyOpenAIEmbeddingError(&embedclient.TransportError{Err: context.DeadlineExceeded})
 	require.Equal(t, processing.EmbeddingProviderCapacity, classification)
 	require.Zero(t, delay)
 }

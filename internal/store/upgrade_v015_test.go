@@ -379,15 +379,23 @@ func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 
 func releasedSchemaCatalog(t *testing.T, db *sql.DB, indexes bool) map[string][3]string {
 	t.Helper()
+	catalog := make(map[string][3]string)
+	for _, row := range releasedSchemaCatalogRows(t, db, indexes) {
+		catalog[row[1]] = [3]string{row[0], row[2], row[3]}
+	}
+	return catalog
+}
+
+func releasedSchemaCatalogRows(t *testing.T, db *sql.DB, indexes bool) [][4]string {
+	t.Helper()
 	rows, err := db.QueryContext(t.Context(), `SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' AND (? OR type<>'index') ORDER BY type,name`, indexes)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
-	catalog := make(map[string][3]string)
+	var catalog [][4]string
 	for rows.Next() {
-		var name string
-		var object [3]string
-		require.NoError(t, rows.Scan(&object[0], &name, &object[1], &object[2]))
-		catalog[name] = object
+		var object [4]string
+		require.NoError(t, rows.Scan(&object[0], &object[1], &object[2], &object[3]))
+		catalog = append(catalog, object)
 	}
 	require.NoError(t, rows.Err())
 	return catalog

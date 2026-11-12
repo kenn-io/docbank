@@ -4580,6 +4580,26 @@ export interface NumberedReservationRequest {
   start_at: number;
 }
 
+export interface OriginalDownloadSelection {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  blob_hash: string;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 0 */
+  size: number;
+  vault_id: string;
+}
+
+export interface OriginalDownloadTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expires_in_seconds: number;
+  name: string;
+  url: string;
+}
+
 export interface OutputCounts {
   attachment_pdfs: number;
   attachments: number;
@@ -7483,6 +7503,18 @@ export interface ProcessingProfileSummary {
   reranking_available?: boolean;
 }
 
+export interface Profile {
+  columns: string[];
+  date_format: string;
+  declared_timezone: string;
+  encoding: string;
+  field: number;
+  header_row: boolean;
+  id: string;
+  newline_in_field: number;
+  qualifier: number;
+}
+
 export type PromotePhotoNodeRequestKind = typeof PromotePhotoNodeRequestKind[keyof typeof PromotePhotoNodeRequestKind];
 
 
@@ -7640,6 +7672,53 @@ export interface QueryPreview {
   dependencies: QueryDependency[];
   query: SavedQueryV1Schema;
   query_fingerprint: string;
+}
+
+export interface RecipientPackageFile {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+export interface RecipientPackageDocument {
+  allocation_id: string;
+  artifact_manifest_sha256: string;
+  document_id: string;
+  labels: string[];
+  namespace_id: string;
+  ordinal: number;
+  page_count: number;
+  pdf: RecipientPackageFile;
+  recipe_sha256: string;
+  review_sha256: string;
+  text: RecipientPackageFile;
+}
+
+export interface RecipientPackageReceipt {
+  contract: string;
+  dat_profile: Profile;
+  document_count: number;
+  documents: RecipientPackageDocument[];
+  load_file: RecipientPackageFile;
+  mapping: RecipientPackageFile;
+  opt_profile: Profile;
+  page_count: number;
+  page_map: RecipientPackageFile;
+}
+
+export interface RecipientPackageDownload {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  contract: string;
+  expires_at: string;
+  id: string;
+  name: string;
+  receipt: RecipientPackageReceipt;
+  sha256: string;
+  size: number;
+  url: string;
+  verification: string;
 }
 
 export interface RedactionFileDigest {
@@ -7878,6 +7957,8 @@ export interface RenditionTextRequest {
   readonly $schema?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
+  /** Resolve the exact observed active rendition independently of the current default profile */
+  exact_rendition?: boolean;
   /** @minimum 1 */
   node_id: number;
   observed?: RenditionTextObserved;
@@ -10079,6 +10160,13 @@ hidden?: boolean;
 
 export type SetPhotoSettingsHeaders = {
 'If-Match': string;
+};
+
+export type ListDocumentProcessingProfilesParams = {
+/**
+ * Include configured profiles without an executable runtime
+ */
+include_configured?: boolean;
 };
 
 export type ListPushSourcesParams = {
@@ -19314,20 +19402,27 @@ return sessionJSON<ProcessingPlan>(getPlanDocumentProcessingUrl(),
 
 
 
-export const getListDocumentProcessingProfilesUrl = () => {
+export const getListDocumentProcessingProfilesUrl = (params?: ListDocumentProcessingProfilesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/processing/profiles`
+  return stringifiedParams.length > 0 ? `/api/v1/processing/profiles?${stringifiedParams}` : `/api/v1/processing/profiles`
 }
 
 /**
- * @summary List locally executable document-processing profiles
+ * @summary List document-processing profiles
  */
-export const listDocumentProcessingProfiles = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
+export const listDocumentProcessingProfiles = async (params?: ListDocumentProcessingProfilesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
 
-  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(),
+  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -19825,6 +19920,68 @@ export const publishNumberedPDF = async (redactionRenderRequest: NonReadonly<Red
     return headers;
   };
 return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
+export const getDiscardRecipientPackagesUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Cancel this owner's recipient package and transfer
+ */
+export const discardRecipientPackages = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRecipientPackagesUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getBuildRecipientPackageUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Prepare a recipient ZIP from one completed numbered review
+ */
+export const buildRecipientPackage = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RecipientPackageDownload> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecipientPackageDownload>(getBuildRecipientPackageUrl(),
   {
     ...options,
     method: 'POST',
@@ -22043,6 +22200,45 @@ return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
     method: 'GET',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
+  }
+);}
+
+
+
+export const getPrepareOriginalDownloadUrl = (versionId: string,) => {
+
+
+
+
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/download-ticket`
+}
+
+/**
+ * @summary Issue a single-use original download URL valid for two minutes
+ */
+export const prepareOriginalDownload = async (versionId: string,
+    originalDownloadSelection: NonReadonly<OriginalDownloadSelection>, options?: Parameters<typeof sessionJSON>[1]): Promise<OriginalDownloadTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<OriginalDownloadTicket>(getPrepareOriginalDownloadUrl(versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(originalDownloadSelection)
   }
 );}
 
