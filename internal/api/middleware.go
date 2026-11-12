@@ -303,6 +303,11 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 					"browser sessions cannot use this endpoint"))
 				return
 			}
+			// Server sign-in already wraps every protected response; a loopback
+			// session has no login policy, so keep the two tax reads private here.
+			if taxBrowserReadAllowed(r) {
+				w = &webPrivateResponse{ResponseWriter: w}
+			}
 			ctx, cancel := context.WithCancel(r.Context())
 			stop := context.AfterFunc(sessionCtx, cancel)
 			defer stop()
