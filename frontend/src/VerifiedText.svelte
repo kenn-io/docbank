@@ -203,6 +203,9 @@
 
 {#snippet pdfNotice()}
   <p class="notice" role="status">
+    {#if resolution?.state === "verified_empty"}
+      {stateMessage("verified_empty")}
+    {/if}
     {missingPages.length === 1 ? "Page" : "Pages"}
     {pageRanges(missingPages)}
     {missingPages.length === 1 ? "has" : "have"} no text layer. If {missingPages.length === 1
@@ -302,7 +305,7 @@
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
       </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
-  {:else if resolution && resolution.state !== "ready"}
+  {:else if resolution && resolution.state !== "ready" && !(resolution.state === "verified_empty" && missingPages.length)}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
 </div>

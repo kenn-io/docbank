@@ -224,8 +224,10 @@ it.each([
       rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  else
-    expect(
-      screen.getByText("Processing verified that this document has no readable text."),
-    ).toBeTruthy();
+  else {
+    expect(rendered.textContent).toContain(
+      "Processing verified that this document has no readable text.",
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  }
 });
