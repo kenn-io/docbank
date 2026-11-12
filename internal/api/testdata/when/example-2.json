@@ -1,0 +1,4 @@
+{"state": "exact", "precision": "second",
+ "at": "2026-03-11T03:40:00Z", "zone_state": "unknown",
+ "placed_by": {"source": "unrecorded", "rule": "msgvault-dating/legacy", "fallback": false},
+ "day": "2026-03-10", "axis_minute": 1420}

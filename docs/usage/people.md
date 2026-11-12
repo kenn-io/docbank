@@ -11,6 +11,17 @@ daemon API and CLI can list, search, create, rename, retire, merge, and split
 these records. MCP can find and read them. Every edit to an existing person
 uses the revision returned by the preceding read.
 
+## Read a document's people
+
+Run `docbank document people <path-or-id>` to see the current version's people
+and unresolved names. Add `--json` for structured output or `--full` to include
+sensitive claims with an API key. The API reads a specific version at
+`GET /api/v1/versions/{version_id}/people`; `disclosure=safe` is the default,
+and `disclosure=full` requires an API key. Browser sessions and MCP's
+`get_document_people` use safe disclosure, which omits blind-copy evidence and
+provisional people without visible support. The response reports the derivation
+state so an unavailable or stale publication is not mistaken for an empty one.
+
 ## People in Photos
 
 Open **Photos → People** to browse the people in your visible photos, 24 cards at a time. Each card shows an assigned face and the number of Library photos depicting that person. Several faces or paired RAW and JPEG files count as one photo. A card shows a person icon when no readable assigned face is available. People with no visible photo, such as email contacts, get no card.

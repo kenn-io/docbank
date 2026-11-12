@@ -1,0 +1,3 @@
+{"state": "date", "precision": "date", "date": "2026-03-09", "end_date": "2026-03-11",
+ "placed_by": {"source": "event_start", "rule": "msgvault-dating/v1", "fallback": false},
+ "day": "2026-03-10"}
