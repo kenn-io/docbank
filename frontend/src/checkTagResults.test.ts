@@ -17,7 +17,7 @@ const request: BatchTagRequest & { nodes: SelectionTarget[] } = {
 afterEach(() => vi.restoreAllMocks());
 
 it("keeps matched and unavailable documents", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith(`/tags/${request.tag_id}`))
       return Response.json({ id: request.tag_id, name: "Review" });
@@ -30,8 +30,14 @@ it("keeps matched and unavailable documents", async () => {
         trashed_at: "2026-01-01",
       });
     if (url.includes("/nodes/3")) return Response.json({ detail: "Missing" }, { status: 404 });
-    if (url.includes("/tags?"))
-      return Response.json({ items: [{ id: request.tag_id }], total: 1, limit: 1000, offset: 0 });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: request.tag_id,
+        tag_revision: 2,
+        nodes: [{ ...nodes[0], assigned: true }],
+      });
+    }
     return Response.json({ id: 1, name: "Live", path: "/Live", revision: 4 });
   });
   const progress: number[] = [];
@@ -93,15 +99,19 @@ it("stops pending reads and schedules no more documents when canceled", async ()
 });
 
 it("classifies removal results", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith(`/tags/${request.tag_id}`))
       return Response.json({ id: request.tag_id, name: "Review" });
-    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-    if (url.includes("/tags?")) {
-      const items = id === 1 ? [{ id: request.tag_id }] : [];
-      return Response.json({ items, total: items.length, limit: 1000, offset: 0 });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: request.tag_id,
+        tag_revision: 2,
+        nodes: [{ ...nodes[0], assigned: nodes[0].node_id === 1 }],
+      });
     }
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
     return Response.json({ id, name: `File ${id}`, revision: id + 1 });
   });
   const { rows } = await checkTagResults("session", { ...request, assign: false }, () => {});
@@ -109,5 +119,29 @@ it("classifies removal results", async () => {
     [1, "remaining", 2],
     [2, "matched", 3],
     [3, "matched", 4],
+  ]);
+});
+
+it("marks a document unavailable when its revision changes before preview", async () => {
+  const calls: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    if (url.endsWith(`/tags/${request.tag_id}`))
+      return Response.json({ id: request.tag_id, name: "Review" });
+    if (url.endsWith("/batch/tags/preview"))
+      return Response.json({ code: "stale_revision" }, { status: 409 });
+    return Response.json({ id: 1, name: "Live", revision: 4 });
+  });
+  const { rows } = await checkTagResults(
+    "session",
+    { ...request, nodes: [request.nodes[0]] },
+    () => {},
+  );
+  expect(rows).toEqual([{ node_id: 1, name: "Live", status: "unavailable" }]);
+  expect(calls).toEqual([
+    `GET /api/v1/tags/${request.tag_id}`,
+    "GET /api/v1/nodes/1",
+    "POST /api/v1/batch/tags/preview",
   ]);
 });

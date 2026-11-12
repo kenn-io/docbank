@@ -1371,7 +1371,7 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   expect(screen.getByRole("region", { name: "Verified content of readme.txt" })).toBeTruthy();
 });
 
-it("refreshes inspected tags when checking an uncertain selection change", async () => {
+it("refreshes inspected tags after closing an uncertain selection change", async () => {
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();
   const backend = fetchMock.getMockImplementation()!;
@@ -1413,9 +1413,9 @@ it("refreshes inspected tags when checking an uncertain selection change", async
   await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await screen.findByRole("button", { name: "Check tag results" });
-  await waitFor(() => expect(screen.queryByText("Inspector unavailable")).toBeNull());
   changed = true;
-  await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByText("Inspector unavailable")).toBeNull());
   await waitFor(() =>
     expect(document.querySelector('[aria-label="Assigned tags"]')?.textContent).toContain("tax"),
   );

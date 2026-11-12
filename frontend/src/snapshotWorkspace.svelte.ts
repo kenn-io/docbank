@@ -54,7 +54,7 @@ export class SnapshotWorkspace {
     query: Query,
     options: SnapshotOptions,
   ): Promise<{ type: "text"; empty: boolean } | { type: "failed"; cause: Error } | undefined> {
-    if (!this.keepsOpenTagChange(query)) this.invalidateActions();
+    this.invalidateActions();
     const epoch = this.epoch;
     const session = this.getSession();
     await this.snapshotSession().run(query, options);
@@ -100,11 +100,6 @@ export class SnapshotWorkspace {
   dismissRecovery(): void {
     this.closeRecovery();
     void this.refreshRetained();
-  }
-
-  // Rerunning the same query behind a selection tag change leaves it open: its documents are captured.
-  private keepsOpenTagChange(query: Query): boolean {
-    return this.actionsOpen && this.actionsScope === "selection" && query === this.state.query;
   }
 
   private invalidateActions(): void {

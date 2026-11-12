@@ -192,10 +192,11 @@ export async function previewBatchTags(
   session: string,
   tagID: string,
   targets: readonly Pick<SelectionTarget, "node_id" | "revision">[],
+  signal?: AbortSignal,
 ): Promise<BatchTagPreview> {
   if (!validUUID(tagID)) throw new Error("Choose a valid tag identity.");
   const nodes = canonicalTargets(targets);
-  const value = await generated.previewBatchTags({ tag_id: tagID, nodes }, { session });
+  const value = await generated.previewBatchTags({ tag_id: tagID, nodes }, { session, signal });
   const invalid = () =>
     new Error("The daemon returned an incomplete or invalid tag membership preview.");
   if (

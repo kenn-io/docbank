@@ -13,14 +13,12 @@
   import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
   import DownloadIcon from "@lucide/svelte/icons/download";
-  import { Disclosure, Button, Modal, Spinner } from "@kenn-io/kit-ui";
+  import { Disclosure, Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
   import { encodeRecovery } from "./actionRecovery.js";
   import { runAction, type ActionProgress } from "./actionRunner.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
-  import DocumentPager from "./DocumentPager.svelte";
-  import DocumentTable from "./DocumentTable.svelte";
 
   interface Props {
     session: string;
@@ -264,23 +262,45 @@
           </select>
         </label>
       {/if}
-      <DocumentTable ariaLabel="Documents in this run">
-        {#snippet header()}
-          <th scope="col">ID</th><th scope="col">Content version</th><th scope="col">SHA-256</th><th
-            scope="col">Bytes</th
-          ><th scope="col">Revision</th>
-        {/snippet}
-        {#snippet children()}
-          {#each visibleTargets as member (member.node_id)}
-            <tr
-              ><td>{member.node_id}</td><td><code>{member.content_version_id}</code></td><td
-                ><code>{member.blob_hash}</code></td
-              ><td>{member.size}</td><td>{member.revision}</td></tr
-            >
-          {/each}
-        {/snippet}
-      </DocumentTable>
-      <DocumentPager total={batch.members.length} bind:offset={targetOffset} />
+      <div class="target-list">
+        <Table
+          unsorted
+          ariaLabel="Documents in this run"
+          class="target-table"
+          zebra={false}
+          scroll="page"
+        >
+          {#snippet header()}
+            <th scope="col">ID</th><th scope="col">Content version</th><th scope="col">SHA-256</th
+            ><th scope="col">Bytes</th><th scope="col">Revision</th>
+          {/snippet}
+          {#snippet children()}
+            {#each visibleTargets as member (member.node_id)}
+              <tr
+                ><td>{member.node_id}</td><td><code>{member.content_version_id}</code></td><td
+                  ><code>{member.blob_hash}</code></td
+                ><td>{member.size}</td><td>{member.revision}</td></tr
+              >
+            {/each}
+          {/snippet}
+        </Table>
+      </div>
+      {#if batch.members.length > 50}
+        <nav class="pager" aria-label="Document pages">
+          <span
+            >{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members
+              .length}</span
+          >
+          <Button size="sm" disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}
+            >Previous</Button
+          >
+          <Button
+            size="sm"
+            disabled={targetOffset + 50 >= batch.members.length}
+            onclick={() => (targetOffset += 50)}>Next</Button
+          >
+        </nav>
+      {/if}
     </Disclosure>
 
     {#if abandonWarning}
@@ -358,7 +378,8 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
-  .confirm {
+  .confirm,
+  .pager {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -392,5 +413,20 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
+  }
+  .target-list {
+    overflow-x: auto;
+    max-height: 240px;
+  }
+  .target-list :global(.target-table .kit-table) {
+    table-layout: fixed;
+    font-size: var(--font-size-xs);
+  }
+  .target-list :global(.target-table th),
+  .target-list :global(.target-table td) {
+    padding: var(--space-2);
+    text-align: left;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--border-default);
   }
 </style>

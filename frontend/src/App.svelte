@@ -3069,10 +3069,11 @@
   // A replay describes a historical success, so reload current observations
   // instead of overwriting newer rows with the receipt's old revisions.
   function refreshTaggedViews(): void {
-    refreshCurrentView();
     const source = selectedSource;
+    const nodeID = selectedID;
+    refreshCurrentView();
     if (source) void loadSelectedTags(source.nodeID, source.key);
-    else if (selectedID !== undefined) void loadSelectedTags(selectedID);
+    else if (nodeID !== undefined) void loadSelectedTags(nodeID);
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
@@ -5535,8 +5536,10 @@
         disabled={loading}
         onchanged={refreshTaggedViews}
         oncreated={() => void loadTagCatalog(false, true)}
-        onchecked={refreshTaggedViews}
-        onclose={() => (batchTagsTargets = null)}
+        onclose={(recovered) => {
+          batchTagsTargets = null;
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5556,8 +5559,10 @@
         onchanged={handleSnapshotSelectionTagged}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onchecked={refreshTaggedViews}
-        onclose={() => snapshot.cancelAction()}
+        onclose={(recovered) => {
+          snapshot.cancelAction();
+          if (recovered) refreshTaggedViews();
+        }}
         onauthfailure={handleFailure}
       />
     {/if}

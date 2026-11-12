@@ -115,12 +115,12 @@ it("tags the selection captured at open and reports what changed", async () => {
   expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
 });
 
-it("refreshes when the outcome becomes uncertain", async () => {
+it("reports an uncertain outcome on close", async () => {
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockRejectedValueOnce(new TypeError("Synthetic response loss"));
-  const onchecked = vi.fn();
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onchecked }));
+  const onclose = vi.fn();
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onclose }));
   await chooseReview();
   await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
   await screen.findByText(
@@ -131,7 +131,8 @@ it("refreshes when the outcome becomes uncertain", async () => {
   expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
   expect(screen.getByRole("button", { name: "Check tag results" })).toBeTruthy();
   expect(fetch).toHaveBeenCalledOnce();
-  expect(onchecked).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(onclose).toHaveBeenCalledWith(true);
 });
 
 it("reports an expired session while checking", async () => {
@@ -251,8 +252,8 @@ it.each(["unknown", "rejected", "stale"])(
     let applied = false;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (init?.method === "POST") {
-        const request = JSON.parse(String(init.body)) as BatchTagRequest;
+      if (url === "/api/v1/batch/tags") {
+        const request = JSON.parse(String(init?.body)) as BatchTagRequest;
         writes.push(request);
         if (writes.length === 1) throw new TypeError("Lost response");
         if (outcome === "unknown") {
@@ -268,13 +269,14 @@ it.each(["unknown", "rejected", "stale"])(
         );
       }
       if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
-      if (url.includes("/tags?"))
+      if (url.endsWith("/batch/tags/preview")) {
+        const { nodes } = JSON.parse(String(init?.body));
         return Response.json({
-          items: applied ? catalog : [],
-          total: applied ? 1 : 0,
-          limit: 1000,
-          offset: 0,
+          tag_id: catalog[0].id,
+          tag_revision: 2,
+          nodes: nodes.map((node: object) => ({ ...node, assigned: applied })),
         });
+      }
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
       if (id === 7) throw new TypeError("Network error");
       return Response.json({ id, name: `Document ${id}`, revision: 12 });
@@ -315,11 +317,17 @@ it("pages checked documents and resets to the first page on another check", asyn
     name: `File ${i + 1}`,
   }));
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (init?.method === "POST") throw new TypeError("Lost response");
     const url = String(input);
+    if (url === "/api/v1/batch/tags") throw new TypeError("Lost response");
     if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
-    if (url.includes("/tags?"))
-      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: catalog[0].id,
+        tag_revision: 2,
+        nodes: nodes.map((node: object) => ({ ...node, assigned: false })),
+      });
+    }
     const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
     return Response.json({ id, name: `File ${id}`, path: `/File ${id}`, revision: 2 });
   });
@@ -348,25 +356,24 @@ it.each([true, false])(
     }));
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (init?.method === "POST") {
-        const request = JSON.parse(String(init.body)) as BatchTagRequest;
+      if (url === "/api/v1/batch/tags") {
+        const request = JSON.parse(String(init?.body)) as BatchTagRequest;
         writes.push(request);
         if (writes.length === 1) throw new TypeError("Lost response");
         return Response.json(await receiptFor(request));
       }
       if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
-      const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-      if (id === 3) throw new TypeError("unavailable");
-      if (url.includes("/tags?")) {
-        const matched = writes.length === 1 ? id === 1 : id === 2;
-        const assigned = matched === assign;
+      if (url.endsWith("/batch/tags/preview")) {
+        const { nodes } = JSON.parse(String(init?.body));
+        const matched = writes.length === 1 ? nodes[0].node_id === 1 : nodes[0].node_id === 2;
         return Response.json({
-          items: assigned ? catalog : [],
-          total: Number(assigned),
-          limit: 1000,
-          offset: 0,
+          tag_id: catalog[0].id,
+          tag_revision: 2,
+          nodes: [{ ...nodes[0], assigned: matched === assign }],
         });
       }
+      const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+      if (id === 3) throw new TypeError("unavailable");
       return Response.json({
         id,
         name: `Document ${id}`,
@@ -403,7 +410,7 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
   let writes = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (init?.method === "POST") {
+    if (url === "/api/v1/batch/tags") {
       writes++;
       if (writes === 1) throw new TypeError("Lost response");
       return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
@@ -413,8 +420,14 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
         return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
       return Response.json(catalog[0]);
     }
-    if (url.includes("/tags?"))
-      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: catalog[0].id,
+        tag_revision: 2,
+        nodes: nodes.map((node: object) => ({ ...node, assigned: false })),
+      });
+    }
     const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
     return Response.json({ id, name: `Document ${id}`, revision: 5 });
   });
@@ -438,23 +451,25 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
 it("keeps the confirmed retry visible when a later check fails", async () => {
   let writes = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (init?.method === "POST") {
+    if (String(input) === "/api/v1/batch/tags") {
       if (++writes === 1) throw new TypeError("Lost response");
-      return Response.json(await receiptFor(JSON.parse(String(init.body))));
+      return Response.json(await receiptFor(JSON.parse(String(init?.body))));
     }
     if (String(input).endsWith(`/tags/${catalog[0].id}`)) {
       if (writes > 1) throw new TypeError("Check failed");
       return Response.json(catalog[0]);
     }
-    if (String(input).includes("/tags?"))
-      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (String(input).endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: catalog[0].id,
+        tag_revision: 2,
+        nodes: nodes.map((node: object) => ({ ...node, assigned: false })),
+      });
+    }
     return Response.json({ id: 7, name: "File 7", revision: 5 });
   });
-  const onchecked = vi.fn();
-  render(
-    SnapshotActions,
-    props({ scope: "selection", count: 1, targets: [targets[0]], onchecked }),
-  );
+  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]] }));
   await chooseReview();
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
@@ -463,5 +478,37 @@ it("keeps the confirmed retry visible when a later check fails", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   await screen.findByText("Check failed");
   expect(screen.getByText("Added “Review” to 1 document.")).toBeTruthy();
-  expect(onchecked).toHaveBeenCalledTimes(3);
+});
+
+it("keeps recovery controls usable while the surrounding view loads", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/batch/tags") throw new TypeError("Lost response");
+    if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      return Response.json({
+        tag_id: catalog[0].id,
+        tag_revision: 2,
+        nodes: [{ ...nodes[0], assigned: false }],
+      });
+    }
+    return Response.json({ id: 7, name: "File 7", revision: 5 });
+  });
+  const view = render(
+    SnapshotActions,
+    props({ scope: "selection", count: 1, targets: [targets[0]] }),
+  );
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByRole("button", { name: "Check tag results" });
+  await view.rerender(
+    props({ scope: "selection", count: 1, targets: [targets[0]], disabled: true }),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
+  const retry = await screen.findByRole("button", { name: "Add “Review” to 1 document" });
+  expect((retry as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByRole("button", { name: "Check again" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
 });

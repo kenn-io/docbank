@@ -543,7 +543,7 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
 });
 
-it("refreshes the view and tag catalog during recovery", async () => {
+it("refreshes the view and tag catalog after recovery closes", async () => {
   history.replaceState(
     null,
     "",
@@ -581,8 +581,12 @@ it("refreshes the view and tag catalog during recovery", async () => {
     }
     if (url === "/api/v1/nodes/2") return new Response("missing", { status: 404 });
     if (url === "/api/v1/nodes/1") return json({ id: 1, name: "report-1.pdf", revision: 3 });
-    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0")
-      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === "/api/v1/batch/tags/preview")
+      return json({
+        tag_id: tag.id,
+        tag_revision: 2,
+        nodes: [{ node_id: 1, revision: 3, assigned: false }],
+      });
     // A server error leaves the client unable to confirm whether the change committed.
     if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
     throw new Error(`unexpected request: ${url}`);
@@ -602,21 +606,21 @@ it("refreshes the view and tag catalog during recovery", async () => {
     "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
   );
   expect(warning.closest('[role="alert"]')).toBeTruthy();
-  await waitFor(() => expect(searches).toHaveLength(2));
+  expect(searches).toHaveLength(1);
   const readsBeforeCheck = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   expect(await screen.findByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
-  await waitFor(() => expect(searches).toHaveLength(3));
+  expect(searches).toHaveLength(1);
   await fireEvent.click(screen.getByText("Review documents"));
   expect(screen.getByText("/records/report-2.pdf").closest("tr")?.textContent).toContain(
     "Couldn't check",
   );
-  await waitFor(() => expect(catalogReads - readsBeforeCheck).toBe(1));
+  expect(catalogReads).toBe(readsBeforeCheck);
   expect(screen.getByRole("dialog", { name: "Tag selected documents" })).toBeTruthy();
   const readsBeforeClose = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(searches).toHaveLength(3);
-  expect(catalogReads).toBe(readsBeforeClose);
+  await waitFor(() => expect(searches).toHaveLength(2));
+  await waitFor(() => expect(catalogReads).toBe(readsBeforeClose + 1));
   expect(searches[1]).toEqual(searches[0]);
   expect(
     screen.queryByText(
@@ -686,6 +690,8 @@ it("uses the rerun's revision after uncertain recovery", async () => {
         limit: 1000,
         offset: 0,
       });
+    if (url === "/api/v1/batch/tags/preview")
+      return json({ tag_id: tag.id, tag_revision: 2, nodes: [{ node_id: 1, revision, assigned }] });
     if (url === "/api/v1/batch/tags") {
       const request = JSON.parse(String(init?.body));
       writes.push(request);
@@ -719,10 +725,10 @@ it("uses the rerun's revision after uncertain recovery", async () => {
   await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
   await fireEvent.click(retry);
   await waitFor(() => expect(writes).toHaveLength(2));
+  await fireEvent.click(await screen.findByRole("button", { name: "Close" }));
   await waitFor(() =>
     expect(document.querySelector('[aria-label="Current tags"]')?.textContent).toContain("Review"),
   );
-  await fireEvent.click(await screen.findByRole("button", { name: "Close" }));
   await screen.findByText(fresh.snapshot_id);
   await waitFor(() =>
     expect((screen.getByRole("button", { name: "Tag all…" }) as HTMLButtonElement).disabled).toBe(

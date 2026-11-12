@@ -10,7 +10,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
-  import { Button, Disclosure, Modal, SegmentedControl, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Disclosure, Modal, SegmentedControl, Spinner, Table } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
   import type { Tag } from "./generated/docbank.js";
   import { randomUUID } from "./crypto.js";
@@ -21,8 +21,6 @@
   import { checkTagResults, type TagResult } from "./checkTagResults.js";
   import { TagChangeRun } from "./tagChangeRun.svelte.js";
   import { documentCount, tagChangeConsequence, tagChangeDone } from "./tagChangeText.js";
-  import DocumentPager from "./DocumentPager.svelte";
-  import DocumentTable from "./DocumentTable.svelte";
 
   interface Props {
     session: string;
@@ -39,9 +37,7 @@
     onchanged?: (receipt: BatchTagReceipt) => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
-    onclose: () => void;
-    /** Fresh tag results arrived, so the view behind the dialog may be stale. */
-    onchecked?: () => void;
+    onclose: (recovered: boolean) => void;
     onauthfailure: (cause: unknown) => void;
     errorMessage?: string;
   }
@@ -59,7 +55,6 @@
     oncreated,
     onimport,
     onclose,
-    onchecked,
     onauthfailure,
     errorMessage = "",
   }: Props = $props();
@@ -68,7 +63,6 @@
   let reading = $state(false);
   let readFailure = $state("");
   let receipt = $state<BatchTagReceipt>();
-  let retryReceipt = $state<BatchTagReceipt>();
   let request = $state<BatchTagRequest & { nodes: SelectionTarget[] }>();
   let recovering = $state(false);
   let checking = $state(false);
@@ -88,13 +82,11 @@
         receipt = confirmed;
         onchanged?.(confirmed);
       } else {
-        retryReceipt = confirmed;
-        onchecked?.();
+        receipt = confirmed;
       }
     },
     onunknown: () => {
       recovering = true;
-      onchecked?.();
     },
     unknownMessage:
       "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
@@ -120,6 +112,7 @@
   });
 
   const busy = $derived(disabled || preparing || applying || reading || checking);
+  const recoveryBusy = $derived(applying || checking);
   const locked = $derived(busy || stale || recovering || receipt !== undefined);
   const consequence = $derived(
     tag
@@ -165,7 +158,6 @@
       tag = result.tag;
       results = result.rows;
       offset = 0;
-      onchecked?.();
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -179,10 +171,9 @@
   }
 
   async function retry(): Promise<void> {
-    if (!request || !remaining.length || busy) return;
+    if (!request || !remaining.length || recoveryBusy) return;
     const nodes = remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! }));
     results = undefined;
-    retryReceipt = undefined;
     await run.submit({
       ...request,
       operation_id: randomUUID(),
@@ -212,7 +203,7 @@
 
   function close(): void {
     if (applying) return;
-    onclose();
+    onclose(recovering);
   }
 </script>
 
@@ -256,7 +247,7 @@
       />
     </div>
 
-    {#if receipt}
+    {#if receipt && !recovering}
       <p class="status done" role="status">
         <CheckIcon size={14} aria-hidden="true" />
         {tagChangeDone(
@@ -271,17 +262,17 @@
       <p class="status">
         {matched} matched · {remaining.length} remaining · {unavailable} couldn't be checked
       </p>
-    {:else if !failure && !retryReceipt}
+    {:else if !failure && !receipt}
       <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
-    {#if retryReceipt}
+    {#if receipt && recovering}
       <p class="status done" role="status">
         <CheckIcon size={14} aria-hidden="true" />
         {tagChangeDone(
-          retryReceipt.assign,
+          receipt.assign,
           tag?.name ?? "",
-          retryReceipt.nodes.filter((node) => node.changed).length,
-          retryReceipt.nodes.length,
+          receipt.nodes.filter((node) => node.changed).length,
+          receipt.nodes.length,
         )}
       </p>
     {/if}
@@ -298,23 +289,37 @@
     {#if failure || errorMessage}<p class="alert" role="alert">{failure || errorMessage}</p>{/if}
     {#if results && tag}
       <Disclosure variant="plain" title="Review documents">
-        <DocumentTable ariaLabel="Tag results" compact>
-          {#snippet header()}<th scope="col">Document</th><th scope="col">Status</th>{/snippet}
-          {#snippet children()}
-            {#each (results ?? []).slice(offset, offset + 50) as row (row.node_id)}
-              <tr
-                ><td>{row.name}</td><td
-                  >{row.status === "unavailable"
-                    ? "Couldn't check"
-                    : (row.status === "matched") === assign
-                      ? `Has “${tag?.name}”`
-                      : `Doesn't have “${tag?.name}”`}</td
-                ></tr
-              >
-            {/each}
-          {/snippet}
-        </DocumentTable>
-        <DocumentPager total={results.length} bind:offset />
+        <div class="target-list">
+          <Table unsorted ariaLabel="Tag results" class="target-table" zebra={false} scroll="page">
+            {#snippet header()}<th scope="col">Document</th><th scope="col">Status</th>{/snippet}
+            {#snippet children()}
+              {#each (results ?? []).slice(offset, offset + 50) as row (row.node_id)}
+                <tr
+                  ><td>{row.name}</td><td
+                    >{row.status === "unavailable"
+                      ? "Couldn't check"
+                      : (row.status === "matched") === assign
+                        ? `Has “${tag?.name}”`
+                        : `Doesn't have “${tag?.name}”`}</td
+                  ></tr
+                >
+              {/each}
+            {/snippet}
+          </Table>
+        </div>
+        {#if results.length > 50}
+          <nav class="pager" aria-label="Document pages">
+            <span>{offset + 1}–{Math.min(offset + 50, results.length)} of {results.length}</span>
+            <Button size="sm" disabled={offset === 0} onclick={() => (offset -= 50)}
+              >Previous</Button
+            >
+            <Button
+              size="sm"
+              disabled={offset + 50 >= results.length}
+              onclick={() => (offset += 50)}>Next</Button
+            >
+          </nav>
+        {/if}
       </Disclosure>
     {/if}
   </div>
@@ -336,11 +341,11 @@
         />
       </span>
     {/if}
-    {#if receipt}
+    {#if receipt && !recovering}
       <Button tone="info" surface="solid" onclick={close}>Done</Button>
     {:else if recovering && request}
       {#if results}<span class="footer-start"
-          ><Button size="sm" surface="soft" disabled={busy} onclick={() => void check()}
+          ><Button size="sm" surface="soft" disabled={recoveryBusy} onclick={() => void check()}
             >Check again</Button
           ></span
         >{/if}
@@ -348,7 +353,7 @@
         >{results && !remaining.length && !unavailable ? "Done" : "Close"}</Button
       >
       {#if results && remaining.length}
-        <Button tone="info" surface="solid" disabled={busy} onclick={() => void retry()}
+        <Button tone="info" surface="solid" disabled={recoveryBusy} onclick={() => void retry()}
           >{assign ? "Add" : "Remove"} “{tag?.name}” {assign ? "to" : "from"}
           {documentCount(remaining.length)}</Button
         >
@@ -415,6 +420,33 @@
   }
   .tag-change :global(.kit-disclosure--plain > .kit-disclosure__content) {
     padding-block-end: 0;
+  }
+  .target-list {
+    overflow: auto;
+    max-height: 240px;
+  }
+  .target-list :global(.target-table .kit-table) {
+    table-layout: fixed;
+    font-size: var(--font-size-xs);
+    margin-block-end: 0;
+  }
+  .target-list :global(.target-table th),
+  .target-list :global(.target-table td) {
+    padding: var(--space-2);
+    text-align: left;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .target-list :global(.target-table th:first-child),
+  .target-list :global(.target-table td:first-child) {
+    padding-inline-start: 0;
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
   }
   .file {
     position: absolute;

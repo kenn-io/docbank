@@ -1,8 +1,7 @@
 import { APIError } from "./api-transport.js";
-import type { BatchTagRequest } from "./batch-tags.js";
-import { getTag, type Tag } from "./generated/docbank.js";
+import { previewBatchTags, type BatchTagRequest } from "./batch-tags.js";
+import { getNode, getTag, type Tag } from "./generated/docbank.js";
 import type { SelectionTarget } from "./selection.js";
-import { liveNodeTags } from "./receipts.js";
 
 export interface TagResult {
   node_id: number;
@@ -29,15 +28,25 @@ export async function checkTagResults(
       const index = next++;
       const { node_id: id, name } = request.nodes[index];
       try {
-        const { node, items } = await liveNodeTags(session, id, readSignal);
+        const node = await getNode(id, { session, signal: readSignal });
+        if (
+          node.id !== id ||
+          !Number.isSafeInteger(node.revision) ||
+          node.revision < 1 ||
+          node.trashed_at
+        )
+          throw new Error("Invalid document");
+        const preview = await previewBatchTags(
+          session,
+          request.tag_id,
+          [{ node_id: id, revision: node.revision }],
+          readSignal,
+        );
         rows[index] = {
           node_id: id,
           name: node.path || `${node.name} (Document ${id})`,
           revision: node.revision,
-          status:
-            items.some((tag) => tag.id === request.tag_id) === request.assign
-              ? "matched"
-              : "remaining",
+          status: preview.nodes[0].assigned === request.assign ? "matched" : "remaining",
         };
       } catch (cause) {
         signal?.throwIfAborted();
