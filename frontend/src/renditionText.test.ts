@@ -135,14 +135,14 @@ it("validates page fields", async () => {
   };
   for (const [fields, expected] of [
     [{ pages_without_text: [2, 3] }, { pagesWithoutText: [2, 3] }],
-    [{ page_coverage: "unavailable" }, { state: "ready" }],
+    [{ page_coverage: "unavailable" }, { pageCoverage: "unavailable" }],
     [
       { state: "unprocessed", artifact: undefined, pages_without_text: [2] },
       { state: "unprocessed", pagesWithoutText: [2] },
     ],
     [
       { state: "unprocessed", artifact: undefined, page_coverage: "unavailable" },
-      { state: "unprocessed" },
+      { state: "unprocessed", pageCoverage: "unavailable" },
     ],
   ]) {
     await expect(resolve(fields)).resolves.toMatchObject(expected);

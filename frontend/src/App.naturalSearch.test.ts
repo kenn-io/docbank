@@ -2132,7 +2132,7 @@ it("scopes empty search coverage to the selected tag", async () => {
 
 it.each([
   [
-    "singular",
+    "known gaps",
     "Some PDFs in this vault have pages without a text layer.",
     textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
   ],

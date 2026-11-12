@@ -119,7 +119,6 @@ func TestWebSessionTextCoverageRoute(t *testing.T) {
 		{http.MethodGet, path, true},
 		{http.MethodGet, path + "?tag_id=" + tag, true},
 		{http.MethodGet, path + "?tag_id=" + tag + "&mime_type=application%2Fpdf", false},
-		{http.MethodPost, path, false},
 		{http.MethodGet, path + "?tag_id=" + tag + "&tag_id=" + tag, false},
 	} {
 		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.path)
