@@ -2,13 +2,16 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	apiruntime "github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -71,6 +74,30 @@ func TestSearchUnderPathInvalidScopesNeverCallProvider(t *testing.T) {
 			{"path and node id", "/", "validation", f.catalog.RootID()},
 		} {
 			t.Run(tool+"/"+tc.name, func(t *testing.T) {
+				t.Logf("scope diagnostic tool=%s path=%q node_id=%d expected=%s", tool, tc.path, tc.id, tc.code)
+				if tool == "answer_question" {
+					_, serviceErr := service.ResolveSourceFence(t.Context(), processing.SourceFenceResolveRequest{
+						Filters: &store.SearchOptions{UnderPath: tc.path, UnderNodeID: tc.id},
+					})
+					t.Logf("source fence service error=%T: %v invalid_scope=%t invalid_fence=%t not_found=%t not_dir=%t", serviceErr, serviceErr,
+						errors.Is(serviceErr, store.ErrInvalidSearchScope), errors.Is(serviceErr, store.ErrInvalidProcessingSourceFence),
+						errors.Is(serviceErr, store.ErrNotFound), errors.Is(serviceErr, store.ErrNotDir))
+					client, err := server.daemon.acquire(t.Context())
+					require.NoError(t, err)
+					_, httpErr := client.daemonconn.ResolveDocumentSourceFence(t.Context(), api.DocumentSourceFenceResolveRequest{
+						Filters: &api.DocumentSourceFenceFilters{UnderPath: tc.path, UnderNodeID: tc.id},
+					})
+					status, received := daemonconn.ResponseStatus(httpErr)
+					facts, hasFacts := daemonconn.ExtractProblemFacts(httpErr)
+					t.Logf("source fence daemon before MCP error=%T: %v status=%d received=%t problem=%+v has_problem=%t decode_error=%t",
+						httpErr, httpErr, status, received, facts, hasFacts, daemonconn.IsResponseDecodeError(httpErr))
+					for cause := httpErr; cause != nil; cause = errors.Unwrap(cause) {
+						t.Logf("source fence daemon error chain=%T: %v", cause, cause)
+					}
+					if decoded, ok := errors.AsType[*apiruntime.ResponseDecodeError](httpErr); ok {
+						t.Logf("source fence daemon response decode status=%d body=%s", decoded.StatusCode, decoded.Body)
+					}
+				}
 				filters := map[string]any{"under_path": tc.path}
 				if tc.id != 0 {
 					filters["under_node_id"] = tc.id
@@ -83,7 +110,9 @@ func TestSearchUnderPathInvalidScopesNeverCallProvider(t *testing.T) {
 				if tool == "search_documents" {
 					args["mode"] = "semantic"
 				}
-				out := exportCall(t, server, tool, args)
+				raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": tool, "arguments": args}))
+				t.Logf("scope diagnostic MCP envelope=%s", raw)
+				out := objectField(t, decodeResult(t, raw), "structuredContent")
 				require.Equal(t, tc.code, out["code"], "%s %s", tool, tc.path)
 				require.Zero(t, provider.queries.Load())
 			})
