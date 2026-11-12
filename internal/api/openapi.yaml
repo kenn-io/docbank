@@ -3717,6 +3717,7 @@ components:
             - string
             - "null"
         amount:
+          description: "At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64."
           maxLength: 32
           type:
             - string
@@ -3728,14 +3729,10 @@ components:
             - "null"
         country:
           maxLength: 2
-          type:
-            - string
-            - "null"
+          type: string
         currency:
           maxLength: 3
-          type:
-            - string
-            - "null"
+          type: string
         direction:
           enum:
             - payable
@@ -3751,6 +3748,7 @@ components:
           format: uuid
           type: string
         form_code:
+          description: At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
           maxLength: 256
           type: string
         kind:
@@ -3771,6 +3769,7 @@ components:
             - integer
             - "null"
         note:
+          description: At most 8192 UTF-8 bytes.
           maxLength: 8192
           type: string
         period_end:
@@ -3783,15 +3782,11 @@ components:
             - "null"
         subdivision:
           maxLength: 6
-          type:
-            - string
-            - "null"
+          type: string
         tax_kind:
           description: At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
           maxLength: 256
-          type:
-            - string
-            - "null"
+          type: string
         tax_year:
           format: int64
           maximum: 9999
@@ -3800,6 +3795,7 @@ components:
             - integer
             - "null"
         title:
+          description: At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.
           maxLength: 1200
           type: string
       required:
@@ -12893,6 +12889,7 @@ components:
           readOnly: true
           type: string
         amount:
+          description: "At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64."
           maxLength: 32
           type:
             - string
@@ -12923,6 +12920,7 @@ components:
           format: uuid
           type: string
         form_code:
+          description: At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
           maxLength: 256
           type: string
         lead_days:
@@ -12933,6 +12931,7 @@ components:
             - integer
             - "null"
         note:
+          description: At most 8192 UTF-8 bytes.
           maxLength: 8192
           type: string
         period_end:
@@ -12958,6 +12957,7 @@ components:
             - integer
             - "null"
         title:
+          description: At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.
           maxLength: 1200
           type: string
       type: object
