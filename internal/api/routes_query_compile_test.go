@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
