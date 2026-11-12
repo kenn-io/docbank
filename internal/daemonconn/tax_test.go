@@ -81,3 +81,27 @@ func TestTaxClientListAndRevealQueries(t *testing.T) {
 	_, err = c.TaxAccount(t.Context(), id, true)
 	require.NoError(t, err)
 }
+
+func TestTaxClientRejectsMalformedAccounts(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct{ name, body, etag string }{
+		{"missing identity", `{"revision":1}`, `"1"`},
+		{"different identity", `{"account_id":"22222222-2222-4222-8222-222222222222","revision":1}`, `"1"`},
+		{"zero revision", `{"account_id":"` + id + `","revision":0}`, `"0"`},
+		{"missing etag", `{"account_id":"` + id + `","revision":1}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if tc.etag != "" {
+					w.Header().Set("ETag", tc.etag)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := New(server.URL, "").TaxAccount(t.Context(), id, false)
+			require.Error(t, err)
+			assert.True(t, IsResponseDecodeError(err))
+		})
+	}
+}
