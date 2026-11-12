@@ -7,10 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	docbank "go.kenn.io/docbank/docbank"
@@ -43,6 +45,7 @@ func TestContentReader(t *testing.T) {
 	_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.ErrorIs(t, err, docbank.ErrVaultLocked)
 	require.NoError(t, v.Close())
+	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
 	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.NoError(t, err)
@@ -73,6 +76,7 @@ func TestContentReaderPackedAndSidecars(t *testing.T) {
 	require.GreaterOrEqual(t, report.BlobsPacked, 1)
 	require.NoFileExists(t, looseBlobPath(root, receipt.Computed.SHA256))
 	require.NoError(t, v.Close())
+	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
 	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.NoError(t, err)
@@ -94,6 +98,7 @@ func assertReaderContent(t *testing.T, reader *docbank.ContentReader, path, want
 
 func assertReaderRefusedUnchanged(t *testing.T, root string, check func(error)) {
 	t.Helper()
+	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
 	for range 2 {
 		_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
@@ -138,6 +143,26 @@ func snapshotReaderTree(t *testing.T, root string) []string {
 	require.NoError(t, err)
 	sort.Strings(entries)
 	return entries
+}
+
+// Windows can defer directory timestamp updates from fixture writes until a
+// later handle closes. Set them explicitly before taking the baseline.
+func stabilizeReaderTree(t *testing.T, root string) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return
+	}
+	stamp := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Chtimes(path, stamp, stamp)
+		}
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 func TestContentReaderRefusesRecoveryWithoutChanges(t *testing.T) {
@@ -289,6 +314,10 @@ func TestContentReaderCloseWaitsForStream(t *testing.T) {
 			require.FailNow(t, "reader closed with an open stream", "error: %v", err)
 		default:
 		}
+		data, err := io.ReadAll(content.Reader)
+		require.NoError(t, err)
+		require.Equal(t, "synthetic", string(data))
+		require.NoError(t, content.Reader.Verify())
 		require.NoError(t, content.Reader.Close())
 		require.NoError(t, <-done)
 		require.NoError(t, reader.Close())
@@ -313,6 +342,7 @@ func TestContentReaderTempInsideVault(t *testing.T) {
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(key, tmp)
 	}
+	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
 	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.NoError(t, err)
@@ -373,6 +403,7 @@ func TestContentReaderCompressedLoose(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "zstd", receipt.Physical.Encoding)
 	require.NoError(t, vault.Close())
+	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
 	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.NoError(t, err)
@@ -398,6 +429,7 @@ func TestContentReaderTamperedAndTrashed(t *testing.T) {
 	require.NoError(t, err)
 	damage[0] ^= 1
 	require.NoError(t, os.WriteFile(path, damage, 0o600))
+	stabilizeReaderTree(t, root)
 	before := snapshotReaderTree(t, root)
 	reader, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
 	require.NoError(t, err)
@@ -406,9 +438,9 @@ func TestContentReaderTamperedAndTrashed(t *testing.T) {
 	content, err := reader.OpenContent(t.Context(), "/tampered")
 	require.NoError(t, err)
 	_, err = io.ReadAll(content.Reader)
-	require.Error(t, err)
-	require.Error(t, content.Reader.Verify())
-	require.NoError(t, content.Reader.Close())
+	require.ErrorIs(t, err, packstore.ErrPhysicalCorrupt)
+	require.ErrorIs(t, content.Reader.Verify(), packstore.ErrPhysicalCorrupt)
+	require.ErrorIs(t, content.Reader.Close(), packstore.ErrPhysicalCorrupt)
 	require.NoError(t, reader.Close())
 	require.Equal(t, before, snapshotReaderTree(t, root))
 }
