@@ -193,11 +193,11 @@ func (s *Store) grantConsentSet(ctx context.Context, requests []ProcessingConsen
 	type preparedGrant struct {
 		authority  normalizedConsentAuthority
 		expiresRaw any
-		grant      ProcessingConsentGrant
 	}
 	issuedAt := time.Now().UTC()
 	issuedRaw := issuedAt.Format(timestampLayout)
 	prepared := make([]preparedGrant, len(requests))
+	grants := make([]ProcessingConsentGrant, len(requests))
 	for index, request := range requests {
 		authority, err := normalizeConsentAuthority(ProviderOperationAuthorizationRequest{
 			Principal: request.Principal, Scope: request.Scope,
@@ -219,12 +219,12 @@ func (s *Store) grantConsentSet(ctx context.Context, requests []ProcessingConsen
 			value := request.ExpiresAt.UTC()
 			expiresRaw, expiresAt = value.Format(timestampLayout), &value
 		}
-		prepared[index] = preparedGrant{authority: authority, expiresRaw: expiresRaw,
-			grant: ProcessingConsentGrant{ID: id, ConsentSetID: setID, VaultID: s.vaultID,
-				Principal: authority.principal, Scope: authority.scope,
-				ProfileFingerprint: authority.profile, DisclosureFingerprint: authority.disclosure,
-				InputClasses: authority.inputs, RetainedArtifactClasses: authority.retained,
-				IssuedAt: issuedAt, ExpiresAt: expiresAt}}
+		prepared[index] = preparedGrant{authority: authority, expiresRaw: expiresRaw}
+		grants[index] = ProcessingConsentGrant{ID: id, ConsentSetID: setID, VaultID: s.vaultID,
+			Principal: authority.principal, Scope: authority.scope,
+			ProfileFingerprint: authority.profile, DisclosureFingerprint: authority.disclosure,
+			InputClasses: authority.inputs, RetainedArtifactClasses: authority.retained,
+			IssuedAt: issuedAt, ExpiresAt: expiresAt}
 	}
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if undecided {
@@ -233,9 +233,9 @@ func (s *Store) grantConsentSet(ctx context.Context, requests []ProcessingConsen
 			}
 		}
 		for index := range prepared {
-			item := &prepared[index]
+			item := prepared[index]
 			if err := s.grantConsentTx(ctx, tx, item.authority, issuedRaw,
-				item.expiresRaw, &item.grant); err != nil {
+				item.expiresRaw, &grants[index]); err != nil {
 				return err
 			}
 		}
@@ -243,10 +243,6 @@ func (s *Store) grantConsentSet(ctx context.Context, requests []ProcessingConsen
 	})
 	if err != nil {
 		return nil, fmt.Errorf("granting processing consent set: %w", err)
-	}
-	grants := make([]ProcessingConsentGrant, len(prepared))
-	for index := range prepared {
-		grants[index] = prepared[index].grant
 	}
 	return grants, nil
 }
