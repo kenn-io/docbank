@@ -466,8 +466,9 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.press("Enter");
   await expect(page.getByText("No matching documents")).toBeVisible();
   await expect(page.getByText(/without a text layer/)).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
-    clip: { x: 231, y: 56, width: 746, height: 960 },
+    clip: { x: 231, y: 0, width: 746, height: 960 },
   });
 });

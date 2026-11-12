@@ -2122,7 +2122,7 @@ it("scopes empty search coverage to the selected tag", async () => {
   await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
   await submitSearch("missing");
   await screen.findByText(
-    "With this tag: some PDFs have pages without a text layer.",
+    "Some PDFs with this tag have pages without a text layer.",
   );
   const liveRequest = fetchMock.mock.calls
     .map(([url]) => String(url))
@@ -2133,17 +2133,17 @@ it("scopes empty search coverage to the selected tag", async () => {
 it.each([
   [
     "singular",
-    "Across the current vault: some PDFs have pages without a text layer.",
+    "Some PDFs in this vault have pages without a text layer.",
     textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
   ],
   [
     "partial",
-    "Across the current vault: some PDFs have pages without a text layer.",
+    "Some PDFs in this vault have pages without a text layer.",
     textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_partial: true }),
   ],
   [
     "unavailable",
-    "Across the current vault: some PDFs have pages without a text layer.",
+    "Some PDFs in this vault have pages without a text layer.",
     textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_unavailable: 1 }),
   ],
   [

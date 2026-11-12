@@ -1245,7 +1245,7 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const pdfCoverageDescription = $derived(
     pdfCoverage?.pdfs_without_text
-      ? `${activeTagID ? "With this tag" : "Across the current vault"}: some PDFs have pages without a text layer.`
+      ? `Some PDFs ${activeTagID ? "with this tag" : "in this vault"} have pages without a text layer.`
       : pdfCoverageIncomplete
         ? "PDF text coverage is incomplete; some pages may not be searchable."
         : undefined,
