@@ -8,7 +8,7 @@
   import PhotoSearch from "./PhotoSearch.svelte";
   import { photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
-  import { onMount, setContext, tick, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
@@ -140,13 +140,7 @@
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
-  import {
-    readerReloadContext,
-    reloadWithSession,
-    rememberSession,
-    takeFragmentSession,
-    type BrowserSession,
-  } from "./browser-session.js";
+  import { rememberSession, takeFragmentSession, type BrowserSession } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -1587,8 +1581,6 @@
       snapshot.reset();
     };
   });
-
-  setContext(readerReloadContext, async () => reloadWithSession());
 
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
     rememberSession(keyLogin ? null : session);

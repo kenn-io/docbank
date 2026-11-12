@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { ReaderReview, ReaderReviewStatus, PDFReviewBridge } from "./pdfReview.js";
-  import { getContext, onDestroy, untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Button, Spinner } from "@kenn-io/kit-ui";
-  import { readerReloadContext } from "./browser-session.js";
+  import { reloadWithSession } from "./browser-session.js";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import { APIError } from "./api-transport.js";
@@ -34,14 +34,7 @@
     onstatus?: (status: ReaderReviewStatus) => void;
     onbridge?: (bridge: PDFReviewBridge) => void;
   } = $props();
-  const reload = getContext<() => Promise<void>>(readerReloadContext);
   let confirming = $state(false);
-  let reloadPending = $state(false);
-  async function startReload(): Promise<void> {
-    reloadPending = true;
-    await reload();
-    reloadPending = false;
-  }
   let preview = $state<Preview | null>(null);
   let progress = $state<DownloadProgress | null>(null);
   let loading = $state(false);
@@ -154,12 +147,8 @@
     {#if confirming}
       <p>Reloading discards unsaved work in this tab.</p>
       <div class="reader-actions">
-        <Button size="sm" disabled={reloadPending} onclick={() => (confirming = false)}
-          >Keep working</Button
-        >
-        <Button size="sm" tone="danger" disabled={reloadPending} onclick={() => void startReload()}
-          >Reload anyway</Button
-        >
+        <Button size="sm" onclick={() => (confirming = false)}>Keep working</Button>
+        <Button size="sm" tone="danger" onclick={() => reloadWithSession()}>Reload anyway</Button>
       </div>
     {:else}
       <p>The reader could not load.</p>

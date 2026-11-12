@@ -25,8 +25,6 @@ export function takeFragmentSession(
 
 let rememberedSession: BrowserSession | null = null;
 
-export const readerReloadContext = Symbol("reader reload");
-
 export function rememberSession(session: BrowserSession | null): void {
   rememberedSession = session;
 }
