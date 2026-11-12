@@ -214,6 +214,14 @@ var backendSuites = []backendSuite{
 			checkStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(t, newPostgresQueryStore)
 		}},
 	}},
+	{name: "metadata-export", postgres: "native operations", scope: "Pinned logical metadata and backup-scoped export, audit verification and recovery into fresh SQLite; excludes PostgreSQL import, physical recovery and public opening.", scenarios: []backendScenario{
+		{"MetadataExportRecovery", func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, newPostgresQueryStore) }},
+		{"MetadataBackupAuthority", func(t *testing.T) { t.Helper(); checkMetadataBackupAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataBackupAuthority(t, newPostgresQueryStore) }},
+		{"MetadataExportFailures", func(t *testing.T) { t.Helper(); checkMetadataExportFailures(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataExportFailures(t, newPostgresQueryStore) }},
+		{"MetadataSnapshotPinned", nil, checkMetadataSnapshotPinnedPostgres},
+		{"MetadataRetainedCatalogs", nil, checkMetadataRetainedCatalogsPostgres},
+		{"MetadataProcessingJobs", func(t *testing.T) { t.Helper(); checkMetadataProcessingJobs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataProcessingJobs(t, newPostgresQueryStore) }},
+	}},
 	{name: "received-packages", postgres: "native operations", scope: "Received-package admission, leased staging, immutable records and labels, completion, cancellation and retained browsing; excludes filesystem workers and portable recovery.", scenarios: []backendScenario{
 		{"ReceivedPackageStagingAndRetention", func(t *testing.T) { t.Helper(); checkReceivedPackageStagingAndRetention(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkReceivedPackageStagingAndRetention(t, newPostgresQueryStore) }},
 		{"ReceivedPackageAdmissionRollback", nil, checkReceivedPackageAdmissionRollbackPostgres},
@@ -2206,7 +2214,7 @@ var backendSuites = []backendSuite{
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
-	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
+	{name: "transfer-and-recovery", postgres: "unqualified", scope: "PostgreSQL metadata import, portable packages and physical backup/restore remain unqualified; metadata-export covers pinned logical export and recovery into fresh SQLite."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
