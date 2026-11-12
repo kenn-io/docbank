@@ -121,7 +121,7 @@ func (PatchTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Sche
 // taxMembers enforces admission that pinned Huma does not: it matches member
 // names case-insensitively and skips nulls on optional properties (D46).
 // Errors are fixed strings; the tax formatter returns only generic validation.
-func taxMembers(raw []byte, names []string) (map[string]jsontext.Value, error) {
+func taxMembers(raw []byte, names []string, nullable ...string) (map[string]jsontext.Value, error) {
 	var members map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &members); err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func taxMembers(raw []byte, names []string) (map[string]jsontext.Value, error) {
 		if !slices.Contains(names, name) {
 			return nil, errors.New("invalid tax field")
 		}
-		if string(member) == jsonNull && name != "authority_party_id" && name != "effective_start" && name != "effective_end" {
+		if string(member) == jsonNull && !slices.Contains(nullable, name) {
 			return nil, errors.New("tax field cannot be null")
 		}
 	}
@@ -139,7 +139,7 @@ func taxMembers(raw []byte, names []string) (map[string]jsontext.Value, error) {
 }
 
 func (p *CreateTaxAccountRequest) UnmarshalJSON(raw []byte) error {
-	if _, err := taxMembers(raw, taxCreateMembers); err != nil {
+	if _, err := taxMembers(raw, taxCreateMembers, "authority_party_id", "effective_start", "effective_end"); err != nil {
 		return err
 	}
 	type fields CreateTaxAccountRequest
@@ -147,7 +147,7 @@ func (p *CreateTaxAccountRequest) UnmarshalJSON(raw []byte) error {
 }
 
 func (p *PatchTaxAccountRequest) UnmarshalJSON(raw []byte) error {
-	members, err := taxMembers(raw, taxPatchMembers)
+	members, err := taxMembers(raw, taxPatchMembers, "effective_start", "effective_end")
 	if err != nil {
 		return err
 	}

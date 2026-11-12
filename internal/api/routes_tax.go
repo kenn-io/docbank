@@ -30,13 +30,17 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 }
 var taxDiagnosticPairs = map[string]string{
 	"invalid value": "filer", "required": "filer_party_id",
-	"invalid length or text": "country subdivision currency tax_kind identifier period_note due_note note",
-	"control character": "tax_kind identifier period_note due_note note",
-	"invalid country": "country", "invalid subdivision": "subdivision", "invalid currency": "currency",
-	"invalid date": "effective_start effective_end", "precedes effective_start": "effective_end",
-	"not canonical": "tax_kind", "unknown cadence": "cadence", "out of range": "lead_days",
+	"invalid length or text": "country subdivision currency tax_kind identifier period_note due_note note title form_code",
+	"control character":      "tax_kind identifier period_note due_note note title form_code",
+	"invalid country":        "country", "invalid subdivision": "subdivision", "invalid currency": "currency",
+	"invalid date": "effective_start effective_end period_start period_end due_date", "precedes effective_start": "effective_end",
+	"precedes period_start": "period_end", "not canonical": "tax_kind title form_code", "unknown cadence": "cadence", "out of range": "lead_days tax_year",
 	"party not found": "filer_party_id authority_party_id", "party is retired": "filer_party_id authority_party_id",
 	"party is not own": "filer_party_id", "party is not an organization": "authority_party_id",
+	"unknown kind": "kind", "unknown state": "state", "unknown direction": "direction",
+	"amount required when currency changes": "amount", "amount required": "amount", "zero required": "amount",
+	"unknown amount must be null": "amount", "invalid length": "amount", "invalid precision": "amount",
+	"invalid decimal or overflow": "amount", "overflow": "amount",
 }
 
 func taxSafeFieldReason(field, reason string) bool {

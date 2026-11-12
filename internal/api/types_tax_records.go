@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
@@ -100,13 +101,12 @@ type PatchTaxRecordRequest struct {
 	present          map[string]bool
 }
 
-func recordMembers(raw []byte) (map[string]jsontext.Value, error) {
-	var members map[string]jsontext.Value
-	err := json.Unmarshal(raw, &members)
-	return members, err
-}
+var taxRecordPatchMembers = []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"}
+var taxRecordCreateMembers = append([]string{"account_id", "kind"}, taxRecordPatchMembers...)
+var taxRecordNullable = []string{"authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", "amount"}
+
 func (p *CreateTaxRecordRequest) UnmarshalJSON(raw []byte) error {
-	members, err := recordMembers(raw)
+	members, err := taxMembers(raw, taxRecordCreateMembers, append([]string{"account_id"}, taxRecordNullable...)...)
 	if err != nil {
 		return err
 	}
@@ -138,9 +138,12 @@ func (p CreateTaxRecordRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(members)
 }
 func (p *PatchTaxRecordRequest) UnmarshalJSON(raw []byte) error {
-	members, err := recordMembers(raw)
+	members, err := taxMembers(raw, taxRecordPatchMembers, taxRecordNullable...)
 	if err != nil {
 		return err
+	}
+	if len(members) == 0 {
+		return errors.New("tax patch must contain a field")
 	}
 	type fields PatchTaxRecordRequest
 	var value fields

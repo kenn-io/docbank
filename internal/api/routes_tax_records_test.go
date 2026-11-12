@@ -303,6 +303,8 @@ func TestTaxRecordRejectedPatchesPreserveRow(t *testing.T) {
 	const secret = "private-record-value"
 	for _, patch := range []map[string]any{
 		{}, {"$schema": "https://example.com/schema"}, {"title": nil}, {"currency": nil}, {"direction": nil}, {"direction": ""}, {"note": nil},
+		{"filer_party_id": nil}, {"country": nil}, {"subdivision": nil}, {"tax_kind": nil}, {"form_code": nil},
+		{"note": "valid", "title": nil}, {"NOTE": secret}, {"Note": nil}, {"DUE_DATE": nil}, {"note": "valid", secret: secret},
 		{"tax_year": 10000}, {"lead_days": 367}, {"title": strings.Repeat(secret, 100)}, {"note": strings.Repeat(secret, 1000)},
 		{"due_date": secret}, {"period_start": "2026-02-01", "period_end": "2026-01-01"}, {"amount": secret, "direction": "payable"},
 		{"state": secret}, {"verification": secret}, {"revision": 123}, {"kind": secret}, {"account_id": account.AccountID}, {secret: secret},
@@ -312,4 +314,25 @@ func TestTaxRecordRejectedPatchesPreserveRow(t *testing.T) {
 		assert.NotContains(t, body, secret)
 		assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
 	}
+	for _, field := range []string{"filer_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "direction", "currency", "note"} {
+		resp, body := do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"note": "valid", field: nil})
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		assert.Contains(t, body, `"code":"validation"`)
+		assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
+	}
+	_, beforeCreate := get(t, ts, "/api/v1/tax/records", nil)
+	for _, field := range []string{"filer_party_id", "kind", "title", "country", "subdivision", "tax_kind", "form_code", "direction", "currency", "note"} {
+		input := map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example", field: nil}
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, input)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		assert.Contains(t, body, `"code":"validation"`)
+	}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example", "NOTE": secret})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.NotContains(t, body, secret)
+	_, afterCreate := get(t, ts, "/api/v1/tax/records", nil)
+	assert.Equal(t, beforeCreate, afterCreate)
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"due_date": nil, "note": "valid"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, int64(2), readTaxTestRecord(t, ts, r.RecordID).Revision)
 }
