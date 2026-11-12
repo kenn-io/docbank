@@ -188,7 +188,7 @@ func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string]bool{}
-			for _, field := range strings.Fields(tc.fields) {
+			for field := range strings.FieldsSeq(tc.fields) {
 				want[field] = true
 			}
 			if len(fields) != len(want) {
