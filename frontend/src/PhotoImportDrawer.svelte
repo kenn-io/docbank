@@ -452,7 +452,7 @@
   function reconcileSavedHashes(item: Item, group: SavedPhotoGroup): void {
     if (!group.hashes) return;
     if (item.hashes.some((hash, index) => hash !== group.hashes![index])) item.files = [];
-    item.hashes = [...group.hashes];
+    [item.hashes, item.names] = [[...group.hashes], group.files.map((file) => file.relative_path)];
   }
 
   async function plan(validated = false, reconnect = false): Promise<void> {
