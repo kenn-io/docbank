@@ -36,7 +36,7 @@ The daemon accepts up to 128 simultaneous photo event streams. When that limit i
 
 ## Add photos in the web app
 
-In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.
+In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. Keep the tab and **Add photos** open until it finishes. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.
 
 RAW, JPEG, and XMP files in the same folder with the same name form one photo. Videos stay separate. The drawer lists skipped files with their reasons, including unsupported types, invalid names or sizes, and duplicate relative paths. Each selection accepts up to 32,768 files, and its path-and-size declaration must fit the 8 MiB message limit.
 

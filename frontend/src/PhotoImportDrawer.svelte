@@ -866,6 +866,9 @@
         onchoose={choose}
       />
     </div>
+    {#if !disabledReason && !error}<p>
+        Keep this tab and Add photos open until the import finishes.
+      </p>{/if}
     {#if planning}
       <p role="status">{hashProgress ? "Hashing" : "Planning"}</p>
       {#if hashProgress}<progress
