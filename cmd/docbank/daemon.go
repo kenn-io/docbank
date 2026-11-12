@@ -490,9 +490,15 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			return nil
 		},
 	}
-	if enabled, err := faces.IsEnabled(sigCtx); err != nil {
+	enabled, err := faces.IsEnabled(sigCtx)
+	if err != nil {
 		return fmt.Errorf("checking face suggestions consent: %w", err)
-	} else if enabled {
+	}
+	heads, err := s.HasFaceVectorHeads(sigCtx)
+	if err != nil {
+		return fmt.Errorf("checking face vector heads: %w", err)
+	}
+	if enabled || heads {
 		if err := faces.OnEnabled(); err != nil {
 			return err
 		}

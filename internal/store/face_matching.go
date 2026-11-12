@@ -31,6 +31,13 @@ type FaceCentroid struct {
 	Values              []float32
 }
 
+// HasFaceVectorHeads reports whether any face embeddings are retained.
+func (s *Store) HasFaceVectorHeads(ctx context.Context) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_heads WHERE input_kind='face')`).Scan(&exists)
+	return exists, err
+}
+
 // FaceMatchingInputs captures the authority used by both grouping and ranking.
 // Candidate output is absent: publishing suggestions cannot invalidate its input.
 func (s *Store) FaceMatchingInputs(ctx context.Context) (FaceMatchingSnapshot, error) {
