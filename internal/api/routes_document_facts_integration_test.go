@@ -35,6 +35,9 @@ func TestVersionFactsRoutesAndOpenLink(t *testing.T) {
 				} else {
 					require.Equal(t, fmt.Sprintf("%s/#node=%d&version=%s", origin, node.ID, node.CurrentVersionID), result["open"].(map[string]any)["web"])
 				}
+				res, body = get(t, ts, path+"?timezone=UTC", nil)
+				require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
+				require.Equal(t, "unknown_parameter", decodeProblem(t, body).Code)
 				res, body = get(t, ts, "/api/v1/versions/00000000-0000-4000-8000-000000000000/"+kind, nil)
 				require.Equal(t, http.StatusNotFound, res.StatusCode, body)
 				require.Equal(t, "version_not_found", decodeProblem(t, body).Code)

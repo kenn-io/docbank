@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -30,7 +31,7 @@ func factsError(err error) error {
 	return FromStoreError(err)
 }
 func registerDocumentFactsRoutes(api huma.API, d Deps) {
-	huma.Register(api, huma.Operation{OperationID: "getVersionDates", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/dates", Summary: "Read a version's date claims"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionDates }, error) {
+	huma.Register(api, huma.Operation{OperationID: "getVersionDates", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/dates", Middlewares: huma.Middlewares{rejectFactsUnknownQuery}, Summary: "Read a version's date claims"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionDates }, error) {
 		if browserSessionRequest(ctx) && in.Disclosure == "full" {
 			return nil, NewError(http.StatusForbidden, "disclosure_forbidden", "Browser sessions may only request safe disclosure")
 		}
@@ -41,7 +42,7 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		out := versionDatesAPI(f, in.Disclosure, d.Cfg.Web.PublicOrigin)
 		return &struct{ Body VersionDates }{Body: out}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "getVersionPeople", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/people", Summary: "Read a version's people"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionPeople }, error) {
+	huma.Register(api, huma.Operation{OperationID: "getVersionPeople", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/people", Middlewares: huma.Middlewares{rejectFactsUnknownQuery}, Summary: "Read a version's people"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionPeople }, error) {
 		if browserSessionRequest(ctx) && in.Disclosure == "full" {
 			return nil, NewError(http.StatusForbidden, "disclosure_forbidden", "Browser sessions may only request safe disclosure")
 		}
@@ -86,7 +87,11 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 		if !ok || safe && (e.Sensitive || e.Role == "blind_copy" || !p.Visible) {
 			continue
 		}
-		edge := VersionPersonEdge{PersonID: e.PersonID, DisplayName: p.Person.DisplayName, Role: e.Role, Basis: e.Basis, Confidence: e.Confidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, RawLabel: e.RawLabel, ClaimCount: e.ClaimCount, External: []FactExternal{}}
+		name := p.Person.DisplayName
+		if safe && p.Person.State == "provisional" && p.Person.Origin == "derived" {
+			name = e.RawLabel
+		}
+		edge := VersionPersonEdge{PersonID: e.PersonID, DisplayName: name, Role: e.Role, Basis: e.Basis, Confidence: e.Confidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, RawLabel: e.RawLabel, ClaimCount: e.ClaimCount, External: []FactExternal{}}
 		for _, x := range p.External {
 			edge.External = append(edge.External, FactExternal{System: x.System, ArchiveID: x.ArchiveID, UID: x.UID})
 		}
@@ -102,12 +107,22 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 	}
 	for _, c := range f.Candidates {
 		for _, o := range c.Occurrences {
-			label := c.DisplayName
-			if safe {
-				label = c.SafeLabels[o]
-			}
+			label := c.OccurrenceLabels[o]
 			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: label, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
 		}
 	}
 	return out
+}
+
+func rejectFactsUnknownQuery(ctx huma.Context, next func(huma.Context)) {
+	url := ctx.URL()
+	for key := range url.Query() {
+		if key != "disclosure" {
+			ctx.SetHeader("Content-Type", "application/problem+json")
+			ctx.SetStatus(http.StatusBadRequest)
+			_ = json.MarshalWrite(ctx.BodyWriter(), NewError(http.StatusBadRequest, "unknown_parameter", "Unknown query parameter"))
+			return
+		}
+	}
+	next(ctx)
 }
