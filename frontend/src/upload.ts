@@ -111,7 +111,7 @@ export interface PhotoGroupReceipt {
 export interface SavedPhotoGroup {
   files: { relative_path: string; size: number; modified_time?: number }[];
   hashes?: string[];
-  status: "remaining" | "pending" | "unconfirmed" | "committed";
+  status: "remaining" | "pending" | "committed";
   receipt?: PhotoGroupReceipt;
 }
 
@@ -385,7 +385,7 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
       reply.saved_import.groups.some(
         (group) =>
           !Array.isArray(group.files) ||
-          !["remaining", "pending", "unconfirmed", "committed"].includes(group.status) ||
+          !["remaining", "pending", "committed"].includes(group.status) ||
           group.files.some(
             (file) => typeof file.relative_path !== "string" || typeof file.size !== "number",
           ) ||
