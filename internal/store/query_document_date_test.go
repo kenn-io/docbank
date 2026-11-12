@@ -120,3 +120,34 @@ func TestDocumentDateKindHidesSensitiveActor(t *testing.T) {
 	compiled := compileFixtureQuery(t, s, "date_kind:sent date:2019-03-04", query.Filters{})
 	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
 }
+
+func TestDocumentDateAllDayEventMatchesSecondDay(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "calendar.ics", fakeHash("c1"), 10, "text/calendar")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "c2")
+	record.DocumentKind = "calendar"
+	start := record.Events[0]
+	start.SourceKey = "metadata/c2/calendar.event.e000001.start/0"
+	start.DateKind, start.DateValue = "started", "2026-03-09"
+	start.AxisKey = "2026-03-09T00:00:00.000000000"
+	start.EventID = document.DocumentEventID(s.VaultID(), node.CurrentVersionID, start.SourceKey, start.DateKind, start.DateValue, start.Precision, start.TimezoneKind, start.EvidenceSHA256)
+	end := start
+	end.SourceKey = "metadata/c2/calendar.event.e000001.end/1"
+	end.DateKind, end.DateValue = "ended", "2026-03-11"
+	end.AxisKey = "2026-03-11T00:00:00.000000000"
+	end.EventID = document.DocumentEventID(s.VaultID(), node.CurrentVersionID, end.SourceKey, end.DateKind, end.DateValue, end.Precision, end.TimezoneKind, end.EvidenceSHA256)
+	record.Events = []document.DocumentEventV1{start, end}
+	record.Primaries = nil
+	for _, disclosure := range []string{"safe", "full"} {
+		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", disclosure)
+		require.True(t, ok)
+		record.Primaries = append(record.Primaries, primary)
+	}
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	compiled := compileFixtureQuery(t, s, "date:2026-03-10 date_precision:day", query.Filters{})
+	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+}

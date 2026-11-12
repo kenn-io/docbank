@@ -701,7 +701,7 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 // A released photo with a sidecar is queued for XMP sync without a new mutation.
 func TestUpgradeReleasedSchemasQueueSidecarPhotos(t *testing.T) {
 	t.Parallel()
-	for _, version := range []int{29, 41} {
+	for _, version := range []int{29, 41, 48} {
 		for _, driver := range v090UpgradeDrivers() {
 			t.Run(fmt.Sprintf("v%d/%s", version, driver.name), func(t *testing.T) {
 				ctx := t.Context()
