@@ -314,7 +314,7 @@ func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
 				return
 			}
 			if action == "update" || action == "attach" || action == "detach" {
-				assert.ErrorIs(t, err, ErrInvalidContract)
+				require.ErrorIs(t, err, ErrInvalidContract)
 			}
 			got, getErr := s.GetContract(ctx, contract.ContractID, "2024-01-01")
 			if assert.NoError(t, getErr) {
