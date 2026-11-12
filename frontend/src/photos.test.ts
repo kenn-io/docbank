@@ -25,7 +25,7 @@ import {
 } from "./photo-test-fixtures.js";
 import type { Query } from "./query.js";
 import * as snapshots from "./snapshots.js";
-import { parseQuery, queryFingerprint } from "./query.js";
+import { canonicalQuery, parseQuery, queryFingerprint } from "./query.js";
 
 beforeEach(() => {
   stubPhotoTimeline();
@@ -2091,7 +2091,10 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])(
     expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-1", "photo-3"]);
     expect(photos.total).toBe(3);
     expect(photos.error).toBe("");
-    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toMatchObject({ query, projection: "map" });
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toMatchObject({
+      query: JSON.parse(canonicalQuery(query)),
+      projection: "map",
+    });
     if (outcome === "failure" || outcome === "cancel")
       expect(JSON.parse(fetcher.mock.calls[2]![1].body).cursor).toBe("second");
     if (rejected)
