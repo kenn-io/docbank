@@ -241,7 +241,8 @@ func TestTaxDuplicatePeriodImportRollsBack(t *testing.T) {
 	target := newTestStore(t)
 	root, vault := target.RootID(), target.vaultID
 	err := target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
-	require.ErrorContains(t, err, "UNIQUE constraint failed: tax_records.account_id")
+	require.Error(t, err)
+	assert.True(t, target.isUniqueViolation(err), "expected a uniqueness violation")
 	assert.Equal(t, root, target.RootID())
 	assert.Equal(t, vault, target.vaultID)
 	accounts, err := target.ListTaxAccounts(ctx, TaxAccountListOptions{Limit: 100})

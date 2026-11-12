@@ -9,6 +9,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/document"
+
 	"golang.org/x/text/currency"
 	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
@@ -56,8 +58,14 @@ func text(s, field string, bytes, runes int, required, note bool) error {
 	if len(s) > bytes || !utf8.ValidString(s) || (runes > 0 && utf8.RuneCountInString(s) > runes) || (required && strings.TrimSpace(s) == "") {
 		return invalid(field, "invalid length or text")
 	}
+	if !note {
+		if !document.ValidPersonIdentityText(s) {
+			return invalid(field, "control character")
+		}
+		return nil
+	}
 	for _, c := range s {
-		if unicode.IsControl(c) && !(note && (c == '\t' || c == '\n')) {
+		if unicode.IsControl(c) && c != '\t' && c != '\n' {
 			return invalid(field, "control character")
 		}
 	}
@@ -80,6 +88,14 @@ func rawLocation(country, subdivision, code string) error {
 		}
 	}
 	return nil
+}
+
+// NormalizeCurrency bounds and canonicalizes raw currency text.
+func NormalizeCurrency(code string) (string, error) {
+	if err := rawLocation("", "", code); err != nil {
+		return "", err
+	}
+	return strings.ToUpper(code), nil
 }
 
 // ValidateCountry checks a canonical tax country code.
@@ -190,7 +206,11 @@ func ValidateTaxKind(s string) error {
 
 // NormalizeAccount canonicalizes and validates account input.
 func NormalizeAccount(v AccountValues) (AccountValues, error) {
-	if err := rawLocation(v.Country, v.Subdivision, v.Currency); err != nil {
+	if err := rawLocation(v.Country, v.Subdivision, ""); err != nil {
+		return v, err
+	}
+	code, err := NormalizeCurrency(v.Currency)
+	if err != nil {
 		return v, err
 	}
 	// Bounds precede normalization and parsing.
@@ -209,7 +229,7 @@ func NormalizeAccount(v AccountValues) (AccountValues, error) {
 	v.TaxKind = kind
 	v.Country = strings.ToUpper(v.Country)
 	v.Subdivision = strings.ToUpper(v.Subdivision)
-	v.Currency = strings.ToUpper(v.Currency)
+	v.Currency = code
 	v.PeriodNote, v.DueNote, v.Note = note(v.PeriodNote), note(v.DueNote), note(v.Note)
 	return v, ValidateAccount(v)
 }
@@ -250,7 +270,11 @@ func ValidateAccount(v AccountValues) error {
 
 // NormalizeRecord canonicalizes and validates record input.
 func NormalizeRecord(v RecordValues) (RecordValues, error) {
-	if err := rawLocation(v.Country, v.Subdivision, v.Currency); err != nil {
+	if err := rawLocation(v.Country, v.Subdivision, ""); err != nil {
+		return v, err
+	}
+	code, err := NormalizeCurrency(v.Currency)
+	if err != nil {
 		return v, err
 	}
 	for _, item := range []struct{ field, value string }{{"note", v.Note}, {"verification_note", v.VerificationNote}} {
@@ -271,7 +295,8 @@ func NormalizeRecord(v RecordValues) (RecordValues, error) {
 		return v, err
 	}
 	v.Title, v.TaxKind, v.FormCode = label(v.Title), kind, label(v.FormCode)
-	v.Country, v.Subdivision, v.Currency = strings.ToUpper(v.Country), strings.ToUpper(v.Subdivision), strings.ToUpper(v.Currency)
+	v.Country, v.Subdivision = strings.ToUpper(v.Country), strings.ToUpper(v.Subdivision)
+	v.Currency = code
 	v.Note, v.VerificationNote = note(v.Note), note(v.VerificationNote)
 	return v, ValidateRecord(v)
 }

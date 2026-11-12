@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/taxrecord"
@@ -131,14 +130,9 @@ func taxRecordValues(in TaxRecordInput, old *TaxRecord, account *TaxAccount) (ta
 	}
 	v.AmountMinor = nil
 	if in.Amount != nil {
-		code := v.Currency
-		if len(code) <= 3 {
-			for i := range len(code) {
-				if code[i] >= 0x80 {
-					return v, &taxrecord.FieldError{Field: "currency", Reason: "invalid currency"}
-				}
-			}
-			code = strings.ToUpper(code)
+		code, err := taxrecord.NormalizeCurrency(v.Currency)
+		if err != nil {
+			return v, err
 		}
 		amount, err := taxrecord.ParseMoney(*in.Amount, code)
 		if err != nil {
