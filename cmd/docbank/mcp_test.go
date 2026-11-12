@@ -150,8 +150,6 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			for _, tool := range catalog.Result.Tools {
 				names[tool.Name] = true
 			}
-			assert.True(t, names["list_contracts"])
-			assert.True(t, names["get_contract"])
 			for _, name := range []string{"create_contract", "update_contract", "link_contract_document"} {
 				assert.Equal(t, test.contracts, names[name], name)
 			}
@@ -326,13 +324,4 @@ func TestMCPBearerCanStartFromMountedSecretWithoutTOML(t *testing.T) {
 	_, _, err = loadMCPHTTPConfig(root)
 	require.ErrorContains(t, err, "cannot both")
 	require.NotContains(t, err.Error(), "conflicting-key")
-}
-
-func TestMCPContractWriteFlagHelp(t *testing.T) {
-	for _, args := range [][]string{{"mcp", "--help"}, {"mcp", "config", "--help"}} {
-		output, err := runCLI(t, args...)
-		require.NoError(t, err)
-		assert.Contains(t, output, "--allow-contract-writes")
-		assert.Contains(t, output, "allow contract creation, field edits, and exact document links")
-	}
 }

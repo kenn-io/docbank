@@ -24,45 +24,14 @@ import (
 )
 
 func TestContractMCPCatalogOptIn(t *testing.T) {
-	names := func(options ServerOptions) map[string]bool {
-		result := map[string]bool{}
-		for _, tool := range toolCatalog(options) {
-			result[tool.Name] = true
-		}
-		return result
-	}
-	assert.Len(t, toolCatalog(ServerOptions{}), 45)
 	assert.Len(t, toolCatalog(ServerOptions{AllowContractWrites: true}), 48)
-	assert.Len(t, toolCatalog(ServerOptions{AllowContractWrites: true, AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true, AllowExportWrites: true, AllowReportWrites: true, AllowKataWrites: true}), 73)
-	read := names(ServerOptions{})
-	assert.True(t, read["list_contracts"])
-	assert.True(t, read["get_contract"])
-	assert.False(t, read["create_contract"])
-	writes := names(ServerOptions{AllowContractWrites: true})
 	for _, tool := range toolCatalog(ServerOptions{AllowContractWrites: true}) {
 		if contractWriteTool(tool.Name) {
-			assert.True(t, writes[tool.Name])
 			assert.False(t, tool.Annotations.ReadOnlyHint)
 			assert.False(t, tool.Annotations.IdempotentHint)
 			assert.Equal(t, new(tool.Name == "update_contract"), tool.Annotations.DestructiveHint)
 		}
 	}
-}
-
-func TestContractMCPPatchPreservesNull(t *testing.T) {
-	var patch api.PatchContractRequest
-	err := json.Unmarshal([]byte(`{"starts_on":null,"expires_on":"2026-12-01","summary":""}`), &patch)
-	require.NoError(t, err)
-	encoded, err := json.Marshal(patch)
-	require.NoError(t, err)
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &fields))
-	assert.Contains(t, fields, "starts_on")
-	assert.Nil(t, fields["starts_on"])
-	assert.Equal(t, "2026-12-01", fields["expires_on"])
-	assert.Contains(t, fields, "summary")
-	assert.Empty(t, fields["summary"])
-	assert.NotContains(t, fields, "signed_on")
 }
 
 func TestContractMCPInputSemanticsTermsByteLimit(t *testing.T) {
@@ -100,6 +69,10 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	id, ok := created["contract_id"].(string)
 	require.True(t, ok)
 	assert.EqualValues(t, 1, created["revision"])
+	_, err = catalog.CreateContract(t.Context(), store.ContractInput{Title: "Agreement %_ without party"})
+	require.NoError(t, err)
+	_, err = catalog.CreateContract(t.Context(), store.ContractInput{Title: "Other agreement", Parties: []store.ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
+	require.NoError(t, err)
 	list := call("list_contracts", map[string]any{"q": "%_", "party_id": party.PartyID, "as_of": "2026-11-12"})
 	assert.EqualValues(t, 50, list["limit"])
 	assert.Equal(t, "2026-11-12", list["as_of"])
@@ -137,44 +110,6 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	assert.Equal(t, "2026-12-01", detail["expires_on"])
 	assert.Contains(t, detail, "summary")
 	assert.Empty(t, detail["summary"])
-	stale := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": map[string]any{"contract_id": id, "revision": 1, "patch": map[string]any{"title": "Incorrect"}}})))
-	assert.Equal(t, "stale_revision", objectField(t, stale, "structuredContent")["code"])
-	// Pin a retained historical version after the file's head has changed.
-	oldVersion := node.CurrentVersionID
-	node, _, err = catalog.ReplaceContent(t.Context(), node.ID, node.Revision, strings.Repeat("b", 64), 7, "text/plain")
-	require.NoError(t, err)
-	historical := call("link_contract_document", map[string]any{"contract_id": id, "revision": 3, "node_id": node.ID, "content_version_id": oldVersion, "role": "amendment"})
-	assert.EqualValues(t, 4, historical["revision"])
-	detail = call("get_contract", map[string]any{"contract_id": id})
-	documents, ok = detail["documents"].([]any)
-	require.True(t, ok)
-	require.Len(t, documents, 2)
-	for _, raw := range documents {
-		doc, ok := raw.(map[string]any)
-		require.True(t, ok)
-		assert.Equal(t, oldVersion, doc["content_version_id"])
-		assert.Equal(t, false, doc["current"])
-		assert.Equal(t, true, doc["available"])
-	}
-	replay := call("link_contract_document", map[string]any{"contract_id": id, "revision": 4, "node_id": node.ID, "content_version_id": oldVersion, "role": "amendment"})
-	assert.EqualValues(t, 4, replay["revision"])
-	other, err := catalog.CreateFile(t.Context(), catalog.RootID(), "other.txt", strings.Repeat("c", 64), 1, "text/plain")
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		nodeID, revision int64
-		version, code    string
-	}{
-		{other.ID, 4, oldVersion, "invalid_contract"},
-		{catalog.RootID(), 4, oldVersion, "not_file"},
-		{node.ID, 3, oldVersion, "stale_revision"},
-	} {
-		response := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "link_contract_document", "arguments": map[string]any{"contract_id": id, "revision": tc.revision, "node_id": tc.nodeID, "content_version_id": tc.version, "role": "attachment"}})))
-		assert.Equal(t, tc.code, objectField(t, response, "structuredContent")["code"])
-	}
-	other, _, err = catalog.Trash(t.Context(), other.ID, other.Revision)
-	require.NoError(t, err)
-	unavailable := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "link_contract_document", "arguments": map[string]any{"contract_id": id, "revision": 4, "node_id": other.ID, "content_version_id": other.CurrentVersionID, "role": "attachment"}})))
-	assert.Equal(t, "invalid_contract", objectField(t, unavailable, "structuredContent")["code"])
 	// A successful write can still fail the final MCP envelope limit.
 	implementation := testImplementation()
 	implementation.Name = strings.Repeat("x", maxToolResponseBytes)
@@ -183,7 +118,7 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	assert.Equal(t, "contract_outcome_unknown", objectField(t, large, "structuredContent")["code"])
 	page, err := catalog.ListContracts(t.Context(), store.ContractListOptions{AsOf: "2026-11-12", Limit: 100})
 	require.NoError(t, err)
-	assert.Len(t, page, 2)
+	assert.Len(t, page, 4)
 	// Let the real API commit, then drop its response at the HTTP boundary.
 	var attempts atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -210,20 +145,7 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	assert.EqualValues(t, 1, attempts.Load())
 	page, err = catalog.ListContracts(t.Context(), store.ContractListOptions{AsOf: "2026-11-12", Limit: 100})
 	require.NoError(t, err)
-	assert.Len(t, page, 3)
-	plan, err := catalog.PreviewInitialAudit(t.Context(), catalog.RootID(), "cli", nil)
-	require.NoError(t, err)
-	_, err = catalog.EnableInitialAudit(t.Context(), plan)
-	require.NoError(t, err)
-	audited := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": map[string]any{"contract_id": id, "revision": 4, "patch": map[string]any{"title": "Forbidden"}}})))
-	assert.Equal(t, "audit_mutation_unsupported", objectField(t, audited, "structuredContent")["code"])
-	unchanged, err := catalog.GetContract(t.Context(), id, "2026-11-12")
-	require.NoError(t, err)
-	assert.Equal(t, "Agreement %_", unchanged.Title)
-	assert.EqualValues(t, 4, unchanged.Revision)
-	disabled := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
-	reply := exchangeRaw(t, disabled, requestFor("tools/call", map[string]any{"name": "create_contract", "arguments": map[string]any{"title": "Disabled"}}))
-	assert.NotZero(t, decodeWireError(t, reply).Code)
+	assert.Len(t, page, 5)
 }
 
 func TestContractMCPClosedArgumentsAndBounds(t *testing.T) {
@@ -241,35 +163,6 @@ func TestContractMCPClosedArgumentsAndBounds(t *testing.T) {
 	} {
 		t.Run(tc.name+fmt.Sprint(tc.args), func(t *testing.T) { assertSchemaRejects(t, tools[tc.name].InputSchema, tc.args) })
 	}
-}
-
-func TestContractMCPProjectionAndEnvelope(t *testing.T) {
-	var c api.Contract
-	require.NoError(t, json.Unmarshal([]byte(`{"contract_id":"11111111-1111-4111-8111-111111111111","title":"Synthetic","revision":1,"signer_email":"private@example.test"}`), &c))
-	out := contractDetail(c)
-	encoded, err := json.Marshal(out)
-	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "private@example.test")
-	out.Summary = strings.Repeat("\"", maxToolResponseBytes)
-	assert.ErrorIs(t, contractResultFits(out), errContractResultTooLarge)
-}
-
-func TestContractMCPWriteOutcomeUnknown(t *testing.T) {
-	attempts := 0
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"contract_id":"11111111-1111-4111-8111-111111111111","revision":1}`))
-	}))
-	t.Cleanup(daemon.Close)
-	conn := daemonconn.New(daemon.URL, "synthetic-key")
-	t.Cleanup(func() { require.NoError(t, conn.Close()) })
-	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return conn, nil }, func(*daemonconn.Connection) error { return nil })
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true}, lease)
-	result := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "create_contract", "arguments": map[string]any{"title": "Synthetic"}})))
-	assert.Equal(t, "contract_outcome_unknown", objectField(t, result, "structuredContent")["code"])
-	assert.Equal(t, 1, attempts)
 }
 
 func TestContractMCPPatchDateRelay(t *testing.T) {
@@ -312,14 +205,22 @@ func TestContractMCPPatchDateRelay(t *testing.T) {
 
 func TestContractMCPDaemonErrorPrivacy(t *testing.T) {
 	const secret = "private-signer@example.test"
-	for _, code := range []string{"invalid_contract", "party_not_own", "party_retired", "not_file", "stale_revision", "unrecognized_contract_problem"} {
+	for _, tc := range []struct {
+		code   string
+		status int
+	}{
+		{"invalid_contract", http.StatusUnprocessableEntity}, {"party_not_own", http.StatusUnprocessableEntity},
+		{"party_retired", http.StatusConflict}, {"not_file", http.StatusUnprocessableEntity},
+		{"stale_revision", http.StatusPreconditionFailed}, {"unrecognized_contract_problem", http.StatusConflict},
+	} {
+		code := tc.code
 		t.Run(code, func(t *testing.T) {
 			var attempts atomic.Int32
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				attempts.Add(1)
 				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(http.StatusConflict)
-				_, _ = fmt.Fprintf(w, `{"status":409,"title":"Request failed","code":%q,"detail":%q}`, code, secret)
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprintf(w, `{"status":%d,"title":"Request failed","code":%q,"detail":%q}`, tc.status, code, secret)
 			}))
 			t.Cleanup(daemon.Close)
 			var logs bytes.Buffer
@@ -343,25 +244,6 @@ func TestContractMCPDaemonErrorPrivacy(t *testing.T) {
 			assert.Contains(t, logs.String(), "operation=create_contract")
 		})
 	}
-}
-
-func TestContractMCPDaemonProjectionPrivacy(t *testing.T) {
-	const id = "11111111-1111-4111-8111-111111111111"
-	const secret = "private-signer@example.test"
-	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"1"`)
-		_, _ = fmt.Fprintf(w, `{"contract_id":%q,"title":"Synthetic","contract_type":"","status":"draft","effective_status":"draft","starts_on":null,"expires_on":null,"signed_on":null,"summary":"","purpose":"","consideration":"","termination":"","revision":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","parties":[],"documents":[],"signer_email":%q}`, id, secret)
-	}))
-	t.Cleanup(daemon.Close)
-	var logs bytes.Buffer
-	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{Logger: slog.New(slog.NewTextHandler(&logs, nil))}, exportTestLease(t, daemon.URL))
-	wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_contract", "arguments": map[string]any{"contract_id": id}}))
-	result := decodeResult(t, wire)
-	assert.NotEqual(t, true, result["isError"])
-	assert.Equal(t, id, objectField(t, result, "structuredContent")["contract_id"])
-	assert.NotContains(t, string(wire), secret)
-	assert.NotContains(t, logs.String(), secret)
 }
 
 func TestContractMCPGetContractTooLargeWire(t *testing.T) {

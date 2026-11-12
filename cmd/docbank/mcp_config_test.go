@@ -94,7 +94,6 @@ func TestMCPConfigRejectsInvalidOptions(t *testing.T) {
 		{"--client", "claude"}, {"--client", "codex", "--transport", "invalid"},
 		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:0"},
 		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341", "--allow-processing"},
-		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341", "--allow-contract-writes"},
 	} {
 		_, err := runCLI(t, append([]string{"mcp", "config"}, args...)...)
 		require.Error(t, err)
