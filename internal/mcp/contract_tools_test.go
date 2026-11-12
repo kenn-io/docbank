@@ -397,3 +397,23 @@ func TestContractMCPGetContractTooLargeWire(t *testing.T) {
 	assert.NotContains(t, string(wire), `"documents"`)
 	assert.NotContains(t, string(wire), id)
 }
+
+func TestContractMCPWriteInvalidIntegerEncoding(t *testing.T) {
+	var mutations atomic.Int32
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mutations.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(daemon.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true}, exportTestLease(t, daemon.URL))
+	args := map[string]any{"contract_id": "11111111-1111-4111-8111-111111111111", "revision": 1, "patch": map[string]any{"title": "Synthetic"}}
+	args["revision"] = float64(1)
+	assertSchemaAccepts(t, catalogMap(toolCatalog(ServerOptions{AllowContractWrites: true}))["update_contract"].InputSchema, args)
+	args["revision"] = 1
+	request := requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": args})
+	wireRequest := strings.Replace(string(request), `"revision":1`, `"revision":1.0`, 1)
+	require.NotEqual(t, string(request), wireRequest)
+	wire := exchangeRaw(t, server, []byte(wireRequest))
+	assert.Zero(t, mutations.Load())
+	assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+}
