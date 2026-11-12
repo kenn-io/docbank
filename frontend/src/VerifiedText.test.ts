@@ -209,7 +209,7 @@ it("finds text, wraps navigation, and clears the find query", async () => {
 
 it.each([
   ["ready", [3, 4, 7], /Pages 3–4, 7 have no text layer/, /OCR can read them/],
-  ["verified_empty", [2], /Page 2 has no text layer/, /OCR can read it/],
+  ["verified_empty", [1], /Page 1 has no text layer/, /OCR can read it/],
 ] as const)("shows %s text coverage for PDF pages %j", async (state, pages, notice, link) => {
   if (state === "ready") {
     await mockReadyText(pdf, [...pages]);
