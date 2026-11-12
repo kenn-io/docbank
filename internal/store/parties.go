@@ -81,12 +81,6 @@ func scanParty(row interface{ Scan(...any) error }) (Party, error) {
 	p.Own = own == 1
 	return p, nil
 }
-func partyOwn(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
 func getPartyQuery(ctx context.Context, q rowQuerier, id string) (Party, error) {
 	if validateUUIDv4(id) != nil {
 		return Party{}, ErrNotFound
@@ -132,7 +126,7 @@ func (s *Store) CreateParty(ctx context.Context, input PartyInput) (Party, error
 		if err := checkPartyReferences(ctx, tx, input, "", nil); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO parties (`+partyColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, p.PartyID, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, partyOwn(p.Own), p.PersonID, p.Revision, p.CreatedAt, p.UpdatedAt, p.RetiredAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO parties (`+partyColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, p.PartyID, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, boolInt(p.Own), p.PersonID, p.Revision, p.CreatedAt, p.UpdatedAt, p.RetiredAt)
 		return err
 	})
 	if err != nil {
@@ -147,7 +141,7 @@ func (s *Store) ListParties(ctx context.Context, options PartyListOptions) ([]Pa
 	}
 	own := 0
 	if options.Own != nil {
-		own = partyOwn(*options.Own)
+		own = boolInt(*options.Own)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT `+partyColumns+` FROM parties WHERE ($1='' OR kind=$2) AND ($3 OR own=$4) AND ($5 OR retired_at IS NULL) ORDER BY display_name_folded,party_id LIMIT $6 OFFSET $7`, options.Kind, options.Kind, options.Own == nil, own, options.IncludeRetired, options.Limit, options.Offset)
 	if err != nil {
@@ -193,7 +187,7 @@ func (s *Store) UpdateParty(ctx context.Context, id string, revision int64, inpu
 		p.Own = input.Own
 		p.Revision++
 		p.UpdatedAt = nowRFC3339()
-		_, err = tx.ExecContext(ctx, `UPDATE parties SET kind=$1,display_name=$2,display_name_folded=$3,legal_name=$4,country=$5,own=$6,person_id=$7,revision=$8,updated_at=$9 WHERE party_id=$10`, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, partyOwn(p.Own), p.PersonID, p.Revision, p.UpdatedAt, p.PartyID)
+		_, err = tx.ExecContext(ctx, `UPDATE parties SET kind=$1,display_name=$2,display_name_folded=$3,legal_name=$4,country=$5,own=$6,person_id=$7,revision=$8,updated_at=$9 WHERE party_id=$10`, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, boolInt(p.Own), p.PersonID, p.Revision, p.UpdatedAt, p.PartyID)
 		updated = p
 		return err
 	})

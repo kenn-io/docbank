@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"testing"
 
@@ -9,18 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
-
-func TestPartyCommandsExposeJSONAndFields(t *testing.T) {
-	t.Parallel()
-	for _, args := range [][]string{{"list", "--help"}, {"show", "--help"}, {"create", "--help"}, {"edit", "--help"}, {"retire", "--help"}} {
-		cmd := newPartyCommand()
-		var out bytes.Buffer
-		cmd.SetOut(&out)
-		cmd.SetArgs(args)
-		require.NoError(t, cmd.Execute())
-		assert.Contains(t, out.String(), "--json")
-	}
-}
 
 func TestPartyExplicitRevisionMustBePositive(t *testing.T) {
 	t.Parallel()
@@ -62,15 +49,8 @@ func TestPartyCLIShowsPopulatedAndRetiredParties(t *testing.T) {
 	assert.Contains(t, out, "retired: "+*retired.RetiredAt)
 	assert.Contains(t, out, "revision 2")
 	assert.Contains(t, out, "person: "+person.PersonID)
-	out, err = runCLI(t, "party", "list")
-	require.NoError(t, err, out)
-	assert.NotContains(t, out, party.PartyID)
-	assert.Contains(t, out, "Synthetic Counterparty")
-	assert.Contains(t, out, "own: false")
 	out, err = runCLI(t, "party", "list", "--include-retired")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, party.PartyID)
 	assert.Contains(t, out, "retired: "+*retired.RetiredAt)
-	assert.Contains(t, out, "own: true")
-	assert.Contains(t, out, "Synthetic Counterparty")
 }

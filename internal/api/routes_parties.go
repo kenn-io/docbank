@@ -50,26 +50,46 @@ type PatchPartyRequest struct {
 	countryPresent, personPresent bool
 }
 
-func (p *PatchPartyRequest) UnmarshalJSON(raw []byte) error {
-	type fields PatchPartyRequest
-	var value fields
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return err
-	}
+// partyMembers enforces the same canonical field names and null rules for all writes.
+func partyMembers(raw []byte) (map[string]jsontext.Value, error) {
 	var members map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &members); err != nil {
-		return err
+		return nil, err
 	}
 	for name, member := range members {
 		switch name {
 		case "kind", "display_name", "legal_name", "own":
 			if string(member) == "null" {
-				return fmt.Errorf("%s cannot be null", name)
+				return nil, fmt.Errorf("%s cannot be null", name)
 			}
 		case "country", "person_id":
 		default:
-			return fmt.Errorf("unknown party field %q", name)
+			return nil, fmt.Errorf("unknown party field %q", name)
 		}
+	}
+	return members, nil
+}
+
+func (p *CreatePartyRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := partyMembers(raw); err != nil {
+		return err
+	}
+	type fields CreatePartyRequest
+	return json.Unmarshal(raw, (*fields)(p))
+}
+
+func (p *PatchPartyRequest) UnmarshalJSON(raw []byte) error {
+	members, err := partyMembers(raw)
+	if err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return fmt.Errorf("party patch must contain a field")
+	}
+	type fields PatchPartyRequest
+	var value fields
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
 	}
 	*p = PatchPartyRequest(value)
 	_, p.countryPresent = members["country"]

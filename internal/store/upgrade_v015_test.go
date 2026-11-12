@@ -858,10 +858,9 @@ func TestUpgradeReleasedV0170KeepsOperationalState(t *testing.T) {
 			require.NoError(t, err)
 			versions := seedRenditionCatalogVersions(t, legacy)
 			request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
+			request.ExplicitStart = true
 			grantRenditionJobConsent(t, legacy, request)
 			_, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
-			require.NoError(t, err)
-			_, err = db.ExecContext(ctx, `INSERT INTO photo_description_explicit_waiters(waiter_id) VALUES(?)`, waiter.ID)
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 			upgraded, err := Open(ctx, path, driver.driver)

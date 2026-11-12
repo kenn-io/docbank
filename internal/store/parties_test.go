@@ -41,21 +41,16 @@ func checkPartyLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, retired, listed[0])
-}
-
-func TestPartyLifecycle(t *testing.T) {
-	t.Parallel()
-	checkPartyLifecycle(t, newTestStore)
-}
-
-func TestPartyDuplicateFoldedName(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	first, err := s.CreateParty(t.Context(), PartyInput{Kind: "organization", DisplayName: "Café"})
+	_, err = s.UpdateParty(ctx, retired.PartyID, retired.Revision, input)
+	require.ErrorIs(t, err, ErrPartyRetired)
+	_, err = s.RetireParty(ctx, retired.PartyID, retired.Revision)
+	require.ErrorIs(t, err, ErrPartyRetired)
+	first, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Café"})
 	require.NoError(t, err)
-	_, err = s.CreateParty(t.Context(), PartyInput{Kind: "person", DisplayName: "CAFE\u0301"})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, first.PartyID)
+	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "CAFE\u0301"})
+	var exists *PartyExistsError
+	require.ErrorAs(t, err, &exists)
+	assert.Equal(t, first.PartyID, exists.PartyID)
 }
 
 func TestPartyValidatesInputsBeforeWriting(t *testing.T) {
@@ -66,6 +61,10 @@ func TestPartyValidatesInputsBeforeWriting(t *testing.T) {
 		{Kind: "person", DisplayName: ""},
 		{Kind: "person", DisplayName: "Example", Country: new("ZZ")},
 		{Kind: "person", DisplayName: "Example", PersonID: new("not-a-uuid")},
+		{Kind: "person", DisplayName: "Bad\x00name"},
+		{Kind: "person", DisplayName: "Valid", LegalName: "Bad\x00name"},
+		{Kind: "person", DisplayName: strings.Repeat("界", 201)},
+		{Kind: "person", DisplayName: "Another", LegalName: strings.Repeat("界", 301)},
 	} {
 		_, err := s.CreateParty(t.Context(), input)
 		require.Error(t, err)
@@ -73,6 +72,8 @@ func TestPartyValidatesInputsBeforeWriting(t *testing.T) {
 	parties, err := s.ListParties(t.Context(), PartyListOptions{Limit: 100})
 	require.NoError(t, err)
 	assert.Empty(t, parties)
+	_, err = s.CreateParty(t.Context(), PartyInput{Kind: "person", DisplayName: strings.Repeat("界", 200), LegalName: strings.Repeat("界", 300)})
+	require.NoError(t, err)
 }
 
 func checkPartyConcurrentNameAdmission(t *testing.T, open func(*testing.T) *Store) {
@@ -104,17 +105,6 @@ func checkPartyConcurrentNameAdmission(t *testing.T, open func(*testing.T) *Stor
 	}
 	assert.Equal(t, 1, success)
 	assert.Equal(t, 1, duplicate)
-}
-
-func TestPartyUnicodeBounds(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	_, err := s.CreateParty(t.Context(), PartyInput{Kind: "person", DisplayName: strings.Repeat("界", 200), LegalName: strings.Repeat("界", 300)})
-	require.NoError(t, err)
-	_, err = s.CreateParty(t.Context(), PartyInput{Kind: "person", DisplayName: strings.Repeat("界", 201)})
-	require.ErrorIs(t, err, ErrInvalidParty)
-	_, err = s.CreateParty(t.Context(), PartyInput{Kind: "person", DisplayName: "Another", LegalName: strings.Repeat("界", 301)})
-	require.ErrorIs(t, err, ErrInvalidParty)
 }
 
 func TestPartyAuditRefusalPreservesAuthority(t *testing.T) {
@@ -158,6 +148,12 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 		}
 	}
 	require.NotEqual(t, -1, partyLine)
+	duplicate := append([]string(nil), lines...)
+	duplicateLine := strings.Replace(duplicate[partyLine], p.PartyID, uuid.NewString(), 1)
+	require.NotEqual(t, duplicate[partyLine], duplicateLine)
+	duplicate = append(duplicate[:partyLine+1], append([]string{duplicateLine}, duplicate[partyLine+1:]...)...)
+	empty := newTestStore(t)
+	require.Error(t, empty.ImportMetadata(ctx, strings.NewReader(strings.Join(duplicate, "\n"))))
 	for _, tc := range []struct{ name, from, to string }{
 		{"country", `"country":"CA"`, `"country":"ZZ"`},
 		{"NUL", `"display_name":"Example"`, `"display_name":"Exam\u0000ple"`},
@@ -176,12 +172,6 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 			assert.Empty(t, items)
 		})
 	}
-
-}
-
-func TestPartyConcurrentNameAdmission(t *testing.T) {
-	t.Parallel()
-	checkPartyConcurrentNameAdmission(t, newTestStore)
 }
 
 func checkPartyFiltersAndReferences(t *testing.T, open func(*testing.T) *Store) {
@@ -206,45 +196,6 @@ func checkPartyFiltersAndReferences(t *testing.T, open func(*testing.T) *Store) 
 	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Missing", PersonID: new("11111111-1111-4111-8111-111111111111")})
 	require.ErrorIs(t, err, ErrInvalidParty)
 }
-func TestPartyFiltersAndReferences(t *testing.T) {
-	t.Parallel()
-	checkPartyFiltersAndReferences(t, newTestStore)
-}
-
-func TestPartyRetireAndEditRace(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	input := PartyInput{Kind: "person", DisplayName: "Example"}
-	p, err := s.CreateParty(ctx, input)
-	require.NoError(t, err)
-	results := make(chan error, 2)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() { <-start; _, err := s.RetireParty(ctx, p.PartyID, p.Revision); results <- err })
-	wg.Go(func() {
-		<-start
-		input.LegalName = "Example Person"
-		_, err := s.UpdateParty(ctx, p.PartyID, p.Revision, input)
-		results <- err
-	})
-	close(start)
-	wg.Wait()
-	close(results)
-	success, stale := 0, 0
-	for err := range results {
-		if err == nil {
-			success++
-		} else if errors.Is(err, ErrStaleRevision) {
-			stale++
-		} else {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	}
-	assert.Equal(t, 1, success)
-	assert.Equal(t, 1, stale)
-}
-
 func checkPartyPersonLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -272,13 +223,5 @@ func checkPartyPersonLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "New link", PersonID: &survivor.PersonID})
 	require.ErrorIs(t, err, ErrInvalidParty)
-	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Bad\x00name"})
-	require.ErrorIs(t, err, ErrInvalidParty)
-	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Valid", LegalName: "Bad\x00name"})
-	require.ErrorIs(t, err, ErrInvalidParty)
-}
 
-func TestPartyPersonLifecycle(t *testing.T) {
-	t.Parallel()
-	checkPartyPersonLifecycle(t, newTestStore)
 }

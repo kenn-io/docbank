@@ -24,7 +24,7 @@ alpha-2 code. Display names contain 1–200 characters and legal names at most
 300. Docbank rejects a new or renamed active party when its folded display
 name matches another active party and returns the existing ID. Retired entries
 remain available through `show` and `list --include-retired`, but are hidden
-from the default list. Use `--clear-country` or `--clear-person` to remove an
+from the default list. Retired parties cannot be edited or un-retired. Use `--clear-country` or `--clear-person` to remove an
 optional field. Every command supports `--json`.
 
 The HTTP API provides `GET` and `POST /api/v1/parties`, `GET` and `PATCH
@@ -35,4 +35,6 @@ provided. A stale revision fails without changing the party. Creation needs no
 revision. Party changes are refused in vaults with active audited history.
 Parties are included in metadata backup and restore.
 
-Duplicate detection compares display names exactly after Unicode normalization and case folding. Punctuation and legal suffix variants are not treated as duplicates. Linking a person requires an active person; an existing link remains readable and editable after that person retires. Merging people moves their linked parties to the survivor and advances each party revision.
+Duplicate detection compares display names exactly after Unicode normalization, case folding, and trimming and collapsing whitespace. For example, `Northwind  Ltd` matches `Northwind Ltd`. Punctuation and legal suffix variants are not treated as duplicates. Linking a person requires an active person; an existing link remains readable and editable after that person retires. Merging people moves their linked parties to the survivor and advances each party revision.
+
+A person split does not move party links; parties moved by a merge remain linked to the survivor.
