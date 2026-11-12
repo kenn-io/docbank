@@ -64,7 +64,15 @@ func decodeFrontmatter(ctx context.Context, src []byte, fm *Frontmatter, b *budg
 	}
 	reader := yamlReader{ctx: ctx, b: b, src: src}
 	var doc yaml.Node
-	if err := yaml.NewDecoder(&reader).Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+	decoder := yaml.NewDecoder(&reader)
+	err := decoder.Decode(&doc)
+	if err == nil {
+		var trailing yaml.Node
+		if err = decoder.Decode(&trailing); err == nil {
+			err = errYAML
+		}
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
 		if reader.err != nil {
 			return reader.err
 		}
