@@ -135,12 +135,9 @@ func (c *Client) Check(ctx context.Context) (Status, error) {
 	}
 	endpoint := c.connection.Endpoint
 	if strings.Contains(endpoint, c.connection.APIKey) {
-		endpoint = "[redacted]"
-		if strings.Contains(endpoint, c.connection.APIKey) {
-			endpoint = "*"
-			if c.connection.APIKey == "*" {
-				endpoint = "?"
-			}
+		endpoint = "*"
+		if c.connection.APIKey == "*" {
+			endpoint = "?"
 		}
 	}
 	return Status{Configured: true, Enabled: true, Endpoint: endpoint, Capability: "template_submission"}, nil
@@ -149,6 +146,8 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 	if cursor < 0 {
 		return TemplatePage{}, errors.New("invalid cursor")
 	}
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	var wire struct {
 		Data *[]struct {
 			ID         int64  `json:"id"`
@@ -194,6 +193,9 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
 		previous = t.ID
+		if t.Submitters == nil {
+			return TemplatePage{}, errors.New("docuseal_invalid_response")
+		}
 		if strings.Contains(t.Name, c.connection.APIKey) {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
@@ -203,7 +205,7 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 		}
 		item := Template{ID: t.ID, Name: name, Roles: make([]string, 0, len(t.Submitters))}
 		for _, role := range t.Submitters {
-			if !safeText(role.Name, c.connection.APIKey, 4096) {
+			if strings.Contains(role.Name, c.connection.APIKey) {
 				return TemplatePage{}, errors.New("docuseal_invalid_response")
 			}
 			item.Roles = append(item.Roles, role.Name)

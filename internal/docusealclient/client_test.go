@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
-	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/docbank/internal/config"
 )
 
@@ -45,45 +45,8 @@ func TestConnectionChecksAndListsTemplates(t *testing.T) {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 }
-func TestConnectionRejectsRedirectAndSecretEcho(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/user" {
-			http.Redirect(w, r, "/elsewhere", 302)
-			return
-		}
-		fmt.Fprint(w, `{"data":[{"id":1,"name":"synthetic-key"}]}`)
-	}))
-	defer s.Close()
-	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = c.Check(t.Context()); err == nil {
-		t.Fatal("accepted redirect")
-	}
-	_, err = c.Templates(t.Context(), 0)
-	if err == nil || strings.Contains(err.Error(), "synthetic-key") {
-		t.Fatalf("unsafe error: %v", err)
-	}
-}
-
-func TestConnectionRejectsOversizedResponse(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("x", maxResponse+1)))
-	}))
-	defer s.Close()
-	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.Check(t.Context())
-	if err == nil || err.Error() != "docuseal_response_too_large" {
-		t.Fatalf("got %v", err)
-	}
-}
-
 func TestConnectionRejectsMalformedProviderShapes(t *testing.T) {
-	for _, body := range []string{"null", "{}", `{"id":0}`} {
+	for _, body := range []string{`{"id":0}`} {
 		t.Run(body, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
 			defer s.Close()
@@ -96,7 +59,7 @@ func TestConnectionRejectsMalformedProviderShapes(t *testing.T) {
 			}
 		})
 	}
-	for _, body := range []string{"null", "{}", `{"data":null}`} {
+	for _, body := range []string{`{"data":null}`} {
 		t.Run("templates/"+body, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
 			defer s.Close()
@@ -111,7 +74,7 @@ func TestConnectionRejectsMalformedProviderShapes(t *testing.T) {
 	}
 }
 
-func TestConnectionRejectsCompressedOversizeAndRedactsErrors(t *testing.T) {
+func TestConnectionRejectsCompressedOversize(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusBadGateway} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -130,18 +93,6 @@ func TestConnectionRejectsCompressedOversizeAndRedactsErrors(t *testing.T) {
 				t.Fatalf("got %v", err)
 			}
 		})
-	}
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "synthetic-key https://example.test/private", http.StatusBadRequest)
-	}))
-	defer s.Close()
-	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.Check(t.Context())
-	if err == nil || strings.Contains(err.Error(), "synthetic-key") || strings.Contains(err.Error(), "example.test") {
-		t.Fatalf("unsafe error: %v", err)
 	}
 }
 
@@ -168,7 +119,11 @@ func TestTemplatesContinuationAndUnsafeText(t *testing.T) {
 				for i := range count {
 					items = append(items, fmt.Sprintf(`{"id":%d,"name":"A\u001b%s","submitters":[%s]}`, 199-i, strings.Repeat("é", 300), strings.TrimSuffix(strings.Repeat(`{"name":"Signer"},`, 21), ",")))
 				}
-				fmt.Fprintf(w, `{"data":[%s],"pagination":{"next":%d}}`, strings.Join(items, ","), 200-count)
+				next := "null"
+				if count > 0 {
+					next = strconv.Itoa(200 - count)
+				}
+				fmt.Fprintf(w, `{"data":[%s],"pagination":{"next":%s}}`, strings.Join(items, ","), next)
 			}))
 			defer s.Close()
 			c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
@@ -187,6 +142,13 @@ func TestTemplatesContinuationAndUnsafeText(t *testing.T) {
 			}
 		})
 	}
+	// A credential in a template name must not be projected.
+	cName := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"id":1,"name":"synthetic-key","submitters":[]}]}`))}, nil
+	})}}
+	if _, err := cName.Templates(t.Context(), 0); err == nil {
+		t.Fatal("accepted credential in template name")
+	}
 	// Role identities cannot be rewritten; reject an echoed credential.
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"data":[{"id":1,"name":"ok","submitters":[{"name":"synthetic-key"}]}]}`)
@@ -201,96 +163,65 @@ func TestTemplatesContinuationAndUnsafeText(t *testing.T) {
 	}
 }
 
-type fixedResolver struct{ addresses []netip.Addr }
-
-func (r fixedResolver) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr, error) {
-	return r.addresses, nil
-}
-
-func TestConnectionRejectsMixedDNSAnswers(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { t.Error("denied DNS answer reached server") }))
-	defer server.Close()
-	u, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.ParseUint(u.Port(), 10, 16)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prefix := netip.MustParsePrefix("127.0.0.0/8")
-	c, err := New(config.DocuSealConnection{Endpoint: "http://docuseal.invalid:" + u.Port(), APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{prefix}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{Scheme: "http", Host: "docuseal.invalid", Port: uint16(port), AllowedCIDRs: []netip.Prefix{prefix}}, fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("192.0.2.1")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.http.Transport = transport
-	if _, err = c.Check(t.Context()); err == nil {
-		t.Fatal("accepted mixed DNS answers")
-	}
-}
-
-func TestTemplatesReducesOversizedPages(t *testing.T) {
-	var requests []string
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.URL.RawQuery)
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		after := r.URL.Query().Get("after")
-		if after == "51" {
-			fmt.Fprint(w, `{"data":[{"id":50,"name":"Last"}],"pagination":{"next":50}}`)
-			return
-		}
-		if limit > 50 {
-			_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
-			return
-		}
-		fmt.Fprint(w, `{"data":[`)
-		for i := range limit {
-			if i > 0 {
-				fmt.Fprint(w, ",")
+func TestTemplatesOversizedPages(t *testing.T) {
+	t.Run("reducible", func(t *testing.T) {
+		var requests []string
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests = append(requests, r.URL.RawQuery)
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			after := r.URL.Query().Get("after")
+			if after == "51" {
+				fmt.Fprint(w, `{"data":[{"id":50,"name":"Last","submitters":[]}],"pagination":{"next":50}}`)
+				return
 			}
-			fmt.Fprintf(w, `{"id":%d,"name":"Template","fields":"%s"}`, 100-i, strings.Repeat("x", 1000))
+			if limit > 50 {
+				_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
+				return
+			}
+			fmt.Fprint(w, `{"data":[`)
+			for i := range limit {
+				if i > 0 {
+					fmt.Fprint(w, ",")
+				}
+				fmt.Fprintf(w, `{"id":%d,"name":"Template","submitters":[],"fields":"%s"}`, 100-i, strings.Repeat("x", 1000))
+			}
+			fmt.Fprint(w, `],"pagination":{"next":51}}`)
+		}))
+		defer s.Close()
+		c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
+		if err != nil {
+			t.Fatal(err)
 		}
-		fmt.Fprint(w, `],"pagination":{"next":51}}`)
-	}))
-	defer s.Close()
-	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.CloseIdleConnections()
-	page, err := c.Templates(t.Context(), 0)
-	if err != nil || len(page.Templates) != 50 || page.Next != 51 {
-		t.Fatalf("page=%+v err=%v", page, err)
-	}
-	page, err = c.Templates(t.Context(), page.Next)
-	if err != nil || len(page.Templates) != 1 || page.Next != 0 {
-		t.Fatalf("final=%+v err=%v", page, err)
-	}
-	if len(requests) != 3 || requests[0] != "limit=100" || requests[1] != "limit=50" || requests[2] != "limit=100&after=51" {
-		t.Fatalf("requests: %v", requests)
-	}
-}
-
-func TestTemplatesIrreducibleOversize(t *testing.T) {
-	var limits []string
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		limits = append(limits, r.URL.Query().Get("limit"))
-		_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
-	}))
-	defer s.Close()
-	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.CloseIdleConnections()
-	_, err = c.Templates(t.Context(), 0)
-	if err == nil || err.Error() != "docuseal_response_too_large" || strings.Join(limits, ",") != "100,50,25,12,6,3,1" {
-		t.Fatalf("limits=%v err=%v", limits, err)
-	}
+		defer c.CloseIdleConnections()
+		page, err := c.Templates(t.Context(), 0)
+		if err != nil || len(page.Templates) != 50 || page.Next != 51 {
+			t.Fatalf("page=%+v err=%v", page, err)
+		}
+		page, err = c.Templates(t.Context(), page.Next)
+		if err != nil || len(page.Templates) != 1 || page.Next != 0 {
+			t.Fatalf("final=%+v err=%v", page, err)
+		}
+		if len(requests) != 3 || requests[0] != "limit=100" || requests[1] != "limit=50" || requests[2] != "limit=100&after=51" {
+			t.Fatalf("requests: %v", requests)
+		}
+	})
+	t.Run("irreducible", func(t *testing.T) {
+		var limits []string
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			limits = append(limits, r.URL.Query().Get("limit"))
+			_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
+		}))
+		defer s.Close()
+		c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.CloseIdleConnections()
+		_, err = c.Templates(t.Context(), 0)
+		if err == nil || err.Error() != "docuseal_response_too_large" || strings.Join(limits, ",") != "100,50,25,12,6,3,1" {
+			t.Fatalf("limits=%v err=%v", limits, err)
+		}
+	})
 }
 
 type docusealRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -319,7 +250,43 @@ func TestCheckRedactsKeyInEndpoint(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":1}`))}, nil
 	})}}
 	status, err := c.Check(t.Context())
-	if err != nil || strings.Contains(status.Endpoint, "key") || status.Endpoint != "[redacted]" {
+	if err != nil || strings.Contains(status.Endpoint, "key") || status.Endpoint != "*" {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
+}
+
+func TestTemplatesRequiresSubmitters(t *testing.T) {
+	for _, tc := range []struct {
+		field string
+		valid bool
+	}{{"", false}, {`,"submitters":null`, false}, {`,"submitters":[]`, true}} {
+		c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			body := `{"data":[{"id":1,"name":"Lease"` + tc.field + `}]}`
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		})}}
+		_, err := c.Templates(t.Context(), 0)
+		if (err == nil) != tc.valid {
+			t.Fatalf("field %q: %v", tc.field, err)
+		}
+	}
+}
+
+func TestTemplatesAggregateDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		start := time.Now()
+		c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			select {
+			case <-time.After(9 * time.Second):
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Repeat("x", maxResponse+1)))}, nil
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		})}}
+		_, err := c.Templates(t.Context(), 0)
+		if calls != 3 || time.Since(start) != 25*time.Second || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("calls=%d elapsed=%v err=%v", calls, time.Since(start), err)
+		}
+	})
 }

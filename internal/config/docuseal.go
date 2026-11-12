@@ -10,20 +10,23 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // DocuSealConfig defers optional connection validation until use.
 //
 //nolint:recvcheck // TOML decoding mutates the config.
 type DocuSealConfig struct {
-	Enabled       bool     `toml:"enabled"`
-	Endpoint      string   `toml:"endpoint"`
-	APIPath       string   `toml:"api_path"`
-	APIKeyEnv     string   `toml:"api_key_env"`
-	APIKeyFile    string   `toml:"api_key_file"`
-	TrustBoundary string   `toml:"trust_boundary"`
-	AllowedCIDRs  []string `toml:"allowed_cidrs"`
-	decodeInvalid bool
+	Enabled          bool     `toml:"enabled"`
+	Endpoint         string   `toml:"endpoint"`
+	APIPath          string   `toml:"api_path"`
+	APIKeyEnv        string   `toml:"api_key_env"`
+	APIKeyFile       string   `toml:"api_key_file"`
+	TrustBoundary    string   `toml:"trust_boundary"`
+	AllowedCIDRs     []string `toml:"allowed_cidrs"`
+	decodeInvalid    bool
+	enabledInvalid   bool
+	explicitDisabled bool
 }
 
 func (d *DocuSealConfig) UnmarshalTOML(value any) error {
@@ -37,25 +40,26 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 		case "enabled":
 			var ok bool
 			d.Enabled, ok = v.(bool)
+			d.enabledInvalid = !ok
+			d.explicitDisabled = ok && !d.Enabled
 			d.decodeInvalid = d.decodeInvalid || !ok
 		case "endpoint", "api_path", "api_key_env", "api_key_file", "trust_boundary":
-			s, ok := v.(string)
-			if !ok {
-				d.decodeInvalid = true
-				continue
-			}
+			var target *string
 			switch k {
 			case "endpoint":
-				d.Endpoint = s
+				target = &d.Endpoint
 			case "api_path":
-				d.APIPath = s
+				target = &d.APIPath
 			case "api_key_env":
-				d.APIKeyEnv = s
+				target = &d.APIKeyEnv
 			case "api_key_file":
-				d.APIKeyFile = s
+				target = &d.APIKeyFile
 			case "trust_boundary":
-				d.TrustBoundary = s
+				target = &d.TrustBoundary
 			}
+			value, valid := v.(string)
+			d.decodeInvalid = d.decodeInvalid || !valid
+			*target = value
 		case "allowed_cidrs":
 			values, ok := v.([]any)
 			if !ok {
@@ -80,7 +84,9 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 }
 
 // DocuSealDisabled reports an absent or explicitly disabled integration.
-func (d DocuSealConfig) DocuSealDisabled() bool { return !d.Enabled && !d.decodeInvalid }
+func (d DocuSealConfig) DocuSealDisabled() bool {
+	return !d.Enabled && !d.enabledInvalid && (d.explicitDisabled || !d.decodeInvalid)
+}
 
 // DocuSealConnection holds per-operation secret material and must not be logged or serialized.
 type DocuSealConnection struct {
@@ -109,7 +115,7 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 			return fail("allowed CIDR")
 		}
 	}
-	if d.APIPath != "" && (d.APIPath == "/" || d.APIPath[0] != '/' || path.Clean(d.APIPath) != d.APIPath || strings.ContainsAny(d.APIPath, "?#%\\")) {
+	if d.APIPath != "" && (d.APIPath == "/" || d.APIPath[0] != '/' || path.Clean(d.APIPath) != d.APIPath || strings.ContainsAny(d.APIPath, "?#%\\") || strings.IndexFunc(d.APIPath, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0) {
 		return fail("API path")
 	}
 	if (d.APIKeyEnv == "") == (d.APIKeyFile == "") {

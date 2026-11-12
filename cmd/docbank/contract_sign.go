@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -41,7 +42,11 @@ func newContractSignCommand() *cobra.Command {
 			return writeCLIJSON(cmd.OutOrStdout(), page)
 		}
 		for _, item := range page.Templates {
-			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\n", item.ID, item.Name, strings.Join(item.Roles, ", ")); err != nil {
+			roles := make([]string, len(item.Roles))
+			for i, role := range item.Roles {
+				roles[i] = strconv.Quote(role)
+			}
+			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\n", item.ID, item.Name, strings.Join(roles, ", ")); err != nil {
 				return err
 			}
 		}

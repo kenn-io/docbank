@@ -303,7 +303,8 @@ The endpoint is a root origin without credentials or a path. Set `api_path` to
 Select exactly one of `api_key_env` or `api_key_file`. A key file is relative to
 the vault unless absolute; it must be owner-only and at most 4,096 bytes.
 `operator_network` allows HTTP and requires private, shared, or loopback CIDRs.
-For `hosted_provider`, use HTTPS and explicit `allowed_cidrs`. Connections use
+For `hosted_provider`, use HTTPS and explicit `allowed_cidrs`. Maintain those
+CIDRs as the hosted provider changes its addresses. Connections use
 only the configured origin and CIDRs, without proxies or redirects. See
 [DocuSeal connection](usage/contracts.md) for the commands. Invalid enabled settings report the setting category without exposing values.
 Provider authentication, API path, response and connection failures use distinct

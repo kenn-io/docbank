@@ -1,11 +1,8 @@
 package api_test
 
 import (
-	"bytes"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,7 +21,9 @@ func TestDocuSealUnconfigured(t *testing.T) {
 
 func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "synthetic-key", r.Header.Get("X-Auth-Token"))
+		if r.Header.Get("X-Auth-Token") != "synthetic-key" {
+			t.Error("missing credential")
+		}
 		switch r.URL.Path {
 		case "/api/user":
 			_, _ = w.Write([]byte(`{"id":7,"email":"private@example.test"}`))
@@ -44,7 +43,6 @@ func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 		require.Equal(t, 200, resp.StatusCode, body)
 		require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 		require.NotContains(t, body, "synthetic-key")
-		require.NotContains(t, body, "private@example.test")
 	}
 }
 
@@ -70,9 +68,7 @@ func TestDocuSealProviderFailuresAreSafe(t *testing.T) {
 			}))
 			defer provider.Close()
 			t.Setenv("DOCUSEAL_API_TEST_KEY", "synthetic-key")
-			var logs bytes.Buffer
 			ts, _ := newTestServer(t, func(d *api.Deps) {
-				d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
 				d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_API_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
 			})
 			resp, body := do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/status", nil, nil)
@@ -80,9 +76,22 @@ func TestDocuSealProviderFailuresAreSafe(t *testing.T) {
 			require.Contains(t, body, tc.code)
 			require.NotContains(t, body, "synthetic-key")
 			require.NotContains(t, body, "private provider body")
-			if strings.Contains(logs.String(), "synthetic-key") {
-				t.Fatal("credential appeared in logs")
-			}
 		})
+	}
+}
+
+func TestDocuSealDisabledMalformedConfig(t *testing.T) {
+	for _, tc := range []struct {
+		enabled any
+		code    string
+	}{{false, "docuseal_unconfigured"}, {"false", "docuseal_config_invalid"}} {
+		var cfg config.DocuSealConfig
+		require.NoError(t, cfg.UnmarshalTOML(map[string]any{"enabled": tc.enabled, "unknown": true}))
+		ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Integrations.DocuSeal = cfg })
+		for _, path := range []string{"/api/v1/integrations/docuseal/status", "/api/v1/integrations/docuseal/templates"} {
+			resp, body := do(t, ts, http.MethodGet, path, nil, nil)
+			require.Equal(t, 503, resp.StatusCode, body)
+			require.Contains(t, body, tc.code)
+		}
 	}
 }

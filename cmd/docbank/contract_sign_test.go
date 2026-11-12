@@ -9,16 +9,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func TestContractSignCommands(t *testing.T) {
-	cmd := newContractSignCommand()
-	for _, args := range [][]string{{"check"}, {"templates"}} {
-		found, _, err := cmd.Find(args)
-		if err != nil || found.Name() != args[0] {
-			t.Fatalf("find %v: %v", args, err)
-		}
-	}
-}
-
 func TestContractSignDaemonWalk(t *testing.T) {
 	configured := true
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +25,7 @@ func TestContractSignDaemonWalk(t *testing.T) {
 			if r.URL.Query().Get("after") != "42" {
 				t.Errorf("cursor: %s", r.URL.RawQuery)
 			}
-			fmt.Fprint(w, `{"templates":[{"id":7,"name":"Lease","roles":["Tenant"]}],"next":0}`)
+			fmt.Fprint(w, `{"templates":[{"id":7,"name":"Lease","roles":["Buyer, Seller","Buyer","Seller"]}],"next":0}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -46,7 +36,7 @@ func TestContractSignDaemonWalk(t *testing.T) {
 	}{
 		{[]string{"contract", "sign", "check"}, "Connected to https://example.test"},
 		{[]string{"contract", "sign", "check", "--json"}, `"capability"`},
-		{[]string{"contract", "sign", "templates", "--after", "42"}, "Lease"},
+		{[]string{"contract", "sign", "templates", "--after", "42"}, `"Buyer, Seller", "Buyer", "Seller"`},
 		{[]string{"contract", "sign", "templates", "--after", "42", "--json"}, `"roles"`},
 	} {
 		out, err := runCLI(t, tc.args...)

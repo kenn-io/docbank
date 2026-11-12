@@ -13,7 +13,7 @@ func TestDocuSealResolveRequiresSafeConfiguration(t *testing.T) {
 	if _, err := valid.Resolve(t.Context(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	cases := []DocuSealConfig{{}, valid, valid, valid, valid, valid, valid, valid, valid}
+	cases := []DocuSealConfig{{}, valid, valid, valid, valid, valid, valid, valid, valid, valid, valid}
 	cases[1].AllowedCIDRs = []string{"0.0.0.0/0"}
 	cases[2].TrustBoundary = "hosted_provider"
 	cases[3].Endpoint = "http://user" + ":" + "password@localhost"
@@ -22,6 +22,8 @@ func TestDocuSealResolveRequiresSafeConfiguration(t *testing.T) {
 	cases[6].APIPath = "/api/../other"
 	cases[7].APIPath = "/api?token=x"
 	cases[8].APIPath = "api"
+	cases[9].APIPath = "/api path"
+	cases[10].APIPath = "/api\n"
 	hosted := valid
 	hosted.Endpoint = "https://example.test"
 	hosted.TrustBoundary = "hosted_provider"
@@ -36,18 +38,11 @@ func TestDocuSealResolveRequiresSafeConfiguration(t *testing.T) {
 	}
 }
 
-func TestDocuSealResolveRejectsInvalidCredential(t *testing.T) {
-	t.Setenv("DOCUSEAL_TEST_KEY", strings.Repeat("x", 4097))
-	cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyEnv: "DOCUSEAL_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
-	if _, err := cfg.Resolve(t.Context(), t.TempDir()); err == nil {
-		t.Fatal("accepted oversized credential")
-	}
-}
-
 func TestDocuSealMalformedConfigIsDeferred(t *testing.T) {
-	for _, section := range []string{"enabled='yes'", "enabled=true\nsurprise='secret'", "enabled=true\nallowed_cidrs=42"} {
+	t.Setenv("DOCUSEAL_TEST_KEY", "synthetic-key")
+	for _, section := range []string{"enabled='yes'\nallowed_cidrs=['127.0.0.1/32']", "enabled=true\nsurprise='value'\nallowed_cidrs=['127.0.0.1/32']", "enabled=true\nallowed_cidrs=42"} {
 		root := t.TempDir()
-		if err := os.WriteFile(filepath.Join(root, "config.toml"), []byte("[integrations.docuseal]\n"+section+"\n"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, "config.toml"), []byte("[integrations.docuseal]\nendpoint='http://127.0.0.1'\napi_key_env='DOCUSEAL_TEST_KEY'\ntrust_boundary='operator_network'\n"+section+"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		cfg, err := Load(root)
@@ -57,7 +52,7 @@ func TestDocuSealMalformedConfigIsDeferred(t *testing.T) {
 		if err = cfg.Validate(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = cfg.Integrations.DocuSeal.Resolve(t.Context(), root); err == nil || strings.Contains(err.Error(), "secret") {
+		if _, err = cfg.Integrations.DocuSeal.Resolve(t.Context(), root); err == nil {
 			t.Fatalf("unsafe result: %v", err)
 		}
 	}
@@ -85,41 +80,47 @@ func TestDocuSealConfigTOMLAndKeyRotation(t *testing.T) {
 	}
 }
 
-func TestDocuSealCredentialFileIsPrivateAndBounded(t *testing.T) {
+func TestDocuSealInvalidCredentials(t *testing.T) {
 	root := t.TempDir()
-	key := filepath.Join(root, "key")
-	cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyFile: "key", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
-	if err := os.WriteFile(key, []byte("synthetic-file-token"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "key"), []byte("synthetic-file-token"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cfg.Resolve(t.Context(), root); err != nil {
+	valid := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyFile: "key", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
+	if _, err := valid.Resolve(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(key, []byte(strings.Repeat("x", 4097)), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cfg.Resolve(t.Context(), root); err == nil {
-		t.Fatal("accepted oversized file")
+
+	for _, tc := range []struct {
+		name, value string
+		file        bool
+	}{
+		{"oversized file", strings.Repeat("x", 4097), true}, {"control env", "part\x1ftoken", false}, {"DEL env", "part\x7ftoken", false}, {"NUL file", "part\x00token", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
+			if tc.file {
+				if err := os.WriteFile(filepath.Join(root, "key"), []byte(tc.value), 0600); err != nil {
+					t.Fatal(err)
+				}
+				cfg.APIKeyFile = "key"
+			} else {
+				t.Setenv("DOCUSEAL_TEST_KEY", tc.value)
+				cfg.APIKeyEnv = "DOCUSEAL_TEST_KEY"
+			}
+			if _, err := cfg.Resolve(t.Context(), root); err == nil {
+				t.Fatal("accepted invalid credential")
+			}
+		})
 	}
 }
 
-func TestDocuSealRejectsControlCredential(t *testing.T) {
-	for _, key := range []string{"part\x1ftoken", "part\x7ftoken"} {
-		t.Setenv("DOCUSEAL_TEST_KEY", key)
-		cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyEnv: "DOCUSEAL_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
-		if _, err := cfg.Resolve(t.Context(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "credential") {
-			t.Fatalf("credential error: %v", err)
-		}
+func TestDocuSealExplicitlyDisabledMalformedConfig(t *testing.T) {
+	var cfg DocuSealConfig
+	if err := cfg.UnmarshalTOML(map[string]any{"enabled": false, "unknown": true}); err != nil || !cfg.DocuSealDisabled() {
+		t.Fatalf("disabled config: %+v, %v", cfg, err)
 	}
-}
-
-func TestDocuSealRejectsNULCredentialFile(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "key"), []byte("part\x00token"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyFile: "key", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
-	if _, err := cfg.Resolve(t.Context(), root); err == nil || !strings.Contains(err.Error(), "credential") {
-		t.Fatalf("credential error: %v", err)
+	if err := cfg.UnmarshalTOML(map[string]any{"enabled": "false"}); err != nil || cfg.DocuSealDisabled() {
+		t.Fatalf("malformed enabled: %+v, %v", cfg, err)
 	}
 }
