@@ -107,6 +107,10 @@ func setContentVersionHeaders(hctx huma.Context, version store.ContentVersion) {
 func streamContentVersion(
 	ctx context.Context, d Deps, version store.ContentVersion,
 ) (*huma.StreamResponse, error) {
+	return streamContentVersionWithFailure(ctx, d, version, false)
+}
+
+func streamContentVersionWithFailure(ctx context.Context, d Deps, version store.ContentVersion, abort bool) (*huma.StreamResponse, error) {
 	f, _, err := d.Blobs.OpenStreamContext(ctx, version.BlobHash)
 	if err != nil {
 		return nil, NewError(http.StatusInternalServerError, "internal",
@@ -119,6 +123,8 @@ func streamContentVersion(
 		// at EOF. Reuse that result only after a complete, verified transfer.
 		if _, err := io.Copy(hctx.BodyWriter(), f); err == nil && f.Verified() {
 			hctx.SetHeader("Content-Digest", contentDigest(mustDecodeHash(version.BlobHash)))
+		} else if abort {
+			panic(http.ErrAbortHandler)
 		}
 	}}, nil
 }

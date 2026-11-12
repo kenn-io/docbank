@@ -259,7 +259,8 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `search_documents` | Requires a 1–8,192-character query and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters selecting every matching live file without a 4,096-file cap. The optional profile name is 1–128 characters. Omitting it uses the same profile and binding retries as `answer_question`. Results include the profile used. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters and require an explicit profile. Optional `rerank` is a boolean that requests the profile's configured reranker. |
 | `find_conflicts` | Requires a processing profile and uses the query, limit, and source selectors from `search_documents`. Retrieval is lexical only, with at most 20 hits. Compares money, percentages, and durations in whole source sentences and returns source dates and evidence IDs. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
-| `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the exact vault, node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
+| `get_original_download_url` | Returns a single-use URL for an exact original selection, without the 32 MiB read limit. The URL expires after two minutes. [Download originals](#download-originals). |
+| `read_document_content` | Reads original bytes from a selected immutable version as base64. Requires the vault ID from `get_vault_info` and the node, version, SHA-256 and size from `list_document_versions`. Originals are limited to 32 MiB; byte windows default to 64 KiB and are capped at 256 KiB. Returns offset, next offset and EOF. Verify the assembled size and SHA-256 before using the bytes. No export job or local file is created. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
 | `check_answer` | Checks [answer figures](#check-figures-in-an-answer) against saved citations. |
@@ -501,6 +502,44 @@ Its search failures are returned without automatic retries or lexical fallback.
 The [PDF evidence reference](../architecture/source-metadata.md#pdf-evidence)
 defines its seven fields and omission rules. Missing observations mean unknown;
 PDF evidence that hasn't been extracted omits `pdf_facts` entirely.
+
+## Download originals
+
+Call `get_original_download_url` with `vault_id` from `get_vault_info` and
+`node_id`, `content_version_id`, `blob_hash`, and `size` from
+`list_document_versions`. The response includes the selection, `name`, `url`,
+and `expires_in_seconds: 120`.
+The daemon checks the exact live node and retained version before issuing
+the ticket and again when downloading. The original streams without staging
+another copy. This works with the web app disabled.
+
+For HTTP MCP, the URL uses the MCP listener's validated origin at
+`/mcp/original?ticket=…`. The same Host and Origin checks protect both
+the tool call and the download. The response also includes `path`, such as
+`/mcp/original?ticket=…`. Behind an HTTPS proxy, set `[mcp.http] public_origin`
+to the client-facing origin, for example `https://archive.example.test`, and
+preserve the Host header at the proxy. Matching HTTPS Origin headers are accepted.
+Forwarded headers do not choose the URL.
+For stdio, the URL uses the local daemon address.
+
+Download with `curl --fail -o original.bin "$url"`. The ticket is the
+credential; no API key or MCP bearer is needed. Treat the URL as private.
+Verify the downloaded size and SHA-256 against `size` and `blob_hash`.
+Failed verification or an interrupted stream ends the transfer with an error.
+A download returns 200 with the whole original. If it is interrupted, request
+a fresh URL before retrying.
+Download the whole original to a local file before using a player that seeks;
+the single-use URL does not support seeking or reopening.
+Each transfer uses its own daemon connection. Downloads have a separate limit
+of 32 concurrent requests, so tool calls can continue while they stream.
+A daemon acquisition has 45 seconds to complete. A transfer stops after five
+minutes without upstream bytes or when a client blocks a write for five minutes.
+Active transfers have no total time limit.
+A second use or an expired ticket returns 404 `download_not_found`.
+A mismatched vault, hash or size, or a trashed document, returns the tool
+error `download_selection_stale`; refresh the document and select its version
+again. A missing node or a version owned by another node returns `not_found`.
+Renaming a document does not invalidate its selected original.
 
 ## Resources and rendition windows
 
