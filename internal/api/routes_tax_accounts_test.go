@@ -135,28 +135,49 @@ func TestTaxHTTPRefusals(t *testing.T) {
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	party, account := createTaxTestAccount(t, ts, nil)
 	path := "/api/v1/tax/accounts/" + account.AccountID
-	for _, tc := range []struct {
+	const sentinel = "private-synthetic-value"
+	type refusal struct {
 		headers map[string]string
 		patch   map[string]any
 		status  int
 		code    string
-	}{
+	}
+	invalid := []map[string]any{{}, {"$schema": "https://example.com/schema.json"}, {"NOTE": sentinel}, {"Note": nil}, {"EFFECTIVE_START": nil}, {"note": "example", sentinel: "example"}}
+	for _, field := range []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "note"} {
+		invalid = append(invalid, map[string]any{field: nil}, map[string]any{field: nil, "effective_end": nil})
+	}
+	refusals := []refusal{
 		{nil, map[string]any{"note": "example"}, http.StatusPreconditionRequired, "precondition_required"},
 		{map[string]string{"If-Match": `"2"`}, map[string]any{"note": "example"}, http.StatusPreconditionFailed, "stale_revision"},
 		{map[string]string{"If-Match": `"1"`}, map[string]any{"country": "ZZ"}, http.StatusUnprocessableEntity, "validation"},
 		{map[string]string{"If-Match": `"1"`}, map[string]any{"state": "private"}, http.StatusUnprocessableEntity, "validation"},
 		{map[string]string{"If-Match": `"1"`}, map[string]any{"revision": 2}, http.StatusUnprocessableEntity, "validation"},
-		{map[string]string{"If-Match": `"1"`}, map[string]any{"identifier": nil}, http.StatusUnprocessableEntity, "validation"},
-		{map[string]string{"If-Match": `"1"`}, map[string]any{"lead_days": nil}, http.StatusUnprocessableEntity, "validation"},
-	} {
-		resp, body := do(t, ts, http.MethodPatch, path, tc.headers, tc.patch)
-		assert.Equal(t, tc.status, resp.StatusCode, body)
-		assert.Contains(t, body, `"code":"`+tc.code+`"`)
 	}
-	resp, body := get(t, ts, path, nil)
+	for _, patch := range invalid {
+		refusals = append(refusals, refusal{map[string]string{"If-Match": `"1"`}, patch, http.StatusUnprocessableEntity, "validation"})
+	}
+	for _, tc := range refusals {
+		resp, body := do(t, ts, http.MethodPatch, path, tc.headers, tc.patch)
+		assert.Equal(t, tc.status, resp.StatusCode, "%v %s", tc.patch, body)
+		assert.Contains(t, body, `"code":"`+tc.code+`"`, "%v", tc.patch)
+		assert.NotContains(t, body, sentinel)
+	}
+	input := map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"}
+	for _, extra := range []map[string]any{{"NOTE": sentinel}, {"subdivision": nil}, {"identifier": nil}, {"period_note": nil}, {"due_note": nil}, {"lead_days": nil}, {"note": nil}} {
+		create := maps.Clone(input)
+		maps.Copy(create, extra)
+		resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, create)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, "%v %s", extra, body)
+		assert.Contains(t, body, `"code":"validation"`, "%v", extra)
+		assert.NotContains(t, body, sentinel)
+	}
+	resp, body := get(t, ts, "/api/v1/tax/accounts", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &account))
-	assert.Equal(t, int64(1), account.Revision)
+	var page api.TaxAccountPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, int64(1), page.Items[0].Revision)
+	assert.Empty(t, page.Items[0].Note)
 	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
@@ -179,7 +200,6 @@ func TestTaxHTTPRefusals(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"note": "Historical example"})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	input := map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"}
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, input)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"invalid_tax"`)

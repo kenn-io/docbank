@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
@@ -102,19 +104,55 @@ func (CreateTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Sch
 	return taxAccountRequestSchema(schema)
 }
 
-// TransformSchema requires at least one editable account field.
+var (
+	taxPatchMembers  = []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note"}
+	taxCreateMembers = append([]string{"filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind"}, taxPatchMembers...)
+)
+
+// TransformSchema documents that at least one editable account field is required.
 func (PatchTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	taxAccountRequestSchema(schema)
-	for _, field := range []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note"} {
+	for _, field := range taxPatchMembers {
 		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
 	}
 	return schema
 }
 
-func (p *PatchTaxAccountRequest) UnmarshalJSON(raw []byte) error {
+// taxMembers enforces admission that pinned Huma does not: it matches member
+// names case-insensitively and skips nulls on optional properties (D46).
+// Errors are fixed strings; the tax formatter returns only generic validation.
+func taxMembers(raw []byte, names []string) (map[string]jsontext.Value, error) {
 	var members map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, err
+	}
+	delete(members, "$schema")
+	for name, member := range members {
+		if !slices.Contains(names, name) {
+			return nil, errors.New("invalid tax field")
+		}
+		if string(member) == jsonNull && name != "authority_party_id" && name != "effective_start" && name != "effective_end" {
+			return nil, errors.New("tax field cannot be null")
+		}
+	}
+	return members, nil
+}
+
+func (p *CreateTaxAccountRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := taxMembers(raw, taxCreateMembers); err != nil {
 		return err
+	}
+	type fields CreateTaxAccountRequest
+	return json.Unmarshal(raw, (*fields)(p))
+}
+
+func (p *PatchTaxAccountRequest) UnmarshalJSON(raw []byte) error {
+	members, err := taxMembers(raw, taxPatchMembers)
+	if err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return errors.New("tax patch must contain a field")
 	}
 	type fields PatchTaxAccountRequest
 	var value fields
