@@ -2124,6 +2124,11 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
   await screen.findByText(
     "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
   );
+  expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
+  const liveRequest = fetchMock.mock.calls
+    .map(([url]) => String(url))
+    .find((url) => url.startsWith("/api/v1/search/text-coverage"));
+  expect(new URL(liveRequest!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
   await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   await fireEvent.input(screen.getByLabelText("Filters JSON"), {
     target: { value: '{"size_min":10}' },
@@ -2165,32 +2170,14 @@ it.each([
     textCoverage({ pdf_page_coverage_partial: true }),
   ],
   ["failure", "PDF text coverage is unavailable.", null],
-  [
-    "tagged",
-    "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
-    textCoverage({ pdfs_without_text: 2, pages_without_text: 3 }),
-  ],
 ] as const)("shows %s PDF coverage", async (kind, message, coverage) => {
-  const { fetchMock } = renderEmptySearch(async () =>
+  renderEmptySearch(async () =>
     coverage === null ? new Response("{}", { status: 500 }) : json(coverage),
   );
-  if (kind === "tagged") {
-    await screen.findAllByText("report.txt");
-    await fireEvent.click(
-      screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-    );
-    await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
-  }
   await submitSearch("missing");
   expect(await screen.findByText(message)).toBeTruthy();
   if (kind !== "failure")
     expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
-  if (kind === "tagged") {
-    const request = fetchMock.mock.calls
-      .map(([url]) => String(url))
-      .find((url) => url.startsWith("/api/v1/search/text-coverage"));
-    expect(new URL(request!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
-  }
 });
 
 it("aborts coverage from an older search", async () => {
