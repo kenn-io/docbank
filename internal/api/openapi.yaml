@@ -10364,6 +10364,66 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/processing
         name: processing
+    OriginalDownloadSelection:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/OriginalDownloadSelection.json
+          format: uri
+          readOnly: true
+          type: string
+        blob_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+        vault_id:
+          format: uuid
+          type: string
+      required:
+        - vault_id
+        - node_id
+        - blob_hash
+        - size
+      type: object
+      x-go-type: api.OriginalDownloadSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    OriginalDownloadTicket:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/OriginalDownloadTicket.json
+          format: uri
+          readOnly: true
+          type: string
+        expires_in_seconds:
+          format: int64
+          type: integer
+        name:
+          type: string
+        url:
+          type: string
+      required:
+        - url
+        - name
+        - expires_in_seconds
+      type: object
+      x-go-type: api.OriginalDownloadTicket
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     OutputCounts:
       additionalProperties: false
       properties:
@@ -18294,6 +18354,9 @@ components:
         blob_hash:
           pattern: ^[0-9a-f]{64}$
           type: string
+        exact_rendition:
+          description: Resolve the exact observed active rendition independently of the current default profile
+          type: boolean
         node_id:
           format: int64
           minimum: 1
@@ -30416,6 +30479,14 @@ paths:
   /api/v1/processing/profiles:
     get:
       operationId: listDocumentProcessingProfiles
+      parameters:
+        - description: Include configured profiles without an executable runtime
+          explode: false
+          in: query
+          name: include_configured
+          schema:
+            description: Include configured profiles without an executable runtime
+            type: boolean
       responses:
         "200":
           content:
@@ -30431,7 +30502,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List locally executable document-processing profiles
+      summary: List document-processing profiles
   /api/v1/processing/source-fences/resolve:
     post:
       operationId: resolveDocumentSourceFence
@@ -33354,6 +33425,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one immutable content version by stable ID
+  /api/v1/versions/{version_id}/download-ticket:
+    post:
+      operationId: prepareOriginalDownload
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OriginalDownloadSelection"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OriginalDownloadTicket"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Issue a single-use original download URL valid for two minutes
   /api/v1/versions/{version_id}/email:
     get:
       operationId: getEmailMetadata

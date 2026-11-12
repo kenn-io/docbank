@@ -367,8 +367,9 @@ sessions and photo settings have native Store contracts as well.
 A public PostgreSQL-backed vault is not available yet: daemon and embedded
 operations still open SQLite. Photo-derived processing, email PDF
 rendering and other media workers, search,
-transfer, backup recovery, multi-store placement and their storage-operation jobs
-remain unqualified.
+PostgreSQL metadata import and physical backup recovery remain unqualified.
+Native multi-store catalog operations are qualified below; deployment adapters
+and filesystem workers remain separate from public PostgreSQL vault opening.
 
 `Setup` takes a caller-owned `database/sql` pool authenticated as `SchemaOwner`
 and uses the explicit `Schema` setting. The database must use `UTF8` encoding;
@@ -435,6 +436,9 @@ grant the following privileges after setup. This example uses schema
 ```sql
 GRANT USAGE ON SCHEMA documents TO docbank_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA documents TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(lifecycle) ON documents.blob_stores TO docbank_runtime;
+GRANT INSERT ON documents.storage_operation_stores TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.storage_operation_cleanup TO docbank_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON documents.nodes, documents.blobs, documents.content_versions
     TO docbank_runtime;
@@ -721,9 +725,9 @@ record per genesis kind, matching SQLite; it does not reject other kinds.
 Go still owns which record kinds are valid. Conditional unique indexes also
 preserve alias, current external identity and active custodian relationships.
 These predicates enforce uniqueness; they do not reject unknown kind or state
-values. Go validators own those values. Multi-store operations are read-only
-inputs to validation here; their active-evacuation uniqueness rule remains part
-of the future write port rather than a closed state list in the new schema.
+values. Go validators own those values. Multi-store operations have native
+contracts below; their active-evacuation uniqueness rule is enforced by the shared Go admission
+check under writer serialization, without a closed state list in PostgreSQL.
 
 Secondary access indexes on the added read-only catalogs are intentionally
 deferred. Port them with the operations that need them, including indexes on
@@ -862,6 +866,40 @@ remove expired plans between read statements, and recheck explicit photo inputs
 before publication. Runtime grants permit only inserts into members, chunks,
 planned documents and roots; source, plan and job updates are limited to their
 existing mutable columns. These grants do not replace Store lifecycle checks.
+
+#### Logical metadata snapshots and SQLite recovery
+
+The internal Store exports deterministic logical metadata on either backend
+through `ExportMetadata`. `BeginMetadataSnapshot` pins the database view before
+returning; its `Export`, `ExportBackup` and blob-authority queries keep that same
+view while writers continue. PostgreSQL uses a read-only `REPEATABLE READ`
+transaction from the runtime pool. Closing the snapshot releases its connection
+and leaves the pool open. SQLite keeps its dedicated deferred connection so a
+backup does not take its writer lock.
+
+Both streams use the existing metadata JSONL format, validators and dependency
+order. The header carries the vault UUID and transactional node allocation
+high-water mark, including IDs whose nodes were deleted. `ExportBackup` includes
+only the retained document and artifact blob closure; uncommitted provider
+staging is excluded. Full export keeps the complete logical blob catalog.
+Neither stream contains physical pack placements or rebuildable search indexes.
+An export validates the retained metadata before writing its header. Treat a
+destination error as a failed export and discard the partial output.
+
+PostgreSQL metadata can be imported through `ImportMetadata` into a fresh SQLite
+Store. The source stays unchanged. Logical identities, retained processing
+authority and canonical audit history survive this transfer; `VerifyAudit`
+replays the history and can compare previously recorded evidence on either
+backend. Copying the metadata stream alone does not recover blob bytes or
+physical pack authority. PostgreSQL import, filesystem backup/restore and public
+PostgreSQL vault opening remain separate boundaries.
+
+The `metadata-export` contracts cover native audited transfer, deterministic
+exports of retained catalogs, backup blob selection, snapshot isolation, canceled
+calls and failed destinations. They recover through the existing SQLite importer
+and re-export the restored metadata. Retained catalog fixtures qualify the
+exporter, not their producers. Existing runtime SELECT grants cover this path;
+no schema changes or extra write privileges are required.
 
 #### PostgreSQL reference implementations
 
@@ -1306,7 +1344,8 @@ changes, inside the same transaction. SQLite retains its released triggers. A
 failed receipt write rolls back the documents, memberships, derived rows and node
 allocation together. Photo import's progress, cancellation and finalization use
 the shared operation records under writer admission. Expired receipts stay until
-pending physical cleanup is gone; this does not qualify multi-store operations.
+pending physical cleanup is gone. Multi-store operations have their own contracts
+below.
 
 The `photo-import` suite covers these native Store workflows. Retained XMP
 receipts used by import are produced by SQLite's publisher. Native XMP publication
@@ -1710,7 +1749,8 @@ transaction retains the original authority and mappings.
 
 PostgreSQL mutation helpers refresh affected pack summaries once per pack inside
 the writer transaction. This includes adoption, replacement, index removal,
-loose repair, logical collection and re-ingest. SQLite keeps its released
+loose repair, placement retirement, storage repair, logical collection and
+re-ingest. SQLite keeps its released
 summary triggers. Counts, totals and maxima describe only live members; dead
 mappings remain until physical retirement. A pack's scan key stays stable after
 publication, even when its lowest member disappears. Bounded GC and repack scans
@@ -1731,7 +1771,50 @@ a separate runtime role. A real-file lifecycle packs documents, revokes collecte
 members, repacks the survivor and reads its original bytes. Additional cases
 cover bounded scans, summary changes, rollback and cleanup replay after content
 is reauthorized. This qualifies the primary catalog and cleanup protocol, not
-public PostgreSQL vault opening, multi-store placement, storage jobs or recovery.
+public PostgreSQL vault opening, deployment workers or metadata recovery.
+
+#### Secondary stores, placement and evacuation
+
+The native Store registers secondary filesystem or S3 identities, reports their
+inventory and availability impact, plans placements and evacuations, and commits
+verified destination receipts on both backends. Store plans contain stable
+identities and physical receipts; deployment paths and credentials stay with the
+caller. Public PostgreSQL opening and deployment-specific workers are separate.
+
+Placement previews and repair plans use one read snapshot. Previews account for retained
+versions and all references, report shared or audit-pinned content,
+and account for container reads, verification and scratch space. PostgreSQL uses
+plain joins and scalar `GREATEST`; SQLite keeps its forced inventory join order.
+
+The caller copies and verifies bytes before entering the short writer transaction.
+Commit rechecks the destination receipt and reference closure, authorizes the
+verified destination and retires only the exact reviewed source generation.
+Reference drift, audit pins or changed source authority keep the source. Packed
+source retirement and repair refresh pack summaries inside the same transaction.
+Failed catalog publication leaves the prior authority, mappings and summaries.
+
+Evacuation admits one active operation per source under writer serialization.
+Active source or destination references prevent detachment and unregistering.
+Finalization requires complete destination coverage, records exact physical
+cleanup, and leaves the source draining until that cleanup finishes. Cancellation
+cannot interrupt already-finalizing publication. Recovery records retain the
+reviewed source candidates and prior destination generation; repair or salvage
+cannot overwrite a destination changed after review.
+
+Cleanup receipts survive process interruption and block expired-operation pruning.
+Before removing an object, the caller rechecks the receipt: a reauthorized object
+consumes its stale receipt without authorizing deletion. Successful physical
+removal consumes only that exact receipt under writer admission. The SQL writer
+lock does not replace exclusive ownership of physical storage during publication.
+
+The `multi-store` contracts run the existing registry, placement, cleanup and
+operation-lifecycle scenarios on both backends. PostgreSQL cases move real bytes
+from a primary pack to a secondary and back, test late-write rollback during
+placement and repair, and commit location changes between preview statements.
+The runtime role may insert store identities, change their lifecycle and remove
+detached identities; it may insert operation-store references and insert/delete
+cleanup receipts. Other lifecycle rules are enforced by Store methods, rather
+than by PostgreSQL grants or a closed state index.
 
 #### Imports and source history
 

@@ -152,6 +152,7 @@ session_lifetime = "24h"       # key-login lifetime, 1m..2160h; 0 = 24h
 port = 0                # 0 = serve /mcp on the API port; otherwise a loopback port
 credential_binding = "" # empty = HTTP MCP cannot start without an env binding
 allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
+public_origin = ""      # e.g. https://archive.example.test behind an HTTPS proxy
 
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
@@ -231,6 +232,11 @@ exclude_patterns = ["*.swp"]
   See [MCP HTTP credential](#mcp-http-credential).
 - **`[mcp.http] allowed_hosts`**: additional accepted MCP HTTP authorities.
   See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
+- **`[mcp.http] public_origin`**: the client-facing HTTP or HTTPS origin for
+  MCP behind a proxy. The proxy must preserve the Host header. The origin's
+  authority is accepted without adding it to `allowed_hosts`; use that list for
+  any additional client authorities. If the proxy rewrites Host, the returned
+  URL uses the validated backend origin instead.
 - **`[backup] repo`**: default snapshot repository used when a backup
   command or API request omits `repo`. `~/...` expands against the daemon
   user's home. A relative path is resolved beneath `$DOCBANK_HOME`.
@@ -1138,6 +1144,8 @@ Setup moves an indexed compatible Nomic profile to Kit's shared per-user server 
 
 The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
 
+The built-in local-text profile sends up to 8 inputs per request, waits up to 5 minutes per request, and sends one request at a time. When setup moves an existing compatible profile, its configured batch size and timeout remain in effect. Configured remote endpoints keep their own settings.
+
 #### Runtime settings
 
 An optional `[embedding_profiles.<name>.runtime]` section makes a binding
@@ -1416,6 +1424,7 @@ forwarding headers do not change that peer check.
 | `DOCBANK_MCP_HTTP_TOKEN` | Select an environment-backed MCP HTTP binding. Overrides the TOML binding; resolved only when MCP HTTP is enabled. |
 | `DOCBANK_MCP_HTTP_TOKEN_FILE` | Supply that MCP bearer through a mounted regular file. |
 | `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` | Comma-separated replacement for `[mcp.http] allowed_hosts`. |
+| `DOCBANK_MCP_HTTP_PUBLIC_ORIGIN` | Override `[mcp.http] public_origin`. |
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
 | `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |

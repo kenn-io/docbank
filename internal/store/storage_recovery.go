@@ -36,7 +36,7 @@ func (s *Store) PlanStorageRecovery(
 	if err != nil {
 		return StorageRecoveryPlan{}, fmt.Errorf("parsing recovery blob hash: %w", err)
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return StorageRecoveryPlan{}, fmt.Errorf("pinning storage recovery: %w", err)
 	}
@@ -69,7 +69,7 @@ func (s *Store) PlanStorageRecovery(
 	}
 	var size int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT size FROM blobs WHERE hash=?`, hash,
+		`SELECT size FROM blobs WHERE hash=$1`, hash,
 	).Scan(&size); errors.Is(err, sql.ErrNoRows) {
 		return StorageRecoveryPlan{}, ErrNotFound
 	} else if err != nil {
@@ -81,8 +81,8 @@ func (s *Store) PlanStorageRecovery(
 		FROM blobs b JOIN blob_locations l ON l.blob_hash=b.hash
 		LEFT JOIN blob_pack_entries e
 		  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
-		WHERE b.hash=?
-		ORDER BY CASE l.store_id WHEN ? THEN 0 ELSE 1 END,l.store_id`,
+		WHERE b.hash=$1
+		ORDER BY CASE l.store_id WHEN $2 THEN 0 ELSE 1 END,l.store_id`,
 		hash, s.primaryStoreID,
 	)
 	if err != nil {
@@ -196,7 +196,7 @@ func (s *Store) BeginStorageRecoveryPublication(
 		var cancelRequested bool
 		if err := tx.QueryRowContext(ctx, `
 			SELECT kind,request_digest,state,cursor,cancel_requested
-			FROM storage_operations WHERE operation_id=?`,
+			FROM storage_operations WHERE operation_id=$1`,
 			operationID,
 		).Scan(&kind, &digest, &state, &cursor, &cancelRequested); err != nil {
 			return fmt.Errorf("reading storage recovery operation: %w", err)
@@ -253,7 +253,7 @@ func (s *Store) CommitStorageRecovery(
 		var cancelRequested bool
 		if err := tx.QueryRowContext(ctx, `
 			SELECT kind,request_digest,state,cursor,cancel_requested
-			FROM storage_operations WHERE operation_id=?`,
+			FROM storage_operations WHERE operation_id=$1`,
 			operationID,
 		).Scan(&kind, &digest, &state, &cursor, &cancelRequested); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -279,7 +279,7 @@ func (s *Store) CommitStorageRecovery(
 		}
 		var size int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT size FROM blobs WHERE hash=?`, plan.Hash,
+			`SELECT size FROM blobs WHERE hash=$1`, plan.Hash,
 		).Scan(&size); err != nil {
 			return fmt.Errorf("rechecking storage recovery membership: %w", err)
 		}
@@ -296,31 +296,36 @@ func (s *Store) CommitStorageRecovery(
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO blob_locations(
 				blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-			) VALUES(?,?,?,?,?,?,?)
+			) VALUES($1,$2,$3,$4,$5,$6,$7)
 			ON CONFLICT(blob_hash,store_id) DO UPDATE SET
 				generation=excluded.generation,kind=excluded.kind,
 				encoding=excluded.encoding,stored_size=excluded.stored_size,
 				pack_eligible=excluded.pack_eligible`,
 			plan.Hash, plan.Destination, receipt.Generation,
 			blobLocationKindLoose, encoding, receipt.Loose.StoredSize,
-			plan.Size <= maxPackEligibleBytes,
+			boolInt(plan.Size <= maxPackEligibleBytes),
 		)
 		if err != nil {
 			return fmt.Errorf("authorizing recovered location %s: %w", plan.Hash, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM blob_pack_entries
-			WHERE blob_hash=? AND store_id=?`,
+			WHERE blob_hash=$1 AND store_id=$2`,
 			plan.Hash, plan.Destination,
 		); err != nil {
 			return fmt.Errorf("retiring damaged packed mapping %s: %w", plan.Hash, err)
 		}
+		if plan.Prior != nil && plan.Prior.Pack != nil {
+			if err := s.refreshPackSummariesTx(ctx, tx, [][2]string{{plan.Destination, plan.Prior.Pack.PackID}}); err != nil {
+				return err
+			}
+		}
 		now := nowRFC3339()
 		result, err := tx.ExecContext(ctx, `
 			UPDATE storage_operations
-			SET state=?,cursor=?,completed_objects=1,copied_objects=1,copied_bytes=?,
-			    receipt_json=?,updated_at=?,finished_at=?,retention_until=?
-			WHERE operation_id=? AND state=? AND cursor=?`,
+			SET state=$1,cursor=$2,completed_objects=1,copied_objects=1,copied_bytes=$3,
+			    receipt_json=$4,updated_at=$5,finished_at=$6,retention_until=$7
+			WHERE operation_id=$8 AND state=$9 AND cursor=$10`,
 			StorageOperationCompleted, plan.Hash, plan.Size,
 			operationReceiptJSON, now, now,
 			retentionUntil.UTC().Format(timestampLayout),
@@ -363,10 +368,10 @@ func blobReadLocationTx(
 		       e.pack_id,e.pack_offset,e.stored_len,e.raw_len,e.flags,e.crc32c
 		FROM blobs b
 		LEFT JOIN blob_locations l
-		  ON l.blob_hash=b.hash AND l.store_id=?
+		  ON l.blob_hash=b.hash AND l.store_id=$1
 		LEFT JOIN blob_pack_entries e
 		  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
-		WHERE b.hash=?`,
+		WHERE b.hash=$2`,
 		storeID, hash.String(),
 	), hash)
 	if errors.Is(err, sql.ErrNoRows) {

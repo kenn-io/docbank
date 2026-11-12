@@ -20,7 +20,7 @@ var backendMaintenanceEffects = []backendMaintenance{
 	{"provenance", "ingest.go, provenance.go and provenance_bindings.go", "imports/sources contracts; immutable inserts and same-node predecessor validation", `
  ingests_immutable_update provenance_immutable_update provenance_same_node_insert
  provenance_version_bindings_immutable_update`},
-	{"pack summaries", "pack_maintenance.go: refreshPackSummariesTx", "documents/physical-storage contracts", `
+	{"pack summaries", "pack_maintenance.go: refreshPackSummariesTx", "documents/physical-storage/multi-store contracts", `
  blob_pack_summary_mapping_insert blob_pack_summary_mapping_delete
  blob_pack_summary_mapping_update blob_pack_summary_blob_delete blob_pack_summary_blob_insert`},
 	{"content promotion", "document_maintenance.go: promoteContentBlobTx", "documents contracts", `

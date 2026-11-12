@@ -240,10 +240,10 @@ func auditRecordDigestAt(
 	var err error
 	if kind == "allocation_entry" {
 		err = snapshot.QueryRowContext(ctx, `SELECT digest FROM audit_records
-			WHERE kind='allocation_entry' AND operation_sequence=?`, count).Scan(&digest)
+			WHERE kind='allocation_entry' AND operation_sequence=$1`, count).Scan(&digest)
 	} else {
 		err = snapshot.QueryRowContext(ctx, `SELECT digest FROM audit_records
-			WHERE kind='scope_chain_entry' AND scope_id=? AND entry_count=?`,
+			WHERE kind='scope_chain_entry' AND scope_id=$1 AND entry_count=$2`,
 			scopeID, count).Scan(&digest)
 	}
 	if err != nil {

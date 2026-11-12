@@ -121,6 +121,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
 | `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
 | `POST /people/by-id/{person_id}/merge` · `POST /people/by-id/{person_id}/split` | merge or split person authority under revision and operation fences | Implemented |
+| `POST /versions/{version_id}/download-ticket` | issue a two-minute single-use original download capability for an exact vault, live file node, retained version, hash and size | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to that version | Implemented |
@@ -1794,7 +1795,8 @@ trailer on a fixed-length message, and pre-reading a large loose or packed
 blob solely to populate a header would double physical I/O. Clients that need
 independent transfer proof hash the body themselves and compare both their
 digest and the trailer with the node's `blob_hash`. The version header must
-equal `current_version_id`.
+equal `current_version_id`. A failed copy or blob verification aborts the
+transfer without a digest trailer.
 
 `GET /nodes/{id}/versions` returns a bounded, newest-first page with `items`,
 `total`, `limit`, and `offset`. `GET /versions/{version_id}` resolves immutable
@@ -1809,6 +1811,25 @@ whole version. The `Content-Digest` trailer covers only the returned window.
 MCP clients verify the assembled bytes against the selected version's size
 and SHA-256. Every window streams from the beginning of the blob up to the
 requested bytes, so a window costs time in proportion to its offset.
+
+`POST /api/v1/versions/{version_id}/download-ticket` issues an original
+download ticket. It requires API authentication and a live file node.
+The request body binds `vault_id`, `node_id`, `blob_hash`,
+and `size` to the path's `version_id`. A retained older version is valid;
+a mismatched selection returns 409 `download_selection_stale`.
+The response contains `url`, `name`, and `expires_in_seconds: 120`.
+Issuance does not stage content and does not require the web app.
+
+The returned relative `/api/daemon/web-download/file?ticket=…` URL needs
+no API key. GET atomically consumes the ticket, rechecks its selection,
+and streams the whole original through the verified blob reader. Identity
+headers name the selected version, SHA-256 and size; the `Content-Digest`
+trailer covers the returned bytes. Verification or streaming failure fails the
+response. HEAD returns 405 without spending the ticket. One GET spends the
+ticket. Reuse or expiry returns 404
+`download_not_found`. Expiry and shutdown revoke capabilities without
+removing retained content. See [Download originals](../usage/mcp.md#download-originals)
+for the MCP relay, proxy setup, and transfer limits.
 
 `GET /nodes/{id}/provenance` returns the requested file node, its live path when
 one exists, and a bounded newest-ingest-first page from one read snapshot. Each

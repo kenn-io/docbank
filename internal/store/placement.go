@@ -74,7 +74,7 @@ func (s *Store) PlanPlacement(
 		request.SourceStoreID == request.DestinationStoreID {
 		return PlacementPlan{}, errors.New("placement requires a target and distinct source/destination stores")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return PlacementPlan{}, fmt.Errorf("pinning placement preview: %w", err)
 	}
@@ -217,7 +217,7 @@ func blobPackStoredBytesTx(
 	var storedBytes int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT stored_bytes FROM blob_packs
-		WHERE store_id=? AND pack_id=?`,
+		WHERE store_id=$1 AND pack_id=$2`,
 		storeID, packID,
 	).Scan(&storedBytes); err != nil {
 		return 0, fmt.Errorf("reading placement source pack %s: %w", packID, err)
@@ -383,7 +383,7 @@ func evacuationHashesTx(
 		SELECT blob.hash,blob.size
 		FROM blobs blob
 		JOIN blob_locations location ON location.blob_hash=blob.hash
-		WHERE location.store_id=?
+		WHERE location.store_id=$1
 		ORDER BY blob.hash`, sourceStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("reading evacuation source authority: %w", err)
@@ -425,7 +425,7 @@ func placementLocationsTx(
 		FROM blobs b JOIN blob_locations l ON l.blob_hash=b.hash
 		LEFT JOIN blob_pack_entries e
 		  ON e.blob_hash=l.blob_hash AND e.store_id=l.store_id
-		WHERE b.hash=? AND l.store_id IN (?,?)
+		WHERE b.hash=$1 AND l.store_id IN ($2,$3)
 		ORDER BY l.store_id`, hash, sourceID, destinationID)
 	if err != nil {
 		return packstore.ReadLocation{}, packstore.ReadLocation{},
@@ -527,7 +527,7 @@ func (s *Store) CommitPlacement(
 		}
 		var size int64
 		err = tx.QueryRowContext(ctx,
-			`SELECT size FROM blobs WHERE hash=?`, planned.Hash,
+			`SELECT size FROM blobs WHERE hash=$1`, planned.Hash,
 		).Scan(&size)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -578,14 +578,14 @@ func (s *Store) CommitPlacement(
 			_, err = tx.ExecContext(ctx, `
 				INSERT INTO blob_locations(
 					blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible
-				) VALUES(?,?,?,?,?,?,?)
+				) VALUES($1,$2,$3,$4,$5,$6,$7)
 				ON CONFLICT(blob_hash,store_id) DO UPDATE SET
 					generation=excluded.generation,kind=excluded.kind,
 					encoding=excluded.encoding,stored_size=excluded.stored_size,
 					pack_eligible=excluded.pack_eligible`,
 				planned.Hash, request.DestinationStoreID, destination.Generation,
 				blobLocationKindLoose, encoding, destination.Loose.StoredSize,
-				size <= maxPackEligibleBytes,
+				boolInt(size <= maxPackEligibleBytes),
 			)
 			if err != nil {
 				return fmt.Errorf(
@@ -644,7 +644,7 @@ func (s *Store) CommitPlacement(
 			committed.PackRepackRequired = true
 			entryResult, err := tx.ExecContext(ctx, `
 				DELETE FROM blob_pack_entries
-				WHERE blob_hash=? AND store_id=? AND pack_id=?`,
+				WHERE blob_hash=$1 AND store_id=$2 AND pack_id=$3`,
 				planned.Hash, request.SourceStoreID, source.Pack.PackID,
 			)
 			if err != nil {
@@ -664,7 +664,7 @@ func (s *Store) CommitPlacement(
 			}
 			locationResult, err := tx.ExecContext(ctx, `
 				DELETE FROM blob_locations
-				WHERE blob_hash=? AND store_id=? AND generation=? AND kind=?`,
+				WHERE blob_hash=$1 AND store_id=$2 AND generation=$3 AND kind=$4`,
 				planned.Hash, request.SourceStoreID,
 				source.Generation, blobLocationKindPacked,
 			)
@@ -685,12 +685,15 @@ func (s *Store) CommitPlacement(
 					planned.Hash, ErrStaleRevision,
 				)
 			}
+			if err := s.refreshPackSummariesTx(ctx, tx, [][2]string{{request.SourceStoreID, source.Pack.PackID}}); err != nil {
+				return err
+			}
 			committed.SourceRevoked = true
 			return nil
 		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM blob_locations
-			WHERE blob_hash=? AND store_id=? AND generation=? AND kind=?`,
+			WHERE blob_hash=$1 AND store_id=$2 AND generation=$3 AND kind=$4`,
 			planned.Hash, request.SourceStoreID, source.Generation, blobLocationKindLoose,
 		)
 		if err != nil {
