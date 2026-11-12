@@ -26,7 +26,6 @@ func (in *contractDocumentLinkInput) Resolve(ctx huma.Context) []error {
 }
 
 func registerContractDocumentRoutes(api huma.API, d Deps, g *gate) {
-
 	for _, link := range []bool{true, false} {
 		method, operation := http.MethodPut, "linkContractDocument"
 		if !link {

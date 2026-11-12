@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
@@ -25,18 +26,18 @@ func TestContractDocumentCLI(t *testing.T) {
 	calls := 0
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		require.Equal(t, "/api/v1/contracts/"+id+"/documents/42", r.URL.Path)
-		require.Equal(t, "signed", r.URL.Query().Get("role"))
-		require.Equal(t, `"1"`, r.Header.Get("If-Match"))
+		assert.Equal(t, "/api/v1/contracts/"+id+"/documents/42", r.URL.Path)
+		assert.Equal(t, "signed", r.URL.Query().Get("role"))
+		assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
 		if r.Method == http.MethodPut {
-			require.False(t, r.URL.Query().Has("content_version_id"))
+			assert.False(t, r.URL.Query().Has("content_version_id"))
 		} else {
-			require.Equal(t, http.MethodDelete, r.Method)
-			require.Equal(t, version, r.URL.Query().Get("content_version_id"))
+			assert.Equal(t, http.MethodDelete, r.Method)
+			assert.Equal(t, version, r.URL.Query().Get("content_version_id"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"2"`)
-		require.NoError(t, json.MarshalWrite(w, api.Contract{ContractID: id, Revision: 2, Parties: []api.ContractParty{}, Documents: []api.ContractDocument{}}))
+		assert.NoError(t, json.MarshalWrite(w, api.Contract{ContractID: id, Revision: 2, Parties: []api.ContractParty{}, Documents: []api.ContractDocument{}}))
 	})
 	for _, action := range []string{"link", "unlink"} {
 		_, err := runCLI(t, "contract", action, id, "id:42", "--role", "signed", "--revision", "1", "--version", "")

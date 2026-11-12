@@ -36,7 +36,7 @@ func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
 			require.NoError(t, err)
 			_, err = s.LinkContractDocument(t.Context(), c.ContractID, c.Revision, n.ID, "signed", "")
 			require.NoError(t, err)
-			n, _, err = s.Trash(t.Context(), n.ID, n.Revision)
+			_, _, err = s.Trash(t.Context(), n.ID, n.Revision)
 			require.NoError(t, err)
 			_, err = s.TrashEmpty(t.Context(), 0, true)
 			require.NoError(t, err)

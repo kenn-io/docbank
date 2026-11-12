@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -54,29 +55,23 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		var versions []string
 		for rows.Next() {
 			var v string
 			if err := rows.Scan(&v); err != nil {
-				_ = rows.Close()
 				return err
 			}
 			versions = append(versions, v)
 		}
 		if err := rows.Err(); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		if err := rows.Close(); err != nil {
 			return err
 		}
 		exists := func(v string) bool {
-			for _, saved := range versions {
-				if saved == v {
-					return true
-				}
-			}
-			return false
+			return slices.Contains(versions, v)
 		}
 		if link && versionID != "" && exists(versionID) {
 			out, err = getContractTx(ctx, tx, id, asOf)

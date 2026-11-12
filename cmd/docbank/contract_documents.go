@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
@@ -18,10 +18,10 @@ func newContractDocumentCommand(link bool) *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: name + " <contract-id> <node>", Short: name + " an exact contract document", Example: "  docbank contract " + name + " <contract-id> id:42 --role signed", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("version") && version == "" {
-			return fmt.Errorf("content version ID must not be empty")
+			return errors.New("content version ID must not be empty")
 		}
 		if cmd.Flags().Changed("revision") && revision < 1 {
-			return fmt.Errorf("revision must be positive")
+			return errors.New("revision must be positive")
 		}
 		selector, err := parseNodeSelector(args[1])
 		if err != nil {
