@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -174,12 +175,14 @@ daemon was running.`,
 				return logErr
 			}
 			defer func() { _ = result.Close() }()
-			_, _, err = daemonconn.Restart(ctx, layout.Root, false)
+			token := os.Getenv("DOCBANK_WEB_RESTART_TOKEN")
+			_ = os.Unsetenv("DOCBANK_WEB_RESTART_TOKEN")
+			restarted, err := daemonconn.RestartWeb(ctx, layout.Root, token)
 			if err != nil {
 				logger.Error("web restart failed", "error", err)
 				return err
 			}
-			if restartOpenWeb {
+			if restarted && restartOpenWeb {
 				c, openErr := daemonconn.EnsureWeb(ctx)
 				if openErr == nil {
 					defer func() { _ = c.Close() }()

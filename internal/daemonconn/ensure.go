@@ -464,6 +464,27 @@ func Restart(ctx context.Context, root string, persistent bool) (kitdaemon.Runti
 	return restart(ctx, root, persistent, Stop, Start)
 }
 
+// RestartWeb restarts only the daemon that accepted the browser request.
+func RestartWeb(ctx context.Context, root, token string) (bool, error) {
+	restarted := false
+	err := WithLaunchLock(ctx, root, func() error {
+		rec, _, ok, err := Find(ctx, root)
+		if err != nil {
+			return err
+		}
+		if !ok || token == "" || rec.Metadata[metaShutdownToken] != token {
+			return nil
+		}
+		if err := stopRecord(ctx, rec); err != nil {
+			return err
+		}
+		_, err = Start(ctx, root, Explicit(rec))
+		restarted = err == nil
+		return err
+	})
+	return restarted, err
+}
+
 func restart(ctx context.Context, root string, persistent bool,
 	stopFn func(context.Context, string) (*kitdaemon.RuntimeRecord, error),
 	startFn func(context.Context, string, bool) (kitdaemon.RuntimeRecord, error),

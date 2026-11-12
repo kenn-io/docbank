@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json/v2"
@@ -714,4 +715,104 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {
+	bin := buildDocbank(t)
+	for _, replace := range []bool{false, true} {
+		t.Run(strconv.FormatBool(replace), func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+			t.Setenv("DOCBANK_HOME", root)
+			t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
+			t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
+			start := exec.CommandContext(t.Context(), bin, "daemon", "start")
+			out, err := start.CombinedOutput()
+			require.NoError(t, err, string(out))
+			old := waitForDaemon(t, root)
+			lock, err := (home.Layout{Root: root}).TryLockLaunch()
+			require.NoError(t, err)
+			defer func() { _ = lock.Release() }()
+			helper := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
+			helper.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
+			require.NoError(t, helper.Start())
+			_, err = daemonconn.Stop(t.Context(), root)
+			require.NoError(t, err)
+			var replacement kitdaemon.RuntimeRecord
+			if replace {
+				process := exec.CommandContext(t.Context(), bin, "daemon", "run")
+				stderr, err := process.StderrPipe()
+				require.NoError(t, err)
+				require.NoError(t, process.Start())
+				t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root); _ = process.Wait() })
+				ready := make(chan struct{})
+				go func() {
+					scanner := bufio.NewScanner(stderr)
+					for scanner.Scan() {
+						if strings.Contains(scanner.Text(), "docbank daemon listening") {
+							close(ready)
+						}
+					}
+				}()
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				select {
+				case <-ready:
+				case <-ctx.Done():
+					t.Fatal("replacement daemon did not start")
+				}
+				replacement = waitForDaemon(t, root)
+			}
+			require.NoError(t, lock.Release())
+			require.NoError(t, helper.Wait())
+			current, _, found, err := daemonconn.Find(t.Context(), root)
+			require.NoError(t, err)
+			require.Equal(t, replace, found)
+			if replace {
+				assert.Equal(t, replacement.PID, current.PID)
+			}
+		})
+	}
+}
+
+func TestWebReplacesPreviousProtocolBuild(t *testing.T) {
+	bin := buildDocbankWithWebOverlay(t, "", true)
+	dir := t.TempDir()
+	runtimeFile, err := filepath.Abs(filepath.Join("..", "..", "internal", "daemonconn", "runtime.go"))
+	require.NoError(t, err)
+	source, err := os.ReadFile(runtimeFile)
+	require.NoError(t, err)
+	oldSource := regexp.MustCompile(`daemonProtocolVersion = "[^"]+"`).ReplaceAllString(string(source), `daemonProtocolVersion = "127"`)
+	require.NotEqual(t, string(source), oldSource)
+	oldFile := filepath.Join(dir, "runtime.go")
+	require.NoError(t, os.WriteFile(oldFile, []byte(oldSource), 0o600))
+	webIndex, err := filepath.Abs(filepath.Join("..", "..", "internal", "web", "dist", "index.html"))
+	require.NoError(t, err)
+	webFile := filepath.Join(dir, "index.html")
+	require.NoError(t, os.WriteFile(webFile, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0o600))
+	overlay, err := json.Marshal(map[string]any{"Replace": map[string]string{runtimeFile: oldFile, webIndex: webFile}})
+	require.NoError(t, err)
+	overlayFile := filepath.Join(dir, "overlay.json")
+	require.NoError(t, os.WriteFile(overlayFile, overlay, 0o600))
+	oldBin := filepath.Join(dir, "docbank-old")
+	if runtime.GOOS == "windows" {
+		oldBin += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5", "-overlay", overlayFile, "-o", oldBin, "go.kenn.io/docbank/cmd/docbank")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, string(out))
+	root := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
+	start := exec.CommandContext(t.Context(), oldBin, "daemon", "start")
+	out, err = start.CombinedOutput()
+	require.NoError(t, err, string(out))
+	old := waitForDaemon(t, root)
+	web := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
+	out, err = web.CombinedOutput()
+	require.NoError(t, err, string(out))
+	current := waitForDaemon(t, root)
+	assert.NotEqual(t, old.PID, current.PID)
 }
