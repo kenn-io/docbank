@@ -2,13 +2,12 @@ package api
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -18,11 +17,11 @@ type versionFactsInput struct {
 	Disclosure string `query:"disclosure" enum:"safe,full" default:"safe"`
 }
 
-func factOpen(origin string, nodeID int64, versionID string) *FactOpen {
-	if origin == "" {
+func factOpen(webURL string, nodeID int64, versionID string) *FactOpen {
+	if webURL == "" {
 		return nil
 	}
-	return &FactOpen{Web: fmt.Sprintf("%s/#node=%d&version=%s", strings.TrimRight(origin, "/"), nodeID, versionID)}
+	return &FactOpen{Web: fmt.Sprintf("%s#node=%d&version=%s", webURL, nodeID, versionID)}
 }
 func factsError(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
@@ -39,7 +38,7 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, factsError(err)
 		}
-		out := versionDatesAPI(f, in.Disclosure, d.Cfg.Web.PublicOrigin)
+		out := versionDatesAPI(f, in.Disclosure, webLaunchURL(d.Cfg.Web.PublicOrigin, d.Cfg.Web.BasePath))
 		return &struct{ Body VersionDates }{Body: out}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "getVersionPeople", Method: http.MethodGet, Path: "/api/v1/versions/{version_id}/people", Middlewares: huma.Middlewares{rejectFactsUnknownQuery}, Summary: "Read a version's people"}, func(ctx context.Context, in *versionFactsInput) (*struct{ Body VersionPeople }, error) {
@@ -51,13 +50,13 @@ func registerDocumentFactsRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, factsError(err)
 		}
-		out := versionPeopleAPI(f, safe, d.Cfg.Web.PublicOrigin)
+		out := versionPeopleAPI(f, safe, webLaunchURL(d.Cfg.Web.PublicOrigin, d.Cfg.Web.BasePath))
 		return &struct{ Body VersionPeople }{Body: out}, nil
 	})
 }
 
-func versionDatesAPI(f store.DocumentDateFacts, disclosure, origin string) VersionDates {
-	out := VersionDates{ContentVersionID: f.Version.ID, NodeID: f.Version.NodeID, State: f.State, Claims: []VersionDateClaim{}, Diagnostics: []FactDiagnostic{}, Open: factOpen(origin, f.Version.NodeID, f.Version.ID)}
+func versionDatesAPI(f store.DocumentDateFacts, disclosure, webURL string) VersionDates {
+	out := VersionDates{ContentVersionID: f.Version.ID, NodeID: f.Version.NodeID, State: f.State, Claims: []VersionDateClaim{}, Diagnostics: []FactDiagnostic{}, Open: factOpen(webURL, f.Version.NodeID, f.Version.ID)}
 	if f.State == "published" {
 		out.DocumentKind = f.View.Events.DocumentKind
 		for _, p := range f.View.Events.Primaries {
@@ -80,8 +79,8 @@ func versionDatesAPI(f store.DocumentDateFacts, disclosure, origin string) Versi
 	return out
 }
 
-func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) VersionPeople {
-	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(origin, f.Version.NodeID, f.Version.ID)}
+func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, webURL string) VersionPeople {
+	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(webURL, f.Version.NodeID, f.Version.ID)}
 	for _, e := range f.Edges {
 		p, ok := f.Persons[e.PersonID]
 		if !ok || safe && !p.Visible {
@@ -118,9 +117,8 @@ func rejectFactsUnknownQuery(ctx huma.Context, next func(huma.Context)) {
 	url := ctx.URL()
 	for key := range url.Query() {
 		if key != "disclosure" {
-			ctx.SetHeader("Content-Type", "application/problem+json")
-			ctx.SetStatus(http.StatusBadRequest)
-			_ = json.MarshalWrite(ctx.BodyWriter(), NewError(http.StatusBadRequest, "unknown_parameter", "Unknown query parameter"))
+			_, w := humago.Unwrap(ctx)
+			writeError(w, NewError(http.StatusBadRequest, "unknown_parameter", "Unknown query parameter"))
 			return
 		}
 	}

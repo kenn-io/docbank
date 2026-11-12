@@ -1,15 +1,29 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/pgtest"
+	"go.kenn.io/docbank/internal/store/pgschema"
 )
 
-func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, newStore func(*testing.T) *Store) {
+func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, postgres bool) {
 	t.Helper()
-	s := newStore(t)
+	var s *Store
+	var setup *sql.DB
+	table := "person_match_candidates"
+	if postgres {
+		var owner string
+		setup, owner = pgtest.NewDatabase(t)
+		s = newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+		table = "documents.person_match_candidates"
+	} else {
+		s = newTestStore(t)
+		setup = s.db
+	}
 	_, first := seedPeopleVersion(t, s)
 	_, second := seedPeopleVersion(t, s)
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", "", []PersonCandidateOccurrence{
@@ -19,10 +33,12 @@ func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, newStore func(
 	person, err := s.CreatePerson(t.Context(), "Suggested", "operator")
 	require.NoError(t, err)
 	suggested := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", person.PersonID, []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "suggested"}}))
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "second-only"}}))
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", person.PersonID, []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "second-suggested"}}))
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:other", "Other", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "other"}}))
 	third := openCandidateForTest(t, s, candidateForTest(t, "name_alias:third", "Third", "", []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "third"}}))
 	for i, id := range []string{candidate.CandidateID, suggested.CandidateID, third.CandidateID} {
-		_, err := s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET created_at=$1 WHERE candidate_id=$2`, fmt.Sprintf("2026-01-0%dT00:00:00Z", 3-i), id)
+		_, err := setup.ExecContext(t.Context(), `UPDATE `+table+` SET created_at=$1 WHERE candidate_id=$2`, fmt.Sprintf("2026-01-0%dT00:00:00Z", 3-i), id)
 		require.NoError(t, err)
 	}
 	keys := []string{"name_alias:example", "name_alias:example", "name_alias:other"}

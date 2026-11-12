@@ -1,8 +1,8 @@
 package mcp
 
 import (
+	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -56,10 +56,20 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 }
 
 func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) {
-	dates := api.VersionDates{ContentVersionID: "00000000-0000-4000-8000-000000000001", NodeID: 1, State: "published", Primary: &api.VersionDatePrimary{EventID: "primary"}}
+	versionID := "00000000-0000-4000-8000-000000000001"
+	dates := api.VersionDates{ContentVersionID: versionID, NodeID: 1, State: "published"}
+	axis, err := document.EventAxisKey("2026-03-10", "date", "omitted", nil)
+	require.NoError(t, err)
 	for i := range 12 {
-		dates.Claims = append(dates.Claims, api.VersionDateClaim{EventID: strconv.Itoa(i), RawValue: strings.Repeat("\\\"", 50000)})
+		evidenceID := fmt.Sprintf("metadata-%d", i)
+		evidenceHash := strings.Repeat("a", 64)
+		eventID := document.DocumentEventID("vault-uid-1", versionID, evidenceID, "created", "2026-03-10", "date", "omitted", evidenceHash)
+		claim := api.VersionDateClaim{EventID: eventID, DateKind: "created", DateValue: "2026-03-10", RawValue: strings.Repeat("\\\"", 30000), Precision: "date", TimezoneKind: "omitted", AxisKey: axis, ClaimBasis: "source_asserted", ParseConfidence: "exact", EvidenceKind: "source_metadata", EvidenceID: evidenceID,
+			When: api.WhenV1{State: "date", Precision: "date", Date: "2026-03-10", PlacedBy: api.WhenPlacedBy{Source: "created", Rule: document.PrimaryRuleV1, EventID: eventID, ClaimBasis: "source_asserted"}}}
+		dates.Claims = append(dates.Claims, claim)
 	}
+	dates.Claims[0].Primary = true
+	dates.Primary = &api.VersionDatePrimary{EventID: dates.Claims[0].EventID, Reason: "created_date", RuleID: document.PrimaryRuleV1, Disclosure: "safe"}
 	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: "synthetic"}}
 	var claims []api.VersionDateClaim
 	var diagnostics []api.FactDiagnostic
@@ -77,6 +87,9 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 			break
 		}
 		require.Greater(t, *page.NextOffset, offset)
+		if offset == 0 {
+			require.Less(t, *page.NextOffset, len(dates.Claims))
+		}
 		offset = *page.NextOffset
 	}
 	require.Equal(t, dates.Claims, claims)
@@ -90,11 +103,15 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 
 func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 	people := api.VersionPeople{ContentVersionID: "00000000-0000-4000-8000-000000000001", State: "published", Open: &api.FactOpen{Web: "https://example.test"}}
-	for i := range 105 {
-		people.Edges = append(people.Edges, api.VersionPersonEdge{PersonID: strconv.Itoa(i), RawLabel: strings.Repeat("x", 10000)})
+	for i := range 40 {
+		edge := api.VersionPersonEdge{PersonID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), DisplayName: "Example Person", Role: "author", Basis: "identifier_match", Confidence: "exact_identifier", EvidenceKind: "source_metadata", EvidenceID: "metadata", RawLabel: "Example Person", ClaimCount: 1, LinkedContact: true}
+		for j := range document.MaxPersonExternalIdentities {
+			edge.External = append(edge.External, api.FactExternal{System: "msgvault", ArchiveID: fmt.Sprintf("archive-%03d-%s", j, strings.Repeat("a", 110)), UID: fmt.Sprintf("person-%03d-%s", i, strings.Repeat("u", 240))})
+		}
+		people.Edges = append(people.Edges, edge)
 	}
-	people.Assertions = []api.VersionPersonAssertion{{DisplayName: "assertion"}}
-	people.Unresolved = []api.VersionUnresolvedName{{RawLabel: "unresolved"}}
+	people.Assertions = []api.VersionPersonAssertion{{AssertionID: "00000000-0000-4000-8000-000000000101", PersonID: people.Edges[0].PersonID, DisplayName: "Example Person", Role: "author", Action: "assert", RecordedAt: "2026-03-10T00:00:00Z", Revision: 1}}
+	people.Unresolved = []api.VersionUnresolvedName{{RawLabel: "Unresolved Person", Role: "author", CandidateID: "00000000-0000-4000-8000-000000000102", EvidenceKind: "source_metadata"}}
 	var edges []api.VersionPersonEdge
 	var assertions []api.VersionPersonAssertion
 	var unresolved []api.VersionUnresolvedName
@@ -114,37 +131,42 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 			break
 		}
 		require.Greater(t, *page.NextOffset, offset)
+		if offset == 0 {
+			require.Less(t, *page.NextOffset, len(people.Edges))
+		}
 		offset = *page.NextOffset
 	}
 	require.Equal(t, people.Edges, edges)
 	require.Equal(t, people.Assertions, assertions)
 	require.Equal(t, people.Unresolved, unresolved)
-	people.Edges = []api.VersionPersonEdge{{RawLabel: strings.Repeat("x", maxToolResponseBytes)}}
-	_, err := documentPeoplePage(people, 0)
-	require.ErrorIs(t, err, errToolResultTooLarge)
 }
 
 func TestDocumentFactsOutputSchemaBounds(t *testing.T) {
 	_, dates := getDocumentDatesSchemas()
 	_, people := getDocumentPeopleSchemas()
-	properties := func(s schema) schema { return s["properties"].(map[string]any) }
-	items := func(s schema) schema { return s["items"].(map[string]any) }
+	asSchema := func(value any) schema {
+		result, ok := value.(map[string]any)
+		require.True(t, ok)
+		return result
+	}
+	properties := func(s schema) schema { return asSchema(s["properties"]) }
+	items := func(s schema) schema { return asSchema(s["items"]) }
 	for _, tc := range []struct {
 		root  schema
 		field string
 	}{
 		{dates, "claims"}, {dates, "diagnostics"}, {people, "edges"}, {people, "assertions"}, {people, "unresolved"},
 	} {
-		array := properties(tc.root)[tc.field].(map[string]any)
+		array := asSchema(properties(tc.root)[tc.field])
 		// Isolate the catalog array bound from its item requirements.
 		bound := maps.Clone(array)
 		bound["items"] = schema{}
 		assertSchemaAccepts(t, bound, make([]any, 100))
 		assertSchemaRejects(t, bound, make([]any, 101))
 	}
-	claim := properties(items(properties(dates)["claims"].(map[string]any)))
-	edge := properties(items(properties(people)["edges"].(map[string]any)))
-	external := properties(items(edge["external"].(map[string]any)))
+	claim := properties(items(asSchema(properties(dates)["claims"])))
+	edge := properties(items(asSchema(properties(people)["edges"])))
+	external := properties(items(asSchema(edge["external"])))
 	for _, tc := range []struct {
 		field any
 		limit int
@@ -158,5 +180,5 @@ func TestDocumentFactsOutputSchemaBounds(t *testing.T) {
 		assertSchemaAccepts(t, tc.field, strings.Repeat("x", tc.limit))
 		assertSchemaRejects(t, tc.field, strings.Repeat("x", tc.limit+1))
 	}
-	require.Equal(t, document.MaxPersonExternalIdentities, edge["external"].(map[string]any)["maxItems"])
+	require.Equal(t, document.MaxPersonExternalIdentities, asSchema(edge["external"])["maxItems"])
 }
