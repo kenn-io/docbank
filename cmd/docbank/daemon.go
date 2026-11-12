@@ -724,30 +724,8 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		}
 	}
 	var restartDaemon func(context.Context, bool) error
-	var restartMu sync.Mutex
-	restartLaunched := false
 	if background {
-		restartDaemon = func(ctx context.Context, openTab bool) error {
-			restartMu.Lock()
-			defer restartMu.Unlock()
-			if restartLaunched {
-				return nil
-			}
-			exe, err := os.Executable()
-			if err != nil {
-				return err
-			}
-			args := []string{"daemon", "restart", "--from-web"}
-			if openTab {
-				args = append(args, "--open-web")
-			}
-			err = kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+layout.Root), Stdout: io.Discard, Stderr: io.Discard})
-			if err != nil {
-				return fmt.Errorf("starting web restart helper: %w", err)
-			}
-			restartLaunched = true
-			return nil
-		}
+		restartDaemon = webRestartLauncher(layout.Root, logger, kitdaemon.StartDetached)
 	}
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
@@ -824,6 +802,39 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		logger.Info("docbank daemon shutting down")
 		jobSupervisor.Stop()
 	}, srv.Shutdown)
+}
+
+func webRestartLauncher(root string, logger *slog.Logger, start func(context.Context, kitdaemon.StartDetachedOptions) error) func(context.Context, bool) error {
+	var mu sync.Mutex
+	launched := false
+	return func(ctx context.Context, openTab bool) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if launched {
+			return nil
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		args := []string{"daemon", "restart", "--from-web"}
+		if openTab {
+			args = append(args, "--open-web")
+		}
+		err = start(ctx, kitdaemon.StartDetachedOptions{Executable: exe, Args: args, Env: append(os.Environ(), "DOCBANK_HOME="+root), Stdout: io.Discard, Stderr: io.Discard, Exited: func(err error) {
+			mu.Lock()
+			launched = false
+			mu.Unlock()
+			if err != nil {
+				logger.Error("web restart helper failed", "error", err)
+			}
+		}})
+		if err != nil {
+			return fmt.Errorf("starting web restart helper: %w", err)
+		}
+		launched = true
+		return nil
+	}
 }
 
 type servingHTTP struct {

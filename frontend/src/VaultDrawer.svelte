@@ -178,9 +178,7 @@
     }}
   >
     <div class="restart-confirmation">
-      <p>
-        Open tabs sign out. Uploads, exports, and command-line requests may be interrupted.
-      </p>
+      <p>Open tabs sign out. Uploads, exports, and command-line requests may be interrupted.</p>
       {@render restartRecovery()}
     </div>
     {#snippet footer()}
@@ -195,8 +193,8 @@
 {#snippet restartRecovery()}
   <p>
     If restart stalls, run <code>docbank daemon restart</code> in the vault's terminal. To reopen,
-    run <code>docbank web --no-browser</code> there and open the printed URL, or reload your public
-    URL and sign in. Fix any command error and retry.
+    run <code>docbank web --no-browser</code> there and open the printed URL, or reload your public URL
+    and sign in. Fix any command error and retry.
   </p>
 {/snippet}
 
