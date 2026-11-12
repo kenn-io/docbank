@@ -58,7 +58,7 @@ func newContractDocumentCommand(link bool) *cobra.Command {
 			out, err = c.UnlinkContractDocument(cmd.Context(), args[0], revision, nodeID, role, version)
 		}
 		if err != nil {
-			return err
+			return contractMutationError(name+" contract document", err)
 		}
 		return printContract(cmd, out, jsonOutput)
 	}}
