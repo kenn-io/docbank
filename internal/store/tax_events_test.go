@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -319,4 +320,28 @@ func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
 	var output bytes.Buffer
 	require.ErrorIs(t, s.ExportMetadata(ctx, &output), taxrecord.ErrInvalid)
 	assert.Empty(t, output.String())
+}
+
+func TestTaxCashCancellationAndWriteFailure(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("1.00"), Currency: "USD"}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err := s.AddTaxEvent(canceled, r.RecordID, r.Revision, cash)
+	require.ErrorIs(t, err, context.Canceled)
+	for _, ddl := range []string{
+		`CREATE TABLE cash_test_parent (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE cash_test_child (id INTEGER REFERENCES cash_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`,
+		`CREATE TRIGGER fail_cash_commit AFTER INSERT ON tax_events BEGIN INSERT INTO cash_test_child VALUES (1); END`,
+	} {
+		_, err = s.db.ExecContext(ctx, ddl)
+		require.NoError(t, err)
+	}
+	_, err = s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+	require.Error(t, err)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, r, d.Record)
+	assert.Empty(t, d.Events)
 }
