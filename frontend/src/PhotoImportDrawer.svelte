@@ -863,9 +863,8 @@
           onclick={() => {
             savedImport = undefined;
             replacingConfirmed = true;
-            selectedImport = "";
-            selectedFiles = [];
-            items = [];
+            [selectedImport, error] = ["", ""];
+            [selectedFiles, items, unsupported, extraFiles] = [[], [], [], []];
             registered = false;
             for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
           }}><PlusIcon size="14" />Start new import</Button

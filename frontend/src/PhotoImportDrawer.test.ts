@@ -1400,6 +1400,7 @@ it("starts a new selection after resuming a saved import", async () => {
     destination: "/photos",
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
+    skipped: [{ path: "old-notes.txt", reason: "Unsupported type" }],
     groups: [
       {
         status: "remaining" as const,
@@ -1429,12 +1430,19 @@ it("starts a new selection after resuming a saved import", async () => {
     target: { files: [original] },
   });
   await screen.findByRole("button", { name: "Resume remaining" });
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [original, new File(["extra"], "old-extra.JPG")] },
+  });
+  await screen.findByText("old-notes.txt");
+  await screen.findByText("old-extra.JPG");
   await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  expect(screen.queryByText("old-notes.txt")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Choose files" }));
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: [fresh] },
   });
   await screen.findByRole("button", { name: "Add 1 group" });
+  expect(screen.queryByText("old-extra.JPG")).toBeNull();
   expect(channel.inspectPhotoImport).toHaveBeenCalledOnce();
   expect(channel.planPhotoImport).toHaveBeenCalledWith(
     [fresh],
