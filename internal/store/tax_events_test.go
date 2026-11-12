@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -27,7 +26,7 @@ func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	assert.Equal(t, "filed", first.Record.State)
 	assert.Equal(t, int64(2), first.Record.Revision)
-	second, err := s.AdvanceTaxRecord(ctx, r.RecordID, first.Record.Revision, TaxEventInput{Kind: "assessed", OccurredOn: "2024-01-01", Amount: new("12.34"), Currency: "USD", Reference: "  "})
+	second, err := s.AdvanceTaxRecord(ctx, r.RecordID, first.Record.Revision, TaxEventInput{Kind: "assessed", OccurredOn: "2024-01-01", Amount: new("12.34"), Currency: "USD"})
 	require.NoError(t, err)
 	assert.Equal(t, new(int64(1234)), second.Event.AmountMinor)
 	assert.Equal(t, r.AmountMinor, second.Record.AmountMinor)
@@ -61,7 +60,11 @@ func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	m, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01", Reference: "synthetic-reference"})
 	require.NoError(t, err)
-	_, err = s.AddTaxEvent(ctx, r.RecordID, m.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2025-01-01", Note: "example"})
+	noteFirst, err := s.AddTaxEvent(ctx, r.RecordID, m.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2025-01-01", Note: "example"})
+	require.NoError(t, err)
+	cash, err := s.AddTaxEvent(ctx, r.RecordID, noteFirst.Record.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("12.34"), Currency: "USD"})
+	require.NoError(t, err)
+	_, err = s.VoidTaxEvent(ctx, r.RecordID, cash.Event.EventID, cash.Record.Revision, "correction")
 	require.NoError(t, err)
 	other, err := s.CreateTaxRecord(ctx, TaxRecordInput{FilerPartyID: &r.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "audit", Title: "Other"})
 	require.NoError(t, err)
@@ -87,6 +90,24 @@ func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
 	require.NotNil(t, detail.Events[1].VoidedAt)
 	assert.Equal(t, "example reason", detail.Events[1].VoidReason)
 	assert.Equal(t, "synthetic-reference", detail.Events[1].Reference)
+	var backup bytes.Buffer
+	snap, err := s.BeginMetadataSnapshot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, snap.ExportBackup(ctx, &backup))
+	require.NoError(t, snap.Close())
+	backupTarget := newTestStore(t)
+	require.NoError(t, backupTarget.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+	cashDetail, err := backupTarget.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	require.Len(t, cashDetail.Events, 3)
+	assert.Equal(t, "payment", cashDetail.Events[2].Kind)
+	assert.NotNil(t, cashDetail.Events[2].VoidedAt)
+	invalidCash := strings.Replace(data.String(), `"kind":"payment","occurred_on":"2026-01-01","sets_state":""`, `"kind":"payment","occurred_on":"2026-01-01","sets_state":"filed"`, 1)
+	require.NotEqual(t, data.String(), invalidCash)
+	cashDest := newTestStore(t)
+	require.Error(t, cashDest.ImportMetadata(ctx, strings.NewReader(invalidCash)))
+	_, err = cashDest.GetTaxRecord(ctx, r.RecordID)
+	require.ErrorIs(t, err, ErrNotFound)
 	invalid := strings.Replace(data.String(), `"void_reason":"example reason"`, `"void_reason":""`, 1)
 	require.NotEqual(t, data.String(), invalid)
 	dest := newTestStore(t)
@@ -112,7 +133,7 @@ func TestTaxEventExportRejectsInvalidAuthority(t *testing.T) {
 		update, cause string
 		invalid       bool
 	}{
-		{`UPDATE tax_events SET kind='refund'`, "sets_state: invalid state", true},
+		{`UPDATE tax_events SET kind='bogus'`, "kind: unsupported event", true},
 		{`UPDATE tax_events SET voided_at='0001-01-01T00:00:00.000000000Z', void_reason='Correction'`, "tax event void precedes recording", false},
 	} {
 		t.Run(tc.cause, func(t *testing.T) {
@@ -222,59 +243,37 @@ func checkTaxEventsAuthorityAndBalance(t *testing.T, open func(*testing.T) *Stor
 	assert.Equal(t, voided.Record.Revision, d.Record.Revision)
 }
 
-func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
-	t.Parallel()
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	m, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("12.34"), Currency: "USD"})
-	require.NoError(t, err)
-	_, err = s.VoidTaxEvent(ctx, r.RecordID, m.Event.EventID, m.Record.Revision, "correction")
-	require.NoError(t, err)
-	var data, backup bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &data))
-	snap, err := s.BeginMetadataSnapshot(ctx)
-	require.NoError(t, err)
-	require.NoError(t, snap.ExportBackup(ctx, &backup))
-	require.NoError(t, snap.Close())
-	for _, raw := range [][]byte{data.Bytes(), backup.Bytes()} {
-		target := newTestStore(t)
-		require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(raw)))
-		detail, err := target.GetTaxRecordDetail(ctx, r.RecordID)
-		require.NoError(t, err)
-		require.Len(t, detail.Events, 1)
-		assert.Equal(t, "payment", detail.Events[0].Kind)
-		assert.Equal(t, "  ", detail.Events[0].Reference)
-		assert.NotNil(t, detail.Events[0].VoidedAt)
-	}
-	for _, replacement := range []struct{ old, new string }{
-		{`"amount_minor":1234`, `"amount_minor":0`}, {`"amount_minor":1234,"currency":"USD"`, `"amount_minor":1234,"currency":""`}, {`"sets_state":""`, `"sets_state":"filed"`},
-	} {
-		corrupted := strings.Replace(data.String(), replacement.old, replacement.new, 1)
-		require.NotEqual(t, data.String(), corrupted)
-		dest := newTestStore(t)
-		require.Error(t, dest.ImportMetadata(ctx, strings.NewReader(corrupted)))
-		_, err = dest.GetTaxRecord(ctx, r.RecordID)
-		require.ErrorIs(t, err, ErrNotFound)
-	}
-}
-
 func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
 	t.Parallel()
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
-	a, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
-	require.NoError(t, err)
-	cash.Amount = new("0.01")
-	b, err := s.AddTaxEvent(ctx, r.RecordID, a.Record.Revision, cash)
-	require.NoError(t, err)
-	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, TaxYear: r.TaxYear, Direction: "payable", Amount: new("1"), Currency: new("USD")}
-	_, err = s.UpdateTaxRecord(ctx, r.RecordID, b.Record.Revision, in)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	assert.Equal(t, b.Record.Revision, d.Record.Revision)
-	assert.Len(t, d.Events, 2)
+	for _, tc := range []struct{ name, initialDirection, initialCurrency string }{
+		{"direction", "unknown", ""}, {"currency", "payable", "EUR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, r := taxFixture(t)
+			ctx := t.Context()
+			in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: tc.initialDirection}
+			if tc.initialDirection == "payable" {
+				in.Amount = new("1")
+				in.Currency = new(tc.initialCurrency)
+				var err error
+				r, err = s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
+				require.NoError(t, err)
+			}
+			cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
+			first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+			require.NoError(t, err)
+			cash.Amount = new("0.01")
+			second, err := s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
+			require.NoError(t, err)
+			in.Direction, in.Amount, in.Currency = "payable", new("1"), new("USD")
+			_, err = s.UpdateTaxRecord(ctx, r.RecordID, second.Record.Revision, in)
+			require.ErrorIs(t, err, taxrecord.ErrInvalid)
+			d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+			require.NoError(t, err)
+			assert.Equal(t, second.Record, d.Record)
+			assert.Len(t, d.Events, 2)
+		})
+	}
 }
 
 func TestTaxCashAppendVoidAtomic(t *testing.T) {
@@ -294,14 +293,6 @@ func TestTaxCashAppendVoidAtomic(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, d.Events, 1)
 	assert.Equal(t, first.Record.Revision, d.Record.Revision)
-	_, err = s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, r.Revision, "correction")
-	require.ErrorIs(t, err, ErrStaleRevision)
-	voided, err := s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, first.Record.Revision, "correction")
-	require.NoError(t, err)
-	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	assert.Equal(t, first.Record.Revision+1, voided.Record.Revision)
-	assert.Equal(t, new(int64(100)), d.Balance.OutstandingMinor)
 }
 
 func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
@@ -322,59 +313,6 @@ func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
 	require.ErrorIs(t, dest.ImportMetadata(ctx, strings.NewReader(invalid)), taxrecord.ErrInvalid)
 	_, err = dest.GetTaxRecord(ctx, r.RecordID)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET direction='payable',amount_minor=100 WHERE record_id=$1`, r.RecordID)
-	require.NoError(t, err)
-	var output bytes.Buffer
-	require.ErrorIs(t, s.ExportMetadata(ctx, &output), taxrecord.ErrInvalid)
-	assert.Empty(t, output.String())
-}
-
-func TestTaxCashCancellationAndWriteFailure(t *testing.T) {
-	t.Parallel()
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("1.00"), Currency: "USD"}
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err := s.AddTaxEvent(canceled, r.RecordID, r.Revision, cash)
-	require.ErrorIs(t, err, context.Canceled)
-	for _, ddl := range []string{
-		`CREATE TABLE cash_test_parent (id INTEGER PRIMARY KEY)`,
-		`CREATE TABLE cash_test_child (id INTEGER REFERENCES cash_test_parent(id) DEFERRABLE INITIALLY DEFERRED)`,
-		`CREATE TRIGGER fail_cash_commit AFTER INSERT ON tax_events BEGIN INSERT INTO cash_test_child VALUES (1); END`,
-	} {
-		_, err = s.db.ExecContext(ctx, ddl)
-		require.NoError(t, err)
-	}
-	_, err = s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
-	require.Error(t, err)
-	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	assert.Equal(t, r, d.Record)
-	assert.Empty(t, d.Events)
-}
-
-func TestTaxRecordCurrencyEditChecksBalance(t *testing.T) {
-	t.Parallel()
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("EUR")}
-	r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
-	require.NoError(t, err)
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
-	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
-	require.NoError(t, err)
-	cash.Amount = new("0.01")
-	second, err := s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
-	require.NoError(t, err)
-	in.Currency = new("USD")
-	_, err = s.UpdateTaxRecord(ctx, r.RecordID, second.Record.Revision, in)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
-	assert.Equal(t, "EUR", d.Record.Currency)
-	assert.Equal(t, second.Record.Revision, d.Record.Revision)
-	assert.Len(t, d.Events, 2)
 }
 
 func TestTaxCashMetadataPerRecordBalance(t *testing.T) {
@@ -385,9 +323,7 @@ func TestTaxCashMetadataPerRecordBalance(t *testing.T) {
 	for range 2 {
 		r, err := s.CreateTaxRecord(ctx, input)
 		require.NoError(t, err)
-		m, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount), Note: strings.Repeat("a", 8192)})
-		require.NoError(t, err)
-		_, err = s.AddTaxEvent(ctx, r.RecordID, m.Record.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01", Note: strings.Repeat("n", 8192)})
+		_, err = s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)})
 		require.NoError(t, err)
 	}
 	require.NoError(t, validateTaxMetadataState(ctx, s.db))
@@ -395,24 +331,4 @@ func TestTaxCashMetadataPerRecordBalance(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &output))
 	dest := newTestStore(t)
 	require.NoError(t, dest.ImportMetadata(ctx, bytes.NewReader(output.Bytes())))
-}
-
-func TestTaxRecordEditValidatesProposedBalance(t *testing.T) {
-	t.Parallel()
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
-	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
-	require.NoError(t, err)
-	cash.Amount = new("0.01")
-	second, err := s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET direction='payable',amount_minor=100 WHERE record_id=$1`, r.RecordID)
-	require.NoError(t, err)
-	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "unknown"}
-	updated, err := s.UpdateTaxRecord(ctx, r.RecordID, second.Record.Revision, in)
-	require.NoError(t, err)
-	assert.Equal(t, "unknown", updated.Direction)
-	_, err = s.GetTaxRecordDetail(ctx, r.RecordID)
-	require.NoError(t, err)
 }

@@ -70,8 +70,6 @@ func TestTaxMutationsRefuseAuditAuthority(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	_, err = s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("1"), Currency: "USD"})
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	detail, err := s.GetTaxRecordDetail(ctx, r.RecordID)

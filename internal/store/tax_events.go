@@ -163,7 +163,11 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 			return err
 		}
 		if v.Kind == "payment" || v.Kind == "refund" {
-			if _, err = getTaxRecordDetail(ctx, tx, id); err != nil {
+			events, err := getTaxRecordEvents(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if _, err = taxrecord.CalculateBalance(r.RecordValues, taxEventFacts(events)); err != nil {
 				return err
 			}
 		}

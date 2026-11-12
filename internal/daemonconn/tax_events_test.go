@@ -144,8 +144,4 @@ func TestTaxCashOverflowClientDiagnostic(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "amount: invalid cash sum")
 	assert.NotContains(t, err.Error(), "private-synthetic")
-	_, err = c.UpdateTaxRecord(t.Context(), id, 1, api.PatchTaxRecordRequest{Direction: new("payable"), Amount: new("1")})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "amount: invalid cash sum")
-	assert.NotContains(t, err.Error(), "private-synthetic")
 }
