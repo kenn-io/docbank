@@ -2223,6 +2223,20 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkTaxAccountLifecycle(t, newPostgresQueryStore)
 		}},
+		{"TaxEventsAuthority", func(t *testing.T) {
+			t.Helper()
+			checkTaxEventsAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTaxEventsAuthority(t, newPostgresQueryStore)
+		}},
+		{"TaxEventsLifecycle", func(t *testing.T) {
+			t.Helper()
+			checkTaxEventsLifecycle(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkTaxEventsLifecycle(t, newPostgresQueryStore)
+		}},
 		{"TaxRecordLifecycle", func(t *testing.T) {
 			t.Helper()
 			checkTaxRecordLifecycle(t, newTestStore)

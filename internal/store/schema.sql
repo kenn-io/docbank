@@ -3332,3 +3332,20 @@ CREATE INDEX IF NOT EXISTS tax_records_filer_year ON tax_records(filer_party_id,
 CREATE INDEX IF NOT EXISTS tax_records_due_date ON tax_records(due_date);
 CREATE INDEX IF NOT EXISTS tax_records_account_period ON tax_records(account_id,period_end);
 CREATE UNIQUE INDEX IF NOT EXISTS tax_records_live_period ON tax_records(account_id,period_start,period_end,kind) WHERE account_id IS NOT NULL AND retired_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS tax_events (
+    event_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL REFERENCES tax_records(record_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    occurred_on TEXT NOT NULL,
+    sets_state TEXT NOT NULL,
+    amount_minor INTEGER,
+    currency TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    note TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    voided_at TEXT,
+    void_reason TEXT NOT NULL,
+    record_revision INTEGER NOT NULL,
+    UNIQUE(record_id, record_revision)
+);

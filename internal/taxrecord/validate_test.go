@@ -119,7 +119,7 @@ func TestTaxDatesYearLeadDaysVocabulary(t *testing.T) {
 		{"lead", func(v *RecordValues) { v.LeadDays = new(int64(367)) }},
 		{"direction", func(v *RecordValues) { v.Direction = "refundable" }},
 		{"amount", func(v *RecordValues) { v.Currency = "USD"; v.AmountMinor = new(int64(0)) }},
-		{"state", func(v *RecordValues) { v.State = "filed" }},
+		{"state", func(v *RecordValues) { v.State = "opened" }},
 		{"verification", func(v *RecordValues) { v.Verification = "verified" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

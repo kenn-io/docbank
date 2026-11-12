@@ -99,3 +99,15 @@ func StateFromEvents(recordKind string, events []EventFact) (string, error) {
 	}
 	return state, nil
 }
+
+// NormalizeVoidReason validates a nonblank canonical reason for voiding.
+func NormalizeVoidReason(reason string) (string, error) {
+	if len(reason) > 8192 {
+		return "", invalid("reason", "invalid length or text")
+	}
+	reason = note(reason)
+	if err := text(reason, "reason", 8192, 0, true, true); err != nil {
+		return "", err
+	}
+	return reason, nil
+}

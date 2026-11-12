@@ -2580,3 +2580,20 @@ CREATE INDEX tax_records_filer_year ON {{schema}}.tax_records(filer_party_id,tax
 CREATE INDEX tax_records_due_date ON {{schema}}.tax_records(due_date);
 CREATE INDEX tax_records_account_period ON {{schema}}.tax_records(account_id,period_end);
 CREATE UNIQUE INDEX tax_records_live_period ON {{schema}}.tax_records(account_id,period_start,period_end,kind) WHERE account_id IS NOT NULL AND retired_at IS NULL;
+
+CREATE TABLE {{schema}}.tax_events (
+    event_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL REFERENCES {{schema}}.tax_records(record_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    occurred_on TEXT NOT NULL,
+    sets_state TEXT NOT NULL,
+    amount_minor BIGINT,
+    currency TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    note TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    voided_at TEXT,
+    void_reason TEXT NOT NULL,
+    record_revision BIGINT NOT NULL,
+    UNIQUE(record_id, record_revision)
+);

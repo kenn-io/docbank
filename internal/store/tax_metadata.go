@@ -112,7 +112,7 @@ func validateTaxRecordMetadata(m metadataTaxRecord) error {
 	return validateTaxMetadataTimes(m.CreatedAt, m.UpdatedAt, m.RetiredAt)
 }
 
-var taxMetadataTables = []metadataRecordCodec{taxAccountMetadata, taxRecordMetadata}
+var taxMetadataTables = []metadataRecordCodec{taxAccountMetadata, taxRecordMetadata, taxEventMetadata}
 
 func validateTaxMetadataTimes(created, updated string, retired *string) error {
 	if err := validateMetadataTime("tax created_at", created); err != nil {
@@ -156,6 +156,98 @@ func validateTaxMetadataState(ctx context.Context, q metadataQuerier) error {
 	}
 	if invalid {
 		return errors.New("duplicate tax record period")
+	}
+	return validateTaxEventAuthority(ctx, q)
+}
+
+type metadataTaxEvent struct {
+	Type           string  `json:"type"`
+	EventID        string  `json:"event_id" db:"event_id"`
+	RecordID       string  `json:"record_id" db:"record_id"`
+	Kind           string  `json:"kind" db:"kind"`
+	OccurredOn     string  `json:"occurred_on" db:"occurred_on"`
+	SetsState      string  `json:"sets_state" db:"sets_state"`
+	AmountMinor    *int64  `json:"amount_minor" db:"amount_minor"`
+	Currency       string  `json:"currency" db:"currency"`
+	Reference      string  `json:"reference" db:"reference"`
+	Note           string  `json:"note" db:"note"`
+	RecordedAt     string  `json:"recorded_at" db:"recorded_at"`
+	VoidedAt       *string `json:"voided_at" db:"voided_at"`
+	VoidReason     string  `json:"void_reason" db:"void_reason"`
+	RecordRevision int64   `json:"record_revision" db:"record_revision"`
+}
+
+var taxEventMetadata = newMetadataTable(metadataTable[metadataTaxEvent]{record: metadataTaxEvent{Type: "tax_event"}, table: "tax_events", suffix: "ORDER BY record_id,record_revision", validate: validateTaxEventMetadata})
+
+func validateTaxEventMetadata(m metadataTaxEvent) error {
+	if m.Type != "tax_event" || validateUUIDv4(m.EventID) != nil || validateUUIDv4(m.RecordID) != nil || m.RecordRevision < 2 {
+		return errors.New("invalid tax event identity")
+	}
+	if err := validateMetadataTime("tax event recorded_at", m.RecordedAt); err != nil {
+		return err
+	}
+	if m.VoidedAt == nil {
+		if m.VoidReason != "" {
+			return errors.New("invalid tax event void")
+		}
+		return nil
+	}
+	if err := validateMetadataTime("tax event voided_at", *m.VoidedAt); err != nil {
+		return err
+	}
+	reason, err := taxrecord.NormalizeVoidReason(m.VoidReason)
+	if err != nil || reason != m.VoidReason {
+		return errors.New("invalid tax event void")
+	}
+	return nil
+}
+
+func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
+	var invalid bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_events e LEFT JOIN tax_records r ON r.record_id=e.record_id WHERE r.record_id IS NULL OR e.record_revision>r.revision)`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid {
+		return errors.New("invalid tax event parent or revision")
+	}
+	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tax_events GROUP BY record_id,record_revision HAVING COUNT(*)>1)`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid {
+		return errors.New("duplicate tax event revision")
+	}
+	rows, err := q.QueryContext(ctx, `SELECT record_id FROM tax_records ORDER BY record_id`)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		d, err := getTaxRecordDetail(ctx, q, id)
+		if err != nil {
+			return err
+		}
+		state, err := taxrecord.StateFromEvents(d.Record.Kind, taxEventFacts(d.Events))
+		if err != nil {
+			return err
+		}
+		if state != d.Record.State {
+			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
+		}
 	}
 	return nil
 }

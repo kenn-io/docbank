@@ -337,11 +337,7 @@ func ValidateRecord(v RecordValues) error {
 	if err := location(v.Country, v.Subdivision, v.Currency, v.AmountMinor != nil); err != nil {
 		return err
 	}
-	state, err := InitialState(v.Kind)
-	if err != nil {
-		return err
-	}
-	if v.State != state {
+	if !ValidStateForKind(v.Kind, v.State) {
 		return invalid("state", "unsupported state")
 	}
 	if v.Verification != "unverified" || v.VerifiedOn != nil || v.VerifiedRevision != nil || v.VerificationNote != "" {
