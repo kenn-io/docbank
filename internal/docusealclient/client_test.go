@@ -319,7 +319,7 @@ func TestCheckRedactsKeyInEndpoint(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":1}`))}, nil
 	})}}
 	status, err := c.Check(t.Context())
-	if err != nil || strings.Contains(status.Endpoint, "key") || status.Endpoint != "https://[redacted].example.test" {
+	if err != nil || strings.Contains(status.Endpoint, "key") || status.Endpoint != "[redacted]" {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
 }

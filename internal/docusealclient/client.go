@@ -133,7 +133,16 @@ func (c *Client) Check(ctx context.Context) (Status, error) {
 	if user.ID <= 0 {
 		return Status{}, errors.New("docuseal_invalid_response")
 	}
-	endpoint := strings.ReplaceAll(c.connection.Endpoint, c.connection.APIKey, "[redacted]")
+	endpoint := c.connection.Endpoint
+	if strings.Contains(endpoint, c.connection.APIKey) {
+		endpoint = "[redacted]"
+		if strings.Contains(endpoint, c.connection.APIKey) {
+			endpoint = "*"
+			if c.connection.APIKey == "*" {
+				endpoint = "?"
+			}
+		}
+	}
 	return Status{Configured: true, Enabled: true, Endpoint: endpoint, Capability: "template_submission"}, nil
 }
 func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, error) {
