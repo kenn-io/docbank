@@ -90,7 +90,6 @@ func taxEventRequestSchema(schema *huma.Schema) *huma.Schema {
 	return schema
 }
 func (AddTaxEventRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Properties["kind"].Enum = []any{"note", "payment", "refund"}
 	return taxEventRequestSchema(schema)
 }
 func (AdvanceTaxRecordRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
