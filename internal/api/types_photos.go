@@ -92,8 +92,8 @@ func (in *SetPhotoSettingsRequest) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	*in = SetPhotoSettingsRequest(decoded)
-	in.preferenceNull = string(members["preference"]) == "null"
-	in.runtimeNull = string(members["hidden_unlock_lifetime_seconds"]) == "null"
+	in.preferenceNull = string(members["preference"]) == jsonNull
+	in.runtimeNull = string(members["hidden_unlock_lifetime_seconds"]) == jsonNull
 	return nil
 }
 
