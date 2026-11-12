@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func TestBrowserRestartKeepsDaemonAndSession(t *testing.T) {
+func TestBrowserRestartKeepsDaemonAndEndsSessions(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
 	available := webAssetsAvailable
@@ -72,7 +72,7 @@ func TestBrowserRestartKeepsDaemonAndSession(t *testing.T) {
 
 	after := waitForDaemon(t, dir)
 	assert.Equal(t, before, after, "the runtime record and its listeners survive the restart")
-	assert.Equal(t, http.StatusOK, browser(http.MethodGet, "api/v1/processing/local/status"), "the tab keeps its session")
+	assert.Equal(t, http.StatusUnauthorized, browser(http.MethodGet, "api/v1/processing/local/status"), "the next run starts without browser sessions")
 
 	cancel()
 	select {
@@ -102,4 +102,11 @@ func TestSharedListenerHandsConnectionsToTheNextView(t *testing.T) {
 	conn, err := shared.view().Accept()
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
+}
+
+func TestShutdownOverridesALaterRestart(t *testing.T) {
+	var p daemonProcess
+	p.shutdown.Store(true)
+	p.restart.Store(true)
+	assert.False(t, p.restartRequested())
 }

@@ -140,8 +140,8 @@ type serveReady struct {
 
 // serveDaemon runs the daemon until ctx ends or a shutdown request arrives.
 // A browser restart ends the current run and serves a fresh one in this
-// process; the vault lock, runtime record, listeners, and browser sessions
-// carry over. A non-nil ready runs at the start of each run's serving, once
+// process; only the vault lock, runtime record, listeners, and API key carry
+// over, so browser sessions end and each tab signs in again. A non-nil ready runs at the start of each run's serving, once
 // the runtime record, listeners, and supervised jobs are in place.
 func serveDaemon(ctx context.Context, ready func(serveReady)) error {
 	// Signals between runs still end the process cleanly.
@@ -693,23 +693,24 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 			logger.Warn("telemetry heartbeat not started", "error", err)
 		}
 	}
-	// A browser restart stops taking browser requests before it returns, so
-	// the tab's next request waits for the next run instead of reaching this
-	// one while its sessions close.
-	var webServer *http.Server
-	// A shutdown request overrides a restart still draining this run.
+	// Shutdown is terminal: a restart handler finishing later cannot undo it.
 	shutdown := func() {
-		p.restart.Store(false)
+		p.shutdown.Store(true)
 		stop()
 	}
+	// A browser restart stops this run taking new connections before its
+	// response, so every request the tab sends afterward reaches the next run.
+	var servers []servingHTTP
 	restart := func() {
 		logger.Info("docbank daemon restarting")
 		p.restart.Store(true)
-		if webServer != nil {
-			webServer.SetKeepAlivesEnabled(false)
-			_ = webListener.Close()
-		}
 		stop()
+		for _, running := range servers {
+			if !running.drainedFirst {
+				running.server.SetKeepAlivesEnabled(false)
+				_ = running.listener.Close()
+			}
+		}
 	}
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
@@ -719,7 +720,7 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, RestartDaemon: restart, WebSessions: &p.sessions,
+		Processing: processingService, LocalText: localText, RestartDaemon: restart,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
 			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
@@ -741,14 +742,14 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 	if mcpHandler != nil {
 		mainHandler = withMCPRoute(mainHandler, mcpHandler)
 	}
-	servers := []servingHTTP{{name: "API", server: newHTTPServer(mainHandler), listener: listener}}
+	servers = []servingHTTP{{name: "API", server: newHTTPServer(mainHandler), listener: listener}}
 	if localListener != nil {
 		servers = append(servers,
 			servingHTTP{name: "local API", server: newHTTPServer(srv.Handler()), listener: localListener})
 	}
 	if webListener != nil {
-		webServer = newHTTPServer(srv.Handler())
-		servers = append(servers, servingHTTP{name: "web", server: webServer, listener: webListener})
+		servers = append(servers,
+			servingHTTP{name: "web", server: newHTTPServer(srv.Handler()), listener: webListener})
 	}
 
 	if mcpHTTP != nil {
@@ -847,7 +848,8 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 	var serveErr error
 	select {
 	case result := <-errCh:
-		if !errors.Is(result.err, http.ErrServerClosed) {
+		// A restart closes listeners only after it has closed stopCh.
+		if !errors.Is(result.err, http.ErrServerClosed) && (!errors.Is(result.err, net.ErrClosed) || !stopped(stopCh)) {
 			serveErr = fmt.Errorf("daemon %s server: %w", result.name, result.err)
 		}
 	case <-ctx.Done():
@@ -887,6 +889,15 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 		return errors.Join(serveErr, shutdownErr)
 	}
 	return serveErr
+}
+
+func stopped(stopCh <-chan struct{}) bool {
+	select {
+	case <-stopCh:
+		return true
+	default:
+		return false
+	}
 }
 
 // listenLocalDiscovery ensures CLI and MCP requests use a loopback peer so

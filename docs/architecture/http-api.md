@@ -1264,9 +1264,9 @@ See [server sign-in](../usage/web.md#sign-in-on-a-server-or-container) for
 lifetime, deployment trust and session-management commands.
 
 `POST /api/v1/processing/local/restart` requires a browser session and returns
-202 once the daemon has stopped taking browser requests for the current run.
-Browser sessions remain valid across the restart, so the tab's next request is
-answered by the restarted run. It returns 403 without a browser session.
+202 once the current run has stopped accepting connections, so later requests
+reach the restarted run. Browser sessions end with the restart. It returns 403
+without a browser session.
 
 `POST /api/daemon/telemetry/events` takes one anonymous interface event with optional allowlisted `properties`,
 such as `app_opened` or `session_ended`, from a browser session or the API key. The daemon answers

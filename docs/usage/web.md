@@ -851,7 +851,7 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
-Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then choose **Restart**. Docbank restarts in place: open tabs stay signed in, while uploads, exports, and command-line requests in progress stop and hidden photos lock. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then choose **Restart**. The page reloads once Docbank is back. Uploads, exports, and command-line requests in progress stop, hidden photos lock, and open tabs need to sign in again. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the

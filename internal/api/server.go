@@ -59,8 +59,7 @@ type PublishEmailDocumentsFunc func(context.Context, *store.Store, *blob.Store, 
 // Deps assembles everything a Server needs to build its routes.
 type Deps struct {
 	LocalTextStatus       func(context.Context) (LocalTextStatus, error)
-	RestartDaemon         func()             // ends this run; the process serves the next on the same listeners
-	WebSessions           *WebSessionHandoff // browser credentials carried across RestartDaemon
+	RestartDaemon         func() // ends this run; the process serves a fresh one on the same listeners
 	LocalText             *processing.LocalTextSetup
 	Store                 *store.Store
 	Blobs                 *blob.Store
@@ -211,8 +210,6 @@ func NewServer(d Deps) *Server {
 	})
 
 	s.webSessions.login = newWebLoginPolicy(d)
-	s.webSessions.handoff = d.WebSessions
-	s.webSessions.resume()
 
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)

@@ -29,7 +29,8 @@ const (
 	webLimitQuery    = "limit"
 )
 
-// webSessionRegistry owns browser credentials for one daemon run. Tokens are random, retained only as digests, and authorize only
+// webSessionRegistry owns browser credentials for exactly one daemon
+// lifetime. Tokens are random, retained only as digests, and authorize only
 // the deliberately limited routes used by the built-in browser. Most are
 // reads; mutations cover verified upload, revision-bound trash, restore, and
 // tag assignment, tag and saved-definition management, processing execution,
@@ -43,69 +44,6 @@ type webSessionRegistry struct {
 	closing     bool
 	onRevoke    func(string)
 	login       *webLoginPolicy
-	handoff     *WebSessionHandoff
-}
-
-// WebSessionHandoff carries browser credentials from one daemon run to the
-// next when the process restarts in place. It holds plain data only: each
-// run's registry ends its sessions' contexts, timers, uploads, and owned
-// resources at shutdown, and the next run resumes the credentials with fresh
-// state. Login sessions keep their original expiry.
-type WebSessionHandoff struct {
-	mu     sync.Mutex
-	cookie string
-	tokens map[[sha256.Size]byte]webSessionState
-}
-
-func (h *WebSessionHandoff) loginCookie(generate func() string) string {
-	if h == nil {
-		return generate()
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.cookie == "" {
-		h.cookie = generate()
-	}
-	return h.cookie
-}
-
-func (h *WebSessionHandoff) save(digest [sha256.Size]byte, state webSessionState) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.tokens == nil {
-		h.tokens = make(map[[sha256.Size]byte]webSessionState)
-	}
-	h.tokens[digest] = webSessionState{login: state.login, createdAt: state.createdAt,
-		expiresAt: state.expiresAt, uploadSecret: state.uploadSecret}
-}
-
-func (h *WebSessionHandoff) take() map[[sha256.Size]byte]webSessionState {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	tokens := h.tokens
-	h.tokens = nil
-	return tokens
-}
-
-// resume admits the credentials saved by the previous run. Login sessions
-// that expired in between are dropped.
-func (r *webSessionRegistry) resume() {
-	if r.handoff == nil {
-		return
-	}
-	now := time.Now()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for digest, state := range r.handoff.take() {
-		if state.login && !now.Before(state.expiresAt) {
-			continue
-		}
-		state.ctx, state.cancel = context.WithCancel(context.Background())
-		if state.login {
-			state.expires = time.AfterFunc(state.expiresAt.Sub(now), func() { r.revokeDigest(digest) })
-		}
-		r.tokens[digest] = state
-	}
 }
 
 type webSessionState struct {
@@ -288,9 +226,6 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 		state.cancel()
 		if state.expires != nil {
 			state.expires.Stop()
-		}
-		if r.handoff != nil {
-			r.handoff.save(digest, state)
 		}
 		states[hex.EncodeToString(digest[:])] = state
 	}

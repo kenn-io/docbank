@@ -293,6 +293,8 @@ function installHarness(options: HarnessOptions) {
     }
     if (options.localText?.restart && url === "/api/v1/processing/local/restart")
       return options.localText.restart();
+    if (options.localText?.restart && url === "/api/daemon/web-auth")
+      return json({ enabled: false });
     if (options.localText && url === "/api/v1/processing/local/plans") return json(localPlan);
     if (options.localText && url === "/api/v1/processing/local/setup") {
       localSetups.push(JSON.parse(String(init?.body)));
@@ -2102,11 +2104,10 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
-it("restarts in place and shows search by meaning on", async () => {
+it("reloads the page once the restarted daemon answers", async () => {
   let restarted = false;
   const harness = searchWithMeaningOff({
-    status: () =>
-      restarted ? { ...localOff, active: true, provider: "local", download_bytes: 0 } : localSaved,
+    status: () => localSaved,
     apply: async () => json(localPlan),
     restart: async () => {
       restarted = true;
@@ -2118,11 +2119,18 @@ it("restarts in place and shows search by meaning on", async () => {
   await within(drawer).findByText("Restart required");
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
-  expect(await within(drawer).findByText("On")).toBeTruthy();
-  expect(within(drawer).queryByRole("button", { name: "Restart" })).toBeNull();
-  await vi.waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Restart Docbank?" })).toBeNull(),
+  const reload = vi.fn();
+  vi.stubGlobal("location", { reload });
+  try {
+    await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(restarted).toBe(true);
+  const urls = harness.fetchMock.mock.calls.map(([input]) => String(input));
+  expect(urls.lastIndexOf("/api/daemon/web-auth")).toBeGreaterThan(
+    urls.indexOf("/api/v1/processing/local/restart"),
   );
   const call = harness.fetchMock.mock.calls.find(
     ([input]) => String(input) === "/api/v1/processing/local/restart",

@@ -7,16 +7,16 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/home"
 	docweb "go.kenn.io/docbank/internal/web"
 )
 
 // daemonProcess owns what lets clients find the daemon for the life of the
-// process: the vault lock, runtime record, listeners, credentials, and
-// browser sessions. A browser restart ends one serve run and starts another
-// against the same daemonProcess, so the CLI never sees the daemon go away
-// and the launch lock is never involved. Everything else belongs to a run.
+// process: the vault lock, runtime record, listeners, and credentials. A
+// browser restart ends one serve run and starts another against the same
+// daemonProcess, so the CLI never sees the daemon go away and the launch lock
+// is never involved. Everything else, including browser sessions, belongs to
+// a run.
 type daemonProcess struct {
 	root    *os.Root
 	lock    *home.Lock
@@ -30,8 +30,7 @@ type daemonProcess struct {
 	apiKey          string
 	webLoginEnabled bool
 
-	sessions api.WebSessionHandoff
-	restart  atomic.Bool
+	restart, shutdown atomic.Bool
 }
 
 // acquire takes the vault on the first run. Later runs already hold it.
@@ -197,7 +196,8 @@ func (v *listenerView) Close() error {
 
 func (v *listenerView) Addr() net.Addr { return v.shared.Addr() }
 
-// restartRequested reports and clears a pending browser restart.
+// restartRequested reports and clears a pending browser restart. An accepted
+// shutdown request ends the process even if a restart was also requested.
 func (p *daemonProcess) restartRequested() bool {
-	return p.restart.Swap(false)
+	return p.restart.Swap(false) && !p.shutdown.Load()
 }

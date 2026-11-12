@@ -161,8 +161,8 @@
     }}
   >
     <p>
-      Uploads, exports, and command-line requests in progress stop, and hidden photos lock. Open
-      tabs stay signed in.
+      Uploads, exports, and command-line requests in progress stop, hidden photos lock, and open
+      tabs need to sign in again.
     </p>
     {#snippet footer()}
       <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
