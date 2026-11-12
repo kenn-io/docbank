@@ -57,7 +57,7 @@ func normalizeDocumentDate(value *DocumentDateFilter) (*DocumentDateFilter, erro
 		}
 	}
 	for _, precision := range out.Precisions {
-		if !slices.Contains([]string{"exact", "day", "coarse"}, precision) {
+		if !ValidDocumentDatePrecision(precision) {
 			return nil, fmt.Errorf("unknown date precision %q", precision)
 		}
 	}
@@ -66,6 +66,16 @@ func normalizeDocumentDate(value *DocumentDateFilter) (*DocumentDateFilter, erro
 	slices.Sort(out.Precisions)
 	out.Precisions = slices.Compact(out.Precisions)
 	return out, nil
+}
+
+// IsDocumentDateField identifies the advanced document-date vocabulary.
+func IsDocumentDateField(field string) bool {
+	return slices.Contains([]string{"date", "date_kind", "date_precision"}, field)
+}
+
+// ValidDocumentDatePrecision reports whether precision is supported by date queries.
+func ValidDocumentDatePrecision(precision string) bool {
+	return slices.Contains([]string{"exact", "day", "coarse"}, precision)
 }
 
 // UsesDocumentDate reports whether a query needs a stable timeline zone.
@@ -82,7 +92,7 @@ func UsesDocumentDate(q Query) bool {
 	}
 	var has func(*Expression) bool
 	has = func(e *Expression) bool {
-		if e.Kind == ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, e.Field) {
+		if e.Kind == ExpressionField && IsDocumentDateField(e.Field) {
 			return true
 		}
 		return slices.ContainsFunc(e.Children, has)

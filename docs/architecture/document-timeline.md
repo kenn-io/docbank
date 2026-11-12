@@ -100,8 +100,10 @@ Events, actors, and primary choices stay together in the canonical record.
 The v23 source metadata extractor re-extracts every original across the vault.
 Calendar VEVENT dates use component keys; VTODO, VJOURNAL, VFREEBUSY and bare
 dates retain legacy flat keys. Timezone observances, alarms and unknown nested
-components do not supply document dates. Flat pairing can be lossy across
-components.
+components do not supply document dates. A retained pre-v23 flat head can pair
+a start and end from different VEVENTs, adding days to a date match.
+Re-extraction replaces that head; the risk can persist if the original cannot
+be re-extracted.
 
 The source metadata extractor retains email `Received` headers as raw strings. It does not derive a received-date claim from them, so it does not classify those strings as dates. Email `Date` claims use the shared email zone classification, including invalid numeric offsets.
 

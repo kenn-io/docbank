@@ -149,7 +149,7 @@ func measureDateLookup(ctx context.Context, t *testing.T, db *sql.DB, label, sta
 	require.NoError(t, plan.Close())
 	planText := strings.Join(details, " ")
 	if label == "date_keys" {
-		require.Contains(t, planText, "document_date_keys_")
+		require.Contains(t, planText, "sqlite_autoindex_document_date_keys_1")
 	} else {
 		require.Contains(t, planText, "measurement_events_lookup")
 		require.NotContains(t, planText, "document_date_keys_")

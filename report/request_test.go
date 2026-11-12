@@ -6,6 +6,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	_ "time/tzdata"
+
+	"go.kenn.io/docbank/internal/query"
 )
 
 func validRequest() Request {
@@ -81,6 +84,37 @@ func TestRequestPreservesOrderedRowsAndLiteralDates(t *testing.T) {
 	}
 	if got.CollectionIDs[0] != "c2" || got.CollectionIDs[1] != "c1" {
 		t.Fatalf("collection order changed: %v", got.CollectionIDs)
+	}
+	for _, tc := range []struct {
+		zone, syntax, expression string
+		invalidZone              bool
+	}{
+		{"UTC", "advanced", "date:2024-01-01", false},
+		{"America/Toronto", "advanced", "date_kind:created date_precision:day", false},
+		{"EST", "advanced", "date:2024-01-01", true},
+		{"CET", "advanced", "date_kind:created", true},
+		{"EST5EDT", "advanced", "date_precision:day", true},
+		{"EST", "simple", "date:2024-01-01", false},
+		{"EST", "advanced", "alpha AND beta", false},
+		{"EST", "advanced", "saved:example", false},
+	} {
+		t.Run(tc.zone+"/"+tc.syntax+"/"+tc.expression, func(t *testing.T) {
+			request := validRequest()
+			request.Timezone = tc.zone
+			request.Terms[0].Syntax = tc.syntax
+			request.Terms[0].Expression = tc.expression
+			got, err := NormalizeRequest(request)
+			if tc.invalidZone {
+				var dateErr *query.DateError
+				if !errors.As(err, &dateErr) || dateErr.Code != "invalid_timezone" {
+					t.Fatalf("got %v, want invalid_timezone", err)
+				}
+				return
+			}
+			if err != nil || got.Timezone != tc.zone {
+				t.Fatalf("got timezone %q, error %v", got.Timezone, err)
+			}
+		})
 	}
 }
 

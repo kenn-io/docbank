@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -48,7 +47,7 @@ func (scope *dateScope) add(field, value string) error {
 		}
 		scope.kinds = append(scope.kinds, value)
 	case "date_precision":
-		if !slices.Contains([]string{"exact", "day", "coarse"}, value) {
+		if !query.ValidDocumentDatePrecision(value) {
 			return fmt.Errorf("unknown date precision %q", value)
 		}
 		scope.precisionGroups = append(scope.precisionGroups, []string{value})
@@ -77,7 +76,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 			}
 			return nil
 		}
-		if !c.pdfOnly && node.Syntax.Kind == query.ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, node.Syntax.Field) {
+		if !c.pdfOnly && node.Syntax.Kind == query.ExpressionField && query.IsDocumentDateField(node.Syntax.Field) {
 			if len(node.Children) != 1 || (node.Children[0].Syntax.Kind != query.ExpressionTerm && node.Children[0].Syntax.Kind != query.ExpressionPhrase) || node.Children[0].Syntax.Prefix {
 				return compileExpressionError(node.Syntax.Start, node.Syntax.End, "date operand must be a single value")
 			}

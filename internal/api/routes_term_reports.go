@@ -110,6 +110,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		request, err := report.NormalizeRequest(in.Body)
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if errors.Is(err, report.ErrInvalidChoice) || errors.Is(err, report.ErrReportLimit) {
 				return nil, termReportError(err)
 			}
