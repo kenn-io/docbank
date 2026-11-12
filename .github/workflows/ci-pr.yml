@@ -36,6 +36,6 @@ jobs:
             files=${files//'%'/'%25'}
             files=${files//$'\r'/'%0D'}
             files=${files//$'\n'/'%0A'}
-            echo "::error::Base schema records were deleted and must be restored: $files. Run make schema-contract-check and add a marker for the current schema version if needed."
+            echo "::error::Base schema records were deleted and must be restored: $files. Run go test -tags fts5 ./internal/store -run TestStorageSchemaVersionContract and add a marker for the current schema version if needed."
             exit 1
           fi

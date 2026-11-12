@@ -84,10 +84,6 @@ clean:
 test:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
-.PHONY: schema-contract-check
-schema-contract-check:
-	CGO_ENABLED=1 go test -tags "$(BUILD_TAGS)" ./internal/store -run '^(TestStorageSchema.*|TestReleasedSchemaFixturesMatchVersions)$$'
-
 .PHONY: backend-coverage test-pg
 backend-coverage:
 	go test -v -tags "$(BUILD_TAGS)" ./internal/store -run '^$$' -args -backend-coverage
