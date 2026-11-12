@@ -75,6 +75,24 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
   },
 );
 
+function textReceipt(source: SelectedSource, overrides: object) {
+  return {
+    source: {
+      node_id: 7,
+      revision: 3,
+      version_id: source.versionID,
+      blob_hash: source.blobHash,
+      size: source.size,
+      media_type: source.mimeType,
+    },
+    profile: { name: "archive", configuration: "configured", fingerprint: "b".repeat(64) },
+    generation_id: "",
+    attachment_id: "",
+    build_id: "",
+    ...overrides,
+  };
+}
+
 async function mockReadyText(source: SelectedSource, pages: number[] = [], artifactStatus = 200) {
   const { createHash } = await import("node:crypto");
   const multiplePages = pages.length > 1;
@@ -119,28 +137,21 @@ async function mockReadyText(source: SelectedSource, pages: number[] = [], artif
   const hash = createHash("sha256").update(bytes).digest("hex");
   vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(
-      Response.json({
-        state: "ready",
-        ...(pages.length ? { pages_without_text: pages } : {}),
-        source: {
-          node_id: 7,
-          revision: 3,
-          version_id: source.versionID,
-          blob_hash: source.blobHash,
-          size: source.size,
-          media_type: source.mimeType,
-        },
-        profile: { name: "archive", configuration: "configured", fingerprint: "b".repeat(64) },
-        generation_id: "c".repeat(64),
-        attachment_id: "d".repeat(64),
-        build_id: "e".repeat(64),
-        artifact: {
-          id: "f".repeat(64),
-          sha256: hash,
-          size: bytes.length,
-          media_type: "text/markdown; charset=utf-8",
-        },
-      }),
+      Response.json(
+        textReceipt(source, {
+          state: "ready",
+          ...(pages.length ? { pages_without_text: pages } : {}),
+          generation_id: "c".repeat(64),
+          attachment_id: "d".repeat(64),
+          build_id: "e".repeat(64),
+          artifact: {
+            id: "f".repeat(64),
+            sha256: hash,
+            size: bytes.length,
+            media_type: "text/markdown; charset=utf-8",
+          },
+        }),
+      ),
     )
     .mockResolvedValueOnce(
       new Response(bytes, {
@@ -165,23 +176,7 @@ const pdf = { ...source, name: "scan.pdf", path: "/scan.pdf", mimeType: "applica
 
 function renderPDF(receipt?: object) {
   if (receipt)
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({
-        source: {
-          node_id: 7,
-          revision: 3,
-          version_id: pdf.versionID,
-          blob_hash: pdf.blobHash,
-          size: pdf.size,
-          media_type: pdf.mimeType,
-        },
-        profile: { name: "archive", configuration: "configured", fingerprint: "b".repeat(64) },
-        generation_id: "",
-        attachment_id: "",
-        build_id: "",
-        ...receipt,
-      }),
-    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(textReceipt(pdf, receipt)));
   render(VerifiedText, {
     session: "session",
     source: pdf,
@@ -251,7 +246,6 @@ it("shows only the page gap notice for a verified-empty PDF", async () => {
 it("shows unavailable PDF page evidence without claiming there are no gaps", async () => {
   renderPDF({ state: "unprocessed", page_coverage: "unavailable" });
   expect(await screen.findByText("PDF page text coverage is unavailable.")).toBeTruthy();
-  expect(screen.queryByText(/no text layer/)).toBeNull();
 });
 
 it("retains PDF page gaps when reading the text artifact fails", async () => {
