@@ -3631,16 +3631,28 @@ components:
           readOnly: true
           type: string
         authority_party_id:
+          format: uuid
           type:
             - string
             - "null"
         cadence:
+          enum:
+            - monthly
+            - bimonthly
+            - quarterly
+            - semiannual
+            - annual
+            - event
+            - other
           type: string
         country:
+          maxLength: 2
           type: string
         currency:
+          maxLength: 3
           type: string
         due_note:
+          maxLength: 8192
           type: string
         effective_end:
           type:
@@ -3651,19 +3663,27 @@ components:
             - string
             - "null"
         filer_party_id:
+          format: uuid
           type: string
         identifier:
+          maxLength: 256
           type: string
         lead_days:
           format: int64
+          maximum: 366
+          minimum: 0
           type: integer
         note:
+          maxLength: 8192
           type: string
         period_note:
+          maxLength: 8192
           type: string
         subdivision:
+          maxLength: 6
           type: string
         tax_kind:
+          maxLength: 256
           type: string
       required:
         - filer_party_id
@@ -12669,10 +12689,20 @@ components:
           readOnly: true
           type: string
         cadence:
+          enum:
+            - monthly
+            - bimonthly
+            - quarterly
+            - semiannual
+            - annual
+            - event
+            - other
           type: string
         currency:
+          maxLength: 3
           type: string
         due_note:
+          maxLength: 8192
           type: string
         effective_end:
           type:
@@ -12683,13 +12713,18 @@ components:
             - string
             - "null"
         identifier:
+          maxLength: 256
           type: string
         lead_days:
           format: int64
+          maximum: 366
+          minimum: 0
           type: integer
         note:
+          maxLength: 8192
           type: string
         period_note:
+          maxLength: 8192
           type: string
       type: object
       x-go-type: api.PatchTaxAccountRequest
@@ -33478,6 +33513,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/TaxAccountPage"
           description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
         default:
           content:
             application/problem+json:
@@ -33501,6 +33540,9 @@ paths:
                 $ref: "#/components/schemas/TaxAccount"
           description: Created
           headers:
+            Cache-Control:
+              schema:
+                type: string
             ETag:
               schema:
                 type: string
@@ -33533,6 +33575,9 @@ paths:
                 $ref: "#/components/schemas/TaxAccount"
           description: OK
           headers:
+            Cache-Control:
+              schema:
+                type: string
             ETag:
               schema:
                 type: string
@@ -33570,6 +33615,9 @@ paths:
                 $ref: "#/components/schemas/TaxAccount"
           description: OK
           headers:
+            Cache-Control:
+              schema:
+                type: string
             ETag:
               schema:
                 type: string
@@ -33602,6 +33650,9 @@ paths:
                 $ref: "#/components/schemas/TaxAccount"
           description: OK
           headers:
+            Cache-Control:
+              schema:
+                type: string
             ETag:
               schema:
                 type: string

@@ -1888,25 +1888,50 @@ export interface CreateTagRequest {
   name: string;
 }
 
+export type CreateTaxAccountRequestCadence = typeof CreateTaxAccountRequestCadence[keyof typeof CreateTaxAccountRequestCadence];
+
+
+export const CreateTaxAccountRequestCadence = {
+  monthly: 'monthly',
+  bimonthly: 'bimonthly',
+  quarterly: 'quarterly',
+  semiannual: 'semiannual',
+  annual: 'annual',
+  event: 'event',
+  other: 'other',
+} as const;
+
 export interface CreateTaxAccountRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @nullable */
   authority_party_id?: string | null;
-  cadence: string;
+  cadence: CreateTaxAccountRequestCadence;
+  /** @maxLength 2 */
   country: string;
+  /** @maxLength 3 */
   currency: string;
+  /** @maxLength 8192 */
   due_note?: string;
   /** @nullable */
   effective_end?: string | null;
   /** @nullable */
   effective_start?: string | null;
   filer_party_id: string;
+  /** @maxLength 256 */
   identifier?: string;
+  /**
+     * @minimum 0
+     * @maximum 366
+     */
   lead_days?: number;
+  /** @maxLength 8192 */
   note?: string;
+  /** @maxLength 8192 */
   period_note?: string;
+  /** @maxLength 6 */
   subdivision?: string;
+  /** @maxLength 256 */
   tax_kind: string;
 }
 
@@ -5242,19 +5267,41 @@ export type PatchPartyRequest = (unknown & ({
   person_id?: string | null;
 }));
 
+export type PatchTaxAccountRequestCadence = typeof PatchTaxAccountRequestCadence[keyof typeof PatchTaxAccountRequestCadence];
+
+
+export const PatchTaxAccountRequestCadence = {
+  monthly: 'monthly',
+  bimonthly: 'bimonthly',
+  quarterly: 'quarterly',
+  semiannual: 'semiannual',
+  annual: 'annual',
+  event: 'event',
+  other: 'other',
+} as const;
+
 export type PatchTaxAccountRequest = (unknown & ({
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  cadence?: string;
+  cadence?: PatchTaxAccountRequestCadence;
+  /** @maxLength 3 */
   currency?: string;
+  /** @maxLength 8192 */
   due_note?: string;
   /** @nullable */
   effective_end?: string | null;
   /** @nullable */
   effective_start?: string | null;
+  /** @maxLength 256 */
   identifier?: string;
+  /**
+     * @minimum 0
+     * @maximum 366
+     */
   lead_days?: number;
+  /** @maxLength 8192 */
   note?: string;
+  /** @maxLength 8192 */
   period_note?: string;
 }));
 
