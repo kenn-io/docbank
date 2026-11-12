@@ -319,7 +319,7 @@ func (s *Store) sealCollectionSnapshotTx(ctx context.Context, tx *sql.Tx, reques
 		if !errors.Is(loadErr, ErrNotFound) {
 			return loadErr
 		}
-		if err := validateSnapshotMembersTx(ctx, tx, request); err != nil {
+		if err := validateSnapshotMembersTx(ctx, tx, request, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		return insertCollectionSnapshotTx(ctx, tx, s.vaultID, result, request.Members)
@@ -327,7 +327,7 @@ func (s *Store) sealCollectionSnapshotTx(ctx context.Context, tx *sql.Tx, reques
 	return result, err
 }
 
-func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request SnapshotSealRequest) error {
+func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request SnapshotSealRequest, postgres bool) error {
 	for _, member := range request.Members {
 		var hash string
 		var size int64
@@ -379,7 +379,7 @@ func validateSnapshotMembersTx(ctx context.Context, tx metadataQuerier, request 
 		return nil
 	}
 	matched := make(map[string]bool, len(request.SourceCollectionIDs))
-	if err := matchSnapshotSourcesBatch(ctx, tx, request.SourceCollectionIDs, matched, request.Members); err != nil {
+	if err := matchSnapshotSourcesBatch(ctx, tx, request.SourceCollectionIDs, matched, request.Members, postgres); err != nil {
 		return err
 	}
 	for _, id := range request.SourceCollectionIDs {

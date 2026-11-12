@@ -101,7 +101,7 @@ func (s *Store) observeOperationalIngestTx(
 	if _, err := tx.ExecContext(ctx, `INSERT INTO provenance(
 		identity,node_id,ingest_id,original_path,original_mtime,supersedes
 	) VALUES($1,$2,$3,$4,$5,NULL)`, fact.Identity, fact.NodeID, fact.IngestID,
-		fact.OriginalPath, fact.OriginalMTime); err != nil {
+		(provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(fact.OriginalPath), fact.OriginalMTime); err != nil {
 		return Node{}, fmt.Errorf("recording operational ingest observation: %w", err)
 	}
 	operation, err := newContentVersionOperation()

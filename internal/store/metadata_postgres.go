@@ -28,7 +28,7 @@ func insertPostgresHiddenFailure(ctx context.Context, tx *sql.Tx, v metadataHidd
 
 func insertPostgresIngest(ctx context.Context, tx *sql.Tx, v metadataIngest) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc)
-		VALUES($1,$2,$3,$4)`, v.ID, v.StartedAt, v.SourceKind, []byte(v.SourceDesc))
+		VALUES($1,$2,$3,$4)`, v.ID, v.StartedAt, []byte(v.SourceKind), []byte(v.SourceDesc))
 	return err
 }
 
@@ -78,4 +78,10 @@ func (s *Store) refreshImportedCatalogsTx(ctx context.Context, tx *sql.Tx) error
 		return fmt.Errorf("restoring candidate face membership: %w", err)
 	}
 	return nil
+}
+
+func insertPostgresProvenance(ctx context.Context, tx *sql.Tx, v metadataProvenance) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime,supersedes)
+		VALUES($1,$2,$3,$4,$5,$6)`, v.Identity, v.NodeID, v.IngestID, []byte(v.OriginalPath), v.OriginalMTime, v.Supersedes)
+	return err
 }

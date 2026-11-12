@@ -65,13 +65,13 @@ func checkSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t *testing.T,
 	defer func() { require.NoError(t, tx.Rollback()) }()
 	q := &membershipCountingQuerier{metadataQuerier: tx}
 	matched := make(map[string]bool)
-	require.NoError(t, matchSnapshotSourcesBatch(t.Context(), q, ids, matched, members))
+	require.NoError(t, matchSnapshotSourcesBatch(t.Context(), q, ids, matched, members, s.postgresSchema != ""))
 	require.Equal(t, 1, q.queries, "one membership query covers the batch and both sources")
 	require.True(t, matched[ids[0]])
 	require.True(t, matched[ids[1]])
 
 	members[0].ContentVersionID = "00000000-0000-4000-8000-000000000001"
-	require.ErrorIs(t, matchSnapshotSourcesBatch(t.Context(), q, ids, matched, members), ErrPackageConflict)
+	require.ErrorIs(t, matchSnapshotSourcesBatch(t.Context(), q, ids, matched, members, s.postgresSchema != ""), ErrPackageConflict)
 }
 
 func streamSnapshotMembers(t *testing.T, members ...CollectionSnapshotMember) *bytes.Reader {
@@ -249,7 +249,7 @@ func checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T,
 	sealed, err := s.SealCollectionSnapshotStream(t.Context(), SnapshotSealHeader{SnapshotID: id, SourceCollectionIDs: sourceIDs}, streamSnapshotMembers(t, members...))
 	require.NoError(t, err)
 	require.Equal(t, count, sealed.MemberCount)
-	require.NoError(t, validateSnapshotMetadataRows(t.Context(), s.db, sealed))
+	require.NoError(t, validateSnapshotMetadataRows(t.Context(), s.db, sealed, s.postgresSchema != ""))
 	if s.postgresSchema == "" {
 		require.NoError(t, s.ValidateMetadata(t.Context()))
 	} else {
@@ -257,10 +257,10 @@ func checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t *testing.T,
 	}
 	wrongMemberHash := sealed
 	wrongMemberHash.MemberHash = fakeHash("ab")
-	require.ErrorIs(t, validateSnapshotMetadataRows(t.Context(), s.db, wrongMemberHash), ErrPackageConflict)
+	require.ErrorIs(t, validateSnapshotMetadataRows(t.Context(), s.db, wrongMemberHash, s.postgresSchema != ""), ErrPackageConflict)
 	wrongManifest := sealed
 	wrongManifest.ManifestSHA256 = fakeHash("cd")
-	require.ErrorIs(t, validateSnapshotMetadataRows(t.Context(), s.db, wrongManifest), ErrPackageConflict)
+	require.ErrorIs(t, validateSnapshotMetadataRows(t.Context(), s.db, wrongManifest, s.postgresSchema != ""), ErrPackageConflict)
 	page, err := s.SnapshotMembers(t.Context(), id, 1000, 2)
 	require.NoError(t, err)
 	require.Equal(t, []CollectionSnapshotMember{members[1000]}, page)

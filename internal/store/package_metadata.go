@@ -292,7 +292,7 @@ func importPackageVolumeMetadata(ctx context.Context, tx *sql.Tx, record metadat
 	return err
 }
 
-func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultID string) error {
+func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultID string, postgres bool) error {
 	if err := exportPackageMetadata(ctx, q, func(any) error { return nil }); err != nil {
 		return fmt.Errorf("validating package metadata: %w", err)
 	}
@@ -333,7 +333,7 @@ func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultI
 				return ErrPackageConflict
 			}
 		}
-		if err := validateSnapshotMetadataRows(ctx, q, snapshot); err != nil {
+		if err := validateSnapshotMetadataRows(ctx, q, snapshot, postgres); err != nil {
 			return err
 		}
 	}
@@ -361,7 +361,7 @@ func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultI
 // and version indexes while checking the same canonical manifest as sealing.
 // Historical collection membership is intentionally not rechecked here: an
 // immutable snapshot keeps its original source IDs after membership changes.
-func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapshot CollectionSnapshot) error {
+func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapshot CollectionSnapshot, postgres bool) error {
 	digest := sha256.New()
 	_, _ = digest.Write([]byte(`{"members":[`))
 	parents := make(map[string]string)
@@ -430,7 +430,7 @@ func validateSnapshotMetadataRows(ctx context.Context, q metadataQuerier, snapsh
 		}
 		// The batch remains bounded while exact content versions and role blobs
 		// are checked against the restored tables.
-		if err := validateSnapshotMembersTx(ctx, q, SnapshotSealRequest{Members: batch}); err != nil {
+		if err := validateSnapshotMembersTx(ctx, q, SnapshotSealRequest{Members: batch}, postgres); err != nil {
 			return err
 		}
 	}

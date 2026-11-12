@@ -202,7 +202,7 @@ func (s *Store) retainPhotoXMPVersionsTx(ctx context.Context, tx *sql.Tx, node N
 	if len(candidates) == 0 {
 		return nil
 	}
-	sources, err := photoXMPSourceVersionsTx(ctx, tx, node.ID)
+	sources, err := s.photoXMPSourceVersionsTx(ctx, tx, node.ID)
 	if err != nil {
 		return err
 	}

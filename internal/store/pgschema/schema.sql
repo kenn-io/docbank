@@ -154,8 +154,8 @@ CREATE INDEX audit_membership_node ON {{schema}}.audit_memberships(node_id);
 CREATE TABLE {{schema}}.ingests (
     id          TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     started_at  TEXT COLLATE "C" NOT NULL,
-    source_kind TEXT COLLATE "C" NOT NULL,
-    -- Canonical audit byte evidence; PostgreSQL TEXT rejects permitted NUL.
+    -- Provenance permits NUL; preserve canonical strings as bytes.
+    source_kind BYTEA NOT NULL,
     source_desc BYTEA NOT NULL
 );
 
@@ -163,7 +163,7 @@ CREATE TABLE {{schema}}.provenance (
     identity       TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     node_id        BIGINT NOT NULL REFERENCES {{schema}}.nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     ingest_id      TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.ingests(id) DEFERRABLE INITIALLY IMMEDIATE,
-    original_path  TEXT COLLATE "C" NOT NULL,
+    original_path  BYTEA NOT NULL,
     original_mtime TEXT COLLATE "C",
     supersedes     TEXT COLLATE "C" REFERENCES {{schema}}.provenance(identity)
         DEFERRABLE INITIALLY DEFERRED
@@ -2175,7 +2175,7 @@ CREATE TABLE {{schema}}.photo_timeline (
 
 CREATE TABLE {{schema}}.photo_source_claims (
     file_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.photo_files(file_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    original_path TEXT COLLATE "C",
+    original_path BYTEA,
     original_mtime TEXT COLLATE "C",
     folder_key TEXT COLLATE "C"
 );

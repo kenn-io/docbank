@@ -159,7 +159,7 @@ const qualityProjectionBytes = `128+length(CAST(version_id AS BLOB))+length(CAST
  length(CAST(waiter_updated_at AS BLOB))+length(CAST(job_updated_at AS BLOB))`
 
 func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string, selection CoverageSelection) (collectionQualityCensus, error) {
-	summary, err := collectionSummaryByID(ctx, q, id)
+	summary, err := collectionSummaryByID(ctx, q, id, false)
 	collection := CollectionQualitySummary{Collection: summary, Coverage: ProcessingCoverage{Configuration: selection.Configuration, ProfileFingerprint: selection.ProfileFingerprint}}
 	if err != nil {
 		return collectionQualityCensus{}, err

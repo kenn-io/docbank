@@ -251,7 +251,7 @@ func TestCollectionQualityCensusKeepsMetadataCoverageAndGenerationInOneSnapshot(
 	require.NoError(t, err)
 	var snapshot CollectionQuality
 	err = s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, _ LexicalGeneration) error {
-		_, err := collectionSummaryByID(t.Context(), q, run.ID())
+		_, err := collectionSummaryByID(t.Context(), q, run.ID(), false)
 		if err != nil {
 			return err
 		}

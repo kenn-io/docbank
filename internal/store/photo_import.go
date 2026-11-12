@@ -336,10 +336,10 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=$`+strconv.Itoa(len(roleArgs)+1)+`
 		ORDER BY n.id, p.identity`, slices.Concat(roleArgs, []any{member.BlobHash})
 	if role == PhotoRoleSidecar {
-		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, normalizePhotoSourcePath(member.OriginalPath), member.OriginalPath}
+		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, normalizePhotoSourcePath(member.OriginalPath), (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(member.OriginalPath)}
 	}
 	if role == PhotoRoleSidecar && fallback && target != "" {
-		original, bound, err := photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
+		original, bound, err := s.photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
 		if err != nil {
 			return Node{}, false, err
 		}
@@ -450,11 +450,11 @@ func (s *Store) photoImportChangedSourceTx(
 		  -- Accepted photo-import paths share sidecar versions. Other source owners keep their bytes.
 		  -- Checkout observations record edits to this node, not independent import sources.
 		  AND NOT EXISTS (SELECT 1 FROM provenance other JOIN ingests i ON i.id=other.ingest_id
-		    WHERE other.node_id=n.id AND other.original_path IS DISTINCT FROM `+pathParam+` AND LOWER(i.source_kind) NOT LIKE 'embedded:%'
+		    WHERE other.node_id=n.id AND other.original_path IS DISTINCT FROM `+pathParam+` AND NOT (`+(provenanceSQLDialect{postgres: s.postgresSchema != ""}).embedded("i.source_kind")+`)
 		      AND i.source_kind<>'photo-checkout'
 		      AND (NOT `+sidecarParam+` OR i.source_kind<>'photo-import')
 		      AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=other.identity))
-		ORDER BY n.id`, append(roleArgs, member.OriginalPath, role == PhotoRoleSidecar), func(rows *sql.Rows) error {
+		ORDER BY n.id`, append(roleArgs, (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(member.OriginalPath), role == PhotoRoleSidecar), func(rows *sql.Rows) error {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return err
@@ -472,7 +472,7 @@ func (s *Store) photoImportChangedSourceTx(
 		return Node{}, false, err
 	}
 	if role == PhotoRoleSidecar {
-		unchanged, version, err := photoXMPSourceUnchangedTx(ctx, tx, prior, member)
+		unchanged, version, err := s.photoXMPSourceUnchangedTx(ctx, tx, prior, member)
 		if err != nil {
 			return Node{}, false, err
 		}
@@ -765,7 +765,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				}
 				file := PhotoFile{AssetID: target.ID, NodeID: node.ID, Role: roles[i], CreatedAt: nowRFC3339()}
 				if roles[i] == PhotoRoleSidecar {
-					sourceID, _, err := photoSidecarSourceTx(ctx, tx, target.ID, group.Members[i].OriginalPath, "", false)
+					sourceID, _, err := s.photoSidecarSourceTx(ctx, tx, target.ID, group.Members[i].OriginalPath, "", false)
 					if err != nil {
 						return err
 					}
@@ -825,7 +825,7 @@ func photoSidecarExtensionAgrees(name, extension string) bool {
 	return extension == "" || strings.EqualFold(strings.TrimPrefix(extension, "."), strings.TrimPrefix(path.Ext(normalizePhotoSourcePath(name)), "."))
 }
 
-func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidecarPath, extension string, vaultNames bool) (string, bool, error) {
+func (s *Store) photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidecarPath, extension string, vaultNames bool) (string, bool, error) {
 	sidecarPath = normalizePhotoSourcePath(sidecarPath)
 	name := path.Base(sidecarPath)
 	original := strings.TrimSuffix(name, path.Ext(name))
@@ -840,7 +840,7 @@ func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidec
 	}
 	rows, err := q.QueryContext(ctx, `SELECT f.file_id,f.role,n.name,COALESCE(p.original_path,'') FROM photo_files f
  JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=n.id
- AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND LOWER(i.source_kind) NOT LIKE 'embedded:%' AND i.source_kind<>'url')
+ AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND NOT (`+(provenanceSQLDialect{postgres: s.postgresSchema != ""}).embedded("i.source_kind")+`) AND i.source_kind<>'url')
  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  WHERE f.asset_id=$1 AND f.role IN ('raw','image') AND n.trashed_at IS NULL ORDER BY f.file_id`, assetID)
 	if err != nil {

@@ -38,6 +38,38 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		require.NoError(t, err)
 		return s
 	}
+	for name, input := range map[string]ProvenanceAppendInput{
+		"NUL source reference":   {SourceKind: "agent", SourceDescription: "supplied source", OriginalPath: "opaque://source\x00reference \\u0000 café"},
+		"NUL caller source kind": {SourceKind: "agent\x00kind \\u0000 café", SourceDescription: "supplied source", OriginalPath: "opaque://source"},
+	} {
+		seeds[name] = func(t *testing.T) *Store {
+			t.Helper()
+			s := newTestStore(t)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "nul.jpg", fakeHash("b5"), 9, "image/jpeg")
+			require.NoError(t, err)
+			plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "cli", nil)
+			require.NoError(t, err)
+			_, err = s.EnableInitialAudit(t.Context(), plan)
+			require.NoError(t, err)
+			input.NodeID, input.IfRevision = node.ID, node.Revision
+			_, err = s.AppendNodeProvenance(t.Context(), input)
+			require.NoError(t, err)
+			return s
+		}
+	}
+	seeds["NUL operational photo source"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		run, err := s.BeginIngest(t.Context(), "cli\x00kind", "operational source")
+		require.NoError(t, err)
+		_, err = s.IngestFileExact(t.Context(), run, s.RootID(), "nul-photo.jpg", fakeHash("b6"), 9, "image/jpeg", "/source/\x00reference/photo.jpg", "2024-03-05T10:00:00Z")
+		require.NoError(t, err)
+		plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "cli", nil)
+		require.NoError(t, err)
+		_, err = s.EnableInitialAudit(t.Context(), plan)
+		require.NoError(t, err)
+		return s
+	}
 	seeds["mailbox work"] = seedMetadataImportMailbox
 	seeds["mailbox job"] = func(t *testing.T) *Store {
 		t.Helper()
@@ -182,23 +214,26 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	// Verify these native fixtures actually produce the custom records whose
 	// insertion behavior the round trip must exercise.
 	requiredKinds := map[string][]string{
-		"mailbox job":             {"mailbox_job"},
-		"mailbox work":            {"mailbox_job", "mailbox_occurrence", "mailbox_archive", "mailbox_transfer_receipt", "mailbox_container", "email_document_publication"},
-		"photo suggestions":       {"photo_suggestion"},
-		"rendered pages":          {"page_document", "page_recipe", "page_image", "page_render_job"},
-		"preview and checksum":    {"blob_checksum", "visual_preview_generation"},
-		"received records":        {"package_record", "package_label", "package_import_receipt", "package_import_job", "package", "package_volume"},
-		"represented snapshot":    {"collection_snapshot", "collection_snapshot_member", "collection_snapshot_representation"},
-		"export plan":             {"export_authority"},
-		"candidate faces":         {"person_document_assertion"},
-		"media input":             {"media_source", "media_source_version", "media_occurrence", "media_input_artifact", "media_operation"},
-		"embeddings":              {"embedding_input_generation"},
-		"photo checkout":          {"photo_checkout", "photo_checkout_entry"},
-		"audit and moved parents": {"blob", "audit_record"},
-		"hidden photo lockout":    {"photo_hidden_failure"},
-		"processing":              {"processing_profile", "rendition_head", "rendition_lexical_generation", "current_rendition_root"},
-		"processing jobs":         {"processing_incarnation", "processing_consent_grant", "rendition_job", "rendition_job_waiter"},
-		"NUL source description":  {"ingest", "provenance", "audit_record"},
+		"mailbox job":                  {"mailbox_job"},
+		"mailbox work":                 {"mailbox_job", "mailbox_occurrence", "mailbox_archive", "mailbox_transfer_receipt", "mailbox_container", "email_document_publication"},
+		"photo suggestions":            {"photo_suggestion"},
+		"rendered pages":               {"page_document", "page_recipe", "page_image", "page_render_job"},
+		"preview and checksum":         {"blob_checksum", "visual_preview_generation"},
+		"received records":             {"package_record", "package_label", "package_import_receipt", "package_import_job", "package", "package_volume"},
+		"represented snapshot":         {"collection_snapshot", "collection_snapshot_member", "collection_snapshot_representation"},
+		"export plan":                  {"export_authority"},
+		"candidate faces":              {"person_document_assertion"},
+		"media input":                  {"media_source", "media_source_version", "media_occurrence", "media_input_artifact", "media_operation"},
+		"embeddings":                   {"embedding_input_generation"},
+		"photo checkout":               {"photo_checkout", "photo_checkout_entry"},
+		"audit and moved parents":      {"blob", "audit_record"},
+		"hidden photo lockout":         {"photo_hidden_failure"},
+		"processing":                   {"processing_profile", "rendition_head", "rendition_lexical_generation", "current_rendition_root"},
+		"processing jobs":              {"processing_incarnation", "processing_consent_grant", "rendition_job", "rendition_job_waiter"},
+		"NUL source description":       {"ingest", "provenance", "audit_record"},
+		"NUL source reference":         {"ingest", "provenance", "audit_record"},
+		"NUL caller source kind":       {"ingest", "provenance", "audit_record"},
+		"NUL operational photo source": {"ingest", "provenance", "audit_record", "photo_file"},
 	}
 	for name, seed := range seeds {
 		t.Run(name, func(t *testing.T) {
@@ -257,6 +292,56 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			after, err := runtime.VerifyAudit(ctx, nil)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			if name == "NUL operational photo source" {
+				node, err := source.NodeByPath(ctx, "/nul-photo.jpg")
+				require.NoError(t, err)
+				want, err := source.NodeProvenance(ctx, node.ID, 10, 0)
+				require.NoError(t, err)
+				require.Len(t, want.Items, 1)
+				for _, store := range []*Store{runtime, recovered} {
+					got, err := store.NodeProvenance(ctx, node.ID, 10, 0)
+					require.NoError(t, err)
+					require.Equal(t, want, got)
+					collections, total, err := store.Collections(ctx, 10, 0)
+					require.NoError(t, err)
+					require.Equal(t, 1, total)
+					require.Equal(t, "cli\x00kind", collections[0].SourceKind)
+					var path string
+					require.NoError(t, store.db.QueryRowContext(ctx, `SELECT original_path FROM photo_source_claims`).Scan(&path))
+					require.Equal(t, "/source/\x00reference/photo.jpg", path)
+				}
+				run, err := runtime.BeginIngest(ctx, "cli\x00kind", "operational source")
+				require.NoError(t, err)
+				_, err = runtime.IngestFileExact(ctx, run, runtime.RootID(), "new-photo.jpg", fakeHash("b7"), 9, "image/jpeg", "/source/\x00reference/new.jpg", "2024-03-05T10:00:00Z")
+				require.NoError(t, err)
+				_, err = runtime.VerifyAudit(ctx, &before.Evidence)
+				require.NoError(t, err)
+			}
+			if name == "NUL source reference" || name == "NUL caller source kind" {
+				node, err := source.NodeByPath(ctx, "/nul.jpg")
+				require.NoError(t, err)
+				want, err := source.NodeProvenance(ctx, node.ID, 10, 0)
+				require.NoError(t, err)
+				require.Len(t, want.Items, 1)
+				for _, store := range []*Store{runtime, recovered} {
+					got, err := store.NodeProvenance(ctx, node.ID, 10, 0)
+					require.NoError(t, err)
+					require.Equal(t, want, got)
+					collections, total, err := store.Collections(ctx, 10, 0)
+					require.NoError(t, err)
+					require.Zero(t, total)
+					require.Empty(t, collections)
+				}
+				_, err = runtime.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "new\x00kind", SourceDescription: "new source", OriginalPath: "opaque://new\x00reference"})
+				require.NoError(t, err)
+				got, err := runtime.NodeProvenance(ctx, node.ID, 10, 0)
+				require.NoError(t, err)
+				require.Len(t, got.Items, 2)
+				require.Equal(t, "new\x00kind", got.Items[0].SourceKind)
+				require.Equal(t, "opaque://new\x00reference", got.Items[0].OriginalPath)
+				_, err = runtime.VerifyAudit(ctx, &before.Evidence)
+				require.NoError(t, err)
+			}
 			if name == "NUL source description" {
 				node, err := source.NodeByPath(ctx, "/nul.txt")
 				require.NoError(t, err)

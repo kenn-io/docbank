@@ -902,11 +902,18 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
-Source descriptions remain valid UTF-8 strings, including U+0000, in the API
-and metadata stream. PostgreSQL stores `ingests.source_desc` as `BYTEA` to keep
-those bytes unchanged; the shared readers scan it back into a string. SQLite
-retains its released `TEXT` column. Provenance reads, metadata export and audit
-validation use the original string.
+Provenance source kinds, descriptions and references remain valid UTF-8 strings,
+including U+0000, in the API and metadata stream. PostgreSQL stores
+`ingests.source_kind`, `ingests.source_desc`, `provenance.original_path` and the
+derived `photo_source_claims.original_path` as `BYTEA`. Shared readers scan these
+bytes back into strings; SQLite retains its released `TEXT` columns. Provenance
+identities, metadata exports and audit records retain the original bytes.
+
+PostgreSQL source classification inspects only the nine-byte `embedded:` prefix,
+case-insensitively, without decoding the full kind into PostgreSQL text. Exact
+source-path lookups bind bytes directly against the existing index. JSON receipt
+paths remain text values and use separate parameters from binary path lookups.
+Neither backend adds a query or an escaping layer to store these values.
 
 PostgreSQL foreign keys that normally check immediately allow explicit deferral.
 Logical import and collection snapshot sealing, including received packages,

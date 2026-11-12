@@ -179,15 +179,11 @@ func (s *Store) ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun
 			return false, ErrAuditMutationUnsupported
 		}
 	}
-	var description any = run.record.SourceDesc
-	if s.postgresSchema != "" {
-		// Audit commits these bytes verbatim; PostgreSQL TEXT cannot hold NUL.
-		description = []byte(run.record.SourceDesc)
-	}
+	d := provenanceSQLDialect{postgres: s.postgresSchema != ""}
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO ingests (id, started_at, source_kind, source_desc)
 		 VALUES ($1, $2, $3, $4) ON CONFLICT(id) DO NOTHING`,
-		run.record.ID, run.record.StartedAt, run.record.SourceKind, description)
+		run.record.ID, run.record.StartedAt, d.value(run.record.SourceKind), d.value(run.record.SourceDesc))
 	if err != nil {
 		return false, fmt.Errorf("recording ingest run: %w", err)
 	}
@@ -585,7 +581,7 @@ func (s *Store) ingestFileTx(
 			identity, node_id, ingest_id, original_path, original_mtime, supersedes
 		 ) VALUES ($1, $2, $3, $4, $5, $6)`,
 		provenance.Identity, provenance.NodeID, provenance.IngestID,
-		provenance.OriginalPath, provenance.OriginalMTime, provenance.Supersedes); err != nil {
+		(provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(provenance.OriginalPath), provenance.OriginalMTime, provenance.Supersedes); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("recording provenance for %q: %w", finalName, err)
 	}
 	binding := ProvenanceVersionBinding{

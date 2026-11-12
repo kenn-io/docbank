@@ -79,7 +79,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 	}
 	var assignmentID string
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if err := validateCustodianReferencesTx(ctx, tx, request); err != nil {
+		if err := s.validateCustodianReferencesTx(ctx, tx, request); err != nil {
 			return err
 		}
 		predicate, args := exactCustodianScopePredicate(request.Scope)
@@ -160,7 +160,7 @@ func custodianScopeValues(scope CustodianScope) (ingestID, packageID, packageRec
 	}
 }
 
-func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request CustodianRequest) error {
+func (s *Store) validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request CustodianRequest) error {
 	if request.PersonID != "" {
 		var state string
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM persons WHERE person_id=$1`, request.PersonID).Scan(&state); errors.Is(err, sql.ErrNoRows) {
@@ -174,7 +174,7 @@ func validateCustodianReferencesTx(ctx context.Context, tx *sql.Tx, request Cust
 	switch request.Scope.Kind {
 	case "collection":
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ingests WHERE id=$1 AND LOWER(source_kind) NOT LIKE 'embedded:%')`, request.Scope.IngestID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ingests WHERE id=$1 AND NOT (`+(provenanceSQLDialect{postgres: s.postgresSchema != ""}).embedded("source_kind")+`))`, request.Scope.IngestID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -317,7 +317,7 @@ func (s *Store) SetOperatorPackageCustodian(ctx context.Context, request Custodi
 			}
 			request.PersonID = canonicalID
 		}
-		if err := validateCustodianReferencesTx(ctx, tx, request); err != nil {
+		if err := s.validateCustodianReferencesTx(ctx, tx, request); err != nil {
 			return err
 		}
 		predicate, args := exactCustodianScopePredicate(request.Scope)
@@ -404,7 +404,7 @@ func (s *Store) custodianByID(ctx context.Context, assignmentID string) (Custodi
 }
 
 func (s *Store) CustodiansForVersion(ctx context.Context, contentVersionID string) ([]CustodianAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+	rows, err := s.db.QueryContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 		SELECT `+custodianColumns+` FROM custodian_assignments ca
 		WHERE ca.retired_at IS NULL AND (
 			(ca.scope_kind='document' AND ca.content_version_id=$1) OR

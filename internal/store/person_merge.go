@@ -263,7 +263,7 @@ func (s *Store) fenceBrowserMergeHiddenTx(ctx context.Context, tx *sql.Tx, survi
 		return err
 	}
 	var hidden bool
-	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	if err := tx.QueryRowContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 	SELECT EXISTS(SELECT 1 FROM (
 		SELECT content_version_id FROM person_document_assertions WHERE person_id IN ($1,$2)
 		UNION

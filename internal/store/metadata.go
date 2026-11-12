@@ -1252,6 +1252,11 @@ func (s *Store) importMetadataRecord(
 		codec.insert = insertPostgresIngest
 		return codec.importRecord(ctx, tx, raw)
 	}
+	if s.postgresSchema != "" && kind == metadataProvenanceType {
+		codec := *provenanceMetadata
+		codec.insert = insertPostgresProvenance
+		return codec.importRecord(ctx, tx, raw)
+	}
 	if codec, ok := metadataCodecs[kind]; ok {
 		return codec.importRecord(ctx, tx, raw)
 	}
@@ -1658,7 +1663,7 @@ func validateMetadataStateWithVaultIdentity(
 		return err
 	}
 	if layout.hasPostV3Metadata() {
-		if err := validateCollectionLabelMetadataState(ctx, tx); err != nil {
+		if err := validateCollectionLabelMetadataState(ctx, tx, layout.postgres); err != nil {
 			return err
 		}
 		if err := validateSavedQueryRunMetadataState(ctx, tx, layout); err != nil {
@@ -1730,7 +1735,7 @@ func validateMetadataStateWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 22 {
-		if err := validatePackageMetadataState(ctx, tx, vaultID); err != nil {
+		if err := validatePackageMetadataState(ctx, tx, vaultID, layout.postgres); err != nil {
 			return err
 		}
 		if err := validatePackageImportMetadataState(ctx, tx); err != nil {

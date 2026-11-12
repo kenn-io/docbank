@@ -34,11 +34,15 @@ func (s *Store) photoSourcesTx(ctx context.Context, tx metadataQuerier, assets s
 	if s.postgresSchema != "" {
 		assetsQuery = "SELECT value FROM json_array_elements_text(NULLIF($2,'')::json)"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),CASE WHEN i.source_kind='url' THEN n.name ELSE COALESCE(p.original_path,n.name) END,
+	name := "n.name"
+	if s.postgresSchema != "" {
+		name = "convert_to(n.name,'UTF8')"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),CASE WHEN i.source_kind='url' THEN `+name+` ELSE COALESCE(p.original_path,`+name+`) END,
  COALESCE(f.sidecar_of_file_id,''),EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=f.asset_id AND a.hidden_at IS NULL AND a.excluded_at IS NULL) AND n.trashed_at IS NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND (($1 AND p.identity=f.source_provenance_identity) OR (NOT $1
- AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND LOWER(origin.source_kind) NOT LIKE 'embedded:%')
+ AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND NOT (`+(provenanceSQLDialect{postgres: s.postgresSchema != ""}).embedded("origin.source_kind")+`))
  AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)))
  LEFT JOIN ingests i ON i.id=p.ingest_id WHERE ($2='' OR f.asset_id IN (`+assetsQuery+`)) AND ($1 OR EXISTS(SELECT 1 FROM photo_files missing WHERE missing.source_provenance_identity IS NULL AND (missing.asset_id=f.asset_id OR missing.node_id=f.node_id)))
  ORDER BY `+photoSourceObservedSQL+`,i.started_at,p.ingest_id,p.original_path,p.identity`, checkout, assets)

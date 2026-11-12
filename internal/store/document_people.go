@@ -135,7 +135,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 		if err := tx.QueryRowContext(ctx, `SELECT binding_epoch FROM document_people_state WHERE singleton=1`).Scan(&input.BindingEpoch); err != nil {
 			return err
 		}
-		if err := checkDocumentPeopleInputRowBoundsTx(ctx, tx, versionID); err != nil {
+		if err := s.checkDocumentPeopleInputRowBoundsTx(ctx, tx, versionID); err != nil {
 			return err
 		}
 		actors, err := documentEventActorClaimsTx(ctx, tx, input.EventGenerationID)
@@ -186,7 +186,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 			}
 			input.Bindings[actorKey] = matches
 		}
-		if err := loadDocumentPeopleCustodiansTx(ctx, tx, versionID, &input); err != nil {
+		if err := s.loadDocumentPeopleCustodiansTx(ctx, tx, versionID, &input); err != nil {
 			return err
 		}
 		if err := loadDocumentPeopleAssertionsTx(ctx, tx, versionID, &input); err != nil {
@@ -213,10 +213,10 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 	return input, nil
 }
 
-func checkDocumentPeopleInputRowBoundsTx(ctx context.Context, tx *sql.Tx, versionID string) error {
+func (s *Store) checkDocumentPeopleInputRowBoundsTx(ctx context.Context, tx *sql.Tx, versionID string) error {
 	const maxRows = document.MaxPersonEdgesPerVersion + 1
 	var custodians int64
-	err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+	err := tx.QueryRowContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 		SELECT count(*) FROM custodian_assignments ca WHERE ca.retired_at IS NULL AND (
 		(ca.scope_kind='document' AND ca.content_version_id=$1) OR
 		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))`,
@@ -410,8 +410,8 @@ func (s *Store) openActorCandidatesTx(ctx context.Context, tx *sql.Tx, versionID
 	return retained, nil
 }
 
-func loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
+func (s *Store) loadDocumentPeopleCustodiansTx(ctx context.Context, tx *sql.Tx, versionID string, input *DocumentPeopleInputs) error {
+	rows, err := tx.QueryContext(ctx, `WITH `+collectionMembershipSQL(s.postgresSchema != "")+`
 		SELECT `+custodianColumns+` FROM custodian_assignments ca WHERE ca.retired_at IS NULL AND (
 		(ca.scope_kind='document' AND ca.content_version_id=$1) OR
 		(ca.scope_kind='collection' AND EXISTS(SELECT 1 FROM collection_members cm JOIN nodes n ON n.id=cm.node_id WHERE cm.ingest_id=ca.ingest_id AND n.current_version_id=$2)))

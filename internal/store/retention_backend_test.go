@@ -341,7 +341,7 @@ func checkCleanupSidecarHistoryPostgres(t *testing.T) {
 	require.NoError(t, err)
 	target, _ := copyRetentionStore(t, source)
 	for _, s := range []*Store{source, target} {
-		outside, err := photoXMPSourceVersionsTx(ctx, s.db, sidecar.ID)
+		outside, err := s.photoXMPSourceVersionsTx(ctx, s.db, sidecar.ID)
 		require.NoError(t, err)
 		for _, observation := range outside {
 			require.NotEqual(t, "/evidence/sidecar.xmp", observation.Path)
