@@ -202,6 +202,12 @@
     gap: var(--space-2);
   }
 
+  /* The header row's padding adds to this gap, so a filer heading needs a
+     tighter one to sit closer to its own table than to the group above. */
+  .tool-section {
+    gap: var(--space-3);
+  }
+
   td,
   th {
     font-variant-numeric: tabular-nums;
