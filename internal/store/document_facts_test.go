@@ -109,6 +109,9 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NotEmpty(t, facts.Edges)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
 	require.NoError(t, err)
+	edges, _, err := s.DocumentPeopleForVersion(t.Context(), version.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Empty(t, edges)
 	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
 	require.Equal(t, "pending", facts.State)
@@ -164,7 +167,7 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	require.True(t, foundSender)
 	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
-	require.Len(t, full.Candidates, 3)
+	require.Len(t, full.Candidates, 2)
 	for _, c := range full.Candidates {
 		if c.ActorKey == "email:sender@example.test" {
 			for _, o := range c.Occurrences {

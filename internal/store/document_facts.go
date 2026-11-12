@@ -139,15 +139,21 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
+	events := eventView.Events.Events
 	if facts.State != factsStatePending && facts.State != factsStateFailed {
-		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID)
+		var actorKeys []string
+		for _, event := range events {
+			for _, actor := range event.Actors {
+				actorKeys = append(actorKeys, actor.ActorKey)
+			}
+		}
+		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID, actorKeys)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
 	}
 	// Candidates omit sensitivity. Match each occurrence to the current event
 	// generation and fail closed when its authoritative evidence is absent.
-	events := eventView.Events.Events
 	for i := range facts.Candidates {
 		c := &facts.Candidates[i]
 		c.OccurrenceLabels = make(map[PersonCandidateOccurrence]string)
