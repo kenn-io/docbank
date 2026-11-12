@@ -580,3 +580,118 @@ func TestRoleSearchNearCompilerBudget(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles)
 }
+
+func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "budget.txt", "aabb", nil)
+	first, err := s.CreatePerson(ctx, "Budget First", "operator")
+	require.NoError(t, err)
+	second, err := s.CreatePerson(ctx, "Budget Second", "operator")
+	require.NoError(t, err)
+	for _, role := range []string{"author", "sender"} {
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: first.PersonID, Role: role, Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"person_role"}}
+	one, err := s.materializeQuerySnapshot(ctx, request, snapshotMaterializeOptions{FacetMemberLimit: 1})
+	require.NoError(t, err)
+	require.True(t, one.Facets[0].Available)
+	require.EqualValues(t, 1, *one.Facets[0].Total)
+	require.ElementsMatch(t, []string{"author", "sender"}, one.Facets[0].Values[0].Roles)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: second.PersonID, Role: "recipient", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	limited, err := s.materializeQuerySnapshot(ctx, request, snapshotMaterializeOptions{FacetMemberLimit: 1})
+	require.NoError(t, err)
+	require.False(t, limited.Facets[0].Available)
+	require.Equal(t, "member_budget_exceeded", limited.Facets[0].Reason)
+	exact, err := s.materializeQuerySnapshot(ctx, request, snapshotMaterializeOptions{FacetMemberLimit: 2})
+	require.NoError(t, err)
+	require.True(t, exact.Facets[0].Available)
+	require.EqualValues(t, 1, *exact.Facets[0].Total)
+	require.Len(t, exact.Facets[0].Values, 2)
+}
+
+func TestRoleSearchNegationBranchMembership(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	first := seedDocumentPeopleEvent(t, s, "branch-one.txt", "ccdd", nil)
+	second := seedDocumentPeopleEvent(t, s, "branch-two.txt", "ccdd", nil)
+	a, err := s.CreatePerson(ctx, "Branch Alpha", "operator")
+	require.NoError(t, err)
+	b, err := s.CreatePerson(ctx, "Branch Beta", "operator")
+	require.NoError(t, err)
+	for _, edge := range []struct{ version, person, role string }{{first.ID, a.PersonID, "sender"}, {second.ID, b.PersonID, "recipient"}} {
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	_, err = s.CreateSavedQuery(ctx, "Branch saved", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"from:\"Branch Alpha\""}`))
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		text  string
+		roles []string
+	}{
+		{`from:"Branch Alpha"`, []string{"sender"}},
+		{`NOT from:"Branch Alpha"`, nil},
+		{`NOT NOT from:"Branch Alpha"`, []string{"sender"}},
+		{`NOT (NOT from:"Branch Alpha" OR to:"Branch Beta") OR name:branch-two`, []string{"sender"}},
+		{`NOT (NOT from:"Branch Alpha" AND to:"Branch Beta") OR name:missing`, []string{"sender"}},
+		{`NOT NOT saved:"Branch saved" OR to:"Branch Beta"`, []string{"sender", "recipient"}},
+		{`NOT NOT between:("Branch Alpha", "Branch Beta") OR to:"Branch Beta"`, []string{"recipient"}},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true}}`, tc.text))
+			result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			require.ElementsMatch(t, tc.roles, result.Rows[0].MatchedRoles)
+		})
+	}
+}
+
+func TestRoleSearchSavedHiddenPersonScope(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	hidden := browsePhotoNode(t, s, "saved-hidden.jpg", fakeHash("saved-hidden"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Hidden Depicted", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: hidden.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	definition, err := s.CreateSavedQuery(ctx, "Hidden saved", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"person:\"Hidden Depicted\""}`))
+	require.NoError(t, err)
+	structured, err := s.CreateSavedQuery(ctx, "Hidden structured", "", SavedQueryKindQuery, fmt.Appendf(nil, `{"filters":{"people":[{"person_id":%q,"roles":["depicted"]}]}}`, person.PersonID))
+	require.NoError(t, err)
+	nested, err := s.CreateSavedQuery(ctx, "Hidden nested", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Hidden structured\""}`))
+	require.NoError(t, err)
+	service := newQuerySnapshotService(s, querySnapshotServiceOptions{})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		ok   bool
+	}{
+		{"unlocked", WithVisiblePeopleOnly(WithPhotoHiddenToken(ctx, token)), true},
+		{"locked", WithVisiblePeopleOnly(ctx), false},
+		{"full", ctx, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, saved := range []SavedQuery{definition, structured, nested} {
+				_, page, err := service.RunSaved(tc.ctx, "owner", saved.ID, saved.Revision, SnapshotRequest{}, nil)
+				if !tc.ok {
+					require.Error(t, err)
+					continue
+				}
+				require.NoError(t, err)
+				require.Len(t, page.Rows, 1)
+			}
+		})
+	}
+}

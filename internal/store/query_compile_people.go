@@ -56,7 +56,15 @@ func (c queryCompiler) compilePersonPredicate(id string, roles []string) compile
 	return compiledQueryFragment{sql: predicate + `)`, args: args}
 }
 
-var betweenPersonRoles = []string{"author", "last_saved_by", "sender", "recipient", "copied", "blind_copy", "organizer", "attendee", "participant", "speaker", "depicted"}
+var betweenPersonRoles = func() []string {
+	var roles []string
+	for _, role := range document.AllEventRoles() {
+		if role != "custodian" {
+			roles = append(roles, string(role))
+		}
+	}
+	return append(roles, "speaker", "depicted")
+}()
 
 func rolesForOperand(field string, safe bool) ([]string, error) {
 	switch field {

@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
 	"slices"
 
@@ -26,21 +25,24 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 	add := func(label string, fragment compiledQueryFragment, gates []compiledQueryFragment) {
 		matches = append(matches, compiledRoleMatch{label: label, predicate: fragment, gates: slices.Clone(gates)})
 	}
-	var walk func(*query.ResolvedExpression, string, []compiledQueryFragment) error
-	walk = func(e *query.ResolvedExpression, field string, gates []compiledQueryFragment) error {
+	var walk func(*query.ResolvedExpression, string, []compiledQueryFragment, bool) error
+	walk = func(e *query.ResolvedExpression, field string, gates []compiledQueryFragment, negative bool) error {
 		if e == nil || e.Syntax == nil {
 			return nil
 		}
 		if e.Syntax.Kind == query.ExpressionNot {
-			return nil
+			return walk(e.Children[0], field, gates, !negative)
 		}
 		if e.Syntax.Kind == query.ExpressionField {
 			field = e.Syntax.Field
 		}
-		if e.Syntax.Kind == query.ExpressionAnd || e.Syntax.Kind == query.ExpressionField && field == "between" {
+		if e.Syntax.Kind == query.ExpressionAnd && !negative || e.Syntax.Kind == query.ExpressionOr && negative || e.Syntax.Kind == query.ExpressionField && field == "between" && !negative {
 			branch, err := c.compileResolvedExpression(e, field)
 			if err != nil {
 				return err
+			}
+			if negative {
+				branch = negateCompiledFragment(branch)
 			}
 			gates = append(slices.Clone(gates), branch)
 		}
@@ -49,20 +51,25 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 			if err != nil {
 				return err
 			}
+			if negative {
+				branch = negateCompiledFragment(branch)
+			}
 			gates = append(slices.Clone(gates), branch)
-			for _, p := range e.Saved.Query.Filters.People {
-				for _, role := range p.Roles {
-					if c.safePeople && role == "blind_copy" {
-						continue
+			if !negative {
+				for _, p := range e.Saved.Query.Filters.People {
+					for _, role := range p.Roles {
+						if c.safePeople && role == "blind_copy" {
+							continue
+						}
+						add(role, c.compilePersonPredicate(p.PersonID, []string{role}), gates)
 					}
-					add(role, c.compilePersonPredicate(p.PersonID, []string{role}), gates)
 				}
 			}
-			if err := walk(e.Saved.Expression, "", gates); err != nil {
+			if err := walk(e.Saved.Expression, "", gates, negative); err != nil {
 				return err
 			}
 		}
-		if e.Dependency != nil {
+		if e.Dependency != nil && !negative {
 			if field == "mentions" {
 				f, err := c.compileExpressionLeaf(e, field)
 				if err != nil {
@@ -90,20 +97,20 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 			// The between field's synthetic AND is already compiled above.
 			if field == "between" && e.Syntax.Kind == query.ExpressionField {
 				for _, operand := range child.Children {
-					if err := walk(operand, field, gates); err != nil {
+					if err := walk(operand, field, gates, negative); err != nil {
 						return err
 					}
 				}
 				continue
 			}
-			if err := walk(child, field, gates); err != nil {
+			if err := walk(child, field, gates, negative); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if !c.photoDisplayMetadata {
-		if err := walk(resolved.Expression, "", nil); err != nil {
+		if err := walk(resolved.Expression, "", nil, false); err != nil {
 			return nil, err
 		}
 		for _, p := range resolved.Query.Filters.People {
@@ -295,8 +302,8 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		if err := rows.Scan(&node, &id, &name, &role); err != nil {
 			return SnapshotFacet{}, err
 		}
-		observation.add("person_role", node, id, name, 1, math.MaxInt64)
-		if observation.total > memberLimit {
+		observation.add("person_role", node, id, name, 1, memberLimit)
+		if observation.limited {
 			return unavailableSnapshotFacet("person_role", "member_budget_exceeded"), nil
 		}
 		if id == "" {
