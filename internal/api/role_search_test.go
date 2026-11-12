@@ -69,6 +69,32 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 	var full api.WorkspaceQueryResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &full))
 	require.EqualValues(t, 1, full.Total)
+	t.Run("api key selected safe facet", func(t *testing.T) {
+		request := fmt.Sprintf(`{"query":{"syntax":"advanced","text":"name:private","filters":{"people":[{"person_id":%q,"roles":["blind_copy"]},{"person_id":%q,"roles":["blind_copy"]}]}},"facets":["person_role"]}`, visible.PersonID, concealed.PersonID)
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, request)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var snapshot api.WorkspaceQueryResponse
+		require.NoError(t, json.Unmarshal([]byte(body), &snapshot))
+		require.EqualValues(t, 1, snapshot.Total)
+		require.Len(t, snapshot.Rows, 1)
+		require.Equal(t, private.CurrentVersionID, snapshot.Rows[0].ContentVersionID)
+		require.Len(t, snapshot.Facets, 1)
+		facet := snapshot.Facets[0]
+		require.Equal(t, "person_role", facet.Dimension)
+		require.True(t, facet.Available)
+		require.NotNil(t, facet.Total)
+		require.NotNil(t, facet.Missing)
+		require.NotNil(t, facet.Other)
+		require.EqualValues(t, 1, *facet.Total)
+		require.EqualValues(t, 1, *facet.Missing)
+		require.Zero(t, *facet.Other)
+		require.Len(t, facet.Values, 1)
+		require.Equal(t, visible.PersonID, facet.Values[0].Key)
+		require.Equal(t, "Matrix Visible", facet.Values[0].Label)
+		require.True(t, facet.Values[0].Selected)
+		require.Zero(t, facet.Values[0].Count)
+		require.Empty(t, facet.Values[0].Roles)
+	})
 	// A visible person resolves in both scopes, but their hidden edge must not
 	// contribute to a browser snapshot or an export source.
 	payload := `{"syntax":"advanced","text":"person:\"Matrix Visible\""}`
