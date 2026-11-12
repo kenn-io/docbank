@@ -14,10 +14,11 @@ import (
 	"go.kenn.io/docbank/internal/taxrecord"
 )
 
+var recordFields = []string{"record_id", "account_id", "filer_party_id", "authority_party_id", "kind", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "state", "direction", "amount_minor", "currency", "verification", "verified_on", "verified_revision", "verification_note", "note", "revision", "created_at", "updated_at", "retired_at"}
+var recordNullable = map[string]bool{"account_id": true, "authority_party_id": true, "tax_year": true, "period_start": true, "period_end": true, "due_date": true, "lead_days": true, "amount_minor": true, "verified_on": true, "verified_revision": true, "retired_at": true}
+
 func decodeTaxRecordReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxRecordPage, error) {
-	fields := []string{"record_id", "account_id", "filer_party_id", "authority_party_id", "kind", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "state", "direction", "amount_minor", "currency", "verification", "verified_on", "verified_revision", "verification_note", "note", "revision", "created_at", "updated_at", "retired_at"}
-	nullable := map[string]bool{"account_id": true, "authority_party_id": true, "tax_year": true, "period_start": true, "period_end": true, "due_date": true, "lead_days": true, "amount_minor": true, "verified_on": true, "verified_revision": true, "retired_at": true}
-	data, err := readTaxReceipt(ctx, response, page, fields, nullable)
+	data, err := readTaxReceipt(ctx, response, page, recordFields, recordNullable)
 	if err != nil {
 		return api.TaxRecordPage{}, err
 	}

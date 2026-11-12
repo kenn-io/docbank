@@ -132,7 +132,7 @@ docbank tax event void RECORD_ID EVENT_ID --reason "Entered in error"
 
 State comes from the latest non-void state event by append revision, not the
 occurred date. Voiding preserves the event and its reason, and can restore a
-previous state. Assessment amounts are available for `assessed` and
+previous state. Correcting an earlier milestone by voiding and re-entering it makes the re-entered state current; re-enter later states if they still apply. Assessment amounts are available for `assessed` and
 `decision_issued` events; they do not calculate a balance. References are masked
 in mutation receipts and ordinary detail reads; only record show with `--reveal`
 returns complete references. Empty references stay empty; masking follows the

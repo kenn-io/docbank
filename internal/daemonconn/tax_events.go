@@ -17,21 +17,7 @@ import (
 )
 
 var eventFields = []string{"event_id", "record_id", "kind", "occurred_on", "sets_state", "amount_minor", "currency", "reference", "note", "recorded_at", "voided_at", "void_reason", "record_revision"}
-var recordFields = []string{"record_id", "account_id", "filer_party_id", "authority_party_id", "kind", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "state", "direction", "amount_minor", "currency", "verification", "verified_on", "verified_revision", "verification_note", "note", "revision", "created_at", "updated_at", "retired_at"}
-var recordNullable = map[string]bool{"account_id": true, "authority_party_id": true, "tax_year": true, "period_start": true, "period_end": true, "due_date": true, "lead_days": true, "amount_minor": true, "verified_on": true, "verified_revision": true, "retired_at": true}
 
-func taxMembers(raw []byte, fields []string, nullable map[string]bool) bool {
-	var m map[string]jsontext.Value
-	if json.Unmarshal(raw, &m) != nil || m == nil {
-		return false
-	}
-	for _, f := range fields {
-		if v, ok := m[f]; !ok || (string(v) == "null" && !nullable[f]) {
-			return false
-		}
-	}
-	return true
-}
 func validEvent(e api.TaxEvent, r api.TaxRecord, reveal bool) bool {
 	if !validUUIDv4(e.EventID) || e.RecordID != r.RecordID || e.RecordRevision < 2 || e.RecordRevision > r.Revision {
 		return false

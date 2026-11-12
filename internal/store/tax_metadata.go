@@ -195,6 +195,9 @@ func validateTaxEventMetadata(m metadataTaxEvent) error {
 	if err := validateMetadataTime("tax event voided_at", *m.VoidedAt); err != nil {
 		return err
 	}
+	if *m.VoidedAt < m.RecordedAt {
+		return errors.New("tax event void precedes recording")
+	}
 	reason, err := taxrecord.NormalizeVoidReason(m.VoidReason)
 	if err != nil || reason != m.VoidReason {
 		return errors.New("invalid tax event void")
@@ -218,34 +221,64 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	if invalid {
 		return errors.New("duplicate tax event revision")
 	}
-	rows, err := q.QueryContext(ctx, `SELECT record_id FROM tax_records ORDER BY record_id`)
+	// Read each catalog once; state follows append revision, not event time.
+	type authority struct {
+		kind, state, derived, created, updated string
+		retired                                *string
+	}
+	parents := map[string]*authority{}
+	rows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,created_at,updated_at,retired_at FROM tax_records`)
 	if err != nil {
 		return err
 	}
-	var ids []string
 	for rows.Next() {
 		var id string
-		if err = rows.Scan(&id); err != nil {
+		var p authority
+		if err = rows.Scan(&id, &p.kind, &p.state, &p.created, &p.updated, &p.retired); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		ids = append(ids, id)
+		p.derived, err = taxrecord.InitialState(p.kind)
+		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		parents[id] = &p
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		d, err := getTaxRecordDetail(ctx, q, id)
+	rows, err = q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events ORDER BY record_id,record_revision`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		event, err := scanTaxEvent(rows)
 		if err != nil {
 			return err
 		}
-		state, err := taxrecord.StateFromEvents(d.Record.Kind, taxEventFacts(d.Events))
-		if err != nil {
+		p := parents[event.RecordID]
+		if p == nil {
+			return errors.New("invalid tax event parent or revision")
+		}
+		if event.RecordedAt < p.created || event.RecordedAt > p.updated || (p.retired != nil && event.RecordedAt > *p.retired) || (event.VoidedAt != nil && (*event.VoidedAt < event.RecordedAt || *event.VoidedAt > p.updated || (p.retired != nil && *event.VoidedAt > *p.retired))) {
+			return errors.New("invalid tax event lifetime")
+		}
+		if err = taxrecord.ValidateEvent(p.kind, event.EventValues); err != nil {
 			return err
 		}
-		if state != d.Record.State {
+		if event.VoidedAt == nil && event.SetsState != "" {
+			p.derived = event.SetsState
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range parents {
+		if p.state != p.derived {
 			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
 		}
 	}

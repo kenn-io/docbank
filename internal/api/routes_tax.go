@@ -44,7 +44,7 @@ var taxDiagnosticPairs = map[string]string{
 	"amount required when currency changes": taxAmountField, "amount required": taxAmountField, "zero required": taxAmountField,
 	"unknown amount must be null": taxAmountField, "invalid length": taxAmountField, "invalid precision": taxAmountField,
 	"invalid decimal or overflow": taxAmountField, "overflow": taxAmountField,
-	"unsupported event": "kind", "requires amount": "currency", "unsupported amount": taxAmountField,
+	"unsupported event": "kind state", "requires amount": "currency", "unsupported amount": taxAmountField,
 }
 
 func taxSafeFieldReason(field, reason string) bool {

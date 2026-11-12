@@ -32,12 +32,10 @@ type TaxRecordDetail struct {
 	Events []TaxEvent `json:"events"`
 }
 type AddTaxEventRequest struct {
-	Kind       string  `json:"kind"`
-	OccurredOn string  `json:"occurred_on"`
-	Currency   string  `json:"currency,omitzero"`
-	Reference  string  `json:"reference,omitzero"`
-	Note       string  `json:"note,omitzero"`
-	Amount     *string `json:"amount,omitzero" nullable:"true"`
+	Kind       string `json:"kind"`
+	OccurredOn string `json:"occurred_on"`
+	Reference  string `json:"reference,omitzero"`
+	Note       string `json:"note,omitzero"`
 }
 type AdvanceTaxRecordRequest struct {
 	State      string  `json:"state"`
@@ -53,7 +51,7 @@ type VoidTaxEventRequest struct {
 
 // Event requests share tax admission: exact names and no null for text.
 func (p *AddTaxEventRequest) UnmarshalJSON(raw []byte) error {
-	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "currency", "reference", "note", "amount"}, "amount"); err != nil {
+	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "reference", "note"}); err != nil {
 		return err
 	}
 	type fields AddTaxEventRequest

@@ -125,20 +125,25 @@ func readTaxReceiptLimit(ctx context.Context, response *http.Response, page bool
 		items = []jsontext.Value{data}
 	}
 	for _, item := range items {
-		var members map[string]jsontext.Value
-		if json.Unmarshal(item, &members) != nil || members == nil {
+		if !taxMembers(item, fields, nullable) {
 			return invalid()
-		}
-		for _, field := range fields {
-			value, ok := members[field]
-			if !ok || (string(value) == "null" && !nullable[field]) {
-				return invalid()
-			}
 		}
 	}
 	return data, nil
 }
 
+func taxMembers(raw []byte, fields []string, nullable map[string]bool) bool {
+	var m map[string]jsontext.Value
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return false
+	}
+	for _, f := range fields {
+		if v, ok := m[f]; !ok || (string(v) == "null" && !nullable[f]) {
+			return false
+		}
+	}
+	return true
+}
 func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxAccountPage, error) {
 	limit := int64(maxTaxSingleReceiptBytes)
 	if page {

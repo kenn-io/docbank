@@ -101,3 +101,11 @@ func TestTaxEventClientAdvanceAndVoidPaths(t *testing.T) {
 	_, err = c.VoidTaxEvent(t.Context(), id, eid, 1, api.VoidTaxEventRequest{Reason: "Correction"})
 	require.NoError(t, err)
 }
+
+func TestTaxEventSafeInputDiagnostics(t *testing.T) {
+	for _, field := range []string{"kind", "state"} {
+		err := safeTaxError(apiProblemError(api.Error{Status: 422, Code: "invalid_tax", Detail: field + ": unsupported event private-synthetic"}))
+		assert.Contains(t, err.Error(), field+": unsupported event")
+		assert.NotContains(t, err.Error(), "private-synthetic")
+	}
+}

@@ -188,7 +188,7 @@ func TestTaxEventRequestAdmission(t *testing.T) {
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 		assert.NotContains(t, body, secret)
 	}
-	resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "amount": nil, "reference": "example"})
+	resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": "example"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var out api.TaxEventMutation
 	require.NoError(t, json.Unmarshal([]byte(body), &out))
@@ -196,4 +196,29 @@ func TestTaxEventRequestAdmission(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPost, path+"/events/"+out.Event.EventID+"/void", map[string]string{"If-Match": `"3"`}, map[string]any{"reason": "Correction"})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+}
+
+func TestTaxEventInputDiagnostics(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	_, account := createTaxTestAccount(t, ts, nil)
+	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
+	path := "/api/v1/tax/records/" + r.RecordID
+	for _, tc := range []struct {
+		path, field string
+		body        map[string]any
+	}{
+		{"/events", "kind", map[string]any{"kind": "private-synthetic", "occurred_on": "2026-01-01"}},
+		{"/advance", "state", map[string]any{"state": "private-synthetic", "occurred_on": "2026-01-01"}},
+		{"/advance", "state", map[string]any{"state": "note", "occurred_on": "2026-01-01"}},
+	} {
+		resp, body := do(t, ts, http.MethodPost, path+tc.path, map[string]string{"If-Match": `"1"`}, tc.body)
+		assert.Equal(t, 422, resp.StatusCode)
+		assert.Contains(t, body, tc.field+": unsupported event")
+		assert.NotContains(t, body, "private-synthetic")
+	}
+	for _, field := range []string{"amount", "currency"} {
+		resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", field: "private-synthetic"})
+		assert.Equal(t, 422, resp.StatusCode)
+		assert.NotContains(t, body, "private-synthetic")
+	}
 }

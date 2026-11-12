@@ -117,11 +117,11 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 		v := taxrecord.EventValues{Kind: in.Kind, OccurredOn: in.OccurredOn, Currency: in.Currency, Reference: in.Reference, Note: in.Note}
 		if advance {
 			if in.Kind == "note" {
-				return taxrecord.ErrInvalid
+				return &taxrecord.FieldError{Field: "state", Reason: "unsupported event"}
 			}
 			v.SetsState = in.Kind
 		} else if in.Kind != "note" {
-			return taxrecord.ErrInvalid
+			return &taxrecord.FieldError{Field: "kind", Reason: "unsupported event"}
 		}
 		if in.Amount != nil {
 			code, err := taxrecord.NormalizeCurrency(in.Currency)
@@ -136,6 +136,10 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 		}
 		v, err = taxrecord.NormalizeEvent(r.Kind, v)
 		if err != nil {
+			var field *taxrecord.FieldError
+			if advance && errors.As(err, &field) && field.Field == "kind" && field.Reason == "unsupported event" {
+				return &taxrecord.FieldError{Field: "state", Reason: field.Reason}
+			}
 			return err
 		}
 		if err = advanceTaxRevision(&r.Revision); err != nil {

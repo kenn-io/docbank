@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -120,8 +121,8 @@ func newTaxEventCommand() *cobra.Command {
 	var reason string
 	var revision int64
 	void := &cobra.Command{Use: "void <record-id> <event-id>", Short: "Void a tax event", Example: "docbank tax event void 11111111-1111-4111-8111-111111111111 33333333-3333-4333-8333-333333333333 --reason correction", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		if err := taxRecordID(args[1]); err != nil {
-			return err
+		if canonical.ValidateUUIDv4(args[1]) != nil {
+			return usageError(errors.New("invalid event ID"))
 		}
 		c, rev, err := eventConnection(cmd, args[0], revision)
 		if err != nil {

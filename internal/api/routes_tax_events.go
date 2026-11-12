@@ -54,7 +54,7 @@ func registerTaxEventRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *taxEventMutationOutput
 		err = g.mutate(ctx, func() error {
-			m, err := d.Store.AddTaxEvent(ctx, in.RecordID, revision, store.TaxEventInput{Kind: in.Body.Kind, OccurredOn: in.Body.OccurredOn, Currency: in.Body.Currency, Reference: in.Body.Reference, Note: in.Body.Note, Amount: in.Body.Amount})
+			m, err := d.Store.AddTaxEvent(ctx, in.RecordID, revision, store.TaxEventInput{Kind: in.Body.Kind, OccurredOn: in.Body.OccurredOn, Reference: in.Body.Reference, Note: in.Body.Note})
 			if err != nil {
 				return err
 			}

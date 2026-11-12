@@ -1043,6 +1043,12 @@ func TestTaxEventOpenAPIContract(t *testing.T) {
 			assert.NotContains(t, schema.Properties, field)
 		}
 	}
+	add := doc.Components.Schemas.Map()["AddTaxEventRequest"]
+	assert.NotContains(t, add.Properties, "amount")
+	assert.NotContains(t, add.Properties, "currency")
+	advance := doc.Components.Schemas.Map()["AdvanceTaxRecordRequest"]
+	assert.Contains(t, advance.Properties, "amount")
+	assert.Contains(t, advance.Properties, "currency")
 	event := doc.Components.Schemas.Map()["TaxEvent"]
 	require.NotNil(t, event)
 	assert.Equal(t, "integer", event.Properties["amount_minor"].Type)
