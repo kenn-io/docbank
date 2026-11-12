@@ -287,7 +287,8 @@ func (s *Store) prepareBrowserPhotoGroupTx(
 	for i, member := range members {
 		actual := group.Members[i]
 		role, _, _, err := photoImportMemberRole(actual)
-		if err != nil || role != member.Role || actual.Name != path.Base(member.Path) || actual.OriginalPath != member.SourcePath ||
+		name, nameErr := NormalizeName(path.Base(member.Path))
+		if err != nil || nameErr != nil || role != member.Role || actual.Name != name || actual.OriginalPath != member.SourcePath ||
 			actual.OriginalMtime != member.Mtime || actual.Size != member.Size || actual.BlobHash != hashes[i] {
 			return false, errors.New("browser photo group member changed")
 		}

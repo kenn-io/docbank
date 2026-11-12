@@ -621,7 +621,10 @@
       if (savedImport || (registered && plannedChannel !== runChannel)) {
         const latest = await channel.inspectPhotoImport(importID, controller.signal);
         for (const [index, group] of (latest.groups ?? []).entries()) {
-          if (items[index].state === "ready" && group.status !== "remaining") {
+          if (
+            group.status === "committed" ||
+            (items[index].state === "ready" && group.status !== "remaining")
+          ) {
             setState(
               items[index],
               group.status === "committed" ? group.receipt!.status : group.status,
@@ -693,6 +696,13 @@
           added ||= receipt.status === "added";
           setState(item, receipt.status);
           item.error = receiptReason(receipt.reason);
+          if (savedImport?.groups) {
+            savedImport.groups[item.group] = {
+              ...savedImport.groups[item.group],
+              status: "committed",
+              receipt,
+            };
+          }
           refreshNeeded = true;
         } catch (cause) {
           if (controller.signal.aborted && !transmissionStarted) break;
@@ -701,7 +711,7 @@
           setState(item, state);
           item.error =
             state === "unconfirmed"
-              ? "Import outcome is unconfirmed. Inspect import before retrying."
+              ? "Import outcome is unconfirmed."
               : cause instanceof Error
                 ? cause.message
                 : String(cause);
@@ -810,7 +820,10 @@
           size="sm"
           surface="soft"
           disabled={!selectedImport || running || planning || !!disabledReason}
-          onclick={() => void inspectSavedImport()}><SearchIcon size="14" />Inspect import</Button
+          onclick={() =>
+            void (selectedImport === importID && registered
+              ? inspectCurrentImport()
+              : inspectSavedImport())}><SearchIcon size="14" />Inspect import</Button
         >
       {/if}
       {#if savedImport || registered || registrationUncertain}
@@ -897,7 +910,7 @@
           </li>{/each}
       </ul>
       <div class="controls">
-        {#if (registered && (counts.unconfirmed > 0 || counts.pending > 0)) || registrationUncertain}
+        {#if ((registered && (counts.unconfirmed > 0 || counts.pending > 0)) || registrationUncertain) && !(savedImports.length && selectedImport === importID && registered)}
           <Button
             size="sm"
             surface="soft"

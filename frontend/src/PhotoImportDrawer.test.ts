@@ -124,6 +124,14 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: [new File(["x"], "left.JPG")] },
   });
+  expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
   await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
   expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
@@ -145,6 +153,78 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   });
   expect(await screen.findByRole("button", { name: "Add 1 group" })).toBeTruthy();
   expect(screen.queryByText(/Import progress changed in another tab/)).toBeNull();
+});
+
+it("keeps completed groups when selecting remaining files in batches", async () => {
+  savedImports.set("batches", {
+    sourceID: "source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: "a".repeat(64),
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: ["a.JPG", "b.JPG"].map((name) => ({
+      status: "remaining" as const,
+      files: [{ relative_path: name, size: 1 }],
+    })),
+  };
+  const committed = {
+    ...saved,
+    groups: [
+      {
+        ...saved.groups[0],
+        status: "committed" as const,
+        receipt: { status: "added" as const, asset_id: "a" },
+      },
+      saved.groups[1],
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(committed),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "batches",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "a.JPG")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledTimes(1));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["y"], "b.JPG")] },
+  });
+  expect(screen.queryByText("File missing")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(savedImports.has("batches")).toBe(false));
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
 });
 
 it("refreshes a group committed between inspection and resume", async () => {
@@ -235,6 +315,43 @@ it("loads saved imports one page at a time", async () => {
     expect(channel.listPhotoImports).toHaveBeenCalledWith(50, expect.any(AbortSignal)),
   );
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+});
+
+it("keeps one inspect action for the selected pending import", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "pending" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved, { ...saved, import_id: "other" }]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Still finishing");
+  expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(1);
+  await fireEvent.change(screen.getByLabelText("Saved import"), { target: { value: "other" } });
+  expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(2);
 });
 
 it("refuses changed bytes and lists files outside the saved import", async () => {

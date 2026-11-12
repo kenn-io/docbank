@@ -1126,3 +1126,17 @@ func TestBrowserPhotoRegistrationKeepsDistinctUnicodePaths(t *testing.T) {
 		saved.SavedImport.Groups[0].Files[0].RelativePath, saved.SavedImport.Groups[1].Files[0].RelativePath,
 	})
 }
+
+func TestBrowserPhotoUploadDecomposedName(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	data := []byte("x")
+	member := map[string]any{"relative_path": "e\u0301.mp4", "expected_size": len(data), "expected_hash": testHash(string(data))}
+	id := planBrowserPhotos(t, conn, []map[string]any{member})
+	receipt := uploadBrowserPhoto(t, conn, id, 0, member, data)
+	require.Equal(t, "photo_group_receipt", receipt.Type, "%+v", receipt)
+	require.Equal(t, "added", receipt.Receipt.Status)
+	_, err := catalog.NodeByPath(t.Context(), "/photos/é.mp4")
+	require.NoError(t, err)
+}
