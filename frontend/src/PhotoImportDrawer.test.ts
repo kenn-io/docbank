@@ -1666,6 +1666,7 @@ it("cancels a group when the drawer closes before sending bytes", async () => {
     target: { files: [files()[0]] },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
   view.unmount();
   await waitFor(() =>
     expect(vi.mocked(channel.uploadPhotoGroup).mock.calls[0][3].aborted).toBe(true),
