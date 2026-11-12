@@ -200,3 +200,30 @@ func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
 	_, err = s.InspectBrowserPhotoImport(ctx, id)
 	require.Error(t, err)
 }
+
+func TestBrowserPhotoImportListExcludesFutureDeclarations(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
+	require.NoError(t, err)
+	plan := BrowserPhotoImport{Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/a.xmp", Size: 1}}}}}
+	ids := make([]uuid.UUID, 3)
+	for i := range ids {
+		plan.SourceID = uuid.New()
+		ids[i], err = s.RegisterBrowserPhotoImport(ctx, plan)
+		require.NoError(t, err)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET format_version=2,created_at='2026-01-03T00:00:00Z' WHERE import_id=$1`, ids[0].String())
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET created_at='2026-01-02T00:00:00Z' WHERE import_id=$1`, ids[1].String())
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE browser_photo_imports SET created_at='2026-01-01T00:00:00Z' WHERE import_id=$1`, ids[2].String())
+	require.NoError(t, err)
+	for offset, id := range ids[1:] {
+		page, err := s.ListBrowserPhotoImports(ctx, offset, 1)
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		assert.Equal(t, id, page[0].ID)
+	}
+}

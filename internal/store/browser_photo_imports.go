@@ -112,7 +112,7 @@ func (s *Store) ListBrowserPhotoImports(ctx context.Context, offset, limit int) 
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT i.import_id,i.source_id,i.label,i.destination,i.created_at,
 		(SELECT COUNT(*) FROM browser_photo_import_groups g WHERE g.import_id=i.import_id)
-		FROM browser_photo_imports i WHERE i.vault_id=$1 ORDER BY i.created_at DESC,i.import_id DESC LIMIT $2 OFFSET $3`,
+		FROM browser_photo_imports i WHERE i.vault_id=$1 AND i.format_version=1 ORDER BY i.created_at DESC,i.import_id DESC LIMIT $2 OFFSET $3`,
 		s.VaultID(), limit, offset)
 	if err != nil {
 		return nil, err
