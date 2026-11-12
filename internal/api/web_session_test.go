@@ -37,13 +37,11 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?extra=1"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false&hidden=true"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=%zz"},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&mime_type=application%2Fpdf"},
-		{http.MethodPost, "/api/v1/search/text-coverage"},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&tag_id=y"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.path)
 	}
 }
+
 func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
@@ -57,8 +55,6 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/merge"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false"},
-		{http.MethodGet, "/api/v1/search/text-coverage"},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.path)
 	}
@@ -110,6 +106,24 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodGet, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPatch, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/photos/assets", nil)))
+}
+
+func TestWebSessionTextCoverageRoute(t *testing.T) {
+	t.Parallel()
+	const path = "/api/v1/search/text-coverage"
+	const tag = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		{http.MethodGet, path, true},
+		{http.MethodGet, path + "?tag_id=" + tag, true},
+		{http.MethodGet, path + "?tag_id=" + tag + "&mime_type=application%2Fpdf", false},
+		{http.MethodPost, path, false},
+		{http.MethodGet, path + "?tag_id=" + tag + "&tag_id=" + tag, false},
+	} {
+		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.path)
+	}
 }
 
 func TestWebSessionPhotoGroupingAndCheckpointMethods(t *testing.T) {

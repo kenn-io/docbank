@@ -207,34 +207,33 @@ it("finds text, wraps navigation, and clears the find query", async () => {
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
-it.each([
-  ["ready", [3, 4, 7], /Pages 3–4, 7 have no text layer/, /OCR can read them/],
-  ["verified_empty", [1], /Page 1 has no text layer/, /OCR can read it/],
-] as const)("shows %s text coverage for PDF pages %j", async (state, pages, notice, link) => {
-  if (state === "ready") {
-    await mockReadyText(pdf, [...pages]);
-    renderPDF();
-  } else
-    renderPDF({
-      state,
-      pages_without_text: pages,
-      generation_id: "c".repeat(64),
-      attachment_id: "d".repeat(64),
-      build_id: "e".repeat(64),
-    });
-  const rendered = await screen.findByText(notice);
-  expect(screen.getByRole("link", { name: link }).getAttribute("href")).toBe(
+it("shows PDF page gaps before ready text", async () => {
+  await mockReadyText(pdf, [3, 4, 7]);
+  renderPDF();
+  const rendered = await screen.findByText(/Pages 3–4, 7 have no text layer/);
+  expect(screen.getByRole("link", { name: /OCR can read them/ }).getAttribute("href")).toBe(
     "https://docbank.ai/docs/usage/document-processing/#ocr",
   );
-  if (state === "ready")
-    expect(
-      rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  else {
-    expect(rendered.textContent).toContain(
-      "Processing verified that this document has no readable text.",
-    );
-    expect(screen.getAllByRole("status")).toHaveLength(1);
-  }
+  expect(
+    rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
+
+it("combines a PDF page gap with the verified-empty notice", async () => {
+  renderPDF({
+    state: "verified_empty",
+    pages_without_text: [1],
+    generation_id: "c".repeat(64),
+    attachment_id: "d".repeat(64),
+    build_id: "e".repeat(64),
+  });
+  const rendered = await screen.findByText(/Page 1 has no text layer/);
+  expect(screen.getByRole("link", { name: /OCR can read it/ }).getAttribute("href")).toBe(
+    "https://docbank.ai/docs/usage/document-processing/#ocr",
+  );
+  expect(rendered.textContent).toContain(
+    "Processing verified that this document has no readable text.",
+  );
+  expect(screen.getAllByRole("status")).toHaveLength(1);
 });

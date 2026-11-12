@@ -6,7 +6,7 @@ import App from "./App.svelte";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { parseQuery } from "./query.js";
 import type { SnapshotRow } from "./snapshots.js";
-import type { Node } from "./generated/docbank.js";
+import type { Node, SearchTextCoverage } from "./generated/docbank.js";
 
 const vaultID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const baseVersion = "11111111-1111-4111-8111-111111111111";
@@ -36,8 +36,11 @@ function json(value: unknown): Response {
   });
 }
 
-function textCoverage(overrides: object = {}) {
+function textCoverage(overrides: Partial<SearchTextCoverage> = {}): SearchTextCoverage {
   return {
+    no_text: 0,
+    families: [],
+    pending: 0,
     pdfs_without_text: 0,
     pages_without_text: 0,
     pdf_page_coverage_partial: false,
@@ -2112,36 +2115,34 @@ it.each([
   [
     "singular",
     "Across the current vault: 1 PDF has 1 page without a text layer. OCR can read scanned pages.",
-    false,
+    textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
   ],
   [
     "partial",
     "Across the current vault: at least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
-    false,
+    textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_partial: true }),
   ],
   [
     "unavailable",
     "Across the current vault: at least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
-    false,
+    textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_unavailable: 1 }),
   ],
-  ["incomplete", "PDF text coverage is incomplete; some pages may not be searchable.", false],
-  ["failure", "PDF text coverage is unavailable.", false],
   [
-    "complete",
-    "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
-    true,
+    "incomplete",
+    "PDF text coverage is incomplete; some pages may not be searchable.",
+    textCoverage({ pdf_page_coverage_partial: true }),
   ],
-])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
-  const coverage = textCoverage({
-    pdfs_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 2,
-    pages_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 3,
-    pdf_page_coverage_partial: kind === "partial" || kind === "incomplete",
-    pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
-  });
+  ["failure", "PDF text coverage is unavailable.", null],
+  [
+    "tagged",
+    "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
+    textCoverage({ pdfs_without_text: 2, pages_without_text: 3 }),
+  ],
+] as const)("shows %s PDF coverage", async (kind, message, coverage) => {
   const { fetchMock } = renderEmptySearch(async () =>
-    kind === "failure" ? new Response("{}", { status: 500 }) : json(coverage),
+    coverage === null ? new Response("{}", { status: 500 }) : json(coverage),
   );
-  if (tagged) {
+  if (kind === "tagged") {
     await screen.findAllByText("report.txt");
     await fireEvent.click(
       screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
@@ -2152,7 +2153,7 @@ it.each([
   expect(await screen.findByText(message)).toBeTruthy();
   if (kind !== "failure")
     expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
-  if (tagged) {
+  if (kind === "tagged") {
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
       .find((url) => url.startsWith("/api/v1/search/text-coverage"));
