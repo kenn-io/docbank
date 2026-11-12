@@ -335,7 +335,7 @@ func TestTaxMutationMaintenanceIsDefinite(t *testing.T) {
 		t.Cleanup(failure.Close)
 		_, err = New(failure.URL, "").CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
 		require.Error(t, err)
-		assert.NotErrorIs(t, err, ErrMaintenanceBusy)
+		require.NotErrorIs(t, err, ErrMaintenanceBusy)
 		assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", status))
 		assert.Contains(t, err.Error(), "may have been applied")
 		assert.NotContains(t, err.Error(), "private-synthetic-value")

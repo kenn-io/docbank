@@ -27,7 +27,6 @@ func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 		require.ErrorAs(t, taxRouteError(slog.Default(), field), &problem)
 		assert.NotContains(t, problem.Detail, "private-synthetic-value")
 	}
-
 }
 
 func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
