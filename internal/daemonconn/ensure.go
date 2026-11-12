@@ -478,7 +478,7 @@ func RestartWeb(ctx context.Context, root, token string) (*kitdaemon.RuntimeReco
 			return err
 		}
 		if !ok || token == "" || rec.Metadata[metaShutdownToken] != token {
-			return nil
+			return errors.New("requesting daemon is no longer running")
 		}
 		if err := stopRecord(ctx, rec); err != nil {
 			return err

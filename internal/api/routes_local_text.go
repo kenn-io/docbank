@@ -73,7 +73,7 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 				return nil, NewError(http.StatusForbidden, "forbidden", "A browser session is required")
 			}
 			if d.RestartDaemon == nil {
-				return nil, NewError(http.StatusConflict, "restart_unavailable", "Restart Docbank where it runs")
+				return nil, NewError(http.StatusConflict, "restart_unavailable", "If Docbank runs in a terminal, press Ctrl+C and start Docbank again. Otherwise, ask its operator to restart it.")
 			}
 			if err := d.RestartDaemon(ctx, input.Origin == strings.TrimSuffix(d.WebURL, "/")); err != nil {
 				return nil, NewError(http.StatusInternalServerError, "restart_failed", err.Error())

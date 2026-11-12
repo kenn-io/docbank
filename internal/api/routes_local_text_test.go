@@ -124,6 +124,7 @@ func TestRestartDaemonBrowserSession(t *testing.T) {
 	require.Contains(t, body, `"restart_available":false`)
 	response, body = do(t, tsUnavailable, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "press Ctrl+C and start Docbank again")
 }
 
 func TestRestartDaemonPublicOrigin(t *testing.T) {

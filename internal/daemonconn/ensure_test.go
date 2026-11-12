@@ -861,6 +861,12 @@ func TestWaitDeadWaitsOutItsBudgetForALiveProcess(t *testing.T) {
 	})
 }
 
+func TestRestartWebReportsMissingDaemon(t *testing.T) {
+	rec, err := RestartWeb(t.Context(), t.TempDir(), "old-token")
+	assert.Nil(t, rec)
+	require.ErrorContains(t, err, "requesting daemon is no longer running")
+}
+
 func TestRestartPreservesLifetime(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
