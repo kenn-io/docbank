@@ -130,8 +130,7 @@ it("refreshes observations and locks an unknown selection result", async () => {
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockRejectedValueOnce(new TypeError("Synthetic response loss"));
-  const onunknown = vi.fn();
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onunknown }));
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
   await chooseReview();
   await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
   await screen.findByText(
@@ -142,7 +141,6 @@ it("refreshes observations and locks an unknown selection result", async () => {
   expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
   expect(screen.getByRole("button", { name: "Check tag results" })).toBeTruthy();
   expect(fetch).toHaveBeenCalledOnce();
-  expect(onunknown).toHaveBeenCalledOnce();
 });
 
 it("reports an expired session while checking", async () => {
@@ -240,6 +238,7 @@ it.each([true, false])(
         if (writes.length === 1) throw new TypeError("Lost response");
         return Response.json(await receiptFor(request));
       }
+      if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
       if (url.includes("/tags?"))
         return Response.json({
           items: assign === writes.length > 1 ? catalog : [],
@@ -263,7 +262,7 @@ it.each([true, false])(
     await fireEvent.click(screen.getByText("Review documents"));
     expect(screen.getByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeTruthy();
     await fireEvent.click(retry);
-    await screen.findByText("1 couldn't be checked and are left out.");
+    await screen.findByText("1 matched · 0 remaining · 1 couldn't be checked");
     expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
     expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
@@ -318,6 +317,7 @@ it.each(["unknown", "rejected", "stale"])(
           { status: 409 },
         );
       }
+      if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
       if (url.includes("/tags?"))
         return Response.json({
           items: applied ? catalog : [],
@@ -349,10 +349,12 @@ it.each(["unknown", "rejected", "stale"])(
       );
       await fireEvent.click(
         await screen.findByRole("button", {
-          name: outcome === "unknown" ? "Check tag results" : "Check again",
+          name: "Check again",
         }),
       );
-      await screen.findByText(outcome === "unknown" ? /1 of 2 documents/ : /0 of 2 documents/);
+      await screen.findByText(
+        outcome === "unknown" ? /1 matched · 0 remaining/ : /0 matched · 1 remaining/,
+      );
     }
   },
 );
@@ -362,6 +364,7 @@ it("pages checked documents and resets to the first page on another check", asyn
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (init?.method === "POST") throw new TypeError("Lost response");
     const url = String(input);
+    if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
     if (url.includes("/tags?"))
       return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
     const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
@@ -379,4 +382,81 @@ it("pages checked documents and resets to the first page on another check", asyn
   expect(screen.getByText("/File 51")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
   await screen.findByText("1–50 of 51");
+});
+
+it("rechecks the entire selection after a confirmed retry", async () => {
+  const writes: BatchTagRequest[] = [];
+  const selected = [1, 2, 3].map((node_id) => ({ node_id, revision: 1 }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST") {
+      const request = JSON.parse(String(init.body)) as BatchTagRequest;
+      writes.push(request);
+      if (writes.length === 1) throw new TypeError("Lost response");
+      return Response.json(await receiptFor(request));
+    }
+    if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    if (id === 3) throw new TypeError("unavailable");
+    if (url.includes("/tags?")) {
+      const assigned = writes.length === 1 ? id === 1 : id === 2;
+      return Response.json({
+        items: assigned ? catalog : [],
+        total: Number(assigned),
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    return Response.json({
+      id,
+      name: `Document ${id}`,
+      path: `/Document ${id}`,
+      revision: 10 + id,
+    });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 3, targets: selected }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
+  await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
+  expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
+  await fireEvent.click(screen.getByText("Review documents"));
+  expect(screen.getByText("/Document 1").parentElement?.textContent).toContain("Missing “Review”");
+  expect(screen.getByText("Document 3").parentElement?.textContent).toContain("Couldn't check");
+});
+
+it.each([false, true])("preserves a deleted tag error (after check: %s)", async (afterCheck) => {
+  let writes = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST") {
+      writes++;
+      if (writes === 1) throw new TypeError("Lost response");
+      return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
+    }
+    if (url.endsWith(`/tags/${catalog[0].id}`)) {
+      if (!afterCheck || writes > 1)
+        return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
+      return Response.json(catalog[0]);
+    }
+    if (url.includes("/tags?"))
+      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    return Response.json({ id, name: `Document ${id}`, revision: 5 });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  if (afterCheck) {
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Add “Review” to 2 documents" }),
+    );
+    await screen.findByText("Tag was deleted");
+    await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+  }
+  await screen.findByText("Tag was deleted");
+  expect(screen.queryByRole("button", { name: /Add “Review”/ })).toBeNull();
+  expect(writes).toBe(afterCheck ? 2 : 1);
 });

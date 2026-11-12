@@ -1382,19 +1382,29 @@ it("refreshes inspected tags after closing an uncertain selection change", async
     assignment_count: 4,
   };
   let changed = false;
+  let inspectorFailed = false;
   const json = (value: unknown) => Response.json(value);
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input);
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
     if (url === "/api/v1/nodes/3")
       return json(selectionNode(3, "readme.txt", "file", 1, changed ? 2 : 1));
-    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0")
+    if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
+      if (!inspectorFailed) {
+        inspectorFailed = true;
+        return Response.json({ detail: "Inspector unavailable" }, { status: 503 });
+      }
       return json({ items: changed ? [tag] : [], total: changed ? 1 : 0, limit: 1000, offset: 0 });
+    }
+    if (changed && url.includes("/children?"))
+      return Response.json({ detail: "Folder unavailable" }, { status: 503 });
     if (url === "/api/v1/batch/tags") return new Response("unavailable", { status: 503 });
     return backend(input, init);
   });
   render(App);
   await fireEvent.click(await screen.findByRole("cell", { name: "readme.txt" }));
   await screen.findByRole("region", { name: "Verified content of readme.txt" });
+  await screen.findByText("Inspector unavailable");
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
   await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
@@ -1409,6 +1419,7 @@ it("refreshes inspected tags after closing an uncertain selection change", async
   await waitFor(() =>
     expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("tax"),
   );
+  expect(screen.queryByText("Inspector unavailable")).toBeNull();
 });
 
 it("uses refreshed live metadata for the selected row and tag actions", async () => {

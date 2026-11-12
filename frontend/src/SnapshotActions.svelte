@@ -36,10 +36,9 @@
     preparing?: boolean;
     onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
-    onunknown?: () => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
-    onclose: () => void;
+    onclose: (recovered: boolean) => void;
     onauthfailure: (cause: unknown) => void;
     errorMessage?: string;
   }
@@ -54,7 +53,6 @@
     preparing = false,
     onstart,
     onchanged,
-    onunknown,
     oncreated,
     onimport,
     onclose,
@@ -71,7 +69,8 @@
   let checking = $state(false);
   let checked = $state(0);
   let results = $state<TagResult[]>();
-  let retryResults: TagResult[] | undefined;
+  let checkedOnce = $state(false);
+  let tagMissing = $state(false);
   let checkController: AbortController | undefined;
   let offset = $state(0);
   const remaining = $derived(results?.filter((row) => row.status === "remaining") ?? []);
@@ -81,17 +80,13 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      if (retryResults?.some((row) => row.status === "unavailable")) {
-        results = retryResults.map((row) =>
-          row.status === "remaining" ? { ...row, status: "matched" } : row,
-        );
-      } else receipt = confirmed;
-      retryResults = undefined;
-      onchanged?.(confirmed);
+      if (!recovering) {
+        receipt = confirmed;
+        onchanged?.(confirmed);
+      }
     },
     onunknown: () => {
       recovering = true;
-      onunknown?.();
     },
     unknownMessage:
       "Docbank couldn't confirm the tag change. Check the documents' tags before trying again.",
@@ -143,13 +138,14 @@
   async function check(): Promise<void> {
     if (!recovering || !request || checking || applying) return;
     checking = true;
+    checkedOnce = true;
     checked = 0;
     results = undefined;
     run.failure = "";
     const controller = new AbortController();
     checkController = controller;
     try {
-      const rows = await checkTagResults(
+      const result = await checkTagResults(
         session,
         request,
         (value) => {
@@ -158,27 +154,31 @@
         controller.signal,
       );
       if (!alive) return;
-      results = rows;
+      tag = result.tag;
+      results = result.rows;
       offset = 0;
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
-      else run.failure = cause instanceof Error ? cause.message : String(cause);
+      else if (cause instanceof APIError && cause.status === 404) {
+        tagMissing = true;
+        run.failure = cause.message;
+      } else run.failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (alive) checking = false;
     }
   }
 
-  function retry(): void {
+  async function retry(): Promise<void> {
     if (!request || !remaining.length || busy) return;
     const nodes = remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! }));
-    retryResults = results;
     results = undefined;
-    void run.submit({
+    const outcome = await run.submit({
       ...request,
       operation_id: randomUUID(),
       nodes,
     });
+    if (alive && outcome.kind === "confirmed") await check();
   }
 
   async function importFile(event: Event): Promise<void> {
@@ -203,7 +203,7 @@
 
   function close(): void {
     if (applying) return;
-    onclose();
+    onclose(recovering);
   }
 </script>
 
@@ -257,30 +257,10 @@
         )}
       </p>
     {:else if results && tag}
-      <p class="consequence">
-        {#if results.length === 1 && unavailable === 0}
-          The document {remaining.length === 0
-            ? assign
-              ? `has “${tag?.name}”`
-              : `doesn't have “${tag?.name}”`
-            : assign
-              ? `doesn't have “${tag?.name}” yet`
-              : `still has “${tag?.name}”`}.
-        {:else if remaining.length === 0 && unavailable === 0}
-          {assign
-            ? `All ${documentCount(results.length)} have “${tag?.name}”.`
-            : `None of the ${documentCount(results.length)} have “${tag?.name}”.`}
-        {:else}
-          {matched} of {documentCount(results.length)}
-          {assign
-            ? `${matched === 1 ? "has" : "have"} “${tag?.name}”`
-            : `${matched === 1 ? "doesn't" : "don't"} have “${tag?.name}”`}. {remaining.length} still
-          need the change.
-        {/if}
+      <p class="consequence">Last check</p>
+      <p class="status">
+        {matched} matched · {remaining.length} remaining · {unavailable} couldn't be checked
       </p>
-      {#if unavailable}<p class="status">
-          {unavailable} couldn't be checked and are left out.
-        </p>{/if}
     {:else if !failure}
       <p class="consequence" class:pending={!tag}>{consequence}</p>
     {/if}
@@ -342,7 +322,7 @@
       </span>
     {/if}
     {#if receipt}
-      <Button tone="info" surface="solid" onclick={onclose}>Done</Button>
+      <Button tone="info" surface="solid" onclick={close}>Done</Button>
     {:else if recovering && request}
       {#if results}<span class="footer-start"
           ><Button size="sm" surface="soft" disabled={busy} onclick={() => void check()}
@@ -357,12 +337,12 @@
           >{assign ? "Add" : "Remove"} “{tag?.name}” {assign ? "to" : "from"}
           {documentCount(remaining.length)}</Button
         >
-      {:else if !results}
+      {:else if !results && !tagMissing}
         <Button
           tone="info"
           surface="solid"
           disabled={checking || applying}
-          onclick={() => void check()}>{!run.unknown ? "Check again" : "Check tag results"}</Button
+          onclick={() => void check()}>{checkedOnce ? "Check again" : "Check tag results"}</Button
         >
       {/if}
     {:else if stale}

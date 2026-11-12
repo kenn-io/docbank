@@ -181,7 +181,7 @@ export async function runBatchTagChange(
     return {
       kind: "rejected",
       cause,
-      stale: cause.code === "stale_revision" || cause.code === "not_found",
+      stale: cause.code === "stale_revision",
     };
   }
 }

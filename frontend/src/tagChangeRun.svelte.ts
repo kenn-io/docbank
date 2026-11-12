@@ -1,4 +1,9 @@
-import { runBatchTagChange, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
+import {
+  runBatchTagChange,
+  type BatchTagOutcome,
+  type BatchTagReceipt,
+  type BatchTagRequest,
+} from "./batch-tags.js";
 
 export interface TagChangeRunOptions {
   session: string;
@@ -16,7 +21,6 @@ export interface TagChangeRunOptions {
 export class TagChangeRun {
   pending = $state(false);
   stale = $state(false);
-  unknown = $state(false);
   failure = $state("");
   private alive = true;
 
@@ -26,25 +30,23 @@ export class TagChangeRun {
     this.alive = false;
   }
 
-  async submit(request: BatchTagRequest): Promise<void> {
+  async submit(request: BatchTagRequest): Promise<BatchTagOutcome> {
     this.pending = true;
     this.failure = "";
-    this.unknown = false;
     const outcome = await runBatchTagChange(this.options.session, request);
-    if (!this.alive) return;
+    if (!this.alive) return outcome;
     this.pending = false;
     if (outcome.kind === "confirmed") {
       this.options.onconfirmed(outcome.receipt);
-      return;
+      return outcome;
     }
     if (outcome.kind === "unknown") {
       this.stale = true;
-      this.unknown = true;
       this.options.onunknown?.();
     }
     if (outcome.kind === "auth") {
       this.options.onauthfailure(outcome.cause);
-      return;
+      return outcome;
     }
     if (outcome.kind === "rejected") this.stale = outcome.stale;
     const text = outcome.cause instanceof Error ? outcome.cause.message : String(outcome.cause);
@@ -52,5 +54,6 @@ export class TagChangeRun {
       (outcome.kind === "unknown" ? this.options.unknownMessage : undefined) ??
       (outcome.kind === "rejected" && outcome.stale ? this.options.staleMessage : undefined) ??
       text;
+    return outcome;
   }
 }

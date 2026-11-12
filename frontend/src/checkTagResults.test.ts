@@ -18,6 +18,8 @@ afterEach(() => vi.restoreAllMocks());
 it("keeps matched and unavailable documents", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url.endsWith(`/tags/${request.tag_id}`))
+      return Response.json({ id: request.tag_id, name: "Review" });
     if (url.includes("/nodes/2"))
       return Response.json({
         id: 2,
@@ -32,17 +34,23 @@ it("keeps matched and unavailable documents", async () => {
     return Response.json({ id: 1, name: "Live", path: "/Live", revision: 4 });
   });
   const progress: number[] = [];
-  expect(await checkTagResults("session", request, (count) => progress.push(count))).toEqual([
-    { node_id: 1, name: "/Live", revision: 4, status: "matched" },
-    { node_id: 2, name: "Document 2", status: "unavailable" },
-    { node_id: 3, name: "Document 3", status: "unavailable" },
-  ]);
+  expect((await checkTagResults("session", request, (count) => progress.push(count))).rows).toEqual(
+    [
+      { node_id: 1, name: "/Live", revision: 4, status: "matched" },
+      { node_id: 2, name: "Document 2", status: "unavailable" },
+      { node_id: 3, name: "Document 3", status: "unavailable" },
+    ],
+  );
   expect(progress).toEqual([1, 2, 3]);
 });
 
 it("retains all documents when reads fail", async () => {
-  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
-  expect(await checkTagResults("session", request, () => {})).toEqual(
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).endsWith(`/tags/${request.tag_id}`))
+      return Response.json({ id: request.tag_id, name: "Review" });
+    throw new TypeError("offline");
+  });
+  expect((await checkTagResults("session", request, () => {})).rows).toEqual(
     request.nodes.map(({ node_id }) => ({
       node_id,
       name: `Document ${node_id}`,
@@ -62,26 +70,29 @@ it("propagates authentication failure", async () => {
 
 it("stops pending reads and schedules no more documents when canceled", async () => {
   const controller = new AbortController();
-  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(
-    (_input, init) =>
-      new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
-      }),
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
+    String(input).endsWith(`/tags/${request.tag_id}`)
+      ? Promise.resolve(Response.json({ id: request.tag_id, name: "Review" }))
+      : new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
   );
   const many = {
     ...request,
     nodes: Array.from({ length: 20 }, (_, i) => ({ node_id: i + 1, revision: 1 })),
   };
   const checking = checkTagResults("session", many, () => {}, controller.signal);
-  expect(fetch).toHaveBeenCalledTimes(8);
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(9));
   controller.abort();
   await expect(checking).rejects.toMatchObject({ name: "AbortError" });
-  expect(fetch).toHaveBeenCalledTimes(8);
+  expect(fetch).toHaveBeenCalledTimes(9);
 });
 
 it("orders remaining documents before matches", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    if (url.endsWith(`/tags/${request.tag_id}`))
+      return Response.json({ id: request.tag_id, name: "Review" });
     const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
     if (url.includes("/tags?")) {
       const items = id === 1 ? [{ id: request.tag_id }] : [];
@@ -89,7 +100,7 @@ it("orders remaining documents before matches", async () => {
     }
     return Response.json({ id, name: `File ${id}`, revision: id + 1 });
   });
-  const rows = await checkTagResults("session", request, () => {});
+  const { rows } = await checkTagResults("session", request, () => {});
   expect(rows.map((row) => [row.node_id, row.status, row.revision])).toEqual([
     [2, "remaining", 3],
     [3, "remaining", 4],

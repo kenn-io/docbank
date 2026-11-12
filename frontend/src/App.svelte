@@ -2901,6 +2901,7 @@
       if (!inspectorRequestCurrent(request, tagGeneration, session, nodeID, sourceKey)) return;
       selectedLiveNode = listing.node;
       selectedLiveSourceKey = sourceKey ?? "";
+      selectedTagsError = "";
       selectedTags = sortTags(listing.items);
       selectedTagsTotal = listing.total;
       const source = selectedSource;
@@ -3355,11 +3356,10 @@
     refreshDocumentsView();
   }
 
-  let snapshotTagRefreshPending = false;
-  let batchTagRefreshPending = false;
-  function handleUnknownTagging(): void {
-    batchTagRefreshPending = true;
+  function refreshAfterTagRecovery(): void {
     refreshCurrentView();
+    void loadTagCatalog(false, true);
+    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -5537,15 +5537,10 @@
         catalog={tagCatalog}
         disabled={loading}
         onchanged={handleBatchTagsChanged}
-        onunknown={handleUnknownTagging}
         oncreated={() => void loadTagCatalog(false, true)}
-        onclose={() => {
+        onclose={(recovered) => {
           batchTagsTargets = null;
-          if (batchTagRefreshPending) {
-            batchTagRefreshPending = false;
-            refreshCurrentView();
-            if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
-          }
+          if (recovered) refreshAfterTagRecovery();
         }}
         onauthfailure={handleFailure}
       />
@@ -5564,15 +5559,11 @@
         errorMessage={snapshot.actionError}
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
-        onunknown={() => (snapshotTagRefreshPending = true)}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onclose={() => {
+        onclose={(recovered) => {
           snapshot.cancelAction();
-          if (snapshotTagRefreshPending) {
-            snapshotTagRefreshPending = false;
-            refreshCurrentView();
-          }
+          if (recovered) refreshAfterTagRecovery();
         }}
         onauthfailure={handleFailure}
       />

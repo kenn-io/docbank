@@ -566,6 +566,7 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url.includes("/children?"))
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+    if (url === `/api/v1/tags/${tag.id}`) return json(tag);
     if (url === "/api/v1/tags?limit=1000&offset=0")
       return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/queries/parse")
@@ -665,6 +666,7 @@ it.each([false, true])(
       if (url === "/api/v1/path?path=%2F") return json(root);
       if (url.includes("/children?"))
         return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
+      if (url === `/api/v1/tags/${tag.id}`) return json(tag);
       if (url === "/api/v1/tags?limit=1000&offset=0")
         return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
       if (url === "/api/v1/queries/parse")

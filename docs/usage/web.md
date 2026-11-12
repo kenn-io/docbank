@@ -382,7 +382,7 @@ create the tag, then apply it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
 If the result is uncertain, choose **Check tag results** to inspect each selected document.
-Review the list, then choose whether to retry documents that still need the change. The retry uses their current revisions and leaves out documents that couldn't be checked.
+Review current membership, then choose whether to retry readable documents that still need the change. The retry uses their current revisions. Docbank checks the full selection again after a confirmed retry, including documents it couldn't read earlier.
 If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
 After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
@@ -403,7 +403,7 @@ that already had the tag before an addition.
 
 **Tag selected…** applies one atomic, revision-checked change to at most 1,000
 documents and reports how many changed. If the result is uncertain, choose **Check tag results** to inspect the selected documents.
-Review the list, then choose whether to retry documents that still need the change. The retry uses their current revisions and leaves out documents that couldn't be checked.
+Review current membership, then choose whether to retry readable documents that still need the change. The retry uses their current revisions. Docbank checks the full selection again after a confirmed retry, including documents it couldn't read earlier.
 Closing recovery reruns the snapshot query. If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
 
 **Tag all…** → **Continue** captures every result, up to 250,000 documents,
