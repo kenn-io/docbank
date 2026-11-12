@@ -54,15 +54,15 @@ Choose **Photos** on a candidate to load up to three linked-photo previews in th
 
 Previews crop the assigned face from its exact current source version, including a paired RAW with different framing. Replacing a source member removes its old face evidence from the chooser and person Library filter. When identity details distinguish the choices, **Whole photo** labels evidence without a face box. When details tie, only matching face crops appear; **Preview unavailable** means no assigned crop could be prepared.
 
-- Browser name search omits people whose only evidence is sensitive document actors, blind-copy actors, or blind-copy assertions, even with Hidden unlocked.
+- Browser name search omits people whose only evidence is sensitive document actors or blind-copy assertions, even with Hidden unlocked.
 - Browser typeahead hides people whose only evidence is in locked Hidden photos until you unlock Hidden.
 - Browser results require at least one of:
     - A retained depicted-photo assertion on a visible photo.
     - An active non-blind-copy operator assertion or suppression on a visible document. These names are searchable before document publication.
-    - A published non-sensitive, non-blind-copy document link.
+    - A published non-sensitive document link.
     - A manually created unlinked person, including imported people.
 - Clearing a face name retains its photo evidence. Browser search hides that person while its only depicted evidence is in locked Hidden photos and restores the same person after unlock.
-- Automatically provisioned exact-identifier people stay hidden while processing is pending or failed, until a visible assertion or non-sensitive, non-blind-copy published document link supports their name.
+- Automatically provisioned exact-identifier people stay hidden while processing is pending or failed, until a visible assertion or non-sensitive published document link supports their name.
 - Unlinked people with supplied identities remain searchable with blank identity labels.
 - When Hidden locks or expires, open name results, identity labels, and namesake previews clear.
 - API-key, CLI, and MCP name searches include all active people, including people whose only photo evidence is Hidden.
