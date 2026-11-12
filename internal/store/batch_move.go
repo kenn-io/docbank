@@ -69,6 +69,9 @@ func (s *Store) BatchMove(ctx context.Context, requests []BatchMoveRequest) ([]B
 		if err != nil {
 			return err
 		}
+		if err := s.addBatchMoveSubtreePaths(ctx, tx, &plan); err != nil {
+			return err
+		}
 		var audited *auditedBatchMoveSnapshot
 		if active {
 			audited, err = s.prepareAuditedBatchMove(ctx, tx, &plan)
@@ -369,6 +372,13 @@ func (s *Store) applyBatchMove(ctx context.Context, tx *sql.Tx, plan batchMovePl
 		}
 		if err := bumpRevisionTx(ctx, tx, id, plan.recordedAt); err != nil {
 			return err
+		}
+	}
+	for id, priorPath := range plan.priorPaths {
+		if priorPath != plan.finalPaths[id] {
+			if err := invalidateMovedNoteLimitTx(ctx, tx, id); err != nil {
+				return err
+			}
 		}
 	}
 	return recordVaultChangesTx(ctx, tx, "moved", sortedBatchMoveIDs(moved)...)

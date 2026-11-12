@@ -224,6 +224,13 @@ func noteLinkContextChanged(ctx context.Context, tx *sql.Tx, target NoteTarget) 
 	return false, rows.Err()
 }
 
+// A terminal limit has no links from which to detect a changed placement.
+func invalidateMovedNoteLimitTx(ctx context.Context, tx *sql.Tx, nodeID int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM note_parses WHERE state='limit'
+ AND version_id=(SELECT current_version_id FROM nodes WHERE id=$1)`, nodeID)
+	return err
+}
+
 // PruneNoteParse revalidates ownership inside the deletion transaction. A
 // restore or rename after discovery must not delete a newly valid projection.
 func (s *Store) PruneNoteParse(ctx context.Context, target NoteTarget) error {
@@ -516,7 +523,8 @@ func (s *Store) NoteByPath(ctx context.Context, notePath, recipe string) (NoteVi
 		if err != nil {
 			return err
 		}
-		view.Summary = NoteSummary{Path: canonical, NodeID: n.ID, ContentVersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size, ModifiedAt: n.ModifiedAt, Title: strings.TrimSuffix(n.Name, path.Ext(n.Name)), Tags: []string{}}
+		filenameTitle, _ := splitSuffix(n.Name)
+		view.Summary = NoteSummary{Path: canonical, NodeID: n.ID, ContentVersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size, ModifiedAt: n.ModifiedAt, Title: filenameTitle, Tags: []string{}}
 		view.State = "pending"
 		var raw *string
 		var title string
