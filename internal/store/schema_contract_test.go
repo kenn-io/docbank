@@ -52,7 +52,7 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 		}
 		version, err := strconv.Atoi(match[1])
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse schema contract version %s: %w", match[1], err)
 		}
 		records = append(records, schemaContract{Version: version, Digest: match[2]})
 	}
