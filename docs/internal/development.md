@@ -240,6 +240,27 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
+An unreleased `currentStorageSchemaVersion` needs a record. Its layout hash
+includes tables, views, triggers, and unique indexes. It excludes non-unique
+indexes and ignores SQL whitespace and comments while preserving token
+spellings. Run `go test -tags fts5 ./internal/store -run
+TestStorageSchemaVersionContract` and add a file under
+`internal/store/testdata/schema-contracts/`. Name the file
+`NNNNNN-<layout-sha256>-<summary-slug>.schema`. The test prints the version
+and layout hash. The summary slug has 1–48 characters: lowercase ASCII letters
+or digits, with words separated by single hyphens. The test also prints sorted
+`name digest` lines for non-unique indexes to put in the record. New indexes
+need another record with their lines. If you change or remove an index in your
+own unmerged record, remove the record, rerun the test, and add its replacement.
+If `main` already records the index, preserve its record and bump
+`currentStorageSchemaVersion`.
+If you change your own unmerged layout, replace its record with the newly named
+file. If `main` already records that version, preserve its record, remove your
+old record, bump `currentStorageSchemaVersion`, rerun the test against the
+combined layout, and add the new record.
+
+Keep the record after release; the unreleased-version test then skips it.
+
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
 `schema.sql` saved as `internal/store/testdata/schema-<tag>.sql` and registered
@@ -2249,8 +2270,9 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
-The exception is the `CI gate` job in `ci-pr.yml`, which only checks the CI
-run's result. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
+The exception is the `CI gate` job in `ci-pr.yml`, which checks the CI
+run's result and preserves schema records from the pull request or merge-group
+base. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
 it does not wait in the GitHub-hosted queue after CI finishes.
 
 Go test jobs run `go test` through gotestsum, which the module pins as a Go
