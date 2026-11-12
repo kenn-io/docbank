@@ -78,7 +78,7 @@ func requireDocumentDateIndex(ctx context.Context, q metadataQuerier) error {
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
 		LEFT JOIN document_event_attempts a ON a.content_version_id=cv.version_id
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
-		WHERE n.kind='file' AND NOT COALESCE(
+		WHERE n.kind='file' AND n.trashed_at IS NULL AND NOT COALESCE(
 			a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0) AND
 			(a.state IN ('failed','unavailable') OR `+currentDocumentDateHead+`), FALSE)
 	)`, state.InputEpoch).Scan(&pending)

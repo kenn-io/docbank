@@ -47,8 +47,8 @@ func whenFromClaim(event document.DocumentEventV1) WhenV1 {
 	}
 	w.ZoneState = string(event.TimezoneKind)
 	if event.UTCKey != "" {
-		// Stored events are decoded and validated before projection; UTCKey is
-		// recomputed by DecodeDocumentEventsV1 from its civil value.
+		// Stored events are decoded and validated before projection. IANA UTC keys
+		// are structurally validated and retained; other exact keys are recomputed.
 		w.State = "exact"
 		at, _ := time.Parse(time.RFC3339Nano, event.UTCKey)
 		w.At = at.UTC().Format(time.RFC3339Nano)

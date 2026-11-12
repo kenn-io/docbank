@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // Supply IANA data for embedded hosts without zoneinfo.
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"

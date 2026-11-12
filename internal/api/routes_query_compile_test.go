@@ -184,6 +184,56 @@ func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *tes
 	require.Equal(t, "UTC", run.Snapshot.Timezone)
 	require.False(t, run.Snapshot.TimezoneDefaulted)
 	require.Equal(t, saved.Fingerprint, run.Snapshot.QueryFingerprint)
+	require.Contains(t, string(saved.Payload), `"timezone":"UTC"`)
+	require.Equal(t, `"1"`, etag)
+	path := "/api/v1/saved-queries/" + saved.ID
+	patch := func(body, match string) (*http.Response, string) {
+		return rawJSONRequest(t, ts.URL, http.MethodPatch, path,
+			map[string]string{"X-Api-Key": testAPIKey, "If-Match": match}, body)
+	}
+	updatedInput := `{"syntax":"advanced","text":"date:2026-03-02"}`
+	response, payload = patch(`{"payload":`+updatedInput+`}`, etag)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"2"`, response.Header.Get("ETag"))
+	var updated api.SavedQuery
+	require.NoError(t, json.Unmarshal([]byte(payload), &updated))
+	require.EqualValues(t, 2, updated.Revision)
+	require.Contains(t, string(updated.Payload), `"timezone":"UTC"`)
+	response, payload = patch(`{"payload":`+updatedInput+`}`, `"2"`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"2"`, response.Header.Get("ETag"))
+	var noOp api.SavedQuery
+	require.NoError(t, json.Unmarshal([]byte(payload), &noOp))
+	require.Equal(t, updated, noOp)
+	response, payload = patch(`{"description":"No payload change"}`, `"2"`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"3"`, response.Header.Get("ETag"))
+	var descriptionOnly api.SavedQuery
+	require.NoError(t, json.Unmarshal([]byte(payload), &descriptionOnly))
+	require.Equal(t, updated.Payload, descriptionOnly.Payload)
+	explicit := `{"syntax":"advanced","text":"date:2026-03-03","timezone":"Asia/Singapore"}`
+	explicitSaved, _ := createSavedQuery(t, ts.URL, "Explicit date zone", explicit)
+	require.Contains(t, string(explicitSaved.Payload), `"timezone":"Asia/Singapore"`)
+	response, payload = patch(`{"payload":`+explicit+`}`, `"3"`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"4"`, response.Header.Get("ETag"))
+	require.NoError(t, json.Unmarshal([]byte(payload), &updated))
+	require.Contains(t, string(updated.Payload), `"timezone":"Asia/Singapore"`)
+	for _, tc := range []struct {
+		query, code string
+		status      int
+	}{
+		{`{"timezone":"Local"}`, "invalid_timezone", http.StatusBadRequest},
+		{`{"syntax":"unknown"}`, "invalid_saved_query", http.StatusUnprocessableEntity},
+	} {
+		response, payload = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
+			map[string]string{"X-Api-Key": testAPIKey}, `{"name":"Invalid","kind":"query","payload":`+tc.query+`}`)
+		require.Equal(t, tc.status, response.StatusCode, payload)
+		require.Equal(t, tc.code, decodeProblem(t, payload).Code)
+		response, payload = patch(`{"payload":`+tc.query+`}`, `"4"`)
+		require.Equal(t, tc.status, response.StatusCode, payload)
+		require.Equal(t, tc.code, decodeProblem(t, payload).Code)
+	}
 }
 
 func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) {

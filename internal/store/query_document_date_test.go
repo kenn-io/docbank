@@ -226,6 +226,14 @@ func TestDocumentDateSnapshotWaitsForIndex(t *testing.T) {
 	driveDocumentEventWorker(t, s)
 	_, err = service.Create(t.Context(), "owner", SnapshotRequest{Query: value})
 	require.NoError(t, err)
+	pending, err := s.CreateFile(t.Context(), s.RootID(), "trash-pending.txt", fakeHash("a9"), 1, "text/plain")
+	require.NoError(t, err)
+	_, err = service.Create(t.Context(), "owner", SnapshotRequest{Query: value})
+	require.ErrorIs(t, err, ErrDocumentDatesPending)
+	_, _, err = s.Trash(t.Context(), pending.ID, pending.Revision)
+	require.NoError(t, err)
+	_, err = service.Create(t.Context(), "owner", SnapshotRequest{Query: value})
+	require.NoError(t, err)
 }
 
 func TestNonDateSnapshotDoesNotReportDefaultedTimezone(t *testing.T) {

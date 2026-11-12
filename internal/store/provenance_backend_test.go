@@ -95,24 +95,29 @@ func checkProvenanceInvalidationPostgres(t *testing.T) {
 	require.NoError(t, err)
 	setup, owner := pgtest.NewDatabase(t)
 	target := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
+	_, err = setup.ExecContext(ctx, `UPDATE documents.vault_metadata SET vault_uid=$1`, source.vaultID)
+	require.NoError(t, err)
+	target.vaultID = source.vaultID
 	tables := append(append([]string{}, postgresEnrollmentCatalogs...), "blob_locations", "blob_packs", "blob_pack_entries",
-		"document_event_state", "document_event_generations", "document_event_heads", "document_events", "document_event_actors", "document_event_primaries", "document_event_dirty")
+		"document_event_state", "document_event_generations", "document_event_heads", "document_events", "document_date_keys", "document_event_actors", "document_event_primaries", "document_event_dirty")
 	copyStoreCatalogFixture(t, source, setup, tables)
 	target.primaryStoreID = source.primaryStoreID
-	type projection struct{ EventHeads, Generations, Events, Actors, Primaries, PeopleHeads, People, EventEpoch, PeopleEpoch, Dirty, Facts int }
+	type projection struct{ EventHeads, Generations, Events, DateKeys, Actors, Primaries, PeopleHeads, People, EventEpoch, PeopleEpoch, Dirty, Facts int }
 	read := func(s *Store) projection {
 		var p projection
 		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT
    (SELECT count(*) FROM document_event_heads),(SELECT count(*) FROM document_event_generations),
-   (SELECT count(*) FROM document_events),(SELECT count(*) FROM document_event_actors),(SELECT count(*) FROM document_event_primaries),
+   (SELECT count(*) FROM document_events),(SELECT count(*) FROM document_date_keys),(SELECT count(*) FROM document_event_actors),(SELECT count(*) FROM document_event_primaries),
    (SELECT count(*) FROM document_people_heads),(SELECT count(*) FROM document_people),
    (SELECT publication_epoch FROM document_event_state),(SELECT publication_epoch FROM document_people_state),
    (SELECT revision FROM document_event_dirty WHERE content_version_id=$1),(SELECT count(*) FROM provenance)`, version.ID).
-			Scan(&p.EventHeads, &p.Generations, &p.Events, &p.Actors, &p.Primaries, &p.PeopleHeads, &p.People, &p.EventEpoch, &p.PeopleEpoch, &p.Dirty, &p.Facts))
+			Scan(&p.EventHeads, &p.Generations, &p.Events, &p.DateKeys, &p.Actors, &p.Primaries, &p.PeopleHeads, &p.People, &p.EventEpoch, &p.PeopleEpoch, &p.Dirty, &p.Facts))
 		return p
 	}
 	before := read(source)
 	require.Equal(t, 1, before.EventHeads)
+	require.Positive(t, before.DateKeys)
+	checkRetentionMetadata(t, target)
 	require.Equal(t, 1, before.PeopleHeads)
 	require.Positive(t, before.People)
 	require.Equal(t, before, read(target))
@@ -133,6 +138,7 @@ func checkProvenanceInvalidationPostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorContains(t, observe(target), "permission denied")
 	require.Equal(t, before, read(target), "failure must roll back evidence, projections and their epochs together")
+	checkRetentionMetadata(t, target)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON documents.document_event_dirty TO "+quotedRole)
 	require.NoError(t, err)
 	require.NoError(t, observe(source))
@@ -141,6 +147,7 @@ func checkProvenanceInvalidationPostgres(t *testing.T) {
 	require.Equal(t, 0, after.EventHeads)
 	require.Equal(t, 0, after.Generations)
 	require.Equal(t, 0, after.Events)
+	require.Equal(t, 0, after.DateKeys)
 	require.Equal(t, 0, after.Actors)
 	require.Equal(t, 0, after.Primaries)
 	require.Equal(t, 0, after.PeopleHeads)
@@ -150,6 +157,8 @@ func checkProvenanceInvalidationPostgres(t *testing.T) {
 	require.Equal(t, before.Dirty+1, after.Dirty)
 	require.Equal(t, before.Facts+1, after.Facts)
 	require.Equal(t, after, read(target))
+	checkRetentionMetadata(t, source)
+	checkRetentionMetadata(t, target)
 }
 
 func checkImportReadSnapshotsPostgres(t *testing.T) {
