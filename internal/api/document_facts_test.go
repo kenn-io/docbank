@@ -66,13 +66,13 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 
 func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	t.Parallel()
-	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
+	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
 	f.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
 	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
 	safeFacts.Edges = f.Edges[:2]
-	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Private Name", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, OccurrenceLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
+	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, OccurrenceLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
 	safe := versionPeopleAPI(safeFacts, true, "")
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
 		t.Fatalf("safe: %+v", safe)
