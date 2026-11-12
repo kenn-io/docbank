@@ -35,13 +35,14 @@ type Server struct {
 // ServerOptions fixes process-wide capabilities before the MCP server starts.
 // The catalog never changes during the lifetime of a server.
 type ServerOptions struct {
-	AllowProcessing    bool
-	AllowPackageWrites bool
-	AllowPhotoEdits    bool
-	AllowExportWrites  bool
-	AllowReportWrites  bool
-	AllowKataWrites    bool
-	Logger             *slog.Logger
+	AllowProcessing     bool
+	AllowPackageWrites  bool
+	AllowPhotoEdits     bool
+	AllowExportWrites   bool
+	AllowReportWrites   bool
+	AllowKataWrites     bool
+	AllowContractWrites bool
+	Logger              *slog.Logger
 }
 
 // NewServer creates an exact-version Docbank MCP server.
@@ -144,6 +145,9 @@ func privateResultError(logger *slog.Logger, method string, request sdkmcp.Reque
 ) (sdkmcp.Result, error) {
 	if call, ok := request.(*sdkmcp.CallToolRequest); ok && call.Params != nil {
 		failure = reportResultError(call.Params.Name, failure)
+		if contractWriteTool(call.Params.Name) {
+			failure = sanitizedDaemonError(errContractOutcomeUnknown, failure)
+		}
 	}
 	logOperationError(logger, method, failure)
 	if domain, known := domainToolError(failure); known {

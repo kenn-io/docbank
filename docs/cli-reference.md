@@ -1492,7 +1492,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ```text
 docbank mcp [--transport stdio|http] [--listen <ip:port>] [--allowed-host <host[:port]>]
             [--allow-processing] [--allow-package-writes] [--allow-export-writes]
-            [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes]
+            [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes] [--allow-contract-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1542,7 +1542,7 @@ HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 ### docbank mcp config
 
 ```text
-docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes]
+docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes] [--allow-contract-writes]
 ```
 
 Prints Claude Code JSON for `.mcp.json` or Codex TOML for

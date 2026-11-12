@@ -18,8 +18,8 @@ func TestMCPConfigStdio(t *testing.T) {
 	require.NoError(t, err)
 	root = filepath.Join(root, "vault with spaces")
 	t.Setenv("DOCBANK_HOME", root)
-	flags := []string{"--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}
-	want := []any{"mcp", "--transport", "stdio", "--allow-export-writes", "--allow-kata-writes", "--allow-package-writes", "--allow-photo-edits", "--allow-processing", "--allow-report-writes"}
+	flags := []string{"--allow-contract-writes", "--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}
+	want := []any{"mcp", "--transport", "stdio", "--allow-contract-writes", "--allow-export-writes", "--allow-kata-writes", "--allow-package-writes", "--allow-photo-edits", "--allow-processing", "--allow-report-writes"}
 	for _, test := range []struct {
 		client string
 		flags  []string
@@ -94,6 +94,7 @@ func TestMCPConfigRejectsInvalidOptions(t *testing.T) {
 		{"--client", "claude"}, {"--client", "codex", "--transport", "invalid"},
 		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:0"},
 		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341", "--allow-processing"},
+		{"--client", "codex", "--transport", "http", "--listen", "127.0.0.1:7341", "--allow-contract-writes"},
 	} {
 		_, err := runCLI(t, append([]string{"mcp", "config"}, args...)...)
 		require.Error(t, err)

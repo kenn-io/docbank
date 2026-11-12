@@ -107,14 +107,16 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                                         string
-		processing, packages, exports, reports, kata bool
+		args                                                    string
+		processing, packages, exports, reports, kata, contracts bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
 		{args: "mcp --allow-export-writes", exports: true},
 		{args: "mcp --allow-report-writes", reports: true},
 		{args: "mcp --allow-kata-writes", kata: true},
+		{args: "mcp --allow-contract-writes", contracts: true},
+		{args: "mcp --allow-contract-writes --allow-kata-writes", contracts: true, kata: true},
 		{args: "mcp --allow-package-writes", packages: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
@@ -147,6 +149,11 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			names := make(map[string]bool, len(catalog.Result.Tools))
 			for _, tool := range catalog.Result.Tools {
 				names[tool.Name] = true
+			}
+			assert.True(t, names["list_contracts"])
+			assert.True(t, names["get_contract"])
+			for _, name := range []string{"create_contract", "update_contract", "link_contract_document"} {
+				assert.Equal(t, test.contracts, names[name], name)
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
@@ -319,4 +326,13 @@ func TestMCPBearerCanStartFromMountedSecretWithoutTOML(t *testing.T) {
 	_, _, err = loadMCPHTTPConfig(root)
 	require.ErrorContains(t, err, "cannot both")
 	require.NotContains(t, err.Error(), "conflicting-key")
+}
+
+func TestMCPContractWriteFlagHelp(t *testing.T) {
+	for _, args := range [][]string{{"mcp", "--help"}, {"mcp", "config", "--help"}} {
+		output, err := runCLI(t, args...)
+		require.NoError(t, err)
+		assert.Contains(t, output, "--allow-contract-writes")
+		assert.Contains(t, output, "allow contract creation, field edits, and exact document links")
+	}
 }

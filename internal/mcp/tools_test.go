@@ -84,12 +84,13 @@ func TestToolCatalogBudget(t *testing.T) {
 		{name: "default", ceiling: defaultToolCatalogBudget},
 		{name: "all writes", ceiling: allWriteToolCatalogBudget, options: ServerOptions{
 			AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true,
-			AllowExportWrites: true, AllowReportWrites: true, AllowKataWrites: true,
+			AllowExportWrites: true, AllowReportWrites: true, AllowKataWrites: true, AllowContractWrites: true,
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := NewServerWithOptions(tc.options)
 			result := listCatalogThroughClient(t, server)
+			t.Logf("catalog %s: %d bytes (budget %d)", tc.name, len(catalogJSON(t, result)), tc.ceiling)
 			require.Len(t, catalogJSON(t, result), len(catalogWireJSON(t, server)))
 			require.NoError(t, toolCatalogBudgetError(t, result, tc.ceiling))
 		})
@@ -143,6 +144,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		"lookup_bates_label",
 		"list_bates_namespaces", "preview_bates_stamp", "get_bates_allocation",
 		"list_bates_exports", "get_bates_export", "find_bates_exports", "get_photo_asset", "get_photo_faces",
+		"list_contracts", "get_contract",
 	}
 	require.Len(t, tools, len(wantNames))
 	for index, tool := range tools {

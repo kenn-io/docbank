@@ -124,3 +124,5 @@ with `role` and optional `content_version_id` query parameters and an `If-Match`
 revision. `GET /api/v1/nodes/{node_id}/contracts` lists linked contracts even
 when that node has been purged. Metadata backup retains links even when the
 existing backup rules omit their document bytes.
+
+Agents can browse contracts and, when enabled by the operator, edit them through [MCP](mcp.md#contracts-over-mcp).
