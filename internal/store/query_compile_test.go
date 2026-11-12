@@ -538,5 +538,7 @@ func TestCompilePhotoPickShorthandAndLiteralDocumentSearch(t *testing.T) {
 	documents := compile("pick", "advanced", false)
 	require.Equal(t, compile(`"pick"`, "advanced", false).predicate, documents.predicate)
 	simple := compile("pick", "simple", true)
+	// Advanced expressions pass through date-scope grouping; simple text does not.
+	simple.predicate.sql = "(" + simple.predicate.sql + ")"
 	require.Equal(t, compile(`"pick"*`, "advanced", true).predicate, simple.predicate)
 }

@@ -61,7 +61,10 @@ func TestTimelineTimezoneConfig(t *testing.T) {
 		t.Run(tc.zone, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "config.toml"), []byte("[web]\ntimeline_timezone = "+strconv.Quote(tc.zone)+"\n"), 0o600))
-			_, err := Load(root)
+			cfg, err := Load(root)
+			if err == nil {
+				err = cfg.Validate()
+			}
 			if tc.valid {
 				require.NoError(t, err)
 			} else {

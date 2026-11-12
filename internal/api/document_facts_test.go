@@ -25,6 +25,7 @@ func TestWhenFieldTable(t *testing.T) {
 		{"missing offset zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "offset", OffsetSeconds: new(3600), UTCKey: "2026-03-10T08:12:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T08:12:00Z","zone_state":"unknown"}`},
 		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
 		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`},
+		{"month", document.DocumentEventV1{Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
