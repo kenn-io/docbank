@@ -395,17 +395,19 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
-// Match ServeMux: clean the escaped path before unescaping each segment.
+// Check both the original path and ServeMux-cleaned escaped path before unescaping segments.
 // Tax paths are recognized at the root and under the configured web base path.
 func isTaxLogPath(u *url.URL, basePath string) bool {
-	segments := strings.Split(path.Clean(u.EscapedPath()), "/")
-	for _, prefix := range []string{"", basePath} {
-		expected := append(strings.Split(prefix, "/"), "api", "v1", "tax")
-		if len(segments) >= len(expected) && slices.EqualFunc(segments[:len(expected)], expected, func(segment, want string) bool {
-			value, err := url.PathUnescape(segment)
-			return err == nil && value == want
-		}) {
-			return true
+	for _, candidate := range []string{u.EscapedPath(), path.Clean(u.EscapedPath())} {
+		segments := strings.FieldsFunc(candidate, func(r rune) bool { return r == '/' })
+		for _, prefix := range []string{"", basePath} {
+			expected := append(strings.FieldsFunc(prefix, func(r rune) bool { return r == '/' }), "api", "v1", "tax")
+			if len(segments) >= len(expected) && slices.EqualFunc(segments[:len(expected)], expected, func(segment, want string) bool {
+				value, err := url.PathUnescape(segment)
+				return err == nil && value == want
+			}) {
+				return true
+			}
 		}
 	}
 	return false

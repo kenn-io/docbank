@@ -118,6 +118,9 @@ func TestTaxHTTPRefusals(t *testing.T) {
 		assert.Equal(t, tc.status, resp.StatusCode, "%v %s", tc.patch, body)
 		assert.Contains(t, body, `"code":"`+tc.code+`"`, "%v", tc.patch)
 		assert.NotContains(t, body, sentinel)
+		if tc.status == http.StatusPreconditionRequired {
+			assert.Contains(t, body, "If-Match")
+		}
 	}
 	input := map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"}
 	for _, extra := range []map[string]any{{"NOTE": sentinel}, {"subdivision": nil}, {"identifier": nil}, {"period_note": nil}, {"due_note": nil}, {"lead_days": nil}, {"note": nil}} {
@@ -180,6 +183,7 @@ func TestTaxHTTPRefusals(t *testing.T) {
 		assert.NotContains(t, string(data), sentinel)
 		resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/example", map[string]string{"If-Match": sentinel}, map[string]any{"note": "example"})
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+		assert.Contains(t, body, "If-Match")
 		assert.NotContains(t, body, sentinel)
 		resp, body = get(t, ts, "/api/v1/tax/accounts?limit="+sentinel, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)

@@ -21,6 +21,7 @@ func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 	for _, field := range []*taxrecord.FieldError{
 		{Field: "private-synthetic-value", Reason: "invalid value"},
 		{Field: "cadence", Reason: "private-synthetic-value"},
+		{Field: "filer", Reason: "unknown cadence"},
 	} {
 		var problem *Error
 		require.ErrorAs(t, taxRouteError(slog.Default(), field), &problem)
@@ -32,7 +33,10 @@ func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
 	t.Parallel()
 	const secret = "private-synthetic-value"
-	assert.Equal(t, "body.note: invalid length or text", SafeTaxDiagnostic("body.note: invalid length or text; body.cadence: unknown cadence "+secret))
+	assert.Equal(t, "cadence: unknown cadence", SafeTaxDiagnostic("filer: unknown cadence; cadence: unknown cadence "+secret))
+	assert.Empty(t, SafeTaxDiagnostic("query.cadence: invalid value; body.filer: invalid value"))
+	assert.Empty(t, SafeTaxDiagnostic("body.cadence: unknown cadence"))
+	assert.Equal(t, "body.note: invalid value", SafeTaxDiagnostic("body.note: invalid value "+secret))
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	var problem *Error
@@ -52,6 +56,8 @@ func TestTaxMalformedPathMuxRedirectIsRedacted(t *testing.T) {
 			"/api/v1/tax/accounts/" + secret,
 			"/api/v1//tax/accounts/" + secret,
 			"/api/v1/tax/accounts/..%2F..%2F" + secret,
+			"/api/v1/tax/accounts/../../" + secret,
+			"/%61pi/v1/%74ax/accounts/../../" + secret,
 			"/%61pi/v1/%74ax/accounts/%2e%2e%2F" + secret,
 			"/api/v1/other/" + secret,
 		} {
@@ -72,7 +78,14 @@ func TestTaxMalformedPathMuxRedirectIsRedacted(t *testing.T) {
 				}
 				assert.NotContains(t, logs.String(), secret)
 				assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
-				if strings.Contains(raw, "//tax/") {
+				if strings.Contains(raw, "/../") {
+					logs.Reset()
+					panicHandler := recoverMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(secret) }), logger, base)
+					panicHandler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, base+raw, nil))
+					assert.Contains(t, logs.String(), "panic in tax handler")
+					assert.NotContains(t, logs.String(), secret)
+				}
+				if strings.Contains(raw, "//tax/") || strings.Contains(raw, "/../") {
 					assert.Equal(t, http.StatusTemporaryRedirect, recorder.Code)
 				} else {
 					assert.Equal(t, http.StatusInternalServerError, recorder.Code)

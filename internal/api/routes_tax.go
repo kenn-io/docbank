@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -26,15 +25,17 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 var taxDiagnosticReasons = []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization"}
 
 func taxSafeFieldReason(field, reason string) bool {
-	if !slices.Contains(taxDiagnosticReasons, reason) {
-		return false
+	fields := map[string]string{
+		"invalid value": "filer", "required": "filer_party_id",
+		"invalid length or text": "country subdivision currency tax_kind identifier period_note due_note note",
+		"control character":      "tax_kind identifier period_note due_note note",
+		"invalid country":        "country", "invalid subdivision": "subdivision", "invalid currency": "currency",
+		"invalid date": "effective_start effective_end", "precedes effective_start": "effective_end",
+		"not canonical": "tax_kind", "unknown cadence": "cadence", "out of range": "lead_days",
+		"party not found": "filer_party_id authority_party_id", "party is retired": "filer_party_id authority_party_id",
+		"party is not own": "filer_party_id", "party is not an organization": "authority_party_id",
 	}
-	for _, known := range taxDiagnosticFields {
-		if known.name == field {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(" "+fields[reason]+" ", " "+field+" ") && fields[reason] != ""
 }
 
 // SafeTaxDiagnostic extracts only a fixed field and reason from untrusted text.
@@ -43,10 +44,21 @@ func SafeTaxDiagnostic(detail string) string {
 	best, result := len(detail), ""
 	for _, field := range taxDiagnosticFields {
 		for _, reason := range taxDiagnosticReasons {
-			for _, prefix := range []string{"", "body.", "query.", "path.", "header."} {
+			for _, prefix := range []string{"", "body.", "query."} {
+				if prefix == "" && !taxSafeFieldReason(field.name, reason) || prefix != "" && (reason != "invalid value" || !taxSafeLocation(prefix+field.name)) {
+					continue
+				}
 				safe := prefix + field.name + ": " + reason
-				if index := strings.Index(detail, safe); index >= 0 && index < best {
-					best, result = index, safe
+				for start := 0; start < len(detail); {
+					index := strings.Index(detail[start:], safe)
+					if index < 0 {
+						break
+					}
+					index += start
+					if (index == 0 || !strings.ContainsAny(detail[index-1:index], ".abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")) && index < best {
+						best, result = index, safe
+					}
+					start = index + 1
 				}
 			}
 		}
@@ -94,7 +106,11 @@ func taxRouteError(logger *slog.Logger, err error) error {
 		wire, _ = errors.AsType[*Error](FromStoreError(err))
 	}
 	detail := "tax request failed"
-	if wire.Status == http.StatusServiceUnavailable && wire.Code == "maintenance_busy" {
+	if wire.Status == http.StatusPreconditionRequired && wire.Code == "precondition_required" {
+		detail = "this endpoint requires If-Match: <revision> (read the target resource to get it)"
+	} else if wire.Status == http.StatusBadRequest && wire.Code == "validation" {
+		detail = "invalid If-Match: want a positive resource revision"
+	} else if wire.Status == http.StatusServiceUnavailable && wire.Code == "maintenance_busy" {
 		logger.Warn("tax request rejected", "class", "maintenance_busy", "status", wire.Status)
 		detail = "vault maintenance is running or queued; retry this mutation after it finishes"
 	} else if wire.Status >= http.StatusInternalServerError {
