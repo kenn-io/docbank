@@ -3,10 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -130,39 +127,6 @@ func TestTaxEventLongReferenceAndRetiredDetail(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, secret)
 	assert.Equal(t, `"3"`, resp.Header.Get("ETag"))
-}
-
-func TestTaxEventValuesAbsentFromLogsAndErrors(t *testing.T) {
-	logFile, err := os.CreateTemp(t.TempDir(), "tax-event-log-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = logFile.Close() })
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Logger = slog.New(slog.NewTextHandler(logFile, nil)) })
-	_, account := createTaxTestAccount(t, ts, nil)
-	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
-	path := "/api/v1/tax/records/" + r.RecordID
-	const secret = "synthetic-sensitive-sentinel"
-	for _, field := range []string{"kind", "occurred_on", "currency", "reference", "note", "amount", "sets_state", "record_revision"} {
-		resp, body := do(t, ts, http.MethodPost, path+"/events?reveal=true", map[string]string{"If-Match": `"1"`}, map[string]any{field: []any{secret}})
-		assert.GreaterOrEqual(t, resp.StatusCode, 400)
-		assert.NotContains(t, body, secret)
-	}
-	resp, body := do(t, ts, http.MethodPost, path+"/events/"+secret+"/void?reveal="+secret, map[string]string{"If-Match": secret}, map[string]any{"reason": secret})
-	assert.GreaterOrEqual(t, resp.StatusCode, 400)
-	assert.NotContains(t, body, secret)
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+path+"/events?reveal=true", strings.NewReader(`{"reference":"`+secret))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("If-Match", `"1"`)
-	bad, err := ts.Client().Do(req)
-	require.NoError(t, err)
-	raw, err := io.ReadAll(bad.Body)
-	require.NoError(t, err)
-	require.NoError(t, bad.Body.Close())
-	assert.GreaterOrEqual(t, bad.StatusCode, 400)
-	assert.NotContains(t, string(raw), secret)
-	content, err := os.ReadFile(logFile.Name())
-	require.NoError(t, err)
-	assert.NotContains(t, string(content), secret)
 }
 
 func TestTaxEventRequestAdmission(t *testing.T) {

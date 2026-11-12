@@ -129,7 +129,7 @@ func TestTaxClientValidationDetails(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "invalid_tax", code)
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	for _, detail := range []string{"title: invalid length or text", "country: account identity mismatch"} {
+	for _, detail := range []string{"title: invalid length or text", "country: account identity mismatch", "kind: unsupported event", "state: unsupported event"} {
 		err := safeTaxError(apiProblemError(api.Error{Status: 422, Code: "invalid_tax", Detail: detail + " private-synthetic"}))
 		assert.Contains(t, err.Error(), detail)
 		assert.NotContains(t, err.Error(), "private-synthetic")
