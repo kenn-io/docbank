@@ -668,7 +668,13 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"inherited": {Profile: portable, RenditionProvider: original.provider, EmbeddingProviders: original.embedders, Tokenizers: original.tokenizers}}})
 			require.NoError(t, err)
 			defer service.Stop()
-			setup = &LocalTextSetup{Service: service, Selected: "inherited"}
+			calls := 0
+			setup = &LocalTextSetup{Service: service, Selected: "inherited", Startup: func(_ context.Context, managed bool, mode string) error {
+				require.True(t, managed)
+				require.Equal(t, "local", mode)
+				calls++
+				return nil
+			}}
 			if tc.revoke {
 				_, err = service.RevokeConsent(t.Context())
 				require.NoError(t, err)
@@ -688,6 +694,11 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 			admitted, err := setup.InitializeInherited(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, tc.active, admitted)
+			if tc.active {
+				require.Equal(t, 1, calls)
+			} else {
+				require.Zero(t, calls)
+			}
 			active, err := service.ProfileConsentActive(t.Context(), "inherited")
 			require.NoError(t, err)
 			require.Equal(t, tc.active, active)
@@ -697,6 +708,43 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 					require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
 				}
 			}
+		})
+	}
+}
+
+func TestLocalTextInheritedSetupFailureAndRevocation(t *testing.T) {
+	for _, tc := range []string{"failure", "cancellation", "revocation"} {
+		t.Run(tc, func(t *testing.T) {
+			fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
+			profile := original.Service.profiles["pdf"]
+			portable := profile.portable
+			portable.Rendition = new(*portable.Rendition)
+			portable.Rendition.AuthorizationFingerprint = workerHash(tc)
+			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"inherited": {Profile: portable, RenditionProvider: profile.provider, EmbeddingProviders: profile.embedders, Tokenizers: profile.tokenizers}}})
+			require.NoError(t, err)
+			defer service.Stop()
+			setup := &LocalTextSetup{Service: service, Selected: "inherited"}
+			setup.Startup = func(ctx context.Context, _ bool, _ string) error {
+				switch tc {
+				case "failure":
+					return errors.New("install failed")
+				case "cancellation":
+					return context.Canceled
+				default:
+					_, err := service.RevokeConsent(ctx)
+					return err
+				}
+			}
+			admitted, err := setup.InitializeInherited(t.Context())
+			if tc == "revocation" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.False(t, admitted)
+			active, err := service.ProfileConsentActive(t.Context(), "inherited")
+			require.NoError(t, err)
+			require.False(t, active)
 		})
 	}
 }

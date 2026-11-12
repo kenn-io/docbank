@@ -223,44 +223,56 @@ func (setup *LocalTextSetup) listTargets(ctx context.Context, after string, limi
 	return setup.pendingTargets(ctx, after, limit, sweep)
 }
 
-// InitializeInherited grants consent only when all operations are undecided and no revocation exists.
-func (setup *LocalTextSetup) InitializeInherited(ctx context.Context) (bool, error) {
+// inheritedConsent checks whether every operation is active or every operation
+// is undecided and the vault has no revocation fence.
+func (setup *LocalTextSetup) inheritedConsent(ctx context.Context) (bool, bool, error) {
 	service := setup.Service
-	active := false
-	err := service.gate.MutateContext(ctx, func() error {
-		profile, ok := service.profiles[setup.Selected]
-		if !ok {
-			return ErrProfileNotConfigured
+	profile, ok := service.profiles[setup.Selected]
+	if !ok {
+		return false, false, ErrProfileNotConfigured
+	}
+	required, active := 0, 0
+	for _, request := range service.profileConsentRequests(profile) {
+		_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
+		state, err := processingConsentState(err)
+		if err != nil {
+			return false, false, err
 		}
-		required, activeCount := 0, 0
-		for _, request := range service.profileConsentRequests(profile) {
-			_, err := service.catalog.AuthorizeProviderOperation(ctx, request)
-			state, err := processingConsentState(err)
-			if err != nil {
+		switch state {
+		case "required":
+			required++
+		case "active":
+			active++
+		default:
+			return false, false, nil
+		}
+	}
+	if required != 0 && active != 0 {
+		return false, false, nil
+	}
+	revoked, err := service.catalog.HasConsentRevocation(ctx, service.principal, service.scope)
+	return !revoked && err == nil, required != 0, err
+}
+
+// InitializeInherited installs the shared runtime before granting undecided consent.
+func (setup *LocalTextSetup) InitializeInherited(ctx context.Context) (bool, error) {
+	eligible, _, err := setup.inheritedConsent(ctx)
+	if err != nil || !eligible {
+		return false, err
+	}
+	if err := setup.Startup(ctx, true, "local"); err != nil {
+		return false, err
+	}
+	active := false
+	err = setup.Service.gate.MutateContext(ctx, func() error {
+		eligible, undecided, err := setup.inheritedConsent(ctx)
+		if err != nil || !eligible {
+			return err
+		}
+		if undecided {
+			if err := setup.Service.grantProfileConsentUngated(ctx, setup.Service.profiles[setup.Selected], nil); err != nil {
 				return err
 			}
-			switch state {
-			case "required":
-				required++
-			case "active":
-				activeCount++
-			default:
-				return nil
-			}
-		}
-		if required == 0 {
-			active = true
-			return nil
-		}
-		if activeCount != 0 {
-			return nil
-		}
-		revoked, err := service.catalog.HasConsentRevocation(ctx, service.principal, service.scope)
-		if err != nil || revoked {
-			return err
-		}
-		if err := service.grantProfileConsentUngated(ctx, profile, nil); err != nil {
-			return err
 		}
 		active = true
 		return nil

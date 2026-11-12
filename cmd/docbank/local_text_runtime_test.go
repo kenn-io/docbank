@@ -565,7 +565,7 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			var restartPending atomic.Bool
 			restartPending.Store(tc.pending)
 
-			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load())
+			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load(), false)
 			require.NoError(t, err)
 			require.Equal(t, tc.provider, status.Provider)
 			require.Equal(t, tc.pending, status.RestartRequired)
@@ -575,6 +575,41 @@ func TestLocalTextStatusProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInheritedLocalTextStatus(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	layout := home.Layout{Root: t.TempDir()}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(t.Context(), layout.DBPath())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, catalog.Close()) }()
+	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, blobs.Close()) }()
+	cfg, err := localTextCandidate(config.Default(), "local", config.LocalTextProfile)
+	require.NoError(t, err)
+	bundle, err := configureEmbeddingRuntimeBundle(cfg)
+	require.NoError(t, err)
+	profiles, err := executableProcessingProfiles(cfg, bundle)
+	require.NoError(t, err)
+	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
+	require.NoError(t, err)
+	defer service.Stop()
+	status, err := localTextStatus(t.Context(), profiles, service, false, true)
+	require.NoError(t, err)
+	require.False(t, status.Active)
+	require.Positive(t, status.DownloadBytes)
+	setup := processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, string) error { return nil }}
+	active, err := setup.InitializeInherited(t.Context())
+	require.NoError(t, err)
+	require.True(t, active)
+	status, err = localTextStatus(t.Context(), profiles, service, false, true)
+	require.NoError(t, err)
+	require.True(t, status.Active)
+	require.Equal(t, "local", status.Provider)
 }
 
 func TestLocalTextStartupActivatesAfterRestart(t *testing.T) {
@@ -631,7 +666,7 @@ func TestInheritedLocalTextAbsentAndUnreadable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	choice, err := inheritedLocalText(t.Context(), config.LocalTextConfig{}, nil)
+	choice, err := inheritedLocalText(nil)
 	require.NoError(t, err)
 	require.Empty(t, choice.Profile)
 	cfg := localTextSourceConfig(t, "http://127.0.0.1:12345", "synthetic-revision", "prefix-free", "DOCBANK_TEST_STATUS_KEY")
@@ -640,22 +675,18 @@ func TestInheritedLocalTextAbsentAndUnreadable(t *testing.T) {
 	profiles, err := executableProcessingProfiles(cfg, bundle)
 	require.NoError(t, err)
 	require.NoError(t, embedlocal.RecordChoice())
-	choice, err = inheritedLocalText(t.Context(), config.LocalTextConfig{}, profiles)
+	choice, err = inheritedLocalText(profiles)
 	require.NoError(t, err)
 	require.Empty(t, choice.Profile)
-	choice, err = inheritedLocalText(t.Context(), config.LocalTextConfig{}, nil)
+	choice, err = inheritedLocalText(nil)
 	require.NoError(t, err)
-	require.Empty(t, choice.Profile)
+	require.Equal(t, config.LocalTextProfile, choice.Profile)
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(filepath.Join(dir, "search-by-meaning")))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "search-by-meaning"), 0700))
-	_, err = inheritedLocalText(t.Context(), config.LocalTextConfig{}, nil)
+	_, err = inheritedLocalText(nil)
 	require.Error(t, err)
-	saved := config.LocalTextConfig{Profile: "archive", Server: "auto"}
-	choice, err = inheritedLocalText(t.Context(), saved, nil)
-	require.NoError(t, err)
-	require.Equal(t, saved, choice)
 }
 
 func TestInheritedLocalTextStartsDaemon(t *testing.T) {
@@ -692,10 +723,11 @@ func TestInheritedLocalTextStartsDaemon(t *testing.T) {
 	defer server.Close()
 	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
 	require.NoError(t, err)
-	recordPath, err := (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
 	require.NoError(t, err)
 	stop, _ := startServeReady(t)
 	defer stop()
+	settleDaemon(t)
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	defer func() { require.NoError(t, connection.Close()) }()
@@ -724,15 +756,4 @@ func TestInheritedLocalTextStartsDaemon(t *testing.T) {
 	require.NoError(t, connection.Close())
 	stop()
 	waitForDaemonStop(t, root)
-	require.NoError(t, os.Remove(recordPath))
-	root = t.TempDir()
-	t.Setenv("DOCBANK_HOME", root)
-	stop, _ = startServeReady(t)
-	defer stop()
-	connection, err = daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	status, err = connection.API().GetLocalTextStatus(t.Context())
-	require.NoError(t, err)
-	require.False(t, status.Active)
-	require.NoFileExists(t, filepath.Join(root, "local-text.json"))
 }

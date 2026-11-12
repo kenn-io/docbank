@@ -331,7 +331,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	}
 	inherited := false
 	if err == nil && choice.Profile == "" {
-		choice, err = inheritedLocalText(sigCtx, choice, processingProfiles)
+		choice, err = inheritedLocalText(processingProfiles)
 		if err != nil {
 			logger.Warn("read shared search by meaning choice; indexing remains inactive", "error", err)
 		}
@@ -354,22 +354,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		selected, candidate, err := candidateProfiles(choice.Server, choice.Profile)
 		if err == nil && selected[choice.Profile].RenditionProvider == nil {
 			err = processing.ErrProfileNotConfigured
-		}
-		if err == nil && inherited {
-			var trial *processing.Service
-			trial, err = processing.NewService(sigCtx, processing.ServiceConfig{Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: selected,
-				Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx,
-				MediaMaxBytes: cfg.Media.MaxSourceBytes})
-			if err == nil {
-				var active bool
-				active, err = (&processing.LocalTextSetup{Service: trial, Selected: choice.Profile}).InitializeInherited(sigCtx)
-				trial.Stop()
-				if err == nil && !active {
-					choice = config.LocalTextConfig{}
-				} else if err == nil {
-					_, err = localEmbeddingOrigin(sigCtx, nil)
-				}
-			}
 		}
 		if err == nil && choice.Profile != "" {
 			cfg, err = projectLocalTextProfile(cfg, processingProfiles, candidate, choice.Profile, selected[choice.Profile])
@@ -447,11 +431,6 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 			MediaMaxBytes: cfg.Media.MaxSourceBytes,
 			Principal:     "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(), Lifecycle: sigCtx})
 		return service, err
-	}
-	if choice.Profile != "" {
-		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error { return localText.Backfill(ctx, logger) }); err != nil {
-			return err
-		}
 	}
 	pdfText := &processing.PDFTextRunner{Service: processingService}
 	if err := pdfText.Initialize(sigCtx); err != nil {
@@ -757,7 +736,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, LocalText: localText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
-			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
+			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load(), inherited)
 		}, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
@@ -813,6 +792,19 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 
 	if mcpURL != "" {
 		logger.Info("docbank MCP HTTP listening", "url", mcpURL)
+	}
+	if choice.Profile != "" {
+		if err := jobSupervisor.StartWorker("embed:local-text", func(ctx context.Context) error {
+			if inherited {
+				active, err := localText.InitializeInherited(ctx)
+				if err != nil || !active {
+					return err
+				}
+			}
+			return localText.Backfill(ctx, logger)
+		}); err != nil {
+			return err
+		}
 	}
 	if ready != nil {
 		ready(serveReady{tracker: tracker, jobs: jobSupervisor})

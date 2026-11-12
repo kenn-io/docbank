@@ -62,10 +62,8 @@ func localTextSave(root string, restartPending *atomic.Bool, save func(string, c
 	}
 }
 
-func inheritedLocalText(ctx context.Context, choice config.LocalTextConfig, profiles map[string]processing.ProfileConfig) (config.LocalTextConfig, error) {
-	if choice.Profile != "" {
-		return choice, nil
-	}
+func inheritedLocalText(profiles map[string]processing.ProfileConfig) (config.LocalTextConfig, error) {
+	choice := config.LocalTextConfig{}
 	for _, profile := range profiles {
 		for _, binding := range profile.Profile.Embeddings {
 			if provider := profile.EmbeddingProviders[binding.Name]; provider != nil && binding.InputKind != document.EmbeddingInputImage && provider.Descriptor().SupportsTextQuery {
@@ -75,10 +73,6 @@ func inheritedLocalText(ctx context.Context, choice config.LocalTextConfig, prof
 	}
 	recorded, err := embedlocal.ChoiceRecorded()
 	if err != nil || !recorded {
-		return choice, err
-	}
-	files, err := embedlocal.Inspect(ctx, embedlocal.Options{SkipOllama: true})
-	if err != nil || files.DownloadBytes != 0 {
 		return choice, err
 	}
 	return config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}, nil
@@ -170,11 +164,20 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	return cfg, nil
 }
 
-func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending bool) (api.LocalTextStatus, error) {
+func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending, inherited bool) (api.LocalTextStatus, error) {
 	status := api.LocalTextStatus{RestartRequired: restartPending}
 	for _, profile := range service.Profiles() {
 		if len(profile.QueryEmbeddingBindings) == 0 {
 			continue
+		}
+		if inherited && profile.Name == config.LocalTextProfile {
+			active, err := service.ProfileConsentActive(ctx, profile.Name)
+			if err != nil {
+				return status, err
+			}
+			if !active {
+				continue
+			}
 		}
 		binding := profiles[profile.Name].EmbeddingDisclosures[profile.QueryEmbeddingBindings[0]]
 		status.Active, status.Provider = true, "configured"
