@@ -2127,6 +2127,8 @@ it.each([
     "Across the current vault: at least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
     false,
   ],
+  ["incomplete", "PDF text coverage is incomplete; some pages may not be searchable.", false],
+  ["failure", "PDF text coverage is unavailable.", false],
   [
     "complete",
     "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
@@ -2134,12 +2136,14 @@ it.each([
   ],
 ])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
   const coverage = textCoverage({
-    pdfs_without_text: kind === "singular" ? 1 : 2,
-    pages_without_text: kind === "singular" ? 1 : 3,
-    pdf_page_coverage_partial: kind === "partial",
+    pdfs_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 2,
+    pages_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 3,
+    pdf_page_coverage_partial: kind === "partial" || kind === "incomplete",
     pdf_page_coverage_unavailable: kind === "unavailable" ? 1 : 0,
   });
-  const { fetchMock } = renderEmptySearch(async () => json(coverage));
+  const { fetchMock } = renderEmptySearch(async () =>
+    kind === "failure" ? new Response("{}", { status: 500 }) : json(coverage),
+  );
   if (tagged) {
     await screen.findAllByText("report.txt");
     await fireEvent.click(
@@ -2149,20 +2153,14 @@ it.each([
   }
   await submitSearch("missing");
   expect(await screen.findByText(message)).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
+  if (kind !== "failure")
+    expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
   if (tagged) {
     const request = fetchMock.mock.calls
       .map(([url]) => String(url))
       .find((url) => url.startsWith("/api/v1/search/text-coverage"));
     expect(new URL(request!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
   }
-});
-
-it("shows unavailable PDF coverage for an empty live search", async () => {
-  renderEmptySearch(async () => new Response("{}", { status: 500 }));
-  await submitSearch("missing");
-  expect(await screen.findByText("PDF text coverage is unavailable.")).toBeTruthy();
-  expect(screen.getByText("No matching documents")).toBeTruthy();
 });
 
 it("aborts coverage from an older search", async () => {
