@@ -241,8 +241,11 @@ ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
 For a catalog change starting from a released SQLite schema version, bump
-`currentStorageSchemaVersion`. Run `make schema-contract-check` and add the named file under
+`currentStorageSchemaVersion`. Run `make schema-contract-check` and add a file under
 `internal/store/testdata/schema-contracts/` with a one-line summary of the change.
+Its name is `NNNNNN-<layout-sha256>-<summary-sha256>.schema`. The test prints
+the version and layout hash. Compute the summary hash from the exact file bytes
+with `sha256sum`, including the final newline if present.
 If you change your own unmerged layout, replace its record with the newly named
 file. If `main` already records that version, preserve its record, remove your
 old record, bump `currentStorageSchemaVersion`, rerun the test against the
@@ -2241,8 +2244,9 @@ shards. Pull requests call `ci.yml` from `main`, so changes to that workflow tak
 effect for pull requests after merge. Workflow validation runs against the
 proposed workflow changes.
 
-The exception is the `CI gate` job in `ci-pr.yml`, which only checks the CI
-run's result. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
+The exception is the `CI gate` job in `ci-pr.yml`, which checks the CI
+run's result and preserves schema records from the pull request or merge-group
+base. It runs on the Namespace profile `namespace-profile-linux-1cpu` so
 it does not wait in the GitHub-hosted queue after CI finishes.
 
 Go test jobs run `go test` through gotestsum, which the module pins as a Go

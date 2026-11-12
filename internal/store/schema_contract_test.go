@@ -30,11 +30,11 @@ func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-func schemaContractFile(record schemaContract) string {
-	return fmt.Sprintf("%06d-%s.schema", record.Version, record.Digest)
+func schemaContractFile(record schemaContract, summaryDigest string) string {
+	return fmt.Sprintf("%06d-%s-%s.schema", record.Version, record.Digest, summaryDigest)
 }
 
-var schemaContractName = regexp.MustCompile(`^([0-9]{6})-([0-9a-f]{64})\.schema$`)
+var schemaContractName = regexp.MustCompile(`^([0-9]{6})-([^-]+)-([^-]+)\.schema$`)
 
 func loadSchemaContracts(dir string) ([]schemaContract, error) {
 	entries, err := os.ReadDir(dir)
@@ -47,7 +47,7 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 	var records []schemaContract
 	for _, entry := range entries {
 		match := schemaContractName.FindStringSubmatch(entry.Name())
-		if match == nil {
+		if match == nil || !canonical.IsSHA256Hex(match[2]) || !canonical.IsSHA256Hex(match[3]) {
 			return nil, fmt.Errorf("invalid schema contract filename %s", entry.Name())
 		}
 		version, _ := strconv.Atoi(match[1])
@@ -58,6 +58,9 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 		summary := strings.TrimSpace(string(body))
 		if summary == "" || strings.ContainsAny(summary, "\r\n") {
 			return nil, fmt.Errorf("schema contract %s must contain a one-line summary", entry.Name())
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(body)) != match[3] {
+			return nil, fmt.Errorf("schema contract %s summary hash does not match its contents", entry.Name())
 		}
 		records = append(records, schemaContract{Version: version, Digest: match[2]})
 	}
@@ -76,15 +79,16 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 			}
 		}
 	}
-	name := schemaContractFile(schemaContract{Version: version, Digest: digest})
+	name := schemaContractFile(schemaContract{Version: version, Digest: digest}, "<summary-sha256>")
+	guidance := "write a one-line summary, hash its exact file bytes with sha256sum, and replace <summary-sha256> in " + name
 	if version < highest {
 		return fmt.Errorf("schema version %d conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, highest+1)
 	}
 	if mismatches > 0 {
-		return fmt.Errorf("schema version %d differs from recorded layouts; if the records are yours and unmerged, remove the old records and keep or add %s with a one-line summary; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, name, highest+1)
+		return fmt.Errorf("schema version %d differs from recorded layouts; if the records are yours and unmerged, remove the old records and %s; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, guidance, highest+1)
 	}
 	if matches == 0 {
-		return fmt.Errorf("add schema contract file testdata/schema-contracts/%s with a one-line summary", name)
+		return fmt.Errorf("add a schema contract under testdata/schema-contracts: %s", guidance)
 	}
 	return nil
 }
@@ -107,24 +111,34 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 func TestStorageSchemaContractRecords(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	record := schemaContract{Version: 49, Digest: strings.Repeat("a", 64)}
-	name := schemaContractFile(record)
-	path := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(path, []byte("Add documents table\n"), 0600))
+	digest := strings.Repeat("a", 64)
+	names := []string{
+		"000049-" + digest + "-9b6914ea954e6023e027151042eab8f33e298aa5aa83dec9f421427f14ded361.schema",
+		"000049-" + digest + "-03c8fb4f55e145ae35268d4dc38370db92219fede5bc902a5d17c4ffda75783c.schema",
+	}
+	for i, body := range []string{"Add documents table\n", "Add records table\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, names[i]), []byte(body), 0600))
+	}
 	records, err := loadSchemaContracts(dir)
 	require.NoError(t, err)
-	require.Equal(t, []schemaContract{record}, records)
+	require.Equal(t, []schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: digest}}, records)
+	require.NoError(t, checkSchemaContract(records, 49, digest))
+
+	path := filepath.Join(dir, names[0])
 	for _, body := range []string{"", " \n\t", "first\nsecond\n"} {
 		require.NoError(t, os.WriteFile(path, []byte(body), 0600))
 		_, err := loadSchemaContracts(dir)
 		require.ErrorContains(t, err, "must contain a one-line summary")
 	}
+	require.NoError(t, os.WriteFile(path, []byte("Changed summary\n"), 0600))
+	_, err = loadSchemaContracts(dir)
+	require.ErrorContains(t, err, "summary hash does not match")
 	require.NoError(t, os.Remove(path))
 	for _, name := range []string{
-		"49-" + record.Digest + ".schema",
-		"000049-" + strings.Repeat("A", 64) + ".schema",
-		"000049-abc.schema",
-		"000049-" + record.Digest + ".json",
+		"49-" + digest + "-" + digest + ".schema",
+		"000049-" + strings.Repeat("A", 64) + "-" + digest + ".schema",
+		"000049-" + digest + "-abc.schema",
+		"000049-" + digest + "-" + digest + ".json",
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0600))
 		_, err := loadSchemaContracts(dir)
@@ -138,16 +152,14 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	next := strings.Repeat("b", 64)
 	records := []schemaContract{{Version: 49, Digest: digest}, {Version: 50, Digest: next}}
-	require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf("add schema contract file testdata/schema-contracts/000049-%s.schema with a one-line summary", digest))
+	require.ErrorContains(t, checkSchemaContract(nil, 49, digest), "000049-"+digest+"-<summary-sha256>.schema")
 	require.NoError(t, checkSchemaContract(records[:1], 49, digest))
 	err := checkSchemaContract(records[:1], 49, next)
-	require.ErrorContains(t, err, "remove the old records and keep or add 000049-"+next+".schema")
-	require.ErrorContains(t, err, "if main already records this version")
-	require.EqualError(t, checkSchemaContract(records, 49, digest), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
+	require.ErrorContains(t, err, "000049-"+next+"-<summary-sha256>.schema")
+	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
+	require.ErrorContains(t, checkSchemaContract(records, 49, digest), "set currentStorageSchemaVersion to 51")
 	require.NoError(t, checkSchemaContract(records, 50, next))
 	err = checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, digest)
-	require.ErrorContains(t, err, "remove the old records and keep or add 000049-"+digest+".schema")
-	require.ErrorContains(t, err, "if main already records this version")
 	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
 }
 
