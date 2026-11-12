@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -8,6 +10,7 @@ import (
 )
 
 func TestCompiledBoundaryRangesSurviveComposition(t *testing.T) {
+	t.Parallel()
 	path := compilePathPredicate("/inbox")
 	coverage, err := compileTextCoveragePredicate("complete", 0, 0)
 	if err != nil {
@@ -43,6 +46,7 @@ func TestCompiledBoundaryRangesSurviveComposition(t *testing.T) {
 // This exercises SQL membership under OR and NOT, including a zero-argument
 // boundary followed by another boundary whose argument range must move.
 func TestPreparedPredicateDuplicateAndPath(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("prepared-duplicate"), 10, "text/plain")
@@ -70,18 +74,19 @@ func TestPreparedPredicateDuplicateAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
 		var version string
 		if err := rows.Scan(&id, &version); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			t.Fatal(err)
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		t.Fatal(err)
 	}
 	if err := rows.Close(); err != nil {
@@ -89,5 +94,17 @@ func TestPreparedPredicateDuplicateAndPath(t *testing.T) {
 	}
 	if !slices.Equal(ids, []int64{unique.ID}) {
 		t.Fatalf("got %v, want only %d (duplicates %d, %d)", ids, unique.ID, first.ID, second.ID)
+	}
+}
+
+func TestPreparedDocumentPopulationCancellation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := materializeDocumentPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want canceled", err)
 	}
 }

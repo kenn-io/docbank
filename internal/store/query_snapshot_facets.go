@@ -142,7 +142,7 @@ func materializeSnapshotFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	population, err := matchedPopulation(facetCompiled, generationID, nil)
+	population, err := materializeDocumentPopulation(ctx, q, facetCompiled, generationID, nil, coverage)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}

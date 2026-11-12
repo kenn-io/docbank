@@ -117,3 +117,52 @@ func prepareBoundPredicate(ctx context.Context, q metadataQuerier, predicate com
 	predicate.relations = 0
 	return predicate, nil
 }
+
+// materializeDocumentPopulation executes the prepared selection once and hands
+// its exact identities to downstream projections on the same read snapshot.
+func materializeDocumentPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, profile *string, coverage CoverageSelection) (compiledQueryFragment, error) {
+	population, err := prepareCompiledPopulation(ctx, q, compiled, generation, profile, coverage)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	statement, args, err := bindQueryPopulation(population, coverage, generation)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	type identity struct {
+		NodeID    int64  `json:"node_id"`
+		VersionID string `json:"content_version_id"`
+	}
+	members := make([]identity, 0)
+	err = func() (err error) {
+		rows, err := q.QueryContext(ctx, statement, args...)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := rows.Close(); err == nil {
+				err = closeErr
+			}
+		}()
+		for rows.Next() {
+			var member identity
+			if err := rows.Scan(&member.NodeID, &member.VersionID); err != nil {
+				return err
+			}
+			members = append(members, member)
+		}
+		return rows.Err()
+	}()
+	if err != nil {
+		return compiledQueryFragment{}, fmt.Errorf("materializing document membership: %w", err)
+	}
+	encoded, err := json.Marshal(members)
+	members = nil
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return compiledQueryFragment{}, err
+	}
+	return compiledQueryFragment{sql: `SELECT json_extract(value,'$.node_id') AS node_id,json_extract(value,'$.content_version_id') AS content_version_id FROM json_each(?)`, args: []any{string(encoded)}}, nil
+}
