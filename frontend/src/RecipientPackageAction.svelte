@@ -22,9 +22,10 @@
     busy={building || (active && controller.phase === "releasing")}
     busyLabel={building ? "Preparing recipient ZIP" : "Releasing recipient ZIP"}
     ariaLabel="Download recipient ZIP"
+    label="Recipient ZIP"
     disabled={controller.phase !== "idle"}
-    onclick={() => void controller.start(inputs, artifact)}>Recipient ZIP</Button
-  >{/if}
+    onclick={() => void controller.start(inputs, artifact)}
+  />{/if}
 {#if building}<Button
     size="sm"
     ariaLabel="Cancel recipient ZIP"
