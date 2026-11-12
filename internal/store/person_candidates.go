@@ -744,10 +744,12 @@ type VersionCandidate struct {
 }
 
 func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
-	// Candidates can outlive the event generation that created them, including
-	// during rebuilds, so current actor keys cannot find every pending occurrence.
-	// Normal admission caps open candidates at maxOpenPersonCandidates; this
-	// scan can still grow if retained data exceeds that limit. Do not truncate.
+	// Matched fresh actors are required for emitted occurrences in both modes.
+	// Canonical writes and validated imports store occurrence UUIDs as literal
+	// lowercase ASCII, so the hex filter finds them; exact comparison below
+	// removes false matches. Admission and import validation cap open candidates
+	// at maxOpenPersonCandidates and evidence at maxPersonCandidateEvidence bytes.
+	// Do not truncate the results.
 	evidenceHex := "hex(evidence_json)"
 	if s.postgresSchema != "" {
 		evidenceHex = "upper(encode(evidence_json, 'hex'))"
