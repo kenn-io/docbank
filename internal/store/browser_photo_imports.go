@@ -102,10 +102,13 @@ func (s *Store) BrowserPhotoGroupReceipt(ctx context.Context, ref BrowserPhotoGr
 	return decodeBrowserPhotoReceipt(receipt.String)
 }
 
+// ErrInvalidBrowserPhotoImportPage identifies invalid saved-import pagination.
+var ErrInvalidBrowserPhotoImportPage = errors.New("invalid browser photo import page")
+
 // ListBrowserPhotoImports lists saved imports in reverse creation order.
 func (s *Store) ListBrowserPhotoImports(ctx context.Context, offset, limit int) ([]BrowserPhotoImport, error) {
 	if offset < 0 || limit < 1 || limit > 100 {
-		return nil, errors.New("invalid browser photo import page")
+		return nil, ErrInvalidBrowserPhotoImportPage
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT i.import_id,i.source_id,i.label,i.destination,i.created_at,
 		(SELECT COUNT(*) FROM browser_photo_import_groups g WHERE g.import_id=i.import_id)

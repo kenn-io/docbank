@@ -546,6 +546,29 @@ func registerBrowserPhotos(t *testing.T, conn *websocket.Conn, id string) string
 	return reply.ImportID
 }
 
+func TestBrowserPhotoImportRejectsInvalidControls(t *testing.T) {
+	t.Parallel()
+	t.Run("negative list offset", func(t *testing.T) {
+		ts, _ := newTestServer(t, nil)
+		conn := browserUploadSocket(t, ts)
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "list_photo_imports", "request_id": "list", "offset": -1}))
+		reply := readPhotoResponse(t, conn)
+		assert.Equal(t, http.StatusUnprocessableEntity, reply.Status)
+		assert.Equal(t, "validation", reply.Code)
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "list_photo_imports", "request_id": "valid", "offset": 0}))
+		assert.Equal(t, "photo_import_list", readPhotoResponse(t, conn).Type)
+	})
+	t.Run("empty plan registration", func(t *testing.T) {
+		ts, _ := newTestServer(t, nil)
+		conn := browserUploadSocket(t, ts)
+		id := previewBrowserPhotos(t, conn, []map[string]any{{"relative_path": "notes.txt", "expected_size": 1}})
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "register_photo_import", "request_id": "register", "import_id": id}))
+		reply := readPhotoResponse(t, conn)
+		assert.Equal(t, http.StatusUnprocessableEntity, reply.Status)
+		assert.Equal(t, "validation", reply.Code)
+	})
+}
+
 func planBrowserPhotos(t *testing.T, conn *websocket.Conn, members []map[string]any) string {
 	t.Helper()
 	return registerBrowserPhotos(t, conn, previewBrowserPhotos(t, conn, members))

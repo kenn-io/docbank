@@ -857,7 +857,7 @@ func (p *webPhotoImport) sourceDescription() string {
 func handleWebPhotoRegistration(
 	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage, plan *webPhotoImport,
 ) bool {
-	if plan == nil || plan.id != begin.ImportID || plan.registered {
+	if plan == nil || plan.id != begin.ImportID || plan.registered || len(plan.groups) == 0 {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID,
 			NewError(http.StatusUnprocessableEntity, "validation", "invalid photo import plan")) == nil
 	}
