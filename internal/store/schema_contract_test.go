@@ -129,10 +129,6 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	records, err := loadSchemaContracts(dir)
 	require.NoError(t, err)
 	require.Equal(t, []schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: digest}}, records)
-	require.NoError(t, checkSchemaContract(records, 49, digest))
-	released, err := schemaContractReleased(records, 48, []int{48})
-	require.ErrorContains(t, err, "schema contract version 49 exceeds currentStorageSchemaVersion 48")
-	require.False(t, released)
 
 	path := filepath.Join(dir, names[0])
 	for _, body := range []string{"", " \n\t", "first\nsecond\n"} {
@@ -164,12 +160,37 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	records := []schemaContract{{Version: 49, Digest: digest}, {Version: 50, Digest: next}}
 	require.ErrorContains(t, checkSchemaContract(nil, 49, digest), "000049-"+digest+"-<summary-sha256>.schema")
 	require.NoError(t, checkSchemaContract(records[:1], 49, digest))
+	require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: digest}}, 49, digest))
 	err := checkSchemaContract(records[:1], 49, next)
 	require.ErrorContains(t, err, "000049-"+next+"-<summary-sha256>.schema")
 	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
 	require.NoError(t, checkSchemaContract(records, 50, next))
 	err = checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, digest)
 	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
+}
+
+func TestStorageSchemaContractReleased(t *testing.T) {
+	t.Parallel()
+	released, err := schemaContractReleased(nil, 48, []int{48})
+	require.NoError(t, err)
+	require.True(t, released)
+	released, err = schemaContractReleased(nil, 49, []int{48})
+	require.NoError(t, err)
+	require.False(t, released)
+	_, err = schemaContractReleased([]schemaContract{{Version: 49}}, 48, []int{48})
+	require.ErrorContains(t, err, "schema contract version 49 exceeds currentStorageSchemaVersion 48")
+}
+
+func TestStorageSchemaRealCatalog(t *testing.T) {
+	t.Parallel()
+	db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), DefaultSQLiteDriver(), schemaSQL, currentStorageSchemaVersion)
+	digest := schemaCatalogDigest(t, db)
+	dir := t.TempDir()
+	name := schemaContractFile(schemaContract{Version: 49, Digest: digest}, "9b6914ea954e6023e027151042eab8f33e298aa5aa83dec9f421427f14ded361")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("Add documents table\n"), 0600))
+	records, err := loadSchemaContracts(dir)
+	require.NoError(t, err)
+	require.NoError(t, checkSchemaContract(records, 49, digest))
 }
 
 func TestStorageSchemaCatalogDigest(t *testing.T) {
@@ -190,21 +211,12 @@ func TestStorageSchemaCatalogDigest(t *testing.T) {
 	trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
 	require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
 	digest := schemaCatalogDigest(t, db)
-	dir := t.TempDir()
-	name := schemaContractFile(schemaContract{Version: 49, Digest: digest}, "9b6914ea954e6023e027151042eab8f33e298aa5aa83dec9f421427f14ded361")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("Add documents table\n"), 0600))
-	records, err := loadSchemaContracts(dir)
-	require.NoError(t, err)
-	require.NoError(t, checkSchemaContract(records, 49, digest))
 	for _, statement := range []string{
 		`CREATE INDEX contract_probe ON nodes(id)`,
 		`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
 		`DROP INDEX nodes_parent`,
 	} {
-		changed := probe(statement)
-		require.NotEqual(t, digest, changed, statement)
-		require.ErrorContains(t, checkSchemaContract(records, 49, changed), "set currentStorageSchemaVersion to 50")
-		require.NoError(t, checkSchemaContract(append(slices.Clone(records), schemaContract{Version: 50, Digest: changed}), 50, changed))
+		require.NotEqual(t, digest, probe(statement), statement)
 	}
 	for _, statement := range []string{
 		`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
