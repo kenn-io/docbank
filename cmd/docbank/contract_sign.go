@@ -25,7 +25,7 @@ func newContractSignCommand() *cobra.Command {
 		if checkJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), status)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Connected to %s (%s)\n", status.Endpoint, status.Capability)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Connected to %s\n", status.Endpoint)
 		if err != nil {
 			return fmt.Errorf("write DocuSeal status: %w", err)
 		}
