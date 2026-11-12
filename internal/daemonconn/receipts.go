@@ -402,6 +402,7 @@ var codeToTypedErr = map[string]error{
 	"stale_revision":                  store.ErrStaleRevision,
 	"tax_revision_exhausted":          store.ErrTaxRevisionExhausted,
 	"tax_retired":                     store.ErrTaxRetired,
+	"tax_event_voided":                store.ErrTaxEventVoided,
 	"invalid_tax":                     taxrecord.ErrInvalid,
 	"redaction_selection_changed":     store.ErrStaleRevision,
 	"redaction_preparation_integrity": ErrIntegrity,
