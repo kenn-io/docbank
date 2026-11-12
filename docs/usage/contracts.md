@@ -111,7 +111,13 @@ is the available head version, even if a later version has identical bytes; `ava
 its version has been pruned or purged. Links do not prevent source deletion.
 Restoring a trashed file makes a retained version available again. If several
 versions have the same role, unlink requires `--version`. Link and unlink use
-the contract revision and do not change its status. An unknown or trashed node returns 422 `invalid_contract`. An unlink matching multiple versions returns 409 `ambiguous_contract_document`. An explicitly empty version is invalid; omit it to select the default.
+the contract revision and do not change its status. A new link to an unknown or
+trashed node returns 422 `invalid_contract`. Re-linking an explicitly named,
+already-linked version is a revision-fenced no-op even after trash or purge;
+omitting the version requires a live source to select its current version. Use
+the recorded `id:N` to unlink after the source disappears. An unlink matching
+multiple versions returns 409 `ambiguous_contract_document`. An explicitly
+empty version is invalid; omit it to select the default.
 
 The API uses `PUT` and `DELETE /api/v1/contracts/{contract_id}/documents/{node_id}`
 with `role` and optional `content_version_id` query parameters and an `If-Match`

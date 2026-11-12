@@ -27,11 +27,36 @@ func TestContractDocumentCLI(t *testing.T) {
 	const version = "22222222-2222-4222-8222-222222222222"
 	calls := 0
 	var malformed atomic.Bool
+	var pathMode atomic.Bool
+	events := make(chan string, 6)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if pathMode.Load() {
+			switch r.URL.Path {
+			case "/api/v1/path":
+				events <- "resolve"
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/agreements/signed.pdf", r.URL.Query().Get("path"))
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Name: "signed.pdf", Kind: "file", Path: "/agreements/signed.pdf", Revision: 1, CurrentVersionID: version, BlobHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Size: 12, MimeType: "application/pdf", CreatedAt: "2024-01-01T00:00:00Z", ModifiedAt: "2024-01-01T00:00:00Z"}))
+				return
+			case "/api/v1/contracts/" + id:
+				events <- "contract"
+				assert.Equal(t, http.MethodGet, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"7"`)
+				assert.NoError(t, json.MarshalWrite(w, api.Contract{ContractID: id, Revision: 7, Parties: []api.ContractParty{}, Documents: []api.ContractDocument{}}))
+				return
+			}
+			events <- r.Method
+		}
 		calls++
 		assert.Equal(t, "/api/v1/contracts/"+id+"/documents/42", r.URL.Path)
 		assert.Equal(t, "signed", r.URL.Query().Get("role"))
-		assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
+		if pathMode.Load() {
+			assert.Equal(t, `"7"`, r.Header.Get("If-Match"))
+		} else {
+			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
+		}
 		if r.Method == http.MethodPut {
 			assert.False(t, r.URL.Query().Has("content_version_id"))
 		} else {
@@ -68,4 +93,19 @@ func TestContractDocumentCLI(t *testing.T) {
 		assert.True(t, daemonconn.IsRetryableMutationError(err), "underlying mutation error must remain classifiable")
 	}
 	require.Equal(t, 4, calls)
+	malformed.Store(false)
+	pathMode.Store(true)
+	for _, tc := range []struct{ action, method string }{{"link", http.MethodPut}, {"unlink", http.MethodDelete}} {
+		args := []string{"contract", tc.action, id, "/agreements/signed.pdf", "--role", "signed"}
+		if tc.action == "unlink" {
+			args = append(args, "--version", version)
+		}
+		_, err := runCLI(t, args...)
+		require.NoError(t, err)
+		require.Len(t, events, 3)
+		assert.Equal(t, "resolve", <-events)
+		assert.Equal(t, "contract", <-events)
+		assert.Equal(t, tc.method, <-events)
+	}
+	require.Equal(t, 6, calls)
 }
