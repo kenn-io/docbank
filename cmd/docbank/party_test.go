@@ -53,4 +53,37 @@ func TestPartyCLIShowsPopulatedAndRetiredParties(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.Contains(t, out, party.PartyID)
 	assert.Contains(t, out, "retired: "+*retired.RetiredAt)
+	assert.NotContains(t, out, "--offset", "list shorter than the limit has no continuation cue")
+
+	// Two parties exist, so --limit 2 returns a full page that may or may not
+	// have a successor; the cue must say "may" and make no total claim.
+	out, err = runCLI(t, "party", "list", "--include-retired", "--limit", "2")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "more parties may exist")
+	assert.Contains(t, out, "--offset 2")
+	assert.NotContains(t, out, "total")
+	assert.NotContains(t, out, "truncated")
+
+	// The next offset comes from the returned page bounds: offset 1 plus one item.
+	out, err = runCLI(t, "party", "list", "--include-retired", "--limit", "1", "--offset", "1")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "more parties may exist")
+	assert.Contains(t, out, "--offset 2")
+
+	// Partial and empty pages carry no cue.
+	for _, args := range [][]string{{"--limit", "3"}, {"--limit", "2", "--offset", "5"}} {
+		out, err = runCLI(t, append([]string{"party", "list", "--include-retired"}, args...)...)
+		require.NoError(t, err, out)
+		assert.NotContains(t, out, "more parties may exist", args)
+		assert.NotContains(t, out, "--offset", args)
+	}
+
+	// JSON output stays a single valid JSON document with no human cue.
+	out, err = runCLI(t, "party", "list", "--include-retired", "--limit", "2", "--json")
+	require.NoError(t, err, out)
+	var page api.PartyPage
+	require.NoError(t, json.Unmarshal([]byte(out), &page), out)
+	assert.Len(t, page.Items, 2)
+	assert.Equal(t, 2, page.Limit)
+	assert.NotContains(t, out, "more parties may exist")
 }
