@@ -73,7 +73,9 @@ func TestExistingReaderOwnership(t *testing.T) {
 type nonPrimaryCatalog struct{ packstore.Catalog }
 
 func TestExistingReaderRejectsNonPrimaryCatalog(t *testing.T) {
-	metadata, _, _, _ := placementTestVault(t)
+	metadata, blobs, _, secondary := placementTestVault(t)
+	require.NotNil(t, blobs)
+	require.NotEmpty(t, secondary.ID)
 	path := filepath.Join(t.TempDir(), "missing")
 	catalog := nonPrimaryCatalog{Catalog: store.NewPackCatalog(metadata)}
 	_, err := NewExistingReader(catalog, path, nil)
