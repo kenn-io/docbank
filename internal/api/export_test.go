@@ -5,3 +5,7 @@ package api
 func SetAfterRouteMutation(g *OperationGate, hook func()) {
 	g.afterRouteMutation = hook
 }
+
+func SetAfterUploadVerification(g *OperationGate, hook func()) {
+	g.afterUploadVerification = hook
+}

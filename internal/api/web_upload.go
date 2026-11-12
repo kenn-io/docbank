@@ -335,7 +335,17 @@ func handleWebUploadConnection(
 						}
 						return NewError(http.StatusConflict, "content_unavailable", "Stored content could not be verified. Run docbank vault verify to identify the problem.")
 					}
-					result = ingest.UploadResult{Node: node, ComputedHash: node.BlobHash, ComputedSize: node.Size}
+					if g.afterUploadVerification != nil {
+						g.afterUploadVerification()
+					}
+					current, found, err := d.Store.FindUploadedFile(ctx, request.parentID, request.name, request.expectedHash, request.expectedSize)
+					if err != nil {
+						return err
+					}
+					if !found || current.ID != node.ID || current.Revision != node.Revision || current.CurrentVersionID != node.CurrentVersionID {
+						return NewError(http.StatusConflict, "upload_changed", "The matching document changed during verification. Retry the upload.")
+					}
+					result = ingest.UploadResult{Node: current, ComputedHash: current.BlobHash, ComputedSize: current.Size}
 					return nil
 				}
 			}
