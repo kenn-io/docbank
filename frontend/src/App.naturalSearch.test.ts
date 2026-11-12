@@ -2116,7 +2116,7 @@ it.each([
         { code: "web_browser", detail: "browser cookie, Host or Origin rejected" },
         { status: 403 },
       ),
-    "browser cookie, Host or Origin rejected",
+    "Docbank couldn't confirm the restart. It may still happen later.",
   ],
 ])("keeps the workspace after an %s response", async (kind, restart, notice) => {
   const request = vi.fn(restart);

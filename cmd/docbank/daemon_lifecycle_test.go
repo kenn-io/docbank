@@ -689,10 +689,17 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusAccepted, response.StatusCode)
 	require.NoError(t, response.Body.Close())
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
+	defer cancel()
 	for {
 		select {
-		case <-t.Context().Done():
-			t.Fatal(t.Context().Err())
+		case <-ctx.Done():
+			logs, _ := filepath.Glob(filepath.Join(root, "logs", "*.log"))
+			for _, path := range logs {
+				data, err := os.ReadFile(path)
+				t.Logf("daemon log %s (read error: %v):\n%s", filepath.Base(path), err, data)
+			}
+			t.Fatalf("replacement daemon did not appear: %v", ctx.Err())
 		case err := <-watcher.Errors:
 			require.NoError(t, err)
 		case <-watcher.Events:
