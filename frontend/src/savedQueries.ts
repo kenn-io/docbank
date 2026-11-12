@@ -108,6 +108,25 @@ function definition(kind: unknown, payload: unknown): Definition {
   throw new Error("Unknown saved definition kind.");
 }
 
+// The server pins its timeline zone into a date query saved without one
+// (internal/api pinSavedQueryTimezone), so a receipt for a query sent without
+// a zone may add one valid zone and nothing else.
+const assignableZone = /^(?:UTC|[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)+)$/;
+
+type ExpectedDefinition = Definition & { name: string; description: string };
+
+function withPinnedZone(expected: ExpectedDefinition, saved: Definition): ExpectedDefinition {
+  if (
+    expected.kind !== "query" ||
+    saved.kind !== "query" ||
+    expected.payload.timezone !== undefined ||
+    saved.payload.timezone === undefined ||
+    !assignableZone.test(saved.payload.timezone)
+  )
+    return expected;
+  return { ...expected, payload: { ...expected.payload, timezone: saved.payload.timezone } };
+}
+
 function canonical(value: Definition): string {
   return value.kind === "query"
     ? canonicalQuery(value.payload)
@@ -230,15 +249,12 @@ export async function createSavedQuery(
     description: descriptionValue(input.description ?? ""),
   };
   const saved = await readResponse(await generated.createSavedQuery(expected, { session }));
-  requireReceipt(saved.revision === 1 && sameDefinition(saved, expected));
+  requireReceipt(saved.revision === 1 && sameDefinition(saved, withPinnedZone(expected, saved)));
   definitionsChanged(session);
   return saved;
 }
 
-function sameDefinition(
-  left: SavedQuery,
-  right: Definition & { name: string; description: string },
-): boolean {
+function sameDefinition(left: SavedQuery, right: ExpectedDefinition): boolean {
   return (
     left.kind === right.kind &&
     left.name === right.name &&
@@ -266,16 +282,19 @@ export async function updateSavedQuery(
     name: body.name ?? observed.name,
     description: body.description ?? observed.description,
   };
-  const revision = observed.revision + (sameDefinition(observed, expected) ? 0 : 1);
-  requireReceipt(Number.isSafeInteger(revision));
   const saved = await readResponse(
     await generated.updateSavedQuery(observed.id, body, headers, { session }),
   );
+  // Only a submitted payload is pinned; a rename keeps the stored payload.
+  const accepted = body.payload === undefined ? expected : withPinnedZone(expected, saved);
+  // A payload that only drops a zone the server re-pins is a canonical no-op.
+  const revision = observed.revision + (sameDefinition(observed, accepted) ? 0 : 1);
+  requireReceipt(Number.isSafeInteger(revision));
   requireReceipt(
     saved.id === observed.id &&
       saved.revision === revision &&
       saved.created_at === observed.created_at &&
-      sameDefinition(saved, expected),
+      sameDefinition(saved, accepted),
   );
   definitionsChanged(session);
   return saved;

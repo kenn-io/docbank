@@ -64,7 +64,7 @@ var backendMaintenanceEffects = []backendMaintenance{
  processing_consent_revocations_immutable_update processing_consent_revocations_immutable_delete`},
 	{"metadata and event evidence", "source_metadata.go and document_events.go; INSERT-only publication grants", "metadata-events contracts; retained evidence is never rewritten", `
  source_metadata_generations_immutable_update document_event_generations_immutable_update
- document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update`},
+ document_events_immutable_update document_event_actors_immutable_update document_event_primaries_immutable_update document_date_keys_immutable_update`},
 	{"document-person generations", "document_people.go; INSERT-only generation grants", "document-people contracts; publication replaces heads without rewriting retained attribution", `
  document_people_generations_immutable_update`},
 	{"visual preview records", "visual_preview.go; INSERT-only generation grants", "visual-evidence contracts; active heads may change without rewriting retained generations", `

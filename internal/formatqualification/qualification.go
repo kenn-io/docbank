@@ -59,7 +59,7 @@ const (
 	mediaDetectionID          = "docbank-media-detection:jpeg+png+webp+gif+iso-bmff:v1"
 	originalRetentionID       = "docbank-original-retention:verified-blob+ingest-authority:v1"
 	// Independently pin the parser implementation, excluding its Go toolchain.
-	sourceMetadataExtractorID = "d325514d29d8e8ec9d0ce14c44beade5efeba49f6d9083baebf525118f45f83e"
+	sourceMetadataExtractorID = "2810f932642b0a1ec3e4df0fbd6287a223b3e2c8add35c6e95b40281f7fff786"
 )
 
 var baseQualifications = []Qualification{

@@ -134,6 +134,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV41SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 48, release: "v0.17.0", backupSuffix: ".schema-v48.bak",
+		validate: func(ctx context.Context, db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(ctx, db, "v0.17.0", schemaV48Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 48)
+		},
+		restoreSourceState:         restoreV41SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
@@ -165,7 +176,7 @@ var currentSchemaTables = [...]string{
 	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"document_event_state", "document_event_generations", "document_event_heads",
 	"document_event_builds", "document_event_dirty", "document_event_attempts",
-	"document_events", "document_event_actors", "document_event_primaries",
+	"document_events", "document_event_actors", "document_event_primaries", "document_date_keys",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs",
 	"vector_index_reader_leases", "vector_index_unavailable_coverage",
 	"media_sources", "media_source_versions", "media_occurrences", "media_input_artifacts",

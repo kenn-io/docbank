@@ -2,6 +2,12 @@
   "format": "docbank-query-identity-v1",
   "queries": [
     {
+      "name": "document_date_timezone",
+      "input_json": "{\"timezone\":\"America/Toronto\",\"sort\":{\"field\":\"document_date\",\"direction\":\"desc\"},\"filters\":{\"document_date\":{\"from\":\"2026-03-01\",\"to\":\"2026-03-31\",\"kinds\":[\"sent\"],\"precisions\":[\"day\"]}}}",
+      "canonical_utf8": "{\"filters\":{\"document_date\":{\"from\":\"2026-03-01\",\"kinds\":[\"sent\"],\"precisions\":[\"day\"],\"to\":\"2026-03-31\"}},\"mode\":\"lexical\",\"sort\":{\"direction\":\"desc\",\"field\":\"document_date\"},\"syntax\":\"simple\",\"text\":\"\",\"timezone\":\"America/Toronto\",\"v\":1}",
+      "fingerprint": "sha256:f86537f3acb87cf85641bf29aefa704cc8e5f21dce08a5dea66c44033938bde6"
+    },
+    {
       "name": "query_person_ids_normalized",
       "input_json": "{\"filters\":{\"person_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]}}",
       "canonical_utf8": "{\"filters\":{\"person_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",

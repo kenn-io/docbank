@@ -27,6 +27,7 @@ function page(overrides: Partial<SnapshotPage> = {}): SnapshotPage {
     total_bytes: 12345,
     rows: [],
     facets: [],
+    timezone_defaulted: false,
     snapshot: true,
     snapshot_id: "0123456789abcdef0123456789abcdef",
     created_at: "2026-09-11T12:34:00Z",

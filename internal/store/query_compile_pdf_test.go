@@ -111,6 +111,9 @@ func TestPDFFilterRejectsInvalidOperands(t *testing.T) {
 	}{
 		{"tag:urgent", "unknown tag reference"},
 		{"name:report", "PDF filters require PDF fact fields"},
+		{"date:2026-03-10", "PDF filters require PDF fact fields"},
+		{"date_kind:sent", "PDF filters require PDF fact fields"},
+		{"pdf_encrypted:true date_precision:day", "PDF filters require PDF fact fields"},
 		{"report", "PDF filters require PDF fact fields"},
 		{"pdf_encrypted:yes", "invalid pdf_encrypted operand"},
 		{"pdf_encrypted:TRUE", "invalid pdf_encrypted operand"},

@@ -1876,6 +1876,84 @@ it.each([
   },
 );
 
+it.each(["Advanced", "top bar"])(
+  "runs a plain-word Document date sort through the snapshot from %s",
+  async (submission) => {
+    const newer = node(2, "newer.txt", baseVersion);
+    const older = node(3, "older.txt", rerankedVersion);
+    const undated = node(4, "undated.txt", "44444444-4444-4444-8444-444444444444");
+    const snapshotRows: SnapshotRow[] = [
+      { document: newer, sortKey: "2026-03-10T00:00:00.000000000" },
+      { document: older, sortKey: "2025-03-10T00:00:00.000000000" },
+      { document: undated, sortKey: "" },
+    ].map(({ document, sortKey }) => {
+      return {
+        node_id: document.id,
+        content_version_id: document.current_version_id,
+        blob_hash: document.blob_hash,
+        size: document.size,
+        revision: document.revision,
+        name: document.name,
+        path: document.path,
+        mime_type: document.mime_type,
+        media_family: "text",
+        modified_at: document.modified_at,
+        sort_key: sortKey,
+        tags: [],
+        collection_ids: [],
+      };
+    });
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: false,
+        },
+      ],
+      files: [newer, older, undated],
+      baseReport: report("hybrid", [result(older, 1, "ranked excerpt")]),
+      snapshotRows,
+    });
+    render(App);
+    await submitSearch("annual report");
+    await screen.findByText("ranked excerpt");
+    await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: /^Sort by:/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "Document date" }));
+    await fireEvent.click(screen.getByRole("combobox", { name: "Direction: Ascending" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Descending" }));
+    if (submission === "Advanced") {
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    } else {
+      await fireEvent.keyDown(window, { key: "Escape" });
+      await fireEvent.submit(
+        screen.getByRole("searchbox", { name: "Search documents" }).closest("form")!,
+      );
+    }
+    const results = await screen.findByRole("region", { name: "Frozen query results" });
+    const calls = harness.fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/v1/workspace/queries",
+    );
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0][1]?.body)).query).toMatchObject({
+      text: "annual report",
+      syntax: "simple",
+      sort: { field: "document_date", direction: "desc" },
+    });
+    const rows = within(results)
+      .getAllByRole("row")
+      .filter((row) => row.textContent?.includes(".txt"));
+    expect(rows).toHaveLength(3);
+    expect(rows[0].textContent).toContain("newer.txt");
+    expect(rows[1].textContent).toContain("older.txt");
+    expect(rows[2].textContent).toContain("undated.txt");
+    expect(harness.postBodies).toHaveLength(1);
+  },
+);
+
 it.each(["top bar", "Advanced"])(
   "retains the sort draft after a failed search from %s",
   async (entry) => {

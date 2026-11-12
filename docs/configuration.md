@@ -206,6 +206,7 @@ exclude_patterns = ["*.swp"]
   this and never idles out. `daemon start` reuses a compatible automatic daemon
   with its existing idle policy; use `daemon restart` to keep it running.
   A daemon hosting MCP HTTP also never idles out.
+- **`[web] timeline_timezone`**: the IANA zone used for document-date searches when no zone is supplied. It defaults to `UTC`; for example, `America/Toronto`.
 - **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,

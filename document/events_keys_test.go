@@ -3,6 +3,7 @@ package document
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -171,5 +172,25 @@ func TestNamedZoneFoldAndGapRemainCivil(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, ok)
 		assert.Empty(t, utc)
+	}
+}
+
+func TestEventLocalInstantPrecision(t *testing.T) {
+	t.Parallel()
+	loc := time.FixedZone("synthetic", 2*3600)
+	for _, tc := range []struct {
+		value     string
+		precision EventPrecision
+		utc       string
+	}{
+		{"2026-03-10T09", "hour", "2026-03-10T07:00:00Z"},
+		{"2026-03-10T09:12", "minute", "2026-03-10T07:12:00Z"},
+		{"2026-03-10T09:12:30.1234", "fraction", "2026-03-10T07:12:30.1234Z"},
+	} {
+		instant, err := EventLocalInstant(tc.value, tc.precision, loc)
+		require.NoError(t, err)
+		require.Equal(t, tc.utc, instant.UTC().Format(time.RFC3339Nano))
+		_, offset := instant.Zone()
+		require.Equal(t, 2*3600, offset)
 	}
 }

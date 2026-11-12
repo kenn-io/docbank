@@ -104,7 +104,37 @@ func TestTermReportRoutesFreezeSummaryDatesAndDownload(t *testing.T) {
 
 func TestTermReportRejectsInvalidRequestAsClientError(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, nil)
+	ts, s := newTestServer(t, nil)
+	createFileWithContent(t, ts, s, "/pending-date.txt", "synthetic")
+	for _, tc := range []struct {
+		expression, code string
+		status           int
+	}{
+		{"date:2026-02-30", "invalid_date", http.StatusBadRequest},
+		{"date:2026-03-01", "document_dates_pending", http.StatusServiceUnavailable},
+	} {
+		body := fmt.Sprintf(`{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":%q,"syntax":"advanced","dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`, tc.expression)
+		response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey}, body)
+		require.Equal(t, tc.status, response.StatusCode, payload)
+		problem := decodeProblem(t, payload)
+		require.Equal(t, tc.code, problem.Code)
+		if tc.status == http.StatusBadRequest {
+			require.NotNil(t, problem.Position)
+		}
+	}
+	for _, zone := range []string{"EST", "CET", "EST5EDT"} {
+		body := fmt.Sprintf(`{"version":1,"all_documents":true,"timezone":%q,"coverage_mode":"available_only","terms":[{"number":1,"expression":"date:2026-03-01","syntax":"advanced","dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`, zone)
+		response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey}, body)
+		require.Equal(t, http.StatusBadRequest, response.StatusCode, payload)
+		require.Equal(t, "invalid_timezone", decodeProblem(t, payload).Code)
+	}
+	for _, term := range []struct{ syntax, expression string }{
+		{"simple", "date:2026-03-01"}, {"advanced", "synthetic"},
+	} {
+		body := fmt.Sprintf(`{"version":1,"all_documents":true,"timezone":"EST","coverage_mode":"available_only","terms":[{"number":1,"expression":%q,"syntax":%q,"dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`, term.expression, term.syntax)
+		response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey}, body)
+		require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	}
 	request := `{"version":1,"all_documents":true,"timezone":"Invalid/Zone","coverage_mode":"strict",` +
 		`"terms":[{"number":1,"expression":"alpha","syntax":"simple",` +
 		`"dates":{"start":"2026-01-01","end":"2026-12-31"}}]}`

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -150,6 +151,90 @@ func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *tes
 	require.Equal(t, "saved", preview.Dependencies[0].Kind)
 	require.NotContains(t, body, "hidden")
 	require.NotContains(t, body, "caption")
+
+	// All three receipts identify submitted intent even when execution defaults a zone.
+	input := `{"syntax":"advanced","text":"date:2026-03-01 AND alpha"}`
+	var fingerprint string
+	for _, path := range []string{queryParsePath, queryHighlightsPath} {
+		response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, input)
+		require.Equal(t, http.StatusOK, response.StatusCode, payload)
+		var receipt struct {
+			QueryFingerprint string `json:"query_fingerprint"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(payload), &receipt))
+		if fingerprint == "" {
+			fingerprint = receipt.QueryFingerprint
+		} else {
+			require.Equal(t, fingerprint, receipt.QueryFingerprint)
+		}
+	}
+	response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":`+input+`}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	var snapshot api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(payload), &snapshot))
+	require.Equal(t, fingerprint, snapshot.QueryFingerprint)
+	require.Equal(t, "UTC", snapshot.Timezone)
+	require.True(t, snapshot.TimezoneDefaulted)
+
+	saved, etag := createSavedQuery(t, ts.URL, "Pinned date", input)
+	response, payload = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	var run api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(payload), &run))
+	require.Equal(t, "UTC", run.Snapshot.Timezone)
+	require.False(t, run.Snapshot.TimezoneDefaulted)
+	require.Equal(t, saved.Fingerprint, run.Snapshot.QueryFingerprint)
+	require.Contains(t, string(saved.Payload), `"timezone":"UTC"`)
+	require.Equal(t, `"1"`, etag)
+	path := "/api/v1/saved-queries/" + saved.ID
+	patch := func(body, match string) (*http.Response, string) {
+		return rawJSONRequest(t, ts.URL, http.MethodPatch, path,
+			map[string]string{"X-Api-Key": testAPIKey, "If-Match": match}, body)
+	}
+	updatedInput := `{"syntax":"advanced","text":"date:2026-03-02"}`
+	response, payload = patch(`{"payload":`+updatedInput+`}`, etag)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"2"`, response.Header.Get("ETag"))
+	var updated api.SavedQuery
+	require.NoError(t, json.Unmarshal([]byte(payload), &updated))
+	require.EqualValues(t, 2, updated.Revision)
+	require.Contains(t, string(updated.Payload), `"timezone":"UTC"`)
+	response, payload = patch(`{"payload":`+updatedInput+`}`, `"2"`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"2"`, response.Header.Get("ETag"))
+	var noOp api.SavedQuery
+	require.NoError(t, json.Unmarshal([]byte(payload), &noOp))
+	require.Equal(t, updated, noOp)
+	response, payload = patch(`{"description":"No payload change"}`, `"2"`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"3"`, response.Header.Get("ETag"))
+	var descriptionOnly api.SavedQuery
+	require.NoError(t, json.Unmarshal([]byte(payload), &descriptionOnly))
+	require.Equal(t, updated.Payload, descriptionOnly.Payload)
+	explicit := `{"syntax":"advanced","text":"date:2026-03-03","timezone":"Asia/Singapore"}`
+	explicitSaved, _ := createSavedQuery(t, ts.URL, "Explicit date zone", explicit)
+	require.Contains(t, string(explicitSaved.Payload), `"timezone":"Asia/Singapore"`)
+	response, payload = patch(`{"payload":`+explicit+`}`, `"3"`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	require.Equal(t, `"4"`, response.Header.Get("ETag"))
+	require.NoError(t, json.Unmarshal([]byte(payload), &updated))
+	require.Contains(t, string(updated.Payload), `"timezone":"Asia/Singapore"`)
+	for _, tc := range []struct {
+		query, code string
+		status      int
+	}{
+		{`{"timezone":"Local"}`, "invalid_timezone", http.StatusBadRequest},
+		// The payload schema rejects an unknown syntax before the route handler.
+		{`{"syntax":"unknown"}`, "validation", http.StatusUnprocessableEntity},
+	} {
+		response, payload = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
+			map[string]string{"X-Api-Key": testAPIKey}, `{"name":"Invalid","kind":"query","payload":`+tc.query+`}`)
+		require.Equal(t, tc.status, response.StatusCode, payload)
+		require.Equal(t, tc.code, decodeProblem(t, payload).Code)
+		response, payload = patch(`{"payload":`+tc.query+`}`, `"4"`)
+		require.Equal(t, tc.status, response.StatusCode, payload)
+		require.Equal(t, tc.code, decodeProblem(t, payload).Code)
+	}
 }
 
 func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) {
@@ -169,4 +254,66 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost,
 		queryHighlightsPath+"?unrecognized=1", headers, `{}`)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+}
+
+func TestQueryCompileTimelineErrors(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	for _, tc := range []struct {
+		input, code string
+		positioned  bool
+	}{
+		{`{"timezone":"Local"}`, "invalid_timezone", false},
+		{`{"syntax":"advanced","text":"date:2026-02-30"}`, "invalid_date", true},
+		{`{"syntax":"advanced","text":"date:2011-12-30","timezone":"Pacific/Apia"}`, "date_not_in_zone", true},
+		{`{"filters":{"document_date":{"from":"2026-02-30","to":"2026-03-01"}}}`, "invalid_date", false},
+		{`{"filters":{"document_date":{"from":"0001-01-01","to":"0001-01-01"}},"timezone":"Asia/Singapore"}`, "invalid_date", false},
+		{`{"filters":{"document_date":{"from":"0000-01-01","to":"0000-01-01"}}}`, "invalid_date", false},
+		{`{"filters":{"document_date":{"from":"9999-12-31","to":"9999-12-31"}},"timezone":"UTC"}`, "invalid_date", false},
+	} {
+		for _, path := range []string{queryParsePath, queryHighlightsPath} {
+			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, tc.input)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+			problem := decodeProblem(t, body)
+			require.Equal(t, tc.code, problem.Code)
+			if tc.positioned {
+				require.NotNil(t, problem.Position)
+				require.Equal(t, 0, problem.Position.Offset)
+				require.Equal(t, len("date:2026-02-30"), problem.Position.End)
+			}
+		}
+	}
+	for _, path := range []string{queryParsePath, queryHighlightsPath} {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, `{"syntax":"advanced","text":"alpha AND date:2026-03-31..2026-03-01"}`)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+		problem := decodeProblem(t, body)
+		require.Equal(t, "invalid_date", problem.Code)
+		require.Equal(t, "date range is reversed", problem.Detail)
+		require.NotNil(t, problem.Position)
+		require.Equal(t, len("alpha AND "), problem.Position.Offset)
+		require.Equal(t, len("alpha AND date:2026-03-31..2026-03-01"), problem.Position.End)
+	}
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries", map[string]string{"X-Api-Key": testAPIKey}, `{"name":"Invalid date","kind":"query","payload":{"filters":{"document_date":{"from":"2026-02-30","to":"2026-03-01"}}}}`)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Equal(t, "invalid_date", decodeProblem(t, body).Code)
+}
+
+func TestFullDateDisclosureRequiresNonBrowserAPIKey(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	input := `{"query":{},"disclosure":"full"}`
+	for _, headers := range []map[string]string{
+		{api.WebSessionHeader: session.Token},
+	} {
+		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, input)
+		require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+	}
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, input)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 }

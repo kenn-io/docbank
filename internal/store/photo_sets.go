@@ -477,7 +477,7 @@ func (s *Store) photoSetQueryIDs(ctx context.Context, tx *sql.Tx, selection Phot
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: selection.Hidden}).compile(ctx, *selection.Query, queryResolver{q: tx})
+	compiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: selection.Hidden}).compile(ctx, *selection.Query, queryResolver{q: tx})
 	if err != nil {
 		return nil, err
 	}

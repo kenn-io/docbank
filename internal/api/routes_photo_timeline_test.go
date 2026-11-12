@@ -46,7 +46,9 @@ func TestPhotoTimelineRouteCountsBrowsedPhotos(t *testing.T) {
 
 func TestPhotoTimelineRouteRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, nil)
+	ts, s := newTestServer(t, nil)
+	_, err := s.CreateFile(t.Context(), s.RootID(), "pending.jpg", testHash("pending"), 10, "image/jpeg")
+	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": testAPIKey}
 	for _, raw := range []string{
 		`{"query":{"syntax":"advanced","text":"tag:"}}`,
@@ -62,6 +64,22 @@ func TestPhotoTimelineRouteRejectsInvalidInput(t *testing.T) {
 	} {
 		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, raw)
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, raw+": "+body)
+	}
+	createSavedQuery(t, ts.URL, "Dated", `{"syntax":"advanced","text":"date:2026-03-01"}`)
+	nested, _ := createSavedQuery(t, ts.URL, "Outer", `{"syntax":"advanced","text":"saved:Dated"}`)
+	for _, tc := range []struct {
+		path, body string
+		headers    map[string]string
+	}{
+		{"/api/v1/photos/assets/query", `{"query":{"mode":"semantic","syntax":"advanced","text":"saved:Outer"}}`, headers},
+		{"/api/v1/photos/assets/query", `{"query":{"syntax":"advanced","text":"saved:Outer"},"facets":["camera"]}`, headers},
+		{"/api/v1/photos/assets/timeline", `{"query":{"syntax":"advanced","text":"saved:Outer"}}`, headers},
+		{"/api/v1/workspace/queries", `{"photos":true,"query":{"syntax":"advanced","text":"saved:Outer"}}`, headers},
+		{"/api/v1/saved-queries/" + nested.ID + "/runs", `{"photos":true}`, map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}},
+	} {
+		response, body := rawJSONRequest(t, ts.URL, http.MethodPost, tc.path, tc.headers, tc.body)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+		require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
 	}
 	saved, _ := createSavedQuery(t, ts.URL, "Calendar rejected for saved runs", `{}`)
 	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs",

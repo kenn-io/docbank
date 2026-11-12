@@ -18,7 +18,7 @@ func TestDateKindRegistryIsExactlySixteenClosedValues(t *testing.T) {
 	assert.False(t, ValidDateKind(""))
 	assert.Equal(t, []EventPrecision{"year", "month", "date", "hour", "minute", "second", "fraction"},
 		AllEventPrecisions())
-	assert.Equal(t, []EventTimezoneKind{"utc", "offset", "named", "omitted", "invalid"},
+	assert.Equal(t, []EventTimezoneKind{"utc", "offset", "iana", "rfc5322", "named", "omitted", "invalid"},
 		AllEventTimezoneKinds())
 	assert.Equal(t, []EventRole{"author", "last_saved_by", "custodian", "sender", "recipient",
 		"copied", "blind_copy", "organizer", "attendee", "participant"}, AllEventRoles())

@@ -14,6 +14,7 @@ export async function snapshotEnvelope<T extends SnapshotRow>(
     member_hash:
       "member_hash" in overrides ? overrides.member_hash : await snapshotMemberHash(rows),
     snapshot_fingerprint: `sha256:${"b".repeat(64)}`,
+    timezone_defaulted: false,
     generation: { kind: "native" },
     coverage: { configuration: "unconfigured" },
     observed_at: "2026-10-01T00:00:00Z",

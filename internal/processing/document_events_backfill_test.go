@@ -31,6 +31,51 @@ func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 	})
 }
 
+func TestRebuildReusesRetainedIANAInstant(t *testing.T) {
+	t.Parallel()
+	catalog := openDocumentEventTestStore(t)
+	ctx := t.Context()
+	node, err := catalog.CreateFile(ctx, catalog.RootID(), "event.ics", testDigest("retained-zone"), 4, "text/calendar")
+	require.NoError(t, err)
+	publishDocumentEventTestMetadata(t, catalog, node.BlobHash, "retained-zone-metadata", []document.SourceMetadataFieldV1{{
+		Key: "calendar.event.e000001.start.raw", Namespace: "calendar", SourceField: "DTSTART;TZID=America/Toronto",
+		Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("20260308T023000")},
+	}})
+	require.NoError(t, catalog.EnsureDocumentEventRecipe(ctx, DocumentEventsDeriverFingerprint))
+	targets, err := catalog.MissingDocumentEventTargetsAfter(ctx, DocumentEventsDeriverFingerprint, "", 25)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	snapshot, err := catalog.LoadDocumentEventEvidence(ctx, targets[0])
+	require.NoError(t, err)
+	record, _, err := DeriveDocumentEvents(snapshot)
+	require.NoError(t, err)
+	found := false
+	for i := range record.Events {
+		if record.Events[i].TimezoneKind == "iana" {
+			record.Events[i].OffsetSeconds = new(-4 * 60 * 60)
+			record.Events[i].UTCKey = "2026-03-08T06:30:00.000000000Z"
+			record.Events[i].AxisKey = "2026-03-08T06:30:00.000000000"
+			found = true
+		}
+	}
+	require.True(t, found)
+	canonical, _, err := document.MarshalDocumentEventsV1(record)
+	require.NoError(t, err)
+	before, err := catalog.PublishDocumentEvents(ctx, targets[0], DocumentEventsDeriverFingerprint, snapshot.InputsSHA256, canonical)
+	require.NoError(t, err)
+	require.NoError(t, RebuildDocumentEvents(ctx, catalog))
+	after, err := catalog.DocumentEventsForVersion(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, before.GenerationID, after.Generation.GenerationID)
+	require.Equal(t, before.Checksum, after.Generation.Checksum)
+	require.Equal(t, before.CreatedAt, after.Generation.CreatedAt)
+	require.Equal(t, canonical, after.Generation.CanonicalJSON)
+	require.Greater(t, after.InputEpoch, targets[0].InputEpoch)
+	coverage, err := catalog.DocumentEventRebuildCoverage(ctx)
+	require.NoError(t, err)
+	require.Zero(t, coverage.Pending+coverage.Failed)
+}
+
 func TestBackfillIdleListingsPreserveWriteRevision(t *testing.T) {
 	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
@@ -506,6 +551,15 @@ func TestDocumentEventBackfillClassifiesOnlyCapturedTerminalEvidence(t *testing.
 	})
 }
 
+func TestDocumentEventReusePropagatesCorruptHead(t *testing.T) {
+	t.Parallel()
+	catalog := &gatedDocumentEventCatalog{gateDepth: 1, snapshot: store.DocumentEventEvidenceSnapshot{InputsSHA256: testDigest("captured")}, viewErr: store.ErrDocumentEventsCorrupt}
+	completed, err := BackfillDocumentEventTargets(t.Context(), catalog, []store.DocumentEventTarget{{ContentVersionID: "92000000-0000-4000-8000-000000000009"}})
+	require.ErrorIs(t, err, store.ErrDocumentEventsCorrupt)
+	require.Zero(t, completed)
+	require.Zero(t, catalog.publishCalls)
+}
+
 type gatedDocumentEventCatalog struct {
 	target       store.DocumentEventTarget
 	snapshot     store.DocumentEventEvidenceSnapshot
@@ -515,6 +569,8 @@ type gatedDocumentEventCatalog struct {
 	ensureCalls  int
 	publishCalls int
 	refreshCalls int
+	view         store.DocumentEventView
+	viewErr      error
 }
 
 func (catalog *gatedDocumentEventCatalog) requireGate() error {
@@ -551,6 +607,19 @@ func (catalog *gatedDocumentEventCatalog) LoadDocumentEventEvidence(
 		return store.DocumentEventEvidenceSnapshot{}, err
 	}
 	return catalog.snapshot, nil
+}
+
+func (catalog *gatedDocumentEventCatalog) DocumentEventsForVersion(context.Context, string) (store.DocumentEventView, error) {
+	if err := catalog.requireGate(); err != nil {
+		return store.DocumentEventView{}, err
+	}
+	if catalog.viewErr != nil {
+		return store.DocumentEventView{}, catalog.viewErr
+	}
+	if catalog.view.Generation.GenerationID == "" {
+		return store.DocumentEventView{}, store.ErrNotFound
+	}
+	return catalog.view, nil
 }
 
 func (catalog *gatedDocumentEventCatalog) PublishDocumentEvents(

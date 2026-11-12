@@ -1069,7 +1069,7 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 // record's own table comes from its registration instead.
 var metadataPristineStateTables = []string{
 	"export_jobs", "document_event_state", "document_event_generations", "document_event_heads",
-	"document_events", "document_event_actors", "document_event_primaries", "document_event_builds",
+	"document_events", "document_event_actors", "document_event_primaries", "document_date_keys", "document_event_builds",
 	"document_event_dirty", "document_event_attempts", "text_extraction_queue", "text_searchable_versions",
 	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs", "vector_index_reader_leases",
 	"vector_index_unavailable_coverage", "rendition_blob_staging", "derivative_blob_purge_pending",

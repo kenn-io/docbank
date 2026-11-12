@@ -502,7 +502,11 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 	if validateUUIDv4(contentVersionID) != nil {
 		return nil, ErrInvalidPerson
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
+	return documentPersonAssertionsTx(ctx, s.db, contentVersionID)
+}
+
+func documentPersonAssertionsTx(ctx context.Context, q metadataQuerier, contentVersionID string) ([]PersonDocumentAssertion, error) {
+	rows, err := q.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -731,3 +735,90 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 }
 
 var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))`
+
+// VersionCandidate contains only the occurrences belonging to the requested version.
+type VersionCandidate struct {
+	CandidateID, ActorKey string
+	Occurrences           []PersonCandidateOccurrence
+	OccurrenceLabels      map[PersonCandidateOccurrence]string
+}
+
+func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string, actorKeys []string) ([]VersionCandidate, error) {
+	// Each emitted occurrence must match a fresh actor. Deduplicate keys before
+	// querying both partial-index partitions, without limiting the results.
+	keys := make([]string, 0, len(actorKeys))
+	seen := make(map[string]bool, len(actorKeys))
+	for _, key := range actorKeys {
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	type orderedCandidate struct {
+		VersionCandidate
+
+		createdAt string
+	}
+	var candidates []orderedCandidate
+	// Keep the parameter count portable across SQLite builds and PostgreSQL.
+	for start := 0; start < len(keys); start += 400 {
+		chunk := keys[start:min(start+400, len(keys))]
+		args := make([]any, len(chunk)+1)
+		placeholders := make([]string, len(chunk))
+		for i, key := range chunk {
+			args[i] = key
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+		}
+		args[len(chunk)] = versionID
+		versionParam := fmt.Sprintf("$%d", len(args))
+		membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
+		if s.postgresSchema != "" {
+			membership = `EXISTS (SELECT 1 FROM jsonb_array_elements(convert_from(evidence_json,'UTF8')::jsonb) o(value) WHERE o.value->>'content_version_id' = ` + versionParam + `)`
+		}
+		filter := `state='open' AND reason<>'face_match' AND actor_key IN (` + strings.Join(placeholders, ",") + `) AND ` + membership
+		columns := `candidate_id,actor_key,evidence_json,created_at`
+		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
+			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
+		err := func() error {
+			rows, err := q.QueryContext(ctx, query, args...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var c orderedCandidate
+				var raw []byte
+				if err := rows.Scan(&c.CandidateID, &c.ActorKey, &raw, &c.createdAt); err != nil {
+					return err
+				}
+				occurrences, err := decodeStoredCandidateEvidence(raw)
+				if err != nil {
+					return err
+				}
+				for _, occurrence := range occurrences {
+					if occurrence.ContentVersionID == versionID {
+						c.Occurrences = append(c.Occurrences, occurrence)
+					}
+				}
+				if len(c.Occurrences) > 0 {
+					candidates = append(candidates, c)
+				}
+			}
+			return rows.Err()
+		}()
+		if err != nil {
+			return nil, err
+		}
+	}
+	slices.SortFunc(candidates, func(a, b orderedCandidate) int {
+		if n := strings.Compare(a.createdAt, b.createdAt); n != 0 {
+			return n
+		}
+		return strings.Compare(a.CandidateID, b.CandidateID)
+	})
+	result := make([]VersionCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		result = append(result, c.VersionCandidate)
+	}
+	return result, nil
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/query"
 )
 
 const (
@@ -95,6 +96,11 @@ func NormalizeRequest(r Request) (Request, error) {
 		if !utf8.ValidString(term.Expression) || strings.ContainsRune(term.Expression, 0) ||
 			strings.TrimSpace(term.Expression) == "" || utf8.RuneCountInString(term.Expression) > maxExpressionRunes {
 			return Request{}, fmt.Errorf("term %d: invalid expression", term.Number)
+		}
+		if query.UsesDocumentDate(query.Query{Text: term.Expression, Syntax: term.Syntax}) {
+			if _, err := query.LoadZone(r.Timezone); err != nil {
+				return Request{}, &query.DateError{Code: "invalid_timezone", Err: err}
+			}
 		}
 		start, err := parseISODate(term.Dates.Start)
 		if err != nil {

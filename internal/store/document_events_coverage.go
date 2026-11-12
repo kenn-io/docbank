@@ -47,10 +47,7 @@ func (s *Store) DocumentEventCoverageReport(ctx context.Context) (DocumentEventC
 		ContractVersion: state.ContractVersion, DeriverFingerprint: state.DeriverFingerprint,
 		InputEpoch: state.InputEpoch, PublicationEpoch: state.PublicationEpoch,
 	}
-	const freshIndexed = `a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
-		AND a.state='indexed' AND h.input_epoch=a.input_epoch
-		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=$2
-		AND g.deriver_fingerprint=$3`
+	freshIndexed := documentEventFreshIndexedSQL("$1", "$2", "$3")
 	query := `SELECT count(*),
 		COALESCE(sum(CASE WHEN ` + freshIndexed + ` THEN 1 ELSE 0 END),0),
 		COALESCE(sum(CASE WHEN a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0)
@@ -193,4 +190,12 @@ func (s *Store) DocumentEventRebuildCoverage(ctx context.Context) (DocumentEvent
 		return DocumentEventCoverage{}, fmt.Errorf("closing document event rebuild coverage: %w", err)
 	}
 	return coverage, nil
+}
+
+// documentEventFreshIndexedSQL is shared by coverage and version reads.
+func documentEventFreshIndexedSQL(epoch, contract, fingerprint string) string {
+	return `a.input_epoch=` + epoch + ` AND a.input_revision=COALESCE(d.revision,0)
+		AND a.state='indexed' AND h.input_epoch=a.input_epoch
+		AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=` + contract + `
+		AND g.deriver_fingerprint=` + fingerprint
 }

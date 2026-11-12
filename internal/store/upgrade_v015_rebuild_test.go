@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -89,15 +91,22 @@ func TestUpgradeReleasedV0150KeepsRebuildReceipts(t *testing.T) {
 			ingestDocumentEventTarget(t, legacy, "one.txt", "f1")
 			ingestDocumentEventTarget(t, legacy, "two.txt", "f2")
 
-			_, err := legacy.StartDocumentEventRebuild(ctx, eventDone, DocumentEventRebuildRequestSHA256)
+			// Seed the v0.15 receipt and state tables directly, as in the released
+			// date fixture: current event publication also writes a newer table.
+			// Completed counts can outlive their targets: version deletion cascades
+			// generations and heads, while receipts have no version foreign key.
+			// These two retained targets await the later running rebuilds.
+			oldSum := sha256.Sum256([]byte("docbank-document-events:f10-metadata+content-version+provenance-binding+actor-evidence:v2"))
+			oldFingerprint := hex.EncodeToString(oldSum[:])
+			resolver := document.PersonResolverFingerprint()
+			const timestamp = "2026-01-01T00:00:00Z"
+			_, err := db.ExecContext(ctx, `INSERT INTO document_event_state(singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES(1,$1,$2,3,3,$3)`, document.DocumentEventsContractV1, oldFingerprint, timestamp)
 			require.NoError(t, err)
-			driveDocumentEventWorker(t, legacy)
-			_, err = legacy.RebuildDocumentPeople(ctx, peopleDone)
+			_, err = db.ExecContext(ctx, `UPDATE document_people_state SET resolver_fingerprint=$1,binding_epoch=3,publication_epoch=3,updated_at=$2 WHERE singleton=1`, resolver, timestamp)
 			require.NoError(t, err)
-			driveDocumentPeopleWorker(t, legacy)
-			_, err = legacy.StartDocumentEventRebuild(ctx, eventRunning, DocumentEventRebuildRequestSHA256)
+			_, err = db.ExecContext(ctx, `INSERT INTO document_event_builds(operation_id,request_sha256,deriver_fingerprint,state,target_epoch,scanned,published,unavailable,failed,started_at,updated_at,finished_at) VALUES($1,$2,$3,'completed',2,2,2,0,0,$4,$4,$4),($5,$2,$3,'running',3,0,0,0,0,$4,$4,NULL)`, eventDone, DocumentEventRebuildRequestSHA256, oldFingerprint, timestamp, eventRunning)
 			require.NoError(t, err)
-			_, err = legacy.RebuildDocumentPeople(ctx, peopleRunning)
+			_, err = db.ExecContext(ctx, `INSERT INTO document_people_builds(operation_id,request_sha256,resolver_fingerprint,state,target_epoch,scanned,published,failed,started_at,updated_at,finished_at) VALUES($1,$2,$3,'completed',2,2,2,0,$4,$4,$4),($5,$2,$3,'running',3,0,0,0,$4,$4,'')`, peopleDone, documentPeopleRebuildDigest(resolver), resolver, timestamp, peopleRunning)
 			require.NoError(t, err)
 
 			events := map[string]DocumentEventBuild{}
@@ -112,10 +121,14 @@ func TestUpgradeReleasedV0150KeepsRebuildReceipts(t *testing.T) {
 			}
 			require.Equal(t, "completed", events[eventDone].State)
 			require.Equal(t, int64(2), events[eventDone].Published)
+			require.Equal(t, int64(2), events[eventDone].TargetEpoch)
 			require.Equal(t, "completed", people[peopleDone].State)
 			require.Equal(t, int64(2), people[peopleDone].Published)
+			require.Equal(t, int64(2), people[peopleDone].TargetEpoch)
 			require.Equal(t, "running", events[eventRunning].State)
+			require.Equal(t, int64(3), events[eventRunning].TargetEpoch)
 			require.Equal(t, "running", people[peopleRunning].State)
+			require.Equal(t, int64(3), people[peopleRunning].TargetEpoch)
 			sourceState := rebuildStateRows(t, legacy)
 			require.NoError(t, db.Close())
 

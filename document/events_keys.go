@@ -35,6 +35,51 @@ func eventCivil(value string, precision EventPrecision) (time.Time, error) {
 	return parsed, nil
 }
 
+// EventLocalInstant resolves a written wall clock using the earlier overlap instant
+// and the first instant after a gap.
+func EventLocalInstant(value string, precision EventPrecision, loc *time.Location) (time.Time, error) {
+	wall, err := eventCivil(value, precision)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if precision != "hour" && precision != "minute" && precision != "second" && precision != "fraction" {
+		return time.Time{}, errors.New("wall clock requires hour or finer precision")
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	lo, hi := wall.Add(-50*time.Hour), wall.Add(50*time.Hour)
+	var first, gap time.Time
+	foundFirst, foundGap := false, false
+	for at := lo; at.Before(hi); {
+		local := at.In(loc)
+		_, offset := local.Zone()
+		_, end := local.ZoneBounds()
+		if end.IsZero() || !end.After(at) || end.After(hi) {
+			end = hi
+		}
+		candidate := wall.Add(-time.Duration(offset) * time.Second)
+		if !candidate.Before(at) && candidate.Before(end) && (!foundFirst || candidate.Before(first)) {
+			first, foundFirst = candidate, true
+		}
+		if end.Before(hi) {
+			_, nextOffset := end.In(loc).Zone()
+			before, after := end.Add(time.Duration(offset)*time.Second), end.Add(time.Duration(nextOffset)*time.Second)
+			if !wall.Before(before) && wall.Before(after) && !foundGap {
+				gap, foundGap = end, true
+			}
+		}
+		at = end
+	}
+	if foundFirst {
+		return first.In(loc), nil
+	}
+	if foundGap {
+		return gap.In(loc), nil
+	}
+	return time.Date(wall.Year(), wall.Month(), wall.Day(), wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc), nil
+}
+
 func EventUTCKey(
 	value string,
 	precision EventPrecision,
@@ -49,7 +94,9 @@ func EventUTCKey(
 		return "", false, errors.New("invalid timezone kind")
 	}
 	switch zone {
-	case "offset":
+	case "iana":
+		return "", false, errors.New("IANA UTC keys require the resolved instant")
+	case "offset", "rfc5322":
 		if offsetSeconds == nil || *offsetSeconds < -86399 || *offsetSeconds > 86399 {
 			return "", false, errors.New("invalid offset")
 		}
@@ -64,16 +111,27 @@ func EventUTCKey(
 	}
 
 	if precision == "year" || precision == "month" || precision == "date" ||
-		(zone != "utc" && zone != "offset") {
+		(zone != "utc" && zone != "offset" && zone != "rfc5322") {
 		return "", false, nil
 	}
-	if zone == "offset" {
+	if zone == "offset" || zone == "rfc5322" {
 		civil = civil.Add(-time.Duration(*offsetSeconds) * time.Second)
 	}
 	if civil.Year() < 1 || civil.Year() > 9999 {
 		return "", false, errors.New("UTC key outside four-digit year range")
 	}
 	return civil.Format("2006-01-02T15:04:05.000000000Z"), true, nil
+}
+
+// EventInstantUTCKey renders an instant with the event contract's UTC key format.
+func EventInstantUTCKey(instant time.Time) (string, error) {
+	value := strings.TrimSuffix(instant.UTC().Format(time.RFC3339Nano), "Z")
+	precision := EventPrecision("second")
+	if strings.Contains(value, ".") {
+		precision = "fraction"
+	}
+	key, _, err := EventUTCKey(value, precision, "utc", nil)
+	return key, err
 }
 
 func EventAxisKey(

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -149,8 +150,8 @@ func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
 	}{
 		{"email named", "message/rfc822", "From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04 XYZ\r\n\r\nbody", "email.sent.raw", "Tue, 2 Jan 2024 03:04 XYZ", "2024-01-02T03:04", "XYZ", "sent", "minute", "named"},
 		{"email omitted", "message/rfc822", "From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04\r\n\r\nbody", "email.sent", "Tue, 2 Jan 2024 03:04", "2024-01-02T03:04", "", "sent", "minute", "omitted"},
-		{"calendar start", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.start.raw", "20240102T030405", "2024-01-02T03:04:05", "America/New_York", "started", "second", "named"},
-		{"calendar end date", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTEND;VALUE=DATE;TZID=Example/Zone:20240103\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.end.raw", "20240103", "2024-01-03", "Example/Zone", "ended", "date", "named"},
+		{"calendar start", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.event.e000001.start.raw", "20240102T030405", "2024-01-02T03:04:05", "America/New_York", "started", "second", "iana"},
+		{"calendar end date", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTEND;VALUE=DATE;TZID=Example/Zone:20240103\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.event.e000001.end.raw", "20240103", "2024-01-03", "Example/Zone", "ended", "date", "named"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(test.payload))
@@ -165,7 +166,11 @@ func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
 			require.Equal(t, test.precision, event.Precision)
 			require.Equal(t, test.zone, event.TimezoneKind)
 			require.Equal(t, test.zoneText, event.ZoneText)
-			require.Empty(t, event.UTCKey)
+			if test.zone == "iana" {
+				require.Equal(t, "2024-01-02T08:04:05.000000000Z", event.UTCKey)
+			} else {
+				require.Empty(t, event.UTCKey)
+			}
 			require.Equal(t, "field/"+test.key, event.EvidenceLocator)
 		})
 	}
@@ -242,7 +247,7 @@ func TestAdaptersRecoverCanonicalLegacyRawEmailClaims(t *testing.T) {
 			name: "two digit year minute named zone",
 			raw:  "Tue, 2 Jan 24 03:04 PST", dateValue: "2024-01-02T03:04",
 			normalized: "2024-01-02T11:04:00Z",
-			precision:  "minute", zone: "named", zoneText: "PST",
+			precision:  "minute", zone: "rfc5322", zoneText: "PST",
 		},
 		{
 			name: "four digit year seconds named zone",
@@ -554,4 +559,49 @@ func requirePrimary(t *testing.T, primaries []document.DocumentEventPrimaryV1, d
 func testDigest(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
+}
+
+func TestCalendarZoneGapAndOverlap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ zone, value, utc string }{
+		{"America/Toronto", "20260308T023000", "2026-03-08T07:00:00.000000000Z"},
+		{"America/Toronto", "20261101T013000", "2026-11-01T05:30:00.000000000Z"},
+		{"Europe/London", "20260329T013000", "2026-03-29T01:00:00.000000000Z"},
+		{"Europe/London", "20261025T013000", "2026-10-25T00:30:00.000000000Z"},
+	} {
+		field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID="+tc.zone, false, tc.value)
+		field.Namespace = "calendar"
+		event, err := metadataDateEvent(field)
+		require.NoError(t, err)
+		require.Equal(t, document.EventTimezoneKind("iana"), event.TimezoneKind)
+		require.Equal(t, document.EventPrecision("second"), event.Precision)
+		require.Equal(t, tc.value, event.RawValue)
+		require.Equal(t, tc.zone, event.ZoneText)
+		require.Equal(t, tc.utc, event.UTCKey)
+	}
+	field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID=UTC", false, "20260329T013000")
+	field.Namespace = "calendar"
+	event, err := metadataDateEvent(field)
+	require.NoError(t, err)
+	require.Equal(t, document.EventTimezoneKind("named"), event.TimezoneKind)
+	require.Empty(t, event.UTCKey)
+}
+
+func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {
+	t.Parallel()
+	payload := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260309\r\nDTEND;VALUE=DATE:20260311\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260401\r\nDTEND;VALUE=DATE:20260403\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+	require.NoError(t, err)
+	input := canonicalDocumentEventInput(t, metadata.Fields)
+	input.Target.MIMEType = "text/calendar"
+	record, _, err := DeriveDocumentEvents(input)
+	require.NoError(t, err)
+	found := map[string]bool{}
+	for _, event := range record.Events {
+		if event.DateKind == "started" || event.DateKind == "ended" {
+			require.NotEmpty(t, event.SourceKindRaw)
+			found[event.SourceKey] = true
+		}
+	}
+	require.Len(t, found, 4)
 }

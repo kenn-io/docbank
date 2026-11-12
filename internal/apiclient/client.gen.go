@@ -16047,6 +16047,57 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 	return responseParser(ctx, resp)
 }
 
+// GetVersionDates Read a version's date claims
+func (c *Client) GetVersionDates(ctx context.Context, options *GetVersionDatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVersionDatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"disclosure": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/dates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetVersionDatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetVersionDatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetVersionDatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetVersionDatesErrorResponse](resp, "GetVersionDatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/dates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PrepareOriginalDownload Issue a single-use original download URL valid for two minutes
 func (c *Client) PrepareOriginalDownload(ctx context.Context, options *PrepareOriginalDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareOriginalDownloadResponse, error) {
 	var err error
@@ -16282,6 +16333,57 @@ func (c *Client) GetEmailPart(ctx context.Context, options *GetEmailPartRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetVersionPeople Read a version's people
+func (c *Client) GetVersionPeople(ctx context.Context, options *GetVersionPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVersionPeopleResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"disclosure": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/people",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetVersionPeopleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetVersionPeopleResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetVersionPeopleResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetVersionPeopleErrorResponse](resp, "GetVersionPeopleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/people")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -26730,6 +26832,44 @@ func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, e
 	return headers, err
 }
 
+// GetVersionDatesRequestOptions is the options needed to make a request to GetVersionDates.
+type GetVersionDatesRequestOptions struct {
+	PathParams *GetVersionDatesPath
+	Query      *GetVersionDatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetVersionDatesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetVersionDatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetVersionDatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetVersionDatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PrepareOriginalDownloadRequestOptions is the options needed to make a request to PrepareOriginalDownload.
 type PrepareOriginalDownloadRequestOptions struct {
 	PathParams *PrepareOriginalDownloadPath
@@ -26893,6 +27033,44 @@ func (o *GetEmailPartRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetVersionPeopleRequestOptions is the options needed to make a request to GetVersionPeople.
+type GetVersionPeopleRequestOptions struct {
+	PathParams *GetVersionPeoplePath
+	Query      *GetVersionPeopleQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetVersionPeopleRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetVersionPeopleRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetVersionPeopleRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetVersionPeopleRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateWorkspaceQueryRequestOptions is the options needed to make a request to CreateWorkspaceQuery.
 type CreateWorkspaceQueryRequestOptions struct {
 	Body *CreateWorkspaceQueryBody
@@ -27031,6 +27209,14 @@ const (
 	VerifiedEmpty                            RenditionTextReceiptState = "verified_empty"
 )
 
+type SavedQueryDateSchemaPrecisions string
+
+const (
+	Coarse SavedQueryDateSchemaPrecisions = "coarse"
+	Day    SavedQueryDateSchemaPrecisions = "day"
+	Exact  SavedQueryDateSchemaPrecisions = "exact"
+)
+
 type SavedQueryFiltersSchemaFlags string
 
 const (
@@ -27096,15 +27282,16 @@ const (
 type SavedQuerySortSchemaField string
 
 const (
-	AddedTime   SavedQuerySortSchemaField = "added_time"
-	CaptureTime SavedQuerySortSchemaField = "capture_time"
-	ImportTime  SavedQuerySortSchemaField = "import_time"
-	MediaType   SavedQuerySortSchemaField = "media_type"
-	ModifiedAt  SavedQuerySortSchemaField = "modified_at"
-	Name        SavedQuerySortSchemaField = "name"
-	Path        SavedQuerySortSchemaField = "path"
-	Relevance   SavedQuerySortSchemaField = "relevance"
-	Size        SavedQuerySortSchemaField = "size"
+	AddedTime    SavedQuerySortSchemaField = "added_time"
+	CaptureTime  SavedQuerySortSchemaField = "capture_time"
+	DocumentDate SavedQuerySortSchemaField = "document_date"
+	ImportTime   SavedQuerySortSchemaField = "import_time"
+	MediaType    SavedQuerySortSchemaField = "media_type"
+	ModifiedAt   SavedQuerySortSchemaField = "modified_at"
+	Name         SavedQuerySortSchemaField = "name"
+	Path         SavedQuerySortSchemaField = "path"
+	Relevance    SavedQuerySortSchemaField = "relevance"
+	Size         SavedQuerySortSchemaField = "size"
 )
 
 type SavedQueryV1SchemaMode string
@@ -27183,12 +27370,26 @@ const (
 	ListSavedQueriesQueryKindQuery ListSavedQueriesQueryKind = "query"
 )
 
+type GetVersionDatesQueryDisclosure string
+
+const (
+	Full GetVersionDatesQueryDisclosure = "full"
+	Safe GetVersionDatesQueryDisclosure = "safe"
+)
+
 type GetEmailPartPathRole string
 
 const (
 	BodyUTF8       GetEmailPartPathRole = "body_utf8"
 	DecodedPayload GetEmailPartPathRole = "decoded_payload"
 	RawHeaders     GetEmailPartPathRole = "raw_headers"
+)
+
+type GetVersionPeopleQueryDisclosure string
+
+const (
+	GetVersionPeopleQueryDisclosureFull GetVersionPeopleQueryDisclosure = "full"
+	GetVersionPeopleQueryDisclosureSafe GetVersionPeopleQueryDisclosure = "safe"
 )
 
 type ShutdownDaemonHeaders struct {
@@ -28017,6 +28218,10 @@ type GetContentVersionBytesPath struct {
 	VersionID string `json:"version_id"`
 }
 
+type GetVersionDatesPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+}
+
 type PrepareOriginalDownloadPath struct {
 	VersionID uuid.UUID `json:"version_id"`
 }
@@ -28039,6 +28244,10 @@ type GetEmailPartPath struct {
 	GenerationID string               `json:"generation_id"`
 	PartPath     string               `json:"part_path"`
 	Role         GetEmailPartPathRole `json:"role"`
+}
+
+type GetVersionPeoplePath struct {
+	VersionID uuid.UUID `json:"version_id"`
 }
 
 type ReadWorkspaceQueryPagePath struct {
@@ -28840,6 +29049,14 @@ type UploadFileQuery struct {
 
 	// Name Virtual filename; must equal the multipart filename
 	Name string `json:"name"`
+}
+
+type GetVersionDatesQuery struct {
+	Disclosure *GetVersionDatesQueryDisclosure `json:"disclosure,omitempty"`
+}
+
+type GetVersionPeopleQuery struct {
+	Disclosure *GetVersionPeopleQueryDisclosure `json:"disclosure,omitempty"`
 }
 
 type ChallengeDaemonResponse struct {
@@ -30439,6 +30656,10 @@ type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
 
+type GetVersionDatesResponse = api.VersionDates
+
+type GetVersionDatesErrorResponse = Error
+
 type PrepareOriginalDownloadResponse = api.OriginalDownloadTicket
 
 type PrepareOriginalDownloadErrorResponse = Error
@@ -30460,6 +30681,10 @@ type GetEmailMetadataGenerationErrorResponse = Error
 type GetEmailPartResponse = runtime.File
 
 type GetEmailPartErrorResponse = Error
+
+type GetVersionPeopleResponse = api.VersionPeople
+
+type GetVersionPeopleErrorResponse = Error
 
 type ListWatchedInboxesResponse = api.WatchedInboxList
 
@@ -30771,6 +30996,8 @@ type DerivativePurgePlanRequest = api.DerivativePurgePlanRequest
 
 type DerivativePurgeReceipt = api.DerivativePurgeReceipt
 
+type DocumentDateFilter = query.DocumentDateFilter
+
 type DocumentEventCoverage = api.DocumentEventCoverage
 
 type DocumentEvidenceReference = api.DocumentEvidenceReference
@@ -30979,6 +31206,12 @@ type EvidenceWindowRequest = api.EvidenceWindowRequest
 type ExportJob = bundle.ExportJob
 
 type FaceBox = document.FaceBox
+
+type FactDiagnostic = api.FactDiagnostic
+
+type FactExternal = api.FactExternal
+
+type FactOpen = api.FactOpen
 
 type Filters = query.Filters
 
@@ -31887,6 +32120,13 @@ type SavedQuery = api.SavedQuery
 
 type SavedQueryCreateRequest = api.SavedQueryCreateRequest
 
+type SavedQueryDateSchema struct {
+	From       string                           `json:"from"`
+	Kinds      []string                         `json:"kinds,omitempty"`
+	Precisions []SavedQueryDateSchemaPrecisions `json:"precisions,omitempty"`
+	To         string                           `json:"to"`
+}
+
 type SavedQueryFiltersSchema struct {
 	AestheticsMax        *string                                `json:"aesthetics_max,omitempty"`
 	AestheticsMin        *string                                `json:"aesthetics_min,omitempty"`
@@ -31906,6 +32146,7 @@ type SavedQueryFiltersSchema struct {
 	ColorGreenMin        *string                                `json:"color_green_min,omitempty"`
 	ColorRedMax          *string                                `json:"color_red_max,omitempty"`
 	ColorRedMin          *string                                `json:"color_red_min,omitempty"`
+	DocumentDate         *SavedQueryDateSchema                  `json:"document_date,omitempty"`
 	ExcludeCollectionIds []uuid.UUID                            `json:"exclude_collection_ids,omitempty"`
 	ExcludePaths         []string                               `json:"exclude_paths,omitempty"`
 	ExcludeTagIds        []uuid.UUID                            `json:"exclude_tag_ids,omitempty"`
@@ -31964,13 +32205,14 @@ type SavedQuerySortSchema struct {
 
 type SavedQueryV1Schema struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string                   `json:"$schema,omitempty"`
-	Filters *SavedQueryFiltersSchema  `json:"filters,omitempty"`
-	Mode    *SavedQueryV1SchemaMode   `json:"mode,omitempty"`
-	Sort    *SavedQuerySortSchema     `json:"sort,omitempty"`
-	Syntax  *SavedQueryV1SchemaSyntax `json:"syntax,omitempty"`
-	Text    *string                   `json:"text,omitempty"`
-	V       *SavedQueryV1SchemaV      `json:"v,omitempty"`
+	Schema   *string                   `json:"$schema,omitempty"`
+	Filters  *SavedQueryFiltersSchema  `json:"filters,omitempty"`
+	Mode     *SavedQueryV1SchemaMode   `json:"mode,omitempty"`
+	Sort     *SavedQuerySortSchema     `json:"sort,omitempty"`
+	Syntax   *SavedQueryV1SchemaSyntax `json:"syntax,omitempty"`
+	Text     *string                   `json:"text,omitempty"`
+	Timezone *string                   `json:"timezone,omitempty"`
+	V        *SavedQueryV1SchemaV      `json:"v,omitempty"`
 }
 
 type SealExportSourceRequest struct {
@@ -32157,9 +32399,23 @@ type VerifyProblem = api.VerifyProblem
 
 type VerifyReport = api.VerifyReport
 
+type VersionDateClaim = api.VersionDateClaim
+
+type VersionDatePrimary = api.VersionDatePrimary
+
+type VersionDates = api.VersionDates
+
+type VersionPeople = api.VersionPeople
+
+type VersionPersonAssertion = api.VersionPersonAssertion
+
+type VersionPersonEdge = api.VersionPersonEdge
+
 type VersionPruneReport = api.VersionPruneReport
 
 type VersionPruneRequest = api.VersionPruneRequest
+
+type VersionUnresolvedName = api.VersionUnresolvedName
 
 type VolumeLimits = bundle.VolumeLimits
 
@@ -32175,6 +32431,10 @@ type WebTabSession struct {
 	Token        string `json:"token"`
 	UploadSecret string `json:"upload_secret"`
 }
+
+type WhenPlacedBy = api.WhenPlacedBy
+
+type WhenV1 = api.WhenV1
 
 type WorkspaceFacetValue = api.WorkspaceFacetValue
 

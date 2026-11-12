@@ -70,6 +70,7 @@
     { value: "name", label: "Name" },
     { value: "path", label: "Path" },
     { value: "modified_at", label: "Modified" },
+    { value: "document_date", label: "Document date" },
     { value: "size", label: "Size" },
     { value: "media_type", label: "File type" },
   ];
@@ -78,6 +79,13 @@
     ...[...new Set([...profiles.map((item) => item.name), ...(profile ? [profile] : [])])]
       .sort()
       .map((name) => ({ value: name, label: name })),
+  ]);
+  // Server validation codes whose 400/422 body may carry an expression byte span.
+  const positionedErrorCodes = new Set([
+    "invalid_query",
+    "invalid_date",
+    "invalid_timezone",
+    "date_not_in_zone",
   ]);
   const directionOptions: SelectDropdownOption[] = [
     { value: "asc", label: "Ascending" },
@@ -163,7 +171,7 @@
             return;
           }
           failure = cause instanceof Error ? cause.message : String(cause);
-          if (cause instanceof APIError && cause.code === "invalid_query")
+          if (cause instanceof APIError && positionedErrorCodes.has(cause.code))
             position = cause.position;
         })
         .finally(() => {

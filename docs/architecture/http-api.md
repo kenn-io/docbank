@@ -123,6 +123,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /people/by-id/{person_id}/merge` · `POST /people/by-id/{person_id}/split` | merge or split person authority under revision and operation fences | Implemented |
 | `POST /versions/{version_id}/download-ticket` | issue a two-minute single-use original download capability for an exact vault, live file node, retained version, hash and size | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
+| `GET /versions/{version_id}/dates` · `GET /versions/{version_id}/people` | read version dates or people with safe or full disclosure | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to that version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
@@ -944,6 +945,8 @@ rows, membership snapshot, or executable SQL are returned. The endpoint is
 available to authenticated API clients and browser sessions. Browser requests
 must use POST without query parameters.
 
+Documents date operands `date:`, `date_kind:`, and `date_precision:`, `filters.document_date`, and `document_date` sort are not supported in Photos; Photos returns `422 invalid_query`. Date filters use the query timezone. Invalid zones return `400 invalid_timezone`; malformed dates return `400 invalid_date`, and a requested day absent in the zone returns `400 date_not_in_zone`. Unrepresentable date boundaries return `400 invalid_date`. The parse receipt describes the submitted canonical query; execution receipts include the zone actually used and `timezone_defaulted` when dates are used.
+
 The compiler preserves expression scope and separate structured filters.
 Missing references, including negative tag and collection operands, fail with
 `422 invalid_query`. Expression errors include a `position` object with
@@ -958,6 +961,8 @@ Existing `/search` requests do not gain advanced syntax through this endpoint.
 processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 `size`, `text_coverage`, and `duplicates` facets, up to eight dimensions.
+
+Date search and `document_date` sort return `503 document_dates_pending` while current document date derivation is pending. Failed and unavailable derivations do not expose an older date head. The optional `disclosure` is `safe` by default; `full` requires an API key. Browser sessions use safe disclosure. Date-bearing snapshot responses report `timezone` and `timezone_defaulted`.
 
 Set `photos: true` to capture a Photos query in its photo ordering, with one
 display-file row per matching asset, an `asset_id`, and its frozen display-file `flag` on each row. Document snapshot rows omit `flag`. This mode
@@ -1124,14 +1129,16 @@ QueryV1 stores these fields. Defaults apply when a field is omitted:
 | `syntax` | `simple` or `advanced` | `simple` |
 | `mode` | `lexical`, `semantic`, or `hybrid` | `lexical` |
 | `filters` | Object described below | `{}` |
-| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, `import_time`, or `added_time` | `name` |
+| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, `import_time`, `added_time`, or `document_date` | `name` |
 | `sort.direction` | `asc` or `desc` | `asc` |
+| `timezone` | `UTC` or a loadable IANA zone containing `/` | `[web] timeline_timezone` for date queries |
 
 The `filters` object accepts the following saved choices. These are storage
 fields, not additional parameters for `GET /search`:
 
 | Fields | Values |
 |--------|--------|
+| `document_date` | Inclusive `from` and `to` civil dates, optional `kinds` (`sent`, `received`, `document_date`, `authored`, `created`, `modified`, `captured`, `started`, `ended`, `printed`, `accessed`, `produced`, `exported`, `imported`, `observed`, `vault_recorded`) and `precisions` (`exact`, `day`, `coarse`) |
 | `paths`, `exclude_paths` | Absolute virtual paths; at most 64 in each set |
 | `collection_ids`, `exclude_collection_ids`, `tag_ids`, `exclude_tag_ids` | Canonical UUIDv4 values; at most 64 in each set |
 | `no_tags`, `has_duplicates`, `collapse_duplicates` | Boolean choices |

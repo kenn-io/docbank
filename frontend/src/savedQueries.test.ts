@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
+import { canonicalQuery, parseQuery } from "./query.js";
 import {
   createSavedQuery,
   deleteSavedQuery,
@@ -167,6 +168,92 @@ describe("saved definition receipts", () => {
     await expect(updateSavedQuery("session", record, { name: "Renamed" })).rejects.toThrow(
       /receipt/i,
     );
+  });
+
+  describe("server-pinned timeline zone", () => {
+    const dated = {
+      ...payload,
+      filters: { ...payload.filters, document_date: { from: "2026-03-01", to: "2026-03-31" } },
+    };
+    const stored = (value: object, change: object = {}) => {
+      const text = canonicalQuery(parseQuery(JSON.stringify(value)));
+      return {
+        ...record,
+        payload: JSON.parse(text),
+        fingerprint: `sha256:${createHash("sha256").update(text).digest("hex")}`,
+        ...change,
+      };
+    };
+    const create = (value: object) =>
+      createSavedQuery("session", {
+        name: record.name,
+        description: record.description,
+        kind: "query",
+        payload: parseQuery(JSON.stringify(value)),
+      });
+
+    it("accepts the assigned zone when a new date query omitted it", async () => {
+      const fetch = respond(
+        stored({ ...dated, timezone: "America/Toronto" }, { revision: 1 }),
+        '"1"',
+      );
+      const saved = await create(dated);
+      expect(saved.kind === "query" && saved.payload.timezone).toBe("America/Toronto");
+      expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).payload).not.toHaveProperty(
+        "timezone",
+      );
+    });
+
+    it("accepts the assigned zone when an update introduces a date operand", async () => {
+      const text = "alpha OR date:2026-03-10";
+      respond(stored({ ...payload, text, timezone: "UTC" }, { revision: 4 }), '"4"');
+      const updated = await updateSavedQuery("session", record, {
+        payload: parseQuery(JSON.stringify({ ...payload, text })),
+      });
+      expect(updated.kind === "query" && updated.payload.timezone).toBe("UTC");
+      expect(updated.revision).toBe(4);
+    });
+
+    it.each([
+      [
+        "explicit zone mismatch",
+        { ...dated, timezone: "UTC" },
+        { ...dated, timezone: "Europe/Paris" },
+      ],
+      ["malformed zone", dated, { ...dated, timezone: "Local" }],
+      ["other field changed", dated, { ...dated, text: "gamma", timezone: "UTC" }],
+    ])("rejects a create receipt with %s", async (_name, sent, received) => {
+      respond(stored(received, { revision: 1 }), '"1"');
+      await expect(create(sent)).rejects.toThrow(/receipt/i);
+    });
+
+    it("keeps the revision when an edit only drops a zone the server re-pins", async () => {
+      const observed = stored({ ...dated, timezone: "UTC" });
+      const fetch = respond(observed);
+      const updated = await updateSavedQuery("session", observed, {
+        payload: parseQuery(JSON.stringify(dated)),
+      });
+      expect(updated.revision).toBe(3);
+      expect(updated.kind === "query" && updated.payload.timezone).toBe("UTC");
+      expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).payload).not.toHaveProperty(
+        "timezone",
+      );
+      fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(stored({ ...dated, timezone: "UTC" }, { revision: 4 })), {
+          headers: { ETag: '"4"' },
+        }),
+      );
+      await expect(
+        updateSavedQuery("session", observed, { payload: parseQuery(JSON.stringify(dated)) }),
+      ).rejects.toThrow(/receipt/i);
+    });
+
+    it("rejects an assigned zone on a rename that sent no payload", async () => {
+      respond(stored({ ...dated, timezone: "UTC" }, { name: "Renamed", revision: 4 }), '"4"');
+      await expect(updateSavedQuery("session", stored(dated), { name: "Renamed" })).rejects.toThrow(
+        /receipt/i,
+      );
+    });
   });
 
   it("rejects null patches and unsafe fences before sending", async () => {

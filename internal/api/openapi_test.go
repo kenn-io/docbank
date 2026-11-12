@@ -22,7 +22,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	doc := string(out)
 	for _, op := range []string{"getNode", "resolvePath", "listChildren", "getNodeContent", "verifyNodeContent",
 		"listContentVersions", "getContentVersion", "getContentVersionBytes", "pruneNodeContentVersions",
-		"lookupContentReferences",
+		"lookupContentReferences", "getVersionDates", "getVersionPeople",
 		"listCollections", "getCollection", "listCollectionMembers", "getCollectionLabel", "setCollectionLabel",
 		"rebuildDocumentPeople", "getPeopleRebuild", "getPeopleCoverage",
 		"getEmailMetadata", "ensureEmailMetadata", "getEmailMetadataGeneration", "getEmailPart",
@@ -789,7 +789,7 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.True(t, schemas["SavedQueryFiltersSchema"].Properties["gps_bounds"].Nullable)
 	require.ElementsMatch(t, []any{"", "pick", "reject"}, schemas["SavedQueryFiltersSchema"].Properties["flags"].Items.Enum)
 	require.ElementsMatch(t, []any{"", "red", "yellow", "green", "blue", "purple"}, schemas["SavedQueryFiltersSchema"].Properties["labels"].Items.Enum)
-	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
+	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time", "document_date"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
 }
 
 func TestOpenAPIPhotoImportCheckpointAllowsEmptyTransitions(t *testing.T) {

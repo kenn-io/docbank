@@ -7,15 +7,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // Supply IANA data for embedded hosts without zoneinfo.
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
 var (
-	calendarComponentDate = regexp.MustCompile(`^calendar\.event\.e[0-9]{6}\.(start|end)(?:\.raw)?$`)
-	metadataOffset        = regexp.MustCompile(`^[+-](0[0-9]|1[0-4]):[0-5][0-9]$`)
-	emailDate             = regexp.MustCompile(`^(?:[A-Za-z]{3},\s*)?([0-9]{1,2})\s+([A-Za-z]{3})\s+([0-9]{2}|[0-9]{4})\s+([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(?:\s+([+-][0-9]{4}|[A-Za-z]{1,10}))?(?:\s+\([^\r\n]*\))?$`)
+	metadataOffset = regexp.MustCompile(`^[+-](0[0-9]|1[0-4]):[0-5][0-9]$`)
+
+	emailDate = regexp.MustCompile(`^(?:[A-Za-z]{3},\s*)?([0-9]{1,2})\s+([A-Za-z]{3})\s+([0-9]{2}|[0-9]{4})\s+([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(?:\s+([+-][0-9]{4}|[A-Za-z]{1,10}))?(?:\s+\([^\r\n]*\))?$`)
 )
 
 func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentEventV1, error) {
@@ -56,7 +58,24 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 				event.ZoneText = strings.Trim(value, `"`)
 				event.OffsetSeconds = nil
 				event.UTCKey = ""
-				event.AxisKey, err = document.EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, nil)
+				zone := strings.TrimSpace(event.ZoneText)
+				loc, loadErr := query.LoadZone(zone)
+				if strings.Contains(zone, "/") && loadErr == nil && event.Precision != "date" && event.Precision != "month" && event.Precision != "year" {
+					instant, parseErr := document.EventLocalInstant(event.DateValue, event.Precision, loc)
+					if parseErr != nil {
+						return document.DocumentEventV1{}, fmt.Errorf("parse calendar date-time: %w", parseErr)
+					}
+					_, offset := instant.Zone()
+					event.TimezoneKind = "iana"
+					event.OffsetSeconds = &offset
+					event.UTCKey, err = document.EventInstantUTCKey(instant)
+					if err != nil {
+						return document.DocumentEventV1{}, err
+					}
+					event.AxisKey = strings.TrimSuffix(event.UTCKey, "Z")
+				} else {
+					event.AxisKey, err = document.EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, nil)
+				}
 				break
 			}
 		}
@@ -157,26 +176,9 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 		precision = "fraction"
 	}
 	zoneToken := match[8]
-	zone := document.EventTimezoneKind("omitted")
-	var zoneText string
-	var offset *int
-	if strings.HasPrefix(zoneToken, "+") || strings.HasPrefix(zoneToken, "-") {
-		if zoneToken == "-0000" {
-			zoneText = zoneToken
-		} else {
-			colon := zoneToken[:3] + ":" + zoneToken[3:]
-			seconds, offsetErr := offsetTokenSeconds(colon)
-			if offsetErr != nil {
-				return document.DocumentEventV1{}, false
-			}
-			zone = "offset"
-			zoneText = zoneToken
-			offset = &seconds
-		}
-	} else if zoneToken != "" {
-		zone = "named"
-		zoneText = zoneToken
-	}
+	zone, offset := emailZone(zoneToken)
+	zoneText := zoneToken
+
 	axis, err := document.EventAxisKey(base, precision, zone, offset)
 	if err != nil {
 		return document.DocumentEventV1{}, false
@@ -194,6 +196,44 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 		event.FractionDigits = len(match[7]) - 1
 	}
 	return event, true
+}
+
+// emailZone classifies the zone tokens admitted by emailDate.
+func emailZone(token string) (document.EventTimezoneKind, *int) {
+	upper := strings.ToUpper(token)
+	if token == "" {
+		return "omitted", nil
+	}
+	if upper == "UTC" {
+		return "utc", nil
+	}
+	if token[0] == '+' || token[0] == '-' {
+		hour, _ := strconv.Atoi(token[1:3])
+		minute, _ := strconv.Atoi(token[3:5])
+		seconds := hour*3600 + minute*60
+		if minute > 59 || seconds > 18*3600 {
+			return "invalid", nil
+		}
+		if seconds == 0 {
+			if token[0] == '-' {
+				return "omitted", nil
+			}
+			return "utc", nil
+		}
+		if token[0] == '-' {
+			seconds = -seconds
+		}
+		return "offset", &seconds
+	}
+	offsets := map[string]int{"UT": 0, "GMT": 0, "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "MST": -7, "MDT": -6, "PST": -8, "PDT": -7}
+	if hours, ok := offsets[upper]; ok {
+		seconds := hours * 3600
+		return "rfc5322", &seconds
+	}
+	if len(token) == 1 && upper != "J" {
+		return "omitted", nil
+	}
+	return "named", nil
 }
 
 func canonicalRFCMonth(value string) string {

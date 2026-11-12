@@ -21,6 +21,12 @@ func termReportError(err error) *Error {
 	if limit, ok := errors.AsType[*report.ContentDateLimitError](err); ok {
 		return NewError(http.StatusRequestEntityTooLarge, "report_limit", limit.Error())
 	}
+	if problem := dateQueryError(err); problem != nil {
+		return problem
+	}
+	if errors.Is(err, store.ErrDocumentDatesPending) {
+		return NewError(http.StatusServiceUnavailable, "document_dates_pending", err.Error())
+	}
 	if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
 		problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
 		if positioned.Offset != 0 || positioned.End != 0 {
@@ -104,6 +110,9 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 		}
 		request, err := report.NormalizeRequest(in.Body)
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if errors.Is(err, report.ErrInvalidChoice) || errors.Is(err, report.ErrReportLimit) {
 				return nil, termReportError(err)
 			}

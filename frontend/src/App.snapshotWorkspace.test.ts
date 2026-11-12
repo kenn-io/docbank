@@ -94,6 +94,7 @@ function snapshot(
             values: [],
           },
     ),
+    timezone_defaulted: false,
     snapshot: true,
     snapshot_id: "0123456789abcdef0123456789abcdef",
     created_at: "2026-09-11T12:34:00Z",

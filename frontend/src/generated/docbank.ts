@@ -2075,6 +2075,13 @@ export interface DerivativePurgePlanRequest {
   content_version_ids?: string[];
 }
 
+export interface DocumentDateFilter {
+  from: string;
+  kinds?: string[];
+  precisions?: string[];
+  to: string;
+}
+
 export interface DocumentEventCoverage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3313,6 +3320,21 @@ export interface ExportJob {
   state: string;
 }
 
+export interface FactDiagnostic {
+  code: string;
+  detail: string;
+}
+
+export interface FactExternal {
+  archive_id: string;
+  system: string;
+  uid: string;
+}
+
+export interface FactOpen {
+  web: string;
+}
+
 export interface GPSBounds {
   east: string;
   north: string;
@@ -3351,6 +3373,7 @@ export interface Filters {
   color_red_max?: string | null;
   /** @nullable */
   color_red_min?: string | null;
+  document_date?: DocumentDateFilter;
   exclude_collection_ids?: string[];
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
@@ -5397,6 +5420,22 @@ export interface WorkspaceQueryCoverage {
   profile_fingerprint?: string;
 }
 
+export type SavedQueryDateSchemaPrecisionsItem = typeof SavedQueryDateSchemaPrecisionsItem[keyof typeof SavedQueryDateSchemaPrecisionsItem];
+
+
+export const SavedQueryDateSchemaPrecisionsItem = {
+  exact: 'exact',
+  day: 'day',
+  coarse: 'coarse',
+} as const;
+
+export interface SavedQueryDateSchema {
+  from: string;
+  kinds?: string[];
+  precisions?: SavedQueryDateSchemaPrecisionsItem[];
+  to: string;
+}
+
 export type SavedQueryFiltersSchemaFlagsItem = typeof SavedQueryFiltersSchemaFlagsItem[keyof typeof SavedQueryFiltersSchemaFlagsItem];
 
 
@@ -5544,6 +5583,7 @@ export interface SavedQueryFiltersSchema {
      * @nullable
      */
   color_red_min?: string | null;
+  document_date?: SavedQueryDateSchema;
   /** @maxItems 64 */
   exclude_collection_ids?: string[];
   /** @maxItems 64 */
@@ -5679,6 +5719,7 @@ export const SavedQuerySortSchemaField = {
   capture_time: 'capture_time',
   import_time: 'import_time',
   added_time: 'added_time',
+  document_date: 'document_date',
 } as const;
 
 export interface SavedQuerySortSchema {
@@ -5710,6 +5751,7 @@ export interface SavedQueryV1Schema {
   syntax?: SavedQueryV1SchemaSyntax;
   /** @maxLength 8192 */
   text?: string;
+  timezone?: string;
   v?: SavedQueryV1SchemaV;
 }
 
@@ -6739,6 +6781,8 @@ export interface Query {
   sort: Sort;
   syntax: string;
   text: string;
+  /** @nullable */
+  timezone?: string | null;
   v: number;
 }
 
@@ -8302,6 +8346,8 @@ export interface WorkspaceQueryResponse {
   snapshot_fingerprint: string;
   /** @pattern ^[0-9a-f]{32}$ */
   snapshot_id: string;
+  timezone?: string;
+  timezone_defaulted: boolean;
   /** @minimum 0 */
   total: number;
   /** @minimum 0 */
@@ -9076,6 +9122,110 @@ export interface VerifyReport {
   problems?: VerifyProblem[];
 }
 
+export interface WhenPlacedBy {
+  claim_basis: string;
+  event_id: string;
+  fallback: boolean;
+  rule: string;
+  source: string;
+}
+
+export interface WhenV1 {
+  at?: string;
+  date?: string;
+  local?: string;
+  period?: string;
+  placed_by: WhenPlacedBy;
+  precision: string;
+  source_offset_seconds?: number;
+  source_zone?: string;
+  state: string;
+  zone_state?: string;
+}
+
+export interface VersionDateClaim {
+  axis_key: string;
+  claim_basis: string;
+  date_kind: string;
+  date_value: string;
+  event_id: string;
+  evidence_id: string;
+  evidence_kind: string;
+  offset_seconds?: number;
+  parse_confidence: string;
+  precision: string;
+  primary: boolean;
+  raw_value: string;
+  source_kind_raw?: string;
+  timezone_kind: string;
+  utc_key?: string;
+  when: WhenV1;
+  zone_text: string;
+}
+
+export interface VersionDatePrimary {
+  disclosure: string;
+  event_id: string;
+  reason: string;
+  rule_id: string;
+}
+
+export interface VersionDates {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  claims: VersionDateClaim[];
+  content_version_id: string;
+  diagnostics: FactDiagnostic[];
+  document_kind?: string;
+  node_id: number;
+  open?: FactOpen;
+  primary?: VersionDatePrimary;
+  state: string;
+}
+
+export interface VersionPersonAssertion {
+  action: string;
+  assertion_id: string;
+  display_name: string;
+  note: string;
+  person_id: string;
+  recorded_at: string;
+  revision: number;
+  role: string;
+}
+
+export interface VersionPersonEdge {
+  basis: string;
+  claim_count: number;
+  confidence: string;
+  display_name: string;
+  evidence_id: string;
+  evidence_kind: string;
+  external: FactExternal[];
+  linked_contact: boolean;
+  person_id: string;
+  raw_label: string;
+  role: string;
+}
+
+export interface VersionUnresolvedName {
+  candidate_id: string;
+  evidence_kind: string;
+  raw_label: string;
+  role: string;
+}
+
+export interface VersionPeople {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assertions: VersionPersonAssertion[];
+  content_version_id: string;
+  edges: VersionPersonEdge[];
+  open?: FactOpen;
+  state: string;
+  unresolved: VersionUnresolvedName[];
+}
+
 export interface VersionPruneReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -9161,6 +9311,17 @@ export interface WebTabSession {
   upload_secret: string;
 }
 
+/**
+ * Full date disclosure requires an API key
+ */
+export type WorkspaceQueryCreateRequestDisclosure = typeof WorkspaceQueryCreateRequestDisclosure[keyof typeof WorkspaceQueryCreateRequestDisclosure];
+
+
+export const WorkspaceQueryCreateRequestDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -9187,6 +9348,8 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Full date disclosure requires an API key */
+  disclosure?: WorkspaceQueryCreateRequestDisclosure;
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
@@ -10438,7 +10601,31 @@ export type GetContentVersionBytesHeaders = {
 Range?: string;
 };
 
+export type GetVersionDatesParams = {
+disclosure?: GetVersionDatesDisclosure;
+};
+
+export type GetVersionDatesDisclosure = typeof GetVersionDatesDisclosure[keyof typeof GetVersionDatesDisclosure];
+
+
+export const GetVersionDatesDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
+
 export type EnsureEmailMetadataBody = { [key: string]: unknown };
+
+export type GetVersionPeopleParams = {
+disclosure?: GetVersionPeopleDisclosure;
+};
+
+export type GetVersionPeopleDisclosure = typeof GetVersionPeopleDisclosure[keyof typeof GetVersionPeopleDisclosure];
+
+
+export const GetVersionPeopleDisclosure = {
+  safe: 'safe',
+  full: 'full',
+} as const;
 
 export type Health200 = {
   status: string;
@@ -22084,6 +22271,39 @@ return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
 
 
 
+export const getGetVersionDatesUrl = (versionId: string,
+    params?: GetVersionDatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/versions/${encodeURIComponent(String(versionId))}/dates?${stringifiedParams}` : `/api/v1/versions/${encodeURIComponent(String(versionId))}/dates`
+}
+
+/**
+ * @summary Read a version's date claims
+ */
+export const getVersionDates = async (versionId: string,
+    params?: GetVersionDatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionDates> => {
+
+  return sessionJSON<VersionDates>(getGetVersionDatesUrl(versionId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getPrepareOriginalDownloadUrl = (versionId: string,) => {
 
 
@@ -22232,6 +22452,39 @@ export const getEmailPart = (versionId: string,
     role: 'raw_headers' | 'decoded_payload' | 'body_utf8', options?: Parameters<typeof sessionResponse>[1]) => {
 
   return sessionResponse<Blob>(getGetEmailPartUrl(versionId,generationId,partPath,role),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getGetVersionPeopleUrl = (versionId: string,
+    params?: GetVersionPeopleParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/versions/${encodeURIComponent(String(versionId))}/people?${stringifiedParams}` : `/api/v1/versions/${encodeURIComponent(String(versionId))}/people`
+}
+
+/**
+ * @summary Read a version's people
+ */
+export const getVersionPeople = async (versionId: string,
+    params?: GetVersionPeopleParams, options?: Parameters<typeof sessionJSON>[1]): Promise<VersionPeople> => {
+
+  return sessionJSON<VersionPeople>(getGetVersionPeopleUrl(versionId,params),
   {
     ...options,
     method: 'GET'

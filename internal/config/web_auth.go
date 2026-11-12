@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/httpboundary"
+	"go.kenn.io/docbank/internal/query"
 )
 
 // minPublicAPIKeyLength keeps a network-exposed key out of online-guessing
@@ -107,6 +108,11 @@ func browserParsesAsIPv4(host string) bool {
 
 func validateWebConfig(c Config) error {
 	w := c.Web
+	if w.TimelineTimezone != "" {
+		if _, err := query.LoadZone(w.TimelineTimezone); err != nil {
+			return fmt.Errorf("[web] timeline_timezone: %w", err)
+		}
+	}
 	if err := ValidateWebBasePath(w.BasePath); err != nil {
 		return err
 	}

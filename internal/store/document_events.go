@@ -282,7 +282,11 @@ func insertDocumentEventGeneration(
 		generation.Checksum, generation.EventCount, generation.CreatedAt); err != nil {
 		return fmt.Errorf("recording document event generation: %w", err)
 	}
-	for _, event := range record.Events {
+	keys, err := document.DateKeysFor(record.Events)
+	if err != nil {
+		return fmt.Errorf("deriving document date keys: %w", err)
+	}
+	for index, event := range record.Events {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO document_events(
 			generation_id,event_id,source_key,date_kind,source_kind_raw,date_value,raw_value,
 			precision,fraction_digits,timezone_kind,zone_text,offset_seconds,axis_key,utc_key,
@@ -296,6 +300,24 @@ func insertDocumentEventGeneration(
 			event.EvidenceKind, event.EvidenceID, event.EvidenceSHA256, []byte(event.EvidenceLocator),
 			documentEventBool(event.Sensitive)); err != nil {
 			return fmt.Errorf("recording document event %s: %w", event.EventID, err)
+		}
+		key := keys[index]
+		var safe, full bool
+		for _, primary := range record.Primaries {
+			if primary.ScopeClass == "vault" && primary.EventID == event.EventID {
+				safe = safe || primary.Disclosure == "safe"
+				full = full || primary.Disclosure == "full"
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO document_date_keys(
+			generation_id,event_id,content_version_id,date_kind,precision,floating,utc_key,axis_key,
+			civil_date,civil_end_date,civil_month,civil_year,sensitive,primary_safe,primary_full
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, generation.GenerationID,
+			event.EventID, generation.ContentVersionID, event.DateKind, event.Precision,
+			documentEventBool(key.Floating), nullableString(event.UTCKey), event.AxisKey,
+			key.CivilDate, key.CivilEndDate, key.CivilMonth, key.CivilYear,
+			documentEventBool(key.Sensitive), documentEventBool(safe), documentEventBool(full)); err != nil {
+			return fmt.Errorf("recording document date key: %w", err)
 		}
 		for _, actor := range event.Actors {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_actors(
@@ -365,8 +387,21 @@ func (s *Store) DocumentEventsForVersion(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
+	if err != nil {
+		return DocumentEventView{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return DocumentEventView{}, fmt.Errorf("closing document event snapshot: %w", err)
+	}
+	view.Generation.CanonicalJSON = append([]byte(nil), view.Generation.CanonicalJSON...)
+	return view, nil
+}
+
+func (s *Store) documentEventsForVersionTx(ctx context.Context, tx *sql.Tx, versionID string) (DocumentEventView, error) {
 	var view DocumentEventView
-	err = tx.QueryRowContext(ctx, `SELECT g.generation_id,g.content_version_id,
+	err := tx.QueryRowContext(ctx, `SELECT g.generation_id,g.content_version_id,
 		g.contract_version,g.deriver_fingerprint,g.inputs_sha256,g.document_kind,
 		g.canonical_json,g.checksum,g.event_count,g.created_at,
 		h.input_epoch,h.published_at
@@ -400,10 +435,6 @@ func (s *Store) DocumentEventsForVersion(
 	if err := checkDocumentEventGeneration(s.VaultID(), view.Generation, view.Events); err != nil {
 		return DocumentEventView{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return DocumentEventView{}, fmt.Errorf("closing document event snapshot: %w", err)
-	}
-	view.Generation.CanonicalJSON = append([]byte(nil), view.Generation.CanonicalJSON...)
 	return view, nil
 }
 

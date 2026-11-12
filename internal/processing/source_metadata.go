@@ -55,7 +55,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v22"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v23"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -1529,6 +1529,9 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 		return
 	}
 	if date.State != document.EmailDateParsed || date.Civil == nil {
+		if _, ok := rawEmailDateEvent(raw); ok {
+			c.string("email.sent.raw", "email", "Date", raw, false)
+		}
 		c.warn("unparseable_timestamp", "email", "Date", "embedded timestamp was not coerced")
 		return
 	}
@@ -1559,7 +1562,36 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 
 func (c *metadataCollector) extractCalendar(data []byte) {
 	lines := unfoldCalendar(string(data))
+	type calendarComponent struct {
+		name    string
+		ordinal int
+	}
+	var stack []calendarComponent
+	component := 0
 	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if name, value, found := strings.Cut(trimmed, ":"); found {
+			if strings.EqualFold(name, "BEGIN") {
+				frame := calendarComponent{name: strings.ToUpper(strings.TrimSpace(value))}
+				if frame.name == "VEVENT" {
+					if component < 1000000 {
+						component++
+					}
+					frame.ordinal = component
+				}
+				stack = append(stack, frame)
+				continue
+			}
+			if strings.EqualFold(name, "END") {
+				for i, frame := range slices.Backward(stack) {
+					if strings.EqualFold(frame.name, strings.TrimSpace(value)) {
+						stack = stack[:i]
+						break
+					}
+				}
+				continue
+			}
+		}
 		name, value, found := strings.Cut(line, ":")
 		if !found {
 			continue
@@ -1579,19 +1611,31 @@ func (c *metadataCollector) extractCalendar(data []byte) {
 			c.string("title", "calendar", name, value, false)
 		case "DESCRIPTION":
 			c.string("description", "calendar", name, value, false)
-		case "DTSTART":
-			if hasNamedTimezone {
-				c.string("calendar.start.raw", "calendar", name, value, false)
-				c.warn("unsupported_timezone", "calendar", name, "named calendar timezone prevented timestamp normalization")
-			} else {
-				c.timestamp("calendar.start", "calendar", name, value)
+		case "DTSTART", "DTEND":
+			key := "calendar."
+			if len(stack) > 0 {
+				frame := stack[len(stack)-1]
+				switch frame.name {
+				case "VEVENT":
+					if frame.ordinal > 999999 {
+						continue
+					}
+					key = fmt.Sprintf("calendar.event.e%06d.", frame.ordinal)
+				case "VCALENDAR", "VTODO", "VJOURNAL", "VFREEBUSY":
+				default:
+					continue
+				}
 			}
-		case "DTEND":
+			if base == "DTSTART" {
+				key += "start"
+			} else {
+				key += "end"
+			}
 			if hasNamedTimezone {
-				c.string("calendar.end.raw", "calendar", name, value, false)
+				c.string(key+".raw", "calendar", name, value, false)
 				c.warn("unsupported_timezone", "calendar", name, "named calendar timezone prevented timestamp normalization")
 			} else {
-				c.timestamp("calendar.end", "calendar", name, value)
+				c.timestamp(key, "calendar", name, value)
 			}
 		case "ORGANIZER":
 			c.strings("creators", "calendar", name, []string{value})

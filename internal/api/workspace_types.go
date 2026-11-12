@@ -14,6 +14,8 @@ const maxWorkspaceQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // WorkspaceQueryCreateRequest opens one exact, daemon-lifetime query snapshot.
 type WorkspaceQueryCreateRequest struct {
+	Disclosure string `json:"disclosure,omitempty" enum:"safe,full" doc:"Full date disclosure requires an API key"`
+
 	Photos   bool         `json:"photos,omitempty"`
 	Query    QueryPayload `json:"query"`
 	Profile  string       `json:"profile,omitempty" maxLength:"128"`
@@ -122,6 +124,9 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 type WorkspaceQueryResponse struct {
 	PhotoSearchStatus
 
+	Timezone          string `json:"timezone,omitempty"`
+	TimezoneDefaulted bool   `json:"timezone_defaulted"`
+
 	Query               QueryPayload               `json:"query"`
 	Dependencies        []WorkspaceQueryDependency `json:"dependencies"`
 	QueryFingerprint    string                     `json:"query_fingerprint" pattern:"^sha256:[0-9a-f]{64}$"`
@@ -179,6 +184,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
+		Timezone: page.Timezone, TimezoneDefaulted: page.TimezoneDefaulted,
 		PhotoSearchStatus: fromStorePhotoSearchStatus(page.PhotoRanking),
 		Query:             QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,

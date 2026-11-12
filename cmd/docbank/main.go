@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	_ "time/tzdata" // Embed zone data on systems without an IANA database.
 
 	"github.com/spf13/cobra"
 )

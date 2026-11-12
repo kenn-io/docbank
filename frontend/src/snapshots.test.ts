@@ -55,6 +55,7 @@ async function page(overrides: Record<string, unknown> = {}): Promise<Record<str
     dependencies: [{ kind: "tag", id: tagID, revision: 2 }],
     member_hash: await sha256OfUTF8("2:" + version2 + "\n"),
     snapshot_fingerprint: `sha256:${"f".repeat(64)}`,
+    timezone_defaulted: false,
     generation: { kind: "rendition", generation_id: "generation-synthetic" },
     coverage: { configuration: "configured", profile_fingerprint: "c".repeat(64) },
     observed_at: "2026-09-11T00:00:00Z",

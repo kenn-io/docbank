@@ -185,7 +185,7 @@ and optional controls are:
 | `version` | Must be `1`. |
 | `all_documents`, `collection_ids`, `selected_documents` | Choose exactly one scope: `all_documents: true`, a nonempty collection ID list, or the selected-document object below. Use `all_documents: false` for either list scope. |
 | `profile` | Configured processing profile name. Required when several profiles exist. Omission returns `invalid_profile`. A sole configured profile is selected automatically. |
-| `timezone` | Required IANA timezone, such as `UTC` or `America/New_York`. `Local` is rejected. Cutoffs are literal calendar dates in this zone. |
+| `timezone` | Required timezone, such as `UTC` or `America/New_York`. `Local` is rejected. Cutoffs are literal calendar dates in this zone. Direct advanced document-date terms require `UTC` or a loadable slash IANA name; legacy zones such as `EST` remain available for other terms. Saved scopes use their pinned zones when present; otherwise they inherit the report zone. |
 | `source_timezone` | Optional source timezone for timestamps that omit one. |
 | `numeric_date_order` | Optional `MDY` or `DMY` interpretation of ambiguous numeric dates. Omit to leave ambiguity unresolved. |
 | `coverage_mode` | `strict` (default) rejects incomplete search or family coverage in the date ranges. `available_only` retains the gaps in coverage totals. |

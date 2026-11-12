@@ -37,6 +37,9 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
+	PhotoScope bool `json:"-"`
+
+	FullDisclosure     bool                                        `json:"-"`
 	RankPhotos         func(context.Context) (PhotoRanking, error) `json:"-"`
 	PhotoProjection    string                                      `json:"-"`
 	PhotoRanking       *PhotoRanking                               `json:"-"`
@@ -117,6 +120,10 @@ type SnapshotFacet struct {
 
 // SnapshotProjection is a complete immutable materialization without cache ownership.
 type SnapshotProjection struct {
+	FullDisclosure    bool   `json:"full_disclosure,omitempty"`
+	Timezone          string `json:"timezone,omitempty"`
+	TimezoneDefaulted bool   `json:"timezone_defaulted"`
+
 	PhotoProjection     string             `json:"photo_projection,omitempty"`
 	PhotoRanking        *PhotoRanking      `json:"photo_ranking,omitempty"`
 	Photos              bool               `json:"photos,omitempty"`
@@ -250,7 +257,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			executionValue.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
-		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
+		compiler := queryCompiler{photos: options.Photos || request.PhotoScope, requireFreshDates: true, fullDisclosure: request.FullDisclosure, photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
 		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -265,6 +272,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 		}
 		projection = SnapshotProjection{
+			FullDisclosure: request.FullDisclosure, Timezone: compiled.Timezone, TimezoneDefaulted: compiled.TimezoneDefaulted,
 			PhotoProjection: request.PhotoProjection, PhotoRanking: request.PhotoRanking, Photos: options.Photos, Query: value, Dependencies: slices.Clone(compiled.Dependencies),
 			Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
@@ -417,6 +425,9 @@ func materializeSnapshotRows(
 	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	photoColumns := `'','',NULL`
+	if !options.Photos && compiled.Query.Sort.Field == "document_date" {
+		photoColumns = `'',COALESCE(` + documentDateSortExpression(compiled.FullDisclosure) + `,''),NULL`
+	}
 	photoOrder := ""
 	if options.Photos {
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
@@ -503,7 +514,7 @@ func materializeSnapshotRows(
 			row.DisplayCollectionLabel = new(displayLabel.String)
 		}
 		row.MediaFamily = query.ClassifyMedia(row.MIMEType, row.Name)
-		if !options.Photos {
+		if !options.Photos && compiled.Query.Sort.Field != "document_date" {
 			row.SortKey, err = snapshotSortKey(row, compiled.Query.Sort.Field)
 		}
 		if err != nil {
@@ -592,16 +603,30 @@ func snapshotSortKey(row SnapshotRow, field string) (string, error) {
 func sortSnapshotRows(rows []SnapshotRow, order query.Sort) {
 	slices.SortStableFunc(rows, func(left, right SnapshotRow) int {
 		var result int
+		leftKey, rightKey := left.SortKey, right.SortKey
+		if order.Field == "document_date" {
+			if leftKey == "" && rightKey != "" {
+				return 1
+			}
+			if rightKey == "" && leftKey != "" {
+				return -1
+			}
+		}
 		if order.Field == "size" {
 			result = cmp.Compare(left.Size, right.Size)
 		} else {
-			result = strings.Compare(left.SortKey, right.SortKey)
+			result = strings.Compare(leftKey, rightKey)
 		}
 		if order.Direction == "desc" {
 			result = -result
 		}
 		if result != 0 {
 			return result
+		}
+		if order.Field == "document_date" {
+			if result = strings.Compare(left.Path, right.Path); result != 0 {
+				return result
+			}
 		}
 		if result = cmp.Compare(left.NodeID, right.NodeID); result != 0 {
 			return result
@@ -637,6 +662,11 @@ func snapshotMemberHash(members []SnapshotMember) string {
 }
 
 type snapshotFingerprintPayload struct {
+	Timezone          string `json:"timezone,omitempty"`
+	TimezoneDefaulted bool   `json:"timezone_defaulted,omitempty"`
+
+	FullDisclosure bool `json:"full_disclosure,omitempty"`
+
 	PhotoRanking *PhotoRanking      `json:"photo_ranking,omitempty"`
 	Photos       bool               `json:"photos"`
 	Query        query.Query        `json:"query"`
@@ -650,7 +680,8 @@ type snapshotFingerprintPayload struct {
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
-		PhotoRanking: projection.PhotoRanking, Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
+		Timezone: projection.Timezone, TimezoneDefaulted: projection.TimezoneDefaulted,
+		FullDisclosure: projection.FullDisclosure, PhotoRanking: projection.PhotoRanking, Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
 		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {

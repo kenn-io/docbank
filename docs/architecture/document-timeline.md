@@ -56,10 +56,10 @@ second, or fractional second. Missing components are never filled in. A date
 such as `2024-06` stays a month. `2024-06-12` stays a date even when the source
 also names a timezone.
 
-Timezone state is recorded as UTC, a numeric offset, a named zone, omitted, or
-invalid. Docbank computes a UTC key only for hour-or-finer values with UTC or a
-valid numeric offset. A named zone is preserved but remains floating because a
-name alone may be ambiguous. Omitted and invalid zones also remain floating.
+Timezone state records UTC, numeric offsets, resolved IANA zones, RFC 5322
+zone names, other named zones, omitted or invalid zones. Hour-or-finer UTC,
+valid offset, resolved IANA and recognized RFC 5322 claims have UTC keys.
+Unknown named, omitted and invalid zones remain floating.
 Unsupported leap seconds remain diagnostics. The machine's local timezone is
 never used to complete a partial claim.
 
@@ -97,12 +97,34 @@ identities in the same transaction, so a stale worker cannot publish over
 changed evidence. Source metadata is decoded before the write transaction.
 Events, actors, and primary choices stay together in the canonical record.
 
+The v23 source metadata extractor re-extracts every original across the vault.
+Calendar VEVENT dates use component keys; VTODO, VJOURNAL, VFREEBUSY and bare
+dates retain legacy flat keys. Timezone observances, alarms and unknown nested
+components do not supply document dates. A retained pre-v23 flat head can pair
+a start and end from different VEVENTs, adding days to a date match.
+Re-extraction replaces that head; the risk can persist if the original cannot
+be re-extracted.
+
+The source metadata extractor retains email `Received` headers as raw strings. It does not derive a received-date claim from them, so it does not classify those strings as dates. Email `Date` claims use the shared email zone classification, including invalid numeric offsets.
+
+The current recipe adds `iana` and `rfc5322` timezone kinds to
+`document-events/v1`. The version identifies the shape of this disposable
+projection; the recipe fingerprint identifies its derivation. The current
+reader accepts older v1 records and the recipe change rebuilds their keys.
+Older strict v1 codecs reject the new kinds, so consumers decoding these
+records independently must upgrade with the producer. Logical backups do not
+contain these derived records; released-vault upgrades rebuild them from
+retained authority. This is a vocabulary extension, not an assertion that an
+older codec can read newer bytes.
+
 A rebuild advances the input epoch and scans every retained version, including
 history and trash. The current recipe reads active `source-metadata/v1`, exact
-provenance bindings, and the content-version record. It then publishes a fresh
+provenance bindings, and the content-version record. It reuses a validated
+retained generation when its inputs and recipe still match, or derives a new
 generation or a bounded failed or unavailable attempt. A rebuild does not
-alter originals, rerun source extraction, call a rendition provider, or
-recreate a rendition that derivative purge removed.
+re-resolve retained instants with changed timezone rules. It does not alter
+originals, rerun source extraction, call a rendition provider, or recreate a
+rendition that derivative purge removed.
 
 Removing a retained version cascades its dirty state, attempts, head, and
 generation, and advances the publication epoch. Trashing a node keeps them
@@ -186,3 +208,33 @@ operation ID after the prerequisite or failure is resolved.
 
 Backups preserve person and custody records. Restore rebuilds the links without
 copying old rebuild receipts. See [Backup and recovery](backup.md).
+
+## Date search projection
+
+`document_date_keys` is a derived projection written with each event
+generation. It stores the civil date, month and year alongside the existing
+axis and UTC keys. All-day starts use their sibling end to represent the
+inclusive span; an end claim keeps its own date. Flat legacy calendar fields pair only within their retained metadata generation. A key is sensitive when its event or any actor is sensitive.
+The current head selects the generation used for search. Backup metadata does
+not include these keys; the timeline rebuild derives them from retained
+sources after restore or upgrade.
+
+Calendar IANA zones resolve overlaps to the earlier instant and gaps to the
+first instant after the gap. Email RFC 5322 zone names use their fixed offsets;
+unknown names and `-0000` remain floating. The stored instant is validated
+without resolving it again, so changing time-zone data does not invalidate a
+retained generation. The event derivation recipe advances when these rules
+change; `primary-rule/v1` remains unchanged.
+
+## Read date claims
+
+`GET /api/v1/versions/{version_id}/dates` reads a retained version's date
+claims and the primary selected by `primary-rule/v1`. `docbank document dates
+<path-or-id>` reads the current version; `--json` returns the structured body.
+The default `safe` disclosure omits a sensitive claim or one with any sensitive
+actor. API-key clients can request `disclosure=full`, or pass `--full` on the
+CLI. Browser sessions and the MCP `get_document_dates` tool use safe disclosure.
+Each claim's `when` describes its precision and source zone without inventing an
+instant for a floating or date-only value. A response reports `published`,
+`pending`, `failed`, or `none`; stale claims are not returned. If configured,
+`open.web` points to the version on the operator's public web origin.

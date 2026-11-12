@@ -144,6 +144,18 @@ func TestPhotoBrowsePageSizeLimits(t *testing.T) {
 func TestPhotoBrowseRouteContract(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
+	for _, raw := range []string{
+		`{"query":{"mode":"semantic","text":"anything","sort":{"field":"document_date"}}}`,
+		`{"query":{"filters":{"document_date":{"from":"2026-03-01","to":"2026-03-02"}}}}`,
+		`{"query":{"syntax":"advanced","text":"date:2026-03-01"}}`,
+		`{"query":{"syntax":"advanced","text":"date_kind:created"}}`,
+		`{"query":{"syntax":"advanced","text":"date_precision:day"}}`,
+	} {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"X-Api-Key": testAPIKey}, raw)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
+	}
+
 	var qualityNode store.Node
 	for _, name := range []string{"a.jpg", "b.jpg", "c.mp4"} {
 		mime := "image/jpeg"
@@ -965,6 +977,82 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &recovered))
 	require.Equal(t, mode, recovered.ActualMode)
 	require.NotEmpty(t, recovered.SnapshotID)
+}
+
+func TestPhotoCachedQuerySurvivesFilteringTagDeletion(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			ts, catalog := newTestServer(t, nil)
+			tag, err := catalog.CreateTag(t.Context(), "Synthetic selection")
+			require.NoError(t, err)
+			var expected []string
+			for _, name := range []string{"sunset-a.jpg", "sunset-b.jpg"} {
+				node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, testHash(name), 10, "image/jpeg")
+				require.NoError(t, err)
+				assignment, err := catalog.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
+				require.NoError(t, err)
+				tag = assignment.Tag
+				asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				expected = append(expected, asset.ID)
+			}
+			request := api.PhotoBrowseRequest{Query: api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","filters":{"tag_ids":[%q]},"sort":{"field":"name","direction":"asc"}}`, mode, tag.ID)), PageSize: 1}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var first api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &first))
+			require.EqualValues(t, 2, first.Total)
+			require.Equal(t, mode, first.RequestedMode)
+			require.Equal(t, "lexical", first.ActualMode)
+			require.Equal(t, "provider_unavailable", first.FallbackReason)
+			require.NotEmpty(t, first.SnapshotID)
+			require.NotEmpty(t, first.NextCursor)
+			require.Len(t, first.Items, 1)
+			require.Contains(t, expected, first.Items[0].AssetID)
+
+			_, err = catalog.DeleteTag(t.Context(), tag.ID, tag.Revision)
+			require.NoError(t, err)
+			request.SnapshotID, request.Cursor = first.SnapshotID, first.NextCursor
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var next api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &next))
+			require.Equal(t, first.SnapshotID, next.SnapshotID)
+			require.Equal(t, first.MemberHash, next.MemberHash)
+			require.Equal(t, first.Total, next.Total)
+			require.Equal(t, first.PhotoSearchStatus, next.PhotoSearchStatus)
+			require.Len(t, next.Items, 1)
+			require.NotEqual(t, first.Items[0].AssetID, next.Items[0].AssetID)
+			require.ElementsMatch(t, expected, []string{first.Items[0].AssetID, next.Items[0].AssetID})
+			require.Empty(t, next.NextCursor)
+
+			request.Cursor = ""
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var again api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &again))
+			require.Equal(t, first.SnapshotID, again.SnapshotID)
+			require.Equal(t, first.MemberHash, again.MemberHash)
+			require.Equal(t, first.Total, again.Total)
+			require.Equal(t, first.PhotoSearchStatus, again.PhotoSearchStatus)
+			require.Len(t, again.Items, 1)
+			require.Equal(t, first.Items[0].AssetID, again.Items[0].AssetID)
+			require.Equal(t, first.NextCursor, again.NextCursor)
+
+			originalQuery := request.Query
+			request.Query = api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","sort":{"field":"document_date"}}`, mode))
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
+			request.Query = originalQuery
+			request.SnapshotID = ""
+			response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+			require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+			require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
+		})
+	}
 }
 
 func TestPhotoSnapshotHTTPForwardsHiddenScope(t *testing.T) {

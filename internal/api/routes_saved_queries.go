@@ -60,6 +60,18 @@ func (optionalSavedQueryPayload) Schema(r huma.Registry) *huma.Schema {
 	return SavedQueryPayload{}.Schema(r)
 }
 
+func pinSavedQueryTimezone(payload []byte, defaultZone string) ([]byte, error) {
+	value, err := query.Parse(payload)
+	if err != nil {
+		return nil, err
+	}
+	if query.UsesDocumentDate(value) && value.Timezone == nil {
+		value.Timezone = &defaultZone
+		return query.Canonical(value)
+	}
+	return payload, nil
+}
+
 func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.QuerySnapshotService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listSavedQueries", Method: http.MethodGet, Path: "/api/v1/saved-queries",
@@ -102,6 +114,16 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 	}, func(ctx context.Context, in *struct {
 		Body SavedQueryCreateRequest
 	}) (*savedQueryOutput, error) {
+		if in.Body.Kind == store.SavedQueryKindQuery {
+			payload, err := pinSavedQueryTimezone(in.Body.Payload, store.QueryDefaultZone(ctx))
+			if err != nil {
+				if problem := dateQueryError(err); problem != nil {
+					return nil, problem
+				}
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_saved_query", err.Error())
+			}
+			in.Body.Payload = payload
+		}
 		var out *savedQueryOutput
 		err := g.mutate(ctx, func() error {
 			saved, err := d.Store.CreateSavedQuery(
@@ -161,6 +183,19 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 		}
 		if in.Body.Payload.Set {
 			payload := []byte(in.Body.Payload.Value)
+			saved, err := d.Store.SavedQueryByID(ctx, in.SavedQueryID)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			if saved.Kind == store.SavedQueryKindQuery {
+				payload, err = pinSavedQueryTimezone(payload, store.QueryDefaultZone(ctx))
+				if err != nil {
+					if problem := dateQueryError(err); problem != nil {
+						return nil, problem
+					}
+					return nil, NewError(http.StatusUnprocessableEntity, "invalid_saved_query", err.Error())
+				}
+			}
 			patch.Payload = &payload
 		}
 		var out *savedQueryOutput
@@ -247,6 +282,9 @@ func registerSavedQueryRunRoute(
 				return nil, workspaceQueryError(err)
 			}
 			request.Query = value
+			if err := d.Store.ValidatePhotoQuery(ctx, value); err != nil {
+				return nil, workspaceQueryError(err)
+			}
 			value = photoRankingQuery(value)
 			if value.Mode != query.ModeLexical {
 				request.RankPhotos = func(buildCtx context.Context) (store.PhotoRanking, error) {
