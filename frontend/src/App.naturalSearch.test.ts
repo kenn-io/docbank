@@ -2112,19 +2112,19 @@ function renderEmptySearch(coverage: () => Promise<Response>) {
 }
 
 it.each([
-  ["singular", "1 PDF has 1 page without a text layer. If scanned, OCR can read it.", false],
+  ["singular", "1 PDF has 1 page without a text layer. OCR can read scanned pages.", false],
   [
     "partial",
-    "At least 2 PDFs have at least 3 pages without a text layer. If scanned, OCR can read them.",
+    "At least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
     false,
   ],
   [
     "unavailable",
-    "At least 2 PDFs have at least 3 pages without a text layer. If scanned, OCR can read them.",
+    "At least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
     false,
   ],
   ["incomplete", "PDF text coverage is incomplete; some pages may not be searchable.", false],
-  ["complete", "2 PDFs have 3 pages without a text layer. If scanned, OCR can read them.", true],
+  ["complete", "2 PDFs have 3 pages without a text layer. OCR can read scanned pages.", true],
 ])("shows %s PDF coverage (tagged: %s)", async (kind, message, tagged) => {
   const coverage = textCoverage({
     pdfs_without_text: kind === "incomplete" ? 0 : kind === "singular" ? 1 : 2,
@@ -2156,13 +2156,13 @@ it.each([
     2,
     3,
     false,
-    "Across the current vault: 3 pages lack a text layer in 2 PDFs. If scanned, OCR can read them.",
+    "Across the current vault: 3 pages lack a text layer in 2 PDFs. OCR can read scanned pages.",
   ],
   [
     1,
     1,
     false,
-    "Across the current vault: 1 page lacks a text layer in 1 PDF. If scanned, OCR can read it.",
+    "Across the current vault: 1 page lacks a text layer in 1 PDF. OCR can read scanned pages.",
   ],
   [
     0,

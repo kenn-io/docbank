@@ -1250,7 +1250,7 @@
       ? (snapshotActive
           ? `Across the current vault: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? " lacks" : "s lack"} a text layer in ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? "" : "s"}.`
           : `${pdfCoverageIncomplete ? "At least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.`) +
-          ` If scanned, OCR can read ${pdfCoverage.pages_without_text === 1 ? "it" : "them"}.`
+          " OCR can read scanned pages."
       : pdfCoverageIncomplete
         ? `${snapshotActive ? "Across the current vault, PDF" : "PDF"} text coverage is incomplete; some pages may not be searchable.`
         : pdfCoverageUnavailable
