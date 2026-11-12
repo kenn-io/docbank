@@ -19235,9 +19235,9 @@ export const getRestartDaemonUrl = () => {
 /**
  * @summary Restart Docbank
  */
-export const restartDaemon = ( options?: Parameters<typeof sessionResponse>[1]) => {
+export const restartDaemon = async ( options?: Parameters<typeof sessionEmpty>[1]): Promise<void> => {
 
-  return sessionResponse<void>(getRestartDaemonUrl(),
+  return sessionEmpty<void>(getRestartDaemonUrl(),
   {
     ...options,
     method: 'POST'

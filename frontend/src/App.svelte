@@ -2029,11 +2029,7 @@
     localText.notice = "";
     let notice = "Restart requested. Docbank may restart later.";
     try {
-      const response = await generated.restartDaemon({
-        session,
-        signal: AbortSignal.timeout(10000),
-      });
-      if (response.status !== 202) throw new Error("Unexpected restart response");
+      await generated.restartDaemon({ session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
       if (!mounted || restartAttempt !== attempt) return;
       if (webSession === session && cause instanceof APIError) {
@@ -2048,13 +2044,7 @@
         }
         if (cause.code === "restart_unavailable") {
           restartAttempt = undefined;
-          if (localText.status) localText.status.restart_available = false;
           readLocalTextStatus();
-          return;
-        }
-        if (cause.status >= 400 && cause.status < 500) {
-          restartAttempt = undefined;
-          localText.error = cause.message;
           return;
         }
       }
