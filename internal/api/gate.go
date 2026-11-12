@@ -29,7 +29,8 @@ type OperationGate struct {
 	// runs after the store commits and before the handler builds its response.
 	afterRouteMutation func()
 	// afterUploadVerification pauses a retry before it reports the result in tests.
-	afterUploadVerification func()
+	afterUploadVerification  func()
+	beforeUploadVerification func()
 }
 
 // NewOperationGate creates one daemon-wide operation coordinator. Every

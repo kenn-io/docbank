@@ -9,3 +9,7 @@ func SetAfterRouteMutation(g *OperationGate, hook func()) {
 func SetAfterUploadVerification(g *OperationGate, hook func()) {
 	g.afterUploadVerification = hook
 }
+
+func SetBeforeUploadVerification(g *OperationGate, hook func()) {
+	g.beforeUploadVerification = hook
+}
