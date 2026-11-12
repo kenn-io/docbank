@@ -128,6 +128,11 @@ it("accepts the worker's bounded digest-form artifact identity", async () => {
 
 it("validates page fields", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
+  const signal = new AbortController().signal;
+  const resolve = (fields: Record<string, unknown>) => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(receipt(fields))));
+    return resolveRenditionText("session", source, 9, "archive", observation, signal);
+  };
   for (const [fields, expected] of [
     [{ pages_without_text: [2, 3] }, { pagesWithoutText: [2, 3] }],
     [{ page_coverage: "unavailable" }, { pageCoverage: "unavailable" }],
@@ -140,30 +145,10 @@ it("validates page fields", async () => {
       { state: "unprocessed", pageCoverage: "unavailable" },
     ],
   ]) {
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(receipt(fields))));
-    await expect(
-      resolveRenditionText(
-        "session",
-        source,
-        9,
-        "archive",
-        observation,
-        new AbortController().signal,
-      ),
-    ).resolves.toMatchObject(expected);
+    await expect(resolve(fields)).resolves.toMatchObject(expected);
   }
   for (const fields of [{ pages_without_text: [0] }, { page_coverage: "invalid" }]) {
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(receipt(fields))));
-    await expect(
-      resolveRenditionText(
-        "session",
-        source,
-        9,
-        "archive",
-        observation,
-        new AbortController().signal,
-      ),
-    ).rejects.toThrow(/Malformed rendition text receipt/);
+    await expect(resolve(fields)).rejects.toThrow(/Malformed rendition text receipt/);
   }
 });
 
