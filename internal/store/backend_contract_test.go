@@ -827,6 +827,23 @@ var backendSuites = []backendSuite{
 		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+		{"DocumentDateFactsNeverReturnsStaleClaims", func(t *testing.T) { t.Helper(); checkDocumentDateFactsNeverReturnsStaleClaims(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentDateFactsNeverReturnsStaleClaims(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsPublicationAndFailure", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsPublicationAndFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsPublicationAndFailure(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsFiltersBlindCopyEdge", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newPostgresQueryStore) }},
+		{"DocumentPeopleFactsFiltersBlindCopyAssertion", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newPostgresQueryStore)
+		}},
+		{"OpenCandidatesForVersionScopesOccurrences", func(t *testing.T) { t.Helper(); checkOpenCandidatesForVersionScopesOccurrences(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkOpenCandidatesForVersionScopesOccurrences(t, newPostgresQueryStore)
+		}},
 		{"OpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence", func(t *testing.T) {
 			t.Helper()
 			checkOpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence(t, newTestStore)

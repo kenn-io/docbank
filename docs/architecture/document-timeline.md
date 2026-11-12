@@ -215,3 +215,16 @@ unknown names and `-0000` remain floating. The stored instant is validated
 without resolving it again, so changing time-zone data does not invalidate a
 retained generation. The event derivation recipe advances when these rules
 change; `primary-rule/v1` remains unchanged.
+
+## Read date claims
+
+`GET /api/v1/versions/{version_id}/dates` reads a retained version's date
+claims and the primary selected by `primary-rule/v1`. `docbank document dates
+<path-or-id>` reads the current version; `--json` returns the structured body.
+The default `safe` disclosure omits a sensitive claim or one with any sensitive
+actor. API-key clients can request `disclosure=full`, or pass `--full` on the
+CLI. Browser sessions and the MCP `get_document_dates` tool use safe disclosure.
+Each claim's `when` describes its precision and source zone without inventing an
+instant for a floating or date-only value. A response reports `published`,
+`pending`, `failed`, or `none`; stale claims are not returned. If configured,
+`open.web` points to the version on the operator's public web origin.

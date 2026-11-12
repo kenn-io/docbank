@@ -223,7 +223,7 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 			return fmt.Errorf("document event %d duplicates an event ID", index)
 		}
 		eventIDs[event.EventID] = struct{}{}
-		eventSensitivity[event.EventID] = eventHasSensitiveEvidence(event)
+		eventSensitivity[event.EventID] = EventHasSensitiveEvidence(event)
 		actorCount += len(event.Actors)
 		if actorCount > MaxDocumentEventActors {
 			return fmt.Errorf("document events contain more than %d actor associations", MaxDocumentEventActors)

@@ -18,6 +18,7 @@ const (
 	versionField              = "content_version_id"
 	personIDField             = "person_id"
 	schemaStateField          = "state"
+	schemaRoleField           = "role"
 	schemaVaultIDField        = "vault_id"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
@@ -225,7 +226,7 @@ func findPeopleSchemas() (schema, schema) {
 func personSchemaProperties() schema {
 	return schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), "origin": stringSchema(64),
-		"state": stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
+		schemaStateField: stringSchema(64), schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(),
 		"updated_at": dateTimeSchema(), "reached_through_person_id": uuidSchema(),
 	}
 }
@@ -260,7 +261,7 @@ func personDetailProperties() schema {
 
 func getPersonSchemas() (schema, schema) {
 	return rootObjectSchema(schema{personIDField: uuidSchema(), "assertion_cursor": uuidSchema(), "assertion_limit": integerSchema(1, 1000)}, personIDField), rootObjectSchema(withPrivateCache(personDetailProperties()), cacheRequired(
-		personIDField, "display_name", "origin", "state", schemaRevisionField, "created_at", "updated_at", "identities", "external_identities")...)
+		personIDField, "display_name", "origin", schemaStateField, schemaRevisionField, "created_at", "updated_at", "identities", "external_identities")...)
 }
 
 func resolvePackageCustodianSchemas() (schema, schema) {
@@ -918,10 +919,10 @@ func photoFileSchema() schema {
 		"id":                 uuidSchema(),
 		"asset_id":           uuidSchema(),
 		"node_id":            integerSchema(1, 0),
-		"role":               enumSchema("raw", "image", "video", "sidecar"),
+		schemaRoleField:      enumSchema("raw", "image", "video", "sidecar"),
 		"sidecar_of_file_id": uuidSchema(),
 		schemaCreatedAtField: dateTimeSchema(),
-	}, "id", "asset_id", "node_id", "role", schemaCreatedAtField)
+	}, "id", "asset_id", "node_id", schemaRoleField, schemaCreatedAtField)
 }
 
 func photoAssetOutputSchema() schema {
@@ -983,12 +984,12 @@ func personAssertionSchema(role schema) schema {
 		"assertion_id":       uuidSchema(),
 		"content_version_id": uuidSchema(),
 		"person_id":          uuidSchema(),
-		"role":               role,
+		schemaRoleField:      role,
 		"action":             enumSchema("assert", "suppress", "withdrawn"),
 		"note":               stringSchema(maxToolResponseBytes),
 		"recorded_at":        dateTimeSchema(),
 		schemaRevisionField:  integerSchema(1, 0),
-	}, "assertion_id", "content_version_id", "person_id", "role", "action", "note", "recorded_at", schemaRevisionField)
+	}, "assertion_id", "content_version_id", "person_id", schemaRoleField, "action", "note", "recorded_at", schemaRevisionField)
 }
 
 func getPhotoFacesSchemas() (schema, schema) {
@@ -1014,9 +1015,9 @@ func getPhotoFacesSchemas() (schema, schema) {
 
 func createPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"node_id": integerSchema(1, 0),
-		"kind":    enumSchema("photo", "video"),
-		"role":    enumSchema("raw", "image", "video", "sidecar"),
+		"node_id":       integerSchema(1, 0),
+		"kind":          enumSchema("photo", "video"),
+		schemaRoleField: enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }
 
@@ -1025,7 +1026,7 @@ func attachPhotoFileSchemas() (schema, schema) {
 		"asset_id":           uuidSchema(),
 		schemaRevisionField:  integerSchema(1, 0),
 		"node_id":            integerSchema(1, 0),
-		"role":               enumSchema("raw", "image", "video", "sidecar"),
+		schemaRoleField:      enumSchema("raw", "image", "video", "sidecar"),
 		"sidecar_of_file_id": uuidSchema(),
 	}, "asset_id", schemaRevisionField, "node_id")
 }
@@ -1052,10 +1053,36 @@ func promotePhotoNodeSchemas() (schema, schema) {
 		"node_id":           integerSchema(1, 0),
 		schemaRevisionField: integerSchema(1, 0),
 		"kind":              enumSchema("photo", "video"),
-		"role":              enumSchema("raw", "image", "video", "sidecar"),
+		schemaRoleField:     enumSchema("raw", "image", "video", "sidecar"),
 	}, "node_id")
 }
 
 func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
+}
+
+func documentFactsInputSchema(maxOffset int64) schema {
+	s := rootObjectSchema(schema{"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "offset": integerSchema(0, maxOffset)})
+	s["description"] = "Provide exactly one of node_id or content_version_id."
+	return s
+}
+func factOpenSchema() schema {
+	return objectSchema(schema{"web": stringSchema(maxToolResponseBytes)}, "web")
+}
+func factWhenSchema() schema {
+	return objectSchema(schema{schemaStateField: stringSchema(maxToolResponseBytes), "precision": stringSchema(maxToolResponseBytes), "at": stringSchema(maxToolResponseBytes), "local": stringSchema(maxToolResponseBytes), "zone_state": stringSchema(maxToolResponseBytes), "source_zone": stringSchema(maxToolResponseBytes), "source_offset_seconds": schema{"type": "integer"}, "date": stringSchema(maxToolResponseBytes), "period": stringSchema(maxToolResponseBytes), "placed_by": objectSchema(schema{"source": stringSchema(maxToolResponseBytes), "rule": stringSchema(maxToolResponseBytes), "fallback": booleanSchema(), "event_id": stringSchema(maxToolResponseBytes), "claim_basis": stringSchema(maxToolResponseBytes)}, "source", "rule", "fallback", "event_id", "claim_basis")}, schemaStateField, "precision", "placed_by")
+}
+func getDocumentDatesSchemas() (schema, schema) {
+	claim := objectSchema(schema{"event_id": stringSchema(maxToolResponseBytes), "date_kind": stringSchema(maxToolResponseBytes), "primary": booleanSchema(), "date_value": stringSchema(maxToolResponseBytes), "raw_value": stringSchema(document.MaxDocumentEventRawValueBytes), "precision": stringSchema(maxToolResponseBytes), "timezone_kind": stringSchema(maxToolResponseBytes), "zone_text": stringSchema(maxToolResponseBytes), "offset_seconds": schema{"type": "integer"}, "axis_key": stringSchema(maxToolResponseBytes), "utc_key": stringSchema(maxToolResponseBytes), "claim_basis": stringSchema(maxToolResponseBytes), "parse_confidence": stringSchema(maxToolResponseBytes), "evidence_kind": stringSchema(maxToolResponseBytes), "evidence_id": stringSchema(maxToolResponseBytes), "source_kind_raw": stringSchema(maxToolResponseBytes), "when": factWhenSchema()}, "event_id", "date_kind", "primary", "date_value", "raw_value", "precision", "timezone_kind", "zone_text", "axis_key", "claim_basis", "parse_confidence", "evidence_kind", "evidence_id", "when")
+	primary := objectSchema(schema{"event_id": stringSchema(maxToolResponseBytes), "reason": stringSchema(maxToolResponseBytes), "rule_id": stringSchema(maxToolResponseBytes), "disclosure": stringSchema(maxToolResponseBytes)}, "event_id", "reason", "rule_id", "disclosure")
+	diagnostic := objectSchema(schema{"code": stringSchema(maxToolResponseBytes), "detail": stringSchema(maxToolResponseBytes)}, "code", "detail")
+	input := documentFactsInputSchema(document.MaxDocumentEvents + document.MaxDocumentEventsEncodedBytes/32)
+	return input, rootObjectSchema(withPrivateCache(schema{"content_version_id": uuidSchema(), "node_id": integerSchema(1, 0), schemaStateField: stringSchema(maxToolResponseBytes), "document_kind": stringSchema(maxToolResponseBytes), "primary": primary, "claims": arraySchema(claim, 100), "diagnostics": arraySchema(diagnostic, 100), "open": factOpenSchema(), "offset": integerSchema(0, 0), "next_offset": integerSchema(1, 0)}), cacheRequired("content_version_id", "node_id", schemaStateField, "claims", "diagnostics", "offset")...)
+}
+func getDocumentPeopleSchemas() (schema, schema) {
+	external := objectSchema(schema{"system": stringSchema(maxToolResponseBytes), "archive_id": stringSchema(document.MaxPersonArchiveIDBytes), "uid": stringSchema(document.MaxPersonExternalUIDBytes)}, "system", "archive_id", "uid")
+	edge := objectSchema(schema{"person_id": uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaRoleField: stringSchema(maxToolResponseBytes), "basis": stringSchema(maxToolResponseBytes), "confidence": stringSchema(maxToolResponseBytes), "evidence_kind": stringSchema(maxToolResponseBytes), "evidence_id": stringSchema(maxToolResponseBytes), "raw_label": stringSchema(document.MaxPersonDisplayNameBytes), "claim_count": integerSchema(0, 0), "linked_contact": booleanSchema(), "external": arraySchema(external, document.MaxPersonExternalIdentities)}, "person_id", "display_name", schemaRoleField, "basis", "confidence", "evidence_kind", "evidence_id", "raw_label", "claim_count", "linked_contact", "external")
+	assertion := objectSchema(schema{"assertion_id": uuidSchema(), "person_id": uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaRoleField: stringSchema(maxToolResponseBytes), "action": stringSchema(maxToolResponseBytes), "note": stringSchema(maxToolResponseBytes), "recorded_at": stringSchema(maxToolResponseBytes), "revision": integerSchema(1, 0)}, "assertion_id", "person_id", "display_name", schemaRoleField, "action", "note", "recorded_at", "revision")
+	unresolved := objectSchema(schema{"raw_label": stringSchema(document.MaxPersonDisplayNameBytes), schemaRoleField: stringSchema(maxToolResponseBytes), "candidate_id": uuidSchema(), "evidence_kind": stringSchema(maxToolResponseBytes)}, "raw_label", schemaRoleField, "candidate_id", "evidence_kind")
+	return documentFactsInputSchema(1<<31 - 1), rootObjectSchema(withPrivateCache(schema{"content_version_id": uuidSchema(), schemaStateField: stringSchema(maxToolResponseBytes), "edges": arraySchema(edge, 100), "assertions": arraySchema(assertion, 100), "unresolved": arraySchema(unresolved, 100), "open": factOpenSchema(), "offset": integerSchema(0, 0), "next_offset": integerSchema(1, 0)}), cacheRequired("content_version_id", schemaStateField, "edges", "assertions", "unresolved", "offset")...)
 }

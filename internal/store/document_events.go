@@ -387,8 +387,21 @@ func (s *Store) DocumentEventsForVersion(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
+	if err != nil {
+		return DocumentEventView{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return DocumentEventView{}, fmt.Errorf("closing document event snapshot: %w", err)
+	}
+	view.Generation.CanonicalJSON = append([]byte(nil), view.Generation.CanonicalJSON...)
+	return view, nil
+}
+
+func (s *Store) documentEventsForVersionTx(ctx context.Context, tx *sql.Tx, versionID string) (DocumentEventView, error) {
 	var view DocumentEventView
-	err = tx.QueryRowContext(ctx, `SELECT g.generation_id,g.content_version_id,
+	err := tx.QueryRowContext(ctx, `SELECT g.generation_id,g.content_version_id,
 		g.contract_version,g.deriver_fingerprint,g.inputs_sha256,g.document_kind,
 		g.canonical_json,g.checksum,g.event_count,g.created_at,
 		h.input_epoch,h.published_at
@@ -422,10 +435,6 @@ func (s *Store) DocumentEventsForVersion(
 	if err := checkDocumentEventGeneration(s.VaultID(), view.Generation, view.Events); err != nil {
 		return DocumentEventView{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return DocumentEventView{}, fmt.Errorf("closing document event snapshot: %w", err)
-	}
-	view.Generation.CanonicalJSON = append([]byte(nil), view.Generation.CanonicalJSON...)
 	return view, nil
 }
 

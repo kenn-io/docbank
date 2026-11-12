@@ -7242,6 +7242,51 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    FactDiagnostic:
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+        - code
+        - detail
+      type: object
+      x-go-type: api.FactDiagnostic
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FactExternal:
+      additionalProperties: false
+      properties:
+        archive_id:
+          type: string
+        system:
+          type: string
+        uid:
+          type: string
+      required:
+        - system
+        - archive_id
+        - uid
+      type: object
+      x-go-type: api.FactExternal
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    FactOpen:
+      additionalProperties: false
+      properties:
+        web:
+          type: string
+      required:
+        - web
+      type: object
+      x-go-type: api.FactOpen
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Filters:
       additionalProperties: false
       properties:
@@ -21881,6 +21926,245 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    VersionDateClaim:
+      additionalProperties: false
+      properties:
+        axis_key:
+          type: string
+        claim_basis:
+          type: string
+        date_kind:
+          type: string
+        date_value:
+          type: string
+        event_id:
+          type: string
+        evidence_id:
+          type: string
+        evidence_kind:
+          type: string
+        offset_seconds:
+          format: int64
+          type: integer
+        parse_confidence:
+          type: string
+        precision:
+          type: string
+        primary:
+          type: boolean
+        raw_value:
+          type: string
+        source_kind_raw:
+          type: string
+        timezone_kind:
+          type: string
+        utc_key:
+          type: string
+        when:
+          $ref: "#/components/schemas/WhenV1"
+        zone_text:
+          type: string
+      required:
+        - event_id
+        - date_kind
+        - primary
+        - date_value
+        - raw_value
+        - precision
+        - timezone_kind
+        - zone_text
+        - axis_key
+        - claim_basis
+        - parse_confidence
+        - evidence_kind
+        - evidence_id
+        - when
+      type: object
+      x-go-type: api.VersionDateClaim
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionDatePrimary:
+      additionalProperties: false
+      properties:
+        disclosure:
+          type: string
+        event_id:
+          type: string
+        reason:
+          type: string
+        rule_id:
+          type: string
+      required:
+        - event_id
+        - reason
+        - rule_id
+        - disclosure
+      type: object
+      x-go-type: api.VersionDatePrimary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionDates:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VersionDates.json
+          format: uri
+          readOnly: true
+          type: string
+        claims:
+          items:
+            $ref: "#/components/schemas/VersionDateClaim"
+          type: array
+        content_version_id:
+          type: string
+        diagnostics:
+          items:
+            $ref: "#/components/schemas/FactDiagnostic"
+          type: array
+        document_kind:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        open:
+          $ref: "#/components/schemas/FactOpen"
+        primary:
+          $ref: "#/components/schemas/VersionDatePrimary"
+        state:
+          type: string
+      required:
+        - content_version_id
+        - node_id
+        - state
+        - claims
+        - diagnostics
+      type: object
+      x-go-type: api.VersionDates
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionPeople:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VersionPeople.json
+          format: uri
+          readOnly: true
+          type: string
+        assertions:
+          items:
+            $ref: "#/components/schemas/VersionPersonAssertion"
+          type: array
+        content_version_id:
+          type: string
+        edges:
+          items:
+            $ref: "#/components/schemas/VersionPersonEdge"
+          type: array
+        open:
+          $ref: "#/components/schemas/FactOpen"
+        state:
+          type: string
+        unresolved:
+          items:
+            $ref: "#/components/schemas/VersionUnresolvedName"
+          type: array
+      required:
+        - content_version_id
+        - state
+        - edges
+        - assertions
+        - unresolved
+      type: object
+      x-go-type: api.VersionPeople
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionPersonAssertion:
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+        assertion_id:
+          type: string
+        display_name:
+          type: string
+        note:
+          type: string
+        person_id:
+          type: string
+        recorded_at:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        role:
+          type: string
+      required:
+        - assertion_id
+        - person_id
+        - display_name
+        - role
+        - action
+        - note
+        - recorded_at
+        - revision
+      type: object
+      x-go-type: api.VersionPersonAssertion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionPersonEdge:
+      additionalProperties: false
+      properties:
+        basis:
+          type: string
+        claim_count:
+          format: int64
+          type: integer
+        confidence:
+          type: string
+        display_name:
+          type: string
+        evidence_id:
+          type: string
+        evidence_kind:
+          type: string
+        external:
+          items:
+            $ref: "#/components/schemas/FactExternal"
+          type: array
+        linked_contact:
+          type: boolean
+        person_id:
+          type: string
+        raw_label:
+          type: string
+        role:
+          type: string
+      required:
+        - person_id
+        - display_name
+        - role
+        - basis
+        - confidence
+        - evidence_kind
+        - evidence_id
+        - raw_label
+        - claim_count
+        - linked_contact
+        - external
+      type: object
+      x-go-type: api.VersionPersonEdge
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     VersionPruneReport:
       additionalProperties: false
       properties:
@@ -22011,6 +22295,27 @@ components:
           uniqueItems: true
       type: object
       x-go-type: api.VersionPruneRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VersionUnresolvedName:
+      additionalProperties: false
+      properties:
+        candidate_id:
+          type: string
+        evidence_kind:
+          type: string
+        raw_label:
+          type: string
+        role:
+          type: string
+      required:
+        - raw_label
+        - role
+        - candidate_id
+        - evidence_kind
+      type: object
+      x-go-type: api.VersionUnresolvedName
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -22157,6 +22462,63 @@ components:
         - token
         - upload_secret
       type: object
+    WhenPlacedBy:
+      additionalProperties: false
+      properties:
+        claim_basis:
+          type: string
+        event_id:
+          type: string
+        fallback:
+          type: boolean
+        rule:
+          type: string
+        source:
+          type: string
+      required:
+        - source
+        - rule
+        - fallback
+        - event_id
+        - claim_basis
+      type: object
+      x-go-type: api.WhenPlacedBy
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    WhenV1:
+      additionalProperties: false
+      properties:
+        at:
+          type: string
+        date:
+          type: string
+        local:
+          type: string
+        period:
+          type: string
+        placed_by:
+          $ref: "#/components/schemas/WhenPlacedBy"
+        precision:
+          type: string
+        source_offset_seconds:
+          format: int64
+          type: integer
+        source_zone:
+          type: string
+        state:
+          type: string
+        zone_state:
+          type: string
+      required:
+        - state
+        - precision
+        - placed_by
+      type: object
+      x-go-type: api.WhenV1
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -33499,6 +33861,39 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one immutable content version by stable ID
+  /api/v1/versions/{version_id}/dates:
+    get:
+      operationId: getVersionDates
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: disclosure
+          schema:
+            default: safe
+            enum:
+              - safe
+              - full
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionDates"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a version's date claims
   /api/v1/versions/{version_id}/download-ticket:
     post:
       operationId: prepareOriginalDownload
@@ -33727,6 +34122,39 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Stream one verified immutable email part artifact
+  /api/v1/versions/{version_id}/people:
+    get:
+      operationId: getVersionPeople
+      parameters:
+        - in: path
+          name: version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: disclosure
+          schema:
+            default: safe
+            enum:
+              - safe
+              - full
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionPeople"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read a version's people
   /api/v1/watches:
     get:
       operationId: listWatchedInboxes
