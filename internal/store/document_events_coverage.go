@@ -198,3 +198,4 @@ func (s *Store) DocumentEventRebuildCoverage(ctx context.Context) (DocumentEvent
 	}
 	return coverage, nil
 }
+

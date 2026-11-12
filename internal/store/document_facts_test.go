@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestDocumentFactsDatesState(t *testing.T) {
@@ -85,6 +86,12 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	require.Equal(t, "published", facts.State)
 	require.NotEmpty(t, facts.Edges)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
+	require.NoError(t, err)
+	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "pending", facts.State)
+	require.Empty(t, facts.Edges)
 	failedVersion := seedDocumentPeopleEvent(t, s, "people-failed.txt", "c5", nil)
 	failedInput, err := s.PrepareDocumentPeopleInputs(t.Context(), failedVersion.ID)
 	require.NoError(t, err)
@@ -93,4 +100,27 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	require.Equal(t, "failed", facts.State)
 	require.Empty(t, facts.Edges)
+}
+
+func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
+	s := newTestStore(t)
+	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "author", Sensitive: true}
+	version, target := ingestDocumentEventTarget(t, s, "sensitive.txt", "d9")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
+	record.Events[0].Actors = []document.DocumentEventActorV1{actor}
+	raw, _, err := document.MarshalDocumentEventsV1(record)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
+	require.NoError(t, err)
+	_, err = s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+	require.NoError(t, err)
+	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
+	require.NoError(t, err)
+	for _, c := range safe.Candidates {
+		require.Empty(t, c.Occurrences)
+	}
+	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Len(t, full.Candidates, 1)
+	require.Len(t, full.Candidates[0].Occurrences, 1)
 }

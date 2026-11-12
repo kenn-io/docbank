@@ -15,6 +15,9 @@ func TestDocumentFactsCommands(t *testing.T) {
 	t.Cleanup(stop)
 	waitForDaemon(t, f.root)
 	for _, noun := range []string{"dates", "people"} {
+		table, err := runCLI(t, "document", noun, "/notes.txt")
+		require.NoError(t, err)
+		require.Contains(t, table, "State: ")
 		output, err := runCLI(t, "document", noun, "/notes.txt", "--json", "--full")
 		require.NoError(t, err)
 		if noun == "dates" {

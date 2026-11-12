@@ -45,6 +45,10 @@ func documentFactsCommand(kind string) *cobra.Command {
 			if asJSON {
 				return writeVersionJSON(cmd.OutOrStdout(), result)
 			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
+			for _, diagnostic := range result.Diagnostics {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Diagnostic: %s: %s\n", diagnostic.Code, diagnostic.Detail)
+			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 			for _, claim := range result.Claims {
 				mark := " "
@@ -63,6 +67,7 @@ func documentFactsCommand(kind string) *cobra.Command {
 		if asJSON {
 			return writeVersionJSON(cmd.OutOrStdout(), result)
 		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		for _, edge := range result.Edges {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, edge.Basis)

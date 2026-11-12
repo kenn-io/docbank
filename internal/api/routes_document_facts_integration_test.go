@@ -4,6 +4,9 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"strings"
+
+	"go.kenn.io/docbank/internal/daemonconn"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -116,4 +119,38 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Contains(t, body, "J. PELLHAM")
+}
+
+func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.WriteContext(ctx, strings.NewReader("synthetic JPEG"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = daemonconn.New(ts.URL, testAPIKey).SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true, "")
+	require.NoError(t, err)
+	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, res.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "synthetic-passcode", "")
+	require.NoError(t, err)
+	for _, kind := range []string{"dates", "people"} {
+		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
+		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token, "Cookie": cookie}
+		res, body = get(t, ts, path, headers)
+		require.Equal(t, http.StatusOK, res.StatusCode, body)
+	}
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	for _, kind := range []string{"dates", "people"} {
+		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
+		res, body = get(t, ts, path, map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token, "Cookie": cookie})
+		require.Equal(t, http.StatusNotFound, res.StatusCode, body)
+	}
 }

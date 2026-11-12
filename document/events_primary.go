@@ -46,7 +46,7 @@ func SelectPrimaryEvent(events []DocumentEventV1, kind DocumentKind, scopeClass,
 		var best *DocumentEventV1
 		for i := range events {
 			event := &events[i]
-			if event.DateKind != dateKind || (disclosure == "safe" && eventHasSensitiveEvidence(*event)) {
+			if event.DateKind != dateKind || (disclosure == "safe" && EventHasSensitiveEvidence(*event)) {
 				continue
 			}
 			if best == nil || comparePrimaryEvents(*event, *best) < 0 {
@@ -60,7 +60,8 @@ func SelectPrimaryEvent(events []DocumentEventV1, kind DocumentKind, scopeClass,
 	return DocumentEventPrimaryV1{}, false
 }
 
-func eventHasSensitiveEvidence(event DocumentEventV1) bool {
+// EventHasSensitiveEvidence reports whether safe disclosure must hide an event.
+func EventHasSensitiveEvidence(event DocumentEventV1) bool {
 	return event.Sensitive || slices.ContainsFunc(event.Actors, func(actor DocumentEventActorV1) bool {
 		return actor.Sensitive
 	})

@@ -576,7 +576,11 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 	if validateUUIDv4(contentVersionID) != nil {
 		return nil, ErrInvalidPerson
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
+	return documentPersonAssertionsTx(ctx, s.db, contentVersionID)
+}
+
+func documentPersonAssertionsTx(ctx context.Context, q metadataQuerier, contentVersionID string) ([]PersonDocumentAssertion, error) {
+	rows, err := q.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=$1 ORDER BY role,person_id,assertion_id`, contentVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -808,21 +812,16 @@ var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces
 
 // VersionCandidate contains only the occurrences belonging to the requested version.
 type VersionCandidate struct {
-	CandidateID, DisplayName string
-	Occurrences              []PersonCandidateOccurrence
+	CandidateID, DisplayName, ActorKey string
+	Occurrences                        []PersonCandidateOccurrence
 }
 
-// OpenCandidatesForVersion reads open, non-face candidates and scopes their
-// evidence to one version, so callers never disclose another version's facts.
-func (s *Store) OpenCandidatesForVersion(ctx context.Context, versionID string) ([]VersionCandidate, error) {
-	if err := validateUUIDv4(versionID); err != nil {
-		return nil, ErrNotFound
+func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
+	evidenceHex := "hex(evidence_json)"
+	if s.postgresSchema != "" {
+		evidenceHex = "upper(encode(evidence_json, 'hex'))"
 	}
-	return openCandidatesForVersion(ctx, s.db, versionID)
-}
-
-func openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
-	rows, err := q.QueryContext(ctx, `SELECT candidate_id,display_name,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' ORDER BY created_at,candidate_id`)
+	rows, err := q.QueryContext(ctx, `SELECT candidate_id,display_name,actor_key,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' AND `+evidenceHex+` LIKE $1 ORDER BY created_at,candidate_id`, fmt.Sprintf("%%%X%%", versionID))
 	if err != nil {
 		return nil, err
 	}
@@ -831,7 +830,7 @@ func openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID 
 	for rows.Next() {
 		var c VersionCandidate
 		var raw []byte
-		if err := rows.Scan(&c.CandidateID, &c.DisplayName, &raw); err != nil {
+		if err := rows.Scan(&c.CandidateID, &c.DisplayName, &c.ActorKey, &raw); err != nil {
 			return nil, err
 		}
 		occurrences, err := decodeStoredCandidateEvidence(raw)

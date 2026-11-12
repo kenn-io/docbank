@@ -689,6 +689,17 @@ func (s *Store) DocumentPeopleForVersion(ctx context.Context, versionID string) 
 		return nil, DocumentPeopleHead{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	edges, head, err := documentPeopleForVersionTx(ctx, tx, versionID)
+	if err != nil {
+		return nil, head, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, head, err
+	}
+	return edges, head, nil
+}
+
+func documentPeopleForVersionTx(ctx context.Context, tx *sql.Tx, versionID string) ([]document.DocumentPersonEdgeV1, DocumentPeopleHead, error) {
 	head, err := documentPeopleHeadTx(ctx, tx, versionID)
 	if err != nil {
 		return nil, head, err
@@ -703,7 +714,7 @@ func (s *Store) DocumentPeopleForVersion(ctx context.Context, versionID string) 
 	if err != nil {
 		return nil, head, err
 	}
-	if !current {
+	if !current || head.ResolverFingerprint != document.PersonResolverFingerprint() {
 		return nil, head, ErrNotFound
 	}
 	if head.GenerationID == "" {
@@ -717,9 +728,6 @@ func (s *Store) DocumentPeopleForVersion(ctx context.Context, versionID string) 
 	record, actual, err := document.DecodeDocumentPeopleV1(raw)
 	if err != nil || actual != checksum || record.ContentVersionID != versionID || record.EventGenerationID != head.EventGenerationID || int64(len(record.Edges)) != head.EdgeCount {
 		return nil, head, ErrDocumentPeopleCorrupt
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, head, err
 	}
 	return record.Edges, head, nil
 }
