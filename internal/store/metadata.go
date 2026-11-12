@@ -559,6 +559,8 @@ func exportMetadataSnapshotWithVaultIdentity(
 		if err := partyMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
+	}
+	if layout.schemaVersion >= taxStorageSchemaVersion {
 		if err := exportMetadataTables(ctx, tx, write, taxMetadataTables); err != nil {
 			return err
 		}
@@ -1674,6 +1676,8 @@ func validateMetadataStateWithVaultIdentity(
 			if err := validatePartyMetadataState(ctx, tx); err != nil {
 				return err
 			}
+		}
+		if layout.schemaVersion >= taxStorageSchemaVersion {
 			if err := validateTaxMetadataState(ctx, tx); err != nil {
 				return err
 			}
