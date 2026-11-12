@@ -27,7 +27,7 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"reveal", "q"}, {"account_id", "b"},
 	{"title", "b"}, {"kind", "bq"}, {"form_code", "b"}, {"tax_year", "b"},
 	{"period_start", "b"}, {"period_end", "b"}, {"due_date", "b"},
-	{"direction", "b"}, {"amount", "b"}, {"state", "q"}, {"year", "q"}, {"record_id", "p"},
+	{"direction", "b"}, {taxAmountField, "b"}, {"state", "q"}, {"year", "q"}, {"record_id", "p"},
 }
 var taxDiagnosticPairs = map[string]string{
 	"invalid value": "filer", "required": "filer_party_id",
@@ -40,9 +40,9 @@ var taxDiagnosticPairs = map[string]string{
 	"party not found":           "filer_party_id authority_party_id", "party is retired": "filer_party_id authority_party_id",
 	"party is not own": "filer_party_id", "party is not an organization": "authority_party_id",
 	"unknown kind": "kind", "unknown state": "state", "unknown direction": "direction",
-	"amount required when currency changes": "amount", "amount required": "amount", "zero required": "amount",
-	"unknown amount must be null": "amount", "invalid length": "amount", "invalid precision": "amount",
-	"invalid decimal or overflow": "amount", "overflow": "amount",
+	"amount required when currency changes": taxAmountField, "amount required": taxAmountField, "zero required": taxAmountField,
+	"unknown amount must be null": taxAmountField, "invalid length": taxAmountField, "invalid precision": taxAmountField,
+	"invalid decimal or overflow": taxAmountField, "overflow": taxAmountField,
 }
 
 func taxSafeFieldReason(field, reason string) bool {

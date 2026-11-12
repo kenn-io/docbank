@@ -32,8 +32,8 @@ func mergeTaxRecordPatch(r store.TaxRecord, p PatchTaxRecordRequest) (store.TaxR
 		if err != nil {
 			return in, err
 		}
-		if code != r.Currency && r.AmountMinor != nil && p.Amount == nil && !p.present["amount"] {
-			return in, &taxrecord.FieldError{Field: "amount", Reason: "amount required when currency changes"}
+		if code != r.Currency && r.AmountMinor != nil && p.Amount == nil && !p.present[taxAmountField] {
+			return in, &taxrecord.FieldError{Field: taxAmountField, Reason: "amount required when currency changes"}
 		}
 	}
 	if r.AmountMinor != nil {
@@ -89,7 +89,7 @@ func mergeTaxRecordPatch(r store.TaxRecord, p PatchTaxRecordRequest) (store.TaxR
 	if p.LeadDays != nil || p.present["lead_days"] {
 		in.LeadDays = p.LeadDays
 	}
-	if p.Amount != nil || p.present["amount"] {
+	if p.Amount != nil || p.present[taxAmountField] {
 		in.Amount = p.Amount
 	}
 	return in, nil

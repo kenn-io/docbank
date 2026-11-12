@@ -56,7 +56,6 @@ func TestTaxRecordClientRejectsUntrustedResponses(t *testing.T) {
 		require.Error(t, err)
 		server.Close()
 	}
-
 }
 func TestTaxRecordMutationHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -105,7 +104,6 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 				c := New(server.URL, "")
 				_, err = c.TaxRecord(t.Context(), id)
 				require.True(t, IsResponseDecodeError(err))
-
 			})
 		}
 	}
@@ -136,11 +134,11 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 	padded := strings.TrimSuffix(taxRecordFixture, "}") + `,"padding":"` + strings.Repeat("x", maxTaxSingleReceiptBytes) + `"}`
 	response := func(body string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(body))} }
 	singleResponse := response(padded)
-	defer singleResponse.Body.Close()
+	t.Cleanup(func() { assert.NoError(t, singleResponse.Body.Close()) })
 	_, err = decodeTaxRecordReceipt(t.Context(), singleResponse, false)
 	require.True(t, IsResponseDecodeError(err))
 	pageResponse := response(`{"items":[` + padded + `],"limit":1,"offset":0}`)
-	defer pageResponse.Body.Close()
+	t.Cleanup(func() { assert.NoError(t, pageResponse.Body.Close()) })
 	page, err := decodeTaxRecordReceipt(t.Context(), pageResponse, true)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
