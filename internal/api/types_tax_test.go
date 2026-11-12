@@ -31,6 +31,11 @@ func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	raw, err := json.Marshal(patch)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"effective_start":null`)
+	empty := PatchTaxAccountRequest{Identifier: new(""), LeadDays: new(int64(0))}
+	raw, err = json.Marshal(empty)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"identifier":""`)
+	assert.Contains(t, string(raw), `"lead_days":0`)
 	for _, body := range []string{`{}`, `{"identifier":null}`, `{"country":"ZZ"}`, `{"unknown_private":"secret"}`, `null`, `[]`} {
 		var invalid PatchTaxAccountRequest
 		assert.Error(t, json.Unmarshal([]byte(body), &invalid), body)

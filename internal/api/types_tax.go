@@ -61,15 +61,15 @@ type CreateTaxAccountRequest struct {
 }
 
 type PatchTaxAccountRequest struct {
-	Identifier          *string `json:"identifier,omitempty"`
-	Cadence             *string `json:"cadence,omitempty"`
-	PeriodNote          *string `json:"period_note,omitempty"`
-	DueNote             *string `json:"due_note,omitempty"`
-	LeadDays            *int64  `json:"lead_days,omitempty"`
-	Currency            *string `json:"currency,omitempty"`
-	EffectiveStart      *string `json:"effective_start,omitempty" nullable:"true"`
-	EffectiveEnd        *string `json:"effective_end,omitempty" nullable:"true"`
-	Note                *string `json:"note,omitempty"`
+	Identifier          *string `json:"identifier,omitzero"`
+	Cadence             *string `json:"cadence,omitzero"`
+	PeriodNote          *string `json:"period_note,omitzero"`
+	DueNote             *string `json:"due_note,omitzero"`
+	LeadDays            *int64  `json:"lead_days,omitzero"`
+	Currency            *string `json:"currency,omitzero"`
+	EffectiveStart      *string `json:"effective_start,omitzero" nullable:"true"`
+	EffectiveEnd        *string `json:"effective_end,omitzero" nullable:"true"`
+	Note                *string `json:"note,omitzero"`
 	ClearEffectiveStart bool    `json:"-"`
 	ClearEffectiveEnd   bool    `json:"-"`
 	present             map[string]bool

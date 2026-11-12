@@ -1,10 +1,13 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,6 +49,14 @@ func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/tax/accounts", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, `"items":[]`)
+	resp, body = get(t, ts, "/api/v1/tax/accounts?include_retired=true", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, body, account.AccountID)
+	assert.NotContains(t, body, "synthetic12345")
+	resp, body = get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, body, `"retired_at":`)
+	assert.NotContains(t, body, "synthetic12345")
 }
 
 func TestTaxHTTPValidationRedaction(t *testing.T) {
@@ -90,7 +101,7 @@ func TestTaxHTTPValidationRedaction(t *testing.T) {
 func TestTaxHTTPRevisionGateAndImmutableFields(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd."})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var party api.Party
 	require.NoError(t, json.Unmarshal([]byte(body), &party))
@@ -116,7 +127,7 @@ func TestTaxHTTPRevisionGateAndImmutableFields(t *testing.T) {
 func TestTaxHTTPFiltersAndPaging(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd."})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var party api.Party
 	require.NoError(t, json.Unmarshal([]byte(body), &party))
@@ -141,7 +152,7 @@ func TestTaxHTTPFiltersAndPaging(t *testing.T) {
 func TestTaxHTTPAuditRefusalPreservesAccount(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd."})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var party api.Party
 	require.NoError(t, json.Unmarshal([]byte(body), &party))
@@ -173,4 +184,85 @@ func TestTaxHTTPAuditRefusalPreservesAccount(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &account))
 	assert.Equal(t, int64(1), account.Revision)
 	assert.Nil(t, account.RetiredAt)
+}
+
+func TestTaxAccountHistoricalPartyReferences(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var party api.Party
+	require.NoError(t, json.Unmarshal([]byte(body), &party))
+	input := map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, input)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var account api.TaxAccount
+	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/parties/"+party.PartyID+"/retire", map[string]string{"If-Match": `"1"`}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/"+account.AccountID, map[string]string{"If-Match": `"1"`}, map[string]any{"note": "Historical example"})
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, input)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"party_retired"`)
+}
+
+type taxTestLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *taxTestLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+func (l *taxTestLog) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.buf.String() }
+
+func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
+	var logs taxTestLog
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Logger = slog.New(slog.NewTextHandler(&logs, nil)) })
+	const sentinel = "private-synthetic-value"
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var party api.Party
+	require.NoError(t, json.Unmarshal([]byte(body), &party))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": sentinel, "cadence": "annual", "currency": "USD", "identifier": sentinel})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var account api.TaxAccount
+	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	_, _ = get(t, ts, "/api/v1/tax/accounts?taxkind="+sentinel, nil)
+	_, _ = get(t, ts, "/api/v1/tax/accounts/"+account.AccountID+"?reveal=true", nil)
+	_, _ = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/"+sentinel, map[string]string{"If-Match": sentinel}, map[string]any{"note": sentinel})
+	assert.NotContains(t, logs.String(), sentinel)
+	assert.NotContains(t, logs.String(), "Example Holdings Ltd.")
+}
+
+func TestTaxAccountMaintenanceRefusal(t *testing.T) {
+	gate := api.NewOperationGate()
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var party api.Party
+	require.NoError(t, json.Unmarshal([]byte(body), &party))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var account api.TaxAccount
+	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	go func() {
+		done <- gate.MaintainContext(t.Context(), func() error { close(started); <-release; return nil })
+	}()
+	<-started
+	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/"+account.AccountID, map[string]string{"If-Match": `"1"`}, map[string]any{"note": "example"})
+	releaseOnce.Do(func() { close(release) })
+	require.NoError(t, <-done)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"maintenance_busy"`)
+	resp, body = get(t, ts, "/api/v1/tax/accounts/"+account.AccountID, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	assert.Equal(t, int64(1), account.Revision)
 }

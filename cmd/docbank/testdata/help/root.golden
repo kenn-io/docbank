@@ -52,6 +52,7 @@ Documents:
   document  Import, browse, and maintain documents and their history
   party  Manage reusable entities and counterparties
   tag  Define tags and organize nodes with them
+  tax  Manage tax accounts
   trash  Inspect and empty the trash
 
 Search and text:
