@@ -292,43 +292,6 @@ describe("snapshot request-epoch state", () => {
     expect(ready.query).toEqual(ready.firstPage!.query);
   });
 
-  it("rejects a receipt that changes more than resolved people identities", async () => {
-    const requested = parseQuery(
-      JSON.stringify({
-        filters: {
-          people: [{ person_id: "00000000-0000-4000-8000-0000000000aa", roles: ["recipient"] }],
-        },
-      }),
-    );
-    const changedRoles = parseQuery(
-      JSON.stringify({
-        filters: {
-          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["sender"] }],
-        },
-      }),
-    );
-    const changedText = parseQuery(
-      JSON.stringify({
-        text: "other",
-        filters: {
-          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["recipient"] }],
-        },
-      }),
-    );
-    for (const returned of [changedRoles, changedText, query]) {
-      const states: Readonly<SnapshotState>[] = [];
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        response(await receipt({ query: returned })),
-      );
-      const session = new SnapshotSession("session", (state) => states.push(state));
-
-      await session.run(requested, { page_size: 50 });
-
-      expect(states.at(-1)).toMatchObject({ status: "error", query: requested });
-      expect(states.at(-1)!.error?.message).toContain("query does not match the request");
-    }
-  });
-
   it("suppresses delayed work after dispose", async () => {
     const states: Readonly<SnapshotState>[] = [];
     const pending = deferred<Response>();

@@ -498,7 +498,7 @@ func TestQuerySnapshotFacetTopFiftyAppendsSelectedValues(t *testing.T) {
 		labels[key] = key
 	}
 	selected := map[string]bool{"t": true}
-	values, other := finalizeSnapshotFacetValues(counts, labels, selected, false)
+	values, other := finalizeSnapshotFacetValues(counts, labels, selected, false, 50)
 	require.Len(t, values, 51)
 	assert.Equal(t, int64(1), other)
 	assert.True(t, values[len(values)-1].Selected)

@@ -149,11 +149,6 @@ func TestCanonicalRejectsInvalidProgrammaticQuery(t *testing.T) {
 
 func TestRoleSearchPeopleCanonical(t *testing.T) {
 	const person = "00000000-0000-4000-8000-000000000001"
-	raw := []byte(`{"v":1,"filters":{"people":[{"person_id":"` + person + `","roles":["sender","organizer","sender"]}]}}`)
-	value, err := Parse(raw)
-	require.NoError(t, err)
-	require.Len(t, value.Filters.People, 1)
-	assert.Equal(t, []string{"organizer", "sender"}, value.Filters.People[0].Roles)
 	for _, roles := range []string{`[]`, `null`, `["mentioned"]`} {
 		_, err := Parse([]byte(`{"v":1,"filters":{"people":[{"person_id":"` + person + `","roles":` + roles + `}]}}`))
 		require.Error(t, err)

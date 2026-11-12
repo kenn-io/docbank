@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -21,13 +22,11 @@ type compiledRoleMatch struct {
 
 func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compiledRoleMatch, error) {
 	byRole := map[string][]compiledQueryFragment{}
-	add := func(label string, fragment compiledQueryFragment) { byRole[label] = append(byRole[label], fragment) }
-	if !c.safePeople {
-		c.hideLocked = "1"
+	add := func(label string, fragment, gate compiledQueryFragment) {
+		byRole[label] = append(byRole[label], joinCompiledFragments([]compiledQueryFragment{gate, fragment}, ` AND `))
 	}
-	c.safePeople = true
-	var walk func(*query.ResolvedExpression, string) error
-	walk = func(e *query.ResolvedExpression, field string) error {
+	var walk func(*query.ResolvedExpression, string, compiledQueryFragment) error
+	walk = func(e *query.ResolvedExpression, field string, gate compiledQueryFragment) error {
 		if e == nil || e.Syntax == nil {
 			return nil
 		}
@@ -37,16 +36,28 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 		if e.Syntax.Kind == query.ExpressionField {
 			field = e.Syntax.Field
 		}
+		if e.Syntax.Kind == query.ExpressionAnd || e.Syntax.Kind == query.ExpressionField && field == "between" {
+			branch, err := c.compileResolvedExpression(e, field)
+			if err != nil {
+				return err
+			}
+			gate = joinCompiledFragments([]compiledQueryFragment{gate, branch}, ` AND `)
+		}
 		if e.Saved != nil {
+			branch, err := c.compileSavedPredicate(e)
+			if err != nil {
+				return err
+			}
+			gate = joinCompiledFragments([]compiledQueryFragment{gate, branch}, ` AND `)
 			for _, p := range e.Saved.Query.Filters.People {
 				for _, role := range p.Roles {
-					if role == "blind_copy" {
+					if c.safePeople && role == "blind_copy" {
 						continue
 					}
-					add(role, c.compilePersonPredicate(p.PersonID, []string{role}))
+					add(role, c.compilePersonPredicate(p.PersonID, []string{role}), gate)
 				}
 			}
-			if err := walk(e.Saved.Expression, ""); err != nil {
+			if err := walk(e.Saved.Expression, "", gate); err != nil {
 				return err
 			}
 		}
@@ -56,9 +67,9 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 				if err != nil {
 					return err
 				}
-				add("mentioned", f)
-			} else if slices.Contains([]string{"author", "from", "to", "cc", "custodian", "participant", "organizer", "attendee", "between"}, field) {
-				roles := []string{"author", "last_saved_by", "sender", "recipient", "copied", "organizer", "attendee", "participant", "speaker", "depicted"}
+				add("mentioned", f, gate)
+			} else if slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "between"}, field) {
+				roles := betweenPersonRoles
 				var err error
 				if field != "between" {
 					roles, err = rolesForOperand(field, c.safePeople)
@@ -67,30 +78,39 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 					return err
 				}
 				for _, role := range roles {
-					if role == "blind_copy" {
+					if c.safePeople && role == "blind_copy" {
 						continue
 					}
-					add(role, c.compilePersonPredicate(e.Dependency.ID, []string{role}))
+					add(role, c.compilePersonPredicate(e.Dependency.ID, []string{role}), gate)
 				}
 			}
 		}
 		for _, child := range e.Children {
-			if err := walk(child, field); err != nil {
+			// The between field's synthetic AND is already compiled above.
+			if field == "between" && e.Syntax.Kind == query.ExpressionField {
+				for _, operand := range child.Children {
+					if err := walk(operand, field, gate); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if err := walk(child, field, gate); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if !c.photoDisplayMetadata {
-		if err := walk(resolved.Expression, ""); err != nil {
+		if err := walk(resolved.Expression, "", trueCompiledFragment()); err != nil {
 			return nil, err
 		}
 		for _, p := range resolved.Query.Filters.People {
 			for _, role := range p.Roles {
-				if role == "blind_copy" {
+				if c.safePeople && role == "blind_copy" {
 					continue
 				}
-				add(role, c.compilePersonPredicate(p.PersonID, []string{role}))
+				add(role, c.compilePersonPredicate(p.PersonID, []string{role}), trueCompiledFragment())
 			}
 		}
 	}
@@ -134,12 +154,22 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 		args = append(args, predicate.args...)
 		relations |= predicate.relations
 	}
-	args = append(args, string(encoded), boolInt(compiled.Query.Filters.CollapseDuplicates))
+	allMembers := compiled
+	allMembers.Query.Filters.CollapseDuplicates = false
+	members, err := matchedPopulation(allMembers, generation, nil)
+	if err != nil {
+		return err
+	}
+	args = append(args, string(encoded))
+	args = append(args, members.args...)
+	args = append(args, boolInt(compiled.Query.Filters.CollapseDuplicates))
+	relations |= members.relations
 	population := compiledQueryFragment{sql: `SELECT root.id, ` + strings.Join(expressions, ",") + `
  FROM json_each(?) ids JOIN nodes root ON root.id=ids.value
  JOIN content_versions rootcv ON rootcv.version_id=root.current_version_id
  JOIN content_versions cv ON cv.blob_hash=rootcv.blob_hash
  JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+ JOIN (` + members.sql + `) matched ON matched.node_id=n.id AND matched.content_version_id=cv.version_id
  WHERE n.id=root.id OR ?=1`, args: args, relations: relations}
 	statement, args, err := bindQueryPopulation(population, coverage, generation)
 	if err != nil {
@@ -213,39 +243,19 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		return SnapshotFacet{}, fmt.Errorf("materializing people facet: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	counts := map[string]int64{}
-	labels := map[string]string{}
+	observation := newSnapshotFacetAccumulator()
 	roles := map[string]map[string]bool{}
-	var lastNode int64
-	var lastPerson string
-	var total, missing int64
-	var nodeHasPerson bool
 	for rows.Next() {
-		var node int64
-		var id, name, role string
+		var node, id, name, role string
 		if err := rows.Scan(&node, &id, &name, &role); err != nil {
 			return SnapshotFacet{}, err
 		}
-		if node != lastNode {
-			if lastNode != 0 && !nodeHasPerson {
-				missing++
-			}
-			total++
-			if total > memberLimit {
-				return unavailableSnapshotFacet("person_role", "member_budget_exceeded"), nil
-			}
-			lastNode = node
-			lastPerson = ""
-			nodeHasPerson = false
+		observation.add("person_role", node, id, name, 1, math.MaxInt64)
+		if observation.total > memberLimit {
+			return unavailableSnapshotFacet("person_role", "member_budget_exceeded"), nil
 		}
 		if id == "" {
 			continue
-		}
-		nodeHasPerson = true
-		labels[id] = name
-		if id != lastPerson {
-			counts[id]++
-			lastPerson = id
 		}
 		if roles[id] == nil {
 			roles[id] = map[string]bool{}
@@ -254,9 +264,6 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	}
 	if err := rows.Err(); err != nil {
 		return SnapshotFacet{}, err
-	}
-	if lastNode != 0 && !nodeHasPerson {
-		missing++
 	}
 	if err := rows.Close(); err != nil {
 		return SnapshotFacet{}, err
@@ -283,47 +290,14 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 			continue
 		}
 		selected[id] = true
-		labels[id] = name
+		observation.labels[id] = name
 	}
-	values := make([]SnapshotFacetValue, 0, len(counts))
-	for id, count := range counts {
-		values = append(values, SnapshotFacetValue{Key: id, Label: labels[id], Count: count, Selected: selected[id]})
-	}
-	slices.SortFunc(values, func(a, b SnapshotFacetValue) int {
-		if a.Count > b.Count {
-			return -1
-		}
-		if a.Count < b.Count {
-			return 1
-		}
-		return strings.Compare(a.Key, b.Key)
-	})
-	var other int64
-	included := map[string]bool{}
-	out := make([]SnapshotFacetValue, 0, min(20, len(values))+len(selected))
-	for i, v := range values {
-		if i < 20 {
-			out = append(out, v)
-			included[v.Key] = true
-		} else if !selected[v.Key] {
-			other += v.Count
-		}
-	}
-	var extra []string
-	for id := range selected {
-		if !included[id] {
-			extra = append(extra, id)
-		}
-	}
-	slices.Sort(extra)
-	for _, id := range extra {
-		out = append(out, SnapshotFacetValue{Key: id, Label: labels[id], Count: counts[id], Selected: true})
-	}
+	out, other := finalizeSnapshotFacetValues(observation.counts, observation.labels, selected, false, 20)
 	for i := range out {
 		for role := range roles[out[i].Key] {
 			out[i].Roles = append(out[i].Roles, role)
 		}
 		slices.Sort(out[i].Roles)
 	}
-	return SnapshotFacet{Dimension: "person_role", Available: true, Total: &total, Values: out, Missing: &missing, Other: &other}, nil
+	return SnapshotFacet{Dimension: "person_role", Available: true, Total: &observation.total, Values: out, Missing: &observation.missing, Other: &other}, nil
 }

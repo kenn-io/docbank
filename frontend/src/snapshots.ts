@@ -302,7 +302,7 @@ function parseRoles(
   field: string,
   allowMention: boolean,
 ): (PersonRole | "mentioned")[] {
-  if (!Array.isArray(value) || value.length > (allowMention ? 16 : 10))
+  if (!Array.isArray(value) || value.length > (allowMention ? 16 : personRoles.length - 1))
     malformed(`${field} exceeds its bound`);
   const valid: readonly string[] = allowMention ? [...personRoles, "mentioned"] : personRoles;
   if (!value.every((role) => typeof role === "string" && valid.includes(role)))

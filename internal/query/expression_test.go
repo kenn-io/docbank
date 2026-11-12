@@ -323,7 +323,7 @@ func TestRoleSearchGrammar(t *testing.T) {
 		require.Equal(t, ExpressionAnd, expr.Children[0].Kind)
 		require.Len(t, expr.Children[0].Children, 2)
 	}
-	for _, input := range []string{`between:("A")`, `between:(A,B,C)`, `between:()`, `between:(A OR B)`, `between:(A,)`, `between:A`, `between:(NOT A, B)`} {
+	for _, input := range []string{`between:("A")`, `between:("A""B")`, `between:(A,B,C)`, `between:()`, `between:(A OR B)`, `between:(A,)`, `between:A`, `between:(NOT A, B)`} {
 		_, err := ParseExpression(input, "advanced")
 		var exprErr *ExpressionError
 		require.ErrorAs(t, err, &exprErr, input)

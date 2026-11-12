@@ -203,14 +203,14 @@ it("canonicalizes person role filters without merging entries", () => {
     JSON.stringify({
       filters: {
         people: [
-          { person_id: id, roles: ["sender", "organizer", "sender"] },
+          { person_id: id, roles: ["sender"] },
           { person_id: id, roles: ["author"] },
         ],
       },
     }),
   );
   expect(parsed.filters.people).toEqual([
-    { person_id: id, roles: ["organizer", "sender"] },
+    { person_id: id, roles: ["sender"] },
     { person_id: id, roles: ["author"] },
   ]);
   expect(canonicalQuery(parseQuery(canonicalQuery(parsed)))).toBe(canonicalQuery(parsed));

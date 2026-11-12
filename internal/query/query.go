@@ -77,23 +77,24 @@ type Filters struct {
 	ColorBlueMin  *string `json:"color_blue_min,omitzero"`
 	ColorBlueMax  *string `json:"color_blue_max,omitzero"`
 
-	RatingMin     *int64         `json:"rating_min,omitzero"`
-	RatingMax     *int64         `json:"rating_max,omitzero"`
-	Flags         []string       `json:"flags,omitzero"`
-	Labels        []string       `json:"labels,omitzero"`
-	Kinds         []string       `json:"kinds,omitzero"`
-	Cameras       []string       `json:"cameras,omitzero"`
-	Lenses        []string       `json:"lenses,omitzero"`
-	Locations     []string       `json:"locations,omitzero"`
-	ISOMin        *int64         `json:"iso_min,omitzero"`
-	ISOMax        *int64         `json:"iso_max,omitzero"`
-	CaptureAfter  string         `json:"capture_after,omitzero"`
-	CaptureBefore string         `json:"capture_before,omitzero"`
-	GPSBounds     *GPSBounds     `json:"gps_bounds,omitzero"`
-	AssetIDs      []string       `json:"asset_ids,omitzero"`
-	SetIDs        []string       `json:"set_ids,omitzero"`
-	PersonIDs     []string       `json:"person_ids,omitzero"`
-	People        []PersonFilter `json:"people,omitzero"`
+	RatingMin     *int64     `json:"rating_min,omitzero"`
+	RatingMax     *int64     `json:"rating_max,omitzero"`
+	Flags         []string   `json:"flags,omitzero"`
+	Labels        []string   `json:"labels,omitzero"`
+	Kinds         []string   `json:"kinds,omitzero"`
+	Cameras       []string   `json:"cameras,omitzero"`
+	Lenses        []string   `json:"lenses,omitzero"`
+	Locations     []string   `json:"locations,omitzero"`
+	ISOMin        *int64     `json:"iso_min,omitzero"`
+	ISOMax        *int64     `json:"iso_max,omitzero"`
+	CaptureAfter  string     `json:"capture_after,omitzero"`
+	CaptureBefore string     `json:"capture_before,omitzero"`
+	GPSBounds     *GPSBounds `json:"gps_bounds,omitzero"`
+	AssetIDs      []string   `json:"asset_ids,omitzero"`
+	SetIDs        []string   `json:"set_ids,omitzero"`
+	PersonIDs     []string   `json:"person_ids,omitzero"`
+
+	People []PersonFilter `json:"people,omitzero"`
 
 	Paths                []string `json:"paths,omitempty"`
 	ExcludePaths         []string `json:"exclude_paths,omitempty"`
@@ -147,23 +148,24 @@ type filtersInput struct {
 	ColorBlueMin  *string `json:"color_blue_min"`
 	ColorBlueMax  *string `json:"color_blue_max"`
 
-	RatingMin     *int64          `json:"rating_min"`
-	RatingMax     *int64          `json:"rating_max"`
-	Flags         *[]string       `json:"flags"`
-	Labels        *[]string       `json:"labels"`
-	Kinds         *[]string       `json:"kinds"`
-	Cameras       *[]string       `json:"cameras"`
-	Lenses        *[]string       `json:"lenses"`
-	Locations     *[]string       `json:"locations"`
-	ISOMin        *int64          `json:"iso_min"`
-	ISOMax        *int64          `json:"iso_max"`
-	CaptureAfter  *string         `json:"capture_after"`
-	CaptureBefore *string         `json:"capture_before"`
-	GPSBounds     *GPSBounds      `json:"gps_bounds"`
-	AssetIDs      *[]string       `json:"asset_ids"`
-	SetIDs        *[]string       `json:"set_ids"`
-	PersonIDs     *[]string       `json:"person_ids"`
-	People        *[]PersonFilter `json:"people"`
+	RatingMin     *int64     `json:"rating_min"`
+	RatingMax     *int64     `json:"rating_max"`
+	Flags         *[]string  `json:"flags"`
+	Labels        *[]string  `json:"labels"`
+	Kinds         *[]string  `json:"kinds"`
+	Cameras       *[]string  `json:"cameras"`
+	Lenses        *[]string  `json:"lenses"`
+	Locations     *[]string  `json:"locations"`
+	ISOMin        *int64     `json:"iso_min"`
+	ISOMax        *int64     `json:"iso_max"`
+	CaptureAfter  *string    `json:"capture_after"`
+	CaptureBefore *string    `json:"capture_before"`
+	GPSBounds     *GPSBounds `json:"gps_bounds"`
+	AssetIDs      *[]string  `json:"asset_ids"`
+	SetIDs        *[]string  `json:"set_ids"`
+	PersonIDs     *[]string  `json:"person_ids"`
+
+	People *[]PersonFilter `json:"people"`
 
 	Paths                *[]string `json:"paths"`
 	ExcludePaths         *[]string `json:"exclude_paths"`

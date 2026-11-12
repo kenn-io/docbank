@@ -36,25 +36,6 @@ func currentDocumentPersonEdgesSQL(version string, safe bool, hideLocked string)
 }
 
 func (c queryCompiler) compilePersonPredicate(id string, roles []string) compiledQueryFragment {
-	if len(roles) > 1 && !c.photoDisplayMetadata {
-		parts := make([]compiledQueryFragment, 0, len(roles))
-		for _, role := range roles {
-			parts = append(parts, c.compilePersonPredicate(id, []string{role}))
-		}
-		return joinCompiledFragments(parts, ` OR `)
-	}
-	key := fmt.Sprintf("%s|%t|%s|%t|%s", id, c.safePeople, c.hideLocked, c.photoDisplayMetadata, strings.Join(roles, ","))
-	if cached, ok := c.personPredicates[key]; ok {
-		return cached
-	}
-	result := c.buildPersonPredicate(id, roles)
-	if c.personPredicates != nil {
-		c.personPredicates[key] = result
-	}
-	return result
-}
-
-func (c queryCompiler) buildPersonPredicate(id string, roles []string) compiledQueryFragment {
 	person := `COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)`
 	if c.photoDisplayMetadata {
 		predicate := `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON ` + currentPhotoSourcePredicate("pf", "pn", "a.content_version_id") + ` WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person
@@ -75,10 +56,7 @@ func (c queryCompiler) buildPersonPredicate(id string, roles []string) compiledQ
 	return compiledQueryFragment{sql: predicate + `)`, args: args}
 }
 
-func (c queryCompiler) compilePersonExceptCustodian(id string) compiledQueryFragment {
-	edges := currentDocumentPersonEdgesSQL("cv.version_id", c.safePeople, c.hideLocked)
-	return compiledQueryFragment{sql: `EXISTS(SELECT 1 FROM ` + edges + ` edge WHERE edge.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND edge.role<>'custodian')`, args: []any{document.PersonResolverFingerprint(), id, id}}
-}
+var betweenPersonRoles = []string{"author", "last_saved_by", "sender", "recipient", "copied", "blind_copy", "organizer", "attendee", "participant", "speaker", "depicted"}
 
 func rolesForOperand(field string, safe bool) ([]string, error) {
 	switch field {

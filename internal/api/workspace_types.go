@@ -87,7 +87,7 @@ type WorkspaceQueryRow struct {
 }
 
 type WorkspaceFacetValue struct {
-	Roles    []string `json:"roles,omitzero" maxItems:"10"`
+	Roles    []string `json:"roles,omitzero" maxItems:"11"`
 	Key      string   `json:"key"`
 	Label    string   `json:"label"`
 	Count    int64    `json:"count" minimum:"0"`
