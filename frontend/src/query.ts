@@ -208,11 +208,7 @@ export function parseQuery(raw: string): Query {
   preflightJSON(raw, true);
   const input: unknown = JSON.parse(raw);
   const object = requireObject(input, "query");
-  requireOnlyKeys(
-    object,
-    ["v", "text", "syntax", "mode", "filters", "sort", "timezone"],
-    "query",
-  );
+  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort", "timezone"], "query");
 
   const filtersInput = object.filters === undefined ? {} : requireObject(object.filters, "filters");
   requireOnlyKeys(filtersInput, [...optionalFilterFields], "filters");

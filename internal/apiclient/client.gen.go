@@ -32121,10 +32121,10 @@ type SavedQuery = api.SavedQuery
 type SavedQueryCreateRequest = api.SavedQueryCreateRequest
 
 type SavedQueryDateSchema struct {
-	From       runtime.Date                     `json:"from"`
+	From       string                           `json:"from"`
 	Kinds      []string                         `json:"kinds,omitempty"`
 	Precisions []SavedQueryDateSchemaPrecisions `json:"precisions,omitempty"`
-	To         runtime.Date                     `json:"to"`
+	To         string                           `json:"to"`
 }
 
 type SavedQueryFiltersSchema struct {
@@ -32205,15 +32205,14 @@ type SavedQuerySortSchema struct {
 
 type SavedQueryV1Schema struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema            *string                   `json:"$schema,omitempty"`
-	Filters           *SavedQueryFiltersSchema  `json:"filters,omitempty"`
-	Mode              *SavedQueryV1SchemaMode   `json:"mode,omitempty"`
-	Sort              *SavedQuerySortSchema     `json:"sort,omitempty"`
-	Syntax            *SavedQueryV1SchemaSyntax `json:"syntax,omitempty"`
-	Text              *string                   `json:"text,omitempty"`
-	Timezone          *string                   `json:"timezone,omitempty"`
-	TimezoneDefaulted *bool                     `json:"timezone_defaulted,omitempty"`
-	V                 *SavedQueryV1SchemaV      `json:"v,omitempty"`
+	Schema   *string                   `json:"$schema,omitempty"`
+	Filters  *SavedQueryFiltersSchema  `json:"filters,omitempty"`
+	Mode     *SavedQueryV1SchemaMode   `json:"mode,omitempty"`
+	Sort     *SavedQuerySortSchema     `json:"sort,omitempty"`
+	Syntax   *SavedQueryV1SchemaSyntax `json:"syntax,omitempty"`
+	Text     *string                   `json:"text,omitempty"`
+	Timezone *string                   `json:"timezone,omitempty"`
+	V        *SavedQueryV1SchemaV      `json:"v,omitempty"`
 }
 
 type SealExportSourceRequest struct {

@@ -508,7 +508,10 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   } catch {
     malformed("query does not satisfy QueryV1");
   }
-  if (expectedQuery !== undefined && canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)) {
+  if (
+    expectedQuery !== undefined &&
+    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)
+  ) {
     malformed("query does not match the request");
   }
   if (!Array.isArray(raw.dependencies) || raw.dependencies.length > 256)
