@@ -430,7 +430,7 @@ test("waits for live details before offering redaction", async ({ page, readerUR
 
 test("shows PDF text gaps in the inspector and empty search", async ({ page, readerURL }) => {
   page.setDefaultTimeout(15000);
-  await page.setViewportSize({ width: 1440, height: 1016 });
+  await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto(readerURL);
   const inspector = page.getByRole("complementary", { name: "Document inspector" });
   for (const file of ["mixed-below-ratio.pdf", "image-only.pdf"]) {
@@ -461,6 +461,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
       clip: { x: 976, y: 56, width: 464, height: 554 },
     });
   }
+  await page.setViewportSize({ width: 1440, height: 1016 });
   const search = page.getByRole("searchbox", { name: "Search documents" });
   await search.fill("unfindable synthetic phrase");
   await search.press("Enter");
