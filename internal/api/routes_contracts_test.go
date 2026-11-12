@@ -43,12 +43,18 @@ func TestContractRoutesExpiryAndRevision(t *testing.T) {
 func TestContractCreateRejectsMisnamedAndNullFields(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Owner", "own": true})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var owner api.Party
+	require.NoError(t, json.Unmarshal([]byte(body), &owner))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement", "parties": []any{map[string]any{"party_id": owner.PartyID, "role": "own"}}})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	for _, body := range []map[string]any{
 		{"title": "Agreement", "Status": "active"},
 		{"title": "Agreement", "status": nil},
 		{"title": "Agreement", "status": ""},
 		{"title": "Agreement", "parties": nil},
-		{"title": "Agreement", "parties": []any{map[string]any{"party_id": "11111111-1111-4111-8111-111111111111", "role": "own", "Role": "counterparty"}}},
+		{"title": "Agreement", "parties": []any{map[string]any{"party_id": owner.PartyID, "role": "own", "Role": "counterparty"}}},
 	} {
 		resp, response := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, body)
 		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, response)
