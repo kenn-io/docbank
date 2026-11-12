@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
-import { parseQuery, queryFingerprint } from "./query.js";
+import { canonicalQuery, parseQuery, queryFingerprint } from "./query.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
 
 const query = parseQuery("{}");
@@ -254,6 +254,79 @@ describe("snapshot request-epoch state", () => {
 
     expect(states.at(-1)).toMatchObject({ status: "ready", query: otherQuery });
     expect(states.filter((state) => state.status === "ready")).toHaveLength(1);
+  });
+
+  it("adopts the receipt's resolved survivor while keeping the request it sent", async () => {
+    const retired = "00000000-0000-4000-8000-0000000000aa";
+    const survivor = "00000000-0000-4000-8000-0000000000bb";
+    const requested = parseQuery(
+      JSON.stringify({
+        text: "synthetic",
+        filters: {
+          people: [
+            { person_id: retired, roles: ["recipient"] },
+            { person_id: survivor, roles: ["recipient"] },
+          ],
+        },
+      }),
+    );
+    const resolved = parseQuery(
+      JSON.stringify({
+        text: "synthetic",
+        filters: { people: [{ person_id: survivor, roles: ["recipient"] }] },
+      }),
+    );
+    const states: Readonly<SnapshotState>[] = [];
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(response(await receipt({ query: resolved })));
+    const session = new SnapshotSession("session", (state) => states.push(state));
+
+    await session.run(requested, { page_size: 50 });
+
+    const sent = JSON.parse(String(fetch.mock.calls[0][1]?.body)) as { query: unknown };
+    expect(sent.query).toEqual(JSON.parse(canonicalQuery(requested)));
+    const ready = states.at(-1)!;
+    expect(ready.status).toBe("ready");
+    expect(ready.query).toEqual(resolved);
+    expect(ready.query).toEqual(ready.firstPage!.query);
+  });
+
+  it("rejects a receipt that changes more than resolved people identities", async () => {
+    const requested = parseQuery(
+      JSON.stringify({
+        filters: {
+          people: [{ person_id: "00000000-0000-4000-8000-0000000000aa", roles: ["recipient"] }],
+        },
+      }),
+    );
+    const changedRoles = parseQuery(
+      JSON.stringify({
+        filters: {
+          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["sender"] }],
+        },
+      }),
+    );
+    const changedText = parseQuery(
+      JSON.stringify({
+        text: "other",
+        filters: {
+          people: [{ person_id: "00000000-0000-4000-8000-0000000000bb", roles: ["recipient"] }],
+        },
+      }),
+    );
+    for (const returned of [changedRoles, changedText, query]) {
+      const states: Readonly<SnapshotState>[] = [];
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        response(await receipt({ query: returned })),
+      );
+      const session = new SnapshotSession("session", (state) => states.push(state));
+
+      await session.run(requested, { page_size: 50 });
+
+      expect(states.at(-1)).toMatchObject({ status: "error", query: requested });
+      expect(states.at(-1)!.error?.message).toContain("query does not match the request");
+    }
   });
 
   it("suppresses delayed work after dispose", async () => {

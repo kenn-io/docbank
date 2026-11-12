@@ -63,11 +63,13 @@ export class SnapshotSession {
         started.signal,
       );
       if (!this.current(started.epoch)) return;
+      // The receipt's query is the server's resolution of the request (merged
+      // people become their survivor), so later facet edits start from it.
       this.emit({
         status: "ready",
         firstPage,
         page: firstPage,
-        query: started.query,
+        query: copyQuery(firstPage.query),
         options: started.options,
         offset: 0,
       });

@@ -13,6 +13,7 @@ import {
   queryFingerprint as fingerprintQuery,
   type Query,
   personRoles,
+  type PersonFilter,
   type PersonRole,
 } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
@@ -536,7 +537,36 @@ function parseFacet(
   };
 }
 
-function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query) {
+function rolesKey(entry: PersonFilter): string {
+  return entry.roles.join("\0");
+}
+
+// The server resolves each requested filters.people person to its current
+// identity, so a merged (retired) ID comes back as the survivor and entries
+// that now name the same person collapse. That is the only difference a
+// receipt may have from its request: everything else matches exactly, every
+// returned role set was requested, and every requested role set survives.
+function resolvesRequestedQuery(response: Query, request: Query): boolean {
+  const withoutPeople = (value: Query) =>
+    canonicalQuery({ ...value, filters: { ...value.filters, people: undefined } });
+  if (withoutPeople(response) !== withoutPeople(request)) return false;
+  const returned = response.filters.people ?? [];
+  const requested = request.filters.people ?? [];
+  if (returned.length > requested.length || (returned.length === 0) !== (requested.length === 0))
+    return false;
+  const requestedRoles = new Set(requested.map(rolesKey));
+  const returnedRoles = new Set(returned.map(rolesKey));
+  return (
+    [...returnedRoles].every((key) => requestedRoles.has(key)) &&
+    [...requestedRoles].every((key) => returnedRoles.has(key))
+  );
+}
+
+function parseQueryEvidence(
+  raw: Record<string, unknown>,
+  expectedQuery?: Query,
+  match: "exact" | "resolved" = "exact",
+) {
   const queryRaw = record(raw.query, "query");
   let decodedQuery: Query;
   try {
@@ -546,7 +576,8 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   }
   if (
     expectedQuery !== undefined &&
-    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)
+    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery) &&
+    (match === "exact" || !resolvesRequestedQuery(decodedQuery, expectedQuery))
   ) {
     malformed("query does not match the request");
   }
@@ -628,7 +659,11 @@ function photoSearchStatus(raw: Record<string, unknown>): PhotoSearchStatus {
   return status;
 }
 
-async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
+async function parseSnapshot(
+  value: unknown,
+  expectedQuery?: Query,
+  match: "exact" | "resolved" = "exact",
+): Promise<SnapshotPage> {
   const raw = record(value, "receipt");
   keys(
     raw,
@@ -665,7 +700,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
     malformed("receipt.$schema is invalid");
-  const evidence = parseQueryEvidence(raw, expectedQuery);
+  const evidence = parseQueryEvidence(raw, expectedQuery, match);
   const decodedQuery = evidence.query;
   const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
   if (
@@ -839,7 +874,7 @@ export async function createSnapshot(
     { query: JSON.parse(canonical), ...normalized },
     { session, signal },
   );
-  const result = await parseSnapshot(await boundedJSON(response), query);
+  const result = await parseSnapshot(await boundedJSON(response), query, "resolved");
   validateFirstPage(result, normalized);
   return result;
 }
@@ -868,7 +903,7 @@ export async function fetchPhotoTimeline(
   if (!Array.isArray(raw.facets) || raw.facets.length !== 1)
     malformed("timeline response is inconsistent");
   const facet = parseFacet(raw.facets[0], 0, true);
-  return { ...parseQueryEvidence(raw, query), facets: [facet] };
+  return { ...parseQueryEvidence(raw, query, "resolved"), facets: [facet] };
 }
 
 function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {
