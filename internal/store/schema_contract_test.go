@@ -167,12 +167,13 @@ func TestStorageSchemaCatalogDigest(t *testing.T) {
 				require.NoError(t, err)
 				return digest
 			}
+			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
+			require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
 			digest := schemaCatalogDigest(t, db)
 			for _, statement := range []string{
-				`CREATE TABLE contract_probe (id INTEGER)`,
 				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
 				`CREATE INDEX contract_probe ON nodes(id)`,
-				`CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`,
+				trigger,
 				`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
 			} {
 				require.NotEqual(t, digest, probe(statement), statement)
