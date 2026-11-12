@@ -10,14 +10,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        amount:
-          maxLength: 32
-          type:
-            - string
-            - "null"
-        currency:
-          maxLength: 3
-          type: string
         kind:
           type: string
         note:

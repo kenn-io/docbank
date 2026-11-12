@@ -39,13 +39,6 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
 export interface AddTaxEventRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /**
-     * @maxLength 32
-     * @nullable
-     */
-  amount?: string | null;
-  /** @maxLength 3 */
-  currency?: string;
   kind: string;
   /** @maxLength 8192 */
   note?: string;
