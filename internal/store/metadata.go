@@ -555,7 +555,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
-	if layout.schemaVersion >= 49 {
+	if layout.schemaVersion >= partiesStorageSchemaVersion {
 		if err := partyMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
@@ -1667,7 +1667,7 @@ func validateMetadataStateWithVaultIdentity(
 				return err
 			}
 		}
-		if layout.schemaVersion >= 49 {
+		if layout.schemaVersion >= partiesStorageSchemaVersion {
 			if err := validatePartyMetadataState(ctx, tx); err != nil {
 				return err
 			}
