@@ -66,7 +66,6 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 
 func checkSchemaContract(records []schemaContract, version int, digest string) error {
 	highest, matches, mismatches := 0, 0, 0
-	var old schemaContract
 	for _, record := range records {
 		highest = max(highest, record.Version)
 		if record.Version == version {
@@ -74,16 +73,15 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 				matches++
 			} else {
 				mismatches++
-				old = record
 			}
 		}
 	}
 	name := schemaContractFile(schemaContract{Version: version, Digest: digest})
-	if version < highest || mismatches > 1 || (matches > 0 && mismatches > 0) {
+	if version < highest {
 		return fmt.Errorf("schema version %d conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, highest+1)
 	}
-	if mismatches == 1 {
-		return fmt.Errorf("schema version %d differs from %s; if this is your unmerged record, replace it with %s and add a one-line summary; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, schemaContractFile(old), name, highest+1)
+	if mismatches > 0 {
+		return fmt.Errorf("schema version %d differs from recorded layouts; if the records are yours and unmerged, remove the old records and keep or add %s with a one-line summary; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, name, highest+1)
 	}
 	if matches == 0 {
 		return fmt.Errorf("add schema contract file testdata/schema-contracts/%s with a one-line summary", name)
@@ -143,11 +141,16 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf("add schema contract file testdata/schema-contracts/000049-%s.schema with a one-line summary", digest))
 	require.NoError(t, checkSchemaContract(records[:1], 49, digest))
 	err := checkSchemaContract(records[:1], 49, next)
-	require.ErrorContains(t, err, "replace it with 000049-"+next+".schema")
+	require.ErrorContains(t, err, "remove the old records and keep or add 000049-"+next+".schema")
 	require.ErrorContains(t, err, "if main already records this version")
 	require.EqualError(t, checkSchemaContract(records, 49, digest), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
 	require.NoError(t, checkSchemaContract(records, 50, next))
-	require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, strings.Repeat("c", 64)), "set currentStorageSchemaVersion to 50")
+	for _, current := range []string{digest, strings.Repeat("c", 64)} {
+		err := checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, current)
+		require.ErrorContains(t, err, "remove the old records and keep or add 000049-"+current+".schema")
+		require.ErrorContains(t, err, "if main already records this version")
+		require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
+	}
 }
 
 func TestStorageSchemaCatalogDigest(t *testing.T) {
