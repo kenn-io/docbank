@@ -22,6 +22,7 @@ export function laneTitle(lane: string): string {
     "derive:photo-quality": "Assessing photos",
     "derive:document-events": "Finding document dates",
     "derive:document-people": "Finding people",
+    "derive:notes": "Notes",
     "storage:pack": "Packing storage",
     "backup:scheduled": "Backing up on schedule",
     "import:packages": "Importing packages",
