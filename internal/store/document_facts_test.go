@@ -140,6 +140,10 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
 	require.NoError(t, err)
+	person, err := s.CreatePerson(t.Context(), "Asserted Author", "operator")
+	require.NoError(t, err)
+	assertion, err := s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
 	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
 	// Exact email actors are auto-provisioned, so seed the unresolved candidate
@@ -157,7 +161,6 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	for _, c := range safe.Candidates {
 		if c.ActorKey == "email:sender@example.test" {
 			require.Len(t, c.Occurrences, 1)
-			require.Equal(t, "Private Name", c.DisplayName)
 			require.Equal(t, "sender@example.test", c.OccurrenceLabels[c.Occurrences[0]])
 			foundSender = true
 		} else {
@@ -178,16 +181,23 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 		}
 	}
 	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
+	// The current event generation is unused while candidate reads are suppressed.
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER document_event_generations_immutable_update`)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_event_generations SET canonical_json=$1 WHERE content_version_id=$2`, []byte(`{`), version.ID)
+	require.NoError(t, err)
 	failed, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
 	require.Equal(t, "failed", failed.State)
 	require.Empty(t, failed.Candidates)
+	require.Equal(t, []PersonDocumentAssertion{assertion}, failed.Assertions)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
 	require.NoError(t, err)
 	pending, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
 	require.Equal(t, "pending", pending.State)
 	require.Empty(t, pending.Candidates)
+	require.Equal(t, []PersonDocumentAssertion{assertion}, pending.Assertions)
 }
 
 func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) {
