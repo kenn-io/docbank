@@ -87,7 +87,8 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, webURL string) Ver
 			continue
 		}
 		name := p.Person.DisplayName
-		if safe && p.Person.State == "provisional" && p.Person.Origin == "derived" {
+		if safe && p.Person.State == "provisional" && p.Person.Origin == "derived" &&
+			(e.Basis != "operator_assigned" || (e.EvidenceKind != "operator_assertion" && e.EvidenceKind != "custodian_assignment")) {
 			name = e.RawLabel
 		}
 		edge := VersionPersonEdge{PersonID: e.PersonID, DisplayName: name, Role: e.Role, Basis: e.Basis, Confidence: e.Confidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, RawLabel: e.RawLabel, ClaimCount: e.ClaimCount, External: []FactExternal{}}

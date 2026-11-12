@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"text/tabwriter"
 	"uuid"
 
@@ -46,19 +47,7 @@ func documentFactsCommand(kind string) *cobra.Command {
 			if asJSON {
 				return writeVersionJSON(cmd.OutOrStdout(), result)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
-			for _, diagnostic := range result.Diagnostics {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Diagnostic: %s\n", diagnostic.Detail)
-			}
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-			for _, claim := range result.Claims {
-				mark := " "
-				if claim.Primary {
-					mark = "*"
-				}
-				_, _ = fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.Precision, documentFactLabel(claim.ClaimBasis))
-			}
-			return w.Flush()
+			return writeVersionDatesTable(cmd.OutOrStdout(), result)
 		}
 		d := apiclient.GetVersionPeopleQueryDisclosure(disclosure)
 		result, err := c.API().GetVersionPeople(cmd.Context(), &apiclient.GetVersionPeopleRequestOptions{PathParams: &apiclient.GetVersionPeoplePath{VersionID: versionID}, Query: &apiclient.GetVersionPeopleQuery{Disclosure: &d}})
@@ -68,23 +57,67 @@ func documentFactsCommand(kind string) *cobra.Command {
 		if asJSON {
 			return writeVersionJSON(cmd.OutOrStdout(), result)
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		for _, edge := range result.Edges {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
-		}
-		for _, assertion := range result.Assertions {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
-		}
-		for _, unresolved := range result.Unresolved {
-			_, _ = fmt.Fprintf(w, "%s\t%s\tunresolved\n", unresolved.Role, unresolved.RawLabel)
-		}
-		return w.Flush()
+		return writeVersionPeopleTable(cmd.OutOrStdout(), result)
 	}}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	cmd.Flags().BoolVar(&full, "full", false, "include sensitive claims")
 	return cmd
 }
+
+func writeVersionDatesTable(out io.Writer, result *apiclient.VersionDates) error {
+	if _, err := fmt.Fprintf(out, "State: %s\n", result.State); err != nil {
+		return fmt.Errorf("writing dates state: %w", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if _, err := fmt.Fprintf(out, "Diagnostic: %q\n", diagnostic.Detail); err != nil {
+			return fmt.Errorf("writing dates diagnostic: %w", err)
+		}
+	}
+	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
+	for _, claim := range result.Claims {
+		mark := " "
+		if claim.Primary {
+			mark = "*"
+		}
+		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%q (state=%s, zone=%q)\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.When.State, claim.When.ZoneState, claim.Precision, documentFactLabel(claim.ClaimBasis))
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing dates table: %w", err)
+	}
+	return nil
+}
+
+func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) error {
+	if _, err := fmt.Fprintf(out, "State: %s\n", result.State); err != nil {
+		return fmt.Errorf("writing people state: %w", err)
+	}
+	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
+	for _, edge := range result.Edges {
+		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
+	}
+	for _, assertion := range result.Assertions {
+		represented := false
+		if assertion.Action == "assert" {
+			for _, edge := range result.Edges {
+				if edge.EvidenceKind == "operator_assertion" && edge.EvidenceID == assertion.AssertionID && edge.PersonID == assertion.PersonID && edge.Role == assertion.Role {
+					represented = true
+					break
+				}
+			}
+		}
+		if !represented {
+			_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
+		}
+	}
+	for _, unresolved := range result.Unresolved {
+		_, _ = fmt.Fprintf(w, "%s\t%q\tunresolved\n", unresolved.Role, unresolved.RawLabel)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing people table: %w", err)
+	}
+	return nil
+}
+
 func documentFactLabel(value string) string {
 	switch value {
 	case "source_asserted":

@@ -763,13 +763,13 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 	// Keep the parameter count portable across SQLite builds and PostgreSQL.
 	for start := 0; start < len(keys); start += 400 {
 		chunk := keys[start:min(start+400, len(keys))]
-		args := make([]any, len(chunk))
+		args := make([]any, len(chunk)+1)
 		placeholders := make([]string, len(chunk))
 		for i, key := range chunk {
 			args[i] = key
 			placeholders[i] = fmt.Sprintf("$%d", i+1)
 		}
-		args = append(args, versionID)
+		args[len(chunk)] = versionID
 		versionParam := fmt.Sprintf("$%d", len(args))
 		membership := `EXISTS (SELECT 1 FROM json_each(CAST(evidence_json AS TEXT)) o WHERE json_extract(o.value, '$.content_version_id') = ` + versionParam + `)`
 		if s.postgresSchema != "" {
@@ -784,7 +784,7 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 			if err != nil {
 				return err
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			for rows.Next() {
 				var c orderedCandidate
 				var raw []byte
