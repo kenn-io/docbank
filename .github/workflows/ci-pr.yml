@@ -28,4 +28,4 @@ jobs:
       - name: Preserve base schema records
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: git diff --no-renames --diff-filter=D --exit-code "$BASE_SHA" HEAD -- internal/store/testdata/schema-contracts
+        run: git diff --no-renames --diff-filter=DM --exit-code "$BASE_SHA" HEAD -- internal/store/testdata/schema-contracts
