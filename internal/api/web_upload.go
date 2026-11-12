@@ -327,7 +327,7 @@ func handleWebUploadConnection(
 					return d.Blobs.OpenStreamContext(ctx, matched.BlobHash)
 				})
 				if errors.Is(uploadErr, errWebVerifyBusy) {
-					uploadErr = NewError(http.StatusServiceUnavailable, "verification_busy", "Upload verification is unavailable. Restart Docbank, sign in again, and retry the upload.")
+					uploadErr = NewError(http.StatusServiceUnavailable, "verification_busy", "Upload verification is busy. Wait a moment, then retry the upload.")
 				} else if uploadErr != nil && !errors.Is(uploadErr, errWebVerifyStalled) {
 					if ctx.Err() != nil {
 						uploadErr = ctx.Err()
