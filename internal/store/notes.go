@@ -299,7 +299,10 @@ func (s *Store) PublishNoteParse(ctx context.Context, target NoteTarget, recipe,
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, target.VersionID, recipe, nowRFC3339(), state, note.Title, note.TitleSource, frontmatter, diagnostic, note.BodyStart, note.Lines); err != nil {
 			return err
 		}
-		return insertNoteStructure(ctx, tx, target, note)
+		if err := insertNoteStructure(ctx, tx, target, note); err != nil {
+			return err
+		}
+		return recordProcessedTx(ctx, tx, target.VersionID, "")
 	})
 }
 
