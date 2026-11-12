@@ -745,7 +745,7 @@ and shows its matches in place of query and saved highlights;
 match counts and arrows appear when there is a query and matches, respectively.
 The **Text** tab remains available for plain-text files, even when **Preview** shows the same text.
 After indexing, it identifies PDF pages without a text layer and links to OCR guidance.
-It also reports when page coverage is unavailable. Empty searches show known gaps or incomplete coverage; frozen query results label these counts as current vault coverage.
+It also reports when page coverage is unavailable. Empty searches outside a frozen query show known gaps or incomplete coverage.
 Processing failures, verified-empty text, and unavailable historical renditions
 remain distinct. Eligible original UTF-8 text is a fallback for that same version
 when no readable rendition is available. Without a processing profile, **Set up**
