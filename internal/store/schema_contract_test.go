@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,31 +19,22 @@ import (
 )
 
 type schemaContract struct {
-	Version int    `json:"version"`
-	Digest  string `json:"digest"`
+	Version int
+	Digest  string
 }
 
 func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	rows, err := db.QueryContext(t.Context(), `SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name`)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var entries [][4]string
-	for rows.Next() {
-		var entry [4]string
-		require.NoError(t, rows.Scan(&entry[0], &entry[1], &entry[2], &entry[3]))
-		entries = append(entries, entry)
-	}
-	require.NoError(t, rows.Err())
-	data, err := canonical.Marshal(entries)
+	data, err := canonical.Marshal(releasedSchemaCatalogRows(t, db, true))
 	require.NoError(t, err)
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-func schemaContractFile(record schemaContract) (string, []byte, error) {
-	data, err := canonical.Marshal(record)
-	return fmt.Sprintf("%06d-%s.json", record.Version, record.Digest), data, err
+func schemaContractFile(record schemaContract) string {
+	return fmt.Sprintf("%06d-%s.schema", record.Version, record.Digest)
 }
+
+var schemaContractName = regexp.MustCompile(`^([0-9]{6})-([0-9a-f]{64})\.schema$`)
 
 func loadSchemaContracts(dir string) ([]schemaContract, error) {
 	entries, err := os.ReadDir(dir)
@@ -52,18 +46,15 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 	}
 	var records []schemaContract
 	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		match := schemaContractName.FindStringSubmatch(entry.Name())
+		if entry.IsDir() || match == nil {
+			return nil, fmt.Errorf("invalid schema contract filename %s", entry.Name())
+		}
+		version, err := strconv.Atoi(match[1])
 		if err != nil {
 			return nil, err
 		}
-		record, err := canonical.Decode[schemaContract](data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
-		}
-		if name, _, _ := schemaContractFile(record); entry.Name() != name {
-			return nil, fmt.Errorf("schema contract filename %s does not match its record", entry.Name())
-		}
-		records = append(records, record)
+		records = append(records, schemaContract{Version: version, Digest: match[2]})
 	}
 	return records, nil
 }
@@ -81,11 +72,8 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 		return fmt.Errorf("schema version %d conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, highest+1)
 	}
 	if !found {
-		name, data, err := schemaContractFile(schemaContract{Version: version, Digest: digest})
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("add schema contract %s: %s", name, data)
+		name := schemaContractFile(schemaContract{Version: version, Digest: digest})
+		return fmt.Errorf("add empty schema contract file testdata/schema-contracts/%s", name)
 	}
 	return nil
 }
@@ -112,21 +100,27 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, records)
 	require.NoError(t, os.Mkdir(dir, 0700))
-	record := schemaContract{Version: 49, Digest: "abc"}
-	name, data, err := schemaContractFile(record)
-	require.NoError(t, err)
+	record := schemaContract{Version: 49, Digest: strings.Repeat("a", 64)}
+	name := schemaContractFile(record)
 	path := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(path, data, 0600))
+	require.NoError(t, os.WriteFile(path, nil, 0600))
 	records, err = loadSchemaContracts(dir)
 	require.NoError(t, err)
 	require.Equal(t, []schemaContract{record}, records)
-	require.NoError(t, os.Rename(path, filepath.Join(dir, "wrong.json")))
-	_, err = loadSchemaContracts(dir)
-	require.ErrorContains(t, err, "does not match its record")
-	require.NoError(t, os.Rename(filepath.Join(dir, "wrong.json"), path))
-	require.NoError(t, os.WriteFile(path, []byte(`{"digest":"abc","format":1,"version":49}`), 0600))
-	_, err = loadSchemaContracts(dir)
-	require.ErrorContains(t, err, `unknown object member name "format"`)
+	require.NoError(t, os.Remove(path))
+	for _, name := range []string{
+		"49-" + record.Digest + ".schema",
+		"000049-" + strings.Repeat("A", 64) + ".schema",
+		"000049-abc.schema",
+		"000049-" + record.Digest + ".json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0600))
+			_, err := loadSchemaContracts(dir)
+			require.ErrorContains(t, err, "invalid schema contract filename")
+			require.NoError(t, os.Remove(filepath.Join(dir, name)))
+		})
+	}
 }
 
 func TestStorageSchemaContractChanges(t *testing.T) {
@@ -153,7 +147,7 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 			require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)}}, 49, probe(`CREATE TABLE contract_probe (id INTEGER, changed TEXT)`, trigger)), "set currentStorageSchemaVersion to 50")
 			digest := schemaCatalogDigest(t, db)
 			record := schemaContract{Version: 49, Digest: digest}
-			require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf(`add schema contract 000049-%s.json: {"digest":"%s","version":49}`, digest, digest))
+			require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf("add empty schema contract file testdata/schema-contracts/000049-%s.schema", digest))
 			require.NoError(t, checkSchemaContract([]schemaContract{record}, 49, digest))
 			for _, statement := range []string{
 				`CREATE TABLE contract_probe (id INTEGER)`,
@@ -173,7 +167,7 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 				proposal := schemaContract{Version: 49, Digest: probe(pair[1])}
 				combined := probe(pair[0], pair[1])
 				require.ErrorContains(t, checkSchemaContract([]schemaContract{main, proposal}, 49, combined), "set currentStorageSchemaVersion to 50", pair[1])
-				require.EqualError(t, checkSchemaContract([]schemaContract{main}, 50, combined), fmt.Sprintf(`add schema contract 000050-%s.json: {"digest":"%s","version":50}`, combined, combined))
+				require.EqualError(t, checkSchemaContract([]schemaContract{main}, 50, combined), fmt.Sprintf("add empty schema contract file testdata/schema-contracts/000050-%s.schema", combined))
 				require.NoError(t, checkSchemaContract([]schemaContract{main, {Version: 50, Digest: combined}}, 50, combined))
 			}
 		})

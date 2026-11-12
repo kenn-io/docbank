@@ -242,7 +242,7 @@ imported and validated logical authority and restored its physical pack catalog.
 
 For a Docbank SQLite vault layout change, bump `currentStorageSchemaVersion`.
 For an unreleased version, run `make schema-contract-check` and add the
-canonical record printed when the test fails under
+empty record file named by the test under
 `internal/store/testdata/schema-contracts/`, without changing earlier records.
 The digest covers the SQLite catalog SQL of every table, trigger, view, and
 index, so any change under an unreleased version needs a version bump. When the
