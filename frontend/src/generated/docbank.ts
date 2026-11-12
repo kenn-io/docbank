@@ -5242,7 +5242,7 @@ export type PatchPartyRequest = (unknown & ({
   person_id?: string | null;
 }));
 
-export interface PatchTaxAccountRequest {
+export type PatchTaxAccountRequest = (unknown & ({
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   cadence?: string;
@@ -5256,7 +5256,7 @@ export interface PatchTaxAccountRequest {
   lead_days?: number;
   note?: string;
   period_note?: string;
-}
+}));
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 

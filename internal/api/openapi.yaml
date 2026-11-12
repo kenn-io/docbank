@@ -12641,6 +12641,25 @@ components:
         name: api
     PatchTaxAccountRequest:
       additionalProperties: false
+      anyOf:
+        - required:
+            - identifier
+        - required:
+            - cadence
+        - required:
+            - period_note
+        - required:
+            - due_note
+        - required:
+            - lead_days
+        - required:
+            - currency
+        - required:
+            - effective_start
+        - required:
+            - effective_end
+        - required:
+            - note
       properties:
         $schema:
           description: A URL to the JSON Schema for this object.
