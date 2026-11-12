@@ -128,13 +128,13 @@ func newPartyCommand() *cobra.Command {
 		if input.Kind == nil && input.DisplayName == nil && input.LegalName == nil && input.Own == nil && input.Country == nil && input.PersonID == nil && !clearCountry && !clearPerson {
 			return fmt.Errorf("provide at least one change")
 		}
-		c, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
 		revision := editRevision
 		if cmd.Flags().Changed("revision") && revision <= 0 {
 			return fmt.Errorf("revision must be positive")
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
 		}
 		if !cmd.Flags().Changed("revision") {
 			p, err := c.Party(cmd.Context(), args[0])
@@ -160,13 +160,13 @@ func newPartyCommand() *cobra.Command {
 	edit.Flags().Int64Var(&editRevision, "revision", 0, "Expected revision (default: current)")
 	var retireRevision int64
 	retire := &cobra.Command{Use: "retire <party-id>", Short: "Retire a party", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
 		revision := retireRevision
 		if cmd.Flags().Changed("revision") && revision <= 0 {
 			return fmt.Errorf("revision must be positive")
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
 		}
 		if !cmd.Flags().Changed("revision") {
 			p, err := c.Party(cmd.Context(), args[0])

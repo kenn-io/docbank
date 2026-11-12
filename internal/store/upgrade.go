@@ -142,7 +142,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 48)
 		},
-		restoreSourceState:         restoreV41SourceState,
+		restoreSourceState:         restoreV48SourceState,
 		keepsProcessingIncarnation: true,
 	},
 }
@@ -811,6 +811,18 @@ func restoreV41SourceState(ctx context.Context, source metadataQuerier, target *
 	}
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
 		return replaceImportedTables(ctx, source, tx, []string{"photo_checkouts", "photo_checkout_entries"})
+	})
+}
+
+// restoreV48SourceState preserves observations and in-flight explicit requests.
+// Feed cursors belong to the database incarnation and intentionally expire on
+// upgrade; vector membership epochs are derived from imported authority.
+func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	if err := restoreV41SourceState(ctx, source, target); err != nil {
+		return err
+	}
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return copyReleasedTables(ctx, source, tx, []string{"watch_source_absences", "photo_description_explicit_waiters"})
 	})
 }
 

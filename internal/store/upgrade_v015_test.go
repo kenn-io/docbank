@@ -843,3 +843,35 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 		require.NoError(t, err)
 	}
 }
+
+func TestUpgradeReleasedV0170KeepsOperationalState(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0170SQL, 48)
+			node := createReleasedFixtureFile(t, legacy, "fixture.txt", fakeHash("a1"), 4, "text/plain")
+			_, err := db.ExecContext(ctx, `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('fixture','fixture.txt',?,?,4)`, node.ID, fakeHash("a1"))
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','fixture.txt','2026-10-05T12:00:00Z')`)
+			require.NoError(t, err)
+			versions := seedRenditionCatalogVersions(t, legacy)
+			request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
+			grantRenditionJobConsent(t, legacy, request)
+			_, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO photo_description_explicit_waiters(waiter_id) VALUES(?)`, waiter.ID)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			upgraded, err := Open(ctx, path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, upgraded.Close()) }()
+			var absence, explicit int
+			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_source_absences WHERE watch_name='fixture' AND source_ref='fixture.txt'`).Scan(&absence))
+			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, waiter.ID).Scan(&explicit))
+			assert.Equal(t, 1, absence)
+			assert.Equal(t, 1, explicit)
+		})
+	}
+}
