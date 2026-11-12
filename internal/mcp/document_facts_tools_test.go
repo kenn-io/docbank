@@ -127,24 +127,29 @@ func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
 func TestDocumentFactsOutputSchemaBounds(t *testing.T) {
 	_, dates := getDocumentDatesSchemas()
 	_, people := getDocumentPeopleSchemas()
-	properties := func(s schema) schema { return s["properties"].(map[string]any) }
-	items := func(s schema) schema { return s["items"].(map[string]any) }
+	asSchema := func(value any) schema {
+		result, ok := value.(map[string]any)
+		require.True(t, ok)
+		return result
+	}
+	properties := func(s schema) schema { return asSchema(s["properties"]) }
+	items := func(s schema) schema { return asSchema(s["items"]) }
 	for _, tc := range []struct {
 		root  schema
 		field string
 	}{
 		{dates, "claims"}, {dates, "diagnostics"}, {people, "edges"}, {people, "assertions"}, {people, "unresolved"},
 	} {
-		array := properties(tc.root)[tc.field].(map[string]any)
+		array := asSchema(properties(tc.root)[tc.field])
 		// Isolate the catalog array bound from its item requirements.
 		bound := maps.Clone(array)
 		bound["items"] = schema{}
 		assertSchemaAccepts(t, bound, make([]any, 100))
 		assertSchemaRejects(t, bound, make([]any, 101))
 	}
-	claim := properties(items(properties(dates)["claims"].(map[string]any)))
-	edge := properties(items(properties(people)["edges"].(map[string]any)))
-	external := properties(items(edge["external"].(map[string]any)))
+	claim := properties(items(asSchema(properties(dates)["claims"])))
+	edge := properties(items(asSchema(properties(people)["edges"])))
+	external := properties(items(asSchema(edge["external"])))
 	for _, tc := range []struct {
 		field any
 		limit int
@@ -158,5 +163,5 @@ func TestDocumentFactsOutputSchemaBounds(t *testing.T) {
 		assertSchemaAccepts(t, tc.field, strings.Repeat("x", tc.limit))
 		assertSchemaRejects(t, tc.field, strings.Repeat("x", tc.limit+1))
 	}
-	require.Equal(t, document.MaxPersonExternalIdentities, edge["external"].(map[string]any)["maxItems"])
+	require.Equal(t, document.MaxPersonExternalIdentities, asSchema(edge["external"])["maxItems"])
 }
