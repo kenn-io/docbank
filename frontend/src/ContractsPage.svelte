@@ -265,7 +265,10 @@
                 <td class="narrow-hidden">{contractTypeLabel(contract.contract_type)}</td>
                 <td class="wrap-cell">{counterpartyNames(contract)}</td>
                 <td
-                  ><Chip size="xs" tone={statusTone(contract.effective_status)}
+                  ><Chip
+                    size="xs"
+                    class="status-chip"
+                    tone={statusTone(contract.effective_status)}
                     >{contractStatusLabel(contract.effective_status)}</Chip
                   ></td
                 >
@@ -341,6 +344,18 @@
     }
     :global(.contracts) tbody .date-cell {
       white-space: normal;
+    }
+    /* The bare table's default border spacing is not needed on a phone. */
+    :global(.contracts) {
+      border-collapse: collapse;
+    }
+    /* A long status such as "Pending signature" breaks between its words
+       instead of setting the column's width; the kit label otherwise keeps
+       one line and would ellipsize. */
+    :global(.contracts .status-chip.kit-chip .kit-chip__label) {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
     }
   }
 </style>
