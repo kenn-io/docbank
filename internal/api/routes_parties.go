@@ -50,6 +50,28 @@ type PatchPartyRequest struct {
 	countryPresent, personPresent bool
 }
 
+// TransformSchema publishes constraints shared with the store without changing nullable fields.
+func (CreatePartyRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	return partyRequestSchema(schema)
+}
+
+func (PatchPartyRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	partyRequestSchema(schema)
+	for _, field := range []string{"kind", "display_name", "legal_name", "country", "person_id", "own"} {
+		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
+	}
+	return schema
+}
+
+func partyRequestSchema(schema *huma.Schema) *huma.Schema {
+	schema.Properties["kind"].Enum = []any{"person", "organization"}
+	schema.Properties["display_name"].MinLength = new(1)
+	schema.Properties["display_name"].MaxLength = new(200)
+	schema.Properties["legal_name"].MaxLength = new(300)
+	schema.Properties["person_id"].Format = "uuid"
+	return schema
+}
+
 // partyMembers enforces the same canonical field names and null rules for all writes.
 func partyMembers(raw []byte) (map[string]jsontext.Value, error) {
 	var members map[string]jsontext.Value
@@ -62,7 +84,7 @@ func partyMembers(raw []byte) (map[string]jsontext.Value, error) {
 			if string(member) == jsonNull {
 				return nil, fmt.Errorf("%s cannot be null", name)
 			}
-		case "country", "person_id":
+		case "country", "person_id", "$schema":
 		default:
 			return nil, fmt.Errorf("unknown party field %q", name)
 		}
@@ -83,6 +105,7 @@ func (p *PatchPartyRequest) UnmarshalJSON(raw []byte) error {
 	if err != nil {
 		return err
 	}
+	delete(members, "$schema")
 	if len(members) == 0 {
 		return fmt.Errorf("party patch must contain a field")
 	}
@@ -132,8 +155,8 @@ func partyResult(p store.Party) *partyOutput {
 
 func registerPartyRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listParties", Method: http.MethodGet, Path: "/api/v1/parties", Summary: "List parties"}, func(ctx context.Context, in *struct {
-		Kind           string `query:"kind"`
-		Own            string `query:"own"`
+		Kind           string `query:"kind" enum:",person,organization"`
+		Own            string `query:"own" enum:",true,false"`
 		IncludeRetired bool   `query:"include_retired"`
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" minimum:"0" default:"0"`

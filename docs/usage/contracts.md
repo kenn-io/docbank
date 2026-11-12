@@ -34,7 +34,7 @@ An edit or retirement requires an `If-Match` revision obtained from the
 resource's `ETag`. The CLI reads the current revision unless `--revision` is
 provided. A stale revision fails without changing the party. Creation needs no
 revision. Party changes are refused in vaults with active audited history.
-Parties are included in metadata backup and restore.
+Parties are included in metadata backup and restore. The API also rejects names made only of whitespace or control characters, and country codes must be assigned ISO 3166-1 alpha-2 codes. New person links must refer to an active person.
 
 Duplicate detection compares display names exactly after Unicode normalization,
 case folding, and trimming and collapsing whitespace. For example,

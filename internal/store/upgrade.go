@@ -822,6 +822,16 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		return err
 	}
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		// Ordinary backups omit derived uploads. Preserve the complete job and
+		// its waiters when an explicit description request is still in flight.
+		jobs := `SELECT job_id FROM rendition_job_waiters WHERE waiter_id IN (SELECT waiter_id FROM photo_description_explicit_waiters)`
+		derived := `json_extract(execution_identity_json, '$.upload.input_kind')='derived_upload' AND job_id IN (` + jobs + `)`
+		if err := copyReleasedRows(ctx, source, tx, "rendition_jobs", derived); err != nil {
+			return err
+		}
+		if err := copyReleasedRows(ctx, source, tx, "rendition_job_waiters", `job_id IN (SELECT job_id FROM rendition_jobs WHERE `+derived+`)`); err != nil {
+			return err
+		}
 		return copyReleasedTables(ctx, source, tx, []string{"watch_source_absences", "photo_description_explicit_waiters"})
 	})
 }

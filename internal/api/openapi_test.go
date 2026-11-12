@@ -856,3 +856,23 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
 	require.NotContains(t, edit.Required, "content_version_id")
 }
+
+func TestPartyRequestSchemas(t *testing.T) {
+	t.Parallel()
+	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas.Map()
+	for _, name := range []string{"CreatePartyRequest", "PatchPartyRequest"} {
+		schema := schemas[name]
+		require.NotNil(t, schema)
+		assert.ElementsMatch(t, []any{"person", "organization"}, schema.Properties["kind"].Enum)
+		assert.Equal(t, 1, *schema.Properties["display_name"].MinLength)
+		assert.Equal(t, 200, *schema.Properties["display_name"].MaxLength)
+		assert.Equal(t, 300, *schema.Properties["legal_name"].MaxLength)
+		assert.Equal(t, "uuid", schema.Properties["person_id"].Format)
+	}
+	patch := schemas["PatchPartyRequest"]
+	var fields []string
+	for _, option := range patch.AnyOf {
+		fields = append(fields, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"kind", "display_name", "legal_name", "country", "person_id", "own"}, fields)
+}
