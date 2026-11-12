@@ -37,7 +37,7 @@ func registerContractDocumentRoutes(api huma.API, d Deps, g *gate) {
 				return nil, err
 			}
 			if in.emptyVersion {
-				return nil, FromStoreError(fmt.Errorf("%w: content version ID must not be empty", store.ErrInvalidContract))
+				return nil, FromStoreError(fmt.Errorf("%w: invalid query or empty content version ID", store.ErrInvalidContract))
 			}
 			var out *contractOutput
 			err = g.mutate(ctx, func() error {

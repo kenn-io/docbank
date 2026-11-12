@@ -137,9 +137,9 @@ func checkContractDocumentRevisionExhaustion(t *testing.T, postgres bool) {
 			}
 			switch action {
 			case "link", "unlink":
-				assert.ErrorIs(t, err, ErrInvalidContract)
+				require.ErrorIs(t, err, ErrInvalidContract)
 			case "stale":
-				assert.ErrorIs(t, err, ErrStaleRevision)
+				require.ErrorIs(t, err, ErrStaleRevision)
 			default:
 				require.NoError(t, err)
 			}

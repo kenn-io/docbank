@@ -43,7 +43,7 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 		return err
 	}
 	for _, d := range c.Documents {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Document: %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
 			return fmt.Errorf("write contract document: %w", err)
 		}
 	}

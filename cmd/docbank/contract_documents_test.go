@@ -19,7 +19,7 @@ func TestContractShowIncludesDocumentEvidence(t *testing.T) {
 	cmd.SetOut(&out)
 	c := api.Contract{Title: "Agreement", Documents: []api.ContractDocument{{NodeID: 42, Role: "signed", ContentVersionID: "11111111-1111-4111-8111-111111111111", BlobSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Current: false, Available: true}}}
 	require.NoError(t, printContractShow(cmd, c, false))
-	require.Contains(t, out.String(), "  signed\tid:42\t11111111-1111-4111-8111-111111111111\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tcurrent=false\tavailable=true\n")
+	require.Contains(t, out.String(), "Document: signed\tid:42\t11111111-1111-4111-8111-111111111111\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tcurrent=false\tavailable=true\n")
 }
 
 func TestContractDocumentCLI(t *testing.T) {
