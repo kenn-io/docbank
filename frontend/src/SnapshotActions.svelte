@@ -67,7 +67,7 @@
   let reading = $state(false);
   let readFailure = $state("");
   let receipt = $state<BatchTagReceipt>();
-  let request = $state<BatchTagRequest>();
+  let request = $state<BatchTagRequest & { nodes: SelectionTarget[] }>();
   let recovering = $state(false);
   let checking = $state(false);
   let checked = $state(0);
@@ -229,10 +229,7 @@
         placeholder="Tag name"
         disabled={locked}
         reopenAfterPick={false}
-        onchange={(id) => {
-          tag = catalog.find((item) => item.id === id);
-          run.failure = "";
-        }}
+        onchange={(id) => (tag = catalog.find((item) => item.id === id))}
         onpick={(picked, created) => {
           tag = picked;
           run.failure = "";
@@ -347,7 +344,7 @@
           onclick={() => void check()}>Check tag results</Button
         >
       {/if}
-    {:else if stale || tagMissing}
+    {:else if stale}
       <Button surface="soft" disabled={applying} onclick={close}>Close</Button>
     {:else}
       <Button surface="soft" disabled={applying} onclick={close}>Cancel</Button>

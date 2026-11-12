@@ -11,7 +11,7 @@ export type SelectionTarget = {
   node_id: number;
   revision: number;
   /** Shown when the document can't be read back. */
-  name?: string;
+  name: string;
 };
 
 function eligibleIDs(rows: readonly SelectableRow[]): number[] {

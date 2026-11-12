@@ -7,7 +7,7 @@ export interface BatchTagRequest {
   operation_id: string;
   tag_id: string;
   assign: boolean;
-  nodes: SelectionTarget[];
+  nodes: { node_id: number; revision: number }[];
 }
 export interface BatchTagNodeResult {
   node_id: number;
@@ -46,7 +46,9 @@ function validUUID(value: unknown): value is string {
   return typeof value === "string" && uuidV4.test(value);
 }
 
-function canonicalTargets(nodes: readonly SelectionTarget[]): SelectionTarget[] {
+function canonicalTargets(
+  nodes: readonly { node_id: number; revision: number }[],
+): { node_id: number; revision: number }[] {
   if (!Array.isArray(nodes) || nodes.length < 1 || nodes.length > 1000) {
     throw new Error("Choose between 1 and 1,000 documents.");
   }
@@ -198,7 +200,7 @@ export async function runBatchTagChange(
 export async function previewBatchTags(
   session: string,
   tagID: string,
-  targets: readonly SelectionTarget[],
+  targets: readonly Pick<SelectionTarget, "node_id" | "revision">[],
 ): Promise<BatchTagPreview> {
   if (!validUUID(tagID)) throw new Error("Choose a valid tag identity.");
   const nodes = canonicalTargets(targets);

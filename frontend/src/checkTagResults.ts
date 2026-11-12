@@ -1,6 +1,7 @@
 import { APIError } from "./api-transport.js";
 import type { BatchTagRequest } from "./batch-tags.js";
 import { getTag, type Tag } from "./generated/docbank.js";
+import type { SelectionTarget } from "./selection.js";
 import { liveNodeTags } from "./receipts.js";
 
 export interface TagResult {
@@ -12,7 +13,7 @@ export interface TagResult {
 
 export async function checkTagResults(
   session: string,
-  request: BatchTagRequest,
+  request: BatchTagRequest & { nodes: SelectionTarget[] },
   progress: (count: number) => void,
   signal?: AbortSignal,
 ): Promise<{ tag: Tag; rows: TagResult[] }> {
@@ -22,9 +23,8 @@ export async function checkTagResults(
   const rows: TagResult[] = new Array(request.nodes.length);
   let next = 0;
   let checked = 0;
-  let authFailure: unknown;
   async function worker(): Promise<void> {
-    while (next < request.nodes.length && !authFailure) {
+    while (next < request.nodes.length && !controller.signal.aborted) {
       signal?.throwIfAborted();
       const index = next++;
       const { node_id: id, name } = request.nodes[index];
@@ -42,16 +42,14 @@ export async function checkTagResults(
       } catch (cause) {
         signal?.throwIfAborted();
         if (cause instanceof APIError && cause.status === 401) {
-          authFailure = cause;
           controller.abort();
           throw cause;
         }
-        rows[index] = { node_id: id, name: name ?? `Document ${id}`, status: "unavailable" };
+        rows[index] = { node_id: id, name, status: "unavailable" };
       }
       progress(++checked);
     }
   }
   await Promise.all(Array.from({ length: Math.min(8, request.nodes.length) }, () => worker()));
-  rows.sort((a, b) => Number(b.status === "remaining") - Number(a.status === "remaining"));
   return { tag, rows };
 }

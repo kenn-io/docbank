@@ -40,10 +40,8 @@ export class TagChangeRun {
       this.options.onconfirmed(outcome.receipt);
       return outcome;
     }
-    if (outcome.kind === "unknown") {
-      this.stale = true;
-      this.options.onunknown?.();
-    }
+    if (outcome.kind === "unknown") this.stale = true;
+    if (outcome.kind === "unknown") this.options.onunknown?.();
     if (outcome.kind === "auth") {
       this.options.onauthfailure(outcome.cause);
       return outcome;

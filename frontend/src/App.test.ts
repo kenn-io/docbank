@@ -1413,13 +1413,12 @@ it("refreshes inspected tags when checking an uncertain selection change", async
   await fireEvent.click(screen.getByRole("option", { name: /^tax \(\d+\)$/ }));
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await screen.findByRole("button", { name: "Check tag results" });
+  await waitFor(() => expect(screen.queryByText("Inspector unavailable")).toBeNull());
   changed = true;
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   await waitFor(() =>
     expect(document.querySelector('[aria-label="Assigned tags"]')?.textContent).toContain("tax"),
   );
-  await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
-  expect(screen.queryByText("Inspector unavailable")).toBeNull();
 });
 
 it("uses refreshed live metadata for the selected row and tag actions", async () => {

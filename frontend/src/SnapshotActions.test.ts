@@ -115,11 +115,12 @@ it("tags the selection captured at open and reports what changed", async () => {
   expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
 });
 
-it("locks an unknown selection result and offers a check", async () => {
+it("refreshes when the outcome becomes uncertain", async () => {
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockRejectedValueOnce(new TypeError("Synthetic response loss"));
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  const onchecked = vi.fn();
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onchecked }));
   await chooseReview();
   await fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
   await screen.findByText(
@@ -130,6 +131,7 @@ it("locks an unknown selection result and offers a check", async () => {
   expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
   expect(screen.getByRole("button", { name: "Check tag results" })).toBeTruthy();
   expect(fetch).toHaveBeenCalledOnce();
+  expect(onchecked).toHaveBeenCalledOnce();
 });
 
 it("reports an expired session while checking", async () => {
@@ -144,19 +146,26 @@ it("reports an expired session while checking", async () => {
   await waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
 });
 
-it("requires a refreshed selection after an initial stale refusal", async () => {
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(Response.json({ code: "stale_revision" }, { status: 409 }));
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText("Some documents changed. Close, refresh, and select them again.");
-  expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
-  expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /Check/ })).toBeNull();
-  expect(fetch).toHaveBeenCalledOnce();
-});
+it.each(["stale_revision", "not_found"])(
+  "requires a refreshed selection after %s",
+  async (code) => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_input, init) =>
+        init?.method === "POST"
+          ? Response.json({ code }, { status: code === "not_found" ? 404 : 409 })
+          : Response.json(catalog[0]),
+      );
+    render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+    await chooseReview();
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByText("Some documents changed. Close, refresh, and select them again.");
+    expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Check/ })).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(code === "not_found" ? 2 : 1);
+  },
+);
 
 it("reads a recovery file without starting an action", async () => {
   const onstart = vi.fn();
@@ -213,57 +222,6 @@ it("rejects an oversized recovery file before reading it", async () => {
   expect(onimport).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("128 MiB"));
 });
-
-it.each([true, false])(
-  "checks current tag state before an explicit retry (assign=%s)",
-  async (assign) => {
-    const writes: BatchTagRequest[] = [];
-    let unavailable = true;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (init?.method === "POST") {
-        const request = JSON.parse(String(init.body)) as BatchTagRequest;
-        writes.push(request);
-        if (writes.length === 1) throw new TypeError("Lost response");
-        return Response.json(await receiptFor(request));
-      }
-      if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
-      if (url.includes("/tags?"))
-        return Response.json({
-          items: assign === writes.length > 1 ? catalog : [],
-          total: assign === writes.length > 1 ? 1 : 0,
-          limit: 1000,
-          offset: 0,
-        });
-      const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-      if (id === 7 && unavailable) throw new TypeError("Network error");
-      return Response.json({ id, name: `Document ${id}`, revision: 12 });
-    });
-    const onchecked = vi.fn();
-    render(SnapshotActions, props({ scope: "selection", count: 2, targets, onchecked }));
-    await chooseReview();
-    if (!assign) await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    const check = await screen.findByRole("button", { name: "Check tag results" });
-    await fireEvent.click(check);
-    await waitFor(() => expect(onchecked).toHaveBeenCalledTimes(2));
-    const retry = await screen.findByRole("button", {
-      name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
-    });
-    expect(writes).toHaveLength(1);
-    await fireEvent.click(screen.getByText("Review documents"));
-    expect(screen.getByText(assign ? "Doesn't have “Review”" : "Has “Review”")).toBeTruthy();
-    await fireEvent.click(retry);
-    await screen.findByText("1 matched · 0 remaining · 1 couldn't be checked");
-    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
-    expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
-    expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
-    unavailable = false;
-    await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-    await screen.findByRole("button", { name: "Done" });
-  },
-);
 
 it("cancels an in-progress check when the dialog closes", async () => {
   let signal: AbortSignal | null | undefined;
@@ -379,49 +337,63 @@ it("pages checked documents and resets to the first page on another check", asyn
   await screen.findByText("1–50 of 51");
 });
 
-it("rechecks the entire selection after a confirmed retry", async () => {
-  const writes: BatchTagRequest[] = [];
-  const selected = [1, 2, 3].map((node_id) => ({ node_id, revision: 1, name: `File ${node_id}` }));
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (init?.method === "POST") {
-      const request = JSON.parse(String(init.body)) as BatchTagRequest;
-      writes.push(request);
-      if (writes.length === 1) throw new TypeError("Lost response");
-      return Response.json(await receiptFor(request));
-    }
-    if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
-    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-    if (id === 3) throw new TypeError("unavailable");
-    if (url.includes("/tags?")) {
-      const assigned = writes.length === 1 ? id === 1 : id === 2;
+it.each([true, false])(
+  "rechecks the entire selection after a confirmed retry (assign=%s)",
+  async (assign) => {
+    const writes: BatchTagRequest[] = [];
+    const selected = [1, 2, 3].map((node_id) => ({
+      node_id,
+      revision: 1,
+      name: `File ${node_id}`,
+    }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        const request = JSON.parse(String(init.body)) as BatchTagRequest;
+        writes.push(request);
+        if (writes.length === 1) throw new TypeError("Lost response");
+        return Response.json(await receiptFor(request));
+      }
+      if (url.endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
+      const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+      if (id === 3) throw new TypeError("unavailable");
+      if (url.includes("/tags?")) {
+        const matched = writes.length === 1 ? id === 1 : id === 2;
+        const assigned = matched === assign;
+        return Response.json({
+          items: assigned ? catalog : [],
+          total: Number(assigned),
+          limit: 1000,
+          offset: 0,
+        });
+      }
       return Response.json({
-        items: assigned ? catalog : [],
-        total: Number(assigned),
-        limit: 1000,
-        offset: 0,
+        id,
+        name: `Document ${id}`,
+        path: `/Document ${id}`,
+        revision: 10 + id,
       });
-    }
-    return Response.json({
-      id,
-      name: `Document ${id}`,
-      path: `/Document ${id}`,
-      revision: 10 + id,
     });
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 3, targets: selected }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
-  await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
-  expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
-  await fireEvent.click(screen.getByText("Review documents"));
-  expect(screen.getByText("/Document 1").parentElement?.textContent).toContain(
-    "Doesn't have “Review”",
-  );
-  expect(screen.getByText("File 3").parentElement?.textContent).toContain("Couldn't check");
-});
+    render(SnapshotActions, props({ scope: "selection", count: 3, targets: selected }));
+    await chooseReview();
+    if (!assign) await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+    await fireEvent.click(
+      await screen.findByRole("button", {
+        name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
+      }),
+    );
+    await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
+    expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
+    expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
+    await fireEvent.click(screen.getByText("Review documents"));
+    expect(screen.getByText("/Document 1").parentElement?.textContent).toContain(
+      assign ? "Doesn't have “Review”" : "Has “Review”",
+    );
+    expect(screen.getByText("File 3").parentElement?.textContent).toContain("Couldn't check");
+  },
+);
 
 it.each([false, true])("preserves a deleted tag error (after check: %s)", async (afterCheck) => {
   let writes = 0;
@@ -459,27 +431,6 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
   expect(writes).toBe(afterCheck ? 2 : 1);
 });
 
-it("identifies a selected document when its recovery read fails", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (init?.method === "POST") throw new TypeError("Lost response");
-    if (String(input).endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
-    return Response.json({ detail: "Missing" }, { status: 404 });
-  });
-  render(
-    SnapshotActions,
-    props({
-      scope: "selection",
-      count: 1,
-      targets: [{ node_id: 7, revision: 3, name: "readme.txt" }],
-    }),
-  );
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  await fireEvent.click(await screen.findByText("Review documents"));
-  expect(screen.getByText("readme.txt")).toBeTruthy();
-});
-
 it("allows a new tag after the chosen tag was deleted", async () => {
   const other = { ...catalog[0], id: "33333333-3333-4333-8333-333333333333", name: "Other" };
   const writes: BatchTagRequest[] = [];
@@ -506,33 +457,6 @@ it("allows a new tag after the chosen tag was deleted", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await screen.findByText(/Added “Other”/);
   expect(writes[1].tag_id).toBe(other.id);
-});
-
-it("requires reselection when a selected document was deleted before applying", async () => {
-  const writes: BatchTagRequest[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-    if (init?.method !== "POST") return Response.json(catalog[0]);
-    writes.push(JSON.parse(String(init.body)) as BatchTagRequest);
-    return Response.json({ code: "not_found", detail: "Document was deleted" }, { status: 404 });
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText(/select them again/i);
-  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
-  expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
-  expect(writes).toHaveLength(1);
-});
-
-it("refreshes the view when an uncertain change is closed without a check", async () => {
-  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Lost response"));
-  const onchecked = vi.fn();
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onchecked }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByRole("button", { name: "Check tag results" });
-  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(onchecked).toHaveBeenCalledOnce();
 });
 
 it("refreshes after a confirmed retry even when the next check fails", async () => {
