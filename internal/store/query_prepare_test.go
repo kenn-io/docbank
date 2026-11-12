@@ -85,11 +85,11 @@ func TestPreparedDocumentPopulationCancellation(t *testing.T) {
 type preparationLifecycleConnector struct{ rows *preparationLifecycleRows }
 
 func (c preparationLifecycleConnector) Connect(context.Context) (driver.Conn, error) {
-	return preparationLifecycleConn{c.rows}, nil
+	return preparationLifecycleConn(c), nil
 }
 func (c preparationLifecycleConnector) Driver() driver.Driver { return c }
 func (c preparationLifecycleConnector) Open(string) (driver.Conn, error) {
-	return preparationLifecycleConn{c.rows}, nil
+	return preparationLifecycleConn(c), nil
 }
 
 type preparationLifecycleConn struct{ rows *preparationLifecycleRows }
@@ -140,7 +140,7 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			r := &preparationLifecycleRows{}
-			want := error(context.Canceled)
+			want := context.Canceled
 			switch failure {
 			case "cancel":
 				r.cancel = cancel
@@ -169,6 +169,7 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 // consumer route without introducing a second query evaluator.
 type populationRecordingQuerier struct {
 	metadataQuerier
+
 	statements []string
 }
 
@@ -203,7 +204,7 @@ func TestDocumentPopulationPersonEdgeRouting(t *testing.T) {
 		{"person any role", `person:"Route Person"`, `{}`, true},
 		{"root people", ``, fmt.Sprintf(`{"people":[{"person_id":%q,"roles":["author"]}]}`, person.PersonID), true},
 		{"path", `path:/missing`, `{}`, false},
-		{"collection", fmt.Sprintf(`collection:%s`, collection.ID()), `{}`, false},
+		{"collection", `collection:` + collection.ID(), `{}`, false},
 		{"coverage", `text_coverage:complete`, `{}`, false},
 		{"duplicates", `has_duplicates:true`, `{}`, false},
 		{"saved collapse plain", `saved:"Plain collapse"`, `{}`, false},
@@ -218,7 +219,7 @@ func TestDocumentPopulationPersonEdgeRouting(t *testing.T) {
 			if tc.name == "negative role" {
 				require.Empty(t, compiled.roleMatches)
 			}
-			rows, err := documentSnapshotPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
+			rows, err := documentSnapshotPopulation(ctx, s.db, compiled, "", CoverageSelection{})
 			require.NoError(t, err)
 			require.Equal(t, tc.edges, strings.Contains(rows.sql, "FROM json_each(?)"))
 		})
@@ -253,7 +254,7 @@ func TestDocumentFacetPopulationRoutes(t *testing.T) {
 			compiled, err := compileQuery(ctx, scoped, queryResolver{q: s.db})
 			require.NoError(t, err)
 			require.True(t, compiled.predicate.personEdges)
-			population, err := documentSnapshotPopulation(ctx, s.db, compiled, "", nil, fixture.selection)
+			population, err := documentSnapshotPopulation(ctx, s.db, compiled, "", fixture.selection)
 			require.NoError(t, err)
 			require.Contains(t, population.sql, "FROM json_each(?)")
 		}

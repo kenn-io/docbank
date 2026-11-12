@@ -158,7 +158,7 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 	}
 	allMembers := compiled
 	allMembers.Query.Filters.CollapseDuplicates = false
-	members, err := documentSnapshotPopulation(ctx, q, allMembers, generation, nil, coverage)
+	members, err := documentSnapshotPopulation(ctx, q, allMembers, generation, coverage)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
-	population, err := documentSnapshotPopulation(ctx, q, scoped, generation, nil, coverage)
+	population, err := documentSnapshotPopulation(ctx, q, scoped, generation, coverage)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}

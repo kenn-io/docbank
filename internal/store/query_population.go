@@ -36,7 +36,6 @@ func selectCompiledPopulation(predicate compiledQueryFragment, collapseDuplicate
 				ROW_NUMBER() OVER (PARTITION BY blob_hash ORDER BY `+DuplicateRepresentativeOrder+`) duplicate_rank
 			FROM (`+prefix, `) matched_members
 		) ranked_members WHERE duplicate_rank=1`)
-
 }
 
 // bindQueryPopulation supplies every shared relation requested by a population

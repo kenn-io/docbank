@@ -873,7 +873,7 @@ func TestRoleSearchMentionsRequireDocumentContent(t *testing.T) {
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Linden Vale", "operator")
 	require.NoError(t, err)
-	person, _ = addTestPersonIdentity(t, s, person, "name_alias", "Willow Finch", "willow-finch")
+	_, _ = addTestPersonIdentity(t, s, person, "name_alias", "Willow Finch", "willow-finch")
 	for i, name := range []string{"Linden Vale.txt", "Willow Finch.txt"} {
 		node, err := s.CreateFile(ctx, s.RootID(), name, testSHA256([]byte(fmt.Sprintf("mention-name-%d", i))), 20, "text/plain")
 		require.NoError(t, err)

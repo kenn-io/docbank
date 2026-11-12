@@ -11,11 +11,11 @@ import (
 // failed pure-Go SQLite row materialization ("VIEWs and/or subqueries nested
 // too deep") when its predicate stayed inline. Person-edge-free queries stay
 // inline. The engine guard's exact site and threshold are unmeasured.
-func documentSnapshotPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, profile *string, coverage CoverageSelection) (compiledQueryFragment, error) {
+func documentSnapshotPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {
 	if !compiled.predicate.personEdges {
-		return matchedPopulation(compiled, generation, profile)
+		return matchedPopulation(compiled, generation, nil)
 	}
-	return materializeDocumentPopulation(ctx, q, compiled, generation, profile, coverage)
+	return materializeDocumentPopulation(ctx, q, compiled, generation, nil, coverage)
 }
 
 // materializeDocumentPopulation executes the selection once and hands
