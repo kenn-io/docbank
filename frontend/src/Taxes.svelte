@@ -74,7 +74,7 @@
         <td>{row.due_date ?? "—"}</td>
         <td>{taxStateLabel(row.state)}</td>
         <td class="amount" title={amount.hint}
-          ><span>{amount.text}</span>{#if amount.hint}<span class="hidden">{amount.hint}</span
+          ><span>{amount.text}</span>{#if amount.hint}<span class="kit-sr-only">{amount.hint}</span
             >{/if}<span class="sub">{amount.direction}</span></td
         >
       </tr>
@@ -225,15 +225,6 @@
 
   .amount {
     text-align: end;
-    white-space: nowrap;
-  }
-
-  .hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
     white-space: nowrap;
   }
 
