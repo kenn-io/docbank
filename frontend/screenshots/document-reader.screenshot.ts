@@ -449,7 +449,7 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
     if (file.startsWith("mixed")) await expect(inspector.locator("pre")).toBeVisible();
     await page.screenshot({
       path: path.join(output!, `${file}-text.png`),
-      clip: { x: 0, y: 0, width: 1440, height: 610 },
+      clip: { x: 976, y: 56, width: 464, height: 554 },
     });
   }
   const search = page.getByRole("searchbox", { name: "Search documents" });
