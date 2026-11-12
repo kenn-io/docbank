@@ -48,7 +48,7 @@ func documentFactsCommand(kind string) *cobra.Command {
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
 			for _, diagnostic := range result.Diagnostics {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Diagnostic: %s: %s\n", diagnostic.Code, diagnostic.Detail)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Diagnostic: %s\n", diagnostic.Detail)
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 			for _, claim := range result.Claims {
@@ -56,7 +56,7 @@ func documentFactsCommand(kind string) *cobra.Command {
 				if claim.Primary {
 					mark = "*"
 				}
-				_, _ = fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.Precision, claim.ClaimBasis)
+				_, _ = fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.Precision, documentFactLabel(claim.ClaimBasis))
 			}
 			return w.Flush()
 		}
@@ -71,7 +71,7 @@ func documentFactsCommand(kind string) *cobra.Command {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
 		for _, edge := range result.Edges {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, edge.Basis)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
 		}
 		for _, assertion := range result.Assertions {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
@@ -85,6 +85,23 @@ func documentFactsCommand(kind string) *cobra.Command {
 	cmd.Flags().BoolVar(&full, "full", false, "include sensitive claims")
 	return cmd
 }
+func documentFactLabel(value string) string {
+	switch value {
+	case "source_asserted":
+		return "From document"
+	case "docbank_observed":
+		return "Recorded by Docbank"
+	case "identifier_match":
+		return "Matched by identity"
+	case "external_uid":
+		return "External identity"
+	case "operator_assigned":
+		return "Assigned by you"
+	default:
+		return value
+	}
+}
+
 func init() {
 	documentCmd.AddCommand(documentFactsCommand("dates"))
 	documentCmd.AddCommand(documentFactsCommand("people"))
