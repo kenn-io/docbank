@@ -140,12 +140,15 @@ func FuzzParseCard(f *testing.F) {
 	})
 }
 
-func TestCanonicalAndTransitions(t *testing.T) {
+func TestCanonicalAndStaleRecord(t *testing.T) {
 	c, err := Parse([]byte(sample))
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := c.Hash()
+	if h != "dcf778b275b6d0c709404658c5df8b39be5acee2c4254c5f3706cd48d3aa368c" {
+		t.Fatalf("unexpected v1 digest: %s", h)
+	}
 	c.Alternates = []string{}
 	if c.Hash() != h {
 		t.Fatal("empty alternates changed hash")
@@ -155,14 +158,6 @@ func TestCanonicalAndTransitions(t *testing.T) {
 	c.Stale = &StaleInfo{Reason: "new_version", Citation: 0}
 	if c.Hash() != h {
 		t.Fatal("lifecycle fields changed hash")
-	}
-	for _, from := range []State{Draft, Approved, Stale} {
-		for _, to := range []State{Draft, Approved, Stale} {
-			want := from == Draft && to == Approved || from == Approved && (to == Draft || to == Stale) || from == Stale && to == Approved
-			if CanTransition(from, to) != want {
-				t.Fatalf("%s -> %s", from, to)
-			}
-		}
 	}
 	c.State = Stale
 	c.Stale = nil

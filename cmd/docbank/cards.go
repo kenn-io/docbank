@@ -12,7 +12,7 @@ import (
 
 var cardsRoot string
 var cardsDeep, cardsJSON bool
-var cardsCmd = &cobra.Command{Use: "cards", Short: "Manage cards", Long: "Inspect answer cards and report whether their cited sources remain current.", GroupID: groupDocuments}
+var cardsCmd = &cobra.Command{Use: "cards", Short: "Inspect answer cards", Long: "Inspect answer cards and report whether their cited sources remain current.", GroupID: groupDocuments}
 var cardsCheckCmd = &cobra.Command{
 	Use: "check", Short: "Report answer card states", Args: cobra.NoArgs,
 	Example: "  docbank cards check --root /answer-cards --json",

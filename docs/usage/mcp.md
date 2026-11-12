@@ -617,6 +617,9 @@ daemon log. A `citation_timeout` or `citation_canceled` permits a later delibera
 retry of the same reference. The read helper retries a disconnected daemon only
 before any response starts, never after a domain failure.
 
+Use saved citations in [answer cards](../cli-reference.md#docbank-cards-check)
+to check whether their sources remain current.
+
 The [HTTP contract](../architecture/http-api.md#retained-text-citations) owns the
 complete field and error table. Current/live rendition resources and windows
 retain their existing behavior.

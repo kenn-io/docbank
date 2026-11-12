@@ -2,10 +2,14 @@ package answercard
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"go.kenn.io/docbank/document"
@@ -39,6 +43,84 @@ func TestCheckReportsStalledDocumentListing(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("want two requests before repeated cursor detection, got %d", requests)
+	}
+}
+
+// Exercise limits through the catalog and content endpoints with synthetic files.
+func TestCheckCandidateBounds(t *testing.T) {
+	const version = "00000000-0000-4000-8000-000000000002"
+	for _, tc := range []struct {
+		name       string
+		files      int
+		size       int64
+		media      string
+		streamSize int64
+		badHash    bool
+		wantError  string
+		wantState  string
+	}{
+		{name: "file limit", files: MaxFiles + 1, media: "application/pdf", wantError: "card_limit: too many files"},
+		{name: "download limit", files: MaxDownloadBytes/MaxBytes + 1, size: MaxBytes, media: "text/plain", wantError: "card_limit: download limit exceeded"},
+		{name: "oversized candidate", files: 1, size: MaxBytes + 1, media: "text/plain", wantState: "invalid"},
+		{name: "content size changed", files: 1, size: 1, streamSize: 2, media: "text/plain", wantError: "card content identity changed"},
+		{name: "content digest mismatch", files: 1, size: 1, badHash: true, media: "text/plain", wantError: "computed SHA-256"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pageNumber, downloads := 0, 0
+			body := strings.Repeat("x", int(tc.size))
+			sum := sha256.Sum256([]byte(body))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/info":
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"vault_id": "00000000-0000-4000-8000-000000000001"})
+				case "/api/v1/documents":
+					w.Header().Set("Content-Type", "application/json")
+					page := api.DocumentPage{PathPrefix: "/answer-cards", Sort: "path", Direction: "asc", PageSize: 250}
+					start := pageNumber * 250
+					for i := start; i < min(start+250, tc.files); i++ {
+						name := fmt.Sprintf("%04d.txt", i)
+						page.Items = append(page.Items, api.DocumentSummary{NodeID: int64(i + 1), ContentVersionID: version, Path: "/answer-cards/" + name, Name: name, MediaType: tc.media, Size: tc.size, ModifiedAt: "2026-01-01T00:00:00Z"})
+					}
+					pageNumber++
+					if start+250 < tc.files {
+						page.NextCursor = strconv.Itoa(pageNumber)
+					}
+					_ = json.NewEncoder(w).Encode(page)
+				default:
+					downloads++
+					size := tc.size
+					if tc.streamSize != 0 {
+						size = tc.streamSize
+					}
+					w.Header().Set(api.ContentVersionHeader, version)
+					hash := hex.EncodeToString(sum[:])
+					if tc.badHash {
+						hash = strings.Repeat("0", 64)
+					}
+					w.Header().Set(api.BlobHashHeader, hash)
+					w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(size, 10))
+					w.Header().Set("Trailer", "Content-Digest")
+					_, _ = w.Write([]byte(body))
+					w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":")
+				}
+			}))
+			t.Cleanup(server.Close)
+			got, err := Check(t.Context(), daemonconn.New(server.URL, "synthetic-key"), "/answer-cards", false)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("want %q, got %v", tc.wantError, err)
+				}
+			} else if err != nil || len(got.Items) != 1 || got.Items[0].State != tc.wantState || got.Items[0].Reason != "oversized" {
+				t.Fatalf("unexpected report %+v, error %v", got, err)
+			}
+			if tc.name == "oversized candidate" && downloads != 0 {
+				t.Fatal("oversized candidate was downloaded")
+			}
+			if tc.name == "download limit" && downloads != MaxDownloadBytes/MaxBytes {
+				t.Fatalf("downloaded %d candidates", downloads)
+			}
+		})
 	}
 }
 

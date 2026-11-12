@@ -289,9 +289,6 @@ func (c Card) Hash() string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
-func CanTransition(from, to State) bool {
-	return from == Draft && to == Approved || from == Approved && to == Stale || from == Stale && to == Approved || from == Approved && to == Draft
-}
 func (c Card) Effective(observations []Observation) Result {
 	if err := c.Validate(); err != nil {
 		return Result{State: Invalid, Reason: err.Error()}
