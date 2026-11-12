@@ -25,6 +25,8 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Push a folder to another daemon](https://docbank.ai/docs/usage/pushing.md): Archive a local folder through a keyed daemon, resume by content hash, and continue an existing watch.
 - [Photo assets](https://docbank.ai/docs/usage/photos.md): Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 - [People](https://docbank.ai/docs/usage/people.md): Browse people and their photos, rename or merge people, and manage canonical records through the API and CLI.
+- [Parties](https://docbank.ai/docs/usage/contracts.md): Keep reusable entities and counterparties in Docbank.
+- [Tax accounts and records](https://docbank.ai/docs/usage/tax-records.md): How Docbank preserves tax accounts and their records and events.
 - [Email PDFs](https://docbank.ai/docs/usage/email-pdf.md): Render one email version as a verified PDF kept alongside its original EML.
 - [Organizing and tagging](https://docbank.ai/docs/usage/organizing.md): Browse, move, rename, and tag documents in the virtual tree.
 - [Searching](https://docbank.ai/docs/usage/searching.md): Ranked, prefix-matching search over document names and verified text content.

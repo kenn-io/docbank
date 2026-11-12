@@ -3256,3 +3256,96 @@ BEGIN
     SELECT DISTINCT vector_space_id,1 FROM embedding_heads WHERE content_version_id IN (OLD.current_version_id,NEW.current_version_id)
     ON CONFLICT(vector_space_id) DO UPDATE SET revision=revision+1;
 END;
+
+CREATE TABLE IF NOT EXISTS parties (
+    party_id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    display_name_folded TEXT NOT NULL,
+    legal_name TEXT NOT NULL,
+    country TEXT,
+    own INTEGER NOT NULL,
+    person_id TEXT REFERENCES persons(person_id) ON DELETE SET NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS parties_name_folded ON parties(display_name_folded);
+
+CREATE TABLE IF NOT EXISTS tax_accounts (
+    account_id TEXT PRIMARY KEY NOT NULL,
+    filer_party_id TEXT NOT NULL REFERENCES parties(party_id),
+    authority_party_id TEXT REFERENCES parties(party_id),
+    country TEXT NOT NULL,
+    subdivision TEXT NOT NULL,
+    tax_kind TEXT NOT NULL,
+    tax_kind_folded TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    cadence TEXT NOT NULL,
+    period_note TEXT NOT NULL,
+    due_note TEXT NOT NULL,
+    lead_days INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    effective_start TEXT,
+    effective_end TEXT,
+    note TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS tax_accounts_filer ON tax_accounts(filer_party_id);
+
+CREATE TABLE IF NOT EXISTS tax_records (
+    record_id TEXT PRIMARY KEY NOT NULL,
+    account_id TEXT REFERENCES tax_accounts(account_id),
+    filer_party_id TEXT NOT NULL REFERENCES parties(party_id),
+    authority_party_id TEXT REFERENCES parties(party_id),
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    country TEXT NOT NULL,
+    subdivision TEXT NOT NULL,
+    tax_kind TEXT NOT NULL,
+    tax_kind_folded TEXT NOT NULL,
+    form_code TEXT NOT NULL,
+    tax_year INTEGER,
+    period_start TEXT,
+    period_end TEXT,
+    due_date TEXT,
+    lead_days INTEGER,
+    state TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    amount_minor INTEGER,
+    currency TEXT NOT NULL,
+    verification TEXT NOT NULL,
+    verified_on TEXT,
+    verified_revision INTEGER,
+    verification_note TEXT NOT NULL,
+    note TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS tax_records_filer_year ON tax_records(filer_party_id,tax_year);
+CREATE INDEX IF NOT EXISTS tax_records_due_date ON tax_records(due_date);
+CREATE INDEX IF NOT EXISTS tax_records_account_period ON tax_records(account_id,period_end);
+CREATE UNIQUE INDEX IF NOT EXISTS tax_records_live_period ON tax_records(account_id,period_start,period_end,kind) WHERE account_id IS NOT NULL AND retired_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS tax_events (
+    event_id TEXT PRIMARY KEY NOT NULL,
+    record_id TEXT NOT NULL REFERENCES tax_records(record_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    occurred_on TEXT NOT NULL,
+    sets_state TEXT NOT NULL,
+    amount_minor INTEGER,
+    currency TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    note TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    voided_at TEXT,
+    void_reason TEXT NOT NULL,
+    record_revision INTEGER NOT NULL,
+    UNIQUE(record_id, record_revision)
+);

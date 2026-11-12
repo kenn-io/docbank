@@ -43,7 +43,7 @@ func (in *SetBackupScheduleRequest) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	*in = SetBackupScheduleRequest(decoded)
-	in.null = string(members["interval_seconds"]) == "null" || string(members["keep_last"]) == "null"
+	in.null = string(members["interval_seconds"]) == jsonNull || string(members["keep_last"]) == jsonNull
 	return nil
 }
 

@@ -60,7 +60,7 @@ func mailboxBrowserRequestAllowed(r *http.Request) bool {
 func readMailboxJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, mailboxJSONLimit)
 	b, err := io.ReadAll(r.Body)
-	if err == nil && (len(b) == 0 || strings.TrimSpace(string(b)) == "null") {
+	if err == nil && (len(b) == 0 || strings.TrimSpace(string(b)) == jsonNull) {
 		err = store.ErrMailboxInvalid
 	}
 	if err == nil {

@@ -128,6 +128,10 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
+| `GET\|POST /tax/accounts` · `GET\|PATCH /tax/accounts/{account_id}` · `POST /tax/accounts/{account_id}/retire` | manage tax accounts | Implemented |
+| `GET\|POST /tax/records` · `GET\|PATCH /tax/records/{record_id}` · `POST /tax/records/{record_id}/retire` | manage tax records | Implemented |
+| `POST /tax/records/{record_id}/events` · `POST /tax/records/{record_id}/events/{event_id}/void` | append notes, payments, or refunds and void events | Implemented |
+| `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
@@ -1526,6 +1530,44 @@ interpreting omissions from a truncated tag listing. Both routes require
 authentication. Browser sessions permit only these exact POST paths without
 query arguments.
 
+## Tax accounts
+
+`GET /api/v1/tax/accounts` filters by `filer`, `country`, and `taxkind`
+using AND semantics. `include_retired` defaults to false; `limit` defaults to
+100 (1–1000) and `offset` defaults to zero. Items are ordered by account ID.
+Pages reflect live data, so concurrent changes can shift or skip items between offsets.
+Get-one includes retired accounts. Create returns 201; edit and retire return
+200 and require `If-Match`. A missing, malformed, or stale revision returns
+428, 400, or 412 respectively. One-account responses carry an `ETag`.
+
+Responses mask identifiers except `GET /api/v1/tax/accounts/{account_id}?reveal=true`.
+PATCH omissions retain values and explicit null clears effective dates. Account
+identity is immutable. Validation and backend errors do not echo tax values;
+schema-invalid inputs return 422 `validation`, domain-invalid tax values return
+422 `invalid_tax`, retired accounts return 409
+`tax_retired`, and audited vaults refuse mutations with 409
+`audit_mutation_unsupported`. See [Tax accounts](../usage/tax-records.md).
+
+## Tax records
+
+`GET /api/v1/tax/records` combines `filer`, `country`, `taxkind`, `year`,
+`state`, and `kind` filters with AND. `include_retired` defaults to false;
+`limit` defaults to 100 (1–1000), and `offset` defaults to zero. ASCII lowercase
+country codes are normalized. Get-one includes retired records and events. It includes `account_id` when attached, but never the account identifier. Event references are masked unless get-one requests `reveal=true`.
+
+Create with `POST /api/v1/tax/records`; update with `PATCH` on the record ID;
+retire with `POST /api/v1/tax/records/{record_id}/retire`. Both writes on an
+existing record require a quoted `If-Match` revision and return an `ETag`.
+Omitted PATCH members retain their values; null clears nullable members. Empty
+and schema-only PATCH bodies receive 422 `validation`. Domain validation returns
+422 `invalid_tax`; stale revisions return 412; retired records and audited-vault
+mutations return 409. Errors and request logs do not include supplied tax values.
+The record's account and kind are immutable; copied account identity cannot be
+changed. Money input is decimal text; a currency change with an existing amount
+requires an explicit resend or clear. See [Tax records](../usage/tax-records.md).
+
+`POST /api/v1/tax/records/{record_id}/advance`, `POST /api/v1/tax/records/{record_id}/events`, and `POST /api/v1/tax/records/{record_id}/events/{event_id}/void` require quoted `If-Match` and return the parent `ETag` with a masked event receipt. Get-one returns events in append order. State derives from the latest surviving state event; void retains the event and its reason. Voiding an already voided event returns 409 `tax_event_voided`. Payments and refunds are recorded through the events endpoint; get-one returns the derived balance. Evidence operations are not included.
+
 ## People search
 
 `GET /api/v1/people` and MCP `find_people` search active people by the beginning of any word in the folded display name. A read-time Unicode word-start predicate filters names before visibility checks and pagination; literal `%`, `_`, and NUL retain their meaning. For example, `Smith` finds `John Smith` and `John—Smith`. Identity labels are read only for the returned matches. Results use folded-name and person-ID order, with a query-bound `next_cursor` when another page exists.
@@ -1572,7 +1614,7 @@ A face conflict returns `409 person_merge_conflict` with up to 20 visible `face_
 
 Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. API-key clients can use every face route. Browser sessions can list faces, create boxed faces, mark an existing person or create a person by name in a whole photo, and name, clear, or remove a face through revision-fenced `name`, `retract`, or `dismiss` decisions. They can clear an existing whole-photo mark with `retract`, its `assertion_id`, and its assertion `revision`. `reject`, `withdraw_rejection`, and `key` require the API key. Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. [Automatic face detection](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#automatic-face-detection) adds unnamed faces when configured and consent is granted. Face suggestions remain unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
 
-`POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`, limited to 200 UTF-8 bytes. `retract` accepts exactly one `face_id` or whole-photo `assertion_id`. Clearing a whole-photo mark keeps its assertion active while named faces still use it; otherwise it becomes withdrawn. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undoing a face's new-name decision retires the new person unless it was edited or has other evidence. Undoing that undo returns not found once the person is retired. Clearing a name or a whole-photo mark leaves the person. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`; dismissed records remain in the API for undo and disappear from browser rows, boxes, and closeups.
+`POST /api/v1/photos/versions/{content_version_id}/face-decisions` takes `face_id`, `revision`, and `action` (`name`, `retract`, `reject`, `dismiss`, `withdraw_rejection`, or `key`). Naming takes either `person_id` or `person_name`, limited to 200 UTF-8 bytes. `retract` accepts exactly one `face_id` or whole-photo `assertion_id`. Clearing a whole-photo mark keeps its assertion active while named faces still use it; otherwise it becomes withdrawn. A new name creates the person and assigns the face in one transaction; a failed revision check rolls both back. Retain `operation_id` for an identical replay after an uncertain response. Rejection, withdrawal and key selection take `person_id`; key selection also takes `person_revision`, and omitting `face_id` clears the key. Existing IDs replay through create; edits use this decision route. Each decision returns `receipt_id`. Undoing a face's new-name decision retires the new person unless it was edited, has other evidence, or is linked to an active party. Undoing that undo returns not found once the person is retired. Clearing a name or a whole-photo mark leaves the person. `POST /api/v1/photos/face-decisions/{receipt_id}/undo` restores changed rows while their saved revisions still match, returning `412 stale_revision` after a conflicting edit. Face reads include `rejected_person_ids` and `dismissed`; dismissed records remain in the API for undo and disappear from browser rows, boxes, and closeups.
 
 Person detail accepts `assertion_cursor` and `assertion_limit` (1–1,000) and returns `assertions_next_cursor`, `key_face_id`, and document and photo assertion selectors. Hidden filtering precedes pagination. Merge conflicts include up to 20 visible `face_ids`, `more`, and `hidden_face_conflict`; retained versions can be corrected through the same Hidden gate.
 
@@ -1741,6 +1783,9 @@ and maintenance are exceptions:
 | `POST /nodes/{id}/trash` | required: target node's revision |
 | `POST /nodes/{id}/restore` | required: target node's revision |
 | `POST /nodes/{id}/verify` | required: binds the evidence to the node state the caller inspected |
+| `PATCH /parties/{party_id}`, `POST /parties/{party_id}/retire` | required: party revision |
+| `PATCH /tax/accounts/{account_id}`, `POST /tax/accounts/{account_id}/retire` | required: account revision |
+| `PATCH /tax/records/{record_id}`, `POST /tax/records/{record_id}/retire` | required: record revision |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required: tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required: saved-definition revision |
 | `POST /saved-queries/{saved_query_id}/runs` | required: executes the saved definition revision the caller inspected |
@@ -2524,6 +2569,9 @@ include a `position` span:
 | `snapshot_unavailable` | 503 | query snapshot exceeded its resource budget or its build was canceled |
 | `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
 | `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
+| `party_exists` | 409 | An active folded name exists; the `party_id` problem extension identifies the existing party |
+| `party_retired` | 409 | The party is retired |
+| `invalid_party` | 422 | The party input or reference is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
