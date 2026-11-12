@@ -23,7 +23,9 @@ func TestTaxRecordDTOJSONPresence(t *testing.T) {
 	for _, name := range []string{"clear_authority", "clear_amount", "title"} {
 		assert.NotContains(t, members, name)
 	}
-	create, err := json.Marshal(api.CreateTaxRecordRequest{Kind: "filing", Title: "Example", ClearAuthority: true})
+	create, err := json.Marshal(api.CreateTaxRecordRequest{Kind: "filing", Title: "Example"})
 	require.NoError(t, err)
-	assert.Contains(t, string(create), `"authority_party_id":null`)
+	assert.NotContains(t, string(create), `"authority_party_id"`)
+	var decoded api.CreateTaxRecordRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"kind":"filing","title":"Example","authority_party_id":null}`), &decoded))
 }

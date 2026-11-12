@@ -67,6 +67,8 @@ and `--offset` as for accounts. A full text page prints a continuation offset.
 Retired records remain available with `show` and cannot be edited. Account-bound
 records retain their copied filer, authority, country, subdivision and tax kind;
 their account and kind cannot be changed. One-off records permit identity edits.
+A second live record for the same account, complete period, and kind is rejected
+with HTTP 409 `exists`.
 Omitted edit fields retain their values; `--clear-authority`, `--clear-tax-year`,
 `--clear-period-start`, `--clear-period-end`, `--clear-due-date`,
 `--clear-lead-days`, and `--clear-amount` explicitly clear nullable values.

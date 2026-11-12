@@ -980,11 +980,23 @@ func TestTaxOpenAPIContract(t *testing.T) {
 		assert.Equal(t, 256, *schema.Properties["form_code"].MaxLength)
 		assert.Equal(t, 32, *schema.Properties["amount"].MaxLength)
 		assert.Equal(t, 8192, *schema.Properties["note"].MaxLength)
+		assert.Contains(t, schema.Properties["title"].Description, "300")
+		assert.Contains(t, schema.Properties["title"].Description, "1200 UTF-8 bytes")
+		assert.Contains(t, schema.Properties["form_code"].Description, "64")
+		assert.Contains(t, schema.Properties["form_code"].Description, "256 UTF-8 bytes")
+		assert.Contains(t, schema.Properties["note"].Description, "8192 UTF-8 bytes")
+		assert.Contains(t, schema.Properties["amount"].Description, "32 ASCII bytes")
 		assert.Equal(t, new(float64(1)), schema.Properties["tax_year"].Minimum)
 		assert.Equal(t, new(float64(9999)), schema.Properties["tax_year"].Maximum)
 		assert.Equal(t, new(float64(0)), schema.Properties["lead_days"].Minimum)
 		assert.Equal(t, new(float64(366)), schema.Properties["lead_days"].Maximum)
 	}
+	createRecord := doc.Components.Schemas.Map()["CreateTaxRecordRequest"]
+	for _, field := range []string{"country", "subdivision", "tax_kind", "currency"} {
+		assert.False(t, createRecord.Properties[field].Nullable, field)
+		assert.NotContains(t, createRecord.Required, field)
+	}
+	assert.True(t, createRecord.Properties["authority_party_id"].Nullable)
 	for _, name := range []string{"account_id", "authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", "amount_minor", "verified_on", "verified_revision", "retired_at"} {
 		assert.True(t, doc.Components.Schemas.Map()["TaxRecord"].Properties[name].Nullable, name)
 	}

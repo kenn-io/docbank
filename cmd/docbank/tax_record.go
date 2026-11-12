@@ -40,8 +40,8 @@ func (f *recordFlags) bind(cmd *cobra.Command, create bool) {
 	flags.StringVar(&f.amount, "amount", "", "exact decimal amount; direction must be payable, refundable, or nil")
 	flags.StringVar(&f.currency, "currency", "", "currency code")
 	flags.StringVar(&f.note, "note", "", "record note")
-	flags.BoolVar(&f.clearAuthority, "clear-authority", false, "clear authority")
 	if !create {
+		flags.BoolVar(&f.clearAuthority, "clear-authority", false, "clear authority")
 		flags.BoolVar(&f.clearYear, "clear-tax-year", false, "clear tax year")
 		flags.BoolVar(&f.clearStart, "clear-period-start", false, "clear period start")
 		flags.BoolVar(&f.clearEnd, "clear-period-end", false, "clear period end")
@@ -122,10 +122,7 @@ func (f *recordFlags) create(cmd *cobra.Command) (api.CreateTaxRecordRequest, er
 	if cmd.Flags().Changed("direction") && f.direction == "" {
 		return api.CreateTaxRecordRequest{}, usageError(errors.New("direction: unknown direction"))
 	}
-	if f.clearAuthority && cmd.Flags().Changed("authority") {
-		return api.CreateTaxRecordRequest{}, usageError(errors.New("cannot set and clear the same field"))
-	}
-	in := api.CreateTaxRecordRequest{Kind: f.kind, Title: f.title, FormCode: f.form, Direction: f.direction, Note: f.note, ClearAuthority: f.clearAuthority}
+	in := api.CreateTaxRecordRequest{Kind: f.kind, Title: f.title, FormCode: f.form, Direction: f.direction, Note: f.note}
 	flags := cmd.Flags()
 	if flags.Changed("account") {
 		in.AccountID = &f.account

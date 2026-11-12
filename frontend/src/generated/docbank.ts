@@ -1979,27 +1979,25 @@ export interface CreateTaxRecordRequest {
   /** @nullable */
   account_id?: string | null;
   /**
+     * At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.
      * @maxLength 32
      * @nullable
      */
   amount?: string | null;
   /** @nullable */
   authority_party_id?: string | null;
-  /**
-     * @maxLength 2
-     * @nullable
-     */
-  country?: string | null;
-  /**
-     * @maxLength 3
-     * @nullable
-     */
-  currency?: string | null;
+  /** @maxLength 2 */
+  country?: string;
+  /** @maxLength 3 */
+  currency?: string;
   direction?: CreateTaxRecordRequestDirection;
   /** @nullable */
   due_date?: string | null;
   filer_party_id?: string;
-  /** @maxLength 256 */
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
   form_code?: string;
   kind: CreateTaxRecordRequestKind;
   /**
@@ -2008,30 +2006,32 @@ export interface CreateTaxRecordRequest {
      * @nullable
      */
   lead_days?: number | null;
-  /** @maxLength 8192 */
+  /**
+     * At most 8192 UTF-8 bytes.
+     * @maxLength 8192
+     */
   note?: string;
   /** @nullable */
   period_end?: string | null;
   /** @nullable */
   period_start?: string | null;
-  /**
-     * @maxLength 6
-     * @nullable
-     */
-  subdivision?: string | null;
+  /** @maxLength 6 */
+  subdivision?: string;
   /**
      * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
      * @maxLength 256
-     * @nullable
      */
-  tax_kind?: string | null;
+  tax_kind?: string;
   /**
      * @minimum 1
      * @maximum 9999
      * @nullable
      */
   tax_year?: number | null;
-  /** @maxLength 1200 */
+  /**
+     * At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.
+     * @maxLength 1200
+     */
   title: string;
 }
 
@@ -5431,6 +5431,7 @@ export type PatchTaxRecordRequest = (unknown & ({
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
+     * At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.
      * @maxLength 32
      * @nullable
      */
@@ -5445,7 +5446,10 @@ export type PatchTaxRecordRequest = (unknown & ({
   /** @nullable */
   due_date?: string | null;
   filer_party_id?: string;
-  /** @maxLength 256 */
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
   form_code?: string;
   /**
      * @minimum 0
@@ -5453,7 +5457,10 @@ export type PatchTaxRecordRequest = (unknown & ({
      * @nullable
      */
   lead_days?: number | null;
-  /** @maxLength 8192 */
+  /**
+     * At most 8192 UTF-8 bytes.
+     * @maxLength 8192
+     */
   note?: string;
   /** @nullable */
   period_end?: string | null;
@@ -5472,7 +5479,67 @@ export type PatchTaxRecordRequest = (unknown & ({
      * @nullable
      */
   tax_year?: number | null;
-  /** @maxLength 1200 */
+  /**
+     * At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.
+     * @maxLength 1200
+     */
+  title?: string;
+})) | (unknown & ({
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.
+     * @maxLength 32
+     * @nullable
+     */
+  amount?: string | null;
+  /** @nullable */
+  authority_party_id?: string | null;
+  /** @maxLength 2 */
+  country?: string;
+  /** @maxLength 3 */
+  currency?: string;
+  direction?: PatchTaxRecordRequestDirection;
+  /** @nullable */
+  due_date?: string | null;
+  filer_party_id?: string;
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
+  form_code?: string;
+  /**
+     * @minimum 0
+     * @maximum 366
+     * @nullable
+     */
+  lead_days?: number | null;
+  /**
+     * At most 8192 UTF-8 bytes.
+     * @maxLength 8192
+     */
+  note?: string;
+  /** @nullable */
+  period_end?: string | null;
+  /** @nullable */
+  period_start?: string | null;
+  /** @maxLength 6 */
+  subdivision?: string;
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
+  tax_kind?: string;
+  /**
+     * @minimum 1
+     * @maximum 9999
+     * @nullable
+     */
+  tax_year?: number | null;
+  /**
+     * At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.
+     * @maxLength 1200
+     */
   title?: string;
 }));
 

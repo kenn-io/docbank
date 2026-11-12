@@ -58,9 +58,9 @@ type CreateTaxRecordRequest struct {
 	AuthorityPartyID *string `json:"authority_party_id,omitzero" nullable:"true" format:"uuid"`
 	Kind             string  `json:"kind"`
 	Title            string  `json:"title"`
-	Country          *string `json:"country,omitzero"`
-	Subdivision      *string `json:"subdivision,omitzero"`
-	TaxKind          *string `json:"tax_kind,omitzero"`
+	Country          *string `json:"country,omitzero" nullable:"false"`
+	Subdivision      *string `json:"subdivision,omitzero" nullable:"false"`
+	TaxKind          *string `json:"tax_kind,omitzero" nullable:"false"`
 	FormCode         string  `json:"form_code,omitzero"`
 	TaxYear          *int64  `json:"tax_year,omitzero" nullable:"true"`
 	PeriodStart      *string `json:"period_start,omitzero" nullable:"true"`
@@ -69,9 +69,8 @@ type CreateTaxRecordRequest struct {
 	LeadDays         *int64  `json:"lead_days,omitzero" nullable:"true"`
 	Direction        string  `json:"direction,omitzero"`
 	Amount           *string `json:"amount,omitzero" nullable:"true"`
-	Currency         *string `json:"currency,omitzero"`
+	Currency         *string `json:"currency,omitzero" nullable:"false"`
 	Note             string  `json:"note,omitzero"`
-	ClearAuthority   bool    `json:"-"`
 	present          map[string]bool
 }
 type PatchTaxRecordRequest struct {
@@ -121,21 +120,6 @@ func (p *CreateTaxRecordRequest) UnmarshalJSON(raw []byte) error {
 		p.present[k] = true
 	}
 	return nil
-}
-func (p CreateTaxRecordRequest) MarshalJSON() ([]byte, error) {
-	type fields CreateTaxRecordRequest
-	raw, err := json.Marshal(fields(p))
-	if err != nil {
-		return nil, err
-	}
-	var members map[string]jsontext.Value
-	if err = json.Unmarshal(raw, &members); err != nil {
-		return nil, err
-	}
-	if p.ClearAuthority {
-		members["authority_party_id"] = jsontext.Value("null")
-	}
-	return json.Marshal(members)
 }
 func (p *PatchTaxRecordRequest) UnmarshalJSON(raw []byte) error {
 	members, err := taxMembers(raw, taxRecordPatchMembers, taxRecordNullable...)
@@ -194,6 +178,16 @@ func (p CreateTaxRecordRequest) input() store.TaxRecordInput {
 	return store.TaxRecordInput{AccountID: p.AccountID, FilerPartyID: p.FilerPartyID, AuthorityPartyID: p.AuthorityPartyID, Kind: p.Kind, Title: p.Title, Country: p.Country, Subdivision: p.Subdivision, TaxKind: p.TaxKind, FormCode: p.FormCode, TaxYear: p.TaxYear, PeriodStart: p.PeriodStart, PeriodEnd: p.PeriodEnd, DueDate: p.DueDate, LeadDays: p.LeadDays, Direction: p.Direction, Amount: p.Amount, Currency: p.Currency, Note: p.Note, AuthoritySet: p.present["authority_party_id"]}
 }
 func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
+	for field, description := range map[string]string{
+		"title":     "At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.",
+		"form_code": "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.",
+		"note":      "At most 8192 UTF-8 bytes.",
+		"amount":    "At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.",
+	} {
+		if property := schema.Properties[field]; property != nil {
+			property.Description = description
+		}
+	}
 	for field, values := range map[string][]string{"kind": taxrecord.RecordKinds(), "direction": taxrecord.RecordDirections()} {
 		if property := schema.Properties[field]; property != nil {
 			property.Enum = nil
