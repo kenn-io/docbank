@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -35,7 +36,7 @@ type CreatePartyRequest struct {
 	DisplayName string  `json:"display_name"`
 	LegalName   string  `json:"legal_name,omitzero"`
 	Country     *string `json:"country,omitempty" nullable:"true"`
-	PersonID    *string `json:"person_id,omitempty" nullable:"true"`
+	PersonID    *string `json:"person_id,omitempty" nullable:"true" format:"uuid"`
 	Own         bool    `json:"own,omitzero"`
 }
 type PatchPartyRequest struct {
@@ -43,7 +44,7 @@ type PatchPartyRequest struct {
 	DisplayName                   *string `json:"display_name,omitzero" nullable:"false"`
 	LegalName                     *string `json:"legal_name,omitzero" nullable:"false"`
 	Country                       *string `json:"country,omitzero" nullable:"true"`
-	PersonID                      *string `json:"person_id,omitzero" nullable:"true"`
+	PersonID                      *string `json:"person_id,omitzero" nullable:"true" format:"uuid"`
 	Own                           *bool   `json:"own,omitzero" nullable:"false"`
 	ClearCountry                  bool    `json:"-"`
 	ClearPerson                   bool    `json:"-"`
@@ -68,7 +69,6 @@ func partyRequestSchema(schema *huma.Schema) *huma.Schema {
 	schema.Properties["display_name"].MinLength = new(1)
 	schema.Properties["display_name"].MaxLength = new(200)
 	schema.Properties["legal_name"].MaxLength = new(300)
-	schema.Properties["person_id"].Format = "uuid"
 	return schema
 }
 
@@ -107,7 +107,7 @@ func (p *PatchPartyRequest) UnmarshalJSON(raw []byte) error {
 	}
 	delete(members, "$schema")
 	if len(members) == 0 {
-		return fmt.Errorf("party patch must contain a field")
+		return errors.New("party patch must contain a field")
 	}
 	type fields PatchPartyRequest
 	var value fields

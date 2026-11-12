@@ -3,7 +3,6 @@ package daemonconn
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"go.kenn.io/docbank/internal/api"
@@ -66,7 +65,7 @@ func (c *Connection) CreateParty(ctx context.Context, input api.CreatePartyReque
 }
 func (c *Connection) UpdateParty(ctx context.Context, id string, revision int64, input api.PatchPartyRequest) (api.Party, error) {
 	if !validUUIDv4(id) || revision < 1 {
-		return api.Party{}, fmt.Errorf("invalid party ID or revision")
+		return api.Party{}, errors.New("invalid party ID or revision")
 	}
 	var response *http.Response
 	p, err := c.apiWithResponse(&response).UpdateParty(ctx, &apiclient.UpdatePartyRequestOptions{PathParams: &apiclient.UpdatePartyPath{PartyID: id}, Header: &apiclient.UpdatePartyHeaders{IfMatch: revisionIfMatch(revision)}, Body: &input})
@@ -77,7 +76,7 @@ func (c *Connection) UpdateParty(ctx context.Context, id string, revision int64,
 }
 func (c *Connection) RetireParty(ctx context.Context, id string, revision int64) (api.Party, error) {
 	if !validUUIDv4(id) || revision < 1 {
-		return api.Party{}, fmt.Errorf("invalid party ID or revision")
+		return api.Party{}, errors.New("invalid party ID or revision")
 	}
 	var response *http.Response
 	p, err := c.apiWithResponse(&response).RetireParty(ctx, &apiclient.RetirePartyRequestOptions{PathParams: &apiclient.RetirePartyPath{PartyID: id}, Header: &apiclient.RetirePartyHeaders{IfMatch: revisionIfMatch(revision)}})
