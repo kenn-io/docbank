@@ -572,10 +572,10 @@ func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
 	collection, err := s.BeginIngest(ctx, "cli", "Synthetic people collection")
 	require.NoError(t, err)
+	addCollectionMembership(t, s, collection, version.NodeID, "/synthetic/many-people.txt", nil)
 	label := "People collection"
 	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
 	require.NoError(t, err)
-	addCollectionMembership(t, s, collection, version.NodeID, "/synthetic/many-people.txt", nil)
 	profile := catalogProcessingProfile(t, false)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		return ensureProcessingProfileTx(ctx, tx, profile)
@@ -683,6 +683,7 @@ func TestRoleSearchNearCompilerBudgetWithRelations(t *testing.T) {
 	require.NoError(t, err)
 	collection, err := s.BeginIngest(ctx, "cli", "Synthetic budget collection")
 	require.NoError(t, err)
+	addCollectionMembership(t, s, collection, version.NodeID, "/synthetic/relation-budget.txt", nil)
 	label := "Budget collection"
 	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
 	require.NoError(t, err)
