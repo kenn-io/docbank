@@ -377,7 +377,7 @@
   }
 
   async function inspectCurrentImport(): Promise<void> {
-    if (!registered || running || planning || disabledReason) return;
+    if (!importID || !items.length || running || planning || disabledReason) return;
     planning = true;
     try {
       await inspectAndApply(importID, true);
@@ -811,7 +811,7 @@
           surface="soft"
           disabled={!selectedImport || running || planning || !!disabledReason}
           onclick={() =>
-            void (selectedImport === importID && registered
+            void (selectedImport === importID && items.length
               ? inspectCurrentImport()
               : inspectSavedImport())}><SearchIcon size="14" />Inspect import</Button
         >
