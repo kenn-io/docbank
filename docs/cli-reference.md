@@ -1579,7 +1579,6 @@ dry run — pass --run to delete
 ```
 
 Packed candidates are reported separately as stored bytes pending repack.
-After `gc --run`, the report names the repack command and points to its selection thresholds when packed bytes are pending.
 Removing their catalog authority does not reclaim the space inside an immutable
 pack. With `--run`, loose blob files are deleted first, then their metadata
 rows. Output separately reports removed blob records, reclaimed loose files,
