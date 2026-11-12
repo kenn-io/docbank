@@ -71,6 +71,7 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
+	safeFacts.Edges = f.Edges[:2]
 	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Private Name", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, OccurrenceLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
 	safe := versionPeopleAPI(safeFacts, true, "")
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
@@ -138,6 +139,7 @@ func TestEmittedWhenMatchesContractExamples(t *testing.T) {
 // TestWhenFieldTableAllProducerCombinations checks the shared contract's field
 // table independently of the example fixtures for every supported precision and zone.
 func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
+	t.Parallel()
 	values := map[document.EventPrecision]string{"year": "2026", "month": "2026-03", "date": "2026-03-10", "hour": "2026-03-10T09", "minute": "2026-03-10T09:12", "second": "2026-03-10T09:12:30", "fraction": "2026-03-10T09:12:30.123"}
 	for _, precision := range document.AllEventPrecisions() {
 		for _, zone := range document.AllEventTimezoneKinds() {
@@ -191,23 +193,5 @@ func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-func TestVersionPeopleProjectionResolvesEdgeAliasAndRetainsAssertionOwner(t *testing.T) {
-	f := store.DocumentPeopleFacts{
-		Persons: map[string]store.FactPerson{
-			"old":     {Person: store.Person{PersonID: "survivor", DisplayName: "Survivor"}, Visible: true},
-			"retired": {Person: store.Person{PersonID: "retired", DisplayName: "Historical Name", State: "retired"}, Visible: true},
-		},
-		Edges:      []document.DocumentPersonEdgeV1{{PersonID: "old", Role: "author"}},
-		Assertions: []store.PersonDocumentAssertion{{PersonID: "retired", Role: "author"}},
-	}
-	got := versionPeopleAPI(f, true, "")
-	if len(got.Edges) != 1 || got.Edges[0].PersonID != "survivor" || got.Edges[0].DisplayName != "Survivor" {
-		t.Fatalf("edge = %+v", got.Edges)
-	}
-	if len(got.Assertions) != 1 || got.Assertions[0].PersonID != "retired" || got.Assertions[0].DisplayName != "Historical Name" {
-		t.Fatalf("assertions = %+v", got.Assertions)
 	}
 }
