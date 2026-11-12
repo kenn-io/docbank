@@ -364,8 +364,10 @@ pruning preserve retention holds and related catalog state. Derivative cleanup
 covers purge previews, rendition and embedding collection, extracted-text and
 email cleanup, and explicit rebuild authorization. Primary blob packing,
 repacking, bounded GC catalog selection and exact physical cleanup receipts
-also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved query
-definition management use the native Store operations on both databases.
+also work with PostgreSQL metadata. Parties, tax account and initial-record
+lifecycle operations, tags, audited bulk tag edits, and saved query definition
+management use native Store operations on both databases. Tax mutations remain
+subject to the logical audit gate.
 Extracted source metadata, typed photo facts, and document-event evidence,
 publication, terminal attempts and rebuild receipts also use shared operations.
 Original-file rendition jobs include consent, resumable claims, artifact staging
@@ -559,6 +561,16 @@ GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, 
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
+GRANT INSERT, UPDATE(kind, display_name, display_name_folded, legal_name, country,
+    own, person_id, revision, updated_at, retired_at) ON documents.parties TO docbank_runtime;
+GRANT INSERT, UPDATE(identifier, cadence, period_note, due_note, lead_days, currency,
+    effective_start, effective_end, note, revision, updated_at, retired_at)
+    ON documents.tax_accounts TO docbank_runtime;
+GRANT INSERT, UPDATE(filer_party_id, authority_party_id, title, country, subdivision,
+    tax_kind, tax_kind_folded, form_code, tax_year, period_start, period_end, due_date,
+    lead_days, state, direction, amount_minor, currency, note, revision, updated_at, retired_at)
+    ON documents.tax_records TO docbank_runtime;
+GRANT INSERT, UPDATE(voided_at, void_reason) ON documents.tax_events TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
 GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
     display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;
@@ -1885,6 +1897,21 @@ do not expose a public PostgreSQL vault or qualify portable metadata import,
 collection snapshots, reporting,
 backup or restore.
 
+#### Parties
+
+Party create, read, list, edit and retirement use shared Store operations on
+both databases. Shared scenarios cover duplicate admission, filters, linked
+person retirement and merge, and revision fences. A merge moves linked parties
+to the survivor and advances their revisions in the same transaction. These
+internal operations do not expose a PostgreSQL-backed public vault.
+
+Party country admission uses the assigned ISO 3166-1 alpha-2 list. The x/text
+`language.Region.IsCountry` contract includes nonstandard CLDR and potentially
+private-use regions, so it is not an equivalent replacement for that list. Tax
+jurisdiction admission instead follows its own `ParseRegion`/`IsCountry` or
+`ZZ` contract and may include CLDR regions, excluding the `UN` and `EZ` groups
+that x/text omits from its group classification.
+
 #### Tags and saved definitions
 
 Tag creation, assignment, rename and deletion use the same Store methods on
@@ -1910,7 +1937,9 @@ mutations remain unavailable after audit enrollment, as on SQLite. Deleting a
 definition cascades retained run receipts through the definition index; this
 does not qualify saved-query execution or run publication on PostgreSQL.
 
-The `organization` backend scenarios cover native mutations, bulk replay and
+The `organization` backend scenarios include party lifecycle and reference
+checks on both backends. Their count is derived from the registry by the
+coverage report. Other scenarios cover native mutations, bulk replay and
 rollback, concurrent saved-definition edits, snapshot consistency and photo
 export effects. Mailbox jobs and settled photo receipts are retained fixtures;
 their producers remain outside this qualification.

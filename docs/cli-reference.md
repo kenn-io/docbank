@@ -91,6 +91,52 @@ does not start a local daemon. Commands never open the vault directly. `docbank 
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
 
+## docbank tax account
+
+```text
+docbank tax account add --filer ID --country CODE --tax-kind KIND --cadence CADENCE --currency CODE [flags]
+docbank tax account list [flags]
+docbank tax account show <account-id> [--reveal] [--json]
+docbank tax account edit <account-id> [flags]
+docbank tax account retire <account-id> [--revision N] [--json]
+```
+
+`tax account add` accepts `--filer`, `--authority`, `--country`, `--subdivision`,
+`--tax-kind`, `--identifier`, `--cadence`, `--period-note`, `--due-note`,
+`--lead-days`, `--currency`, `--effective-start`, `--effective-end`, and
+`--note`. Filer, country, tax kind, cadence, and currency are required.
+`list` accepts `--filer`, `--country`, `--taxkind`, `--include-retired`,
+`--limit`, and `--offset`. `show <account-id>` alone accepts `--reveal`.
+`edit <account-id>` accepts editable fields and `--clear-effective-start` or
+`--clear-effective-end`; `retire <account-id>` makes an account read-only.
+Edit and retire accept `--revision`; without it they inspect once and send one
+fenced write. `--json` is available on all account commands. See
+[Tax accounts](usage/tax-records.md) for masking and an example workflow.
+
+## docbank tax record
+
+```text
+docbank tax record add --kind KIND --title TITLE [flags]
+docbank tax record list [flags]
+docbank tax record show <record-id> [--reveal] [--json]
+docbank tax record edit <record-id> [flags]
+docbank tax record retire <record-id> [--revision N] [--json]
+docbank tax record advance <record-id> --state STATE --occurred-on DATE [flags]
+docbank tax event add <record-id> --kind note --occurred-on DATE [flags]
+docbank tax event void <record-id> <event-id> --reason REASON [--revision N] [--json]
+```
+
+Add accepts `--account`, `--filer`, `--authority`,
+`--kind`, `--title`, `--country`, `--subdivision`, `--tax-kind`, `--form-code`,
+`--tax-year`, `--period-start`, `--period-end`, `--due-date`, `--lead-days`,
+`--direction`, `--amount`, `--currency`, and `--note`. Kind and title are
+required. List accepts `--filer`, `--country`, `--taxkind`, `--year`, `--state`,
+`--kind`, `--include-retired`, `--limit`, and `--offset`. Edit accepts the
+editable fields and their nullable `--clear-*` flags; account and kind cannot
+be edited. Edit and retire accept `--revision`; otherwise they inspect once and
+send one fenced write. Advance and event writes also accept `--revision` and never retry; show reveals event references only with `--reveal`. All record and event commands accept `--json`. See
+[Tax records](usage/tax-records.md) for money and identity rules.
+
 ## docbank changes
 
 ```text
@@ -886,6 +932,18 @@ fails with `stale_revision`. Human output identifies the source, new version,
 resulting revision, size, and hash. `--json` returns the node, new version, and
 complete source-version receipt. Repeating the same historical choice later is
 valid and records another operation.
+
+## docbank party
+
+```text
+docbank party list [--kind person|organization] [--own=true|false] [--include-retired] [--limit <n>] [--offset <n>] [--json]
+docbank party show <party-id> [--json]
+docbank party create <display-name> [--kind person|organization] [--legal-name <name>] [--country <code>] [--person <person-id>] [--own] [--json]
+docbank party edit <party-id> [--name <name>] [--kind <kind>] [--legal-name <name>] [--country <code> | --clear-country] [--person <person-id> | --clear-person] [--own=true|false] [--revision <n>] [--json]
+docbank party retire <party-id> [--revision <n>] [--json]
+```
+
+Manage reusable entities and counterparties. List excludes retired parties by default. Edit and retire read the current revision immediately before writing unless `--revision` supplies a positive expected revision. A stale revision is refused. See [Contracts](usage/contracts.md) for name matching and person links.
 
 ## docbank tag
 

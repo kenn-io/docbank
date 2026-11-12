@@ -1,0 +1,205 @@
+package daemonconn
+
+import (
+	"encoding/json/v2"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
+)
+
+const taxRecordFixture = `{"record_id":"11111111-1111-4111-8111-111111111111","filer_party_id":"22222222-2222-4222-8222-222222222222","account_id":null,"authority_party_id":null,"subdivision":"","form_code":"","tax_year":null,"period_start":null,"period_end":null,"due_date":null,"lead_days":null,"amount_minor":null,"currency":"","verified_on":null,"verified_revision":null,"verification_note":"","note":"","retired_at":null,"kind":"filing","title":"Example","country":"ZZ","tax_kind":"Example","state":"expected","direction":"unknown","verification":"unverified","revision":1,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","$schema":"https://example.com/schema","extra":true}`
+
+func TestTaxRecordClientContracts(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tax/records" {
+			q := r.URL.Query()
+			assert.Equal(t, "2026", q.Get("year"))
+			assert.Equal(t, "filing", q.Get("kind"))
+			assert.Equal(t, "expected", q.Get("state"))
+			assert.Equal(t, "zz", q.Get("country"))
+			_, _ = w.Write([]byte(`{"items":[` + taxRecordFixture + `],"limit":1,"offset":0}`))
+			return
+		}
+		assert.Equal(t, "/api/v1/tax/records/"+id, r.URL.Path)
+		assert.Equal(t, `"2"`, r.Header.Get("If-Match"))
+		w.Header().Set("ETag", `"3"`)
+		_, _ = w.Write([]byte(strings.Replace(taxRecordFixture, `"revision":1`, `"revision":3`, 1)))
+	}))
+	t.Cleanup(server.Close)
+	c := New(server.URL, "")
+	page, err := c.TaxRecords(t.Context(), "", "zz", "", new(int64(2026)), "expected", "filing", false, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	_, err = c.UpdateTaxRecord(t.Context(), id, 2, api.PatchTaxRecordRequest{ClearAuthority: true, ClearTaxYear: true, ClearPeriodStart: true, ClearDueDate: true, ClearLeadDays: true, ClearAmount: true})
+	require.NoError(t, err)
+}
+func TestTaxRecordClientRejectsUntrustedResponses(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct{ body, etag string }{{taxRecordFixture, `"2"`}, {strings.Replace(taxRecordFixture, id, "invalid", 1), `"1"`}, {strings.Replace(taxRecordFixture, `"kind":"filing"`, `"kind":"invalid"`, 1), `"1"`}, {strings.Replace(taxRecordFixture, `"state":"expected"`, `"state":"invalid"`, 1), `"1"`}, {strings.Replace(taxRecordFixture, `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"invalid"`, 1), `"1"`}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("ETag", tc.etag)
+			_, _ = w.Write([]byte(strings.TrimSuffix(tc.body, "}") + `,"events":[]}`))
+		}))
+		_, err := New(server.URL, "").TaxRecord(t.Context(), id, false)
+		require.Error(t, err)
+		server.Close()
+	}
+}
+func TestTaxRecordMutationHint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"wrong"`)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(taxRecordFixture))
+	}))
+	t.Cleanup(server.Close)
+	_, err := New(server.URL, "").CreateTaxRecord(t.Context(), api.CreateTaxRecordRequest{Kind: "filing", Title: "Example"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inspect the record")
+	assert.NotContains(t, err.Error(), "account")
+	err = taxMutationFailure(&responseDecodeError{err: errors.New("private-synthetic")}, "record")
+	assert.Contains(t, err.Error(), "inspect the record")
+	assert.NotContains(t, err.Error(), "private-synthetic")
+}
+
+func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
+	t.Parallel()
+	const id = "11111111-1111-4111-8111-111111111111"
+	fields := []string{"record_id", "account_id", "filer_party_id", "authority_party_id", "kind", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "state", "direction", "amount_minor", "currency", "verification", "verified_on", "verified_revision", "verification_note", "note", "revision", "created_at", "updated_at", "retired_at"}
+	nullable := map[string]bool{"account_id": true, "authority_party_id": true, "tax_year": true, "period_start": true, "period_end": true, "due_date": true, "lead_days": true, "amount_minor": true, "verified_on": true, "verified_revision": true, "retired_at": true}
+	for _, field := range fields {
+		for _, null := range []bool{false, true} {
+			if null && nullable[field] {
+				continue
+			}
+			t.Run(field+strconv.FormatBool(null), func(t *testing.T) {
+				t.Parallel()
+				var members map[string]any
+				require.NoError(t, json.Unmarshal([]byte(taxRecordFixture), &members))
+				if null {
+					members[field] = nil
+				} else {
+					delete(members, field)
+				}
+				body, err := json.Marshal(members)
+				require.NoError(t, err)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("ETag", `"1"`)
+					_, _ = w.Write(append(body[:len(body)-1], []byte(`,"events":[]}`)...))
+				}))
+				t.Cleanup(server.Close)
+				c := New(server.URL, "")
+				_, err = c.TaxRecord(t.Context(), id, false)
+				require.True(t, IsResponseDecodeError(err))
+			})
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"items":[{}],"limit":1,"offset":0}`))
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/records" {
+			w.WriteHeader(http.StatusCreated)
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+	c := New(server.URL, "")
+	_, err := c.TaxRecords(t.Context(), "", "", "", nil, "", "", false, 1, 0)
+	require.True(t, IsResponseDecodeError(err))
+	_, err = c.CreateTaxRecord(t.Context(), api.CreateTaxRecordRequest{})
+	require.True(t, IsResponseDecodeError(err))
+	_, err = c.UpdateTaxRecord(t.Context(), id, 1, api.PatchTaxRecordRequest{})
+	require.True(t, IsResponseDecodeError(err))
+	_, err = c.RetireTaxRecord(t.Context(), id, 1)
+	require.True(t, IsResponseDecodeError(err))
+
+	// The same complete record is too large as a single receipt but fits a page.
+	padded := strings.TrimSuffix(taxRecordFixture, "}") + `,"padding":"` + strings.Repeat("x", maxTaxSingleReceiptBytes) + `"}`
+	response := func(body string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(body))} }
+	singleResponse := response(padded)
+	t.Cleanup(func() { assert.NoError(t, singleResponse.Body.Close()) })
+	_, err = decodeTaxRecordReceipt(t.Context(), singleResponse, false)
+	require.True(t, IsResponseDecodeError(err))
+	pageResponse := response(`{"items":[` + padded + `],"limit":1,"offset":0}`)
+	t.Cleanup(func() { assert.NoError(t, pageResponse.Body.Close()) })
+	page, err := decodeTaxRecordReceipt(t.Context(), pageResponse, true)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	for _, body := range []string{`{}`, `{"items":[],"offset":0}`, `{"items":[],"limit":1}`, `{"items":null,"limit":1,"offset":0}`, `{"items":[],"limit":null,"offset":0}`, `{"items":[],"limit":1,"offset":null}`} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := New(server.URL, "").TaxRecords(t.Context(), "", "", "", nil, "", "", false, 1, 0)
+			require.True(t, IsResponseDecodeError(err))
+		})
+	}
+}
+
+func TestTaxRecordMutationReceipts(t *testing.T) {
+	t.Parallel()
+	const id = "11111111-1111-4111-8111-111111111111"
+	for _, tc := range []struct {
+		name, body, etag string
+		op               string
+		valid            bool
+	}{
+		{"create valid", taxRecordFixture, `"1"`, "create", true},
+		{"create wrong revision", strings.Replace(taxRecordFixture, `"revision":1`, `"revision":2`, 1), `"2"`, "create", false},
+		{"create retired", strings.Replace(taxRecordFixture, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1), `"1"`, "create", false},
+		{"edit valid", strings.Replace(taxRecordFixture, `"revision":1`, `"revision":2`, 1), `"2"`, "edit", true},
+		{"edit stale", taxRecordFixture, `"1"`, "edit", false},
+		{"edit retired", strings.Replace(strings.Replace(taxRecordFixture, `"revision":1`, `"revision":2`, 1), `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1), `"2"`, "edit", false},
+		{"retire valid", strings.Replace(strings.Replace(taxRecordFixture, `"revision":1`, `"revision":2`, 1), `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1), `"2"`, "retire", true},
+		{"retire active", strings.Replace(taxRecordFixture, `"revision":1`, `"revision":2`, 1), `"2"`, "retire", false},
+		{"retire stale", strings.Replace(taxRecordFixture, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1), `"1"`, "retire", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", tc.etag)
+				if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/records" {
+					w.WriteHeader(http.StatusCreated)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+			c := New(server.URL, "")
+			var err error
+			switch tc.op {
+			case "create":
+				_, err = c.CreateTaxRecord(t.Context(), api.CreateTaxRecordRequest{})
+			case "edit":
+				_, err = c.UpdateTaxRecord(t.Context(), id, 1, api.PatchTaxRecordRequest{})
+			case "retire":
+				_, err = c.RetireTaxRecord(t.Context(), id, 1)
+			}
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.True(t, IsResponseDecodeError(err))
+			}
+		})
+	}
+}

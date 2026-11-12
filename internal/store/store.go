@@ -50,11 +50,14 @@ type Store struct {
 	photoHiddenSessions    map[string]time.Time
 }
 
+const partiesStorageSchemaVersion = 49
+const taxStorageSchemaVersion = 50
+
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 48
+const currentStorageSchemaVersion = 51
 const auditEventSequenceStorageSchemaVersion = 46
 const photoSuggestionsStorageSchemaVersion = 43
 const photoFaceDetectionStorageSchemaVersion = 43
