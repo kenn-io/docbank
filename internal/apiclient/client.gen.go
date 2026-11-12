@@ -16007,10 +16007,15 @@ func (c *Client) CreateTaxRecord(ctx context.Context, options *CreateTaxRecordRe
 // GetTaxRecord Inspect a tax record
 func (c *Client) GetTaxRecord(ctx context.Context, options *GetTaxRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTaxRecordResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"reveal": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}",
-		Method:     "GET",
-		Options:    options,
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -16088,6 +16093,147 @@ func (c *Client) UpdateTaxRecord(ctx context.Context, options *UpdateTaxRecordRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AdvanceTaxRecord Advance a tax record
+func (c *Client) AdvanceTaxRecord(ctx context.Context, options *AdvanceTaxRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AdvanceTaxRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}/advance",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AdvanceTaxRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AdvanceTaxRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AdvanceTaxRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AdvanceTaxRecordErrorResponse](resp, "AdvanceTaxRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}/advance")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AddTaxEvent Add a tax record note
+func (c *Client) AddTaxEvent(ctx context.Context, options *AddTaxEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddTaxEventResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}/events",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AddTaxEventResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(AddTaxEventResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AddTaxEventResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AddTaxEventErrorResponse](resp, "AddTaxEventErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// VoidTaxEvent Void a tax event
+func (c *Client) VoidTaxEvent(ctx context.Context, options *VoidTaxEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*VoidTaxEventResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}/events/{event_id}/void",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*VoidTaxEventResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(VoidTaxEventResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "VoidTaxEventResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[VoidTaxEventErrorResponse](resp, "VoidTaxEventErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}/events/{event_id}/void")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -27559,6 +27705,7 @@ func (o *CreateTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
 // GetTaxRecordRequestOptions is the options needed to make a request to GetTaxRecord.
 type GetTaxRecordRequestOptions struct {
 	PathParams *GetTaxRecordPath
+	Query      *GetTaxRecordQuery
 }
 
 // GetPathParams returns the path params as a map.
@@ -27574,7 +27721,13 @@ func (o *GetTaxRecordRequestOptions) GetPathParams() (map[string]any, error) {
 
 // GetQuery returns the query params as a map.
 func (o *GetTaxRecordRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
@@ -27620,6 +27773,132 @@ func (o *UpdateTaxRecordRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *UpdateTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AdvanceTaxRecordRequestOptions is the options needed to make a request to AdvanceTaxRecord.
+type AdvanceTaxRecordRequestOptions struct {
+	PathParams *AdvanceTaxRecordPath
+	Body       *AdvanceTaxRecordBody
+	Header     *AdvanceTaxRecordHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AdvanceTaxRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AdvanceTaxRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AdvanceTaxRecordRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AdvanceTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AddTaxEventRequestOptions is the options needed to make a request to AddTaxEvent.
+type AddTaxEventRequestOptions struct {
+	PathParams *AddTaxEventPath
+	Body       *AddTaxEventBody
+	Header     *AddTaxEventHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AddTaxEventRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AddTaxEventRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AddTaxEventRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AddTaxEventRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// VoidTaxEventRequestOptions is the options needed to make a request to VoidTaxEvent.
+type VoidTaxEventRequestOptions struct {
+	PathParams *VoidTaxEventPath
+	Body       *VoidTaxEventBody
+	Header     *VoidTaxEventHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *VoidTaxEventRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *VoidTaxEventRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *VoidTaxEventRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *VoidTaxEventRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -28667,6 +28946,18 @@ type UpdateTaxRecordHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type AdvanceTaxRecordHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type AddTaxEventHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type VoidTaxEventHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type RetireTaxRecordHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -29327,6 +29618,19 @@ type UpdateTaxRecordPath struct {
 	RecordID string `json:"record_id"`
 }
 
+type AdvanceTaxRecordPath struct {
+	RecordID string `json:"record_id"`
+}
+
+type AddTaxEventPath struct {
+	RecordID string `json:"record_id"`
+}
+
+type VoidTaxEventPath struct {
+	RecordID string `json:"record_id"`
+	EventID  string `json:"event_id"`
+}
+
 type RetireTaxRecordPath struct {
 	RecordID string `json:"record_id"`
 }
@@ -29751,6 +30055,12 @@ type UpdateTaxAccountBody = PatchTaxAccountRequest
 type CreateTaxRecordBody = CreateTaxRecordRequest
 
 type UpdateTaxRecordBody = PatchTaxRecordRequest
+
+type AdvanceTaxRecordBody = AdvanceTaxRecordRequest
+
+type AddTaxEventBody = AddTaxEventRequest
+
+type VoidTaxEventBody = VoidTaxEventRequest
 
 type GetTextOutlineBody = TextOutlineRequest
 
@@ -30195,6 +30505,10 @@ type ListTaxRecordsQuery struct {
 	IncludeRetired *bool   `json:"include_retired,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	Offset         *int64  `json:"offset,omitempty"`
+}
+
+type GetTaxRecordQuery struct {
+	Reveal *bool `json:"reveal,omitempty"`
 }
 
 type ListTrashQuery struct {
@@ -31749,13 +32063,25 @@ type CreateTaxRecordResponse = api.TaxRecord
 
 type CreateTaxRecordErrorResponse = Error
 
-type GetTaxRecordResponse = api.TaxRecord
+type GetTaxRecordResponse = api.TaxRecordDetail
 
 type GetTaxRecordErrorResponse = Error
 
 type UpdateTaxRecordResponse = api.TaxRecord
 
 type UpdateTaxRecordErrorResponse = Error
+
+type AdvanceTaxRecordResponse = api.TaxEventMutation
+
+type AdvanceTaxRecordErrorResponse = Error
+
+type AddTaxEventResponse = api.TaxEventMutation
+
+type AddTaxEventErrorResponse = Error
+
+type VoidTaxEventResponse = api.TaxEventMutation
+
+type VoidTaxEventErrorResponse = Error
 
 type RetireTaxRecordResponse = api.TaxRecord
 
@@ -31910,6 +32236,10 @@ type HealthResponse struct {
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	Version       string `json:"version"`
 }
+
+type AddTaxEventRequest = api.AddTaxEventRequest
+
+type AdvanceTaxRecordRequest = api.AdvanceTaxRecordRequest
 
 type AssignTagPathRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -33544,7 +33874,13 @@ type TaxAccount = api.TaxAccount
 
 type TaxAccountPage = api.TaxAccountPage
 
+type TaxEvent = api.TaxEvent
+
+type TaxEventMutation = api.TaxEventMutation
+
 type TaxRecord = api.TaxRecord
+
+type TaxRecordDetail = api.TaxRecordDetail
 
 type TaxRecordPage = api.TaxRecordPage
 
@@ -33616,6 +33952,8 @@ type VerifyReport = api.VerifyReport
 type VersionPruneReport = api.VersionPruneReport
 
 type VersionPruneRequest = api.VersionPruneRequest
+
+type VoidTaxEventRequest = api.VoidTaxEventRequest
 
 type VolumeLimits = bundle.VolumeLimits
 

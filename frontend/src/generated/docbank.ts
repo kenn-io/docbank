@@ -36,6 +36,44 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface AddTaxEventRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @maxLength 32
+     * @nullable
+     */
+  amount?: string | null;
+  /** @maxLength 3 */
+  currency?: string;
+  kind: string;
+  /** @maxLength 8192 */
+  note?: string;
+  /** @maxLength 10 */
+  occurred_on: string;
+  /** @maxLength 256 */
+  reference?: string;
+}
+
+export interface AdvanceTaxRecordRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @maxLength 32
+     * @nullable
+     */
+  amount?: string | null;
+  /** @maxLength 3 */
+  currency?: string;
+  /** @maxLength 8192 */
+  note?: string;
+  /** @maxLength 10 */
+  occurred_on: string;
+  /** @maxLength 256 */
+  reference?: string;
+  state: string;
+}
+
 export interface AssignTagPathRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -9145,6 +9183,24 @@ export interface TaxAccountPage {
   offset: number;
 }
 
+export interface TaxEvent {
+  /** @nullable */
+  amount_minor: number | null;
+  currency: string;
+  event_id: string;
+  kind: string;
+  note: string;
+  occurred_on: string;
+  record_id: string;
+  record_revision: number;
+  recorded_at: string;
+  reference: string;
+  sets_state: string;
+  void_reason: string;
+  /** @nullable */
+  voided_at: string | null;
+}
+
 export interface TaxRecord {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -9160,6 +9216,59 @@ export interface TaxRecord {
   direction: string;
   /** @nullable */
   due_date: string | null;
+  filer_party_id: string;
+  form_code: string;
+  kind: string;
+  /** @nullable */
+  lead_days: number | null;
+  note: string;
+  /** @nullable */
+  period_end: string | null;
+  /** @nullable */
+  period_start: string | null;
+  record_id: string;
+  /** @nullable */
+  retired_at: string | null;
+  revision: number;
+  state: string;
+  subdivision: string;
+  /** @maxLength 64 */
+  tax_kind: string;
+  /** @nullable */
+  tax_year: number | null;
+  title: string;
+  updated_at: string;
+  verification: string;
+  verification_note: string;
+  /** @nullable */
+  verified_on: string | null;
+  /** @nullable */
+  verified_revision: number | null;
+}
+
+export interface TaxEventMutation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  event: TaxEvent;
+  record: TaxRecord;
+}
+
+export interface TaxRecordDetail {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  account_id: string | null;
+  /** @nullable */
+  amount_minor: number | null;
+  /** @nullable */
+  authority_party_id: string | null;
+  country: string;
+  created_at: string;
+  currency: string;
+  direction: string;
+  /** @nullable */
+  due_date: string | null;
+  events: TaxEvent[];
   filer_party_id: string;
   form_code: string;
   kind: string;
@@ -9617,6 +9726,13 @@ export interface VersionPruneRequest {
      * @maxItems 1000
      */
   version_ids?: string[];
+}
+
+export interface VoidTaxEventRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 8192 */
+  reason: string;
 }
 
 export interface WatchedInbox {
@@ -10971,7 +11087,23 @@ limit?: number;
 offset?: number;
 };
 
+export type GetTaxRecordParams = {
+reveal?: boolean;
+};
+
 export type UpdateTaxRecordHeaders = {
+'If-Match': string;
+};
+
+export type AdvanceTaxRecordHeaders = {
+'If-Match': string;
+};
+
+export type AddTaxEventHeaders = {
+'If-Match': string;
+};
+
+export type VoidTaxEventHeaders = {
 'If-Match': string;
 };
 
@@ -22669,20 +22801,29 @@ return sessionJSON<TaxRecord>(getCreateTaxRecordUrl(),
 
 
 
-export const getGetTaxRecordUrl = (recordId: string,) => {
+export const getGetTaxRecordUrl = (recordId: string,
+    params?: GetTaxRecordParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/tax/records/${encodeURIComponent(String(recordId))}`
+  return stringifiedParams.length > 0 ? `/api/v1/tax/records/${encodeURIComponent(String(recordId))}?${stringifiedParams}` : `/api/v1/tax/records/${encodeURIComponent(String(recordId))}`
 }
 
 /**
  * @summary Inspect a tax record
  */
-export const getTaxRecord = async (recordId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxRecord> => {
+export const getTaxRecord = async (recordId: string,
+    params?: GetTaxRecordParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxRecordDetail> => {
 
-  return sessionJSON<TaxRecord>(getGetTaxRecordUrl(recordId),
+  return sessionJSON<TaxRecordDetail>(getGetTaxRecordUrl(recordId,params),
   {
     ...options,
     method: 'GET'
@@ -22728,6 +22869,128 @@ return sessionJSON<TaxRecord>(getUpdateTaxRecordUrl(recordId),
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(patchTaxRecordRequest)
+  }
+);}
+
+
+
+export const getAdvanceTaxRecordUrl = (recordId: string,) => {
+
+
+
+
+  return `/api/v1/tax/records/${encodeURIComponent(String(recordId))}/advance`
+}
+
+/**
+ * @summary Advance a tax record
+ */
+export const advanceTaxRecord = async (recordId: string,
+    advanceTaxRecordRequest: NonReadonly<AdvanceTaxRecordRequest>,
+    headers: AdvanceTaxRecordHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxEventMutation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxEventMutation>(getAdvanceTaxRecordUrl(recordId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(advanceTaxRecordRequest)
+  }
+);}
+
+
+
+export const getAddTaxEventUrl = (recordId: string,) => {
+
+
+
+
+  return `/api/v1/tax/records/${encodeURIComponent(String(recordId))}/events`
+}
+
+/**
+ * @summary Add a tax record note
+ */
+export const addTaxEvent = async (recordId: string,
+    addTaxEventRequest: NonReadonly<AddTaxEventRequest>,
+    headers: AddTaxEventHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxEventMutation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxEventMutation>(getAddTaxEventUrl(recordId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(addTaxEventRequest)
+  }
+);}
+
+
+
+export const getVoidTaxEventUrl = (recordId: string,
+    eventId: string,) => {
+
+
+
+
+  return `/api/v1/tax/records/${encodeURIComponent(String(recordId))}/events/${encodeURIComponent(String(eventId))}/void`
+}
+
+/**
+ * @summary Void a tax event
+ */
+export const voidTaxEvent = async (recordId: string,
+    eventId: string,
+    voidTaxEventRequest: NonReadonly<VoidTaxEventRequest>,
+    headers: VoidTaxEventHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxEventMutation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxEventMutation>(getVoidTaxEventUrl(recordId,eventId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(voidTaxEventRequest)
   }
 );}
 

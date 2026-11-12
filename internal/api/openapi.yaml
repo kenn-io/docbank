@@ -1,5 +1,79 @@
 components:
   schemas:
+    AddTaxEventRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AddTaxEventRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        amount:
+          maxLength: 32
+          type:
+            - string
+            - "null"
+        currency:
+          maxLength: 3
+          type: string
+        kind:
+          type: string
+        note:
+          maxLength: 8192
+          type: string
+        occurred_on:
+          maxLength: 10
+          type: string
+        reference:
+          maxLength: 256
+          type: string
+      required:
+        - kind
+        - occurred_on
+      type: object
+      x-go-type: api.AddTaxEventRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    AdvanceTaxRecordRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AdvanceTaxRecordRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        amount:
+          maxLength: 32
+          type:
+            - string
+            - "null"
+        currency:
+          maxLength: 3
+          type: string
+        note:
+          maxLength: 8192
+          type: string
+        occurred_on:
+          maxLength: 10
+          type: string
+        reference:
+          maxLength: 256
+          type: string
+        state:
+          type: string
+      required:
+        - state
+        - occurred_on
+      type: object
+      x-go-type: api.AdvanceTaxRecordRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     AssignTagPathRequest:
       additionalProperties: false
       properties:
@@ -21627,6 +21701,84 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TaxEvent:
+      additionalProperties: false
+      properties:
+        amount_minor:
+          format: int64
+          type:
+            - integer
+            - "null"
+        currency:
+          type: string
+        event_id:
+          format: uuid
+          type: string
+        kind:
+          type: string
+        note:
+          type: string
+        occurred_on:
+          type: string
+        record_id:
+          format: uuid
+          type: string
+        record_revision:
+          format: int64
+          type: integer
+        recorded_at:
+          type: string
+        reference:
+          type: string
+        sets_state:
+          type: string
+        void_reason:
+          type: string
+        voided_at:
+          type:
+            - string
+            - "null"
+      required:
+        - event_id
+        - record_id
+        - kind
+        - occurred_on
+        - sets_state
+        - amount_minor
+        - currency
+        - reference
+        - note
+        - recorded_at
+        - voided_at
+        - void_reason
+        - record_revision
+      type: object
+      x-go-type: api.TaxEvent
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxEventMutation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxEventMutation.json
+          format: uri
+          readOnly: true
+          type: string
+        event:
+          $ref: "#/components/schemas/TaxEvent"
+        record:
+          $ref: "#/components/schemas/TaxRecord"
+      required:
+        - record
+        - event
+      type: object
+      x-go-type: api.TaxEventMutation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TaxRecord:
       additionalProperties: false
       properties:
@@ -21753,6 +21905,140 @@ components:
         - retired_at
       type: object
       x-go-type: api.TaxRecord
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxRecordDetail:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxRecordDetail.json
+          format: uri
+          readOnly: true
+          type: string
+        account_id:
+          type:
+            - string
+            - "null"
+        amount_minor:
+          format: int64
+          type:
+            - integer
+            - "null"
+        authority_party_id:
+          type:
+            - string
+            - "null"
+        country:
+          type: string
+        created_at:
+          type: string
+        currency:
+          type: string
+        direction:
+          type: string
+        due_date:
+          type:
+            - string
+            - "null"
+        events:
+          items:
+            $ref: "#/components/schemas/TaxEvent"
+          type: array
+        filer_party_id:
+          type: string
+        form_code:
+          type: string
+        kind:
+          type: string
+        lead_days:
+          format: int64
+          type:
+            - integer
+            - "null"
+        note:
+          type: string
+        period_end:
+          type:
+            - string
+            - "null"
+        period_start:
+          type:
+            - string
+            - "null"
+        record_id:
+          format: uuid
+          type: string
+        retired_at:
+          type:
+            - string
+            - "null"
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+        subdivision:
+          type: string
+        tax_kind:
+          maxLength: 64
+          type: string
+        tax_year:
+          format: int64
+          type:
+            - integer
+            - "null"
+        title:
+          type: string
+        updated_at:
+          type: string
+        verification:
+          type: string
+        verification_note:
+          type: string
+        verified_on:
+          type:
+            - string
+            - "null"
+        verified_revision:
+          format: int64
+          type:
+            - integer
+            - "null"
+      required:
+        - events
+        - record_id
+        - account_id
+        - filer_party_id
+        - authority_party_id
+        - kind
+        - title
+        - country
+        - subdivision
+        - tax_kind
+        - form_code
+        - tax_year
+        - period_start
+        - period_end
+        - due_date
+        - lead_days
+        - state
+        - direction
+        - amount_minor
+        - currency
+        - verification
+        - verified_on
+        - verified_revision
+        - verification_note
+        - note
+        - revision
+        - created_at
+        - updated_at
+        - retired_at
+      type: object
+      x-go-type: api.TaxRecordDetail
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -22782,6 +23068,26 @@ components:
           uniqueItems: true
       type: object
       x-go-type: api.VersionPruneRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    VoidTaxEventRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/VoidTaxEventRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        reason:
+          maxLength: 8192
+          type: string
+      required:
+        - reason
+      type: object
+      x-go-type: api.VoidTaxEventRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -34171,12 +34477,17 @@ paths:
           required: true
           schema:
             type: string
+        - explode: false
+          in: query
+          name: reveal
+          schema:
+            type: boolean
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaxRecord"
+                $ref: "#/components/schemas/TaxRecordDetail"
           description: OK
           headers:
             Cache-Control:
@@ -34232,6 +34543,134 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Edit a tax record
+  /api/v1/tax/records/{record_id}/advance:
+    post:
+      operationId: advanceTaxRecord
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdvanceTaxRecordRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEventMutation"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Advance a tax record
+  /api/v1/tax/records/{record_id}/events:
+    post:
+      operationId: addTaxEvent
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTaxEventRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEventMutation"
+          description: Created
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Add a tax record note
+  /api/v1/tax/records/{record_id}/events/{event_id}/void:
+    post:
+      operationId: voidTaxEvent
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: event_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoidTaxEventRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEventMutation"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Void a tax event
   /api/v1/tax/records/{record_id}/retire:
     post:
       operationId: retireTaxRecord
