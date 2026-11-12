@@ -5,12 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
-	"uuid"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/answer"
@@ -107,18 +105,11 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 }
 
 func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
-	vaultID, err := uuid.Parse(fence.VaultUID)
-	if err != nil {
-		return api.CoverageReport{}, fmt.Errorf("parsing coverage vault ID: %w", err)
-	}
-	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
-		Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs,
-	}})
+	report, err := readProcessingCoverage(ctx, processing.PDFTextProfileName, fence, func(ctx context.Context, options *apiclient.GetDocumentProcessingCoverageRequestOptions) (*api.CoverageReport, error) {
+		return c.API().GetDocumentProcessingCoverage(ctx, options)
+	})
 	if err != nil {
 		return api.CoverageReport{}, err
-	}
-	if report.VaultUID != fence.VaultUID {
-		return api.CoverageReport{}, errors.New("processing coverage escaped its vault fence")
 	}
 	return *report, nil
 }

@@ -914,6 +914,22 @@ type processingCoverageOutput struct {
 	PageCoverageUnavailable bool                  `json:"page_coverage_unavailable,omitempty"`
 }
 
+func readProcessingCoverage(ctx context.Context, profile string, fence api.DocumentSourceFence, read func(context.Context, *apiclient.GetDocumentProcessingCoverageRequestOptions) (*api.CoverageReport, error)) (*api.CoverageReport, error) {
+	vaultID, err := uuid.Parse(fence.VaultUID)
+	if err != nil {
+		return nil, fmt.Errorf("parsing coverage vault ID: %w", err)
+	}
+	report, err := read(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
+		Profile: profile, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs}})
+	if err != nil {
+		return nil, err
+	}
+	if report.VaultUID != fence.VaultUID {
+		return nil, errors.New("processing coverage escaped its vault fence")
+	}
+	return report, nil
+}
+
 func getProcessingCoverage(
 	ctx context.Context, lease *daemonLease, raw []byte,
 ) (processingCoverageOutput, error) {
@@ -925,19 +941,13 @@ func getProcessingCoverage(
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return processingCoverageOutput{}, err
 	}
-	vaultID, err := uuid.Parse(input.VaultID)
-	if err != nil {
-		return processingCoverageOutput{}, fmt.Errorf("parsing coverage vault ID: %w", err)
-	}
-	report, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
-		return c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
-			Profile: input.Profile, VaultUID: vaultID, ContentVersionID: input.ContentVersionIDs}})
+	report, err := readProcessingCoverage(ctx, input.Profile, api.DocumentSourceFence{VaultUID: input.VaultID, ContentVersionIDs: input.ContentVersionIDs}, func(ctx context.Context, options *apiclient.GetDocumentProcessingCoverageRequestOptions) (*api.CoverageReport, error) {
+		return daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.CoverageReport, error) {
+			return c.API().GetDocumentProcessingCoverage(ctx, options)
+		})
 	})
 	if err != nil {
 		return processingCoverageOutput{}, err
-	}
-	if report.VaultUID != input.VaultID {
-		return processingCoverageOutput{}, errors.New("processing coverage escaped its vault fence")
 	}
 	classes := append([]api.CoverageClass{report.Renditions}, report.Embeddings...)
 	output := processingCoverageOutput{VaultID: report.VaultUID,
