@@ -863,8 +863,7 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 
 func TestPartyRequestSchemas(t *testing.T) {
 	t.Parallel()
-	doc := api.NewOfflineServer().API().OpenAPI()
-	schemas := doc.Components.Schemas.Map()
+	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas.Map()
 	for _, name := range []string{"CreatePartyRequest", "PatchPartyRequest"} {
 		schema := schemas[name]
 		require.NotNil(t, schema)
@@ -880,6 +879,12 @@ func TestPartyRequestSchemas(t *testing.T) {
 		fields = append(fields, option.Required...)
 	}
 	assert.ElementsMatch(t, []string{"kind", "display_name", "legal_name", "country", "person_id", "own"}, fields)
+}
+
+func TestContractRequestSchemas(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
 	for _, name := range []string{"CreateContractRequest", "PatchContractRequest"} {
 		schema := schemas[name]
 		require.NotNil(t, schema)

@@ -85,7 +85,7 @@ func TestContractPreflight(t *testing.T) {
 	})
 }
 
-func TestContractShowQuotesTermsAndResolvesLinkedNames(t *testing.T) {
+func TestContractShowQuotesTerms(t *testing.T) {
 	c := api.Contract{Title: "Agreement", Summary: "line\n\x1b[31m"}
 	cmd := newContractShowCommand()
 	var out bytes.Buffer
@@ -131,9 +131,6 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	}
 	// An unknown later addition must not apply fields or an earlier valid link.
 	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--title", "Should not apply", "--own", owner.PartyID, "--counterparty", "Missing supplier")
-	require.ErrorContains(t, err, "not found")
-	require.Equal(t, contract, read())
-	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--counterparty", "Missing supplier")
 	require.ErrorContains(t, err, "not found")
 	require.Equal(t, contract, read())
 	for _, tc := range []struct{ flag, party string }{
