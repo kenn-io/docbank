@@ -105,7 +105,8 @@ async function mockReadyText(source: SelectedSource, pages: number[] = [], artif
   };
   const bytes = new TextEncoder().encode(`---\n${JSON.stringify(envelope)}\n---\n${body}`);
   const hash = createHash("sha256").update(bytes).digest("hex");
-  vi.spyOn(globalThis, "fetch")
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
     .mockName("verified text fetch")
     .mockResolvedValueOnce(
       Response.json({
@@ -130,24 +131,26 @@ async function mockReadyText(source: SelectedSource, pages: number[] = [], artif
           media_type: "text/markdown; charset=utf-8",
         },
       }),
-    )
-    .mockResolvedValueOnce(
-      artifact ??
-        new Response(bytes, {
-          headers: {
-            "Content-Type": "text/markdown; charset=utf-8",
-            "Content-Length": String(bytes.length),
-            "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
-            "X-Docbank-Rendition-SHA256": hash,
-            "X-Docbank-Rendition-Size": String(bytes.length),
-            "X-Docbank-Rendition-Profile": "b".repeat(64),
-            "X-Docbank-Rendition-Generation": "c".repeat(64),
-            "X-Docbank-Rendition-Attachment": "d".repeat(64),
-            "X-Docbank-Rendition-Build": "e".repeat(64),
-            "X-Docbank-Rendition-Artifact": "f".repeat(64),
-          },
-        }),
     );
+  if (artifact) fetchMock.mockResolvedValueOnce(artifact);
+  else {
+    fetchMock.mockResolvedValueOnce(
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Content-Length": String(bytes.length),
+          "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
+          "X-Docbank-Rendition-SHA256": hash,
+          "X-Docbank-Rendition-Size": String(bytes.length),
+          "X-Docbank-Rendition-Profile": "b".repeat(64),
+          "X-Docbank-Rendition-Generation": "c".repeat(64),
+          "X-Docbank-Rendition-Attachment": "d".repeat(64),
+          "X-Docbank-Rendition-Build": "e".repeat(64),
+          "X-Docbank-Rendition-Artifact": "f".repeat(64),
+        },
+      }),
+    );
+  }
 }
 
 const pdf = { ...source, name: "scan.pdf", path: "/scan.pdf", mimeType: "application/pdf" };
