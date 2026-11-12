@@ -72,8 +72,6 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 				out = append(out, s)
 			}
 			d.AllowedCIDRs = out
-		case "download_origins", "import_path", "poll_interval", "max_document_bytes":
-			// Reserved for later consumers; do not let their values disable D1.
 		default:
 			d.decodeInvalid = true
 		}
@@ -101,17 +99,15 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 		return fail("configuration")
 	}
 	var prefixes []netip.Prefix
-	for _, s := range d.AllowedCIDRs {
-		p, e := netip.ParsePrefix(s)
-		if e != nil || d.TrustBoundary == "operator_network" && !privateRenditionNetwork(p) {
-			return fail("allowed CIDR")
-		}
-		prefixes = append(prefixes, p)
-	}
 	egress := ProviderEgressConfig{Endpoint: d.Endpoint, AllowedCIDRs: d.AllowedCIDRs, ProxyMode: "disabled", ConnectTimeout: Duration(30 * time.Second), KeepAlive: Duration(30 * time.Second), TLSHandshakeTimeout: Duration(10 * time.Second)}
-	u, err := validateProviderEgressConfig(egress, "docuseal")
+	u, err := validateProviderEgressConfigWithPrefixes(egress, "docuseal", &prefixes)
 	if err != nil || u.Path != "" && u.Path != "/" || u.RawPath != "" || d.TrustBoundary != "operator_network" && d.TrustBoundary != "hosted_provider" || d.TrustBoundary == "hosted_provider" && u.Scheme != "https" {
 		return fail("endpoint or trust boundary")
+	}
+	for _, prefix := range prefixes {
+		if d.TrustBoundary == "operator_network" && !privateRenditionNetwork(prefix) {
+			return fail("allowed CIDR")
+		}
 	}
 	if d.APIPath != "" && (d.APIPath == "/" || d.APIPath[0] != '/' || path.Clean(d.APIPath) != d.APIPath || strings.ContainsAny(d.APIPath, "?#%\\")) {
 		return fail("API path")

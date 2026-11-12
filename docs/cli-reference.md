@@ -101,6 +101,15 @@ Read committed vault changes in cursor order. The default output has four tab-se
 
 An expired cursor produces a nonzero exit and a message to rescan, then resume with `--after CURSOR`, including when expiry happens during streaming. An interrupted drain or a later read failure also produces a nonzero exit. The command prints only change events; HTTP completion and error records stay out of stdout. Save the supplied cursor before rescanning. See [React to vault changes](agents/integration.md#react-to-vault-changes) for event kinds and retention.
 
+## docbank contract sign
+
+```text
+docbank contract sign check [--json]
+docbank contract sign templates [--after ID] [--json]
+```
+
+Check the configured DocuSeal connection and list templates. See [DocuSeal connection](usage/contracts.md) for configuration and pagination.
+
 ## docbank kata
 
 ```text

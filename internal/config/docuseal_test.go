@@ -13,11 +13,22 @@ func TestDocuSealResolveRequiresSafeConfiguration(t *testing.T) {
 	if _, err := valid.Resolve(t.Context(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	cases := []DocuSealConfig{{}, valid, valid, valid, valid}
+	cases := []DocuSealConfig{{}, valid, valid, valid, valid, valid, valid, valid, valid}
 	cases[1].AllowedCIDRs = []string{"0.0.0.0/0"}
 	cases[2].TrustBoundary = "hosted_provider"
 	cases[3].Endpoint = "http://user" + ":" + "password@localhost"
 	cases[4].APIKeyFile = "also-set"
+	cases[5].APIPath = "/"
+	cases[6].APIPath = "/api/../other"
+	cases[7].APIPath = "/api?token=x"
+	cases[8].APIPath = "api"
+	hosted := valid
+	hosted.Endpoint = "https://example.test"
+	hosted.TrustBoundary = "hosted_provider"
+	hosted.APIPath = ""
+	if _, err := hosted.Resolve(t.Context(), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range cases {
 		if _, err := tc.Resolve(t.Context(), t.TempDir()); err == nil {
 			t.Errorf("accepted unsafe configuration: %+v", tc)
@@ -110,21 +121,5 @@ func TestDocuSealRejectsNULCredentialFile(t *testing.T) {
 	cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyFile: "key", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
 	if _, err := cfg.Resolve(t.Context(), root); err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("credential error: %v", err)
-	}
-}
-
-func TestDocuSealFutureSettingsDoNotDisableConnection(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOCUSEAL_TEST_KEY", "synthetic-key")
-	text := "[integrations.docuseal]\nenabled=true\nendpoint='http://127.0.0.1'\napi_key_env='DOCUSEAL_TEST_KEY'\ntrust_boundary='operator_network'\nallowed_cidrs=['127.0.0.1/32']\npoll_interval=42\ndownload_origins=false\nimport_path=5\nmax_document_bytes='bad'\n"
-	if err := os.WriteFile(filepath.Join(root, "config.toml"), []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = cfg.Integrations.DocuSeal.Resolve(t.Context(), root); err != nil {
-		t.Fatal(err)
 	}
 }

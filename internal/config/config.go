@@ -1306,6 +1306,10 @@ func validateRenditionOrigin(parsed *url.URL, boundary document.RenditionTrustBo
 }
 
 func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (*url.URL, error) {
+	return validateProviderEgressConfigWithPrefixes(runtime, prefix, nil)
+}
+
+func validateProviderEgressConfigWithPrefixes(runtime ProviderEgressConfig, prefix string, prefixes *[]netip.Prefix) (*url.URL, error) {
 	parsed, err := validateProviderEndpoint(runtime.Endpoint, prefix)
 	if err != nil {
 		return nil, err
@@ -1317,8 +1321,12 @@ func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (
 		return nil, fmt.Errorf("%s runtime egress must be proxy-disabled with allowed CIDRs", prefix)
 	}
 	for _, value := range runtime.AllowedCIDRs {
-		if _, err := netip.ParsePrefix(value); err != nil {
+		network, err := netip.ParsePrefix(value)
+		if err != nil {
 			return nil, fmt.Errorf("%s runtime allowed CIDR %q is invalid", prefix, value)
+		}
+		if prefixes != nil {
+			*prefixes = append(*prefixes, network)
 		}
 	}
 	for _, value := range runtime.SPKISHA256 {

@@ -3,6 +3,7 @@ package docusealclient
 import (
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -229,5 +230,96 @@ func TestConnectionRejectsMixedDNSAnswers(t *testing.T) {
 	c.http.Transport = transport
 	if _, err = c.Check(t.Context()); err == nil {
 		t.Fatal("accepted mixed DNS answers")
+	}
+}
+
+func TestTemplatesReducesOversizedPages(t *testing.T) {
+	var requests []string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		after := r.URL.Query().Get("after")
+		if after == "51" {
+			fmt.Fprint(w, `{"data":[{"id":50,"name":"Last"}],"pagination":{"next":50}}`)
+			return
+		}
+		if limit > 50 {
+			_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
+			return
+		}
+		fmt.Fprint(w, `{"data":[`)
+		for i := range limit {
+			if i > 0 {
+				fmt.Fprint(w, ",")
+			}
+			fmt.Fprintf(w, `{"id":%d,"name":"Template","fields":"%s"}`, 100-i, strings.Repeat("x", 1000))
+		}
+		fmt.Fprint(w, `],"pagination":{"next":51}}`)
+	}))
+	defer s.Close()
+	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseIdleConnections()
+	page, err := c.Templates(t.Context(), 0)
+	if err != nil || len(page.Templates) != 50 || page.Next != 51 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	page, err = c.Templates(t.Context(), page.Next)
+	if err != nil || len(page.Templates) != 1 || page.Next != 0 {
+		t.Fatalf("final=%+v err=%v", page, err)
+	}
+	if len(requests) != 3 || requests[0] != "limit=100" || requests[1] != "limit=50" || requests[2] != "limit=100&after=51" {
+		t.Fatalf("requests: %v", requests)
+	}
+}
+
+func TestTemplatesIrreducibleOversize(t *testing.T) {
+	var limits []string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limits = append(limits, r.URL.Query().Get("limit"))
+		_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
+	}))
+	defer s.Close()
+	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseIdleConnections()
+	_, err = c.Templates(t.Context(), 0)
+	if err == nil || err.Error() != "docuseal_response_too_large" || strings.Join(limits, ",") != "100,50,25,12,6,3,1" {
+		t.Fatalf("limits=%v err=%v", limits, err)
+	}
+}
+
+type docusealRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f docusealRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type docusealErrorBody struct{ err error }
+
+func (b docusealErrorBody) Read([]byte) (int, error) { return 0, b.err }
+func (b docusealErrorBody) Close() error             { return nil }
+
+func TestCheckPreservesBodyContextErrors(t *testing.T) {
+	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
+		c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: docusealErrorBody{err: want}}, nil
+		})}}
+		_, err := c.Check(t.Context())
+		if !errors.Is(err, want) {
+			t.Fatalf("got %v, want %v", err, want)
+		}
+	}
+}
+
+func TestCheckRedactsKeyInEndpoint(t *testing.T) {
+	c := &Client{connection: config.DocuSealConnection{Endpoint: "https://key.example.test", APIKey: "key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":1}`))}, nil
+	})}}
+	status, err := c.Check(t.Context())
+	if err != nil || strings.Contains(status.Endpoint, "key") || status.Endpoint != "https://[redacted].example.test" {
+		t.Fatalf("status=%+v err=%v", status, err)
 	}
 }

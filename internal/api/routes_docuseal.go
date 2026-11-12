@@ -10,23 +10,12 @@ import (
 )
 
 func registerDocuSealRoutes(api huma.API, d Deps) {
-	client := func(ctx context.Context) (*docusealclient.Client, error) {
-		connection, err := d.Cfg.Integrations.DocuSeal.Resolve(ctx, d.VaultRoot)
-		if err != nil {
-			if d.Cfg.Integrations.DocuSeal.DocuSealDisabled() {
-				return nil, NewError(503, "docuseal_unconfigured", "Enable and configure [integrations.docuseal]")
-			}
-			return nil, NewError(503, "docuseal_config_invalid", err.Error())
-		}
-		c, err := docusealclient.New(connection)
-		if err != nil {
-			return nil, NewError(503, "docuseal_config_invalid", "Check DocuSeal egress settings")
-		}
-		return c, nil
-	}
 	problem := func(err error) error {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return NewError(504, "docuseal_timeout", "DocuSeal request timed out")
+		}
+		if errors.Is(err, context.Canceled) {
+			return NewError(408, "docuseal_canceled", "DocuSeal request canceled")
 		}
 		switch err.Error() {
 		case "docuseal_unauthorized":
@@ -39,15 +28,33 @@ func registerDocuSealRoutes(api huma.API, d Deps) {
 			return NewError(502, "docuseal_request_failed", "Check the DocuSeal connection and egress settings")
 		}
 	}
+	client := func(ctx context.Context) (*docusealclient.Client, error) {
+		connection, err := d.Cfg.Integrations.DocuSeal.Resolve(ctx, d.VaultRoot)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, problem(err)
+			}
+			if d.Cfg.Integrations.DocuSeal.DocuSealDisabled() {
+				return nil, NewError(503, "docuseal_unconfigured", "Enable and configure [integrations.docuseal]")
+			}
+			return nil, NewError(503, "docuseal_config_invalid", err.Error())
+		}
+		c, err := docusealclient.New(connection)
+		if err != nil {
+			return nil, NewError(503, "docuseal_config_invalid", "Check DocuSeal egress settings")
+		}
+		return c, nil
+	}
 	type statusOutput struct {
 		CacheControl string `header:"Cache-Control"`
 		Body         docusealclient.Status
 	}
-	huma.Register(api, huma.Operation{OperationID: "getDocuSealStatus", Method: http.MethodGet, Path: "/api/v1/integrations/docuseal/status", Summary: "Check the DocuSeal connection", Errors: []int{502, 503, 504}}, func(ctx context.Context, _ *struct{}) (*statusOutput, error) {
+	huma.Register(api, huma.Operation{OperationID: "getDocuSealStatus", Method: http.MethodGet, Path: "/api/v1/integrations/docuseal/status", Summary: "Check the DocuSeal connection", Errors: []int{408, 502, 503, 504}}, func(ctx context.Context, _ *struct{}) (*statusOutput, error) {
 		c, err := client(ctx)
 		if err != nil {
 			return nil, err
 		}
+		defer c.CloseIdleConnections()
 		result, err := c.Check(ctx)
 		if err != nil {
 			return nil, problem(err)
@@ -58,13 +65,14 @@ func registerDocuSealRoutes(api huma.API, d Deps) {
 		CacheControl string `header:"Cache-Control"`
 		Body         docusealclient.TemplatePage
 	}
-	huma.Register(api, huma.Operation{RejectUnknownQueryParameters: true, OperationID: "listDocuSealTemplates", Method: http.MethodGet, Path: "/api/v1/integrations/docuseal/templates", Summary: "List DocuSeal templates", Errors: []int{400, 502, 503, 504}}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{RejectUnknownQueryParameters: true, OperationID: "listDocuSealTemplates", Method: http.MethodGet, Path: "/api/v1/integrations/docuseal/templates", Summary: "List DocuSeal templates", Errors: []int{400, 408, 502, 503, 504}}, func(ctx context.Context, in *struct {
 		After int64 `query:"after" minimum:"0"`
 	}) (*templatesOutput, error) {
 		c, err := client(ctx)
 		if err != nil {
 			return nil, err
 		}
+		defer c.CloseIdleConnections()
 		result, err := c.Templates(ctx, in.After)
 		if err != nil {
 			return nil, problem(err)

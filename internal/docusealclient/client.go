@@ -21,6 +21,8 @@ import (
 
 const maxResponse = 2 << 20
 
+var errResponseTooLarge = errors.New("docuseal_response_too_large")
+
 type Status struct {
 	Configured bool   `json:"configured"`
 	Enabled    bool   `json:"enabled"`
@@ -64,6 +66,10 @@ func New(c config.DocuSealConnection) (*Client, error) {
 	}
 	return &Client{connection: c, http: providerhttp.IsolateClient(&http.Client{Transport: transport, Timeout: 10 * time.Second})}, nil
 }
+
+// CloseIdleConnections releases the request-owned transport.
+func (c *Client) CloseIdleConnections() { c.http.CloseIdleConnections() }
+
 func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -77,15 +83,30 @@ func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return context.DeadlineExceeded
+		}
 		return errors.New("docuseal_request_failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return context.DeadlineExceeded
+		}
 		return errors.New("docuseal_response_failed")
 	}
 	if len(data) > maxResponse {
-		return errors.New("docuseal_response_too_large")
+		return errResponseTooLarge
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		switch resp.StatusCode {
@@ -112,18 +133,12 @@ func (c *Client) Check(ctx context.Context) (Status, error) {
 	if user.ID <= 0 {
 		return Status{}, errors.New("docuseal_invalid_response")
 	}
-	if strings.Contains(c.connection.Endpoint, c.connection.APIKey) {
-		return Status{}, errors.New("docuseal_invalid_response")
-	}
-	return Status{Configured: true, Enabled: true, Endpoint: c.connection.Endpoint, Capability: "template_submission"}, nil
+	endpoint := strings.ReplaceAll(c.connection.Endpoint, c.connection.APIKey, "[redacted]")
+	return Status{Configured: true, Enabled: true, Endpoint: endpoint, Capability: "template_submission"}, nil
 }
 func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, error) {
 	if cursor < 0 {
 		return TemplatePage{}, errors.New("invalid cursor")
-	}
-	suffix := "/templates?limit=100"
-	if cursor > 0 {
-		suffix += fmt.Sprintf("&after=%d", cursor)
 	}
 	var wire struct {
 		Data *[]struct {
@@ -137,14 +152,27 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 			Next *int64 `json:"next"`
 		} `json:"pagination"`
 	}
-	if err := c.get(ctx, suffix, &wire); err != nil {
-		return TemplatePage{}, err
+	limit := 100
+	for {
+		suffix := fmt.Sprintf("/templates?limit=%d", limit)
+		if cursor > 0 {
+			suffix += fmt.Sprintf("&after=%d", cursor)
+		}
+		err := c.get(ctx, suffix, &wire)
+		if errors.Is(err, errResponseTooLarge) && limit > 1 {
+			limit /= 2
+			continue
+		}
+		if err != nil {
+			return TemplatePage{}, err
+		}
+		break
 	}
-	if wire.Data == nil || len(*wire.Data) > 100 {
+	if wire.Data == nil || len(*wire.Data) > limit {
 		return TemplatePage{}, errors.New("docuseal_invalid_response")
 	}
 	page := TemplatePage{Templates: make([]Template, 0, len(*wire.Data))}
-	if len(*wire.Data) == 100 {
+	if len(*wire.Data) == limit {
 		last := (*wire.Data)[len(*wire.Data)-1].ID
 		if wire.Pagination.Next == nil || *wire.Pagination.Next != last || last <= 0 || cursor > 0 && last >= cursor {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
