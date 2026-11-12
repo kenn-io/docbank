@@ -27,7 +27,7 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	e, err := s.CreatePerson(ctx, "Elm Custodian", "operator")
 	require.NoError(t, err)
 	for _, edge := range []struct{ version, person, role string }{
-		{email.ID, a.PersonID, "sender"}, {email.ID, b.PersonID, "recipient"}, {email.ID, c.PersonID, "copied"}, {email.ID, d.PersonID, "blind_copy"}, {pdf.ID, a.PersonID, "author"}, {pdf.ID, e.PersonID, "custodian"},
+		{email.ID, a.PersonID, "sender"}, {email.ID, b.PersonID, "recipient"}, {email.ID, c.PersonID, "copied"}, {email.ID, d.PersonID, "blind_copy"}, {pdf.ID, a.PersonID, "author"}, {pdf.ID, e.PersonID, "custodian"}, {email.ID, e.PersonID, "speaker"},
 	} {
 		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
 		require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestRoleSearchOperandSets(t *testing.T) {
 		{`from:"Aster Sender"`, []string{"email.txt"}}, {`author:"Aster Sender"`, []string{"paper.pdf"}},
 		{`to:"Cedar Copy"`, []string{"email.txt"}}, {`cc:"Birch Recipient"`, nil},
 		{`bcc:"Dahlia Blind"`, []string{"email.txt"}}, {`between:("Aster Sender", "Birch Recipient")`, []string{"email.txt"}},
-		{`between:("Aster Sender", "Elm Custodian")`, nil},
+		{`between:("Aster Sender", "Elm Custodian")`, []string{"email.txt"}},
 	} {
 		t.Run(tc.text, func(t *testing.T) {
 			q := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, tc.text))
@@ -57,6 +57,11 @@ func TestRoleSearchOperandSets(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, selected.Rows, 1)
 	require.Equal(t, "email.txt", selected.Rows[0].Name)
+	fullBcc := snapshotTestQuery(t, `{"syntax":"advanced","text":"bcc:\"Dahlia Blind\""}`)
+	bccResult, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: fullBcc})
+	require.NoError(t, err)
+	require.Len(t, bccResult.Rows, 1)
+	require.Empty(t, bccResult.Rows[0].MatchedRoles)
 	forbidden := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["blind_copy"]}]}}`, a.PersonID))
 	_, err = s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: forbidden})
 	require.ErrorContains(t, err, "bcc: is not available in browser sessions")
@@ -100,7 +105,7 @@ func TestRoleSearchFrozenMatchesAndPeopleFacet(t *testing.T) {
 	require.True(t, projection.Facets[0].Available)
 	require.Len(t, projection.Facets[0].Values, 1)
 	require.Equal(t, person.PersonID, projection.Facets[0].Values[0].Key)
-	require.Equal(t, []string{"sender"}, projection.Facets[0].Values[0].Roles)
+	require.Equal(t, []string{"sender", "speaker"}, projection.Facets[0].Values[0].Roles)
 	require.EqualValues(t, 1, projection.Facets[0].Values[0].Count)
 }
 
@@ -130,6 +135,9 @@ func checkRoleSearchCurrentPersonRelation(t *testing.T, newStore func(*testing.T
 	check(false, published.PersonID, string(published.Role), true)
 	check(false, direct.PersonID, "blind_copy", true)
 	check(true, direct.PersonID, "blind_copy", false)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: direct.PersonID, Role: "speaker", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	check(true, direct.PersonID, "speaker", true)
 	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
 	require.NoError(t, err)
 	check(false, published.PersonID, string(published.Role), false)
@@ -155,6 +163,8 @@ func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
 	_, args, err := compiled.Bind("")
 	require.NoError(t, err)
 	require.Contains(t, args, `"A ""OR"" *"`)
+	require.Contains(t, compiled.PositiveTextTerms(), `A "OR" *`)
+	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
 	require.Len(t, compiled.roleMatches, 1)
 	require.Equal(t, "mentioned", compiled.roleMatches[0].label)
 }
@@ -281,4 +291,70 @@ func TestRoleSearchBrowserHiddenLock(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRoleSearchMergedFilterReturnsSurvivor(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "merged.txt", "ef", nil)
+	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+	require.NoError(t, err)
+	retired, err := s.CreatePerson(ctx, "Retired", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: retired.PersonID, Role: "speaker", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, retired.PersonID, "11111111-1111-4111-8111-111111111111", survivor.Revision, retired.Revision)
+	require.NoError(t, err)
+	value := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["speaker"]}]}}`, retired.PersonID))
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, survivor.PersonID, result.Query.Filters.People[0].PersonID)
+	require.Equal(t, survivor.PersonID, result.Facets[0].Values[0].Key)
+	require.True(t, result.Facets[0].Values[0].Selected)
+}
+
+func TestPublishedBccActorIsNotVisibleToBrowserPeopleOperations(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "bcc.txt", "f1", []document.DocumentEventActorV1{{
+		Role: "blind_copy", ActorKey: "email:bcc@example.test", Address: "bcc@example.test", DisplayName: "Bcc Person", Claim: `"recipient"`,
+	}})
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	publication := documentPeoplePublicationForInput(t, input)
+	_, err = s.PublishDocumentPeople(ctx, publication)
+	require.NoError(t, err)
+	id := publication.People.Edges[0].PersonID
+	person, _, err := s.PersonByID(ctx, id)
+	require.NoError(t, err)
+	visible, _, err := s.PeopleByDisplayName(ctx, "Bcc Person", "", "", 100, true, PeopleSearchOptions{})
+	require.NoError(t, err)
+	require.Empty(t, visible)
+	_, err = s.UpdatePerson(WithVisiblePeopleOnly(ctx), id, person.Revision, "New Name")
+	require.ErrorIs(t, err, ErrNotFound)
+	survivor, err := s.CreatePerson(ctx, "Public Person", "operator")
+	require.NoError(t, err)
+	_, err = s.MergePersons(WithVisiblePeopleOnly(ctx), survivor.PersonID, id, "11111111-1111-4111-8111-111111111111", survivor.Revision, person.Revision)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestRoleSearchCollapsedDuplicateAnnotationsIncludeOtherMembers(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	first := seedDocumentPeopleEvent(t, s, "one.txt", "fa", nil)
+	second := seedDocumentPeopleEvent(t, s, "two.txt", "fa", nil)
+	a, err := s.CreatePerson(ctx, "First Speaker", "operator")
+	require.NoError(t, err)
+	b, err := s.CreatePerson(ctx, "Second Attendee", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: first.ID, PersonID: a.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: second.ID, PersonID: b.PersonID, Role: "attendee", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"from:\"First Speaker\" OR attendee:\"Second Attendee\"","filters":{"collapse_duplicates":true}}`)
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.ElementsMatch(t, []string{"sender", "attendee"}, result.Rows[0].MatchedRoles)
 }

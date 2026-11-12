@@ -110,7 +110,7 @@ func (state *resolutionState) resolveQuery(ctx context.Context, value Query, sav
 	if err != nil {
 		return ResolvedQuery{}, err
 	}
-	facetDependencies, err := state.resolveFacets(ctx, value)
+	facetDependencies, err := state.resolveFacets(ctx, &value)
 	if err != nil {
 		return ResolvedQuery{}, err
 	}
@@ -248,7 +248,7 @@ func (state *resolutionState) resolveLeaf(
 	return &dependency, &nestedResolved, dependencies, nil
 }
 
-func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([]Dependency, error) {
+func (state *resolutionState) resolveFacets(ctx context.Context, value *Query) ([]Dependency, error) {
 	type facet struct {
 		kind   ReferenceKind
 		values []string
@@ -261,13 +261,19 @@ func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([
 		{kind: ReferencePerson, values: value.Filters.PersonIDs},
 	}
 	var dependencies []Dependency
-	for _, person := range value.Filters.People {
+	for i, person := range value.Filters.People {
 		ref, err := state.lookup(ctx, ReferencePerson, person.PersonID, true, 0, 0)
 		if err != nil {
 			return nil, err
 		}
+		value.Filters.People[i].PersonID = ref.Dependency.ID
 		dependencies = append(dependencies, ref.Dependency)
 	}
+	normalized, err := normalizePeople(value.Filters.People)
+	if err != nil {
+		return nil, err
+	}
+	value.Filters.People = normalized
 	for _, facet := range facets {
 		for _, id := range facet.values {
 			// Structured filters have no span in the query text.

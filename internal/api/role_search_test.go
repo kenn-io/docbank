@@ -149,3 +149,24 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestPeopleBrowserConcealsBccOnlyEvidenceAcrossRoutes(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	file := createFileWithContent(t, ts, s, "/private.txt", "synthetic")
+	private, err := s.CreatePerson(ctx, "Private Bcc", "operator")
+	require.NoError(t, err)
+	public, err := s.CreatePerson(ctx, "Public Person", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: file.CurrentVersionID, PersonID: private.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
+	response, body := do(t, ts, http.MethodGet, "/api/v1/people?query=Private", headers, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NotContains(t, body, private.PersonID)
+	response, body = do(t, ts, http.MethodPatch, "/api/v1/people/by-id/"+private.PersonID, headers, map[string]string{"display_name": "Renamed"})
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	merge := map[string]any{"absorbed_person_id": private.PersonID, "absorbed_revision": private.Revision, "operation_id": "00000000-0000-4000-8000-000000000013"}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/people/by-id/"+public.PersonID+"/merge", headers, merge)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+}

@@ -473,6 +473,10 @@ func (s *Store) photoSetExplicitIDs(ctx context.Context, tx *sql.Tx, selection P
 }
 
 func (s *Store) photoSetQueryIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
+	ctx, err := s.scopeQueryPeople(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	coverage, err := normalizeCoverageSelection(selection.Coverage)
 	if err != nil {
 		return nil, err

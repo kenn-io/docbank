@@ -3,6 +3,7 @@ package query
 import (
 	"errors"
 	"slices"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -26,7 +27,7 @@ func normalizePeople(values []PersonFilter) ([]PersonFilter, error) {
 		}
 		roles := slices.Clone(entry.Roles)
 		for _, role := range roles {
-			if !slices.Contains(document.AllEventRoles(), document.EventRole(role)) {
+			if !document.ValidPersonRole(role) {
 				return nil, errors.New("invalid filters.people role")
 			}
 		}
@@ -34,5 +35,14 @@ func normalizePeople(values []PersonFilter) ([]PersonFilter, error) {
 		entry.Roles = slices.Compact(roles)
 		result = append(result, entry)
 	}
+	slices.SortFunc(result, func(a, b PersonFilter) int {
+		if c := strings.Compare(a.PersonID, b.PersonID); c != 0 {
+			return c
+		}
+		return slices.Compare(a.Roles, b.Roles)
+	})
+	result = slices.CompactFunc(result, func(a, b PersonFilter) bool {
+		return a.PersonID == b.PersonID && slices.Equal(a.Roles, b.Roles)
+	})
 	return result, nil
 }

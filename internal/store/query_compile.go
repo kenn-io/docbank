@@ -78,18 +78,32 @@ type queryCompiler struct {
 	safePeople           bool
 	hideLocked           string
 	personNames          func(string) ([]string, error)
+	personPredicates     map[string]compiledQueryFragment
+	mentionPredicates    map[string]compiledQueryFragment
 }
 
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
+	c.personPredicates = make(map[string]compiledQueryFragment)
+	c.mentionPredicates = make(map[string]compiledQueryFragment)
 	c.safePeople, _ = ctx.Value(visiblePersonContextKey{}).(bool)
 	c.hideLocked = "0"
 	if c.safePeople && queryPeopleHideLocked(ctx) {
 		c.hideLocked = "1"
 	}
+	mentionNames := make(map[string][]string)
 	if r, ok := resolver.(queryResolver); ok {
-		c.personNames = func(id string) ([]string, error) { return r.personMentionNames(ctx, id) }
+		c.personNames = func(id string) ([]string, error) {
+			if names, ok := mentionNames[id]; ok {
+				return names, nil
+			}
+			names, err := r.personMentionNames(ctx, id)
+			if err == nil {
+				mentionNames[id] = names
+			}
+			return names, err
+		}
 	}
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
@@ -108,7 +122,7 @@ func (c queryCompiler) compile(
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
 		photoHidden:       c.photoHidden,
 		predicate:         predicate,
-		positiveTextTerms: query.PositiveTextTerms(resolved),
+		positiveTextTerms: query.PositiveTextTermsWithMentions(resolved, mentionNames),
 	}
 	compiled.roleMatches, err = c.collectRoleMatches(resolved)
 	if err != nil {
@@ -318,6 +332,9 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		if expression.Dependency == nil || c.personNames == nil {
 			return compiledQueryFragment{}, errors.New("resolved mention lacks names")
 		}
+		if cached, ok := c.mentionPredicates[expression.Dependency.ID]; ok {
+			return cached, nil
+		}
 		names, err := c.personNames(expression.Dependency.ID)
 		if err != nil {
 			return compiledQueryFragment{}, err
@@ -326,7 +343,11 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		for _, name := range names {
 			parts = append(parts, c.compileLexicalPredicate(quoteFTSOperand(name, false), true))
 		}
-		return joinCompiledFragments(parts, ` OR `), nil
+		result := joinCompiledFragments(parts, ` OR `)
+		if c.mentionPredicates != nil {
+			c.mentionPredicates[expression.Dependency.ID] = result
+		}
+		return result, nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -739,6 +760,5 @@ func (c queryCompiler) compileBetween(expression *query.ResolvedExpression) (com
 	if children[0].Dependency == nil || children[1].Dependency == nil || children[0].Dependency.ID == children[1].Dependency.ID {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "between: needs two different people")
 	}
-	roles, _ := rolesForOperand("between", c.safePeople)
-	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonPredicate(children[0].Dependency.ID, roles), c.compilePersonPredicate(children[1].Dependency.ID, roles)}, ` AND `), nil
+	return joinCompiledFragments([]compiledQueryFragment{c.compilePersonExceptCustodian(children[0].Dependency.ID), c.compilePersonExceptCustodian(children[1].Dependency.ID)}, ` AND `), nil
 }

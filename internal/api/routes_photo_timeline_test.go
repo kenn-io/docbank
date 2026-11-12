@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoTimelineRouteCountsBrowsedPhotos(t *testing.T) {
@@ -84,4 +85,30 @@ func TestPhotoTimelineRouteAcceptsBrowserSessions(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/timeline?unexpected=1", headers, request)
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+}
+
+// Every browser entry that compiles a photo selection uses the same person fence.
+func TestPhotoQueryRoutesConcealBccOnlyPerson(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	file, err := s.CreateFile(ctx, s.RootID(), "synthetic.txt", testHash("synthetic"), 10, "text/plain")
+	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Concealed Person", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: file.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	album, err := s.CreatePhotoSet(ctx, "Synthetic album")
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"1"`}
+	body := `{"query":{"syntax":"advanced","text":"person:\"Concealed Person\""}}`
+	for _, path := range []string{
+		"/api/v1/photos/assets/query", "/api/v1/photos/assets/timeline",
+		"/api/v1/photos/rejects/preflight", "/api/v1/photos/authored/prepare",
+		"/api/v1/photos/albums/" + album.ID + "/members/add",
+	} {
+		response, result := rawJSONRequest(t, ts.URL, http.MethodPost, path, headers, body)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, path+": "+result)
+		require.Contains(t, result, "unknown person reference")
+	}
 }

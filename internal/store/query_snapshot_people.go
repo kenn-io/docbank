@@ -22,8 +22,12 @@ type compiledRoleMatch struct {
 func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compiledRoleMatch, error) {
 	byRole := map[string][]compiledQueryFragment{}
 	add := func(label string, fragment compiledQueryFragment) { byRole[label] = append(byRole[label], fragment) }
-	var walk func(*query.ResolvedExpression, string, bool) error
-	walk = func(e *query.ResolvedExpression, field string, negated bool) error {
+	if !c.safePeople {
+		c.hideLocked = "1"
+	}
+	c.safePeople = true
+	var walk func(*query.ResolvedExpression, string) error
+	walk = func(e *query.ResolvedExpression, field string) error {
 		if e == nil || e.Syntax == nil {
 			return nil
 		}
@@ -36,27 +40,34 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 		if e.Saved != nil {
 			for _, p := range e.Saved.Query.Filters.People {
 				for _, role := range p.Roles {
+					if role == "blind_copy" {
+						continue
+					}
 					add(role, c.compilePersonPredicate(p.PersonID, []string{role}))
 				}
 			}
-			if err := walk(e.Saved.Expression, "", negated); err != nil {
+			if err := walk(e.Saved.Expression, ""); err != nil {
 				return err
 			}
 		}
-		if e.Dependency != nil && !negated {
+		if e.Dependency != nil {
 			if field == "mentions" {
 				f, err := c.compileExpressionLeaf(e, field)
 				if err != nil {
 					return err
 				}
 				add("mentioned", f)
-			} else if slices.Contains([]string{"author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "between"}, field) {
-				roles, err := rolesForOperand(field, c.safePeople)
+			} else if slices.Contains([]string{"author", "from", "to", "cc", "custodian", "participant", "organizer", "attendee", "between"}, field) {
+				roles := []string{"author", "last_saved_by", "sender", "recipient", "copied", "organizer", "attendee", "participant", "speaker", "depicted"}
+				var err error
+				if field != "between" {
+					roles, err = rolesForOperand(field, c.safePeople)
+				}
 				if err != nil {
 					return err
 				}
 				for _, role := range roles {
-					if c.safePeople && role == "blind_copy" {
+					if role == "blind_copy" {
 						continue
 					}
 					add(role, c.compilePersonPredicate(e.Dependency.ID, []string{role}))
@@ -64,18 +75,21 @@ func (c queryCompiler) collectRoleMatches(resolved query.ResolvedQuery) ([]compi
 			}
 		}
 		for _, child := range e.Children {
-			if err := walk(child, field, negated); err != nil {
+			if err := walk(child, field); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if !c.photoDisplayMetadata {
-		if err := walk(resolved.Expression, "", false); err != nil {
+		if err := walk(resolved.Expression, ""); err != nil {
 			return nil, err
 		}
 		for _, p := range resolved.Query.Filters.People {
 			for _, role := range p.Roles {
+				if role == "blind_copy" {
+					continue
+				}
 				add(role, c.compilePersonPredicate(p.PersonID, []string{role}))
 			}
 		}
@@ -106,38 +120,64 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 	if err != nil {
 		return err
 	}
+	var expressions []string
+	var args []any
+	var relations compiledQueryRelations
 	for _, match := range compiled.roleMatches {
 		partial := compiled
 		partial.predicate = match.predicate
-		partial.Query.Filters.CollapseDuplicates = false
-		population, err := matchedPopulation(partial, generation, nil)
+		predicate, err := partial.bind(generation, nil)
 		if err != nil {
 			return err
 		}
-		statement, args, err := bindQueryPopulation(population, coverage, generation)
-		if err != nil {
+		expressions = append(expressions, "CASE WHEN "+predicate.sql+" THEN 1 ELSE 0 END")
+		args = append(args, predicate.args...)
+		relations |= predicate.relations
+	}
+	args = append(args, string(encoded), boolInt(compiled.Query.Filters.CollapseDuplicates))
+	population := compiledQueryFragment{sql: `SELECT root.id, ` + strings.Join(expressions, ",") + `
+ FROM json_each(?) ids JOIN nodes root ON root.id=ids.value
+ JOIN content_versions rootcv ON rootcv.version_id=root.current_version_id
+ JOIN content_versions cv ON cv.blob_hash=rootcv.blob_hash
+ JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+ WHERE n.id=root.id OR ?=1`, args: args, relations: relations}
+	statement, args, err := bindQueryPopulation(population, coverage, generation)
+	if err != nil {
+		return err
+	}
+	if len(statement) > maxCompiledQuerySQL || len(args) > maxCompiledQueryArgs {
+		return compileExpressionError(0, len(compiled.Query.Text), "role annotations exceed query bounds")
+	}
+	found, err := q.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return fmt.Errorf("annotating roles: %w", err)
+	}
+	defer func() { _ = found.Close() }()
+	for found.Next() {
+		var id int64
+		values := make([]int, len(compiled.roleMatches))
+		dest := make([]any, 0, len(values)+1)
+		dest = append(dest, &id)
+		for i := range values {
+			dest = append(dest, &values[i])
+		}
+		if err := found.Scan(dest...); err != nil {
 			return err
 		}
-		args = append(args, string(encoded))
-		found, err := q.QueryContext(ctx, `SELECT node_id FROM (`+statement+`) WHERE node_id IN (SELECT value FROM json_each(?))`, args...)
-		if err != nil {
-			return fmt.Errorf("annotating roles: %w", err)
-		}
-		for found.Next() {
-			var id int64
-			if err := found.Scan(&id); err != nil {
-				_ = found.Close()
-				return err
+		if i, ok := index[id]; ok {
+			for j, value := range values {
+				label := compiled.roleMatches[j].label
+				if value != 0 && !slices.Contains(rows[i].MatchedRoles, label) {
+					rows[i].MatchedRoles = append(rows[i].MatchedRoles, label)
+				}
 			}
-			if i, ok := index[id]; ok {
-				rows[i].MatchedRoles = append(rows[i].MatchedRoles, match.label)
-			}
 		}
-		err = found.Err()
-		_ = found.Close()
-		if err != nil {
-			return err
-		}
+	}
+	if err := found.Err(); err != nil {
+		return err
+	}
+	for i := range rows {
+		slices.Sort(rows[i].MatchedRoles)
 	}
 	return nil
 }
@@ -162,16 +202,12 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		hide = "0"
 	}
 	args = append(args, document.PersonResolverFingerprint())
-	sql := `WITH matched_members AS (` + statement + `), edges AS (
- SELECT n.id node_id,COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=a.person_id),a.person_id) person_id,a.role
- FROM matched_members m JOIN nodes n ON n.id=m.node_id JOIN person_document_assertions a ON a.content_version_id=m.content_version_id
- WHERE ` + currentPersonAssertionFence(true, hide) + ` AND a.role IN (` + eventRolesSQL() + `)
- UNION SELECT n.id,COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=p.person_id),p.person_id),p.role
- FROM matched_members m JOIN nodes n ON n.id=m.node_id JOIN document_people p ON p.content_version_id=m.content_version_id
- JOIN document_people_heads h ON h.content_version_id=p.content_version_id AND h.generation_id=p.generation_id
- JOIN document_event_heads eh ON eh.content_version_id=h.content_version_id CROSS JOIN document_people_state ps
- WHERE ` + currentPersonPublishedFence(true, hide) + ` AND p.role IN (` + eventRolesSQL() + `))
- SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(e.role,'') FROM matched_members m LEFT JOIN edges e ON e.node_id=m.node_id LEFT JOIN persons p ON p.person_id=e.person_id AND p.state<>'retired' ORDER BY m.node_id,p.person_id,e.role`
+	sql := `WITH matched_members AS (` + statement + `)
+ SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(json_extract(e.value,'$.role'),'')
+ FROM matched_members m JOIN nodes n ON n.id=m.node_id
+ LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + currentDocumentPersonEdgesSQL("m.content_version_id", true, hide) + ` edge)) e
+ LEFT JOIN persons p ON p.person_id=json_extract(e.value,'$.person_id') AND p.state<>'retired'
+ ORDER BY m.node_id,p.person_id,json_extract(e.value,'$.role')`
 	rows, err := q.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing people facet: %w", err)
@@ -228,7 +264,7 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 	selected := map[string]bool{}
 	for _, entry := range compiled.Query.Filters.People {
 		var id, name string
-		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
+		err := q.QueryRowContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=$1),$2) AND `+personVisibleSQL("persons.person_id", 3), entry.PersonID, entry.PersonID, 1, boolInt(hide == "1")).Scan(&id, &name)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -290,14 +326,4 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		slices.Sort(out[i].Roles)
 	}
 	return SnapshotFacet{Dimension: "person_role", Available: true, Total: &total, Values: out, Missing: &missing, Other: &other}, nil
-}
-
-// Event roles are the only roles accepted by the facet wire contract.
-func eventRolesSQL() string {
-	roles := document.AllEventRoles()
-	values := make([]string, 0, len(roles))
-	for _, role := range roles {
-		values = append(values, "'"+strings.ReplaceAll(string(role), "'", "''")+"'")
-	}
-	return strings.Join(values, ",")
 }

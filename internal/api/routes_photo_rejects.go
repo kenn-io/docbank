@@ -33,6 +33,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 	}, func(
 		ctx context.Context, in *struct{ Body PhotoRejectsRequest },
 	) (*struct{ Body PhotoRejectsPreflight }, error) {
+		ctx = browserPeopleScope(ctx)
 		value, err := parseWorkspaceQuery(in.Body.Query)
 		if err != nil {
 			return nil, err

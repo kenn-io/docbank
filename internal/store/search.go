@@ -2614,6 +2614,10 @@ func (s *Store) SearchPageWithOptions(
 // The generation lease also keeps publication from collecting their FTS rows.
 func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn func(*sql.Tx, SearchOptions) error) error {
 	return s.withReadTx(ctx, func(tx *sql.Tx) (retErr error) {
+		ctx, err := s.scopeQueryPeople(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if opts.PhotoScope != nil {
 			lease, err := s.acquireLexicalGeneration(ctx, tx)
 			if err != nil && !errors.Is(err, ErrNotFound) {

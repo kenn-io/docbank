@@ -2,6 +2,12 @@
   "format": "docbank-query-identity-v1",
   "queries": [
     {
+      "name": "people_set_order_and_duplicates",
+      "input_json": "{\"filters\":{\"people\":[{\"person_id\":\"00000000-0000-4000-8000-000000000002\",\"roles\":[\"speaker\"]},{\"person_id\":\"00000000-0000-4000-8000-000000000001\",\"roles\":[\"sender\",\"organizer\",\"sender\"]},{\"person_id\":\"00000000-0000-4000-8000-000000000002\",\"roles\":[\"speaker\"]}]}}",
+      "canonical_utf8": "{\"filters\":{\"people\":[{\"person_id\":\"00000000-0000-4000-8000-000000000001\",\"roles\":[\"organizer\",\"sender\"]},{\"person_id\":\"00000000-0000-4000-8000-000000000002\",\"roles\":[\"speaker\"]}]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:36d65ef11867b37c838811123225893c08925dbc6fde4332273edf344140522b"
+    },
+    {
       "name": "query_person_ids_normalized",
       "input_json": "{\"filters\":{\"person_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]}}",
       "canonical_utf8": "{\"filters\":{\"person_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",

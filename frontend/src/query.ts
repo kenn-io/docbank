@@ -110,6 +110,8 @@ export const personRoles = [
   "organizer",
   "attendee",
   "participant",
+  "speaker",
+  "depicted",
 ] as const;
 export type PersonRole = (typeof personRoles)[number];
 export interface PersonFilter {
@@ -381,7 +383,19 @@ function normalizePeople(value: PersonFilter[] | undefined): PersonFilter[] | un
     if (!roles?.length) throw new Error("filters.people.roles is required");
     return { person_id: entry.person_id, roles };
   });
-  return entries.length ? entries : undefined;
+  entries.sort((a, b) => {
+    if (a.person_id !== b.person_id) return a.person_id < b.person_id ? -1 : 1;
+    const left = a.roles.join("\0");
+    const right = b.roles.join("\0");
+    return left === right ? 0 : left < right ? -1 : 1;
+  });
+  const unique = entries.filter(
+    (entry, index) =>
+      index === 0 ||
+      entry.person_id !== entries[index - 1].person_id ||
+      entry.roles.join("\0") !== entries[index - 1].roles.join("\0"),
+  );
+  return unique.length ? unique : undefined;
 }
 
 function parseFilters(input: Record<string, unknown>): QueryFilters {
