@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"uuid"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -22,9 +21,6 @@ func documentFactsSelection(raw []byte) (documentFactsInput, error) {
 	var in documentFactsInput
 	if err := decodeReadArguments(raw, &in); err != nil {
 		return in, err
-	}
-	if (in.NodeID > 0) == (in.ContentVersionID != "") || in.NodeID < 0 || in.ContentVersionID != "" && !daemonconn.IsCanonicalUUIDv4(in.ContentVersionID) {
-		return in, invalidToolArgumentsError()
 	}
 	return in, nil
 }
@@ -97,10 +93,6 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 // documentDatesPage pages claims followed by diagnostics, retaining the primary
 // and version metadata on every page. Oversized individual items fail visibly.
 func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput, error) {
-	const maxItems = document.MaxDocumentEvents + document.MaxDocumentEventsEncodedBytes/32
-	if offset < 0 || offset > maxItems {
-		return documentDatesOutput{}, invalidToolArgumentsError()
-	}
 	total := len(dates.Claims) + len(dates.Diagnostics)
 	start := min(offset, total)
 	output := documentDatesOutput{privateCache: newPrivateCache(), VersionDates: dates, Offset: start}
@@ -126,9 +118,6 @@ func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput,
 
 // documentPeoplePage traverses edges, assertions and unresolved names in order.
 func documentPeoplePage(people api.VersionPeople, offset int) (documentPeopleOutput, error) {
-	if offset < 0 || offset > 1<<31-1 {
-		return documentPeopleOutput{}, invalidToolArgumentsError()
-	}
 	edges, assertions := len(people.Edges), len(people.Assertions)
 	total := edges + assertions + len(people.Unresolved)
 	start := min(offset, total)

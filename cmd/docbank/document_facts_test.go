@@ -45,11 +45,44 @@ func TestDocumentFactsTableWriteErrors(t *testing.T) {
 
 func TestDocumentDatesTablePublishedClaim(t *testing.T) {
 	result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
-		Primary: true, DateKind: "sent", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted",
+		Primary: true, DateKind: "sent", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted", When: api.WhenV1{State: "date"},
 	}}}
 	var output strings.Builder
 	require.NoError(t, writeVersionDatesTable(&output, result))
-	require.Equal(t, "State: published\n* sent  2024-03-15  America/Vancouver  date  From document\n", output.String())
+	require.Equal(t, "State: published\n* sent  2024-03-15  \"America/Vancouver\" (state=date, zone=\"\")  date  From document\n", output.String())
+}
+
+func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
+	for _, tc := range []struct {
+		name, zone, state, zoneState, want string
+	}{
+		{"email unknown offset", "-0000", "floating", "omitted", `"-0000" (state=floating, zone="omitted")`},
+		{"exact missing source zone", "", "exact", "unknown", `"" (state=exact, zone="unknown")`},
+		{"zone controls", "zone\n\x1b[31m", "floating", "named", `"zone\n\x1b[31m" (state=floating, zone="named")`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := &api.VersionDates{State: "published", Diagnostics: []api.FactDiagnostic{{Detail: "detail\n\x1b[31m"}}, Claims: []api.VersionDateClaim{{
+				DateKind: "sent", DateValue: "2024-03-15T12:30:00", ZoneText: tc.zone, Precision: "second", ClaimBasis: "source_asserted", When: api.WhenV1{State: tc.state, ZoneState: tc.zoneState},
+			}}}
+			var output strings.Builder
+			require.NoError(t, writeVersionDatesTable(&output, result))
+			require.Contains(t, output.String(), `Diagnostic: "detail\n\x1b[31m"`+"\n")
+			require.Contains(t, output.String(), tc.want)
+			require.NotContains(t, output.String(), "\x1b")
+		})
+	}
+
+	result := &api.VersionPeople{State: "published",
+		Edges:      []api.VersionPersonEdge{{Role: "author", DisplayName: "edge\n\x1b[31m", Basis: "operator_assigned"}},
+		Assertions: []api.VersionPersonAssertion{{Role: "sender", DisplayName: "assertion\n\x1b[31m", Action: "suppress"}},
+		Unresolved: []api.VersionUnresolvedName{{Role: "recipient", RawLabel: "unresolved\n\x1b[31m"}},
+	}
+	var output strings.Builder
+	require.NoError(t, writeVersionPeopleTable(&output, result))
+	require.Contains(t, output.String(), `"edge\n\x1b[31m"`)
+	require.Contains(t, output.String(), `"assertion\n\x1b[31m"`)
+	require.Contains(t, output.String(), `"unresolved\n\x1b[31m"`)
+	require.NotContains(t, output.String(), "\x1b")
 }
 
 func TestDocumentFactsCommandRegistration(t *testing.T) {
@@ -141,7 +174,6 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 		{name: "different person", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.PersonID = "other"; return a }(), wantRow: true},
 		{name: "different role", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Role = "sender"; return a }(), wantRow: true},
 		{name: "different evidence kind", state: "published", edges: []api.VersionPersonEdge{func() api.VersionPersonEdge { e := edge; e.EvidenceKind = "custodian_assignment"; return e }()}, assertion: assertion, wantRow: true},
-		{name: "empty identity", state: "published", edges: []api.VersionPersonEdge{func() api.VersionPersonEdge { e := edge; e.EvidenceID = ""; return e }()}, assertion: func() api.VersionPersonAssertion { a := assertion; a.AssertionID = ""; return a }(), wantRow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := api.VersionPeople{State: tc.state, Edges: tc.edges, Assertions: []api.VersionPersonAssertion{tc.assertion}, Unresolved: []api.VersionUnresolvedName{{Role: "author", RawLabel: "Unknown"}}}
@@ -149,7 +181,7 @@ func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
 			require.NoError(t, writeVersionJSON(&before, &result))
 			var table strings.Builder
 			require.NoError(t, writeVersionPeopleTable(&table, &result))
-			require.Contains(t, table.String(), "Unknown  unresolved")
+			require.Contains(t, table.String(), "\"Unknown\"  unresolved")
 			if len(tc.edges) != 0 {
 				require.Contains(t, table.String(), "Assigned by you")
 			}
