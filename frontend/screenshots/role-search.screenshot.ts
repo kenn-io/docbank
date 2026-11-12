@@ -14,8 +14,6 @@ import type { SnapshotPage } from "../src/snapshots.js";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-// "branch" proves this checkout; "base" captures the same fixtures with the
-// historical control binary, which predates role operands and the People facet.
 const proof = process.env.DOCBANK_ROLE_SEARCH_PROOF;
 test.skip(!proof, "DOCBANK_ROLE_SEARCH_PROOF enables this proof");
 
@@ -56,11 +54,11 @@ const advanced = (text: string, filters: Record<string, unknown> = {}) => ({
   sort: { field: "name", direction: "asc" } as const,
 });
 const query = advanced('from:"Mara Okonkwo-Fell"');
-// Any role: the one person operand the base branch already has.
+// Any-role person query.
 const anyRole = advanced('person:"Mara Okonkwo-Fell"');
 
 // Attachments are named
-// role-search-<base|branch>-<state>-<wide|narrow|mobile-<part>>-<theme>.png.
+// role-search-branch-<state>-<wide|narrow|mobile-<part>>-<theme>.png.
 async function capture(page: Page, testInfo: TestInfo, name: string, theme: "light" | "dark") {
   await page.evaluate(async (value) => {
     localStorage.setItem("docbank-theme", value);
@@ -89,18 +87,15 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
 }
 
 // The first result is selected on load, so the inspector reads its email and
-// history; a capture taken earlier shows their loading states. The base binary
-// predates this proof's inspector, so it only waits for the loading to end.
+// history; a capture taken earlier shows their loading states.
 async function inspectorLoaded(page: Page) {
-  if (proof === "branch") {
-    const inspector = page.getByRole("complementary", { name: "Document inspector" });
-    await expect(
-      inspector.getByRole("region", { name: "Email reader" }).getByLabel("Decoded email headers"),
-    ).toBeAttached();
-    await expect(
-      inspector.getByRole("region", { name: "History", exact: true }).locator(":scope > ol"),
-    ).toBeAttached();
-  }
+  const inspector = page.getByRole("complementary", { name: "Document inspector" });
+  await expect(
+    inspector.getByRole("region", { name: "Email reader" }).getByLabel("Decoded email headers"),
+  ).toBeAttached();
+  await expect(
+    inspector.getByRole("region", { name: "History", exact: true }).locator(":scope > ol"),
+  ).toBeAttached();
   await expect(page.getByText("Loading and verifying the email…")).toHaveCount(0);
   await expect(page.getByText("Loading history…")).toHaveCount(0);
 }
@@ -229,29 +224,6 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       await editor.getByRole("button", { name: "Search", exact: true }).click();
       await expect(editor).toBeHidden();
     };
-    const everyEmail = emails.map(([name]) => name).sort();
-    if (proof === "base") {
-      await expect
-        .poll(async () => (await freeze(anyRole, []))?.rows.map((row) => row.name), {
-          timeout: 120_000,
-          intervals: [1_000],
-        })
-        .toEqual(everyEmail);
-      await open(anyRole);
-      await captureStates(
-        page,
-        testInfo,
-        "person-query",
-        async () => {
-          await expect(
-            results.getByRole("cell", { name: "/vendor-notes.eml", exact: true }),
-          ).toBeVisible();
-          await expect(people).toHaveCount(0);
-        },
-        [["results", results]],
-      );
-      return;
-    }
     const expected = {
       rows: [
         ["board-update.eml", ["sender"]],
@@ -272,7 +244,7 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       })
       .toEqual(expected);
 
-    // The base comparison: any role, no role chips, but now a People group.
+    // An any-role query shows the People group without role chips.
     await open(anyRole);
     await captureStates(
       page,

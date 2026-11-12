@@ -959,7 +959,7 @@ Existing `/search` requests do not gain advanced syntax through this endpoint.
 200 with its first page. The request accepts `query`, an optional configured
 processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
-`size`, `text_coverage`, and `duplicates` facets, up to eight dimensions.
+`size`, `text_coverage`, `duplicates`, and `person_role` facets, up to nine dimensions.
 
 Set `photos: true` to capture a Photos query in its photo ordering, with one
 display-file row per matching asset, an `asset_id`, and its frozen display-file `flag` on each row. Document snapshot rows omit `flag`. This mode
@@ -976,6 +976,12 @@ node/content-version membership observed at creation. It also carries exact
 content replacements, or dependency changes do not rewrite an existing
 snapshot. Create another snapshot to observe them.
 
+Document rows can include `matched_roles`, the sorted, distinct roles that
+contributed to a true positive query match within the caller's evidence scope.
+`mentioned` marks a display-name or alias phrase found in document text. With
+duplicate collapse, only actual matching members contribute roles to the result's
+chips.
+
 `POST /workspace/queries/{id}/pages` accepts only the required `cursor`. Send
 the returned `next_cursor` or `previous_cursor` unchanged. It is bound to the
 snapshot, owner, ordering, direction, and page size. The response omits a
@@ -990,6 +996,13 @@ without a value, and `other` sums value counts omitted from the response. A
 document with several tags or collections contributes once to each value,
 so those value counts can exceed `total`.
 [Photo browse](../usage/photos.md) counts distinct assets instead.
+
+The `person_role` facet keeps the leading 20 people plus selected people. Each
+value's optional `roles` lists the frozen roles for that person. Counts and roles
+use browser-safe evidence for every caller, excluding blind-copy and sensitive
+claims. Only root `filters.people` entries are omitted when counting;
+`person_ids`, expression operands and nested saved queries stay in force.
+Selecting a value adds a root people entry with the roles shown.
 
 Each ordinary available facet keeps its leading 50 values plus selected QueryV1 values
 outside that set, including a selected value whose count is zero. Size uses the

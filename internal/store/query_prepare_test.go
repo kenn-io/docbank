@@ -15,42 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
-func TestCompiledBoundaryRangesSurviveComposition(t *testing.T) {
-	t.Parallel()
-	path := compilePathPredicate("/inbox")
-	coverage, err := compileTextCoveragePredicate("complete", 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nested := joinCompiledFragments([]compiledQueryFragment{path, negateCompiledFragment(coverage)}, ` OR `)
-	population := selectCompiledPopulation(nested, true)
-	saved := markCompiledBoundary(wrapCompiledFragment(population, `EXISTS (SELECT 1 FROM (`, `) saved WHERE saved.node_id=n.id AND saved.content_version_id=cv.version_id)`), 0)
-	combined := joinCompiledFragments([]compiledQueryFragment{{sql: `n.name=?`, args: []any{"example"}}, saved, compileCollectionPredicate("collection")}, ` AND `)
-	if len(combined.boundaries) != 4 {
-		t.Fatalf("got %d boundaries", len(combined.boundaries))
-	}
-	for _, b := range combined.boundaries {
-		if b.sqlStart < 0 || b.sqlEnd > len(combined.sql) || b.sqlStart >= b.sqlEnd || b.argStart < 0 || b.argEnd > len(combined.args) || b.argStart > b.argEnd {
-			t.Fatalf("invalid boundary: %+v", b)
-		}
-	}
-	pathBoundary, coverageBoundary, savedBoundary, collectionBoundary := combined.boundaries[0], combined.boundaries[1], combined.boundaries[2], combined.boundaries[3]
-	if combined.sql[pathBoundary.sqlStart:pathBoundary.sqlEnd] != path.sql || !slices.Equal(combined.args[pathBoundary.argStart:pathBoundary.argEnd], path.args) {
-		t.Fatal("path range changed")
-	}
-	if combined.sql[coverageBoundary.sqlStart:coverageBoundary.sqlEnd] != coverage.sql || !slices.Equal(combined.args[coverageBoundary.argStart:coverageBoundary.argEnd], coverage.args) || coverageBoundary.relations != compiledRelationProcessingCoverage {
-		t.Fatal("coverage range changed")
-	}
-	if !(savedBoundary.sqlStart < pathBoundary.sqlStart && savedBoundary.sqlEnd > coverageBoundary.sqlEnd && savedBoundary.argStart <= pathBoundary.argStart && savedBoundary.argEnd >= coverageBoundary.argEnd) {
-		t.Fatal("saved boundary lost its nested domain")
-	}
-	if combined.sql[collectionBoundary.sqlStart:collectionBoundary.sqlEnd] != compileCollectionPredicate("collection").sql {
-		t.Fatal("collection range changed")
-	}
-}
-
-// This exercises SQL membership under OR and NOT, including a zero-argument
-// boundary followed by another boundary whose argument range must move.
+// This exercises SQL membership under OR and NOT with duplicate and path predicates.
 func TestPreparedPredicateDuplicateAndPath(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -68,7 +33,7 @@ func TestPreparedPredicateDuplicateAndPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	compiled := compileFixtureQuery(t, s, `NOT has_duplicates:true OR path:/missing`, query.Filters{})
-	population, err := prepareCompiledPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
+	population, err := matchedPopulation(compiled, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,45 +132,36 @@ func (r *preparationLifecycleRows) Next(values []driver.Value) error {
 func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	boundary := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
 	final := compileFixtureQuery(t, s, `name:synthetic`, query.Filters{})
 	iterationErr := errors.New("synthetic iteration error")
 	closeErr := errors.New("synthetic close error")
-	for _, owner := range []string{"boundary", "final"} {
-		for _, failure := range []string{"cancel", "iteration", "close"} {
-			t.Run(owner+"/"+failure, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				r := &preparationLifecycleRows{}
-				want := error(context.Canceled)
-				switch failure {
-				case "cancel":
-					r.cancel = cancel
-				case "iteration":
-					r.iterationErr, want = iterationErr, iterationErr
-				case "close":
-					r.closeErr, want = closeErr, closeErr
-				}
-				db := sql.OpenDB(preparationLifecycleConnector{r})
-				t.Cleanup(func() { _ = db.Close() })
-				var got compiledQueryFragment
-				var err error
-				if owner == "boundary" {
-					got, err = prepareCompiledPredicate(ctx, db, boundary, "", nil, CoverageSelection{})
-				} else {
-					got, err = materializeDocumentPopulation(ctx, db, final, "", nil, CoverageSelection{})
-				}
-				if !errors.Is(err, want) {
-					t.Fatalf("got error %v, want %v", err, want)
-				}
-				if got.sql != "" || len(got.args) != 0 {
-					t.Fatalf("fabricated membership: %+v", got)
-				}
-				if r.queries != 1 || r.next != 2 || r.closed != 1 {
-					t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
-				}
-			})
-		}
+	for _, failure := range []string{"cancel", "iteration", "close"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			r := &preparationLifecycleRows{}
+			want := error(context.Canceled)
+			switch failure {
+			case "cancel":
+				r.cancel = cancel
+			case "iteration":
+				r.iterationErr, want = iterationErr, iterationErr
+			case "close":
+				r.closeErr, want = closeErr, closeErr
+			}
+			db := sql.OpenDB(preparationLifecycleConnector{r})
+			t.Cleanup(func() { _ = db.Close() })
+			got, err := materializeDocumentPopulation(ctx, db, final, "", nil, CoverageSelection{})
+			if !errors.Is(err, want) {
+				t.Fatalf("got error %v, want %v", err, want)
+			}
+			if got.sql != "" || len(got.args) != 0 {
+				t.Fatalf("fabricated membership: %+v", got)
+			}
+			if r.queries != 1 || r.next != 2 || r.closed != 1 {
+				t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
+			}
+		})
 	}
 }
 
@@ -265,16 +221,6 @@ func TestDocumentPopulationPersonEdgeRouting(t *testing.T) {
 			rows, err := documentSnapshotPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
 			require.NoError(t, err)
 			require.Equal(t, tc.edges, strings.Contains(rows.sql, "FROM json_each(?)"))
-			reportQueries := &populationRecordingQuerier{metadataQuerier: s.db}
-			report, err := documentReportPopulation(ctx, reportQueries, compiled, "", nil, CoverageSelection{})
-			require.NoError(t, err)
-			if !tc.edges {
-				require.NotContains(t, report.sql, "prepared_member")
-				require.Empty(t, reportQueries.statements)
-			} else if tc.name == "saved collapse role" {
-				require.NotEmpty(t, reportQueries.statements)
-				require.Contains(t, report.sql, "prepared_member")
-			}
 		})
 	}
 }
@@ -332,44 +278,12 @@ func TestDocumentFacetPopulationRoutes(t *testing.T) {
 	}
 	require.NotEmpty(t, facetSQL)
 	require.NotContains(t, facetSQL, "FROM json_each(?)")
-	// The People facet prepares its own role-free population before joining edges.
+	// The People facet keeps a role-free population inline before joining edges.
 	compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
 	require.False(t, compiled.predicate.personEdges)
 	recording := &populationRecordingQuerier{metadataQuerier: s.db}
 	_, err = materializePersonRoleFacet(ctx, recording, compiled, "", fixture.selection, 1000)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(recording.statements), 2)
-	require.Contains(t, recording.statements[len(recording.statements)-1], "FROM json_each(?)")
-}
-
-func TestPreparedMembershipExactPairsAndEmptyNot(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	first, err := s.CreateFile(ctx, s.RootID(), "pair-first.txt", fakeHash("ce01"), 10, "text/plain")
-	require.NoError(t, err)
-	second, err := s.CreateFile(ctx, s.RootID(), "pair-second.txt", first.BlobHash, 10, "text/plain")
-	require.NoError(t, err)
-	compiled := compileFixtureQuery(t, s, `has_duplicates:true`, query.Filters{})
-	predicate, err := prepareCompiledPredicate(ctx, s.db, compiled, "", nil, CoverageSelection{})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		node    int64
-		version string
-		want    bool
-	}{{first.ID, first.CurrentVersionID, true}, {second.ID, second.CurrentVersionID, true}, {first.ID, second.CurrentVersionID, false}, {second.ID, first.CurrentVersionID, false}} {
-		args := append(append([]any(nil), predicate.args...), tc.node, tc.version, tc.node, tc.version)
-		var got bool
-		err := s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id, 'file' AS kind, NULL AS trashed_at, ? AS current_version_id) n, (SELECT ? AS node_id, ? AS version_id) cv`, args...).Scan(&got)
-		require.NoError(t, err)
-		require.Equal(t, tc.want, got)
-	}
-	empty := compileFixtureQuery(t, s, `NOT path:/absent`, query.Filters{})
-	predicate, err = prepareCompiledPredicate(ctx, s.db, empty, "", nil, CoverageSelection{})
-	require.NoError(t, err)
-	args := append(append([]any(nil), predicate.args...), first.ID, first.CurrentVersionID, first.ID, first.CurrentVersionID)
-	var got bool
-	err = s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id, 'file' AS kind, NULL AS trashed_at, ? AS current_version_id) n, (SELECT ? AS node_id, ? AS version_id) cv`, args...).Scan(&got)
-	require.NoError(t, err)
-	require.True(t, got)
+	require.NotEmpty(t, recording.statements)
+	require.NotContains(t, recording.statements[len(recording.statements)-1], "FROM json_each(?)")
 }
