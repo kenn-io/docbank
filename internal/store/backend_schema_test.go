@@ -45,6 +45,12 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
 	delete(left["vault_metadata"].Columns, "schema_version")
 	delete(right["vault_metadata"].Columns, "schema_fingerprint")
+	// Source descriptions permit NUL and feed canonical audit byte strings.
+	// PostgreSQL BYTEA preserves them while SQLite retains its released TEXT.
+	assert.Equal(t, backendColumn{Kind: "text", Required: true}, left["ingests"].Columns["source_desc"])
+	assert.Equal(t, backendColumn{Kind: "bytes", Required: true}, right["ingests"].Columns["source_desc"])
+	delete(left["ingests"].Columns, "source_desc")
+	delete(right["ingests"].Columns, "source_desc")
 	// PostgreSQL's transactional node counter implements SQLite's sqlite_sequence.
 	require.Contains(t, right, "node_allocation")
 	delete(right, "node_allocation")

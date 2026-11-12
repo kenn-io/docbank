@@ -26,6 +26,12 @@ func insertPostgresHiddenFailure(ctx context.Context, tx *sql.Tx, v metadataHidd
 	return err
 }
 
+func insertPostgresIngest(ctx context.Context, tx *sql.Tx, v metadataIngest) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc)
+		VALUES($1,$2,$3,$4)`, v.ID, v.StartedAt, v.SourceKind, []byte(v.SourceDesc))
+	return err
+}
+
 // SQLite import triggers own these projections. Rebuild after all records exist.
 func (s *Store) refreshImportedCatalogsTx(ctx context.Context, tx *sql.Tx) error {
 	for after := ""; ; {

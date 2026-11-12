@@ -155,7 +155,8 @@ CREATE TABLE {{schema}}.ingests (
     id          TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     started_at  TEXT COLLATE "C" NOT NULL,
     source_kind TEXT COLLATE "C" NOT NULL,
-    source_desc TEXT COLLATE "C" NOT NULL
+    -- Canonical audit byte evidence; PostgreSQL TEXT rejects permitted NUL.
+    source_desc BYTEA NOT NULL
 );
 
 CREATE TABLE {{schema}}.provenance (

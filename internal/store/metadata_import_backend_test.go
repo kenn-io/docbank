@@ -25,6 +25,19 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	seeds := retainedMetadataCatalogSeeds()
+	seeds["NUL source description"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		run, err := s.BeginIngest(t.Context(), "cli", "source\x00description \\u0000 café")
+		require.NoError(t, err)
+		_, err = s.IngestFileExact(t.Context(), run, s.RootID(), "nul.txt", fakeHash("b4"), 9, "text/plain", "opaque://report", "")
+		require.NoError(t, err)
+		plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "cli", nil)
+		require.NoError(t, err)
+		_, err = s.EnableInitialAudit(t.Context(), plan)
+		require.NoError(t, err)
+		return s
+	}
 	seeds["mailbox work"] = seedMetadataImportMailbox
 	seeds["mailbox job"] = func(t *testing.T) *Store {
 		t.Helper()
@@ -185,6 +198,7 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		"hidden photo lockout":    {"photo_hidden_failure"},
 		"processing":              {"processing_profile", "rendition_head", "rendition_lexical_generation", "current_rendition_root"},
 		"processing jobs":         {"processing_incarnation", "processing_consent_grant", "rendition_job", "rendition_job_waiter"},
+		"NUL source description":  {"ingest", "provenance", "audit_record"},
 	}
 	for name, seed := range seeds {
 		t.Run(name, func(t *testing.T) {
@@ -243,6 +257,32 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			after, err := runtime.VerifyAudit(ctx, nil)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			if name == "NUL source description" {
+				node, err := source.NodeByPath(ctx, "/nul.txt")
+				require.NoError(t, err)
+				want, err := source.NodeProvenance(ctx, node.ID, 10, 0)
+				require.NoError(t, err)
+				require.Equal(t, "source\x00description \\u0000 café", want.Items[0].SourceDescription)
+				collection, err := source.CollectionByID(ctx, want.Items[0].IngestID)
+				require.NoError(t, err)
+				for _, store := range []*Store{runtime, recovered} {
+					got, err := store.NodeProvenance(ctx, node.ID, 10, 0)
+					require.NoError(t, err)
+					require.Equal(t, want, got)
+					collections, total, err := store.Collections(ctx, 10, 0)
+					require.NoError(t, err)
+					require.Equal(t, 1, total)
+					require.Equal(t, []Collection{collection}, collections)
+				}
+				_, err = runtime.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "new\x00source", OriginalPath: "opaque://new-reference"})
+				require.NoError(t, err)
+				got, err := runtime.NodeProvenance(ctx, node.ID, 10, 0)
+				require.NoError(t, err)
+				require.Len(t, got.Items, 2)
+				require.Equal(t, "new\x00source", got.Items[0].SourceDescription)
+				_, err = runtime.VerifyAudit(ctx, &before.Evidence)
+				require.NoError(t, err)
+			}
 			if name == "hidden photo lockout" {
 				_, _, err := runtime.UnlockPhotoHidden(ctx, "wrong-passcode")
 				require.Error(t, err)

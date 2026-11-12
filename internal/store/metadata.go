@@ -1247,6 +1247,11 @@ func (s *Store) importMetadataRecord(
 		codec.insert = insertPostgresHiddenFailure
 		return codec.importRecord(ctx, tx, raw)
 	}
+	if s.postgresSchema != "" && kind == metadataIngestType {
+		codec := *ingestMetadata
+		codec.insert = insertPostgresIngest
+		return codec.importRecord(ctx, tx, raw)
+	}
 	if codec, ok := metadataCodecs[kind]; ok {
 		return codec.importRecord(ctx, tx, raw)
 	}

@@ -81,7 +81,7 @@ func (s *Store) AppendNodeProvenance(
 		if err != nil {
 			return err
 		}
-		if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+		if _, err := s.ensureIngestRunTx(ctx, tx, run); err != nil {
 			return err
 		}
 		provenance := metadataProvenance{

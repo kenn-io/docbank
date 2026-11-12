@@ -230,6 +230,12 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
+			if table == "ingests" {
+				position := slices.Index(columns, "source_desc")
+				description, ok := values[position].(string)
+				require.True(t, ok)
+				values[position] = []byte(description)
+			}
 			_, err := to.ExecContext(ctx, insert, values...)
 			require.NoError(t, err)
 		}

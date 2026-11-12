@@ -902,6 +902,12 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
+Source descriptions remain valid UTF-8 strings, including U+0000, in the API
+and metadata stream. PostgreSQL stores `ingests.source_desc` as `BYTEA` to keep
+those bytes unchanged; the shared readers scan it back into a string. SQLite
+retains its released `TEXT` column. Provenance reads, metadata export and audit
+validation use the original string.
+
 PostgreSQL foreign keys that normally check immediately allow explicit deferral.
 Logical import and collection snapshot sealing, including received packages,
 defer those keys until validation or commit. Other writes retain their existing

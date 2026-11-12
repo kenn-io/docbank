@@ -160,7 +160,7 @@ func activeProvenanceMatchesTx(
 // ensureIngestRunTx publishes run once and rejects any identity collision with
 // different immutable fields. The returned boolean reports whether this
 // transaction inserted the record.
-func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
+func (s *Store) ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, error) {
 	if err := validateIngestRecord(run.record); err != nil {
 		return false, fmt.Errorf("validating ingest run: %w", err)
 	}
@@ -179,10 +179,15 @@ func ensureIngestRunTx(ctx context.Context, tx *sql.Tx, run IngestRun) (bool, er
 			return false, ErrAuditMutationUnsupported
 		}
 	}
+	var description any = run.record.SourceDesc
+	if s.postgresSchema != "" {
+		// Audit commits these bytes verbatim; PostgreSQL TEXT cannot hold NUL.
+		description = []byte(run.record.SourceDesc)
+	}
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO ingests (id, started_at, source_kind, source_desc)
 		 VALUES ($1, $2, $3, $4) ON CONFLICT(id) DO NOTHING`,
-		run.record.ID, run.record.StartedAt, run.record.SourceKind, run.record.SourceDesc)
+		run.record.ID, run.record.StartedAt, run.record.SourceKind, description)
 	if err != nil {
 		return false, fmt.Errorf("recording ingest run: %w", err)
 	}

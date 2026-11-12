@@ -171,7 +171,7 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 		if occupied {
 			return ErrPackageConflict
 		}
-		if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
+		if _, err := s.ensureIngestRunTx(ctx, tx, run); err != nil {
 			return err
 		}
 		now := nowRFC3339()
