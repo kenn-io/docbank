@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -227,4 +229,90 @@ func TestContractAuditRefusal(t *testing.T) {
 	_, err = s.UpdateContract(ctx, c.ContractID, c.Revision, ContractInput{Title: "Changed", Status: "draft"})
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	require.ErrorIs(t, s.DeleteContract(ctx, c.ContractID, c.Revision), ErrAuditMutationUnsupported)
+}
+
+// checkContractRevisionExhaustion exercises contracts restored at the integer limit.
+func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
+	t.Helper()
+	for _, action := range []string{"update", "attach", "detach", "noop", "stale", "boundary"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := t.Context()
+			source := newTestStore(t)
+			linked, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Linked"})
+			require.NoError(t, err)
+			other, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Other"})
+			require.NoError(t, err)
+			input := ContractInput{Title: "Agreement", Status: "draft", Parties: []ContractPartyInput{{PartyID: linked.PartyID, Role: "counterparty"}}}
+			contract, err := source.CreateContract(ctx, input)
+			require.NoError(t, err)
+			var original bytes.Buffer
+			require.NoError(t, source.ExportMetadata(ctx, &original))
+			lines := strings.Split(original.String(), "\n")
+			revision := int64(math.MaxInt64)
+			if action == "boundary" {
+				revision--
+			}
+			found := false
+			for i, line := range lines {
+				if strings.Contains(line, `"type":"contract"`) && strings.Contains(line, contract.ContractID) {
+					lines[i] = strings.Replace(line, `"revision":1`, `"revision":`+strconv.FormatInt(revision, 10), 1)
+					require.NotEqual(t, line, lines[i])
+					found = true
+				}
+			}
+			require.True(t, found)
+			s := newTestStore(t)
+			require.NoError(t, s.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
+			}
+			before, err := s.GetContract(ctx, contract.ContractID, "")
+			require.NoError(t, err)
+			require.Equal(t, revision, before.Revision)
+			var snapshot bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &snapshot))
+			switch action {
+			case "update", "boundary":
+				input.Title = "Changed"
+				_, err = s.UpdateContract(ctx, contract.ContractID, revision, input)
+			case "attach":
+				_, err = s.AttachContractParty(ctx, contract.ContractID, revision, other.PartyID, "counterparty")
+			case "detach":
+				_, err = s.DetachContractParty(ctx, contract.ContractID, revision, linked.PartyID, "counterparty")
+			case "noop":
+				var same Contract
+				same, err = s.UpdateContract(ctx, contract.ContractID, revision, input)
+				require.NoError(t, err)
+				require.Equal(t, before, same)
+				same, err = s.AttachContractParty(ctx, contract.ContractID, revision, linked.PartyID, "counterparty")
+				require.NoError(t, err)
+				require.Equal(t, before, same)
+			case "stale":
+				input.Title = "Changed"
+				_, err = s.UpdateContract(ctx, contract.ContractID, revision-1, input)
+				require.ErrorIs(t, err, ErrStaleRevision)
+			}
+			if action == "boundary" {
+				require.NoError(t, err)
+				got, getErr := s.GetContract(ctx, contract.ContractID, "")
+				require.NoError(t, getErr)
+				assert.Equal(t, int64(math.MaxInt64), got.Revision)
+				assert.Equal(t, "Changed", got.Title)
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &exported))
+				return
+			}
+			if action == "update" || action == "attach" || action == "detach" {
+				assert.ErrorIs(t, err, ErrInvalidContract)
+			}
+			got, getErr := s.GetContract(ctx, contract.ContractID, "")
+			if assert.NoError(t, getErr) {
+				assert.Equal(t, before, got)
+			}
+			var after bytes.Buffer
+			if assert.NoError(t, s.ExportMetadata(ctx, &after)) {
+				assert.Equal(t, snapshot.Bytes(), after.Bytes())
+			}
+		})
+	}
 }

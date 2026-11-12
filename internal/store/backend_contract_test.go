@@ -2245,6 +2245,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPartyFiltersAndReferences(t, newPostgresQueryStore)
 		}},
+		{"ContractRevisionExhaustion", func(t *testing.T) { t.Helper(); checkContractRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkContractRevisionExhaustion(t, true) }},
 		{"ContractPartyHistory", func(t *testing.T) {
 			t.Helper()
 			checkContractPartyHistory(t, newTestStore)
