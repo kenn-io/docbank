@@ -61,30 +61,32 @@ func TestSearchUnderPathInvalidScopesNeverCallProvider(t *testing.T) {
 	server := newSearchProcessingServer(t, f, service)
 	for _, tool := range []string{"search_documents", "answer_question"} {
 		for _, tc := range []struct {
-			path, code string
-			id         int64
+			name, path, code string
+			id               int64
 		}{
-			{"/missing", "not_found", 0},
-			{"/trashed", "not_found", 0},
-			{"/mercury.txt", "not_dir", 0},
-			{"/..", "validation", 0},
-			{"/", "validation", f.catalog.RootID()},
+			{"missing", "/missing", "not_found", 0},
+			{"trashed", "/trashed", "not_found", 0},
+			{"file", "/mercury.txt", "not_dir", 0},
+			{"dotdot", "/..", "validation", 0},
+			{"path and node id", "/", "validation", f.catalog.RootID()},
 		} {
-			filters := map[string]any{"under_path": tc.path}
-			if tc.id != 0 {
-				filters["under_node_id"] = tc.id
-			}
-			query := "query"
-			if tool == "answer_question" {
-				query = "question"
-			}
-			args := map[string]any{query: "mercury", "profile": "text", "filters": filters}
-			if tool == "search_documents" {
-				args["mode"] = "semantic"
-			}
-			out := exportCall(t, server, tool, args)
-			require.Equal(t, tc.code, out["code"], "%s %s", tool, tc.path)
-			require.Zero(t, provider.queries.Load())
+			t.Run(tool+"/"+tc.name, func(t *testing.T) {
+				filters := map[string]any{"under_path": tc.path}
+				if tc.id != 0 {
+					filters["under_node_id"] = tc.id
+				}
+				query := "query"
+				if tool == "answer_question" {
+					query = "question"
+				}
+				args := map[string]any{query: "mercury", "profile": "text", "filters": filters}
+				if tool == "search_documents" {
+					args["mode"] = "semantic"
+				}
+				out := exportCall(t, server, tool, args)
+				require.Equal(t, tc.code, out["code"], "%s %s", tool, tc.path)
+				require.Zero(t, provider.queries.Load())
+			})
 		}
 	}
 }

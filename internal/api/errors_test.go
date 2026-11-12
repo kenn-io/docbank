@@ -93,16 +93,20 @@ func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		err    error
+		status int
 		code   string
 		detail string
 	}{
-		{processing.ErrRenditionFailed, "rendition_failed", ""},
-		{fmt.Errorf("%w: %w: open /synthetic/private/passwords.txt: permission denied", processing.ErrRenditionOperatorRequired, processing.ErrPDFPasswordsUnreadable), "rendition_operator_required", "PDF passwords file can't be read; check media.pdf_passwords_file"},
-		{processing.ErrRenditionOperatorRequired, "rendition_operator_required", "document rendition requires operator intervention"},
-		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large", ""},
+		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", ""},
+		{fmt.Errorf("%w: %w: open /synthetic/private/passwords.txt: permission denied", processing.ErrRenditionOperatorRequired, processing.ErrPDFPasswordsUnreadable), http.StatusConflict, "rendition_operator_required", "PDF passwords file can't be read; check media.pdf_passwords_file"},
+		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
+		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, http.StatusUnprocessableEntity, "similar_search_too_large", ""},
+		{store.ErrInvalidSearchScope, http.StatusUnprocessableEntity, "validation", ""},
+		{fmt.Errorf("invalid path component: %w", store.ErrInvalidSearchScope), http.StatusUnprocessableEntity, "validation", ""},
 	} {
 		mapped := &Error{}
 		require.ErrorAs(t, fromProcessingError(test.err), &mapped)
+		assert.Equal(t, test.status, mapped.Status)
 		assert.Equal(t, test.code, mapped.Code)
 		if test.detail != "" {
 			assert.Equal(t, test.detail, mapped.Detail)

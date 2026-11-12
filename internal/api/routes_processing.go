@@ -859,7 +859,7 @@ func fromProcessingError(err error) error {
 		result.ObservedScopeCount = scopeError.ObservedScopeCount
 		return result
 	}
-	if errors.Is(err, store.ErrNotDir) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) {
+	if errors.Is(err, store.ErrNotDir) || errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrVersionNodeMismatch) || errors.Is(err, store.ErrSearchQueryRequired) || errors.Is(err, store.ErrInvalidSearchScope) {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", detailPrefix+"document processing failed")
