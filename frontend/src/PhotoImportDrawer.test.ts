@@ -2669,6 +2669,7 @@ it("inspects an unconfirmed group on a replacement channel", async () => {
 });
 
 it("retains a selection when the channel changes during checkpoint save", async () => {
+  const selected = files()[0];
   const module = await import("./photoImportStorage.js");
   const actual = await vi.importActual<typeof module>("./photoImportStorage.js");
   vi.spyOn(module, "photoImportStorage").mockImplementation(actual.photoImportStorage);
@@ -2710,7 +2711,20 @@ it("retains a selection when the channel changes during checkpoint save", async 
   const replacement: PhotoImportTransport = {
     registerPhotoImport: vi.fn(async (id: string) => id),
     listPhotoImports: vi.fn(async () => []),
-    inspectPhotoImport: vi.fn(),
+    inspectPhotoImport: vi.fn(async () => ({
+      import_id: "first",
+      source_id: saved?.sourceID,
+      label: "Photos",
+      destination: "/",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+      groups: [
+        {
+          status: "remaining" as const,
+          files: [{ relative_path: selected.name, size: selected.size }],
+        },
+      ],
+    })),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "second", groups: [[0]], unsupported: [] }),
@@ -2728,7 +2742,7 @@ it("retains a selection when the channel changes during checkpoint save", async 
     expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
   );
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: [files()[0]] },
+    target: { files: [selected] },
   });
   await started;
   const sourceID = saved?.sourceID;
@@ -2736,13 +2750,16 @@ it("retains a selection when the channel changes during checkpoint save", async 
   releaseSave();
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
-  expect(replacement.planPhotoImport).toHaveBeenCalledWith(
-    expect.anything(),
-    "/",
-    sourceID,
-    expect.anything(),
-    expect.anything(),
-    expect.anything(),
+  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
+  expect(replacement.inspectPhotoImport).toHaveBeenCalledWith("first", expect.any(AbortSignal));
+  expect(vi.mocked(original.planPhotoImport).mock.calls[0][2]).toBe(sourceID);
+  expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+    "first",
+    0,
+    [selected],
+    expect.any(AbortSignal),
+    expect.any(Function),
+    expect.any(Array),
   );
   expect(screen.queryByText(/changed in another tab/)).toBeNull();
 });
