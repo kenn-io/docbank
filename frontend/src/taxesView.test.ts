@@ -35,7 +35,7 @@ it("first page requests limit 50 offset 0 with no filters", async () => {
   taxes.dispose();
 });
 
-it("filer and year filters are sent exactly and reset paging", async () => {
+it("filer and year filters are sent exactly and replace the rows", async () => {
   const fetch = serveTaxes((query) => ({
     items: query.filer ? [record("v1", ventures)] : [record("h1", holdings)],
   }));

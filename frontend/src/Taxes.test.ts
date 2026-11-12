@@ -140,6 +140,11 @@ it("each filter state offers one reset per filter", async () => {
     await fireEvent.keyDown(year, { key: "Enter" });
     await screen.findByRole("button", { name: "All years" });
   };
+  // Year only: All years is the one reset.
+  await applyYear();
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "All years" }));
+  await waitFor(() => expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year"));
   // Filer only: All filers is the one reset.
   await chooseVentures();
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
@@ -161,18 +166,15 @@ it("each filter state offers one reset per filter", async () => {
 });
 
 it("empty vault and no-match states", async () => {
-  const fetch = serveTaxes(() => ({ items: [] }));
+  serveTaxes(() => ({ items: [] }));
   show();
   expect(await screen.findByText("No tax records yet")).toBeTruthy();
   const year = screen.getByLabelText("Tax year");
   await fireEvent.input(year, { target: { value: "2032" } });
   await fireEvent.blur(year);
   expect(await screen.findByText("No records match these filters")).toBeTruthy();
-  // With only a year set there is one reset: All years.
-  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "All years" }));
   expect(await screen.findByText("No tax records yet")).toBeTruthy();
-  expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year");
   expect((year as HTMLInputElement).value).toBe("");
 });
 

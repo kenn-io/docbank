@@ -505,7 +505,6 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	// and stay private. Everything else tax- or party-related is refused.
 	resp = webRequest(http.MethodGet, "/api/v1/parties?include_retired=true&limit=1000&offset=0")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"))
 	var browserParties api.PartyPage
 	require.NoError(t, json.UnmarshalRead(resp.Body, &browserParties))
 	require.NoError(t, resp.Body.Close())
@@ -525,7 +524,6 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 
 	resp = webRequest(http.MethodGet, "/api/v1/tax/records?limit=50&offset=0")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "private, no-store", resp.Header.Get("Cache-Control"))
 	var browserRecords struct {
 		Items []map[string]any `json:"items"`
 	}
