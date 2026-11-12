@@ -510,8 +510,12 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			ctx := t.Context()
 			dbPath := filepath.Join(t.TempDir(), "vault.db")
 			db, legacy := newReleasedFixtureStore(t, dbPath, driver.driver, schemaV0170SQL, 48)
-			n := createReleasedFixtureFile(t, legacy, "released.md", fakeHash("d4"), 8, "text/markdown")
-			require.NoError(t, execReleasedWatchAbsence(ctx, db, n))
+			run, err := legacy.BeginIngest(ctx, "watch", "fixture")
+			require.NoError(t, err)
+			n, err := legacy.IngestFileExact(ctx, run, legacy.RootID(), "released.md", fakeHash("d4"), 8, "text/markdown", "released.md", "")
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00.000000000Z')`)
+			require.NoError(t, err)
 			tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 			require.NoError(t, err)
 			var before bytes.Buffer
@@ -575,12 +579,4 @@ func TestNoteIndexedTupleAdmission(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, validateNoteIndexes(ctx, target, notemarkdown.Note{Frontmatter: &notemarkdown.Frontmatter{Fields: fields}}), context.Canceled)
-}
-
-func execReleasedWatchAbsence(ctx context.Context, db *sql.DB, n Node) error {
-	if _, err := db.ExecContext(ctx, `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('fixture','released.md',$1,$2,$3)`, n.ID, n.BlobHash, n.Size); err != nil {
-		return err
-	}
-	_, err := db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00.000000000Z')`)
-	return err
 }
