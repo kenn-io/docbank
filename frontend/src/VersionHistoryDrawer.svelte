@@ -155,7 +155,8 @@
   <div class="versions">
     <p class="summary">
       <span class="path">{path}</span>
-      {#if page && error === null}<span>{page.total} version{page.total === 1 ? "" : "s"}</span>{/if}
+      {#if page && error === null}<span>{page.total} version{page.total === 1 ? "" : "s"}</span
+        >{/if}
       {#if node.trashed_at}<Chip size="xs" tone="warning">Trash</Chip>{/if}
     </p>
     {#if node.trashed_at}
@@ -171,7 +172,9 @@
       <div class="status"><Spinner size={16} /> Loading versions…</div>
     {:else if error !== null}
       <div class="error-block">
-        <p class="error" role="alert">Couldn't load versions{#if error}: {error}{/if}</p>
+        <p class="error" role="alert">
+          Couldn't load versions{#if error}: {error}{/if}
+        </p>
         {#if retryable}<Button size="sm" onclick={() => void load(false)}>Try again</Button>{/if}
       </div>
     {:else if !page || page.items.length === 0}
