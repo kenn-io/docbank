@@ -238,24 +238,54 @@ it.each(["success", "invalid", "backend"])(
   },
 );
 
-it("selects a server byte span correctly without stealing focus during validation", async () => {
+const dateText = "😀 date:2026-03-31..2026-03-01";
+it.each([
+  {
+    code: "invalid_query",
+    status: 422,
+    text: "😀x",
+    position: { offset: 4, end: 5 },
+    range: [2, 3],
+  },
+  ...["invalid_date", "invalid_timezone", "date_not_in_zone"].map((code) => ({
+    code,
+    status: 400,
+    text: dateText,
+    position: { offset: 5, end: 32 },
+    range: [3, 30],
+  })),
+])(
+  "selects a $code server byte span correctly without stealing focus during validation",
+  async ({ code, status, text, position, range }) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code, detail: "Unknown operand", position }), { status }),
+    );
+    const { rerender } = open();
+    await rerender({ query: { ...query, text } });
+    await screen.findByText("Unknown operand");
+    const expression = screen.getByLabelText("Query syntax") as HTMLTextAreaElement;
+    expect(document.activeElement).not.toBe(expression);
+    await fireEvent.click(screen.getByRole("button", { name: "Focus query error" }));
+    expect(document.activeElement).toBe(expression);
+    expect([expression.selectionStart, expression.selectionEnd]).toEqual(range);
+  },
+);
+
+it.each([
+  { code: "invalid_date", position: { offset: 5, end: 33 } },
+  { code: "invalid_timezone", position: { offset: 2, end: 32 } },
+  { code: "date_not_in_zone", position: { offset: 32, end: 5 } },
+  { code: "internal", position: { offset: 5, end: 32 } },
+])("omits Focus query error for a $code span that is unusable here", async ({ code, position }) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        code: "invalid_query",
-        detail: "Unknown operand",
-        position: { offset: 4, end: 5 },
-      }),
-      { status: 422 },
-    ),
+    new Response(JSON.stringify({ code, detail: "Unusable span", position }), {
+      status: code === "internal" ? 500 : 400,
+    }),
   );
   const { rerender } = open();
-  await rerender({ query: { ...query, text: "😀x" } });
-  await screen.findByText("Unknown operand");
-  const expression = screen.getByLabelText("Query syntax") as HTMLTextAreaElement;
-  await fireEvent.click(screen.getByRole("button", { name: "Focus query error" }));
-  expect(document.activeElement).toBe(expression);
-  expect([expression.selectionStart, expression.selectionEnd]).toEqual([2, 3]);
+  await rerender({ query: { ...query, text: dateText } });
+  await screen.findByText("Unusable span");
+  expect(screen.queryByRole("button", { name: "Focus query error" })).toBeNull();
 });
 
 it("aborts pending validation on close and unmount", async () => {

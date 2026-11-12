@@ -79,6 +79,13 @@
       .sort()
       .map((name) => ({ value: name, label: name })),
   ]);
+  // Server validation codes whose 400/422 body may carry an expression byte span.
+  const positionedErrorCodes = new Set([
+    "invalid_query",
+    "invalid_date",
+    "invalid_timezone",
+    "date_not_in_zone",
+  ]);
   const directionOptions: SelectDropdownOption[] = [
     { value: "asc", label: "Ascending" },
     { value: "desc", label: "Descending" },
@@ -163,7 +170,7 @@
             return;
           }
           failure = cause instanceof Error ? cause.message : String(cause);
-          if (cause instanceof APIError && cause.code === "invalid_query")
+          if (cause instanceof APIError && positionedErrorCodes.has(cause.code))
             position = cause.position;
         })
         .finally(() => {
