@@ -38,7 +38,7 @@
     onchanged?: (receipt: BatchTagReceipt) => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
-    onclose: (recovered: boolean) => void;
+    onclose: () => void;
     /** Fresh tag results arrived, so the view behind the dialog may be stale. */
     onchecked?: () => void;
     onauthfailure: (cause: unknown) => void;
@@ -208,7 +208,7 @@
 
   function close(): void {
     if (applying) return;
-    onclose(recovering);
+    onclose();
   }
 </script>
 

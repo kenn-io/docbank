@@ -542,7 +542,7 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
 });
 
-it("refreshes during recovery and again after closing", async () => {
+it("refreshes the view and tag catalog during recovery", async () => {
   history.replaceState(
     null,
     "",
@@ -610,14 +610,16 @@ it("refreshes during recovery and again after closing", async () => {
   );
   expect(warning.closest('[role="alert"]')).toBeTruthy();
   expect(searches).toHaveLength(1);
+  const readsBeforeCheck = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   expect(await screen.findByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
   await waitFor(() => expect(searches).toHaveLength(2));
+  await waitFor(() => expect(catalogReads - readsBeforeCheck).toBe(1));
   expect(screen.getByRole("dialog", { name: "Tag selected documents" })).toBeTruthy();
   const readsBeforeClose = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  await waitFor(() => expect(searches).toHaveLength(3));
-  expect(catalogReads - readsBeforeClose).toBe(1);
+  expect(searches).toHaveLength(2);
+  expect(catalogReads).toBe(readsBeforeClose);
   expect(searches[1]).toEqual(searches[0]);
   expect(
     screen.queryByText(
@@ -731,7 +733,8 @@ it.each([false, true])(
     });
     render(App);
     await fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    await screen.findByRole("cell", { name: "/records/report-1.pdf" });
+    await fireEvent.click(await screen.findByRole("cell", { name: "/records/report-1.pdf" }));
+    await screen.findByRole("button", { name: "Add tag" });
     await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
     await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
     await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
@@ -744,8 +747,13 @@ it.each([false, true])(
     await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(retry);
     await waitFor(() => expect(writes).toHaveLength(2));
+    await waitFor(() =>
+      expect(document.querySelector('[aria-label="Current tags"]')?.textContent).toContain(
+        "Review",
+      ),
+    );
     await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
-    await waitFor(() => expect(searches).toHaveLength(4));
+    await waitFor(() => expect(searches).toHaveLength(3));
     expect(searches[1]).toEqual(searches[0]);
     if (failRerun) await screen.findByText("Snapshot refresh failed");
     else {

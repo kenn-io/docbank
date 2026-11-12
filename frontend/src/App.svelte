@@ -3065,11 +3065,18 @@
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
-  function handleBatchTagsChanged(_receipt?: BatchTagReceipt): void {
+  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
     // A replay describes a historical success. Reload current observations
     // instead of overwriting newer rows with the receipt's old revisions.
     refreshCurrentView();
     if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
+  }
+
+  function refreshCheckedTags(): void {
+    refreshCurrentView();
+    const source = selectedSource;
+    if (source) void loadSelectedTags(source.nodeID, source.key);
+    else if (selectedID !== undefined) void loadSelectedTags(selectedID);
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
@@ -5532,11 +5539,8 @@
         disabled={loading}
         onchanged={handleBatchTagsChanged}
         oncreated={() => void loadTagCatalog(false, true)}
-        onchecked={refreshDocumentsView}
-        onclose={(recovered) => {
-          batchTagsTargets = null;
-          if (recovered) handleBatchTagsChanged();
-        }}
+        onchecked={refreshCheckedTags}
+        onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
       />
     {/if}
@@ -5556,11 +5560,8 @@
         onchanged={handleSnapshotSelectionTagged}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
-        onchecked={refreshDocumentsView}
-        onclose={(recovered) => {
-          snapshot.cancelAction();
-          if (recovered) handleBatchTagsChanged();
-        }}
+        onchecked={refreshCheckedTags}
+        onclose={() => snapshot.cancelAction()}
         onauthfailure={handleFailure}
       />
     {/if}
