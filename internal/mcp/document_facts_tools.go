@@ -47,9 +47,9 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 				return nil, err
 			}
 			id = node.CurrentVersionID
-		}
-		if !daemonconn.IsCanonicalUUIDv4(id) {
-			return nil, invalidToolArgumentsError()
+			if id == "" {
+				return nil, &searchProfileError{code: "no_content_version", message: "Document has no current content version."}
+			}
 		}
 		version, err := uuid.Parse(id)
 		if err != nil {

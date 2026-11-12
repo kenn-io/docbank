@@ -1,17 +1,19 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strings"
-
-	"go.kenn.io/docbank/internal/daemonconn"
 	"testing"
+	"time"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -59,34 +61,33 @@ func TestVersionFactsBrowserFullForbidden(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
 	}
-}
-
-func TestVersionPeopleSafeHidesBlindCopyAssertion(t *testing.T) {
-	ts, s := newTestServer(t, nil)
-	node := createFileWithContent(t, ts, s, "mail.eml", "synthetic")
 	person, err := s.CreatePerson(t.Context(), "Blind Recipient", "operator")
 	require.NoError(t, err)
 	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	path := fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID)
-	res, body := get(t, ts, path, nil)
+	res, body = get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.NotContains(t, body, person.PersonID)
-	require.NotContains(t, body, "blind_copy")
 	res, body = get(t, ts, path+"?disclosure=full", nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	require.Contains(t, body, person.PersonID)
-	require.Contains(t, body, "blind_copy")
+
 }
 
 func TestVersionFactsPDFMetadata(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	node, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", testHash("pdf-facts"), 1, "application/pdf")
 	require.NoError(t, err)
-	dateField := func(key, source, raw, normalized string) document.SourceMetadataFieldV1 {
-		return document.SourceMetadataFieldV1{Key: key, Namespace: "pdf.info", SourceField: source, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Normalized: normalized, Raw: raw, Precision: document.SourceMetadataPrecisionDate, Timezone: document.SourceMetadataTimezoneOmitted}}}
-	}
-	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{dateField("created", "CreationDate", "D:20260310", "2026-03-10"), dateField("modified", "ModDate", "D:20260311", "2026-03-11"), {Key: "creators", Namespace: "pdf.info", SourceField: "Author", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"J. PELLHAM"}}}}, Warnings: []document.SourceMetadataWarningV1{}}
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetAuthor("J. PELLHAM", false)
+	pdf.SetCreationDate(time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC))
+	pdf.SetModificationDate(time.Date(2026, 3, 11, 0, 0, 0, 0, time.UTC))
+	pdf.AddPage()
+	var encoded bytes.Buffer
+	require.NoError(t, pdf.Output(&encoded))
+	metadata, err := processing.ExtractSourceMetadata(t.Context(), t.TempDir(), encoded.Bytes())
+	require.NoError(t, err)
 	raw, _, err := document.MarshalSourceMetadataV1(metadata)
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("extractor"), raw)

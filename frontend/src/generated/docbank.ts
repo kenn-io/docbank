@@ -9292,7 +9292,6 @@ export interface VersionPeople {
   assertions: VersionPersonAssertion[];
   content_version_id: string;
   edges: VersionPersonEdge[];
-  node_id: number;
   open?: FactOpen;
   state: string;
   unresolved: VersionUnresolvedName[];
