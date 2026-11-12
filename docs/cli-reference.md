@@ -113,6 +113,27 @@ Edit and retire accept `--revision`; without it they inspect once and send one
 fenced write. `--json` is available on all account commands. See
 [Tax accounts](usage/tax-records.md) for masking and an example workflow.
 
+## docbank tax record
+
+```text
+docbank tax record add --kind KIND --title TITLE [flags]
+docbank tax record list [flags]
+docbank tax record show <record-id> [--json]
+docbank tax record edit <record-id> [flags]
+docbank tax record retire <record-id> [--revision N] [--json]
+```
+
+Add accepts `--account`, `--filer`, `--authority`, `--clear-authority`,
+`--kind`, `--title`, `--country`, `--subdivision`, `--tax-kind`, `--form-code`,
+`--tax-year`, `--period-start`, `--period-end`, `--due-date`, `--lead-days`,
+`--direction`, `--amount`, `--currency`, and `--note`. Kind and title are
+required. List accepts `--filer`, `--country`, `--taxkind`, `--year`, `--state`,
+`--kind`, `--include-retired`, `--limit`, and `--offset`. Edit accepts the
+editable fields and their nullable `--clear-*` flags; account and kind cannot
+be edited. Edit and retire accept `--revision`; otherwise they inspect once and
+send one fenced write. All record commands accept `--json`. See
+[Tax records](usage/tax-records.md) for money and identity rules.
+
 ## docbank changes
 
 ```text

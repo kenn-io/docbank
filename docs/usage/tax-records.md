@@ -7,11 +7,12 @@ description: How Docbank preserves tax accounts and their initial records.
 
 Docbank preserves tax accounts and initial tax records alongside
 [parties](contracts.md). An account identifies a filer, an optional authority,
-a jurisdiction, and an owner-chosen tax kind. Manage accounts through the CLI
-or HTTP API. Tax kinds accept up to 256 UTF-8 bytes before trimming and NFC
-normalization, and up to 64 Unicode characters afterward. Identifiers are
-limited to 256 UTF-8 bytes; each account note is limited to 8,192 UTF-8 bytes. Record operations are not yet exposed through those interfaces,
-MCP, or the web application.
+a jurisdiction, and an owner-chosen tax kind. Manage accounts and initial records
+through the CLI or HTTP API. Tax kinds accept up to 256 UTF-8 bytes before
+trimming and NFC normalization, and up to 64 Unicode characters afterward.
+Identifiers are limited to 256 UTF-8 bytes; each account note is limited to
+8,192 UTF-8 bytes. Tax operations are not yet exposed through MCP or the web
+application.
 
 ## Manage an account
 
@@ -43,6 +44,44 @@ may have been applied: inspect the account list or account before trying again.
 Creating again can add another registration. The CLI replaces an incompatible older daemon before
 sending an account request. A vault with audited authority refuses account
 mutations with `audit_mutation_unsupported` (HTTP 409).
+
+## Manage an initial record
+
+Attach a record to an account, or create a one-off record with its own filer and
+jurisdiction:
+
+```sh
+docbank tax record add --account ACCOUNT_ID --kind filing --title "Example return" --direction payable --amount 1234.00 --json
+docbank tax record add --filer FILER_ID --country ZZ --tax-kind Example --kind audit --title "Example review" --json
+docbank tax record list --filer FILER_ID --country ZZ --taxkind Example --year 2026 --state expected --kind filing
+docbank tax record show RECORD_ID
+docbank tax record edit RECORD_ID --note "Example note" --due-date 2027-01-31
+docbank tax record retire RECORD_ID
+```
+
+`list` combines filters with AND and supports `--include-retired`, `--limit`
+and `--offset` as for accounts. A full text page prints a continuation offset.
+Retired records remain available with `show` and cannot be edited. Account-bound
+records retain their copied filer, authority, country, subdivision and tax kind;
+their account and kind cannot be changed. One-off records permit identity edits.
+Omitted edit fields retain their values; `--clear-authority`, `--clear-tax-year`,
+`--clear-period-start`, `--clear-period-end`, `--clear-due-date`,
+`--clear-lead-days`, and `--clear-amount` explicitly clear nullable values.
+A period edit does not recalculate an existing tax year.
+
+Amounts use exact decimal text in the selected currency, never floating point.
+`payable` and `refundable` require an amount; `nil` requires zero; `unknown`
+requires no amount. When changing the currency of a non-null amount, resend the
+amount in the new currency or clear it and choose a compatible direction. Even
+zero requires a resend or clear; changing only the currency's letter case does
+not. Docbank never converts or rounds an amount. Records begin in their kind's
+initial state and are unverified; this interface does not set those fields.
+
+Edit and retire inspect once for the current revision unless `--revision` is
+supplied, and never retry a stale write. If a response is lost or invalid, inspect
+the record before retrying: the change may have been applied. The CLI replaces
+an incompatible account-only daemon before record requests. Audited vaults
+refuse record mutations with HTTP 409 `audit_mutation_unsupported`.
 
 An account's identity cannot change after creation. A record attached to it
 copies that identity and retains it even if the account is retired. New

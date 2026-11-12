@@ -129,6 +129,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tax/accounts` · `GET\|PATCH /tax/accounts/{account_id}` · `POST /tax/accounts/{account_id}/retire` | manage tax accounts | Implemented |
+| `GET\|POST /tax/records` · `GET\|PATCH /tax/records/{record_id}` · `POST /tax/records/{record_id}/retire` | manage initial tax records | Implemented |
 | `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
@@ -1545,6 +1546,25 @@ schema-invalid inputs return 422 `validation`, domain-invalid tax values return
 `tax_retired`, and audited vaults refuse mutations with 409
 `audit_mutation_unsupported`. See [Tax accounts](../usage/tax-records.md).
 
+## Tax records
+
+`GET /api/v1/tax/records` combines `filer`, `country`, `taxkind`, `year`,
+`state`, and `kind` filters with AND. `include_retired` defaults to false;
+`limit` defaults to 100 (1–1000), and `offset` defaults to zero. ASCII lowercase
+country codes are normalized. Get-one includes retired records. Responses do
+not include an account identifier or a reveal option.
+
+Create with `POST /api/v1/tax/records`; update with `PATCH` on the record ID;
+retire with `POST /api/v1/tax/records/{record_id}/retire`. Both writes on an
+existing record require a quoted `If-Match` revision and return an `ETag`.
+Omitted PATCH members retain their values; null clears nullable members. Empty
+and schema-only PATCH bodies receive 422 `validation`. Domain validation returns
+422 `invalid_tax`; stale revisions return 412; retired records and audited-vault
+mutations return 409. Errors and request logs do not include supplied tax values.
+The record's account and kind are immutable; copied account identity cannot be
+changed. Money input is decimal text; a currency change with an existing amount
+requires an explicit resend or clear. See [Tax records](../usage/tax-records.md).
+
 ## People search
 
 `GET /api/v1/people` and MCP `find_people` search active people by the beginning of any word in the folded display name. A read-time Unicode word-start predicate filters names before visibility checks and pagination; literal `%`, `_`, and NUL retain their meaning. For example, `Smith` finds `John Smith` and `John—Smith`. Identity labels are read only for the returned matches. Results use folded-name and person-ID order, with a query-bound `next_cursor` when another page exists.
@@ -1762,6 +1782,7 @@ and maintenance are exceptions:
 | `POST /nodes/{id}/verify` | required: binds the evidence to the node state the caller inspected |
 | `PATCH /parties/{party_id}`, `POST /parties/{party_id}/retire` | required: party revision |
 | `PATCH /tax/accounts/{account_id}`, `POST /tax/accounts/{account_id}/retire` | required: account revision |
+| `PATCH /tax/records/{record_id}`, `POST /tax/records/{record_id}/retire` | required: record revision |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required: tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required: saved-definition revision |
 | `POST /saved-queries/{saved_query_id}/runs` | required: executes the saved definition revision the caller inspected |
