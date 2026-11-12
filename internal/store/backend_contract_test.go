@@ -827,6 +827,18 @@ var backendSuites = []backendSuite{
 		{"SplitPersonMovesCustodianAndExternalUID", func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSplitPersonMovesCustodianAndExternalUID(t, newPostgresQueryStore) }},
 		{"PersonSplitMissingAssertion", func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonSplitMissingAssertion(t, newPostgresQueryStore) }},
 		{"MergePersonsPreservesKeyFace", func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMergePersonsPreservesKeyFace(t, newPostgresQueryStore) }},
+		{"DocumentFactsDatesState", func(t *testing.T) { t.Helper(); checkDocumentFactsDatesState(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentFactsDatesState(t, newPostgresQueryStore) }},
+		{"DocumentPeopleFactsSensitiveUnresolvedActor", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSensitiveUnresolvedActor(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t, newPostgresQueryStore)
+		}},
 		{"DocumentDateFactsNeverReturnsStaleClaims", func(t *testing.T) { t.Helper(); checkDocumentDateFactsNeverReturnsStaleClaims(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkDocumentDateFactsNeverReturnsStaleClaims(t, newPostgresQueryStore)
