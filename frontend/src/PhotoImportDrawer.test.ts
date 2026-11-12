@@ -951,6 +951,14 @@ it("requires a new import when a closed preview cannot be distinguished from an 
   expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false);
   expect(channel.planPhotoImport).toHaveBeenCalledOnce();
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+  vi.mocked(channel.planPhotoImport).mockRejectedValueOnce(new Error("Plan unavailable"));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Replace import" }));
+  await screen.findByText("Plan unavailable");
+  expect(savedImports.get("preview-resume")?.sourceID).toBe(originalSource);
+  expect(screen.queryByRole("button", { name: "Resume import" })).toBeNull();
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: selected },
   });
