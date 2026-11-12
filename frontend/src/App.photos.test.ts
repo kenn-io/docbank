@@ -2762,6 +2762,7 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
     groups: [[0]],
     unsupported: [],
   });
+  vi.spyOn(VerifiedUploadChannel.prototype, "registerPhotoImport").mockResolvedValue("import-1");
   let imported = false;
   vi.spyOn(VerifiedUploadChannel.prototype, "uploadPhotoGroup").mockImplementation(async () => {
     imported = true;
@@ -2856,6 +2857,7 @@ it.each(["search", "tag", "snapshot"] as const)(
       groups: [[0]],
       unsupported: [],
     });
+    vi.spyOn(VerifiedUploadChannel.prototype, "registerPhotoImport").mockResolvedValue("import-1");
     const upload = vi
       .spyOn(VerifiedUploadChannel.prototype, "uploadPhotoGroup")
       .mockResolvedValue({ status: "added", asset_id: "photo-1" });
