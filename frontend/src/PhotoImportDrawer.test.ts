@@ -118,6 +118,10 @@ it("inspects a saved import and resumes only its remaining group", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("done.ARW, done.DNG");
   expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
+  expect(screen.getByText("Duplicates: 0")).toBeTruthy();
+  expect(
+    screen.getByText("Keep this tab and Add photos open until the import finishes."),
+  ).toBeTruthy();
   expect(refresh).toHaveBeenCalledOnce();
   const replacement = {
     ...channel,
@@ -295,6 +299,10 @@ it("refreshes a group committed between inspection and resume", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
   await screen.findByText("Multiple RAW files share this name.");
   expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
+  expect(screen.getByText("Duplicates: 0")).toBeTruthy();
+  expect(
+    screen.queryByText("Keep this tab and Add photos open until the import finishes."),
+  ).toBeNull();
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
@@ -1895,7 +1903,7 @@ it.each([false, true])(
       [""],
     );
     expect(screen.getByText("Added: 1")).toBeTruthy();
-    expect(screen.getByText("Already in vault: 1")).toBeTruthy();
+    expect(screen.getByText("Duplicates: 1")).toBeTruthy();
     expect(screen.getByText("Skipped: 1")).toBeTruthy();
     expect(screen.getByText("Unsupported type")).toBeTruthy();
     expect(screen.getByText("notes.txt")).toBeTruthy();
