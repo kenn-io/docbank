@@ -261,6 +261,9 @@ func registerContractRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return FromStoreError(err)
 			}
+			if c.Revision != rev {
+				return FromStoreError(store.ErrStaleRevision)
+			}
 			v := store.ContractInput{Title: c.Title, ContractType: c.ContractType, Status: c.Status, StartsOn: c.StartsOn, ExpiresOn: c.ExpiresOn, SignedOn: c.SignedOn, Summary: c.Summary, Purpose: c.Purpose, Consideration: c.Consideration, Termination: c.Termination}
 			b := in.Body
 			if b.Title != nil {

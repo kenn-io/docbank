@@ -32,6 +32,8 @@ func TestContractRoutesExpiryAndRevision(t *testing.T) {
 	require.Nil(t, c.ExpiresOn)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"title": "Stale"})
 	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"3"`}, map[string]any{"title": "Future"})
+	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"title": nil})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
