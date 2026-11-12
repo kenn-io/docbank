@@ -12,6 +12,34 @@ afterEach(() => {
 });
 
 describe("upload documents drawer", () => {
+  it("offers recovery when reconnecting fails", async () => {
+    const reconnect = vi.fn();
+    render(UploadDrawer, {
+      session: "session",
+      channel: { uploadFile: vi.fn() },
+      directory: {
+        id: 3,
+        name: "Reports",
+        path: "/Reports",
+        kind: "dir",
+        size: 0,
+        revision: 1,
+        created_at: "2026-07-28T00:00:00Z",
+        modified_at: "2026-07-28T00:00:00Z",
+      },
+      disabledReason: "Disconnected",
+      connectionState: "failed",
+      onreconnect: reconnect,
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain("Run `docbank web` again");
+    await fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(reconnect).toHaveBeenCalledOnce();
+  });
+
   it.each(["added", "skipped"] as const)(
     "hashes and uploads selected files before refreshing the directory: %s",
     async (status) => {

@@ -438,7 +438,7 @@ func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string
 			if err == nil && readCtx.Err() != nil {
 				err = readCtx.Err()
 			}
-			if err == nil && (size != expected || total != expected) {
+			if err == nil && size != expected {
 				err = io.ErrUnexpectedEOF
 			}
 			err = errors.Join(err, stream.Close())

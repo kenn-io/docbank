@@ -26,7 +26,7 @@
     <span class="message"
       >{retrying
         ? "The upload channel disconnected. Reconnecting…"
-        : "Docbank couldn't reconnect the upload channel."}</span
+        : "Docbank couldn't reconnect the upload channel. Run `docbank web` again if reconnecting fails."}</span
     >
     <!-- One button across retries keeps its width, place, and keyboard focus. -->
     <Button
