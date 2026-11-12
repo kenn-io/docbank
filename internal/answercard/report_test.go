@@ -48,7 +48,6 @@ func TestCheckReportsStalledDocumentListing(t *testing.T) {
 
 // Exercise limits through the catalog and content endpoints with synthetic files.
 func TestCheckCandidateBounds(t *testing.T) {
-	const version = "00000000-0000-4000-8000-000000000002"
 	for _, tc := range []struct {
 		name       string
 		files      int
@@ -80,6 +79,7 @@ func TestCheckCandidateBounds(t *testing.T) {
 					start := pageNumber * 250
 					for i := start; i < min(start+250, tc.files); i++ {
 						name := fmt.Sprintf("%04d.txt", i)
+						version := fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
 						page.Items = append(page.Items, api.DocumentSummary{NodeID: int64(i + 1), ContentVersionID: version, Path: "/answer-cards/" + name, Name: name, MediaType: tc.media, Size: tc.size, ModifiedAt: "2026-01-01T00:00:00Z"})
 					}
 					pageNumber++
@@ -93,7 +93,7 @@ func TestCheckCandidateBounds(t *testing.T) {
 					if tc.streamSize != 0 {
 						size = tc.streamSize
 					}
-					w.Header().Set(api.ContentVersionHeader, version)
+					w.Header().Set(api.ContentVersionHeader, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/versions/"), "/content"))
 					hash := hex.EncodeToString(sum[:])
 					if tc.badHash {
 						hash = strings.Repeat("0", 64)
