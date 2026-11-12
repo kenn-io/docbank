@@ -238,7 +238,7 @@ func rejectDeclaredOversizeBodies(api huma.API, logger *slog.Logger) func(huma.C
 			return
 		}
 		if err := huma.WriteErr(api, ctx, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body is too large limit=%d bytes", limit)); err != nil {
-			logger.Debug("write oversize body rejection", "path", requestLogPath(r.URL.Path), "error", err)
+			logger.Debug("write oversize body rejection", "path", requestLogPath(r.URL), "error", err)
 		}
 	}
 }
@@ -395,23 +395,33 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
-func isTaxLogPath(raw string) bool {
-	clean := path.Clean(raw)
-	return clean == "/api/v1/tax" || strings.HasPrefix(clean, "/api/v1/tax/")
+// Match ServeMux: clean the escaped path before unescaping each segment.
+func isTaxLogPath(u *url.URL) bool {
+	segments := strings.Split(path.Clean(u.EscapedPath()), "/")
+	if len(segments) < 4 {
+		return false
+	}
+	for i, expected := range []string{"api", "v1", "tax"} {
+		value, err := url.PathUnescape(segments[i+1])
+		if err != nil || value != expected {
+			return false
+		}
+	}
+	return true
 }
 
-func requestLogPath(path string) string {
-	if isTaxLogPath(path) {
+func requestLogPath(u *url.URL) string {
+	if isTaxLogPath(u) {
 		return "/api/v1/tax/{redacted}"
 	}
-	return path
+	return u.Path
 }
 
 func logMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("request", "method", r.Method, "path", requestLogPath(r.URL.Path),
+		logger.Info("request", "method", r.Method, "path", requestLogPath(r.URL),
 			"remote", r.RemoteAddr, "duration", time.Since(start))
 	})
 }
@@ -423,8 +433,8 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(v)
 				}
-				if isTaxLogPath(r.URL.Path) {
-					logger.Error("panic in tax handler", "path", requestLogPath(r.URL.Path))
+				if isTaxLogPath(r.URL) {
+					logger.Error("panic in tax handler", "path", requestLogPath(r.URL))
 				} else {
 					logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
 				}

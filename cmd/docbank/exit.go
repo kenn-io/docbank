@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 const (
@@ -100,7 +101,7 @@ func commandExitCode(err error, started bool) int {
 		return exitBusy
 	}
 	if errors.Is(err, store.ErrInvalidName) || errors.Is(err, store.ErrInvalidTag) ||
-		errors.Is(err, store.ErrInvalidPerson) ||
+		errors.Is(err, store.ErrInvalidPerson) || errors.Is(err, taxrecord.ErrInvalid) ||
 		errors.Is(err, store.ErrSearchQueryRequired) ||
 		errors.Is(err, store.ErrInvalidBatchMove) ||
 		errors.Is(err, store.ErrInvalidVersionPrune) ||
@@ -110,7 +111,7 @@ func commandExitCode(err error, started bool) int {
 		return exitUsage
 	}
 	if code, ok := daemonconn.ProblemCode(err); ok &&
-		(code == "validation" || code == "invalid_tax" || code == "audit_acknowledgment_required") {
+		(code == "validation" || code == "audit_acknowledgment_required") {
 		return exitUsage
 	}
 	if !started {

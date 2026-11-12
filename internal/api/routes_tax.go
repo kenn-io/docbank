@@ -93,10 +93,14 @@ func taxRouteError(logger *slog.Logger, err error) error {
 	if !errors.As(err, &wire) {
 		wire, _ = errors.AsType[*Error](FromStoreError(err))
 	}
-	if wire.Status >= http.StatusInternalServerError {
+	detail := "tax request failed"
+	if wire.Status == http.StatusServiceUnavailable && wire.Code == "maintenance_busy" {
+		logger.Warn("tax request rejected", "class", "maintenance_busy", "status", wire.Status)
+		detail = "vault maintenance is running or queued; retry this mutation after it finishes"
+	} else if wire.Status >= http.StatusInternalServerError {
 		logger.Error("tax request failed", "class", "tax_5xx", "status", wire.Status)
 	}
-	out := NewError(wire.Status, wire.Code, "tax request failed")
+	out := NewError(wire.Status, wire.Code, detail)
 	if field, ok := errors.AsType[*taxrecord.FieldError](err); ok && taxSafeFieldReason(field.Field, field.Reason) {
 		out.Detail = field.Error()
 	}

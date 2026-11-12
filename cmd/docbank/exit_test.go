@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func TestCommandExitCode(t *testing.T) {
@@ -34,6 +35,7 @@ func TestCommandExitCode(t *testing.T) {
 		{name: "cobra usage", err: errors.New("unknown flag"), want: exitUsage},
 		{name: "search query required", err: store.ErrSearchQueryRequired, started: true, want: exitUsage},
 		{name: "semantic usage", err: usageError(errors.New("bad limit")), started: true, want: exitUsage},
+		{name: "invalid tax", err: fmt.Errorf("tax: %w", taxrecord.ErrInvalid), started: true, want: exitUsage},
 		{name: "not found", err: fmt.Errorf("lookup: %w", store.ErrNotFound), started: true, want: exitNotFound},
 		{name: "stale revision", err: store.ErrStaleRevision, started: true, want: exitStale},
 		{name: "stale preview", err: store.ErrAuditPreviewStale, started: true, want: exitStale},

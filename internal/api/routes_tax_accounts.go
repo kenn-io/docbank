@@ -63,10 +63,10 @@ func mergeTaxAccountPatch(a store.TaxAccount, p PatchTaxAccountRequest) store.Ta
 	if p.Note != nil {
 		in.Note = *p.Note
 	}
-	if p.startPresent || p.ClearEffectiveStart {
+	if p.startPresent {
 		in.EffectiveStart = p.EffectiveStart
 	}
-	if p.endPresent || p.ClearEffectiveEnd {
+	if p.endPresent {
 		in.EffectiveEnd = p.EffectiveEnd
 	}
 	return in

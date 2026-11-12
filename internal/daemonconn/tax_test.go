@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 const taxAccountFixture = `{"account_id":"11111111-1111-4111-8111-111111111111","filer_party_id":"22222222-2222-4222-8222-222222222222","authority_party_id":null,"country":"ZZ","subdivision":"","tax_kind":"Example","identifier":"","cadence":"annual","period_note":"","due_note":"","lead_days":0,"currency":"USD","effective_start":null,"effective_end":null,"note":"","retired_at":null,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`
@@ -133,6 +134,7 @@ func TestTaxClientValidationDetails(t *testing.T) {
 	code, ok := ProblemCode(err)
 	assert.True(t, ok)
 	assert.Equal(t, "invalid_tax", code)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
 	untrusted := safeTaxError(apiProblemError(api.Error{Status: http.StatusUnprocessableEntity, Code: "invalid_tax", Detail: "cadence: unknown cadence private-synthetic-value"}))
 	assert.Contains(t, untrusted.Error(), "cadence: unknown cadence")
 	assert.NotContains(t, untrusted.Error(), "private-synthetic-value")
@@ -331,4 +333,21 @@ func TestTaxMutationReceiptTransitions(t *testing.T) {
 			assert.Contains(t, err.Error(), "may have been applied")
 		})
 	}
+}
+
+func TestTaxMutationMaintenanceIsDefinite(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":503,"code":"maintenance_busy","detail":"private-synthetic-value"}`))
+	}))
+	t.Cleanup(server.Close)
+	_, err := New(server.URL, "").CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+	require.ErrorIs(t, err, ErrMaintenanceBusy)
+	assert.Contains(t, err.Error(), "retry this mutation after maintenance finishes")
+	assert.NotContains(t, err.Error(), "may have been applied")
+	assert.NotContains(t, err.Error(), "private-synthetic-value")
+	unknown := taxMutationFailure(apiProblemError(api.Error{Status: http.StatusInternalServerError, Code: "internal", Detail: "private-synthetic-value"}))
+	assert.Contains(t, unknown.Error(), "may have been applied")
+	assert.NotContains(t, unknown.Error(), "private-synthetic-value")
 }

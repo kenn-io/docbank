@@ -29,7 +29,7 @@ func TestTaxValuesAbsentFromLogs(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), req)
 	}
 	assert.NotContains(t, logs.String(), sentinel)
-	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath("/api/v1/tax/"+sentinel))
+	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tax/"+sentinel, nil).URL))
 }
 
 func TestTaxLoggingPreservesOtherRoutes(t *testing.T) {
@@ -73,17 +73,44 @@ func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
 
 func TestTaxMalformedPathMuxRedirectIsRedacted(t *testing.T) {
 	t.Parallel()
+	const secret = "private-synthetic-value"
+	for _, raw := range []string{
+		"/api/v1//tax/accounts/" + secret,
+		"/api/v1/tax/accounts/..%2F..%2F" + secret,
+		"/%61pi/v1/%74ax/accounts/%2e%2e%2F" + secret,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/tax/accounts/{id}", func(http.ResponseWriter, *http.Request) { panic(secret) })
+			handler := logMiddleware(recoverMiddleware(mux, logger), logger)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, raw, nil))
+			assert.NotContains(t, logs.String(), secret)
+			assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
+			if strings.Contains(raw, "//tax/") {
+				assert.Equal(t, http.StatusMovedPermanently, recorder.Code)
+			} else {
+				assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+				assert.Contains(t, logs.String(), "panic in tax handler")
+			}
+		})
+	}
+}
+
+func TestTaxMaintenanceErrorIsSafe(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/tax/accounts/{id}", func(http.ResponseWriter, *http.Request) {})
-	handler := logMiddleware(recoverMiddleware(mux, logger), logger)
-	const secret = "private-synthetic-value"
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1//tax/accounts/"+secret, nil))
-	assert.Equal(t, http.StatusMovedPermanently, recorder.Code)
-	assert.NotContains(t, logs.String(), secret)
-	assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
+	var problem *Error
+	require.ErrorAs(t, taxRouteError(logger, NewError(http.StatusServiceUnavailable, "maintenance_busy", "private-synthetic-value")), &problem)
+	assert.Contains(t, problem.Detail, "retry")
+	assert.Contains(t, logs.String(), "WARN")
+	assert.Contains(t, logs.String(), "maintenance_busy")
+	assert.NotContains(t, logs.String(), "private-synthetic-value")
+	assert.NotContains(t, problem.Detail, "private-synthetic-value")
 }
 
 func TestTaxRevisionExhaustionError(t *testing.T) {
@@ -117,7 +144,7 @@ func TestTaxOversizeWriteFailureOmitsPath(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	const sentinel = "private-synthetic-value"
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/tax/accounts/"+sentinel, nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/tax/accounts/..%2F..%2F"+sentinel, nil)
 	request.ContentLength = 10
 	ctx := humago.NewContext(&huma.Operation{Path: "/api/v1/tax/accounts/{account_id}", MaxBodyBytes: 1}, request, failingTaxResponse{httptest.NewRecorder()})
 	called := false

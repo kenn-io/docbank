@@ -42,6 +42,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 type Connection struct {
@@ -401,6 +402,7 @@ var codeToTypedErr = map[string]error{
 	"stale_revision":                  store.ErrStaleRevision,
 	"tax_revision_exhausted":          store.ErrTaxRevisionExhausted,
 	"tax_retired":                     store.ErrTaxRetired,
+	"invalid_tax":                     taxrecord.ErrInvalid,
 	"redaction_selection_changed":     store.ErrStaleRevision,
 	"redaction_preparation_integrity": ErrIntegrity,
 	"invalid_person":                  store.ErrInvalidPerson,
