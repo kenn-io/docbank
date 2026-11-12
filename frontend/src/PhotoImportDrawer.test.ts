@@ -498,7 +498,7 @@ it("resumes a preview closed before registration", async () => {
     inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
     uploadPhotoGroup: vi.fn(async () => {
       versionAtUpload = savedImports.get("preview-resume")?.protocolVersion;
-      return { status: "added" as const };
+      return { status: "added" as const, asset_id: "asset" };
     }),
   };
   const props = {
