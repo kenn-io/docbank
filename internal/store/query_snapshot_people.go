@@ -202,13 +202,13 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 		hide = "0"
 	}
 	args = append(args, document.PersonResolverFingerprint())
-	sql := `WITH matched_members AS (` + statement + `)
+	statementSQL := `WITH matched_members AS (` + statement + `)
  SELECT m.node_id,COALESCE(p.person_id,''),COALESCE(p.display_name,''),COALESCE(json_extract(e.value,'$.role'),'')
  FROM matched_members m JOIN nodes n ON n.id=m.node_id
  LEFT JOIN json_each((SELECT json_group_array(json_object('person_id',edge.person_id,'role',edge.role)) FROM ` + currentDocumentPersonEdgesSQL("m.content_version_id", true, hide) + ` edge)) e
  LEFT JOIN persons p ON p.person_id=json_extract(e.value,'$.person_id') AND p.state<>'retired'
  ORDER BY m.node_id,p.person_id,json_extract(e.value,'$.role')`
-	rows, err := q.QueryContext(ctx, sql, args...)
+	rows, err := q.QueryContext(ctx, statementSQL, args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing people facet: %w", err)
 	}
