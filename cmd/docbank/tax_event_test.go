@@ -66,23 +66,3 @@ func TestTaxCLIEventReveal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "private-synthetic-1234")
 }
-
-func TestTaxEventInvalidIDs(t *testing.T) {
-	const id = "11111111-1111-4111-8111-111111111111"
-	requests := 0
-	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusUnprocessableEntity)
-	})
-	for _, tc := range []struct{ record, event, want string }{{"bad", id, "invalid record ID"}, {id, "bad", "invalid event ID"}} {
-		cmd := newTaxCommand()
-		cmd.SilenceErrors = true
-		cmd.SilenceUsage = true
-		cmd.SetArgs([]string{"event", "void", tc.record, tc.event, "--reason", "Example"})
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), tc.want)
-		assert.Equal(t, exitUsage, commandExitCode(err, true))
-	}
-	assert.Zero(t, requests)
-}

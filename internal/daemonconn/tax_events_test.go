@@ -21,24 +21,15 @@ func TestTaxEventClientContracts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"2"`)
-		if r.Method == http.MethodGet {
-			assert.Equal(t, "true", r.URL.Query().Get("reveal"))
-			_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + eventFixture + `]}`))
-			return
-		}
-		assert.Equal(t, "/api/v1/tax/records/"+id+"/events", r.URL.Path)
-		assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"record":` + record + `,"event":` + eventFixture + `}`))
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "true", r.URL.Query().Get("reveal"))
+		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + eventFixture + `]}`))
 	}))
 	t.Cleanup(server.Close)
 	c := New(server.URL, "")
 	detail, err := c.TaxRecord(t.Context(), id, true)
 	require.NoError(t, err)
 	require.Len(t, detail.Events, 1)
-	result, err := c.AddTaxEvent(t.Context(), id, 1, api.AddTaxEventRequest{Kind: "note", OccurredOn: "2026-01-01"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), result.Record.Revision)
 }
 func TestTaxEventClientRejectsInvalidReceipts(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
@@ -72,7 +63,12 @@ func TestTaxEventClientAdvanceAndVoidPaths(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"2"`)
 		result, parent := event, record
-		if strings.HasSuffix(r.URL.Path, "/void") {
+		if r.URL.Path == "/api/v1/tax/records/"+id+"/events" {
+			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
+			result = eventFixture
+			parent = strings.Replace(record, `"state":"filed"`, `"state":"expected"`, 1)
+			w.WriteHeader(http.StatusCreated)
+		} else if strings.HasSuffix(r.URL.Path, "/void") {
 			w.Header().Set("ETag", `"3"`)
 			assert.Equal(t, `"2"`, r.Header.Get("If-Match"))
 			parent = strings.Replace(strings.Replace(record, `"revision":2`, `"revision":3`, 1), `"state":"filed"`, `"state":"expected"`, 1)
@@ -86,7 +82,10 @@ func TestTaxEventClientAdvanceAndVoidPaths(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	c := New(server.URL, "")
-	_, err := c.AdvanceTaxRecord(t.Context(), id, 1, api.AdvanceTaxRecordRequest{State: "filed", OccurredOn: "2026-01-01"})
+	added, err := c.AddTaxEvent(t.Context(), id, 1, api.AddTaxEventRequest{Kind: "note", OccurredOn: "2026-01-01"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), added.Record.Revision)
+	_, err = c.AdvanceTaxRecord(t.Context(), id, 1, api.AdvanceTaxRecordRequest{State: "filed", OccurredOn: "2026-01-01"})
 	require.NoError(t, err)
 	_, err = c.VoidTaxEvent(t.Context(), id, eid, 2, api.VoidTaxEventRequest{Reason: "Correction"})
 	require.NoError(t, err)

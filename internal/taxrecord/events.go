@@ -41,9 +41,6 @@ func NormalizeEvent(recordKind string, v EventValues) (EventValues, error) {
 
 // ValidateEvent validates canonical authority accepted at this stage.
 func ValidateEvent(recordKind string, v EventValues) error {
-	if _, err := InitialState(recordKind); err != nil {
-		return err
-	}
 	if v.Kind == "note" {
 		if v.SetsState != "" {
 			return invalid("sets_state", "invalid state")
@@ -80,13 +77,14 @@ func ValidateEvent(recordKind string, v EventValues) error {
 
 // EventState incrementally derives state from validated event facts.
 type EventState struct {
-	kind, state string
-	latest      int64
+	State  string
+	kind   string
+	latest int64
 }
 
 func NewEventState(kind string) (EventState, error) {
 	state, err := InitialState(kind)
-	return EventState{kind: kind, state: state}, err
+	return EventState{kind: kind, State: state}, err
 }
 
 func (s *EventState) Apply(event EventFact) error {
@@ -94,12 +92,10 @@ func (s *EventState) Apply(event EventFact) error {
 		return err
 	}
 	if !event.Voided && event.SetsState != "" && event.RecordRevision > s.latest {
-		s.latest, s.state = event.RecordRevision, event.SetsState
+		s.latest, s.State = event.RecordRevision, event.SetsState
 	}
 	return nil
 }
-
-func (s *EventState) State() string { return s.state }
 
 // StateFromEvents derives state from surviving events by append revision.
 func StateFromEvents(recordKind string, events []EventFact) (string, error) {
@@ -112,7 +108,7 @@ func StateFromEvents(recordKind string, events []EventFact) (string, error) {
 			return "", err
 		}
 	}
-	return state.State(), nil
+	return state.State, nil
 }
 
 // NormalizeVoidReason validates a nonblank canonical reason for voiding.

@@ -42,9 +42,6 @@ const taxEventColumns = `event_id,record_id,kind,occurred_on,sets_state,amount_m
 func scanTaxEvent(row interface{ Scan(...any) error }) (TaxEvent, error) {
 	var e TaxEvent
 	err := row.Scan(&e.EventID, &e.RecordID, &e.Kind, &e.OccurredOn, &e.SetsState, &e.AmountMinor, &e.Currency, &e.Reference, &e.Note, &e.RecordedAt, &e.VoidedAt, &e.VoidReason, &e.RecordRevision)
-	if errors.Is(err, sql.ErrNoRows) {
-		return e, ErrNotFound
-	}
 	return e, err
 }
 func taxEventFacts(events []TaxEvent) []taxrecord.EventFact {
@@ -185,9 +182,6 @@ func (s *Store) VoidTaxEvent(ctx context.Context, recordID, eventID string, revi
 		}
 		if r.RetiredAt != nil {
 			return ErrTaxRetired
-		}
-		if validateUUIDv4(eventID) != nil {
-			return ErrNotFound
 		}
 		var target *TaxEvent
 		for i := range d.Events {

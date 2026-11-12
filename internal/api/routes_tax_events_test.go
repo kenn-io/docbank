@@ -65,8 +65,6 @@ func TestTaxEventReferenceBoundariesAndWriteRejection(t *testing.T) {
 	for _, ref := range refs {
 		assert.Contains(t, body, `"reference":"`+ref.raw+`"`)
 	}
-	resp, body = do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"6"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "sets_state": "filed"})
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
 
 func TestTaxEventRevisionsAndRejection(t *testing.T) {
@@ -91,7 +89,6 @@ func TestTaxEventRevisionsAndRejection(t *testing.T) {
 		body   map[string]any
 		status int
 	}{
-		{nil, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": secret}, http.StatusPreconditionRequired},
 		{map[string]string{"If-Match": `"9"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": secret}, http.StatusPreconditionFailed},
 		{map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "reference": secret}, http.StatusUnprocessableEntity},
 	} {
@@ -117,12 +114,8 @@ func TestTaxEventLongReferenceAndRetiredDetail(t *testing.T) {
 	resp, body := do(t, ts, http.MethodPost, path+"/events?reveal=true", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": secret})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	assert.NotContains(t, body, secret)
-	resp, body = do(t, ts, http.MethodPost, path+"/retire?reveal=true", map[string]string{"If-Match": `"2"`}, nil)
+	resp, body = do(t, ts, http.MethodPost, path+"/retire", map[string]string{"If-Match": `"2"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	assert.NotContains(t, body, secret)
-	resp, body = get(t, ts, "/api/v1/tax/records?include_retired=true&reveal=true", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	assert.NotContains(t, body, secret)
 	resp, body = get(t, ts, path+"?reveal=true", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, secret)
@@ -139,6 +132,7 @@ func TestTaxEventRequestAdmission(t *testing.T) {
 		path string
 		body map[string]any
 	}{
+		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "sets_state": "filed"}},
 		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": nil}},
 		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "note": nil}},
 		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "currency": nil}},

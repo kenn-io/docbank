@@ -208,20 +208,19 @@ func validateTaxEventMetadata(m metadataTaxEvent) error {
 func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	// Read each catalog once; state follows append revision, not event time.
 	type authority struct {
-		state, created, updated string
-		retired                 *string
-		revision                int64
-		derived                 taxrecord.EventState
+		state    string
+		revision int64
+		derived  taxrecord.EventState
 	}
 	parents := map[string]*authority{}
-	rows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,created_at,updated_at,retired_at,revision FROM tax_records`)
+	rows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,revision FROM tax_records`)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var id, kind string
 		var p authority
-		if err = rows.Scan(&id, &kind, &p.state, &p.created, &p.updated, &p.retired, &p.revision); err != nil {
+		if err = rows.Scan(&id, &kind, &p.state, &p.revision); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -257,9 +256,6 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 			return errors.New("duplicate tax event revision")
 		}
 		previousID, previousRevision = event.RecordID, event.RecordRevision
-		if event.RecordedAt < p.created || event.RecordedAt > p.updated || (p.retired != nil && event.RecordedAt > *p.retired) || (event.VoidedAt != nil && (*event.VoidedAt < event.RecordedAt || *event.VoidedAt > p.updated || (p.retired != nil && *event.VoidedAt > *p.retired))) {
-			return errors.New("invalid tax event lifetime")
-		}
 		if err = p.derived.Apply(taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}); err != nil {
 			return err
 		}
@@ -268,7 +264,7 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		return err
 	}
 	for _, p := range parents {
-		if p.state != p.derived.State() {
+		if p.state != p.derived.State {
 			return &taxrecord.FieldError{Field: "state", Reason: "unsupported state"}
 		}
 	}

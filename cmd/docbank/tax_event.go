@@ -25,42 +25,24 @@ func printTaxRecordDetail(cmd *cobra.Command, d api.TaxRecordDetail) error {
 	return nil
 }
 func printTaxEventMutation(cmd *cobra.Command, m api.TaxEventMutation) error {
-	var err error
 	if v, _ := cmd.Flags().GetBool("json"); v {
-		err = writeCLIJSON(cmd.OutOrStdout(), m)
-	} else {
-		err = printTaxRecordDetail(cmd, api.TaxRecordDetail{TaxRecord: m.Record, Events: []api.TaxEvent{m.Event}})
+		return writeCLIJSON(cmd.OutOrStdout(), m)
 	}
-	if err != nil {
-		return errors.New("tax record change was committed, but output failed; inspect the record before trying again")
-	}
-	return nil
+	return printTaxRecordDetail(cmd, api.TaxRecordDetail{TaxRecord: m.Record, Events: []api.TaxEvent{m.Event}})
 }
 
 type eventFlags struct {
-	kind, date, amount, currency, reference, note, reason string
-	revision                                              int64
+	kind, date, amount, currency, reference, note string
+	revision                                      int64
 }
 
-func (f *eventFlags) bind(cmd *cobra.Command, advance bool) {
-	if advance {
-		cmd.Flags().StringVar(&f.kind, "state", "", "new state")
-	} else {
-		cmd.Flags().StringVar(&f.kind, "kind", "", "event kind: note")
-	}
+func (f *eventFlags) bind(cmd *cobra.Command, flag, usage string) {
+	cmd.Flags().StringVar(&f.kind, flag, "", usage)
 	cmd.Flags().StringVar(&f.date, "occurred-on", "", "event date")
 	cmd.Flags().StringVar(&f.reference, "reference", "", "event reference")
 	cmd.Flags().StringVar(&f.note, "note", "", "event note")
-	if advance {
-		cmd.Flags().StringVar(&f.amount, "amount", "", "exact assessment amount")
-		cmd.Flags().StringVar(&f.currency, "currency", "", "currency code")
-	}
 	cmd.Flags().Int64Var(&f.revision, "revision", 0, "expected revision (default: current)")
-	if advance {
-		_ = cmd.MarkFlagRequired("state")
-	} else {
-		_ = cmd.MarkFlagRequired("kind")
-	}
+	_ = cmd.MarkFlagRequired(flag)
 	_ = cmd.MarkFlagRequired("occurred-on")
 }
 func eventConnection(cmd *cobra.Command, id string, revision int64) (*daemonconn.Connection, int64, error) {
@@ -100,7 +82,9 @@ func newTaxRecordAdvanceCommand() *cobra.Command {
 		}
 		return printTaxEventMutation(cmd, m)
 	}}
-	f.bind(cmd, true)
+	f.bind(cmd, "state", "new state")
+	cmd.Flags().StringVar(&f.amount, "amount", "", "exact assessment amount")
+	cmd.Flags().StringVar(&f.currency, "currency", "", "currency code")
 	return cmd
 }
 func newTaxEventCommand() *cobra.Command {
@@ -117,7 +101,7 @@ func newTaxEventCommand() *cobra.Command {
 		}
 		return printTaxEventMutation(cmd, m)
 	}}
-	f.bind(add, false)
+	f.bind(add, "kind", "event kind: note")
 	var reason string
 	var revision int64
 	void := &cobra.Command{Use: "void <record-id> <event-id>", Short: "Void a tax event", Example: "docbank tax event void 11111111-1111-4111-8111-111111111111 33333333-3333-4333-8333-333333333333 --reason correction", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {

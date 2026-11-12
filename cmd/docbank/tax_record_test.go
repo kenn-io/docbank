@@ -84,6 +84,16 @@ func TestTaxRecordUsageErrors(t *testing.T) {
 		assert.Equal(t, exitUsage, commandExitCode(err, true))
 		assert.NotContains(t, err.Error(), "private-synthetic")
 	}
+	for _, tc := range []struct{ record, event, want string }{{"bad", id, "invalid record ID"}, {id, "bad", "invalid event ID"}} {
+		cmd := newTaxCommand()
+		cmd.SilenceErrors = true
+		cmd.SilenceUsage = true
+		cmd.SetArgs([]string{"event", "void", tc.record, tc.event, "--reason", "Example"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), tc.want)
+		assert.Equal(t, exitUsage, commandExitCode(err, true))
+	}
 	assert.Zero(t, requests)
 	cmd := newTaxCommand()
 	cmd.SetArgs([]string{"record", "private-synthetic"})

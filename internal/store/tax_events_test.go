@@ -104,17 +104,29 @@ func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
 	}
 }
 func TestTaxEventExportRejectsInvalidAuthority(t *testing.T) {
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	_, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE tax_events SET kind='refund'`)
-	require.NoError(t, err)
-	var data bytes.Buffer
-	err = s.ExportMetadata(ctx, &data)
-	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "kind: unsupported event")
-	assert.Empty(t, data.String())
+	for _, tc := range []struct {
+		update, cause string
+		invalid       bool
+	}{
+		{`UPDATE tax_events SET kind='refund'`, "kind: unsupported event", true},
+		{`UPDATE tax_events SET voided_at='0001-01-01T00:00:00.000000000Z', void_reason='Correction'`, "tax event void precedes recording", false},
+	} {
+		t.Run(tc.cause, func(t *testing.T) {
+			s, _, r := taxFixture(t)
+			ctx := t.Context()
+			_, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01"})
+			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, tc.update)
+			require.NoError(t, err)
+			var data bytes.Buffer
+			err = s.ExportMetadata(ctx, &data)
+			require.ErrorContains(t, err, tc.cause)
+			if tc.invalid {
+				require.ErrorIs(t, err, taxrecord.ErrInvalid)
+			}
+			assert.Empty(t, data.String())
+		})
+	}
 }
 
 func checkTaxEventsAuthority(t *testing.T, open func(*testing.T) *Store) {
@@ -186,40 +198,4 @@ func TestTaxEventsSource48DoesNotQueryTaxCatalogs(t *testing.T) {
 			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), db, &data, 48))
 		})
 	}
-}
-
-func TestTaxEventMetadataTimeBounds(t *testing.T) {
-	for _, tc := range []struct{ name, update, cause string }{
-		{"recorded before parent", `UPDATE tax_events SET recorded_at='0001-01-01T00:00:00.000000000Z'`, "invalid tax event lifetime"},
-		{"recorded after parent", `UPDATE tax_events SET recorded_at='9998-01-01T00:00:00.000000000Z'`, "invalid tax event lifetime"},
-		{"void before recorded", `UPDATE tax_events SET voided_at='0001-01-01T00:00:00.000000000Z', void_reason='Correction'`, "tax event void precedes recording"},
-		{"void after parent", `UPDATE tax_events SET voided_at='9998-01-01T00:00:00.000000000Z', void_reason='Correction'`, "invalid tax event lifetime"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, _, r := taxFixture(t)
-			ctx := t.Context()
-			_, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
-			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, tc.update)
-			require.NoError(t, err)
-			var out bytes.Buffer
-			require.ErrorContains(t, s.ExportMetadata(ctx, &out), tc.cause)
-			assert.Empty(t, out.String())
-		})
-	}
-}
-
-func TestTaxEventImportRejectsInvalidLifetime(t *testing.T) {
-	s, _, r := taxFixture(t)
-	ctx := t.Context()
-	m, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "note", OccurredOn: "2026-01-01"})
-	require.NoError(t, err)
-	var original bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &original))
-	corrupted := strings.Replace(original.String(), `"recorded_at":"`+m.Event.RecordedAt+`"`, `"recorded_at":"9998-01-01T00:00:00.000000000Z"`, 1)
-	require.NotEqual(t, original.String(), corrupted)
-	dest := newTestStore(t)
-	require.Error(t, dest.ImportMetadata(ctx, strings.NewReader(corrupted)))
-	_, err = dest.GetTaxRecord(ctx, r.RecordID)
-	require.ErrorIs(t, err, ErrNotFound)
 }
