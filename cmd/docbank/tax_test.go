@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,4 +58,32 @@ func TestTaxCLIFlagErrorsArePrivate(t *testing.T) {
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "private-synthetic")
 	}
+}
+
+func TestTaxCLIRevisionInspectAndNoRetry(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	var reads, writes int
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tax/accounts/"+id {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			reads++
+			assert.NotEqual(t, "true", r.URL.Query().Get("reveal"))
+			w.Header().Set("ETag", `"1"`)
+			_, _ = w.Write([]byte(`{"account_id":"` + id + `","revision":1}`))
+		case http.MethodPatch:
+			writes++
+			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
+			w.WriteHeader(http.StatusPreconditionFailed)
+			_, _ = w.Write([]byte(`{"status":412,"title":"Precondition Failed","code":"stale_revision"}`))
+		}
+	})
+	_, err := runCLI(t, "tax", "account", "edit", id, "--note", "example")
+	require.Error(t, err)
+	assert.Equal(t, 1, reads)
+	assert.Equal(t, 1, writes)
 }
