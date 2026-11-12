@@ -84,6 +84,11 @@ backups include contracts and their links.
 The HTTP API exposes `/api/v1/contracts` and individual contracts at
 `/api/v1/contracts/{contract_id}`. Mutations of existing records use the
 revision in `If-Match`; a stale revision fails without changing that operation.
+The web app's browser session may only read: `GET /api/v1/contracts` with
+`status`, `type`, `expiring_before`, `as_of`, `limit` and `offset`, each at
+most once, and `GET /api/v1/contracts/{contract_id}` with a canonical UUID and
+an optional `as_of`. Writes, `q`, `party_id`, and party and document link
+routes require the API key.
 
 Contract party links use `PUT` and `DELETE` on
 `/api/v1/contracts/{contract_id}/parties/{party_id}?role=own|counterparty`.
@@ -134,7 +139,8 @@ The table shows each agreement's title, type, counterparties, status, start
 date and expiry date, sorted by title. Filter it by status, including
 **Expired**, by type, and by **Expires** within 30, 90 or 365 days. A window of
 N days shows agreements expiring from the page's date through N days later, in
-any status; add **Active** to see only current agreements. **Clear filters**
+any status unless you choose one; choose **Active** to see only current
+agreements. **Clear filters**
 returns to the whole register.
 
 Dates and expiry use the daemon's date, shown under the filters. The page keeps

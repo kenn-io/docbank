@@ -102,9 +102,15 @@ function words(label: string): string {
   const text = label.replaceAll("_", " ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+const anyTypeLabel = "Any type";
+// Ordinary labels read as words. A label whose words would look like another
+// label (stray underscores) or like the Any type filter keeps its stored form.
+const readableType = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
 export function contractTypeLabel(type: string): string {
   if (!type) return "—";
-  return type === "nda" ? "NDA" : words(type);
+  if (type === "nda") return "NDA";
+  const label = readableType.test(type) ? words(type) : type;
+  return label === anyTypeLabel ? type : label;
 }
 export function contractStatusLabel(status: string): string {
   return statusLabels[status] ?? status;
@@ -135,7 +141,7 @@ export function contractTypeOptions(seen: Iterable<string>): { value: string; la
     .map((value) => ({ value, label: contractTypeLabel(value) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   return [
-    { value: "", label: "Any type" },
+    { value: "", label: anyTypeLabel },
     ...suggestedTypes.map((value) => ({ value, label: contractTypeLabel(value) })),
     ...extra,
   ];

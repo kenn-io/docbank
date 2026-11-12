@@ -220,7 +220,7 @@
           {#if filters.expiringDays}
             Shows agreements expiring from {formatCivilDate(asOf)} through {formatCivilDate(
               addCivilDays(asOf, filters.expiringDays),
-            )}{filters.status === "active"
+            )}{filters.status
               ? "."
               : ", in any status. Choose Active to see only current agreements."}
           {:else}
