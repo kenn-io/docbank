@@ -139,7 +139,7 @@ func (s *Store) ScanNoteTargetsAfter(ctx context.Context, recipe, after string, 
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		var selected []NoteTarget
 		var recipes []*string
 		var ids []int64

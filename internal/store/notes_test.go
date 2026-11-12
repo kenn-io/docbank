@@ -526,7 +526,7 @@ func checkNoteAuthoredValuesAndCollections(t *testing.T, newStore func(*testing.
 	publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], identities, notemarkdown.Recipe)
 	rows, err := s.db.QueryContext(ctx, `SELECT target_path,target_key FROM note_links WHERE version_id=$1 ORDER BY ordinal`, n.CurrentVersionID)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { require.NoError(t, rows.Close()) }()
 	var paths, keys []*string
 	for rows.Next() {
 		var targetPath, targetKey *string

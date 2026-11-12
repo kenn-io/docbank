@@ -128,6 +128,7 @@ func TestNoteBackfillDrainsBadNotes(t *testing.T) {
 
 type notePublicationFailure struct {
 	NoteCatalog
+
 	err   error
 	calls int
 }
