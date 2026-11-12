@@ -1,6 +1,6 @@
 ---
-title: Parties
-description: Keep reusable entities and counterparties in Docbank.
+title: Contracts and parties
+description: Register agreements and reusable parties in Docbank.
 ---
 
 # Parties
@@ -50,3 +50,36 @@ revision.
 
 A person split does not move party links; parties moved by a merge remain linked
 to the survivor.
+
+## Contract records
+
+Register an agreement with its dates, terms, and parties. Create the parties
+first, then refer to them by ID or active display name.
+
+```console
+docbank contract create "Storage agreement" --status active --own "Example Holdings Inc" --counterparty "Northwind Storage Ltd" --expires 2027-12-31
+docbank contract list --status active --expiring-before 2028-01-01
+docbank contract show <contract-id>
+docbank contract edit <contract-id> --summary "Annual storage" --clear-expires
+docbank contract delete <contract-id>
+```
+
+Stored statuses are `draft`, `pending_signature`, `active`, `terminated`, and
+`cancelled`. An active agreement reads as `expired` after its expiry date; on
+the expiry date it remains active. `--as-of` chooses the date used for that
+calculation, and `--expiring-before` excludes the named date. Title search
+with `--q` is a literal, ASCII case-insensitive substring. A contract type is
+an optional lowercase label containing letters, digits, and underscores.
+Each short term is limited to 8,192 bytes.
+
+An own-party link requires an own entity. Retired parties remain on existing
+contracts but cannot be newly attached. Edit party links with `--own`,
+`--counterparty`, `--remove-own`, and `--remove-counterparty`. Each change
+uses the contract revision. If a later change fails, the command reports the
+steps already applied. Deleting a contract removes its party links, not
+stored documents. Contract mutations are refused in audited vaults. Metadata
+backups include contracts and their links.
+
+The HTTP API exposes `/api/v1/contracts` and individual contracts at
+`/api/v1/contracts/{contract_id}`. Mutations of existing records use the
+revision in `If-Match`; a stale revision fails without changing that operation.

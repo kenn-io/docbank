@@ -560,6 +560,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= contractsStorageSchemaVersion {
+		if err := exportMetadataTables(ctx, tx, write, []metadataRecordCodec{contractMetadata, contractPartyMetadata}); err != nil {
+			return err
+		}
+	}
 	if layout.schemaVersion >= photoFacesStorageSchemaVersion {
 		var codec metadataRecordCodec = photoFaceMetadata
 		if layout.schemaVersion < photoFaceDetectionStorageSchemaVersion {
@@ -1669,6 +1674,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.schemaVersion >= partiesStorageSchemaVersion {
 			if err := validatePartyMetadataState(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= contractsStorageSchemaVersion {
+			if err := validateContractMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}

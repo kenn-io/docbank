@@ -2244,6 +2244,27 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkPartyFiltersAndReferences(t, newPostgresQueryStore)
 		}},
+		{"ContractPartyHistory", func(t *testing.T) {
+			t.Helper()
+			checkContractPartyHistory(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractPartyHistory(t, newPostgresQueryStore)
+		}},
+		{"ContractFilters", func(t *testing.T) {
+			t.Helper()
+			checkContractFilters(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractFilters(t, newPostgresQueryStore)
+		}},
+		{"ContractLifecycle", func(t *testing.T) {
+			t.Helper()
+			checkContractLifecycle(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractLifecycle(t, newPostgresQueryStore)
+		}},
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
 			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)

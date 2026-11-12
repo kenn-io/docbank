@@ -3272,3 +3272,16 @@ CREATE TABLE IF NOT EXISTS parties (
     retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS parties_name_folded ON parties(display_name_folded);
+
+CREATE TABLE IF NOT EXISTS contracts (
+ contract_id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, contract_type TEXT NOT NULL,
+ status TEXT NOT NULL, starts_on TEXT, expires_on TEXT, signed_on TEXT,
+ summary TEXT NOT NULL, purpose TEXT NOT NULL, consideration TEXT NOT NULL, termination TEXT NOT NULL,
+ revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS contracts_expires_on ON contracts(expires_on);
+CREATE TABLE IF NOT EXISTS contract_parties (
+ contract_id TEXT NOT NULL REFERENCES contracts(contract_id) ON DELETE CASCADE,
+ party_id TEXT NOT NULL REFERENCES parties(party_id), role TEXT NOT NULL,
+ PRIMARY KEY(contract_id, party_id, role)
+);

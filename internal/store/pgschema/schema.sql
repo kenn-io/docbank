@@ -2520,3 +2520,18 @@ CREATE TABLE {{schema}}.parties (
     retired_at TEXT COLLATE "C"
 );
 CREATE INDEX parties_name_folded ON {{schema}}.parties(display_name_folded);
+
+CREATE TABLE {{schema}}.contracts (
+ contract_id TEXT COLLATE "C" PRIMARY KEY NOT NULL, title TEXT COLLATE "C" NOT NULL,
+ contract_type TEXT COLLATE "C" NOT NULL, status TEXT COLLATE "C" NOT NULL,
+ starts_on TEXT COLLATE "C", expires_on TEXT COLLATE "C", signed_on TEXT COLLATE "C",
+ summary TEXT COLLATE "C" NOT NULL, purpose TEXT COLLATE "C" NOT NULL,
+ consideration TEXT COLLATE "C" NOT NULL, termination TEXT COLLATE "C" NOT NULL,
+ revision BIGINT NOT NULL, created_at TEXT COLLATE "C" NOT NULL, updated_at TEXT COLLATE "C" NOT NULL
+);
+CREATE INDEX contracts_expires_on ON {{schema}}.contracts(expires_on);
+CREATE TABLE {{schema}}.contract_parties (
+ contract_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.contracts(contract_id) ON DELETE CASCADE,
+ party_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.parties(party_id), role TEXT COLLATE "C" NOT NULL,
+ PRIMARY KEY(contract_id, party_id, role)
+);

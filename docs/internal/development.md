@@ -540,6 +540,10 @@ GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
 GRANT INSERT, UPDATE(kind, display_name, display_name_folded, legal_name, country,
     own, person_id, revision, updated_at, retired_at) ON documents.parties TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(title, contract_type, status, starts_on, expires_on,
+    signed_on, summary, purpose, consideration, termination, revision, updated_at)
+    ON documents.contracts TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.contract_parties TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
 GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
     display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;

@@ -25,6 +25,17 @@ func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
 			require.NoError(t, err)
 			return s
 		},
+		"contracts": func(t *testing.T) *Store {
+			t.Helper()
+			s := newTestStore(t)
+			party, err := s.CreateParty(t.Context(), PartyInput{Kind: "organization", DisplayName: "Synthetic owner", Own: true})
+			require.NoError(t, err)
+			_, err = s.CreateContract(t.Context(), ContractInput{Title: "Retained agreement", Parties: []ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
+			require.NoError(t, err)
+			_, err = s.RetireParty(t.Context(), party.PartyID, party.Revision)
+			require.NoError(t, err)
+			return s
+		},
 		"processing": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)

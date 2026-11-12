@@ -33,6 +33,10 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	retired, err = s.RetireParty(ctx, retired.PartyID, retired.Revision)
 	require.NoError(t, err)
+	party, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Contract owner", Own: true})
+	require.NoError(t, err)
+	contract, err := s.CreateContract(ctx, ContractInput{Title: "Retained agreement", Parties: []ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
+	require.NoError(t, err)
 	deleted, err := s.Mkdir(ctx, s.RootID(), "removed")
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, deleted.ID, deleted.Revision)
@@ -68,6 +72,10 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 		require.NoError(t, err)
 		require.Equal(t, want, got)
 	}
+	recoveredContract, err := target.GetContract(ctx, contract.ContractID, "2024-01-01")
+	require.NoError(t, err)
+	require.Len(t, recoveredContract.Parties, 1)
+	require.Equal(t, party.PartyID, recoveredContract.Parties[0].PartyID)
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	require.Equal(t, exported.Bytes(), restored.Bytes())
