@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func TestTaxValuesAbsentFromLogs(t *testing.T) {
@@ -34,6 +35,20 @@ func TestTaxLoggingPreservesOtherRoutes(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/other", nil))
 	assert.Contains(t, logs.String(), "/api/v1/other")
 	assert.Contains(t, logs.String(), "ordinary panic")
+}
+
+func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
+	for _, field := range []*taxrecord.FieldError{
+		{Field: "private-synthetic-value", Reason: "invalid value"},
+		{Field: "cadence", Reason: "private-synthetic-value"},
+	} {
+		var problem *Error
+		require.ErrorAs(t, taxRouteError(field), &problem)
+		assert.NotContains(t, problem.Detail, "private-synthetic-value")
+	}
+	var problem *Error
+	require.ErrorAs(t, taxRouteError(&taxrecord.FieldError{Field: "cadence", Reason: "unknown cadence"}), &problem)
+	assert.Equal(t, "cadence: unknown cadence", problem.Detail)
 }
 
 func TestTaxRevisionExhaustionError(t *testing.T) {
