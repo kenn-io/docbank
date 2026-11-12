@@ -64,7 +64,7 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 		evidenceID := fmt.Sprintf("metadata-%d", i)
 		evidenceHash := strings.Repeat("a", 64)
 		eventID := document.DocumentEventID("vault-uid-1", versionID, evidenceID, "created", "2026-03-10", "date", "omitted", evidenceHash)
-		claim := api.VersionDateClaim{EventID: eventID, DateKind: "created", DateValue: "2026-03-10", RawValue: strings.Repeat("\\\"", 30000), Precision: "date", TimezoneKind: "omitted", AxisKey: axis, ClaimBasis: "source_asserted", ParseConfidence: "exact_identifier", EvidenceKind: "source_metadata", EvidenceID: evidenceID,
+		claim := api.VersionDateClaim{EventID: eventID, DateKind: "created", DateValue: "2026-03-10", RawValue: strings.Repeat("\\\"", 30000), Precision: "date", TimezoneKind: "omitted", AxisKey: axis, ClaimBasis: "source_asserted", ParseConfidence: "exact", EvidenceKind: "source_metadata", EvidenceID: evidenceID,
 			When: api.WhenV1{State: "date", Precision: "date", Date: "2026-03-10", PlacedBy: api.WhenPlacedBy{Source: "created", Rule: document.PrimaryRuleV1, EventID: eventID, ClaimBasis: "source_asserted"}}}
 		dates.Claims = append(dates.Claims, claim)
 	}
