@@ -88,8 +88,8 @@ func TestContractDocumentCLI(t *testing.T) {
 			args = append(args, "--version", version)
 		}
 		_, err := runCLI(t, args...)
-		assert.ErrorContains(t, err, "outcome unknown")
-		assert.ErrorContains(t, err, "inspect contracts before retrying")
+		require.ErrorContains(t, err, "outcome unknown")
+		require.ErrorContains(t, err, "inspect contracts before retrying")
 		assert.True(t, daemonconn.IsRetryableMutationError(err), "underlying mutation error must remain classifiable")
 	}
 	require.Equal(t, 4, calls)

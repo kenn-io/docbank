@@ -55,7 +55,7 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		var versions []string
 		for rows.Next() {
 			var v string
