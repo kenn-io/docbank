@@ -177,7 +177,7 @@ it.each([
   expect(history.length).toBe(entries + 1);
 });
 
-it("reports no telemetry screen on Taxes", async () => {
+it("supplies no Taxes screen to telemetry", async () => {
   const telemetry = vi.spyOn(appOpened, "startTelemetryReporting");
   start();
   await screen.findByText("No documents yet");

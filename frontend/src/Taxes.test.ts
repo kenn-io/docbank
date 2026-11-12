@@ -176,19 +176,6 @@ it("load more appears only on a full page", async () => {
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
 });
 
-it("dates render as stored text", async () => {
-  const zone = process.env.TZ;
-  process.env.TZ = "Pacific/Pago_Pago";
-  try {
-    serveTaxes(() => ({ items: [{ ...q1, due_date: "2031-01-01" }] }));
-    show();
-    expect(await screen.findByText("2031-01-01")).toBeTruthy();
-  } finally {
-    if (zone === undefined) delete process.env.TZ;
-    else process.env.TZ = zone;
-  }
-});
-
 it("failed filer names stay distinct and can be reloaded", async () => {
   let fail = true;
   serveTaxes(

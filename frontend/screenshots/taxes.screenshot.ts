@@ -20,6 +20,10 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
     // Canonical parties reject ZZ, so they carry no country; tax rows use ZZ.
     const party = async (name: string, ...flags: string[]) =>
       (await json("party", "create", name, "--kind", "organization", ...flags)).party_id as string;
+    // Long enough to wrap in the Title column; only its ending tells it apart.
+    const longTitle =
+      "Notice of assessment 2031 for the Example Ventures Ltd. payroll account, " +
+      "second revised notice after the review of the April and May filings";
     const holdings = await party("Example Holdings Ltd.", "--own");
     const ventures = await party("Example Ventures Ltd.", "--own");
     const agency = await party("Example Revenue Agency");
@@ -35,7 +39,7 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
     );
     await add(
       ...["--filer", ventures, "--country", "ZZ", "--tax-kind", "payroll", "--kind", "notice"],
-      ...["--title", "Notice of assessment 2031", "--tax-year", "2031", "--currency", "JPY"],
+      ...["--title", longTitle, "--tax-year", "2031", "--currency", "JPY"],
       ...["--direction", "payable", "--amount", "5000"],
     );
     await add(
@@ -87,6 +91,20 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
       await expect(rowTitles(`Tax records for ${names[filer]}`)).toHaveText(titlesOf(filer));
     await expect(main.getByText("123400 USD", { exact: true })).toBeVisible();
     await expect(main.getByText("5000 JPY", { exact: true })).toBeVisible();
+    // The long title is shown whole on several lines inside its fixed column,
+    // and a short title still takes one line.
+    const long = main.getByText(longTitle, { exact: true });
+    await expect(long).toBeVisible();
+    const lines = (text: string) =>
+      main.getByText(text, { exact: true }).evaluate((span) => span.getClientRects().length);
+    expect(await lines(longTitle)).toBeGreaterThan(1);
+    expect(await lines("Sales tax return, Q1 2031")).toBe(1);
+    const year = await main
+      .getByRole("table", { name: "Tax records for Example Ventures Ltd.", exact: true })
+      .getByRole("columnheader", { name: "Year" })
+      .boundingBox();
+    const title = await long.boundingBox();
+    expect(title!.x + title!.width).toBeLessThanOrEqual(year!.x);
     await mkdir(output!, { recursive: true });
     await captureThemes(page, output!, "web-taxes-all");
 

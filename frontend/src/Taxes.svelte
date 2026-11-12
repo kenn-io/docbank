@@ -72,7 +72,7 @@
       )}
       <tr>
         <td class="title"
-          ><span title={row.title}>{row.title}</span>{#if row.form_code}<span class="sub"
+          ><span>{row.title}</span>{#if row.form_code}<span class="sub"
               >{row.form_code}</span
             >{/if}</td
         >
@@ -270,11 +270,10 @@
     overflow-wrap: anywhere;
   }
 
-  .title > span:first-child {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  /* Long titles wrap inside the fixed Title width, so every user sees the
+     whole title. */
+  .title {
+    overflow-wrap: anywhere;
   }
 
   .sub {
