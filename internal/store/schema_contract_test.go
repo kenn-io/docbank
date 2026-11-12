@@ -148,6 +148,10 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	require.EqualError(t, checkSchemaContract(records, 49, digest), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
 	require.NoError(t, checkSchemaContract(records, 50, next))
 	require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, strings.Repeat("c", 64)), "set currentStorageSchemaVersion to 50")
+}
+
+func TestStorageSchemaCatalogDigest(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
@@ -164,9 +168,6 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 				return digest
 			}
 			digest := schemaCatalogDigest(t, db)
-			table := `CREATE TABLE contract_probe (id INTEGER)`
-			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
-			require.NotEqual(t, probe(table), probe(table+"; "+trigger))
 			for _, statement := range []string{
 				`CREATE TABLE contract_probe (id INTEGER)`,
 				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,

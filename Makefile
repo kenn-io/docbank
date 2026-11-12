@@ -86,7 +86,7 @@ test:
 
 .PHONY: schema-contract-check
 schema-contract-check:
-	CGO_ENABLED=1 go test -tags "$(BUILD_TAGS)" ./internal/store -run '^(TestStorageSchemaVersionContract|TestStorageSchemaContractChanges|TestStorageSchemaContractRecords|TestReleasedSchemaFixturesMatchVersions)$$'
+	CGO_ENABLED=1 go test -tags "$(BUILD_TAGS)" ./internal/store -run '^(TestStorageSchemaVersionContract|TestStorageSchemaContractChanges|TestStorageSchemaCatalogDigest|TestStorageSchemaContractRecords|TestReleasedSchemaFixturesMatchVersions)$$'
 
 .PHONY: backend-coverage test-pg
 backend-coverage:
