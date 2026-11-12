@@ -207,6 +207,28 @@ describe("contracts page", () => {
     expect(requests.at(-1)).toBe("/api/v1/contracts?as_of=2027-01-01&limit=100&offset=100");
   });
 
+  it("shows a contract once when a later live page repeats it", async () => {
+    const first = many(100, "a");
+    const added = contract({
+      contract_id: "b0000000-0000-4000-8000-000000000000",
+      title: "b added",
+    });
+    serve((url) => {
+      if (!list(url)) return undefined;
+      // A concurrent insert ahead of the offset shifts the last row of the
+      // first page onto the second page.
+      return url.searchParams.get("offset") === "0" ? page(first) : page([first[99]!, added]);
+    });
+    show();
+    await screen.findByRole("button", { name: "Show contract a agreement 99" });
+    await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByRole("button", { name: "Show contract b added" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Show contract a agreement 99" })).toHaveLength(1);
+    expect(screen.getAllByRole("row")).toHaveLength(102);
+    expect(requests.at(-1)).toBe("/api/v1/contracts?as_of=2027-01-01&limit=100&offset=100");
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
   it("ignores an older filter response", async () => {
     let releaseActive: (() => void) | undefined;
     serve(async (url) => {
@@ -381,6 +403,30 @@ describe("contract detail", () => {
     );
     expect((await screen.findByRole("alert")).textContent).toContain("no longer matches");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows a failed refresh on the open contract and retries it", async () => {
+    let listStatus = 200;
+    const routes = detailRoutes(() => Response.json(contract({ documents: [] })));
+    serve((url) =>
+      list(url) && listStatus !== 200
+        ? Response.json({ detail: "Daemon busy" }, { status: listStatus })
+        : routes(url),
+    );
+    show();
+    await fireEvent.click(await screen.findByRole("button", { name: /^Show contract/ }));
+    await screen.findByRole("heading", { name: "Northwind Storage - unit lease" });
+    listStatus = 500;
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh contracts" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Daemon busy");
+    expect(screen.getByRole("heading", { name: "Northwind Storage - unit lease" })).toBeTruthy();
+    listStatus = 200;
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(
+      await screen.findByRole("heading", { name: "Northwind Storage - unit lease" }),
+    ).toBeTruthy();
   });
 
   it("keeps the open contract on refresh and shows when it was deleted", async () => {

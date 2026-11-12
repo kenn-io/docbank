@@ -66,6 +66,20 @@ describe("contract helpers", () => {
     expect(formatCivilDate(null)).toBe("—");
   });
 
+  it("keeps API years below 100 instead of remapping them to the 1900s", () => {
+    const utc = (year: number, month: number, day: number) => {
+      const value = new Date(0);
+      value.setUTCFullYear(year, month, day);
+      return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(
+        value,
+      );
+    };
+    expect(formatCivilDate("0099-01-01")).toBe(utc(99, 0, 1));
+    expect(formatCivilDate("0099-01-01")).not.toBe(utc(1999, 0, 1));
+    expect(addCivilDays("0099-12-31", 1)).toBe("0100-01-01");
+    expect(addCivilDays("0001-01-01", 30)).toBe("0001-01-31");
+  });
+
   it("labels types, statuses and roles", () => {
     expect(contractTypeLabel("offer_letter")).toBe("Offer letter");
     expect(contractTypeLabel("nda")).toBe("NDA");
