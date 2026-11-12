@@ -116,4 +116,5 @@ the contract revision and do not change its status. An unknown or trashed node r
 The API uses `PUT` and `DELETE /api/v1/contracts/{contract_id}/documents/{node_id}`
 with `role` and optional `content_version_id` query parameters and an `If-Match`
 revision. `GET /api/v1/nodes/{node_id}/contracts` lists linked contracts even
-when that node has been purged. Metadata backup retains unavailable links.
+when that node has been purged. Metadata backup retains links even when the
+existing backup rules omit their document bytes.

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestContractShowIncludesDocumentEvidence(t *testing.T) {
@@ -24,6 +26,7 @@ func TestContractDocumentCLI(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
 	const version = "22222222-2222-4222-8222-222222222222"
 	calls := 0
+	var malformed atomic.Bool
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		assert.Equal(t, "/api/v1/contracts/"+id+"/documents/42", r.URL.Path)
@@ -37,6 +40,10 @@ func TestContractDocumentCLI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"2"`)
+		if malformed.Load() {
+			_, _ = w.Write([]byte("{"))
+			return
+		}
 		assert.NoError(t, json.MarshalWrite(w, api.Contract{ContractID: id, Revision: 2, Parties: []api.ContractParty{}, Documents: []api.ContractDocument{}}))
 	})
 	for _, action := range []string{"link", "unlink"} {
@@ -49,4 +56,16 @@ func TestContractDocumentCLI(t *testing.T) {
 	_, err = runCLI(t, "contract", "unlink", id, "id:42", "--role", "signed", "--revision", "1", "--version", version)
 	require.NoError(t, err)
 	require.Equal(t, 2, calls)
+	malformed.Store(true)
+	for _, action := range []string{"link", "unlink"} {
+		args := []string{"contract", action, id, "id:42", "--role", "signed", "--revision", "1"}
+		if action == "unlink" {
+			args = append(args, "--version", version)
+		}
+		_, err := runCLI(t, args...)
+		assert.ErrorContains(t, err, "outcome unknown")
+		assert.ErrorContains(t, err, "inspect contracts before retrying")
+		assert.True(t, daemonconn.IsRetryableMutationError(err), "underlying mutation error must remain classifiable")
+	}
+	require.Equal(t, 4, calls)
 }

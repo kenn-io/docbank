@@ -895,6 +895,8 @@ docbank contract show <contract-id> [--as-of <date>] [--json]
 docbank contract create <title> [--status <status>] [--type <type>] [--own <party>] [--counterparty <party>] [--json]
 docbank contract edit <contract-id> [field and party flags] [--revision <n>] [--json]
 docbank contract delete <contract-id> [--revision <n>] [--json]
+docbank contract link <contract-id> <node> --role <role> [--version <version-id>] [--revision <n>] [--json]
+docbank contract unlink <contract-id> <node> --role <role> [--version <version-id>] [--revision <n>] [--json]
 ```
 
 Register agreements, dates, terms and parties. `--expiring-before` is exclusive

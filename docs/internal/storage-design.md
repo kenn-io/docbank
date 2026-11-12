@@ -437,6 +437,11 @@ revise this envelope.
 
 ## Logical metadata portability
 
+`contract_documents` identifies each link by contract, content version and
+role, and records the node ID, hash and size. It has no foreign key to the
+source node or version, so the evidence survives their removal. Metadata JSONL
+exports and restores these links even when the source is unavailable.
+
 ### Photo asset authority
 
 Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,

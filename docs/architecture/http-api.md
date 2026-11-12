@@ -129,6 +129,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /contracts` · `GET\|PATCH\|DELETE /contracts/{contract_id}` · `PUT\|DELETE /contracts/{contract_id}/parties/{party_id}` | list and manage contracts and their party links | Implemented |
+| `PUT\|DELETE /contracts/{contract_id}/documents/{node_id}` · `GET /nodes/{node_id}/contracts` | link or unlink exact document versions and list contracts by node | Implemented |
 | `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
