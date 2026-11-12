@@ -647,6 +647,7 @@ func BenchmarkLocalTextIdleSweep(b *testing.B) {
 }
 
 func TestLocalTextInheritedConsent(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		revoke  bool

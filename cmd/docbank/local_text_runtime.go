@@ -72,8 +72,11 @@ func inheritedLocalText(profiles map[string]processing.ProfileConfig) (config.Lo
 		}
 	}
 	recorded, err := embedlocal.ChoiceRecorded()
-	if err != nil || !recorded {
-		return choice, err
+	if err != nil {
+		return choice, fmt.Errorf("read shared search by meaning choice: %w", err)
+	}
+	if !recorded {
+		return choice, nil
 	}
 	return config.LocalTextConfig{Profile: config.LocalTextProfile, Server: "local"}, nil
 }
