@@ -30359,6 +30359,11 @@ paths:
   /api/v1/processing/local/restart:
     post:
       operationId: restartDaemon
+      parameters:
+        - in: header
+          name: Origin
+          schema:
+            type: string
       responses:
         "202":
           description: Accepted

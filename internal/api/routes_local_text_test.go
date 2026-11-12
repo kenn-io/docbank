@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -137,4 +138,22 @@ func TestRestartDaemonPublicOrigin(t *testing.T) {
 	response := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 	require.Equal(t, []bool{false}, calls)
+	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, testWebURL+"api/daemon/web-session", nil)
+	issue.RemoteAddr = "127.0.0.1:1234"
+	issue.Header.Set("X-Api-Key", testAPIKey)
+	issued := httptest.NewRecorder()
+	catalog.Server.Handler().ServeHTTP(issued, issue)
+	require.Equal(t, http.StatusCreated, issued.Code, issued.Body.String())
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(issued.Body.Bytes(), &session))
+	local := httptest.NewRequestWithContext(t.Context(), http.MethodPost, testWebURL+"api/v1/processing/local/restart", nil)
+	local.RemoteAddr = "127.0.0.1:1234"
+	local.Header.Set(api.WebSessionHeader, session.Token)
+	local.Header.Set("Origin", strings.TrimSuffix(testWebURL, "/"))
+	localResponse := httptest.NewRecorder()
+	catalog.Server.Handler().ServeHTTP(localResponse, local)
+	require.Equal(t, http.StatusAccepted, localResponse.Code, localResponse.Body.String())
+	require.Equal(t, []bool{false, true}, calls)
 }

@@ -853,6 +853,8 @@ pinning are not browser workflows.
 
 Open **System → Search by meaning** to enable text search by meaning, approve setup, and follow the restart and recovery instructions in the drawer. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
 
+If the browser cannot open a new tab after a local restart, run `docbank web --no-browser` and open the printed link.
+
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
 count, each row shows the name with its folder beneath, and the **Match** column

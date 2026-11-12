@@ -2026,7 +2026,7 @@
     localText.notice = "";
     let notice = "Restart requested. Docbank may restart later.";
     try {
-      await generated.restartDaemon({ session, signal: AbortSignal.timeout(10000) });
+      await generated.restartDaemon(undefined, { session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
       if (!mounted || webSession !== session) return;
       if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
