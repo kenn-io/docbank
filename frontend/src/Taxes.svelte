@@ -146,7 +146,9 @@
             <Button size="sm" onclick={() => setYear(null)}>All years</Button>
           {/if}
         </div>
-        {#if filtered}<Button size="sm" onclick={clearFilters}>Clear filters</Button>{/if}
+        {#if view && view.filters.filer !== ""}
+          <Button size="sm" onclick={clearFilters}>Clear filters</Button>
+        {/if}
       </nav>
 
       <section class="records" aria-label="Tax records">
