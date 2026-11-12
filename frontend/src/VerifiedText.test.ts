@@ -25,25 +25,16 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
   "offers the %s text state without an empty Find toolbar",
   async (state) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({
-        state,
-        source: {
-          node_id: 7,
-          revision: 3,
-          version_id: source.versionID,
-          blob_hash: source.blobHash,
-          size: 50,
-          media_type: "image/png",
-        },
-        profile: {
-          name: "",
-          configuration: state === "unconfigured" ? "unconfigured" : "configured",
-          fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
-        },
-        generation_id: "",
-        attachment_id: "",
-        build_id: "",
-      }),
+      Response.json(
+        textReceipt(source, {
+          state,
+          profile: {
+            name: "",
+            configuration: state === "unconfigured" ? "unconfigured" : "configured",
+            fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
+          },
+        }),
+      ),
     );
     const onprocess = vi.fn();
     render(VerifiedText, {
