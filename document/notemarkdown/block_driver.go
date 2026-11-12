@@ -282,7 +282,6 @@ func (d *blockDriver) closeBlocks(from, to int) {
 		paragraph, ok := node.(*ast.Paragraph)
 		if ok && node.Parent() != nil {
 			d.transformParagraph(paragraph)
-			continue
 		}
 	}
 	if from == len(blocks)-1 {
