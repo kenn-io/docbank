@@ -118,9 +118,12 @@ fenced write. `--json` is available on all account commands. See
 ```text
 docbank tax record add --kind KIND --title TITLE [flags]
 docbank tax record list [flags]
-docbank tax record show <record-id> [--json]
+docbank tax record show <record-id> [--reveal] [--json]
 docbank tax record edit <record-id> [flags]
 docbank tax record retire <record-id> [--revision N] [--json]
+docbank tax record advance <record-id> --state STATE --occurred-on DATE [flags]
+docbank tax event add <record-id> --kind note --occurred-on DATE [flags]
+docbank tax event void <record-id> <event-id> --reason REASON [--revision N] [--json]
 ```
 
 Add accepts `--account`, `--filer`, `--authority`,
@@ -131,7 +134,7 @@ required. List accepts `--filer`, `--country`, `--taxkind`, `--year`, `--state`,
 `--kind`, `--include-retired`, `--limit`, and `--offset`. Edit accepts the
 editable fields and their nullable `--clear-*` flags; account and kind cannot
 be edited. Edit and retire accept `--revision`; otherwise they inspect once and
-send one fenced write. All record commands accept `--json`. See
+send one fenced write. Advance and event writes also accept `--revision` and never retry; show reveals event references only with `--reveal`. All record and event commands accept `--json`. See
 [Tax records](usage/tax-records.md) for money and identity rules.
 
 ## docbank changes

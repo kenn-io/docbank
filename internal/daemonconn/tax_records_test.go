@@ -46,13 +46,13 @@ func TestTaxRecordClientContracts(t *testing.T) {
 }
 func TestTaxRecordClientRejectsUntrustedResponses(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
-	for _, tc := range []struct{ body, etag string }{{taxRecordFixture, `"2"`}, {strings.Replace(taxRecordFixture, id, "invalid", 1), `"1"`}, {strings.Replace(taxRecordFixture, `"kind":"filing"`, `"kind":"invalid"`, 1), `"1"`}, {strings.Replace(taxRecordFixture, `"state":"expected"`, `"state":"filed"`, 1), `"1"`}, {strings.Replace(taxRecordFixture, `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"invalid"`, 1), `"1"`}} {
+	for _, tc := range []struct{ body, etag string }{{taxRecordFixture, `"2"`}, {strings.Replace(taxRecordFixture, id, "invalid", 1), `"1"`}, {strings.Replace(taxRecordFixture, `"kind":"filing"`, `"kind":"invalid"`, 1), `"1"`}, {strings.Replace(taxRecordFixture, `"state":"expected"`, `"state":"invalid"`, 1), `"1"`}, {strings.Replace(taxRecordFixture, `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"invalid"`, 1), `"1"`}} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("ETag", tc.etag)
-			_, _ = w.Write([]byte(tc.body))
+			_, _ = w.Write([]byte(strings.TrimSuffix(tc.body, "}") + `,"events":[]}`))
 		}))
-		_, err := New(server.URL, "").TaxRecord(t.Context(), id)
+		_, err := New(server.URL, "").TaxRecord(t.Context(), id, false)
 		require.Error(t, err)
 		server.Close()
 	}
@@ -98,11 +98,11 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.Header().Set("ETag", `"1"`)
-					_, _ = w.Write(body)
+					_, _ = w.Write(append(body[:len(body)-1], []byte(`,"events":[]}`)...))
 				}))
 				t.Cleanup(server.Close)
 				c := New(server.URL, "")
-				_, err = c.TaxRecord(t.Context(), id)
+				_, err = c.TaxRecord(t.Context(), id, false)
 				require.True(t, IsResponseDecodeError(err))
 			})
 		}

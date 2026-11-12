@@ -129,7 +129,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tax/accounts` · `GET\|PATCH /tax/accounts/{account_id}` · `POST /tax/accounts/{account_id}/retire` | manage tax accounts | Implemented |
-| `GET\|POST /tax/records` · `GET\|PATCH /tax/records/{record_id}` · `POST /tax/records/{record_id}/retire` | manage initial tax records | Implemented |
+| `GET\|POST /tax/records` · `GET\|PATCH /tax/records/{record_id}` · `POST /tax/records/{record_id}/retire` | manage tax records | Implemented |
 | `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
@@ -1552,8 +1552,7 @@ schema-invalid inputs return 422 `validation`, domain-invalid tax values return
 `GET /api/v1/tax/records` combines `filer`, `country`, `taxkind`, `year`,
 `state`, and `kind` filters with AND. `include_retired` defaults to false;
 `limit` defaults to 100 (1–1000), and `offset` defaults to zero. ASCII lowercase
-country codes are normalized. Get-one includes retired records. Responses do
-include `account_id` as a link when attached, but do not include the account’s secret `identifier` or a reveal option.
+country codes are normalized. Get-one includes retired records and events. It includes `account_id` when attached, but never the account identifier. Event references are masked unless get-one requests `reveal=true`.
 
 Create with `POST /api/v1/tax/records`; update with `PATCH` on the record ID;
 retire with `POST /api/v1/tax/records/{record_id}/retire`. Both writes on an
@@ -1565,6 +1564,8 @@ mutations return 409. Errors and request logs do not include supplied tax values
 The record's account and kind are immutable; copied account identity cannot be
 changed. Money input is decimal text; a currency change with an existing amount
 requires an explicit resend or clear. See [Tax records](../usage/tax-records.md).
+
+`POST /api/v1/tax/records/{record_id}/advance`, `POST /api/v1/tax/records/{record_id}/events`, and `POST /api/v1/tax/records/{record_id}/events/{event_id}/void` require quoted `If-Match` and return the parent `ETag` with a masked event receipt. Get-one returns events in append order. State derives from the latest surviving state event; void retains the event and its reason. Payment and evidence operations are not included.
 
 ## People search
 

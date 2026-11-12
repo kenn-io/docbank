@@ -244,12 +244,14 @@ func newTaxRecordCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		r, err := c.TaxRecord(cmd.Context(), args[0])
+		reveal, _ := cmd.Flags().GetBool("reveal")
+		r, err := c.TaxRecord(cmd.Context(), args[0], reveal)
 		if err != nil {
 			return err
 		}
-		return printTaxRecord(cmd, r)
+		return printTaxRecordDetail(cmd, r)
 	}}
+	show.Flags().Bool("reveal", false, "reveal event references")
 	var add recordFlags
 	create := &cobra.Command{Use: "add", Short: "Create a tax record", Example: "docbank tax record add --account 11111111-1111-4111-8111-111111111111 --kind filing --title Example", Args: taxNoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		in, err := add.create(cmd)
@@ -288,7 +290,7 @@ func newTaxRecordCommand() *cobra.Command {
 		}
 		rev := editRev
 		if !cmd.Flags().Changed("revision") {
-			r, err := c.TaxRecord(cmd.Context(), args[0])
+			r, err := c.TaxRecord(cmd.Context(), args[0], false)
 			if err != nil {
 				return err
 			}
@@ -315,7 +317,7 @@ func newTaxRecordCommand() *cobra.Command {
 		}
 		rev := retireRev
 		if !cmd.Flags().Changed("revision") {
-			r, err := c.TaxRecord(cmd.Context(), args[0])
+			r, err := c.TaxRecord(cmd.Context(), args[0], false)
 			if err != nil {
 				return err
 			}
@@ -328,6 +330,6 @@ func newTaxRecordCommand() *cobra.Command {
 		return printTaxRecord(cmd, r)
 	}}
 	retire.Flags().Int64Var(&retireRev, "revision", 0, "expected revision (default: current)")
-	group.AddCommand(create, edit, list, show, retire)
+	group.AddCommand(create, edit, list, show, retire, newTaxRecordAdvanceCommand())
 	return group
 }

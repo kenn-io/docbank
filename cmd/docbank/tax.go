@@ -27,7 +27,7 @@ func newTaxCommand() *cobra.Command {
 	root.Annotations = map[string]string{helpOnlyAnnotation: helpOnlyMarker}
 	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	root.PersistentFlags().Bool("json", false, "print JSON")
-	root.AddCommand(newTaxAccountCommand(), newTaxRecordCommand())
+	root.AddCommand(newTaxAccountCommand(), newTaxRecordCommand(), newTaxEventCommand())
 	return root
 }
 

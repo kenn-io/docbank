@@ -74,7 +74,7 @@ func TestTaxRecordUsageErrors(t *testing.T) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	})
 	const id = "11111111-1111-4111-8111-111111111111"
-	for _, args := range [][]string{{"record", "add", "--kind=filing", "--title=Example", "--direction="}, {"record", "edit", id}, {"record", "edit", id, "--revision=0", "--note=x"}, {"record", "edit", id, "--amount=1", "--clear-amount"}, {"record", "show", id, "--reveal"}, {"record", "list", "--year=private-synthetic"}, {"record", "private-synthetic"}} {
+	for _, args := range [][]string{{"record", "add", "--kind=filing", "--title=Example", "--direction="}, {"record", "edit", id}, {"record", "edit", id, "--revision=0", "--note=x"}, {"record", "edit", id, "--amount=1", "--clear-amount"}, {"record", "list", "--year=private-synthetic"}, {"record", "private-synthetic"}} {
 		cmd := newTaxCommand()
 		cmd.SilenceErrors = true
 		cmd.SilenceUsage = true

@@ -1,13 +1,13 @@
 ---
 title: Tax accounts and records
-description: How Docbank preserves tax accounts and their initial records.
+description: How Docbank preserves tax accounts and their records and events.
 ---
 
 # Tax accounts and records
 
-Docbank preserves tax accounts and initial tax records alongside
+Docbank preserves tax accounts and tax records alongside
 [parties](contracts.md). An account identifies a filer, an optional authority,
-a jurisdiction, and an owner-chosen tax kind. Manage accounts and initial records
+a jurisdiction, and an owner-chosen tax kind. Manage accounts and records
 through the CLI or HTTP API. Tax kinds accept up to 256 UTF-8 bytes before
 trimming and NFC normalization, and up to 64 Unicode characters afterward.
 Identifiers are limited to 256 UTF-8 bytes; each account note is limited to
@@ -45,7 +45,7 @@ Creating again can add another registration. The CLI replaces an incompatible ol
 sending an account request. A vault with audited authority refuses account
 mutations with `audit_mutation_unsupported` (HTTP 409).
 
-## Manage an initial record
+## Manage a record
 
 Attach a record to an account, or create a one-off record with its own filer and
 jurisdiction:
@@ -89,7 +89,7 @@ requires no amount. When changing the currency of a non-null amount, resend the
 amount in the new currency or clear it and choose a compatible direction. Even
 zero requires a resend or clear; changing only the currency's letter case does
 not. Docbank never converts or rounds an amount. Records begin in their kind's
-initial state and are unverified; this interface does not set those fields.
+initial state and are unverified. State changes use events; verification is not yet available.
 
 Edit and retire inspect once for the current revision unless `--revision` is
 supplied, and never retry a stale write. If a response is lost or invalid, inspect
@@ -110,9 +110,8 @@ overridden. A tax year defaults to the year of the period end. Amounts are exact
 nonnegative minor units; direction records whether an amount is payable or refundable.
 Currencies missing from the pinned currency catalog are rejected.
 
-Records start in their kind's initial state and unverified. Event transitions,
-payments, document evidence, deadlines, and verification operations are not
-available through these store operations. Mutations are refused when the vault
+Records start in their kind's initial state and unverified. Payments, document evidence, deadlines, and verification operations are not
+available yet. Mutations are refused when the vault
 has audited authority. Revisions reject stale updates. Retired accounts and records are read-only
 and cannot be unretired; create a new row when needed.
 
@@ -120,3 +119,24 @@ Metadata backups preserve accounts and records, including retired entries and
 historical party references. Restore validates their fields and relationships
 and installs the snapshot atomically. A snapshot from before these catalogs
 restores them empty. See [backup and restore](backup.md) for vault recovery.
+
+## Record events
+
+```sh
+docbank tax record advance RECORD_ID --state filed --occurred-on 2026-04-30 --reference "Example reference"
+docbank tax record advance RECORD_ID --state assessed --occurred-on 2026-05-31 --amount 1234.00 --currency USD
+docbank tax event add RECORD_ID --kind note --occurred-on 2026-06-01 --note "Example Revenue Agency confirmed receipt"
+docbank tax record show RECORD_ID --reveal
+docbank tax event void RECORD_ID EVENT_ID --reason "Entered in error"
+```
+
+State comes from the latest non-void state event by append revision, not the
+occurred date. Voiding preserves the event and its reason, and can restore a
+previous state. Assessment amounts are available for `assessed` and
+`decision_issued` events; they do not calculate a balance. References are masked
+in mutation receipts and ordinary detail reads; only record show with `--reveal`
+returns complete references. Empty references stay empty; masking follows the
+account identifier rule. Events and records share a revision: advance, add and
+void inspect once unless `--revision` is supplied, then send one fenced write
+without retry. Retired records are read-only. Payments and document evidence
+are planned for later slices.

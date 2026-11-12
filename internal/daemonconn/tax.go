@@ -40,7 +40,7 @@ func (e *taxClientError) Error() string {
 	}
 	if code, ok := ProblemCode(e.cause); ok {
 		switch code {
-		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "tax_revision_exhausted", "audit_mutation_unsupported", "maintenance_busy", "internal":
+		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "tax_event_voided", "tax_revision_exhausted", "audit_mutation_unsupported", "maintenance_busy", "internal":
 			message += ": " + code
 			if code == "maintenance_busy" {
 				message += "; retry this mutation after maintenance finishes"

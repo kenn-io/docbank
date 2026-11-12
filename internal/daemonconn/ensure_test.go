@@ -234,6 +234,8 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "pre-tax daemons must be replaced")
 	rec.Metadata[metaProtocolVersion] = "129" // Before tax record routes.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "account-only daemons must be replaced")
+	rec.Metadata[metaProtocolVersion] = "130" // Before tax event routes.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "record-only daemons must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
@@ -360,9 +362,9 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	// Protocol 130 lacks tax events, even with the same dev version.
 	rec.Metadata[MetaExplicitStart] = "true"
-	rec.Metadata[metaProtocolVersion] = "119"
+	rec.Metadata[metaProtocolVersion] = "130"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root, false,

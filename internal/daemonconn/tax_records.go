@@ -2,6 +2,7 @@ package daemonconn
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -74,20 +75,49 @@ func (c *Connection) TaxRecords(ctx context.Context, filer, country, taxkind str
 	}
 	return page, nil
 }
-func (c *Connection) TaxRecord(ctx context.Context, id string) (api.TaxRecord, error) {
+func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api.TaxRecordDetail, error) {
+	var out api.TaxRecordDetail
 	if !validUUIDv4(id) {
-		return api.TaxRecord{}, errors.New("invalid tax record ID")
+		return out, errors.New("invalid tax record ID")
 	}
 	var response *http.Response
-	_, err := c.apiWithResponse(&response).GetTaxRecord(runtime.WithStreamingResponse(ctx), &apiclient.GetTaxRecordRequestOptions{PathParams: &apiclient.GetTaxRecordPath{RecordID: id}})
-	if err != nil {
-		return api.TaxRecord{}, safeTaxError(err)
+	opts := &apiclient.GetTaxRecordRequestOptions{PathParams: &apiclient.GetTaxRecordPath{RecordID: id}}
+	if reveal {
+		opts.Query = &apiclient.GetTaxRecordQuery{Reveal: &reveal}
 	}
-	receipt, err := decodeTaxRecordReceipt(ctx, response, false)
+	_, err := c.apiWithResponse(&response).GetTaxRecord(runtime.WithStreamingResponse(ctx), opts)
 	if err != nil {
-		return api.TaxRecord{}, safeTaxError(err)
+		return out, safeTaxError(err)
 	}
-	return validateTaxRecordResponse(&receipt.Items[0], response, id)
+	data, err := readTaxReceiptLimit(ctx, response, false, append(append([]string{}, recordFields...), "events"), recordNullable, maxTaxReceiptBytes)
+	if err != nil {
+		return out, safeTaxError(err)
+	}
+	var raw map[string]jsontext.Value
+	var events []jsontext.Value
+	if json.Unmarshal(data, &raw) != nil || json.Unmarshal(raw["events"], &events) != nil || events == nil || json.Unmarshal(data, &out) != nil {
+		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
+	}
+	if _, err = validateTaxRecordResponse(&out.TaxRecord, response, id); err != nil {
+		return api.TaxRecordDetail{}, safeTaxError(err)
+	}
+	var previous int64
+	seen := make(map[string]bool, len(events))
+	facts := make([]taxrecord.EventFact, 0, len(events))
+	for i, rawEvent := range events {
+		e := out.Events[i]
+		if !taxMembers(rawEvent, eventFields, map[string]bool{"amount_minor": true, "voided_at": true}) || !validEvent(e, out.TaxRecord, reveal) || e.RecordRevision <= previous || seen[e.EventID] {
+			return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
+		}
+		previous = e.RecordRevision
+		seen[e.EventID] = true
+		facts = append(facts, taxrecord.EventFact{EventValues: taxrecord.EventValues{Kind: e.Kind, OccurredOn: e.OccurredOn, SetsState: e.SetsState, AmountMinor: e.AmountMinor, Currency: e.Currency, Note: e.Note}, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
+	}
+	state, err := taxrecord.StateFromEvents(out.Kind, facts)
+	if err != nil || state != out.State {
+		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
+	}
+	return out, nil
 }
 func (c *Connection) CreateTaxRecord(ctx context.Context, in api.CreateTaxRecordRequest) (api.TaxRecord, error) {
 	var response *http.Response
