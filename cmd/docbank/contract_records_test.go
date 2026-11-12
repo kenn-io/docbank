@@ -234,4 +234,8 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	require.NoError(t, err, out)
 	_, err = runCLI(t, "contract", "show", contract.ContractID)
 	require.Error(t, err)
+	_, err = runCLI(t, "contract", "delete", second.ContractID, "--revision", "1")
+	require.ErrorContains(t, err, "revision mismatch")
+	out, err = runCLI(t, "contract", "show", second.ContractID)
+	require.NoError(t, err, out)
 }
