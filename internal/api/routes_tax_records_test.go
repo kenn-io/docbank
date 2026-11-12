@@ -28,7 +28,8 @@ func TestTaxRecordHTTPWorkflow(t *testing.T) {
 	assert.Equal(t, "expected", record["state"])
 	assert.Equal(t, "unverified", record["verification"])
 	assert.Equal(t, `"1"`, resp.Header.Get("ETag"))
-	id := record["record_id"].(string)
+	id, ok := record["record_id"].(string)
+	require.True(t, ok)
 	path := "/api/v1/tax/records/" + id
 	resp, body = get(t, ts, "/api/v1/tax/records?country=zz&taxkind=example", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -139,7 +140,6 @@ func TestTaxRecordAuthorityAndPatchPresence(t *testing.T) {
 	assert.Nil(t, changed.DueDate)
 	assert.Nil(t, changed.LeadDays)
 	assert.Nil(t, changed.AmountMinor)
-
 }
 
 func TestTaxRecordMoneyHTTP(t *testing.T) {
@@ -195,7 +195,6 @@ func TestTaxRecordMoneyHTTP(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"6"`}, map[string]any{"currency": "JPY"})
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Equal(t, zero, readTaxTestRecord(t, ts, r.RecordID))
-
 }
 
 func TestTaxRecordRevisionGateAndAudit(t *testing.T) {

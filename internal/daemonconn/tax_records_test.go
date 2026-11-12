@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 			if null && nullable[field] {
 				continue
 			}
-			t.Run(field+fmt.Sprint(null), func(t *testing.T) {
+			t.Run(field+strconv.FormatBool(null), func(t *testing.T) {
 				t.Parallel()
 				var members map[string]any
 				require.NoError(t, json.Unmarshal([]byte(taxRecordFixture), &members))
@@ -153,9 +154,13 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 	// The same complete record is too large as a single receipt but fits a page.
 	padded := strings.TrimSuffix(taxRecordFixture, "}") + `,"padding":"` + strings.Repeat("x", maxTaxSingleReceiptBytes) + `"}`
 	response := func(body string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(body))} }
-	_, err = decodeTaxRecordReceipt(t.Context(), response(padded), false)
+	singleResponse := response(padded)
+	defer singleResponse.Body.Close()
+	_, err = decodeTaxRecordReceipt(t.Context(), singleResponse, false)
 	require.True(t, IsResponseDecodeError(err))
-	page, err := decodeTaxRecordReceipt(t.Context(), response(`{"items":[`+padded+`],"limit":1,"offset":0}`), true)
+	pageResponse := response(`{"items":[` + padded + `],"limit":1,"offset":0}`)
+	defer pageResponse.Body.Close()
+	page, err := decodeTaxRecordReceipt(t.Context(), pageResponse, true)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	for _, body := range []string{`{}`, `{"items":[],"offset":0}`, `{"items":[],"limit":1}`, `{"items":null,"limit":1,"offset":0}`, `{"items":[],"limit":null,"offset":0}`, `{"items":[],"limit":1,"offset":null}`} {

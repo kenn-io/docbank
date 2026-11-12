@@ -25,16 +25,6 @@ func fromStoreTaxRecord(r store.TaxRecord) TaxRecord {
 func taxRecordResult(r store.TaxRecord) *taxRecordOutput {
 	return &taxRecordOutput{ETag: revisionETag(r.Revision), Body: fromStoreTaxRecord(r)}
 }
-func taxAmountText(minor *int64, code string) (*string, error) {
-	if minor == nil {
-		return nil, nil
-	}
-	s, err := taxrecord.FormatMoney(*minor, code)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
 func mergeTaxRecordPatch(r store.TaxRecord, p PatchTaxRecordRequest) (store.TaxRecordInput, error) {
 	in := store.TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, FormCode: r.FormCode, TaxYear: r.TaxYear, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, DueDate: r.DueDate, LeadDays: r.LeadDays, Direction: r.Direction, Note: r.Note, AuthorityPartyID: r.AuthorityPartyID}
 	if p.Currency != nil {
@@ -46,10 +36,12 @@ func mergeTaxRecordPatch(r store.TaxRecord, p PatchTaxRecordRequest) (store.TaxR
 			return in, &taxrecord.FieldError{Field: "amount", Reason: "amount required when currency changes"}
 		}
 	}
-	var err error
-	in.Amount, err = taxAmountText(r.AmountMinor, r.Currency)
-	if err != nil {
-		return in, err
+	if r.AmountMinor != nil {
+		amount, err := taxrecord.FormatMoney(*r.AmountMinor, r.Currency)
+		if err != nil {
+			return in, err
+		}
+		in.Amount = &amount
 	}
 	if p.FilerPartyID != nil {
 		in.FilerPartyID = p.FilerPartyID

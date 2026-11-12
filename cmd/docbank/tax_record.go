@@ -173,7 +173,10 @@ func printTaxRecord(cmd *cobra.Command, r api.TaxRecord) error {
 		return writeCLIJSON(cmd.OutOrStdout(), r)
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\taccount: %v\tfiler: %s\tauthority: %v\tkind: %s\ttitle: %q\tcountry: %s\tsubdivision: %s\ttax kind: %q\tform: %q\tyear: %v\tperiod start: %v\tperiod end: %v\tdue: %v\tlead days: %v\tstate: %s\tdirection: %s\tamount minor: %v\tcurrency: %s\tverification: %s\tverified on: %v\tverified revision: %v\tverification note: %q\tnote: %q\tretired: %v\trevision %d\tcreated: %s\tupdated: %s\n", r.RecordID, taxValue(r.AccountID), r.FilerPartyID, taxValue(r.AuthorityPartyID), r.Kind, r.Title, r.Country, r.Subdivision, r.TaxKind, r.FormCode, taxValue(r.TaxYear), taxValue(r.PeriodStart), taxValue(r.PeriodEnd), taxValue(r.DueDate), taxValue(r.LeadDays), r.State, r.Direction, taxValue(r.AmountMinor), r.Currency, r.Verification, taxValue(r.VerifiedOn), taxValue(r.VerifiedRevision), r.VerificationNote, r.Note, taxValue(r.RetiredAt), r.Revision, r.CreatedAt, r.UpdatedAt)
-	return err
+	if err != nil {
+		return fmt.Errorf("print tax record: %w", err)
+	}
+	return nil
 }
 func taxValue[T any](p *T) any {
 	if p == nil {
@@ -221,9 +224,11 @@ func newTaxRecordCommand() *cobra.Command {
 			}
 		}
 		if len(page.Items) == page.Limit {
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "limit reached: more records may exist; repeat this command with --offset %d to continue\n", page.Offset+len(page.Items))
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "limit reached: more records may exist; repeat this command with --offset %d to continue\n", page.Offset+len(page.Items)); err != nil {
+				return fmt.Errorf("print tax record continuation: %w", err)
+			}
 		}
-		return err
+		return nil
 	}}
 	list.Flags().StringVar(&filer, "filer", "", "filter by filer party ID")
 	list.Flags().StringVar(&country, "country", "", "filter by country")
