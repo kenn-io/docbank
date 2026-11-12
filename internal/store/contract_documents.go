@@ -123,11 +123,21 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE contracts SET revision=$1,updated_at=$2 WHERE contract_id=$3`, rev+1, nowRFC3339(), id); err != nil {
+		if err = advanceContractRevisionTx(ctx, tx, id, rev); err != nil {
 			return err
 		}
 		out, err = getContractTx(ctx, tx, id, asOf)
 		return err
 	})
 	return out, err
+}
+
+// advanceContractRevisionTx commits the next contract revision, refusing at the integer limit.
+func advanceContractRevisionTx(ctx context.Context, tx *sql.Tx, id string, rev int64) error {
+	next, err := nextContractRevision(rev)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE contracts SET revision=$1,updated_at=$2 WHERE contract_id=$3`, next, nowRFC3339(), id)
+	return err
 }
