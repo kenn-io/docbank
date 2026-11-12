@@ -106,9 +106,15 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 	}
 	var prefixes []netip.Prefix
 	egress := ProviderEgressConfig{Endpoint: d.Endpoint, AllowedCIDRs: d.AllowedCIDRs, ProxyMode: "disabled", ConnectTimeout: Duration(30 * time.Second), KeepAlive: Duration(30 * time.Second), TLSHandshakeTimeout: Duration(10 * time.Second)}
-	u, err := validateProviderEgressConfigWithPrefixes(egress, "docuseal", &prefixes)
-	if err != nil || u.Path != "" && u.Path != "/" || u.RawPath != "" || d.TrustBoundary != "operator_network" && d.TrustBoundary != "hosted_provider" || d.TrustBoundary == "hosted_provider" && u.Scheme != "https" {
-		return fail("endpoint or trust boundary")
+	u, err := validateProviderEndpoint(d.Endpoint, "docuseal")
+	if err != nil || u.Path != "" && u.Path != "/" || u.RawPath != "" {
+		return fail("endpoint")
+	}
+	if d.TrustBoundary != "operator_network" && d.TrustBoundary != "hosted_provider" || d.TrustBoundary == "hosted_provider" && u.Scheme != "https" {
+		return fail("trust_boundary")
+	}
+	if _, err := validateProviderEgressConfigWithPrefixes(egress, "docuseal", &prefixes); err != nil {
+		return fail("allowed CIDR")
 	}
 	for _, prefix := range prefixes {
 		if d.TrustBoundary == "operator_network" && !privateRenditionNetwork(prefix) {

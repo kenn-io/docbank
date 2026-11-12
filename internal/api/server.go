@@ -112,8 +112,6 @@ type Server struct {
 	stopPhotoEvents context.CancelFunc
 }
 
-const cacheControlNoStore = "no-store"
-
 // NewServer wires all routes and middleware onto a fresh mux. The handler
 // is safe to mount under httptest; nothing here binds a socket.
 func NewServer(d Deps) *Server {

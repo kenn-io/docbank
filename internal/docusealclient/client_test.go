@@ -89,7 +89,11 @@ func TestConnectionRejectsCompressedOversize(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = c.Check(t.Context()); err == nil || err.Error() != "docuseal_response_too_large" {
+			want := "docuseal_response_too_large"
+			if status != http.StatusOK {
+				want = "docuseal_provider_error"
+			}
+			if _, err = c.Check(t.Context()); err == nil || err.Error() != want {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -289,4 +293,64 @@ func TestTemplatesAggregateDeadline(t *testing.T) {
 			t.Fatalf("calls=%d elapsed=%v err=%v", calls, time.Since(start), err)
 		}
 	})
+}
+
+// A non-success status is authoritative even when its body cannot be read.
+type unreadableDocuSealBody struct{ closed *bool }
+
+func (b unreadableDocuSealBody) Read([]byte) (int, error) { panic("error body was read") }
+func (b unreadableDocuSealBody) Close() error             { *b.closed = true; return nil }
+
+func TestProviderErrorStatusDoesNotReadOrRetryBody(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		for _, kind := range []string{"oversized", "unreadable"} {
+			for _, operation := range []string{"check", "templates"} {
+				t.Run(fmt.Sprintf("%d/%s/%s", status, kind, operation), func(t *testing.T) {
+					calls := 0
+					closed := false
+					c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
+						calls++
+						var body io.ReadCloser = unreadableDocuSealBody{closed: &closed}
+						if kind == "oversized" {
+							body = &trackedDocuSealBody{Reader: strings.NewReader(strings.Repeat("x", maxResponse+1)), closed: &closed}
+						}
+						return &http.Response{StatusCode: status, Header: make(http.Header), Body: body}, nil
+					})}}
+					var err error
+					if operation == "check" {
+						_, err = c.Check(t.Context())
+					} else {
+						_, err = c.Templates(t.Context(), 0)
+					}
+					if err == nil || err.Error() != "docuseal_unauthorized" || calls != 1 || !closed {
+						t.Fatalf("err=%v calls=%d closed=%v", err, calls, closed)
+					}
+				})
+			}
+		}
+	}
+}
+
+type trackedDocuSealBody struct {
+	io.Reader
+	closed *bool
+}
+
+func (b *trackedDocuSealBody) Close() error { *b.closed = true; return nil }
+
+func TestConnectionRefusesRedirect(t *testing.T) {
+	reached := false
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	defer target.Close()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
+	defer provider.Close()
+	c, err := New(config.DocuSealConnection{Endpoint: provider.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseIdleConnections()
+	_, err = c.Check(t.Context())
+	if err == nil || err.Error() != "docuseal_provider_error" || reached {
+		t.Fatalf("err=%v reached=%v", err, reached)
+	}
 }

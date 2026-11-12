@@ -28,6 +28,8 @@ func docuSealProblem(err error) *Error {
 	}
 }
 
+const cacheControlNoStore = "no-store"
+
 func registerDocuSealRoutes(api huma.API, d Deps) {
 	client := func(ctx context.Context) (*docusealclient.Client, error) {
 		connection, err := d.Cfg.Integrations.DocuSeal.Resolve(ctx, d.VaultRoot)
@@ -66,7 +68,7 @@ func registerDocuSealRoutes(api huma.API, d Deps) {
 		CacheControl string `header:"Cache-Control"`
 		Body         docusealclient.TemplatePage
 	}
-	huma.Register(api, huma.Operation{RejectUnknownQueryParameters: true, OperationID: "listDocuSealTemplates", Method: http.MethodGet, Path: "/api/v1/integrations/docuseal/templates", Summary: "List DocuSeal templates", Errors: []int{400, 408, 502, 503, 504}}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{RejectUnknownQueryParameters: true, OperationID: "listDocuSealTemplates", Method: http.MethodGet, Path: "/api/v1/integrations/docuseal/templates", Summary: "List DocuSeal templates", Errors: []int{408, 502, 503, 504}}, func(ctx context.Context, in *struct {
 		After int64 `query:"after" minimum:"0"`
 	}) (*templatesOutput, error) {
 		c, err := client(ctx)

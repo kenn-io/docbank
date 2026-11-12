@@ -61,7 +61,7 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 		if err != nil {
 			return nil, kataProblem(err)
 		}
-		return &citeOutput{CacheControl: cacheControlNoStore, Body: issue}, nil
+		return &citeOutput{CacheControl: "no-store", Body: issue}, nil
 	})
 	type contextOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -94,7 +94,7 @@ func registerKataRoutes(api huma.API, d Deps, g *OperationGate) {
 		if err != nil {
 			return nil, kataProblem(err)
 		}
-		return &contextOutput{CacheControl: cacheControlNoStore, Body: page}, nil
+		return &contextOutput{CacheControl: "no-store", Body: page}, nil
 	})
 	// jsontext.Value carries arbitrary JSON, rather than base64-encoded bytes.
 	api.OpenAPI().Components.Schemas.Map()["Issue"].Properties["metadata"].AdditionalProperties = &huma.Schema{}

@@ -64,7 +64,7 @@ func New(c config.DocuSealConnection) (*Client, error) {
 	if err != nil {
 		return nil, errors.New("invalid DocuSeal egress policy")
 	}
-	return &Client{connection: c, http: providerhttp.IsolateClient(&http.Client{Transport: transport, Timeout: 10 * time.Second})}, nil
+	return &Client{connection: c, http: providerhttp.IsolateClient(&http.Client{Transport: transport})}, nil
 }
 
 // CloseIdleConnections releases the request-owned transport.
@@ -92,6 +92,16 @@ func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 		return errors.New("docuseal_request_failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return errors.New("docuseal_unauthorized")
+		case http.StatusNotFound:
+			return errors.New("docuseal_not_found")
+		default:
+			return errors.New("docuseal_provider_error")
+		}
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil {
 		if ctx.Err() != nil {
@@ -108,16 +118,7 @@ func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 	if len(data) > maxResponse {
 		return errResponseTooLarge
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return errors.New("docuseal_unauthorized")
-		case http.StatusNotFound:
-			return errors.New("docuseal_not_found")
-		default:
-			return errors.New("docuseal_provider_error")
-		}
-	}
+
 	if !utf8.Valid(data) || json.Unmarshal(data, dst) != nil {
 		return errors.New("docuseal_invalid_response")
 	}
@@ -200,9 +201,6 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
 		name := displayText(t.Name)
-		if strings.Contains(name, c.connection.APIKey) {
-			return TemplatePage{}, errors.New("docuseal_invalid_response")
-		}
 		item := Template{ID: t.ID, Name: name, Roles: make([]string, 0, len(t.Submitters))}
 		for _, role := range t.Submitters {
 			if strings.Contains(role.Name, c.connection.APIKey) {
@@ -224,11 +222,11 @@ func ValidTemplatePage(page TemplatePage) bool {
 		return false
 	}
 	for _, item := range page.Templates {
-		if item.ID <= 0 || !safeText(item.Name, "", 512) || len(item.Roles) > 1024 {
+		if item.ID <= 0 || !safeText(item.Name, 512) || len(item.Roles) > 1024 {
 			return false
 		}
 		for _, role := range item.Roles {
-			if !safeText(role, "", 4096) {
+			if !safeText(role, 4096) {
 				return false
 			}
 		}
@@ -253,8 +251,8 @@ func displayText(s string) string {
 	return b.String()
 }
 
-func safeText(s, key string, limit int) bool {
-	if s == "" || len(s) > limit || !utf8.ValidString(s) || key != "" && strings.Contains(s, key) {
+func safeText(s string, limit int) bool {
+	if s == "" || len(s) > limit || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {

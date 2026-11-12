@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -70,7 +72,9 @@ func TestDocuSealProviderFailuresAreSafe(t *testing.T) {
 			}))
 			defer provider.Close()
 			t.Setenv("DOCUSEAL_API_TEST_KEY", "synthetic-key")
+			var logs bytes.Buffer
 			ts, _ := newTestServer(t, func(d *api.Deps) {
+				d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
 				d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_API_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
 			})
 			resp, body := do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/status", nil, nil)
@@ -78,6 +82,9 @@ func TestDocuSealProviderFailuresAreSafe(t *testing.T) {
 			require.Contains(t, body, tc.code)
 			require.NotContains(t, body, "synthetic-key")
 			require.NotContains(t, body, "private provider body")
+			require.Contains(t, logs.String(), "request")
+			require.NotContains(t, logs.String(), "synthetic-key")
+			require.NotContains(t, logs.String(), "private provider body")
 		})
 	}
 }

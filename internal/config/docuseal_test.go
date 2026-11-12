@@ -124,3 +124,25 @@ func TestDocuSealExplicitlyDisabledMalformedConfig(t *testing.T) {
 		t.Fatalf("malformed enabled: %+v, %v", cfg, err)
 	}
 }
+
+func TestDocuSealResolveReportsSafeField(t *testing.T) {
+	valid := DocuSealConfig{Enabled: true, Endpoint: "https://example.test", APIKeyEnv: "DOCUSEAL_TEST_KEY", TrustBoundary: "hosted_provider", AllowedCIDRs: []string{"127.0.0.1/32"}}
+	for _, tc := range []struct {
+		name string
+		edit func(*DocuSealConfig)
+		want string
+	}{
+		{"endpoint", func(d *DocuSealConfig) { d.Endpoint = "https://synthetic-secret@example.test/path" }, "invalid DocuSeal endpoint settings"},
+		{"boundary", func(d *DocuSealConfig) { d.TrustBoundary = "synthetic-secret" }, "invalid DocuSeal trust_boundary settings"},
+		{"hosted HTTP", func(d *DocuSealConfig) { d.Endpoint = "http://example.test" }, "invalid DocuSeal trust_boundary settings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.edit(&cfg)
+			_, err := cfg.Resolve(t.Context(), t.TempDir())
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("got %v, want %s", err, tc.want)
+			}
+		})
+	}
+}
