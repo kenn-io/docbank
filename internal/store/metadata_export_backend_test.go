@@ -25,7 +25,13 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	_, err = s.AssignTag(ctx, tag.ID, file.ID, file.Revision)
 	require.NoError(t, err)
-	_, err = s.CreatePerson(ctx, "Example Person", "operator")
+	person, err := s.CreatePerson(ctx, "Example Person", "operator")
+	require.NoError(t, err)
+	active, err := s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Active Party", PersonID: &person.PersonID})
+	require.NoError(t, err)
+	retired, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Retired Party", PersonID: &person.PersonID})
+	require.NoError(t, err)
+	retired, err = s.RetireParty(ctx, retired.PartyID, retired.Revision)
 	require.NoError(t, err)
 	deleted, err := s.Mkdir(ctx, s.RootID(), "removed")
 	require.NoError(t, err)
@@ -57,6 +63,11 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	require.Equal(t, s.VaultID(), target.VaultID())
 	require.NoError(t, target.ValidateMetadata(ctx))
+	for _, want := range []Party{active, retired} {
+		got, err := target.GetParty(ctx, want.PartyID)
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+	}
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	require.Equal(t, exported.Bytes(), restored.Bytes())

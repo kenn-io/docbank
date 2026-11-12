@@ -30,6 +30,7 @@
   import TagIcon from "@lucide/svelte/icons/tag";
   import KeyboardIcon from "@lucide/svelte/icons/keyboard";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import ReceiptTextIcon from "@lucide/svelte/icons/receipt-text";
   import {
     Button,
     Card,
@@ -121,6 +122,7 @@
   import TagCatalogModal, { type TagDefinitionChange } from "./TagCatalogModal.svelte";
   import TagPicker from "./TagPicker.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
+  import Taxes from "./Taxes.svelte";
   import AppTooltip from "./AppTooltip.svelte";
   import IconAction from "./IconAction.svelte";
   import Toasts from "./Toasts.svelte";
@@ -504,22 +506,25 @@
     event.preventDefault();
     event.returnValue = "";
   }
-  type DocsPage = "searches" | "productions" | "imports" | "trash";
+  type DocsPage = "searches" | "productions" | "imports" | "trash" | "taxes";
   function pageAt(path: string): DocsPage | null {
     return path === "/searches" ||
       path === "/productions" ||
       path === "/imports" ||
-      path === "/trash"
+      path === "/trash" ||
+      path === "/taxes"
       ? (path.slice(1) as DocsPage)
       : null;
   }
   let docsPage = $state(pageAt(webPath()));
-  const docsScreens = {
+  // Taxes reports no screen: tax pages send nothing to telemetry.
+  const docsScreens: Record<DocsPage, generated.TelemetryEventPropertiesScreen | undefined> = {
     searches: "saved_queries",
     productions: "bates",
     imports: "collections",
     trash: "trash",
-  } as const;
+    taxes: undefined,
+  };
   function openDocsPage(page: DocsPage | null) {
     navOpen = false;
     if (docsPage === page) return;
@@ -1240,20 +1245,22 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
-  const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(
+  const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen | undefined>(
     shortcutHelpOpen
       ? "help"
       : snapshot.actionsOpen
         ? "snapshot_actions"
-        : (panelScreen ??
-          (!photoMode && docsPage ? docsScreens[docsPage] : null) ??
-          (snapshotActive
-            ? "snapshot"
-            : activeQuery || queryBarOpen
-              ? "search"
-              : tagBrowse
-                ? "tags"
-                : "browse")),
+        : panelScreen
+          ? panelScreen
+          : !photoMode && docsPage
+            ? docsScreens[docsPage]
+            : snapshotActive
+              ? "snapshot"
+              : activeQuery || queryBarOpen
+                ? "search"
+                : tagBrowse
+                  ? "tags"
+                  : "browse",
   );
   $effect(() => {
     telemetryReporting?.reportScreen(visibleScreen);
@@ -4071,6 +4078,15 @@
           <button
             type="button"
             class="nav-item"
+            aria-label="Taxes"
+            aria-current={docsPage === "taxes" ? "page" : undefined}
+            onclick={() => openDocsPage("taxes")}
+          >
+            <ReceiptTextIcon size="16" aria-hidden="true" />Taxes
+          </button>
+          <button
+            type="button"
+            class="nav-item"
             aria-label="Recoverable trash"
             aria-current={docsPage === "trash" ? "page" : undefined}
             onclick={() => openDocsPage("trash")}
@@ -4460,7 +4476,9 @@
               ? "Productions"
               : docsPage === "imports"
                 ? "Imports"
-                : "Trash"}
+                : docsPage === "taxes"
+                  ? "Taxes"
+                  : "Trash"}
         >
           {#if docsPage === "searches"}
             {@render savedQueries(false, () => {})}
@@ -4489,6 +4507,8 @@
             />
           {:else if docsPage === "trash"}
             {@render trash(() => {})}
+          {:else if docsPage === "taxes"}
+            <Taxes session={webSession} onauthfailure={handleFailure} />
           {/if}
         </ToolPage>
       {:else}

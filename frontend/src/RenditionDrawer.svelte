@@ -5,6 +5,7 @@
   import DrawerShell from "./DrawerShell.svelte";
   import { Button, Card, Chip, IconButton, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
+  import { displayLabel } from "./format.js";
   import { renditionArtifact, type RenditionArtifact } from "./receipts.js";
 
   interface Props {
@@ -50,9 +51,7 @@
   }
 
   function titleCase(value: string): string {
-    return value
-      ? value.replaceAll("_", " ").replace(/^./, (char) => char.toUpperCase())
-      : "Unknown";
+    return value ? displayLabel(value) : "Unknown";
   }
 </script>
 

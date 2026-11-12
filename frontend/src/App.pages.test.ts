@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
+import * as appOpened from "./app-opened.js";
 import { productionPackage } from "./package-test-fixtures.js";
 import { root } from "./version-test-fixtures.js";
 import { queryFingerprint, type Query } from "./query.js";
@@ -118,6 +119,7 @@ it.each([
   ["Searches", "Searches", "/searches"],
   ["Productions", "Productions", "/productions"],
   ["Imports", "Imports", "/imports"],
+  ["Taxes", "Taxes", "/taxes"],
   ["Recoverable trash", "Trash", "/trash"],
 ])("navigates to %s and restores it with browser history", async (label, title, path) => {
   start();
@@ -158,6 +160,7 @@ it.each([
   ["Productions", "/productions", "/api/v1/bates/exports?"],
   ["Imports", "/imports", "/api/v1/collections?"],
   ["Recoverable trash", "/trash", "/api/v1/trash?"],
+  ["Taxes", "/taxes", "/api/v1/tax/records?"],
 ])("keeps %s at %s when %s returns 401", async (label, path, endpoint) => {
   const fetch = start();
   await screen.findByText("No documents yet");
@@ -172,6 +175,16 @@ it.each([
   await screen.findByText("Open your Docbank");
   expect(location.pathname).toBe(path);
   expect(history.length).toBe(entries + 1);
+});
+
+it("supplies no Taxes screen to telemetry", async () => {
+  const telemetry = vi.spyOn(appOpened, "startTelemetryReporting");
+  start();
+  await screen.findByText("No documents yet");
+  const reportScreen = vi.spyOn(telemetry.mock.results[0]!.value, "reportScreen");
+  await fireEvent.click(screen.getByRole("button", { name: "Taxes" }));
+  expect(await screen.findByText("No tax records yet")).toBeTruthy();
+  await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith(undefined));
 });
 
 it("retains unfinished Advanced input and execution settings across Imports navigation", async () => {

@@ -8349,6 +8349,247 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	return responseParser(ctx, resp)
 }
 
+// ListParties List parties
+func (c *Client) ListParties(ctx context.Context, options *ListPartiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPartiesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_retired": {Style: "form", Explode: &[]bool{false}[0]},
+		"kind":            {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"own":             {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/parties",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPartiesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPartiesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPartiesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPartiesErrorResponse](resp, "ListPartiesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateParty Create a party
+func (c *Client) CreateParty(ctx context.Context, options *CreatePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/parties",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePartyErrorResponse](resp, "CreatePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetParty Inspect a party
+func (c *Client) GetParty(ctx context.Context, options *GetPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPartyErrorResponse](resp, "GetPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateParty Edit a party
+func (c *Client) UpdateParty(ctx context.Context, options *UpdatePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdatePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdatePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdatePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdatePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdatePartyErrorResponse](resp, "UpdatePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireParty Retire a party
+func (c *Client) RetireParty(ctx context.Context, options *RetirePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetirePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetirePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetirePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetirePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetirePartyErrorResponse](resp, "RetirePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -15410,6 +15651,498 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 	return responseParser(ctx, resp)
 }
 
+// ListTaxAccounts List tax accounts
+func (c *Client) ListTaxAccounts(ctx context.Context, options *ListTaxAccountsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTaxAccountsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"country":         {Style: "form", Explode: &[]bool{false}[0]},
+		"filer":           {Style: "form", Explode: &[]bool{false}[0]},
+		"include_retired": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"taxkind":         {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/tax/accounts",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTaxAccountsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTaxAccountsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTaxAccountsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListTaxAccountsErrorResponse](resp, "ListTaxAccountsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/accounts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateTaxAccount Create a tax account
+func (c *Client) CreateTaxAccount(ctx context.Context, options *CreateTaxAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTaxAccountResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/accounts",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateTaxAccountResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateTaxAccountResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateTaxAccountResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateTaxAccountErrorResponse](resp, "CreateTaxAccountErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/accounts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetTaxAccount Inspect a tax account
+func (c *Client) GetTaxAccount(ctx context.Context, options *GetTaxAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTaxAccountResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"reveal": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/tax/accounts/{account_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTaxAccountResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTaxAccountResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTaxAccountResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetTaxAccountErrorResponse](resp, "GetTaxAccountErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/accounts/{account_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateTaxAccount Edit a tax account
+func (c *Client) UpdateTaxAccount(ctx context.Context, options *UpdateTaxAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateTaxAccountResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/accounts/{account_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateTaxAccountResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateTaxAccountResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateTaxAccountResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateTaxAccountErrorResponse](resp, "UpdateTaxAccountErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/accounts/{account_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireTaxAccount Retire a tax account
+func (c *Client) RetireTaxAccount(ctx context.Context, options *RetireTaxAccountRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireTaxAccountResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tax/accounts/{account_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetireTaxAccountResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetireTaxAccountResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetireTaxAccountResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetireTaxAccountErrorResponse](resp, "RetireTaxAccountErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/accounts/{account_id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListTaxRecords List tax records
+func (c *Client) ListTaxRecords(ctx context.Context, options *ListTaxRecordsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTaxRecordsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"country":         {Style: "form", Explode: &[]bool{false}[0]},
+		"filer":           {Style: "form", Explode: &[]bool{false}[0]},
+		"include_retired": {Style: "form", Explode: &[]bool{false}[0]},
+		"kind":            {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"state":           {Style: "form", Explode: &[]bool{false}[0]},
+		"taxkind":         {Style: "form", Explode: &[]bool{false}[0]},
+		"year":            {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/tax/records",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListTaxRecordsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListTaxRecordsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListTaxRecordsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListTaxRecordsErrorResponse](resp, "ListTaxRecordsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateTaxRecord Create a tax record
+func (c *Client) CreateTaxRecord(ctx context.Context, options *CreateTaxRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateTaxRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/records",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateTaxRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateTaxRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateTaxRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateTaxRecordErrorResponse](resp, "CreateTaxRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetTaxRecord Inspect a tax record
+func (c *Client) GetTaxRecord(ctx context.Context, options *GetTaxRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTaxRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTaxRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTaxRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTaxRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetTaxRecordErrorResponse](resp, "GetTaxRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateTaxRecord Edit a tax record
+func (c *Client) UpdateTaxRecord(ctx context.Context, options *UpdateTaxRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateTaxRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateTaxRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateTaxRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateTaxRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateTaxRecordErrorResponse](resp, "UpdateTaxRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireTaxRecord Retire a tax record
+func (c *Client) RetireTaxRecord(ctx context.Context, options *RetireTaxRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetireTaxRecordResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/tax/records/{record_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetireTaxRecordResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetireTaxRecordResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetireTaxRecordResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetireTaxRecordErrorResponse](resp, "RetireTaxRecordErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/tax/records/{record_id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetTextOutline Read the outline of an exact retained rendition
 func (c *Client) GetTextOutline(ctx context.Context, options *GetTextOutlineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTextOutlineResponse, error) {
 	var err error
@@ -21847,6 +22580,176 @@ func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ListPartiesRequestOptions is the options needed to make a request to ListParties.
+type ListPartiesRequestOptions struct {
+	Query *ListPartiesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPartiesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPartiesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPartiesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPartiesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePartyRequestOptions is the options needed to make a request to CreateParty.
+type CreatePartyRequestOptions struct {
+	Body *CreatePartyBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePartyRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePartyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPartyRequestOptions is the options needed to make a request to GetParty.
+type GetPartyRequestOptions struct {
+	PathParams *GetPartyPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPartyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdatePartyRequestOptions is the options needed to make a request to UpdateParty.
+type UpdatePartyRequestOptions struct {
+	PathParams *UpdatePartyPath
+	Body       *UpdatePartyBody
+	Header     *UpdatePartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdatePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdatePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdatePartyRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdatePartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetirePartyRequestOptions is the options needed to make a request to RetireParty.
+type RetirePartyRequestOptions struct {
+	PathParams *RetirePartyPath
+	Header     *RetirePartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetirePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetirePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetirePartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetirePartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -26417,6 +27320,353 @@ func (o *ListTagNodesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListTaxAccountsRequestOptions is the options needed to make a request to ListTaxAccounts.
+type ListTaxAccountsRequestOptions struct {
+	Query *ListTaxAccountsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListTaxAccountsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListTaxAccountsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListTaxAccountsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListTaxAccountsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateTaxAccountRequestOptions is the options needed to make a request to CreateTaxAccount.
+type CreateTaxAccountRequestOptions struct {
+	Body *CreateTaxAccountBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateTaxAccountRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateTaxAccountRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateTaxAccountRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateTaxAccountRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetTaxAccountRequestOptions is the options needed to make a request to GetTaxAccount.
+type GetTaxAccountRequestOptions struct {
+	PathParams *GetTaxAccountPath
+	Query      *GetTaxAccountQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetTaxAccountRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetTaxAccountRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetTaxAccountRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetTaxAccountRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateTaxAccountRequestOptions is the options needed to make a request to UpdateTaxAccount.
+type UpdateTaxAccountRequestOptions struct {
+	PathParams *UpdateTaxAccountPath
+	Body       *UpdateTaxAccountBody
+	Header     *UpdateTaxAccountHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateTaxAccountRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateTaxAccountRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateTaxAccountRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateTaxAccountRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetireTaxAccountRequestOptions is the options needed to make a request to RetireTaxAccount.
+type RetireTaxAccountRequestOptions struct {
+	PathParams *RetireTaxAccountPath
+	Header     *RetireTaxAccountHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetireTaxAccountRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetireTaxAccountRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetireTaxAccountRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetireTaxAccountRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// ListTaxRecordsRequestOptions is the options needed to make a request to ListTaxRecords.
+type ListTaxRecordsRequestOptions struct {
+	Query *ListTaxRecordsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListTaxRecordsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListTaxRecordsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListTaxRecordsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListTaxRecordsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateTaxRecordRequestOptions is the options needed to make a request to CreateTaxRecord.
+type CreateTaxRecordRequestOptions struct {
+	Body *CreateTaxRecordBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateTaxRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateTaxRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateTaxRecordRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetTaxRecordRequestOptions is the options needed to make a request to GetTaxRecord.
+type GetTaxRecordRequestOptions struct {
+	PathParams *GetTaxRecordPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetTaxRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetTaxRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetTaxRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateTaxRecordRequestOptions is the options needed to make a request to UpdateTaxRecord.
+type UpdateTaxRecordRequestOptions struct {
+	PathParams *UpdateTaxRecordPath
+	Body       *UpdateTaxRecordBody
+	Header     *UpdateTaxRecordHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateTaxRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateTaxRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateTaxRecordRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetireTaxRecordRequestOptions is the options needed to make a request to RetireTaxRecord.
+type RetireTaxRecordRequestOptions struct {
+	PathParams *RetireTaxRecordPath
+	Header     *RetireTaxRecordHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetireTaxRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetireTaxRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetireTaxRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetireTaxRecordRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetTextOutlineRequestOptions is the options needed to make a request to GetTextOutline.
 type GetTextOutlineRequestOptions struct {
 	Body *GetTextOutlineBody
@@ -27176,6 +28426,22 @@ const (
 	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
 )
 
+type ListPartiesQueryKind string
+
+const (
+	ListPartiesQueryKindEmpty  ListPartiesQueryKind = ""
+	ListPartiesQueryKindPerson ListPartiesQueryKind = "person"
+	Organization               ListPartiesQueryKind = "organization"
+)
+
+type ListPartiesQueryOwn string
+
+const (
+	False                    ListPartiesQueryOwn = "false"
+	ListPartiesQueryOwnEmpty ListPartiesQueryOwn = ""
+	True                     ListPartiesQueryOwn = "true"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -27267,6 +28533,14 @@ type PruneNodeContentVersionsHeaders struct {
 type UploadPackageChunkHeaders struct {
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
+}
+
+type UpdatePartyHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RetirePartyHeaders struct {
+	IfMatch string `json:"If-Match"`
 }
 
 type RenamePersonHeaders struct {
@@ -27378,6 +28652,22 @@ type DeleteTagHeaders struct {
 }
 
 type RenameTagHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdateTaxAccountHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RetireTaxAccountHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdateTaxRecordHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RetireTaxRecordHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
@@ -27742,6 +29032,18 @@ type CancelPageRenderJobPath struct {
 	ID uuid.UUID `json:"id"`
 }
 
+type GetPartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
+type UpdatePartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
+type RetirePartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
 type UnassignTagPathPath struct {
 	TagID string `json:"tag_id"`
 }
@@ -28005,6 +29307,30 @@ type ListTagNodesPath struct {
 	TagID string `json:"tag_id"`
 }
 
+type GetTaxAccountPath struct {
+	AccountID string `json:"account_id"`
+}
+
+type UpdateTaxAccountPath struct {
+	AccountID string `json:"account_id"`
+}
+
+type RetireTaxAccountPath struct {
+	AccountID string `json:"account_id"`
+}
+
+type GetTaxRecordPath struct {
+	RecordID string `json:"record_id"`
+}
+
+type UpdateTaxRecordPath struct {
+	RecordID string `json:"record_id"`
+}
+
+type RetireTaxRecordPath struct {
+	RecordID string `json:"record_id"`
+}
+
 type ReadTimelineRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
@@ -28230,6 +29556,10 @@ type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
 
+type CreatePartyBody = CreatePartyRequest
+
+type UpdatePartyBody = PatchPartyRequest
+
 type MkdirPathBody = MkdirPathRequest
 
 type MovePathBody = MovePathRequest
@@ -28413,6 +29743,14 @@ type PreviewBlobStoreRegistrationBody = PreviewBlobStoreRegistrationRequest
 type CreateTagBody = CreateTagRequest
 
 type RenameTagBody = RenameTagRequest
+
+type CreateTaxAccountBody = CreateTaxAccountRequest
+
+type UpdateTaxAccountBody = PatchTaxAccountRequest
+
+type CreateTaxRecordBody = CreateTaxRecordRequest
+
+type UpdateTaxRecordBody = PatchTaxRecordRequest
 
 type GetTextOutlineBody = TextOutlineRequest
 
@@ -28676,6 +30014,14 @@ type ReadPageImageQuery struct {
 	ImageSha256  *string    `json:"image_sha256,omitempty"`
 }
 
+type ListPartiesQuery struct {
+	Kind           *ListPartiesQueryKind `json:"kind,omitempty"`
+	Own            *ListPartiesQueryOwn  `json:"own,omitempty"`
+	IncludeRetired *bool                 `json:"include_retired,omitempty"`
+	Limit          *int64                `json:"limit,omitempty"`
+	Offset         *int64                `json:"offset,omitempty"`
+}
+
 type ResolvePathQuery struct {
 	Path string `json:"path"`
 }
@@ -28824,6 +30170,31 @@ type ListTagNodesQuery struct {
 	Limit    *int64 `json:"limit,omitempty"`
 	Offset   *int64 `json:"offset,omitempty"`
 	LiveOnly *bool  `json:"live_only,omitempty"`
+}
+
+type ListTaxAccountsQuery struct {
+	Filer          *string `json:"filer,omitempty"`
+	Country        *string `json:"country,omitempty"`
+	Taxkind        *string `json:"taxkind,omitempty"`
+	IncludeRetired *bool   `json:"include_retired,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+	Offset         *int64  `json:"offset,omitempty"`
+}
+
+type GetTaxAccountQuery struct {
+	Reveal *bool `json:"reveal,omitempty"`
+}
+
+type ListTaxRecordsQuery struct {
+	Filer          *string `json:"filer,omitempty"`
+	Country        *string `json:"country,omitempty"`
+	Taxkind        *string `json:"taxkind,omitempty"`
+	Year           *int64  `json:"year,omitempty"`
+	State          *string `json:"state,omitempty"`
+	Kind           *string `json:"kind,omitempty"`
+	IncludeRetired *bool   `json:"include_retired,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+	Offset         *int64  `json:"offset,omitempty"`
 }
 
 type ListTrashQuery struct {
@@ -29157,6 +30528,7 @@ type GetExportJobEventsErrorResponse struct {
 	InaccessibleFaceConflict *bool                `json:"inaccessible_face_conflict,omitempty"`
 	More                     *bool                `json:"more,omitempty"`
 	ObservedScopeCount       *int64               `json:"observed_scope_count,omitempty"`
+	PartyID                  *string              `json:"party_id,omitempty"`
 	Position                 *ErrorPosition       `json:"position,omitempty"`
 	Redaction                *PDFRedactionProblem `json:"redaction,omitempty"`
 	Status                   int64                `json:"status"`
@@ -29652,6 +31024,26 @@ type GetPageRenderJobErrorResponse = Error
 type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
+
+type ListPartiesResponse = api.PartyPage
+
+type ListPartiesErrorResponse = Error
+
+type CreatePartyResponse = api.Party
+
+type CreatePartyErrorResponse = Error
+
+type GetPartyResponse = api.Party
+
+type GetPartyErrorResponse = Error
+
+type UpdatePartyResponse = api.Party
+
+type UpdatePartyErrorResponse = Error
+
+type RetirePartyResponse = api.Party
+
+type RetirePartyErrorResponse = Error
 
 type ResolvePathResponse = api.Node
 
@@ -30329,6 +31721,46 @@ type ListTagNodesResponse = api.TaggedNodePage
 
 type ListTagNodesErrorResponse = Error
 
+type ListTaxAccountsResponse = api.TaxAccountPage
+
+type ListTaxAccountsErrorResponse = Error
+
+type CreateTaxAccountResponse = api.TaxAccount
+
+type CreateTaxAccountErrorResponse = Error
+
+type GetTaxAccountResponse = api.TaxAccount
+
+type GetTaxAccountErrorResponse = Error
+
+type UpdateTaxAccountResponse = api.TaxAccount
+
+type UpdateTaxAccountErrorResponse = Error
+
+type RetireTaxAccountResponse = api.TaxAccount
+
+type RetireTaxAccountErrorResponse = Error
+
+type ListTaxRecordsResponse = api.TaxRecordPage
+
+type ListTaxRecordsErrorResponse = Error
+
+type CreateTaxRecordResponse = api.TaxRecord
+
+type CreateTaxRecordErrorResponse = Error
+
+type GetTaxRecordResponse = api.TaxRecord
+
+type GetTaxRecordErrorResponse = Error
+
+type UpdateTaxRecordResponse = api.TaxRecord
+
+type UpdateTaxRecordErrorResponse = Error
+
+type RetireTaxRecordResponse = api.TaxRecord
+
+type RetireTaxRecordErrorResponse = Error
+
 type GetTextOutlineResponse = document.TextOutlinePage
 
 type GetTextOutlineErrorResponse api.Error
@@ -30727,6 +32159,8 @@ type CreateNodeRequest struct {
 	ParentID int64                 `json:"parent_id"`
 }
 
+type CreatePartyRequest = api.CreatePartyRequest
+
 type CreatePersonRequest = api.CreatePersonRequest
 
 type CreatePhotoAlbumRequest = api.CreatePhotoAlbumRequest
@@ -30740,6 +32174,10 @@ type CreateTagRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Name   string  `json:"name"`
 }
+
+type CreateTaxAccountRequest = api.CreateTaxAccountRequest
+
+type CreateTaxRecordRequest = api.CreateTaxRecordRequest
 
 type CustodianAssignment = api.CustodianAssignment
 
@@ -31344,6 +32782,16 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type Party = api.Party
+
+type PartyPage = api.PartyPage
+
+type PatchPartyRequest = api.PatchPartyRequest
+
+type PatchTaxAccountRequest = api.PatchTaxAccountRequest
+
+type PatchTaxRecordRequest = api.PatchTaxRecordRequest
 
 type Pending = kataevidence.Pending
 
@@ -32091,6 +33539,14 @@ type TagPage = api.TagPage
 type TaggedNode = api.TaggedNode
 
 type TaggedNodePage = api.TaggedNodePage
+
+type TaxAccount = api.TaxAccount
+
+type TaxAccountPage = api.TaxAccountPage
+
+type TaxRecord = api.TaxRecord
+
+type TaxRecordPage = api.TaxRecordPage
 
 type TelemetryEventProperties = api.TelemetryEventProperties
 

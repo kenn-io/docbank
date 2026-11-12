@@ -443,6 +443,23 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	)
 	require.NoError(t, err)
 	document = assignment.Node
+	// Synthetic catalog for the Taxes page's browser reads, written before the
+	// audit scope refuses logical writes: an own filer with one record, and an
+	// unrelated, retired, non-own contact linked to a person.
+	contactPerson, err := s.CreatePerson(t.Context(), "Example Contact", "operator")
+	require.NoError(t, err)
+	filer, err := s.CreateParty(t.Context(), store.PartyInput{Kind: "organization",
+		DisplayName: "Example Holdings Ltd.", LegalName: "Example Holdings Limited", Own: true})
+	require.NoError(t, err)
+	contact, err := s.CreateParty(t.Context(), store.PartyInput{Kind: "person",
+		DisplayName: "Example Contact", LegalName: "Example Contact Legal", Country: new("CA"),
+		PersonID: &contactPerson.PersonID})
+	require.NoError(t, err)
+	contact, err = s.RetireParty(t.Context(), contact.PartyID, contact.Revision)
+	require.NoError(t, err)
+	taxRecord, err := s.CreateTaxRecord(t.Context(), store.TaxRecordInput{FilerPartyID: &filer.PartyID,
+		Country: new("ZZ"), TaxKind: new("sales-tax"), Kind: "filing", Title: "Example return", Note: "Example note"})
+	require.NoError(t, err)
 	plan, err := s.PreviewInitialAudit(t.Context(), taxes.ID, "api", nil)
 	require.NoError(t, err)
 	_, err = s.EnableInitialAudit(t.Context(), plan)
@@ -482,6 +499,60 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	resp = webRequest(http.MethodGet, "/api/v1/path?path=/")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
+
+	// D67: the Taxes page's two browser reads return the full existing record
+	// and party objects, including a retired, non-own party unrelated to tax,
+	// and stay private. Everything else tax- or party-related is refused.
+	resp = webRequest(http.MethodGet, "/api/v1/parties?include_retired=true&limit=1000&offset=0")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var browserParties api.PartyPage
+	require.NoError(t, json.UnmarshalRead(resp.Body, &browserParties))
+	require.NoError(t, resp.Body.Close())
+	listedParties := map[string]api.Party{}
+	for _, party := range browserParties.Items {
+		listedParties[party.PartyID] = party
+	}
+	require.Contains(t, listedParties, filer.PartyID)
+	shownContact := listedParties[contact.PartyID]
+	assert.Equal(t, "Example Contact Legal", shownContact.LegalName)
+	require.NotNil(t, shownContact.Country)
+	assert.Equal(t, "CA", *shownContact.Country)
+	require.NotNil(t, shownContact.PersonID)
+	assert.Equal(t, contactPerson.PersonID, *shownContact.PersonID)
+	assert.NotNil(t, shownContact.RetiredAt)
+	assert.False(t, shownContact.Own)
+
+	resp = webRequest(http.MethodGet, "/api/v1/tax/records?limit=50&offset=0")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var browserRecords struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.UnmarshalRead(resp.Body, &browserRecords))
+	require.NoError(t, resp.Body.Close())
+	require.Len(t, browserRecords.Items, 1)
+	assert.Equal(t, taxRecord.RecordID, browserRecords.Items[0]["record_id"])
+	assert.Equal(t, "Example note", browserRecords.Items[0]["note"])
+	assert.Contains(t, browserRecords.Items[0], "verification_note")
+
+	recordPath := "/api/v1/tax/records/" + taxRecord.RecordID
+	for _, denied := range []struct{ method, path string }{
+		{http.MethodGet, recordPath},
+		{http.MethodGet, recordPath + "?reveal=true"},
+		{http.MethodPatch, recordPath},
+		{http.MethodPost, recordPath + "/retire"},
+		{http.MethodPost, "/api/v1/tax/records"},
+		{http.MethodGet, "/api/v1/tax/records?limit=50&offset=0&reveal=true"},
+		{http.MethodGet, "/api/v1/tax/records?limit=50&offset=0&include_retired=true"},
+		{http.MethodGet, "/api/v1/tax/accounts"},
+		{http.MethodGet, "/api/v1/parties/" + contact.PartyID},
+		{http.MethodGet, "/api/v1/parties?own=true"},
+		{http.MethodPost, "/api/v1/parties"},
+		{http.MethodPatch, "/api/v1/parties/" + filer.PartyID},
+	} {
+		resp = webRequest(denied.method, denied.path)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, denied.method+" "+denied.path)
+		require.NoError(t, resp.Body.Close())
+	}
 
 	resp = webRequest(http.MethodGet,
 		"/api/v1/audit/status?node_id="+strconv.FormatInt(document.ID, 10))

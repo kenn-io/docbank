@@ -143,7 +143,9 @@ func TestWebPages(t *testing.T) {
 		{"/productions", true},
 		{"/imports", true},
 		{"/trash", true},
+		{"/taxes", true},
 		{"/searches/x", false},
+		{"/taxes/x", false},
 	} {
 		require.Equal(t, tc.allowed, authExempt(tc.path), tc.path)
 		response := httptest.NewRecorder()
@@ -154,5 +156,46 @@ func TestWebPages(t *testing.T) {
 			require.Contains(t, response.Header().Get("Content-Type"), "text/html")
 		}
 		require.Equal(t, status, response.Code, tc.path)
+	}
+}
+
+func TestWebSessionAllowsOnlyTaxListReads(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		method, path string
+		allowed      bool
+	}{
+		// TestWebSessionIsScopedRevocableAndDaemonLocal sends the page's real
+		// list reads and each denied tax and party route through the server;
+		// these are the predicate cases it does not reach.
+		{http.MethodGet, "/api/v1/tax/records?limit=50&offset=50&filer=11111111-1111-4111-8111-111111111111&year=2031", true},
+		{http.MethodGet, "/api/v1/tax/records?state=expected", false},
+		{http.MethodGet, "/api/v1/tax/records?year=2031&year=2032", false},
+		{http.MethodGet, "/api/v1/tax/records?year=%zz", false},
+		{http.MethodGet, "/api/v1/tax/accounts/11111111-1111-4111-8111-111111111111?reveal=true", false},
+	} {
+		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.method+" "+tc.path)
+	}
+	// A loopback browser session has no login policy, so the auth branch
+	// itself keeps both reads private; API-key responses are unchanged.
+	sessions := newWebSessionRegistry()
+	token, _, err := sessions.issue()
+	require.NoError(t, err)
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), "master-key", sessions, "master-owner")
+	for _, tc := range []struct {
+		path, header, value, cache string
+	}{
+		{"/api/v1/tax/records?limit=50&offset=0", WebSessionHeader, token, "private, no-store"},
+		{"/api/v1/parties?include_retired=true&limit=1000&offset=0", WebSessionHeader, token, "private, no-store"},
+		{"/api/v1/parties?include_retired=true&limit=1000&offset=0", "X-Api-Key", "master-key", ""},
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
+		request.Header.Set(tc.header, tc.value)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, tc.header+" "+tc.path)
+		require.Equal(t, tc.cache, response.Header().Get("Cache-Control"), tc.header+" "+tc.path)
 	}
 }
