@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptrace"
 	"sync"
 	"sync/atomic"
@@ -293,6 +294,11 @@ func daemonProcessingStart[T any](
 	if canceled := contextCancellation(ctx, err); canceled != nil {
 		lease.discard(current)
 		return zero, sanitizedDaemonError(errProcessingOutcomeUnknown, canceled)
+	}
+	status, received := daemonconn.ResponseStatus(err)
+	facts, hasFacts := daemonconn.ExtractProblemFacts(err)
+	if received && status == http.StatusInternalServerError && hasFacts && facts.Code == "internal" {
+		return zero, sanitizedDaemonError(errProcessingOutcomeUnknown, err)
 	}
 	return zero, sanitizedDaemonError(errDaemonRequestFailed, err)
 }

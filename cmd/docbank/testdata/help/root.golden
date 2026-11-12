@@ -49,7 +49,9 @@ Usage:
   docbank [command]
 
 Documents:
+  contract  Manage contracts
   document  Import, browse, and maintain documents and their history
+  party  Manage reusable entities and counterparties
   tag  Define tags and organize nodes with them
   trash  Inspect and empty the trash
 

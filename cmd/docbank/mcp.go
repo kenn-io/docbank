@@ -17,15 +17,16 @@ import (
 )
 
 var (
-	mcpTransport          string
-	mcpListen             string
-	mcpAllowedHosts       []string
-	mcpAllowProcessing    bool
-	mcpAllowPackageWrites bool
-	mcpAllowPhotoEdits    bool
-	mcpAllowExportWrites  bool
-	mcpAllowReportWrites  bool
-	mcpAllowKataWrites    bool
+	mcpTransport           string
+	mcpListen              string
+	mcpAllowedHosts        []string
+	mcpAllowProcessing     bool
+	mcpAllowPackageWrites  bool
+	mcpAllowPhotoEdits     bool
+	mcpAllowExportWrites   bool
+	mcpAllowReportWrites   bool
+	mcpAllowKataWrites     bool
+	mcpAllowContractWrites bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -70,7 +71,7 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
 		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites,
 		AllowPhotoEdits: mcpAllowPhotoEdits, AllowExportWrites: mcpAllowExportWrites,
-		AllowReportWrites: mcpAllowReportWrites, AllowKataWrites: mcpAllowKataWrites, Logger: logger,
+		AllowReportWrites: mcpAllowReportWrites, AllowKataWrites: mcpAllowKataWrites, AllowContractWrites: mcpAllowContractWrites, Logger: logger,
 	})
 	switch mcpTransport {
 	case "stdio":
@@ -200,5 +201,7 @@ func init() {
 		"allow frozen report creation, reviewed revisions, verified downloads, and explicit release")
 	mcpCmd.PersistentFlags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
 		"allow quoting exact verified Docbank passages into Kata issues")
+	mcpCmd.PersistentFlags().BoolVar(&mcpAllowContractWrites, "allow-contract-writes", false,
+		"allow contract creation, field edits, and exact document links")
 	rootCmd.AddCommand(mcpCmd)
 }

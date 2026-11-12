@@ -234,8 +234,11 @@ actually removed; packed logical death is pending repack.
 
 ### Change schema
 
-Layouts that never shipped are disposable. v0.9.0 is the first released
-compatibility boundary: incompatible SQLite changes use a tested deterministic
+Layouts that never shipped are disposable. Unreleased schema 49, 50 and 51
+development vaults contain parties, contract records and document links respectively.
+Recreate a disposable vault when its layout changes.
+Released schema 48 vaults retain the supported upgrade path. v0.9.0 is the first
+released compatibility boundary: incompatible SQLite changes use a tested deterministic
 JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
@@ -364,7 +367,7 @@ pruning preserve retention holds and related catalog state. Derivative cleanup
 covers purge previews, rendition and embedding collection, extracted-text and
 email cleanup, and explicit rebuild authorization. Primary blob packing,
 repacking, bounded GC catalog selection and exact physical cleanup receipts
-also work with PostgreSQL metadata. Tags, audited bulk tag edits, and saved query
+also work with PostgreSQL metadata. Parties, tags, audited bulk tag edits, and saved query
 definition management use the native Store operations on both databases.
 Extracted source metadata, typed photo facts, and document-event evidence,
 publication, terminal attempts and rebuild receipts also use shared operations.
@@ -559,6 +562,13 @@ GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, 
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
+GRANT INSERT, UPDATE(kind, display_name, display_name_folded, legal_name, country,
+    own, person_id, revision, updated_at, retired_at) ON documents.parties TO docbank_runtime;
+GRANT INSERT, DELETE, UPDATE(title, contract_type, status, starts_on, expires_on,
+    signed_on, summary, purpose, consideration, termination, revision, updated_at)
+    ON documents.contracts TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.contract_parties TO docbank_runtime;
+GRANT INSERT, DELETE ON documents.contract_documents TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
 GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
     display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;
@@ -1885,6 +1895,18 @@ do not expose a public PostgreSQL vault or qualify portable metadata import,
 collection snapshots, reporting,
 backup or restore.
 
+#### Parties
+
+Party create, read, list, edit and retirement use shared Store operations on
+both databases. Shared scenarios cover duplicate admission, filters, linked
+person retirement and merge, and revision fences. A merge moves linked parties
+to the survivor and advances their revisions in the same transaction. These
+internal operations do not expose a PostgreSQL-backed public vault.
+
+Country admission uses the assigned ISO 3166-1 alpha-2 list. The x/text
+`language.Region.IsCountry` contract includes nonstandard CLDR and potentially
+private-use regions, so it is not an equivalent replacement for that list.
+
 #### Tags and saved definitions
 
 Tag creation, assignment, rename and deletion use the same Store methods on
@@ -1910,7 +1932,9 @@ mutations remain unavailable after audit enrollment, as on SQLite. Deleting a
 definition cascades retained run receipts through the definition index; this
 does not qualify saved-query execution or run publication on PostgreSQL.
 
-The `organization` backend scenarios cover native mutations, bulk replay and
+The `organization` backend scenarios include party lifecycle and reference
+checks on both backends. Their count is derived from the registry by the
+coverage report. Other scenarios cover native mutations, bulk replay and
 rollback, concurrent saved-definition edits, snapshot consistency and photo
 export effects. Mailbox jobs and settled photo receipts are retained fixtures;
 their producers remain outside this qualification.

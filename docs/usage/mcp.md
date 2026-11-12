@@ -44,7 +44,7 @@ See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) and
 
 The snippet uses Docbank's absolute launch path, preserving package-manager
 symlinks, and the selected vault's canonical `DOCBANK_HOME`.
-All six `--allow-*` flags carry through to
+The `--allow-*` flags carry through to
 stdio arguments. Printing creates no vault, starts no daemon, and leaves
 client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.
@@ -150,7 +150,8 @@ changes. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
 and explicit release. `--allow-kata-writes` permits quoting verified passages
-into Kata issues. Each flag is independent and applies only to standalone MCP. The daemon-hosted
+into Kata issues. `--allow-contract-writes` enables contract creation, field edits,
+and exact document links. Each flag is independent and applies only to standalone MCP. The daemon-hosted
 catalog stays read-only. Enable the combination you need at standalone startup.
 
 ## Connect over a trusted network
@@ -239,8 +240,7 @@ content and its JSON text representation. The complete result, including
 resource links, is capped at 1 MiB.
 
 Tests enforce a 150,000-byte default catalog budget and a 235,000-byte budget
-with all six write flags enabled, set from baseline measurements of 135,667 and
-213,288 bytes, respectively.
+with all seven write flags enabled.
 They measure compact JSON of the complete client-decoded `tools/list` result
 with HTML escaping disabled to match the SDK, including output schemas,
 metadata, and cache fields; a larger catalog requires a reviewed budget edit.
@@ -277,6 +277,8 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `list_package_custodians` | Pages through active custodian claims for an exact package scope. |
 | `find_people` | Finds bounded active canonical people by word-start folded display-name search, with global display-only identity labels that may contain email addresses, phone numbers, or scoped handles, and folded-name page continuation. |
 | `get_person` | Reads one person, its identities, and its external UIDs. |
+| `list_contracts` | Lists compact contract rows, default 50 and maximum 100. |
+| `get_contract` | Reads a complete contract, its parties, and exact document evidence. |
 | `list_packages` | Pages through received and produced load-file packages. |
 | `get_package` | Reads one package and its retained source authority. |
 | `list_package_members` | Pages through a package's immutable document occurrences. |
@@ -286,6 +288,9 @@ metadata, and cache fields; a larger catalog requires a reviewed budget edit.
 | `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision or a member's file revision changes. |
 
 The browser applies [name visibility and namesake recognition rules](people.md#browser-names-and-visibility). MCP `find_people` keeps global search. An invalid cursor or one from another query, projection, or ordering returns the tool error `cursor_expired`; restart from the first page.
+
+Starting the server with `--allow-contract-writes` adds `create_contract`,
+`update_contract`, and `link_contract_document`. See [Contracts over MCP](#contracts-over-mcp).
 
 Starting the server with `--allow-kata-writes` adds this write tool:
 
@@ -703,6 +708,36 @@ pages can stop a read sequence; there is no cursor, saved outline or retention
 lease. The full [HTTP contract](../architecture/http-api.md#retained-text-sections)
 owns fields, limits and errors. Neither page hashes nor a saved citation prove
 that provider text quotes the original file verbatim.
+
+## Contracts over MCP
+
+The contract list is live, not a snapshot. To continue a full page, add the
+returned `limit` to `offset` and retain the filters and returned `as_of`. A
+full last page can be followed by an empty page. `get_contract` returns the
+complete detail or `contract_result_too_large`; use the CLI or HTTP API if it
+does not fit. List rows omit terms, parties, and documents. `contract_type` is a
+lowercase label of letters, digits and underscores, at most 64 characters; a
+list type filter must be non-empty.
+
+With contract writes enabled, a synthetic workflow is:
+
+1. Call `create_contract` with `{"title":"Service agreement","starts_on":"2026-01-01"}`.
+2. Call `get_contract` with the returned `contract_id` to inspect the record
+   and revision. Existing party UUIDs are available in contract details; party
+   management remains in the CLI or HTTP API.
+3. Call `update_contract` with `{"contract_id":"<id>","revision":1,"patch":{"starts_on":null}}`
+   to clear the date. Omitted patch fields remain unchanged.
+4. Call `link_contract_document` with the returned revision, exact numeric
+   `node_id`, `content_version_id`, and role (for example `signed`). Linking a
+   signed copy does not change the contract status.
+
+Use the latest revision from a read or receipt. A stale revision is rejected;
+read again before deciding whether to retry. If a write returns
+`contract_outcome_unknown`, inspect the contract before retrying. For a create,
+list and inspect possible matches first; titles are not unique. Never retry
+blindly. The tools do not manage parties, unlink documents (use
+`docbank contract unlink`), or send, cancel, or refresh signatures.
+The daemon-hosted catalog provides the two reads only.
 
 ## Optional processing start
 

@@ -887,6 +887,34 @@ resulting revision, size, and hash. `--json` returns the node, new version, and
 complete source-version receipt. Repeating the same historical choice later is
 valid and records another operation.
 
+## docbank contract
+
+```text
+docbank contract list [--status <status>] [--type <type>] [--party-id <id>] [--expiring-before <date>] [--q <text>] [--as-of <date>] [--limit <n>] [--offset <n>] [--json]
+docbank contract show <contract-id> [--as-of <date>] [--json]
+docbank contract create <title> [--status <status>] [--type <type>] [--starts <date>] [--expires <date>] [--signed <date>] [--summary <text>] [--purpose <text>] [--consideration <text>] [--termination <text>] [--own <party>] [--counterparty <party>] [--json]
+docbank contract edit <contract-id> [--title <title>] [--status <status>] [--type <type>] [--starts <date> | --clear-starts] [--expires <date> | --clear-expires] [--signed <date> | --clear-signed] [--summary <text>] [--purpose <text>] [--consideration <text>] [--termination <text>] [--own <party>] [--counterparty <party>] [--remove-own <party>] [--remove-counterparty <party>] [--revision <n>] [--json]
+docbank contract delete <contract-id> [--revision <n>] [--json]
+docbank contract link <contract-id> <node> --role <role> [--version <version-id>] [--revision <n>] [--json]
+docbank contract unlink <contract-id> <node> --role <role> [--version <version-id>] [--revision <n>] [--json]
+```
+
+Register agreements, dates, terms and parties. `--expiring-before` is exclusive
+and includes every status; combine it with `--status active` for active
+renewals. See [Contracts](usage/contracts.md) for fields and link behavior.
+
+## docbank party
+
+```text
+docbank party list [--kind person|organization] [--own=true|false] [--include-retired] [--limit <n>] [--offset <n>] [--json]
+docbank party show <party-id> [--json]
+docbank party create <display-name> [--kind person|organization] [--legal-name <name>] [--country <code>] [--person <person-id>] [--own] [--json]
+docbank party edit <party-id> [--name <name>] [--kind <kind>] [--legal-name <name>] [--country <code> | --clear-country] [--person <person-id> | --clear-person] [--own=true|false] [--revision <n>] [--json]
+docbank party retire <party-id> [--revision <n>] [--json]
+```
+
+Manage reusable entities and counterparties. List excludes retired parties by default. Edit and retire read the current revision immediately before writing unless `--revision` supplies a positive expected revision. A stale revision is refused. See [Contracts](usage/contracts.md) for name matching and person links.
+
 ## docbank tag
 
 ```text
@@ -1468,7 +1496,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ```text
 docbank mcp [--transport stdio|http] [--listen <ip:port>] [--allowed-host <host[:port]>]
             [--allow-processing] [--allow-package-writes] [--allow-export-writes]
-            [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes]
+            [--allow-photo-edits] [--allow-report-writes] [--allow-kata-writes] [--allow-contract-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1518,7 +1546,7 @@ HTTP hosting in the daemon process, see [docbank daemon](#docbank-daemon).
 ### docbank mcp config
 
 ```text
-docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes]
+docbank mcp config --client claude-code|codex [--transport stdio|http] [--listen <ip:port>] [--allow-processing] [--allow-package-writes] [--allow-photo-edits] [--allow-export-writes] [--allow-report-writes] [--allow-kata-writes] [--allow-contract-writes]
 ```
 
 Prints Claude Code JSON for `.mcp.json` or Codex TOML for

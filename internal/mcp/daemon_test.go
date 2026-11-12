@@ -815,6 +815,53 @@ func TestDaemonProcessingStartPreservesDefiniteDomainResponse(t *testing.T) {
 	assert.Zero(t, closed.count(current))
 }
 
+func TestDaemonProcessingStartInternalResponseIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		unknown    bool
+	}{
+		{name: "internal commit failure", code: "internal", unknown: true},
+		{name: "coded integrity failure", code: "kata_evidence_integrity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.MarshalWrite(w, api.Error{Title: "Internal Server Error", Status: http.StatusInternalServerError, Code: tc.code, Detail: "synthetic failure"})
+			}))
+			t.Cleanup(server.Close)
+			current := daemonconn.New(server.URL, "synthetic-key")
+			t.Cleanup(func() { require.NoError(t, current.Close()) })
+			var ensures atomic.Int32
+			closed := newClosedClients()
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				ensures.Add(1)
+				return current, nil
+			}, closed.close)
+			calls := 0
+			_, err := daemonProcessingStart(t.Context(), lease, func(c *daemonconn.Connection) (api.ProcessingJob, error) {
+				calls++
+				return c.StartProcessing(t.Context(), api.StartProcessingRequest{}, strings.Repeat("b", 64))
+			})
+			assert.Equal(t, 1, calls)
+			assert.EqualValues(t, 1, requests.Load())
+			assert.EqualValues(t, 1, ensures.Load())
+			assert.Zero(t, closed.count(current))
+			if tc.unknown {
+				require.ErrorIs(t, err, errProcessingOutcomeUnknown)
+			} else {
+				require.ErrorIs(t, err, errDaemonRequestFailed)
+				require.NotErrorIs(t, err, errProcessingOutcomeUnknown)
+				facts, ok := daemonProblemFacts(err)
+				require.True(t, ok)
+				assert.Equal(t, tc.code, facts.Code)
+			}
+		})
+	}
+}
+
 func disconnectedDaemonClient(t *testing.T) *daemonconn.Connection {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {

@@ -24,6 +24,7 @@ nav = [
     {"Push a folder" = "usage/pushing.md"},
     {"Photo assets" = "usage/photos.md"},
     {"People" = "usage/people.md"},
+    {"Contracts" = "usage/contracts.md"},
     {"Email PDFs" = "usage/email-pdf.md"},
     {"Organizing and tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},

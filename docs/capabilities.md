@@ -36,6 +36,7 @@ explains how.
   document does not move its stored bytes.
 - Refer to a live document by path, or by a numeric node ID that stays the same
   through moves, renames, trash, and restore.
+- Register [contracts and parties](usage/contracts.md), including agreement dates, terms, and counterparties.
 - Define tags and assign them regardless of folder. Renaming a tag changes its
   display name and nothing else. The web app groups slash-separated tag names
   and keeps each tag's color when its name changes.

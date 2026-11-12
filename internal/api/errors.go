@@ -19,6 +19,7 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
+	PartyID                  string              `json:"party_id,omitzero"`
 	Cursor                   string              `json:"cursor,omitzero"`
 	Redaction                *redaction.Problem  `json:"redaction,omitempty"`
 	BackupForget             *BackupForgetReport `json:"backup_forget,omitempty"`
@@ -120,6 +121,11 @@ var storeErrCodes = []struct {
 	{store.ErrNotDir, http.StatusUnprocessableEntity, "not_dir"},
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},
+	{store.ErrAmbiguousContractDocument, http.StatusConflict, "ambiguous_contract_document"},
+	{store.ErrInvalidContract, http.StatusUnprocessableEntity, "invalid_contract"},
+	{store.ErrPartyNotOwn, http.StatusUnprocessableEntity, "party_not_own"},
+	{store.ErrInvalidParty, http.StatusUnprocessableEntity, "invalid_party"},
+	{store.ErrPartyRetired, http.StatusConflict, "party_retired"},
 	{store.ErrInvalidTag, http.StatusUnprocessableEntity, "invalid_tag"},
 	{store.ErrInvalidSavedQuery, http.StatusUnprocessableEntity, "invalid_saved_query"},
 	{store.ErrInvalidCollectionLabel, http.StatusUnprocessableEntity, "invalid_collection_label"},
@@ -210,6 +216,11 @@ var storeErrCodes = []struct {
 // unrecognized error becomes an opaque 500 (message still surfaced — this
 // is a single-user local daemon, not a hardened multi-tenant service).
 func FromStoreError(err error) error {
+	if conflict, ok := errors.AsType[*store.PartyExistsError](err); ok {
+		out := NewError(http.StatusConflict, "party_exists", conflict.Error())
+		out.PartyID = conflict.PartyID
+		return out
+	}
 	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflictError](err); ok {
 		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
 		for _, face := range conflict.Faces {

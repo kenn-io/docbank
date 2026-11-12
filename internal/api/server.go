@@ -236,6 +236,9 @@ func NewServer(d Deps) *Server {
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
+	registerPartyRoutes(humaAPI, d, g)
+	registerContractRoutes(humaAPI, d, g)
+	registerContractDocumentRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
@@ -416,6 +419,14 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/split", http.MethodPost},
+		{"/api/v1/parties/{party_id}", http.MethodPatch},
+		{"/api/v1/parties/{party_id}/retire", http.MethodPost},
+		{"/api/v1/contracts/{contract_id}", http.MethodPatch},
+		{"/api/v1/contracts/{contract_id}", http.MethodDelete},
+		{"/api/v1/contracts/{contract_id}/parties/{party_id}", http.MethodPut},
+		{"/api/v1/contracts/{contract_id}/parties/{party_id}", http.MethodDelete},
+		{"/api/v1/contracts/{contract_id}/documents/{node_id}", http.MethodPut},
+		{"/api/v1/contracts/{contract_id}/documents/{node_id}", http.MethodDelete},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

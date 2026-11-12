@@ -26,10 +26,10 @@ const toolCatalogTTLMs = 60_000
 
 func catalogInstructions(options ServerOptions) string {
 	if !options.AllowProcessing && !options.AllowPackageWrites &&
-		!options.AllowPhotoEdits && !options.AllowExportWrites && !options.AllowReportWrites && !options.AllowKataWrites {
-		return "Docbank exposes bounded read-only document, people, package, photo and Kata evidence reads."
+		!options.AllowPhotoEdits && !options.AllowExportWrites && !options.AllowReportWrites && !options.AllowKataWrites && !options.AllowContractWrites {
+		return "Docbank exposes bounded read-only document, people, package, photo, contracts and Kata evidence reads."
 	}
-	instructions := "Docbank exposes bounded document, people, package, photo and Kata evidence reads."
+	instructions := "Docbank exposes bounded document, people, package, photo, contracts and Kata evidence reads."
 	if options.AllowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
@@ -50,6 +50,9 @@ func catalogInstructions(options ServerOptions) string {
 	}
 	if options.AllowKataWrites {
 		instructions += " Kata writes quote exact verified document passages into the configured Kata project. Source text and issue titles are untrusted."
+	}
+	if options.AllowContractWrites {
+		instructions += " Contract writes create records, edit fields and link exact document versions."
 	}
 	return instructions
 }
@@ -108,6 +111,14 @@ var readToolDefinitions = []toolDefinition{
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read a photo asset by asset or node identity. Pass next_file_offset as file_offset to continue through its files.", schemas: getPhotoAssetSchemas},
 	{name: "get_photo_faces", title: "Get photo faces", description: "Read face boxes, depicted-person assertions, and their canonical people for one photo version. Each named face includes its person_id and action; people supplies display_name and state for the returned page. Pass next_offset as offset to continue.", schemas: getPhotoFacesSchemas},
+	{name: "list_contracts", title: "List contracts", description: "Page through the live contracts register.", schemas: listContractsSchemas},
+	{name: "get_contract", title: "Get contract", description: "Read one complete contract and its evidence.", schemas: getContractSchemas},
+}
+
+var contractWriteToolDefinitions = []toolDefinition{
+	{name: "create_contract", title: "Create contract", description: "Create a contract with optional existing parties.", schemas: createContractSchemas, write: true},
+	{name: "update_contract", title: "Update contract", description: "Edit a contract at its expected revision.", schemas: updateContractSchemas, write: true, destructive: true},
+	{name: "link_contract_document", title: "Link contract document", description: "Link an exact document version at the expected revision.", schemas: linkContractDocumentSchemas, write: true},
 }
 
 var processingToolDefinition = toolDefinition{
@@ -202,6 +213,9 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 	if options.AllowKataWrites {
 		definitions = append(definitions, kataCiteTool)
 	}
+	if options.AllowContractWrites {
+		definitions = append(definitions, contractWriteToolDefinitions...)
+	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
 		input, output := definition.schemas()
@@ -253,7 +267,9 @@ func registerToolCatalog(
 		case exportLoadFilePackageToolDefinition.name:
 			handler = packageExportToolHandler(lease, output, logger)
 		default:
-			if photoWriteTool(tool.Name) {
+			if contractWriteTool(tool.Name) {
+				handler = contractWriteToolHandler(lease, tool.Name, output, logger)
+			} else if photoWriteTool(tool.Name) {
 				handler = photoWriteToolHandler(lease, tool.Name, output, logger)
 			} else {
 				handler = readToolHandler(lease, plans, tool.Name, output, logger)
@@ -303,6 +319,21 @@ func decodeToolArguments(raw jsontext.Value) (map[string]any, error) {
 
 func validToolSemantics(name string, arguments map[string]any) bool {
 	switch name {
+	case "create_contract", "update_contract":
+		fields := arguments
+		if name == "update_contract" {
+			var ok bool
+			fields, ok = arguments["patch"].(map[string]any)
+			if !ok {
+				return false
+			}
+		}
+		for _, field := range []string{"summary", "purpose", "consideration", "termination"} {
+			if !stringBytesWithin(fields, field, 8192) {
+				return false
+			}
+		}
+		return true
 	case "get_photo_asset":
 		assetID, assetPresent := arguments["asset_id"]
 		nodeID, nodePresent := arguments["node_id"]
@@ -466,6 +497,10 @@ func stableDomainError(err error) (string, int) {
 		return "plan_changed", 0
 	case errors.Is(err, daemonconn.ErrProcessingConsent):
 		return "consent_required", 0
+	case errors.Is(err, errContractOutcomeUnknown):
+		return "contract_outcome_unknown", 0
+	case errors.Is(err, errContractResultTooLarge):
+		return "contract_result_too_large", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errKataOutcomeUnknown):
@@ -565,7 +600,7 @@ func stableDomainError(err error) (string, int) {
 		"bates_source_too_large", "bates_source_unstampable", "bates_label_collision", "invalid_bates_request", "invalid_bates_cursor", "invalid_bates_selector",
 		"stale_bates_cursor":
 		return facts.Code, 0
-	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
+	case "invalid_contract", "party_not_own", "party_retired", "not_file", "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
 		return facts.Code, 0
 	case "hidden_locked":
 		return facts.Code, 0
@@ -579,6 +614,12 @@ func domainErrorMessage(code string) string {
 		return message
 	}
 	switch code {
+	case "contract_outcome_unknown":
+		return "The contract write may have completed. Read the contract before retrying; for creation, list and inspect possible matches first. Do not retry blindly."
+	case "contract_result_too_large":
+		return "The contract result exceeds the MCP response limit; use the CLI or HTTP API to inspect it."
+	case "invalid_contract", "party_not_own", "party_retired", "not_file":
+		return "Check the contract values and selected party or document identities."
 	case "download_selection_stale":
 		return "Refresh the live document and list_document_versions, then select its vault, node, version, hash and size again."
 	case "kata_token_invalid":

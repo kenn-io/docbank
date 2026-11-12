@@ -18,8 +18,8 @@ func TestMCPConfigStdio(t *testing.T) {
 	require.NoError(t, err)
 	root = filepath.Join(root, "vault with spaces")
 	t.Setenv("DOCBANK_HOME", root)
-	flags := []string{"--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}
-	want := []any{"mcp", "--transport", "stdio", "--allow-export-writes", "--allow-kata-writes", "--allow-package-writes", "--allow-photo-edits", "--allow-processing", "--allow-report-writes"}
+	flags := []string{"--allow-contract-writes", "--allow-processing", "--allow-package-writes", "--allow-photo-edits", "--allow-export-writes", "--allow-report-writes", "--allow-kata-writes"}
+	want := []any{"mcp", "--transport", "stdio", "--allow-contract-writes", "--allow-export-writes", "--allow-kata-writes", "--allow-package-writes", "--allow-photo-edits", "--allow-processing", "--allow-report-writes"}
 	for _, test := range []struct {
 		client string
 		flags  []string
