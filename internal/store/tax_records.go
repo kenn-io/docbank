@@ -149,7 +149,7 @@ func taxRecordValues(in TaxRecordInput, old *TaxRecord, account *TaxAccount) (ta
 	return taxrecord.NormalizeRecord(v)
 }
 func taxRecordMatchesAccount(v taxrecord.RecordValues, a TaxAccount) bool {
-	return v.FilerPartyID == a.FilerPartyID && sameString(v.AuthorityPartyID, a.AuthorityPartyID) && v.Country == a.Country && v.Subdivision == a.Subdivision && v.TaxKind == a.TaxKind
+	return v.FilerPartyID == a.FilerPartyID && equalOptionalStrings(v.AuthorityPartyID, a.AuthorityPartyID) && v.Country == a.Country && v.Subdivision == a.Subdivision && v.TaxKind == a.TaxKind
 }
 func (s *Store) taxRecordWriteError(err error) error {
 	if err != nil && s.isUniqueViolation(err) {
@@ -212,14 +212,14 @@ func (s *Store) UpdateTaxRecord(ctx context.Context, id string, revision int64, 
 		if r.RetiredAt != nil {
 			return ErrTaxRetired
 		}
-		if !sameString(in.AccountID, r.AccountID) || in.Kind != r.Kind {
+		if !equalOptionalStrings(in.AccountID, r.AccountID) || in.Kind != r.Kind {
 			return fmt.Errorf("%w: record binding and kind are immutable", taxrecord.ErrInvalid)
 		}
 		v, err := taxRecordValues(in, &r, nil)
 		if err != nil {
 			return err
 		}
-		if r.AccountID != nil && (v.FilerPartyID != r.FilerPartyID || !sameString(v.AuthorityPartyID, r.AuthorityPartyID) || v.Country != r.Country || v.Subdivision != r.Subdivision || v.TaxKind != r.TaxKind) {
+		if r.AccountID != nil && (v.FilerPartyID != r.FilerPartyID || !equalOptionalStrings(v.AuthorityPartyID, r.AuthorityPartyID) || v.Country != r.Country || v.Subdivision != r.Subdivision || v.TaxKind != r.TaxKind) {
 			return fmt.Errorf("%w: account identity is immutable", taxrecord.ErrInvalid)
 		}
 		if err := checkTaxParties(ctx, tx, v.FilerPartyID, v.AuthorityPartyID, r.FilerPartyID, r.AuthorityPartyID); err != nil {

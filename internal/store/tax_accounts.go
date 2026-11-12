@@ -87,11 +87,7 @@ func (s *Store) GetTaxAccount(ctx context.Context, id string) (TaxAccount, error
 
 // taxInsert and taxUpdate use only compile-time table and column names supplied by their callers.
 func taxInsert(ctx context.Context, tx *sql.Tx, table, columns string, args []any) error {
-	markers := make([]string, len(args))
-	for i := range markers {
-		markers[i] = fmt.Sprintf("$%d", i+1)
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO `+table+` (`+columns+`) VALUES (`+strings.Join(markers, ",")+`)`, args...)
+	_, err := tx.ExecContext(ctx, `INSERT INTO `+table+` (`+columns+`) VALUES (`+numberedPlaceholders(len(args), 0)+`)`, args...)
 	return err
 }
 func taxUpdate(ctx context.Context, tx *sql.Tx, table, columns string, args []any, revision int64) error {
@@ -114,7 +110,6 @@ func taxUpdate(ctx context.Context, tx *sql.Tx, table, columns string, args []an
 	}
 	return nil
 }
-func sameString(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 func checkTaxParty(ctx context.Context, tx *sql.Tx, id string, filer bool) error {
 	field := "authority_party_id"
 	if filer {
@@ -144,7 +139,7 @@ func checkTaxParties(ctx context.Context, tx *sql.Tx, filer string, authority *s
 			return err
 		}
 	}
-	if authority != nil && !sameString(authority, oldAuthority) {
+	if authority != nil && !equalOptionalStrings(authority, oldAuthority) {
 		if err := checkTaxParty(ctx, tx, *authority, false); err != nil {
 			return err
 		}
@@ -205,7 +200,7 @@ func (s *Store) UpdateTaxAccount(ctx context.Context, id string, revision int64,
 		if err != nil {
 			return err
 		}
-		if v.FilerPartyID != a.FilerPartyID || !sameString(v.AuthorityPartyID, a.AuthorityPartyID) || v.Country != a.Country || v.Subdivision != a.Subdivision || v.TaxKind != a.TaxKind {
+		if v.FilerPartyID != a.FilerPartyID || !equalOptionalStrings(v.AuthorityPartyID, a.AuthorityPartyID) || v.Country != a.Country || v.Subdivision != a.Subdivision || v.TaxKind != a.TaxKind {
 			return fmt.Errorf("%w: account identity is immutable", taxrecord.ErrInvalid)
 		}
 		a.AccountValues = v
