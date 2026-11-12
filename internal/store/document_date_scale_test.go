@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,23 +29,31 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 		}
 		statements := []string{
 			`INSERT INTO document_event_generations (generation_id,content_version_id,contract_version,deriver_fingerprint,inputs_sha256,document_kind,canonical_json,checksum,event_count,created_at)
-			 SELECT cv.version_id,cv.version_id,'document-events/v1','synthetic','synthetic','other',X'7B7D','synthetic',1,'2026-01-01T00:00:00Z' FROM content_versions cv`,
+			 SELECT cv.version_id,cv.version_id,'document-events/v1','` + DocumentEventsDeriverFingerprint + `','synthetic','other',X'7B7D','synthetic',1,'2026-01-01T00:00:00Z' FROM content_versions cv`,
 			`INSERT INTO document_event_heads (content_version_id,generation_id,input_epoch,published_at)
 			 SELECT content_version_id,generation_id,1,'2026-01-01T00:00:00Z' FROM document_event_generations`,
 			`INSERT INTO document_events (generation_id,event_id,source_key,date_kind,source_kind_raw,date_value,raw_value,precision,fraction_digits,timezone_kind,zone_text,axis_key,utc_key,claim_basis,parse_confidence,evidence_kind,evidence_id,evidence_sha256,evidence_locator,sensitive)
 			 SELECT cv.version_id,'event','source','created','created',
-			 date('2026-01-01',printf('+%d days',n.id%365))||CASE WHEN n.id%3=2 THEN '' ELSE 'T12:00:00' END, 'synthetic',
-			 CASE WHEN n.id%3=2 THEN 'date' ELSE 'second' END,0,
-			 CASE WHEN n.id%3=0 THEN 'utc' ELSE 'omitted' END,'',
-			 date('2026-01-01',printf('+%d days',n.id%365))||'T12:00:00.000000000',
-			 CASE WHEN n.id%3=0 THEN date('2026-01-01',printf('+%d days',n.id%365))||'T12:00:00.000000000Z' END,
+			 CASE n.id%5 WHEN 3 THEN substr(date('2025-01-01',printf('+%d days',(n.id/5)%730)),1,7) WHEN 4 THEN substr(date('2025-01-01',printf('+%d days',(n.id/5)%730)),1,4) ELSE date('2025-01-01',printf('+%d days',(n.id/5)%730))||CASE WHEN n.id%5=2 THEN '' ELSE 'T12:00:00' END END, 'synthetic',
+			 CASE n.id%5 WHEN 2 THEN 'date' WHEN 3 THEN 'month' WHEN 4 THEN 'year' ELSE 'second' END,0,
+			 CASE WHEN n.id%5=0 THEN 'utc' ELSE 'omitted' END,'',
+			 CASE n.id%5 WHEN 4 THEN substr(date('2025-01-01',printf('+%d days',(n.id/5)%730)),1,4)||'-01-01T00:00:00.000000000'
+                 WHEN 3 THEN substr(date('2025-01-01',printf('+%d days',(n.id/5)%730)),1,7)||'-01T00:00:00.000000000'
+                 WHEN 2 THEN date('2025-01-01',printf('+%d days',(n.id/5)%730))||'T00:00:00.000000000'
+                 ELSE date('2025-01-01',printf('+%d days',(n.id/5)%730))||'T12:00:00.000000000' END,
+			 CASE WHEN n.id%5=0 THEN date('2025-01-01',printf('+%d days',(n.id/5)%730))||'T12:00:00.000000000Z' END,
 			 'source_asserted','exact','source_metadata','synthetic','synthetic',X'7B7D',0
 			 FROM content_versions cv JOIN nodes n ON n.id=cv.node_id`,
 			`INSERT INTO document_date_keys (generation_id,event_id,content_version_id,date_kind,precision,floating,utc_key,axis_key,civil_date,civil_end_date,civil_month,civil_year,sensitive,primary_safe,primary_full)
 			 SELECT e.generation_id,e.event_id,e.generation_id,e.date_kind,e.precision,
-			 CASE WHEN e.utc_key IS NULL THEN 1 ELSE 0 END,e.utc_key,e.axis_key,substr(e.date_value,1,10),substr(e.date_value,1,10),
-			 substr(e.date_value,1,7),substr(e.date_value,1,4),0,1,1 FROM document_events e`,
+			 CASE WHEN e.utc_key IS NULL AND e.precision='second' THEN 1 ELSE 0 END,e.utc_key,e.axis_key,
+             CASE WHEN e.precision IN ('year','month') THEN '' ELSE substr(e.date_value,1,10) END,
+             CASE WHEN e.precision IN ('year','month') THEN '' ELSE substr(e.date_value,1,10) END,
+             CASE WHEN e.precision='year' THEN '' ELSE substr(e.date_value,1,7) END,substr(e.date_value,1,4),0,1,1 FROM document_events e`,
 		}
+		statements = append(statements,
+			`INSERT INTO document_event_state (singleton,contract_version,deriver_fingerprint,input_epoch,publication_epoch,updated_at) VALUES (1,'document-events/v1','`+DocumentEventsDeriverFingerprint+`',1,1,'2026-01-01T00:00:00Z') ON CONFLICT (singleton) DO NOTHING`,
+			`INSERT INTO document_event_attempts (content_version_id,input_epoch,input_revision,inputs_sha256,state,diagnostic_json,attempted_at) SELECT content_version_id,1,0,'synthetic','indexed',X'7B7D','2026-01-01T00:00:00Z' FROM document_event_generations`)
 		for _, statement := range statements {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return err
@@ -55,26 +64,32 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 	var versions int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_versions`).Scan(&versions))
 	require.Equal(t, 100000, versions)
+	var currentFiles int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.kind='file'`).Scan(&currentFiles))
+	require.Equal(t, 100000, currentFiles)
 
-	for _, tc := range []struct{ name, keyIndex, keyPredicate, eventPredicate string }{
-		{"exact", "document_date_keys_utc", `k.utc_key>='2026-03-01T00:00:00.000000000Z' AND k.utc_key<'2026-03-02T00:00:00.000000000Z'`, `e.utc_key>='2026-03-01T00:00:00.000000000Z' AND e.utc_key<'2026-03-02T00:00:00.000000000Z'`},
-		{"floating", "document_date_keys_civil", `k.civil_date='2026-03-01' AND k.utc_key IS NULL AND k.precision='second'`, `substr(e.date_value,1,10)='2026-03-01' AND e.utc_key IS NULL AND e.precision='second'`},
-		{"civil", "document_date_keys_civil", `k.civil_date='2026-03-01' AND k.precision='date'`, `e.date_value='2026-03-01' AND e.precision='date'`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			keySQL := `SELECT n.id FROM document_date_keys k INDEXED BY ` + tc.keyIndex + ` JOIN document_event_heads h ON h.generation_id=k.generation_id JOIN content_versions cv ON cv.version_id=h.content_version_id JOIN nodes n ON n.current_version_id=cv.version_id WHERE ` + tc.keyPredicate + ` ORDER BY n.id`
-			eventSQL := `SELECT n.id FROM document_events e JOIN document_event_heads h ON h.generation_id=e.generation_id JOIN content_versions cv ON cv.version_id=h.content_version_id JOIN nodes n ON n.current_version_id=cv.version_id WHERE ` + tc.eventPredicate + ` ORDER BY n.id`
-			keys := measureDateLookup(t, ctx, s.db, "date_keys", keySQL)
-			events := measureDateLookup(t, ctx, s.db, "document_events", eventSQL)
-			require.NotEmpty(t, keys)
-			require.Equal(t, events, keys)
-		})
-	}
+	part, err := (queryCompiler{dateZone: "UTC"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2026-03-01", "2026-03-01"}}})
+	require.NoError(t, err)
+	from := ` FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.kind='file' AND `
+	sortKey := documentDateSortExpression(false)
+	keySQL := `SELECT n.id` + from + part.sql + ` ORDER BY ` + sortKey + `, n.id`
+	// This baseline uses retained event columns, without the derived key indexes.
+	// The synthetic corpus has one primary event per file and no multi-day ranges.
+	baseline := `EXISTS (SELECT 1 FROM document_events e JOIN document_event_heads h ON h.generation_id=e.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND e.sensitive=0 AND ((e.utc_key IS NOT NULL AND e.utc_key>=? AND e.utc_key<?) OR (e.utc_key IS NULL AND e.precision NOT IN ('year','month') AND substr(e.date_value,1,10)<=? AND substr(e.date_value,1,10)>=?) OR (e.precision='month' AND substr(e.date_value,1,7)>=? AND substr(e.date_value,1,7)<=?) OR (e.precision='year' AND substr(e.date_value,1,4)>=? AND substr(e.date_value,1,4)<=?)))`
+	baselineSort := strings.Replace(sortKey, "document_date_keys k", "document_events k", 1)
+	baselineSort = strings.Replace(baselineSort, "k.primary_safe=1 AND ", "", 1)
+	eventSQL := `SELECT n.id` + from + baseline + ` ORDER BY ` + baselineSort + `, n.id`
+	keys := measureDateLookup(t, ctx, s.db, "date_keys", keySQL, part.args...)
+	events := measureDateLookup(t, ctx, s.db, "document_events", eventSQL, part.args...)
+	require.NotEmpty(t, keys)
+	require.Less(t, len(keys), versions)
+	require.Equal(t, events, keys)
+
 }
 
-func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, statement string) []int64 {
+func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, statement string, args ...any) []int64 {
 	t.Helper()
-	plan, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN `+statement)
+	plan, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN `+statement, args...)
 	require.NoError(t, err)
 	for plan.Next() {
 		var id, parent, unused int
@@ -85,7 +100,7 @@ func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, sta
 	require.NoError(t, plan.Err())
 	require.NoError(t, plan.Close())
 	start := time.Now()
-	rows, err := db.QueryContext(ctx, statement)
+	rows, err := db.QueryContext(ctx, statement, args...)
 	require.NoError(t, err)
 	var ids []int64
 	for rows.Next() {

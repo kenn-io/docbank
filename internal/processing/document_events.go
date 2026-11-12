@@ -147,7 +147,7 @@ func metadataAdapter(input DocumentEventInput) (
 			}
 			event.DateKind = kind
 			event.SourceKey = sourceKey
-			if document.CalendarDateSide(field.Key) != "" {
+			if document.CalendarDateSide(field.Key) != "" || strings.HasPrefix(field.Key, "calendar.start") || strings.HasPrefix(field.Key, "calendar.end") {
 				event.SourceKindRaw = field.SourceField
 			}
 			event.ClaimBasis = "source_asserted"

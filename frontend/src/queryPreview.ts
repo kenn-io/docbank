@@ -58,7 +58,20 @@ export async function previewQuery(
   }
 
   const rawQuery = object(receipt.query, "query");
-  requireKeys(rawQuery, ["v", "text", "syntax", "mode", "filters", "sort", ...(Object.hasOwn(rawQuery, "timezone") ? ["timezone"] : []), ...(Object.hasOwn(rawQuery, "timezone_defaulted") ? ["timezone_defaulted"] : [])], "query");
+  requireKeys(
+    rawQuery,
+    [
+      "v",
+      "text",
+      "syntax",
+      "mode",
+      "filters",
+      "sort",
+      ...(Object.hasOwn(rawQuery, "timezone") ? ["timezone"] : []),
+      ...(Object.hasOwn(rawQuery, "timezone_defaulted") ? ["timezone_defaulted"] : []),
+    ],
+    "query",
+  );
   object(rawQuery.filters, "query.filters");
   const rawSort = object(rawQuery.sort, "query.sort");
   requireKeys(rawSort, ["field", "direction"], "query.sort");

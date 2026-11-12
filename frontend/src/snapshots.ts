@@ -510,7 +510,14 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   }
   if (
     expectedQuery !== undefined &&
-    canonicalQuery(decodedQuery) !== canonicalQuery({ ...expectedQuery, ...(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined ? { timezone: decodedQuery.timezone } : {}), timezone_defaulted: decodedQuery.timezone_defaulted })
+    canonicalQuery(decodedQuery) !==
+      canonicalQuery({
+        ...expectedQuery,
+        ...(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined
+          ? { timezone: decodedQuery.timezone }
+          : {}),
+        timezone_defaulted: decodedQuery.timezone_defaulted,
+      })
   ) {
     malformed("query does not match the request");
   }
@@ -631,7 +638,8 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
     malformed("receipt.$schema is invalid");
-  if (typeof raw.timezone_defaulted !== "boolean") malformed("timezone_defaulted must be a boolean");
+  if (typeof raw.timezone_defaulted !== "boolean")
+    malformed("timezone_defaulted must be a boolean");
   const timezone = optionalString(raw.timezone, "timezone");
   const evidence = parseQueryEvidence(raw, expectedQuery);
   const decodedQuery = evidence.query;

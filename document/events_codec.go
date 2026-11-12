@@ -178,8 +178,9 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 		if event.TimezoneKind == "iana" {
 			// Retained gap resolutions are validated without consulting changing tzdata.
 			civil, err := eventCivil(event.DateValue, event.Precision)
-			at, parseErr := time.Parse("2006-01-02T15:04:05.000000000Z", event.UTCKey)
-			if event.Precision == "date" || event.Precision == "month" || event.Precision == "year" || err != nil || parseErr != nil || event.OffsetSeconds == nil || *event.OffsetSeconds < -86399 || *event.OffsetSeconds > 86399 || !strings.Contains(event.ZoneText, "/") || event.AxisKey != strings.TrimSuffix(event.UTCKey, "Z") || at.Format("2006-01-02T15:04:05.000000000Z") != event.UTCKey {
+			at, parseErr := time.Parse(time.RFC3339Nano, event.UTCKey)
+			canonicalUTC, keyErr := EventInstantUTCKey(at)
+			if event.Precision == "date" || event.Precision == "month" || event.Precision == "year" || err != nil || parseErr != nil || event.OffsetSeconds == nil || *event.OffsetSeconds < -86399 || *event.OffsetSeconds > 86399 || !strings.Contains(event.ZoneText, "/") || event.AxisKey != strings.TrimSuffix(event.UTCKey, "Z") || keyErr != nil || canonicalUTC != event.UTCKey {
 				return fmt.Errorf("document event %d has invalid IANA key", index)
 			}
 			wall := at.Add(time.Duration(*event.OffsetSeconds) * time.Second)

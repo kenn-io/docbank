@@ -88,6 +88,12 @@ func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 	require.Equal(t, "America/Toronto", compiled.Timezone)
 	require.True(t, compiled.TimezoneDefaulted)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	page, err := service.Create(ctx, "owner", SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Equal(t, "America/Toronto", page.Timezone)
+	require.True(t, page.TimezoneDefaulted)
 	for _, tc := range []struct {
 		zone, day string
 		matches   bool
@@ -171,6 +177,10 @@ func TestDocumentDateAllDayEventMatchesSecondDay(t *testing.T) {
 	require.NoError(t, err)
 	compiled := compileFixtureQuery(t, s, "date:2026-03-10 date_precision:day", query.Filters{})
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	compiled = compileFixtureQuery(t, s, "date_kind:ended date:2026-03-10", query.Filters{})
+	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	compiled = compileFixtureQuery(t, s, "date_kind:ended date:2026-03-11", query.Filters{})
+	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
 func TestDocumentDateDisclosureUsesFullPrimary(t *testing.T) {
@@ -213,4 +223,38 @@ func TestDocumentDateSnapshotWaitsForIndex(t *testing.T) {
 	driveDocumentEventWorker(t, s)
 	_, err = service.Create(t.Context(), "owner", SnapshotRequest{Query: value})
 	require.NoError(t, err)
+}
+
+func TestNonDateSnapshotDoesNotReportDefaultedTimezone(t *testing.T) {
+	s := newTestStore(t)
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	page, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
+	require.NoError(t, err)
+	require.Empty(t, page.Timezone)
+	require.False(t, page.TimezoneDefaulted)
+}
+
+func TestFailedRebuildHidesOldDateFromSearchAndSort(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "stale.txt", fakeHash("f1"), 1, "text/plain")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "f2")
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	_, err = s.StartDocumentEventRebuild(ctx, "90000000-0000-4000-8000-000000000015", fakeHash("f3"))
+	require.NoError(t, err)
+	target = requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, requireDocumentEventInputsSHA256(t, s, target), "failed", []byte(`[]`)))
+	service := NewQuerySnapshotService(s)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	page, err := service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"date:2019-03-04"}`)})
+	require.NoError(t, err)
+	require.Empty(t, page.Rows)
+	page, err = service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"document_date"}}`)})
+	require.NoError(t, err)
+	require.Len(t, page.Rows, 1)
+	require.Empty(t, page.Rows[0].SortKey)
 }

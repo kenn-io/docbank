@@ -63,6 +63,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, queryInputError(err)
 		}
+		submitted := value
 		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
@@ -78,7 +79,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			}
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query")
 		}
-		canonical, fingerprint, err := query.CanonicalWithFingerprint(value)
+		canonical, fingerprint, err := query.CanonicalWithFingerprint(submitted)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not encode query")
 		}

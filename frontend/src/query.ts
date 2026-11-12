@@ -1,3 +1,4 @@
+import { documentDateKinds } from "./generated/documentDateKinds.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import formatMetadata from "../../document/format_metadata.json";
@@ -208,7 +209,11 @@ export function parseQuery(raw: string): Query {
   preflightJSON(raw, true);
   const input: unknown = JSON.parse(raw);
   const object = requireObject(input, "query");
-  requireOnlyKeys(object, ["v", "text", "syntax", "mode", "filters", "sort", "timezone", "timezone_defaulted"], "query");
+  requireOnlyKeys(
+    object,
+    ["v", "text", "syntax", "mode", "filters", "sort", "timezone", "timezone_defaulted"],
+    "query",
+  );
 
   const filtersInput = object.filters === undefined ? {} : requireObject(object.filters, "filters");
   requireOnlyKeys(filtersInput, [...optionalFilterFields], "filters");
@@ -412,10 +417,26 @@ function parseDocumentDate(value: unknown): DocumentDateFilter {
     !date.startsWith("0000-") &&
     !Number.isNaN(Date.parse(date)) &&
     new Date(date).toISOString().slice(0, 10) === date;
-  if (!validDate(from) || !validDate(to) || from > to) throw new Error("document date range is invalid");
-  const kinds = normalizeSet(optionalStringArray(obj.kinds, "kinds"), 64, (v) => ["sent", "received", "document_date", "authored", "created", "modified", "captured", "started", "ended", "printed", "accessed", "produced", "exported", "imported", "observed", "vault_recorded"].includes(v), "kinds");
-  const precisions = normalizeSet(optionalStringArray(obj.precisions, "precisions"), 64, (v) => ["exact", "day", "coarse"].includes(v), "precisions") as DocumentDateFilter["precisions"];
-  return { from, ...(kinds?.length ? { kinds } : {}), ...(precisions?.length ? { precisions } : {}), to };
+  if (!validDate(from) || !validDate(to) || from > to)
+    throw new Error("document date range is invalid");
+  const kinds = normalizeSet(
+    optionalStringArray(obj.kinds, "kinds"),
+    64,
+    (v) => documentDateKinds.has(v),
+    "kinds",
+  );
+  const precisions = normalizeSet(
+    optionalStringArray(obj.precisions, "precisions"),
+    64,
+    (v) => ["exact", "day", "coarse"].includes(v),
+    "precisions",
+  ) as DocumentDateFilter["precisions"];
+  return {
+    from,
+    ...(kinds?.length ? { kinds } : {}),
+    ...(precisions?.length ? { precisions } : {}),
+    to,
+  };
 }
 
 function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
@@ -423,7 +444,8 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   const syntax = value.syntax;
   const mode = value.mode;
   const sort = value.sort;
-  if (value.timezone_defaulted && value.timezone === undefined) throw new Error("timezone_defaulted requires timezone");
+  if (value.timezone_defaulted && value.timezone === undefined)
+    throw new Error("timezone_defaulted requires timezone");
   if (v !== 1) throw new Error("query version must be 1");
   validateUnicode(value.text, "query text");
   if (scalarLength(value.text) > 8192) throw new Error("query text exceeds 8192 Unicode scalars");
@@ -463,7 +485,8 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
 
 function normalizeFilters(value: QueryFilters): QueryFilters {
   const result: QueryFilters = {
-    document_date: value.document_date === undefined ? undefined : parseDocumentDate(value.document_date),
+    document_date:
+      value.document_date === undefined ? undefined : parseDocumentDate(value.document_date),
     kinds: normalizeSet(
       value.kinds,
       64,

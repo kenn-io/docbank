@@ -10,6 +10,15 @@ import (
 	"go.kenn.io/kit/civiltime"
 )
 
+// documentDateSortExpression is shared by document and photo snapshot sorting.
+func documentDateSortExpression(fullDisclosure bool) string {
+	primary := "k.primary_safe=1 AND k.sensitive=0"
+	if fullDisclosure {
+		primary = "k.primary_full=1"
+	}
+	return `(SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND ` + primary + ` LIMIT 1)`
+}
+
 func datePrecisionGroup(values []string) [][]string {
 	if len(values) == 0 {
 		return nil
@@ -153,12 +162,19 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 			}
 			return compiledQueryFragment{}, dateErr
 		}
-		format := "2006-01-02T15:04:05.000000000Z"
+		startKey, err := document.EventInstantUTCKey(start)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		endKey, err := document.EventInstantUTCKey(end)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
 		predicates = append(predicates, `((k.utc_key IS NOT NULL AND k.utc_key>=? AND k.utc_key<?) OR
 			(k.utc_key IS NULL AND k.precision NOT IN ('year','month') AND k.civil_date<=? AND k.civil_end_date>=?) OR
 			(k.precision='month' AND k.civil_month>=? AND k.civil_month<=?) OR
 			(k.precision='year' AND k.civil_year>=? AND k.civil_year<=?))`)
-		args = append(args, start.UTC().Format(format), end.UTC().Format(format), r[1], r[0], r[0][:7], r[1][:7], r[0][:4], r[1][:4])
+		args = append(args, startKey, endKey, r[1], r[0], r[0][:7], r[1][:7], r[0][:4], r[1][:4])
 	}
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE ` + strings.Join(predicates, " AND ") + ")", args: args}, nil
 }

@@ -97,6 +97,8 @@ identities in the same transaction, so a stale worker cannot publish over
 changed evidence. Source metadata is decoded before the write transaction.
 Events, actors, and primary choices stay together in the canonical record.
 
+The source metadata extractor retains email `Received` headers as raw strings. It does not derive a received-date claim from them, so it does not classify those strings as dates. Email `Date` claims use the shared email zone classification, including invalid numeric offsets.
+
 The current recipe adds `iana` and `rfc5322` timezone kinds to
 `document-events/v1`. The version identifies the shape of this disposable
 projection; the recipe fingerprint identifies its derivation. The current

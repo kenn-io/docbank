@@ -70,7 +70,10 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 					_, offset := instant.Zone()
 					event.TimezoneKind = "iana"
 					event.OffsetSeconds = &offset
-					event.UTCKey = instant.UTC().Format("2006-01-02T15:04:05.000000000Z")
+					event.UTCKey, err = document.EventInstantUTCKey(instant)
+					if err != nil {
+						return document.DocumentEventV1{}, err
+					}
 					event.AxisKey = strings.TrimSuffix(event.UTCKey, "Z")
 				} else {
 					event.AxisKey, err = document.EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, nil)

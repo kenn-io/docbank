@@ -78,6 +78,17 @@ func EventUTCKey(
 	return civil.Format("2006-01-02T15:04:05.000000000Z"), true, nil
 }
 
+// EventInstantUTCKey renders an instant with the event contract's UTC key format.
+func EventInstantUTCKey(instant time.Time) (string, error) {
+	value := strings.TrimSuffix(instant.UTC().Format(time.RFC3339Nano), "Z")
+	precision := EventPrecision("second")
+	if strings.Contains(value, ".") {
+		precision = "fraction"
+	}
+	key, _, err := EventUTCKey(value, precision, "utc", nil)
+	return key, err
+}
+
 func EventAxisKey(
 	value string,
 	precision EventPrecision,

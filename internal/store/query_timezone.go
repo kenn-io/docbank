@@ -83,12 +83,10 @@ func requireDocumentDateIndex(ctx context.Context, q metadataQuerier) error {
 		LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
 		LEFT JOIN document_event_attempts a ON a.content_version_id=cv.version_id
 		LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
-		LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id
 		WHERE n.kind='file' AND NOT COALESCE(
 			a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0) AND
-			(a.state IN ('failed','unavailable') OR (a.state='indexed' AND h.input_epoch=a.input_epoch
-			 AND g.inputs_sha256=a.inputs_sha256 AND g.contract_version=$2 AND g.deriver_fingerprint=$3)), FALSE)
-	)`, state.InputEpoch, state.ContractVersion, state.DeriverFingerprint).Scan(&pending)
+			(a.state IN ('failed','unavailable') OR `+currentDocumentDateHead+`), FALSE)
+	)`, state.InputEpoch).Scan(&pending)
 	if err != nil {
 		return fmt.Errorf("checking document date index: %w", err)
 	}

@@ -42,7 +42,7 @@ The current extractor publishes these fields when the source contains them:
 | `office.core` | OOXML core and application properties | `title`, `creators`, `subject`, `description`, `keywords`, `language`, `created`, `modified`, `page_count`, `office.core.word_count` |
 | `office.custom` | OOXML custom properties | `office.custom.<normalized_name>` |
 | `email` | RFC 5322 messages | `email.from`, `.to`, `.cc`, `.bcc`, `.subject`, `.sent`, `.received`; `attachment_count` |
-| `calendar` | iCalendar | `title`, `description`, `creators`, `calendar.start`, `.end`, `.start.raw`, `.end.raw` |
+| `calendar` | iCalendar | `title`, `description`, `creators`, and per-event `calendar.event.eNNNNNN.start` / `.end` (with `.raw` for named zones) |
 | `media.id3` | ID3 tags | `title`, `creators`, `created`, `media.id3.album` |
 
 In this table, a leading dot adds the namespace prefix. For example,

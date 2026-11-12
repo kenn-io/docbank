@@ -256,6 +256,11 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			executionValue.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
+		// An explicit top-level zone belongs to this request. Nested saved
+		// scopes retain their own pinned zone and origin.
+		if options.SavedQuery == nil && request.Query.Timezone != nil {
+			executionValue.TimezoneDefaulted = false
+		}
 		compiler := queryCompiler{requireFreshDates: true, fullDisclosure: request.FullDisclosure, photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
 		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
 		if err != nil {
@@ -269,13 +274,6 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
 				return err
 			}
-		}
-		// A direct explicit zone is a current-request override for the receipt.
-		// Saved runs retain the origin frozen in their saved definition.
-		if options.SavedQuery == nil && request.Query.Timezone != nil {
-			compiled.TimezoneDefaulted = false
-		} else if compiled.Timezone == "" {
-			compiled.TimezoneDefaulted = false
 		}
 		resultQuery := compiled.Query
 		resultQuery.Mode = value.Mode
@@ -434,18 +432,14 @@ func materializeSnapshotRows(
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
 	dateSortColumn := `''`
 	photoColumns := `'','',NULL`
-	primaryPredicate := "k.primary_safe=1 AND k.sensitive=0"
-	if compiled.FullDisclosure {
-		primaryPredicate = "k.primary_full=1"
-	}
 	if !options.Photos && compiled.Query.Sort.Field == "document_date" {
-		photoColumns = `'',COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND ` + primaryPredicate + ` LIMIT 1),''),NULL`
+		photoColumns = `'',COALESCE(` + documentDateSortExpression(compiled.FullDisclosure) + `,''),NULL`
 	}
 	photoOrder := ""
 	if options.Photos {
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
 		if compiled.Query.Sort.Field == "document_date" {
-			dateSortColumn = `COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND ` + primaryPredicate + ` LIMIT 1),'')`
+			dateSortColumn = `COALESCE(` + documentDateSortExpression(compiled.FullDisclosure) + `,'')`
 		}
 		photoOrder = ` ORDER BY m.photo_position`
 	}

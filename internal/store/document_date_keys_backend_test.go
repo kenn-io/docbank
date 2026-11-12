@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,4 +34,33 @@ func checkDocumentDateKeysFollowGeneration(t *testing.T, open func(*testing.T) *
 	var count int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_date_keys WHERE generation_id=$1`, generation.GenerationID).Scan(&count))
 	require.Zero(t, count)
+}
+
+// A terminal rebuild failure may retain an old head, but no date consumer may use it.
+func checkDocumentDateFailedHeadIsNotVisible(t *testing.T, open func(*testing.T) *Store) {
+	s := open(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "dated.txt", fakeHash("b1"), 1, "text/plain")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "b2")
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	var visible int
+	read := func() {
+		t.Helper()
+		err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=$1 AND `+currentDocumentDateHead, node.CurrentVersionID).Scan(&visible)
+		require.NoError(t, err)
+	}
+	read()
+	require.Equal(t, 1, visible)
+	for i, state := range []string{"failed", "unavailable"} {
+		_, err = s.StartDocumentEventRebuild(ctx, fmt.Sprintf("90000000-0000-4000-8000-%012d", i+1), fakeHash(state))
+		require.NoError(t, err)
+		target = requireDocumentEventTarget(t, s, node.CurrentVersionID)
+		require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, requireDocumentEventInputsSHA256(t, s, target), state, []byte(`[]`)))
+		require.NoError(t, requireDocumentDateIndex(ctx, s.db))
+		read()
+		require.Zero(t, visible, state)
+	}
 }

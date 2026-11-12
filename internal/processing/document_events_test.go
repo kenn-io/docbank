@@ -64,6 +64,16 @@ func TestAdaptersPreserveDistinctF10CapturedClaimsAndCalendarComponents(t *testi
 	require.Equal(t, "DTSTART", calendar.SourceKindRaw)
 }
 
+func TestLegacyCalendarSourceKindRawUsesActualField(t *testing.T) {
+	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
+		timestampField("calendar.start", "calendar", "DTSTART", false, "2024-04-05", "20240405", "date", "omitted"),
+	})
+	input.Target.MIMEType = "text/calendar"
+	record, _, err := DeriveDocumentEvents(input)
+	require.NoError(t, err)
+	require.Equal(t, "DTSTART", requireEventKind(t, record.Events, "started").SourceKindRaw)
+}
+
 func TestAdaptersAnchorActorOnlyF10ClaimsToVaultRecorded(t *testing.T) {
 	t.Parallel()
 	ada := "Ada Lovelace"
@@ -571,5 +581,36 @@ func TestCalendarZoneGapAndOverlap(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, document.EventTimezoneKind("iana"), event.TimezoneKind)
 		require.Equal(t, tc.utc, event.UTCKey)
+	}
+}
+
+func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {
+	payload := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260309\r\nDTEND;VALUE=DATE:20260311\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260401\r\nDTEND;VALUE=DATE:20260403\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
+	require.NoError(t, err)
+	input := canonicalDocumentEventInput(t, metadata.Fields)
+	input.Target.MIMEType = "text/calendar"
+	record, _, err := DeriveDocumentEvents(input)
+	require.NoError(t, err)
+	keys, err := document.DateKeysFor(record.Events)
+	require.NoError(t, err)
+	found := map[string]document.DateKey{}
+	for i, event := range record.Events {
+		if event.DateKind == "started" || event.DateKind == "ended" {
+			require.NotEmpty(t, event.SourceKindRaw)
+			found[event.SourceKey] = keys[i]
+		}
+	}
+	require.Len(t, found, 4)
+	for source, key := range found {
+		if strings.Contains(source, "e000001.start") {
+			require.Equal(t, "2026-03-10", key.CivilEndDate)
+		}
+		if strings.Contains(source, "e000001.end") {
+			require.Equal(t, "2026-03-10", key.CivilDate)
+		}
+		if strings.Contains(source, "e000002.start") {
+			require.Equal(t, "2026-04-02", key.CivilEndDate)
+		}
 	}
 }
