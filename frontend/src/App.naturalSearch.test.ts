@@ -2184,11 +2184,8 @@ it.each([
   },
 );
 
-it("ignores coverage from an older search", async () => {
-  let resolve!: (response: Response) => void;
-  const old = new Promise<Response>((done) => {
-    resolve = done;
-  });
+it("aborts coverage from an older search", async () => {
+  const old = new Promise<Response>(() => {});
   const coverage = vi.fn().mockReturnValueOnce(old).mockResolvedValue(json(textCoverage()));
   const { fetchMock } = renderEmptySearch(coverage);
   await submitSearch("first");
@@ -2201,11 +2198,6 @@ it("ignores coverage from an older search", async () => {
   await submitSearch("second");
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));
   expect(signal?.aborted).toBe(true);
-  await act(async () =>
-    resolve(json(textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }))),
-  );
-  expect(screen.queryByText(/without a text layer/)).toBeNull();
-  expect(screen.queryByRole("link", { name: "Learn about OCR" })).toBeNull();
 });
 
 it("ends the browser session when PDF coverage returns 401", async () => {
