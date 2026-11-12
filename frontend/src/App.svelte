@@ -1984,7 +1984,9 @@
       .getLocalTextStatus({ session, signal: controller.signal })
       .then((status) => {
         if (controller.signal.aborted || session !== webSession) return;
-        updateLocalTextStatus(status);
+        localText.status = status;
+        if (!status.restart_required) localText.notice = "";
+        if (status.active || status.restart_required) localText.error = "";
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted || session !== webSession) return;
@@ -1992,12 +1994,6 @@
         else localText.readError = cause instanceof Error ? cause.message : String(cause);
       });
     return () => controller.abort();
-  }
-
-  function updateLocalTextStatus(status: NonNullable<typeof localText.status>): void {
-    localText.status = status;
-    if (!status.restart_required) localText.notice = "";
-    if (status.active || status.restart_required) localText.error = "";
   }
 
   // Clicking Turn on is the consent, so the reviewed plan is applied without another prompt.
@@ -2034,17 +2030,13 @@
       await generated.restartDaemon(undefined, { session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
       if (!mounted || webSession !== session) return;
-      if (cause instanceof APIError && cause.status === 401 && cause.code === "unauthorized")
-        return handleFailure(cause);
-      notice = restartFailureNotice(cause);
+      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
+      notice =
+        cause instanceof APIError && cause.code === "restart_failed"
+          ? `Docbank couldn't restart: ${cause.message}`
+          : "Docbank couldn't confirm the restart. It may still happen later.";
     }
     if (mounted && webSession === session) localText.notice = notice;
-  }
-
-  function restartFailureNotice(cause: unknown): string {
-    if (cause instanceof APIError && cause.status === 500 && cause.code === "restart_failed")
-      return `Docbank couldn't restart: ${cause.message}`;
-    return "Docbank couldn't confirm the restart. It may still happen later.";
   }
 
   async function loadRoot(): Promise<void> {

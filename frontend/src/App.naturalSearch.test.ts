@@ -334,27 +334,6 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.submit(input.closest("form")!);
 }
 
-it("prompts for sign-in when the restart request rejects the browser session", async () => {
-  searchWithMeaningOff({
-    status: () => ({ ...localSaved, restart_available: true }),
-    restart: async () =>
-      Response.json(
-        { code: "unauthorized", detail: "missing or invalid API key or browser session" },
-        { status: 401 },
-      ),
-  });
-  render(App);
-  const drawer = await openSearchByMeaningTab();
-  await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-  await fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-      name: "Restart",
-    }),
-  );
-  expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
-});
-
 it.each([
   [true, false],
   [true, true],
@@ -1311,21 +1290,32 @@ it("keeps the restart step after setup when the first re-read fails", async () =
   expect(within(drawer).getByText("Restart required")).toBeTruthy();
 });
 
-it.each(["reading status", "turning on"])(
+it.each(["reading status", "turning on", "restarting"])(
   "hands a rejected session to sign-in while %s",
   async (step) => {
     searchWithMeaningOff({
       status: () =>
         step === "reading status"
           ? new Response("{}", { status: 401 })
-          : localOff,
+          : step === "restarting"
+            ? { ...localSaved, restart_available: true }
+            : localOff,
       apply: () => Promise.resolve(new Response("{}", { status: 401 })),
+      restart: () => Promise.resolve(new Response("{}", { status: 401 })),
     });
     render(App);
     await submitSearch("notes");
     const drawer = await openSearchByMeaning();
     if (step === "turning on")
       await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
+    if (step === "restarting") {
+      await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart" }));
+      await fireEvent.click(
+        within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+          name: "Restart",
+        }),
+      );
+    }
     expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "System" })).toBeNull();
   },
@@ -2136,11 +2126,6 @@ it.each([
   [
     "proxy error",
     async () => new Response("Proxy error", { status: 500 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-  ],
-  [
-    "unverified authorization error",
-    async () => new Response(null, { status: 401 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
   [
