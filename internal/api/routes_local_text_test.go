@@ -125,19 +125,16 @@ func TestRestartDaemonBrowserSession(t *testing.T) {
 	response, body = do(t, tsUnavailable, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 	require.Contains(t, body, "press Ctrl+C and start Docbank again")
-}
 
-func TestRestartDaemonPublicOrigin(t *testing.T) {
-	t.Parallel()
-	var calls []bool
+	calls = nil
 	_, catalog := newTestServer(t, func(deps *api.Deps) {
 		deps.WebLoginEnabled = true
 		deps.Cfg.Web.PublicOrigin = signInOrigin
 		deps.RestartDaemon = func(_ context.Context, openTab bool) error { calls = append(calls, openTab); return nil }
 	})
 	status, cookie := loginBrowser(t, catalog.Server)
-	response := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
-	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	publicResponse := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
+	require.Equal(t, http.StatusAccepted, publicResponse.Code, publicResponse.Body.String())
 	require.Equal(t, []bool{false}, calls)
 	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, testWebURL+"api/daemon/web-session", nil)
 	issue.RemoteAddr = "127.0.0.1:1234"

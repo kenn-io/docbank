@@ -228,7 +228,9 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.False(t, discoverOptions(true).Accept(rec, info), "setup must replace daemons that create a separate local index")
 	rec.Metadata[metaProtocolVersion] = "122" // Before distinct unavailable-index search errors.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without unavailable-index search errors must be replaced")
-	rec.Metadata[metaProtocolVersion] = "127" // The previous daemon lacks browser restart.
+	rec.Metadata[metaProtocolVersion] = "126" // Before browser restart.
+	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without browser restart must be replaced")
+	rec.Metadata[metaProtocolVersion] = "127" // The current main daemon predates browser restart.
 	assert.False(t, discoverOptions(true).Accept(rec, info), "daemons without browser restart must be replaced")
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "an incompatible protocol must be replaced")

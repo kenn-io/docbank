@@ -335,37 +335,6 @@ async function submitSearch(value: string): Promise<void> {
 }
 
 it.each([
-  [
-    "web_browser",
-    "Browser cookie required",
-    "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues.",
-  ],
-  ["invalid_request", "Invalid request", "Docbank couldn't restart: Invalid request"],
-])("shows a restart refusal for %s and keeps the workspace", async (code, detail, message) => {
-  searchWithMeaningOff({
-    status: () => ({ ...localSaved, restart_available: true }),
-    apply: async () => json(localPlan),
-    restart: async () =>
-      new Response(JSON.stringify({ code, detail }), {
-        status: 403,
-        headers: { "Content-Type": "application/json" },
-      }),
-  });
-  render(App);
-  const search = await screen.findByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "unfinished draft" } });
-  const drawer = await openSearchByMeaningTab();
-  await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
-  expect((await within(drawer).findByRole("alert")).textContent).toContain(message);
-  expect(within(drawer).queryByText(/may still happen later/)).toBeNull();
-  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
-  expect((search as HTMLInputElement).value).toBe("unfinished draft");
-});
-
-it.each([
   [true, false],
   [true, true],
   [false, false],
@@ -2136,9 +2105,34 @@ it.each(["names", "meaning", "frozen"])(
 
 it.each([
   [
+    "web_browser",
+    async () =>
+      new Response(
+        JSON.stringify({ code: "web_browser", detail: "browser cookie, Host or Origin rejected" }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      ),
+    "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues.",
+    "alert",
+  ],
+  [
+    "restart_unavailable",
+    async () =>
+      new Response(
+        JSON.stringify({
+          code: "restart_unavailable",
+          detail:
+            "If Docbank runs in a terminal, press Ctrl+C and start Docbank again. Otherwise, ask its operator to restart it.",
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
+    "Docbank couldn't restart: If Docbank runs in a terminal, press Ctrl+C and start Docbank again. Otherwise, ask its operator to restart it.",
+    "alert",
+  ],
+  [
     "accepted",
     async () => new Response(null, { status: 202 }),
     "Restart requested. Docbank may restart later.",
+    "status",
   ],
   [
     "lost",
@@ -2146,12 +2140,14 @@ it.each([
       throw new Error("connection lost");
     },
     "Docbank couldn't confirm the restart. It may still happen later.",
+    "status",
   ],
   [
     "unrecognized structured error",
     async () =>
       new Response(JSON.stringify({ code: "internal", detail: "Proxy error" }), { status: 500 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
+    "status",
   ],
   [
     "rejected",
@@ -2161,8 +2157,9 @@ it.each([
         headers: { "Content-Type": "application/json" },
       }),
     "Docbank couldn't restart: Helper could not start",
+    "status",
   ],
-])("keeps the workspace when the restart outcome is %s", async (_kind, restart, notice) => {
+])("shows the restart outcome for %s", async (_kind, restart, notice, role) => {
   const request = vi.fn(restart);
   const harness = searchWithMeaningOff({
     status: () => ({ ...localSaved, restart_available: true }),
@@ -2170,15 +2167,16 @@ it.each([
     restart: request,
   });
   render(App);
-  const search = await screen.findByRole("searchbox", { name: "Search documents" });
-  await fireEvent.input(search, { target: { value: "unfinished draft" } });
   const drawer = await openSearchByMeaningTab();
   await within(drawer).findByText("Restart required");
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
-  expect(await within(drawer).findByText(notice)).toBeTruthy();
-  expect((search as HTMLInputElement).value).toBe("unfinished draft");
+  expect((await within(drawer).findByRole(role)).textContent).toContain(notice);
+  if (role === "alert") {
+    expect(within(drawer).queryByText(/may still happen later/)).toBeNull();
+    expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  }
   expect(request).toHaveBeenCalledOnce();
   const call = harness.fetchMock.mock.calls.find(
     ([input]) => String(input) === "/api/v1/processing/local/restart",

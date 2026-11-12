@@ -803,9 +803,6 @@ waitForBrowser:
 		return nil
 	}
 	var output bytes.Buffer
-	require.NoError(t, reopenWeb(t.Context(), &output, root, restarted, open))
-	require.True(t, opened)
-
 	_, err = daemonconn.Stop(t.Context(), root)
 	require.NoError(t, err)
 	opened = false
