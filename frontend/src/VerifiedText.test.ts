@@ -251,6 +251,6 @@ it.each([
   else if (state === "artifact_error") expect(screen.getByRole("alert")).toBeTruthy();
   else
     expect(
-      screen.queryByText("Processing verified that this document has no readable text."),
-    ).toBeNull();
+      screen.getByText("Processing verified that this document has no readable text."),
+    ).toBeTruthy();
 });

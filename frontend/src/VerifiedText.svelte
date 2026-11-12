@@ -302,7 +302,7 @@
     {#if onprocess}<div>
         <Button size="sm" surface="soft" onclick={onprocess}>Process…</Button>
       </div>{:else}<p class="setup">This version hasn't been processed.</p>{/if}
-  {:else if resolution && resolution.state !== "ready" && !(resolution.state === "verified_empty" && missingPages.length)}
+  {:else if resolution && resolution.state !== "ready"}
     <p class="notice" role="status">{stateMessage(resolution.state)}</p>
   {/if}
 </div>
