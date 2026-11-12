@@ -528,7 +528,9 @@ it.each(["pinned", "changed"])(
         {
           status: "remaining" as const,
           files: [{ relative_path: "a.JPG", size: 1 }],
-          ...(reason === "pinned" ? { hashes: ["b".repeat(64)] } : {}),
+          ...(reason === "pinned"
+            ? { hashes: ["3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d"] }
+            : {}),
         },
       ],
     };
@@ -537,7 +539,6 @@ it.each(["pinned", "changed"])(
         import_id: "saved",
         groups: [[0]],
         unsupported: [],
-        hashes: new Map([[file, "a".repeat(64)]]),
       }),
       registerPhotoImport: vi.fn().mockResolvedValue("saved"),
       listPhotoImports: vi.fn().mockResolvedValue([saved]),
