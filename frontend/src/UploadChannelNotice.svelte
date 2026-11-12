@@ -23,14 +23,16 @@
   role={retrying ? "status" : "alert"}
 >
   {#if retrying || state === "failed"}
-    <span class="message"
-      >{retrying
-        ? "The upload channel disconnected. Reconnecting…"
-        : "Docbank couldn't reconnect the upload channel. Run `docbank web` again if reconnecting fails."}</span
-    >
-    <!-- One button across retries keeps its width, place, and keyboard focus. -->
+    {#if state === "failed"}
+      <span class="message"
+        >Docbank couldn't reconnect the upload channel. Run `docbank web` again if reconnecting
+        fails.</span
+      >
+    {/if}
+    <!-- Keep the same button across retries to preserve keyboard focus. -->
     <Button
       {size}
+      class="reconnect"
       tone="info"
       surface="solid"
       busy={retrying}
@@ -54,6 +56,9 @@
   }
   .message {
     flex: 1;
+  }
+  .notice :global(.reconnect) {
+    margin-left: auto;
   }
   .error .message {
     color: var(--accent-red);
