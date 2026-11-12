@@ -44,6 +44,10 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 			 CASE WHEN n.id%5=0 THEN date('2025-01-01',printf('+%d days',(n.id/5)%730))||'T12:00:00.000000000Z' END,
 			 'source_asserted','exact','source_metadata','synthetic','synthetic',X'7B7D',0
 			 FROM content_versions cv JOIN nodes n ON n.id=cv.node_id`,
+			`INSERT INTO document_event_primaries (generation_id,scope_class,disclosure,event_id,rule_id,reason)
+    SELECT generation_id,'vault','safe',event_id,'primary-rule/v1','created_date' FROM document_events`,
+			`INSERT INTO document_event_primaries (generation_id,scope_class,disclosure,event_id,rule_id,reason)
+    SELECT generation_id,'vault','full',event_id,'primary-rule/v1','created_date' FROM document_events`,
 			`INSERT INTO document_date_keys (generation_id,event_id,content_version_id,date_kind,precision,floating,utc_key,axis_key,civil_date,civil_end_date,civil_month,civil_year,sensitive,primary_safe,primary_full)
 			 SELECT e.generation_id,e.event_id,e.generation_id,e.date_kind,e.precision,
 			 CASE WHEN e.utc_key IS NULL AND e.precision='second' THEN 1 ELSE 0 END,e.utc_key,e.axis_key,
@@ -77,7 +81,10 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 	// The synthetic corpus has one primary event per file and no multi-day ranges.
 	baseline := `EXISTS (SELECT 1 FROM document_events e JOIN document_event_heads h ON h.generation_id=e.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND e.sensitive=0 AND ((e.utc_key IS NOT NULL AND e.utc_key>=? AND e.utc_key<?) OR (e.utc_key IS NULL AND e.precision NOT IN ('year','month') AND substr(e.date_value,1,10)<=? AND substr(e.date_value,1,10)>=?) OR (e.precision='month' AND substr(e.date_value,1,7)>=? AND substr(e.date_value,1,7)<=?) OR (e.precision='year' AND substr(e.date_value,1,4)>=? AND substr(e.date_value,1,4)<=?)))`
 	baselineSort := strings.Replace(sortKey, "document_date_keys k", "document_events k", 1)
+	require.NotEqual(t, sortKey, baselineSort)
+	beforePrimaryRemoval := baselineSort
 	baselineSort = strings.Replace(baselineSort, "k.primary_safe=1 AND ", "", 1)
+	require.NotEqual(t, beforePrimaryRemoval, baselineSort)
 	eventSQL := `SELECT n.id` + from + baseline + ` ORDER BY ` + baselineSort + `, n.id`
 	keys := measureDateLookup(t, ctx, s.db, "date_keys", keySQL, part.args...)
 	events := measureDateLookup(t, ctx, s.db, "document_events", eventSQL, part.args...)
@@ -91,14 +98,22 @@ func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, sta
 	t.Helper()
 	plan, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN `+statement, args...)
 	require.NoError(t, err)
+	var details []string
 	for plan.Next() {
 		var id, parent, unused int
 		var detail string
 		require.NoError(t, plan.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
 		t.Logf("%s plan: %s", label, detail)
 	}
 	require.NoError(t, plan.Err())
 	require.NoError(t, plan.Close())
+	planText := strings.Join(details, " ")
+	if label == "date_keys" {
+		require.Contains(t, planText, "document_date_keys_")
+	} else {
+		require.NotContains(t, planText, "document_date_keys_")
+	}
 	start := time.Now()
 	rows, err := db.QueryContext(ctx, statement, args...)
 	require.NoError(t, err)

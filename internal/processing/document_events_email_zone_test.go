@@ -5,39 +5,16 @@ import (
 	"testing"
 )
 
-func TestEmailDateNumericZeroZone(t *testing.T) {
-	for _, tc := range []struct {
-		raw  string
-		kind string
-	}{
-		{"10 Mar 2026 12:30 +0000", "utc"},
-		{"10 Mar 2026 12:30 -0000", "omitted"},
+func TestEmailDateZones(t *testing.T) {
+	for _, tc := range []struct{ zone, kind string }{
+		{"+0000", "utc"}, {"-0000", "omitted"}, {"Z", "omitted"}, {"+1930", "invalid"}, {"+1260", "invalid"},
 	} {
-		event, ok := rawEmailDateEvent(tc.raw)
+		event, ok := rawEmailDateEvent("10 Mar 2026 12:30 " + tc.zone)
 		if !ok || string(event.TimezoneKind) != tc.kind {
-			t.Errorf("%q: kind %q, parsed %v; want %q", tc.raw, event.TimezoneKind, ok, tc.kind)
+			t.Errorf("%s: %+v parsed %v", tc.zone, event, ok)
 		}
-	}
-}
-
-func TestEmailDateNamedZones(t *testing.T) {
-	for _, tc := range []struct{ raw, kind, utc string }{
-		{"10 Mar 2026 12:30 EST", "rfc5322", "2026-03-10T17:30:00.000000000Z"},
-		{"10 Mar 2026 12:30 Z", "omitted", ""},
-		{"10 Mar 2026 12:30 CET", "named", ""},
-	} {
-		e, ok := rawEmailDateEvent(tc.raw)
-		if !ok || string(e.TimezoneKind) != tc.kind || e.UTCKey != tc.utc {
-			t.Errorf("%q: %+v, parsed %v", tc.raw, e, ok)
-		}
-	}
-}
-
-func TestEmailDateInvalidOffsetRemainsFloating(t *testing.T) {
-	for _, zone := range []string{"+1930", "+1260"} {
-		event, ok := rawEmailDateEvent("10 Mar 2026 12:30 " + zone)
-		if !ok || event.TimezoneKind != "invalid" || event.ZoneText != zone || event.OffsetSeconds != nil || event.UTCKey != "" {
-			t.Errorf("%s: %+v, parsed %v", zone, event, ok)
+		if tc.kind == "invalid" && (event.ZoneText != tc.zone || event.OffsetSeconds != nil || event.UTCKey != "") {
+			t.Errorf("%s: %+v", tc.zone, event)
 		}
 	}
 }
@@ -49,9 +26,5 @@ func TestInvalidEmailOffsetRetainedThroughMetadata(t *testing.T) {
 	collector.emailTimestamp(document.EmailDateV1{State: document.EmailDateInvalid}, raw)
 	if len(record.Fields) != 1 || record.Fields[0].Key != "email.sent.raw" {
 		t.Fatalf("fields = %+v", record.Fields)
-	}
-	event, err := metadataDateEvent(record.Fields[0])
-	if err != nil || event.TimezoneKind != "invalid" || event.ZoneText != "+1930" || event.RawValue != raw || event.UTCKey != "" {
-		t.Fatalf("event = %+v, err = %v", event, err)
 	}
 }

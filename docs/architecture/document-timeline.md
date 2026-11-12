@@ -204,7 +204,7 @@ copying old rebuild receipts. See [Backup and recovery](backup.md).
 `document_date_keys` is a derived projection written with each event
 generation. It stores the civil date, month and year alongside the existing
 axis and UTC keys. All-day starts use their sibling end to represent the
-inclusive span. A key is sensitive when its event or any actor is sensitive.
+inclusive span; an end claim keeps its own date. Flat legacy calendar fields pair only within their retained metadata generation. A key is sensitive when its event or any actor is sensitive.
 The current head selects the generation used for search. Backup metadata does
 not include these keys; the timeline rebuild derives them from retained
 sources after restore or upgrade.

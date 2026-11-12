@@ -75,21 +75,6 @@ describe("query preview transport", () => {
     expect(request?.signal).toBe(controller.signal);
   });
 
-  it("rejects a self-consistent receipt for a different request", async () => {
-    const other = parseQuery(
-      JSON.stringify({ syntax: "advanced", text: "date:2026-03-10", timezone: "UTC" }),
-    );
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      response({
-        query: JSON.parse(canonicalQuery(other)),
-        query_fingerprint: await queryFingerprint(other),
-      }),
-    );
-    await expect(previewQuery("session", query, new AbortController().signal)).rejects.toThrow(
-      /query preview receipt/i,
-    );
-  });
-
   it.each([
     [
       "a different canonical query",

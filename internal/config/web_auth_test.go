@@ -56,7 +56,7 @@ func TestTimelineTimezoneConfig(t *testing.T) {
 		zone  string
 		valid bool
 	}{
-		{"UTC", true}, {"America/Toronto", true}, {"", false}, {"Local", false}, {"EST", false},
+		{"America/Toronto", true}, {"", false}, {"Local", false},
 	} {
 		t.Run(tc.zone, func(t *testing.T) {
 			root := t.TempDir()

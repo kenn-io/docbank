@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/kit/civiltime"
 )
 
-// documentDateSortExpression is shared by document and photo snapshot sorting.
+// documentDateSortExpression selects the current primary date for Documents sorting.
 func documentDateSortExpression(fullDisclosure bool) string {
 	primary := "k.primary_safe=1 AND k.sensitive=0"
 	if fullDisclosure {
@@ -164,11 +164,11 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		}
 		startKey, err := document.EventInstantUTCKey(start)
 		if err != nil {
-			return compiledQueryFragment{}, err
+			return compiledQueryFragment{}, dateBoundaryError(err, scope, index)
 		}
 		endKey, err := document.EventInstantUTCKey(end)
 		if err != nil {
-			return compiledQueryFragment{}, err
+			return compiledQueryFragment{}, dateBoundaryError(err, scope, index)
 		}
 		predicates = append(predicates, `((k.utc_key IS NOT NULL AND k.utc_key>=? AND k.utc_key<?) OR
 			(k.utc_key IS NULL AND k.precision NOT IN ('year','month') AND k.civil_date<=? AND k.civil_end_date>=?) OR
@@ -177,4 +177,13 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		args = append(args, startKey, endKey, r[1], r[0], r[0][:7], r[1][:7], r[0][:4], r[1][:4])
 	}
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE ` + strings.Join(predicates, " AND ") + ")", args: args}, nil
+}
+
+func dateBoundaryError(err error, scope dateScope, index int) error {
+	dateErr := &query.DateError{Code: "invalid_date", Err: err}
+	if index < len(scope.rangePositions) && scope.rangePositions[index] != nil {
+		pos := scope.rangePositions[index]
+		return &query.ExpressionError{Offset: pos.Start, End: pos.End, Message: dateErr.Error(), Cause: dateErr}
+	}
+	return dateErr
 }

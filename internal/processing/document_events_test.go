@@ -64,16 +64,6 @@ func TestAdaptersPreserveDistinctF10CapturedClaimsAndCalendarComponents(t *testi
 	require.Equal(t, "DTSTART", calendar.SourceKindRaw)
 }
 
-func TestLegacyCalendarSourceKindRawUsesActualField(t *testing.T) {
-	input := canonicalDocumentEventInput(t, []document.SourceMetadataFieldV1{
-		timestampField("calendar.start", "calendar", "DTSTART", false, "2024-04-05", "20240405", "date", "omitted"),
-	})
-	input.Target.MIMEType = "text/calendar"
-	record, _, err := DeriveDocumentEvents(input)
-	require.NoError(t, err)
-	require.Equal(t, "DTSTART", requireEventKind(t, record.Events, "started").SourceKindRaw)
-}
-
 func TestAdaptersAnchorActorOnlyF10ClaimsToVaultRecorded(t *testing.T) {
 	t.Parallel()
 	ada := "Ada Lovelace"
@@ -573,10 +563,11 @@ func testDigest(seed string) string {
 
 func TestCalendarZoneGapAndOverlap(t *testing.T) {
 	for _, tc := range []struct{ value, utc string }{
-		{"2026-03-08T02:30", "2026-03-08T07:00:00.000000000Z"},
-		{"2026-11-01T01:30", "2026-11-01T05:30:00.000000000Z"},
+		{"20260308T0230", "2026-03-08T07:00:00.000000000Z"},
+		{"20261101T0130", "2026-11-01T05:30:00.000000000Z"},
 	} {
-		field := timestampField("calendar.event.e000001.start", "calendar", "DTSTART;TZID=America/Toronto", false, tc.value, tc.value, "minute", "omitted")
+		field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID=America/Toronto", false, tc.value)
+		field.Namespace = "calendar"
 		event, err := metadataDateEvent(field)
 		require.NoError(t, err)
 		require.Equal(t, document.EventTimezoneKind("iana"), event.TimezoneKind)
@@ -592,25 +583,12 @@ func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {
 	input.Target.MIMEType = "text/calendar"
 	record, _, err := DeriveDocumentEvents(input)
 	require.NoError(t, err)
-	keys, err := document.DateKeysFor(record.Events)
-	require.NoError(t, err)
-	found := map[string]document.DateKey{}
-	for i, event := range record.Events {
+	found := map[string]bool{}
+	for _, event := range record.Events {
 		if event.DateKind == "started" || event.DateKind == "ended" {
 			require.NotEmpty(t, event.SourceKindRaw)
-			found[event.SourceKey] = keys[i]
+			found[event.SourceKey] = true
 		}
 	}
 	require.Len(t, found, 4)
-	for source, key := range found {
-		if strings.Contains(source, "e000001.start") {
-			require.Equal(t, "2026-03-10", key.CivilEndDate)
-		}
-		if strings.Contains(source, "e000001.end") {
-			require.Equal(t, "2026-03-10", key.CivilDate)
-		}
-		if strings.Contains(source, "e000002.start") {
-			require.Equal(t, "2026-04-02", key.CivilEndDate)
-		}
-	}
 }

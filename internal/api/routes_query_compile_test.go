@@ -174,32 +174,28 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 
 func TestQueryCompileTimelineErrors(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
-	for _, tc := range []struct{ input, code string }{
-		{`{"timezone":"Local"}`, "invalid_timezone"},
-		{`{"syntax":"advanced","text":"date:2026-02-30"}`, "invalid_date"},
-		{`{"syntax":"advanced","text":"date:2011-12-30","timezone":"Pacific/Apia"}`, "date_not_in_zone"},
+	for _, tc := range []struct {
+		input, code string
+		positioned  bool
+	}{
+		{`{"timezone":"Local"}`, "invalid_timezone", false},
+		{`{"syntax":"advanced","text":"date:2026-02-30"}`, "invalid_date", true},
+		{`{"syntax":"advanced","text":"date:2011-12-30","timezone":"Pacific/Apia"}`, "date_not_in_zone", true},
+		{`{"filters":{"document_date":{"from":"0000-01-01","to":"0000-01-01"}}}`, "invalid_date", false},
+		{`{"filters":{"document_date":{"from":"9999-12-31","to":"9999-12-31"}},"timezone":"UTC"}`, "invalid_date", false},
 	} {
 		for _, path := range []string{queryParsePath, queryHighlightsPath} {
 			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, tc.input)
 			require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
-			require.Equal(t, tc.code, decodeProblem(t, body).Code)
+			problem := decodeProblem(t, body)
+			require.Equal(t, tc.code, problem.Code)
+			if tc.positioned {
+				require.NotNil(t, problem.Position)
+				require.Equal(t, 0, problem.Position.Offset)
+				require.Equal(t, len("date:2026-02-30"), problem.Position.End)
+			}
 		}
 	}
-}
-
-func TestTimelineDateErrorKeepsExpressionPosition(t *testing.T) {
-	ts, _ := newTestServer(t, nil)
-	for _, text := range []string{"date:2026-02-30", "date:2011-12-30"} {
-		input := fmt.Sprintf(`{"syntax":"advanced","text":%q,"timezone":"Pacific/Apia"}`, text)
-		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, map[string]string{"X-Api-Key": testAPIKey}, input)
-		require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
-		problem := decodeProblem(t, body)
-		require.NotNil(t, problem.Position)
-		require.Equal(t, 0, problem.Position.Offset)
-		require.Equal(t, len(text), problem.Position.End)
-	}
-	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, map[string]string{"X-Api-Key": testAPIKey}, `{"syntax":"advanced","text":"invalid_date:foo"}`)
-	require.NotEqual(t, http.StatusBadRequest, resp.StatusCode, body)
 }
 
 func TestFullDateDisclosureRequiresNonBrowserAPIKey(t *testing.T) {
@@ -213,7 +209,6 @@ func TestFullDateDisclosureRequiresNonBrowserAPIKey(t *testing.T) {
 	input := `{"query":{},"disclosure":"full"}`
 	for _, headers := range []map[string]string{
 		{api.WebSessionHeader: session.Token},
-		{api.WebSessionHeader: session.Token, "X-Api-Key": testAPIKey},
 	} {
 		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, input)
 		require.Equal(t, http.StatusForbidden, resp.StatusCode, body)

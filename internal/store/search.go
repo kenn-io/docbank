@@ -2641,7 +2641,7 @@ func (s *Store) withSearchOptionsTx(ctx context.Context, opts SearchOptions, fn 
 // photoSearchFragment compiles one photo query as lexical node membership.
 func photoSearchFragment(ctx context.Context, queryer rowQuerier, request PhotoBrowseRequest) (compiledQueryFragment, error) {
 	request.Query.Mode = querypkg.ModeLexical
-	compiled, err := (queryCompiler{requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
+	compiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: queryer})
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}

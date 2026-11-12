@@ -2138,10 +2138,10 @@ var backendSuites = []backendSuite{
 		}},
 		{"DocumentDateFailedHeadIsNotVisible", func(t *testing.T) {
 			t.Helper()
-			checkDocumentDateFailedHeadIsNotVisible(t, newTestStore)
+			checkDocumentDateFailedHeadIsNotVisible(t, newTestStore, false)
 		}, func(t *testing.T) {
 			t.Helper()
-			checkDocumentDateFailedHeadIsNotVisible(t, newPostgresQueryStore)
+			checkDocumentDateFailedHeadIsNotVisible(t, newPostgresQueryStore, true)
 		}},
 		{"DocumentDateKeysFollowGeneration", func(t *testing.T) {
 			t.Helper()

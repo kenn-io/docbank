@@ -102,7 +102,6 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 					var err error
 					if request.Kind == "query" && request.Query != nil {
 						value := *request.Query
-						value.TimezoneDefaulted = false
 						page, err = snapshots.Create(ctx, snapshotOwner, store.SnapshotRequest{Query: value})
 					} else {
 						// Source resolution already holds the operation gate below.

@@ -66,11 +66,7 @@ func pinSavedQueryTimezone(payload []byte, defaultZone string) ([]byte, error) {
 		return nil, err
 	}
 	if query.UsesDocumentDate(value) && value.Timezone == nil {
-		if defaultZone == "" {
-			defaultZone = "UTC"
-		}
 		value.Timezone = &defaultZone
-		value.TimezoneDefaulted = true
 		return query.Canonical(value)
 	}
 	return payload, nil
@@ -119,7 +115,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 		Body SavedQueryCreateRequest
 	}) (*savedQueryOutput, error) {
 		if in.Body.Kind == store.SavedQueryKindQuery {
-			payload, err := pinSavedQueryTimezone(in.Body.Payload, d.Cfg.Web.TimelineTimezone)
+			payload, err := pinSavedQueryTimezone(in.Body.Payload, store.QueryDefaultZone(ctx))
 			if err != nil {
 				if problem := dateQueryError(err); problem != nil {
 					return nil, problem
@@ -192,7 +188,7 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 				return nil, FromStoreError(err)
 			}
 			if saved.Kind == store.SavedQueryKindQuery {
-				payload, err = pinSavedQueryTimezone(payload, d.Cfg.Web.TimelineTimezone)
+				payload, err = pinSavedQueryTimezone(payload, store.QueryDefaultZone(ctx))
 				if err != nil {
 					if problem := dateQueryError(err); problem != nil {
 						return nil, problem
@@ -286,6 +282,9 @@ func registerSavedQueryRunRoute(
 				return nil, workspaceQueryError(err)
 			}
 			request.Query = value
+			if err := store.ValidatePhotoDocumentDates(value); err != nil {
+				return nil, workspaceQueryError(err)
+			}
 			value = photoRankingQuery(value)
 			if value.Mode != query.ModeLexical {
 				request.RankPhotos = func(buildCtx context.Context) (store.PhotoRanking, error) {

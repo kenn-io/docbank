@@ -64,7 +64,6 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			return nil, queryInputError(err)
 		}
 		submitted := value
-		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
 			if problem := dateQueryError(err); problem != nil {
@@ -102,7 +101,6 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, queryInputError(err)
 		}
-		value.TimezoneDefaulted = false // This request supplied a zone explicitly.
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
 			if problem := dateQueryError(err); problem != nil {
@@ -117,7 +115,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			}
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query highlights")
 		}
-		fingerprint, err := query.Fingerprint(compiled.Query)
+		fingerprint, err := query.Fingerprint(value)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not fingerprint query highlights")
 		}

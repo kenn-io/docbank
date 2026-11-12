@@ -231,7 +231,7 @@ func (s *Store) photoRejects(
 	if err != nil {
 		return PhotoRejectsPreflight{}, err
 	}
-	compiler := queryCompiler{requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}
+	compiler := queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}
 	compiled, err := compiler.compile(ctx, request.Query, queryResolver{q: q})
 	if err != nil {
 		return PhotoRejectsPreflight{}, err

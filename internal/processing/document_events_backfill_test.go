@@ -12,8 +12,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/emailmime"
-	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -657,63 +655,4 @@ func publishDocumentEventTestMetadata(
 		t.Context(), sourceSHA256, testDigest(extractorSeed), canonical,
 	)
 	require.NoError(t, err)
-}
-
-func TestSourceMetadataUpgradeRebuildsInvalidEmailDate(t *testing.T) {
-	ctx := t.Context()
-	catalog := openDocumentEventTestStore(t)
-	node, err := catalog.CreateFile(ctx, catalog.RootID(), "invalid.eml", testDigest("invalid-email"), 1, "message/rfc822")
-	require.NoError(t, err)
-	oldDescriptor := strings.Replace(sourceMetadataExtractorDescriptor, ":v23", ":v22", 1)
-	oldFingerprint := fingerprintSourceMetadataExtractor(oldDescriptor, emailmime.Recipe())
-	require.NotEqual(t, SourceMetadataExtractorFingerprint, oldFingerprint)
-	oldMetadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{}, Warnings: []document.SourceMetadataWarningV1{}})
-	require.NoError(t, err)
-	_, err = catalog.PublishSourceMetadata(ctx, node.BlobHash, oldFingerprint, oldMetadata)
-	require.NoError(t, err)
-	targets, err := catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 25)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	require.NoError(t, RebuildDocumentEvents(ctx, catalog))
-	before, err := catalog.DocumentEventsForVersion(ctx, node.CurrentVersionID)
-	require.NoError(t, err)
-	for _, event := range before.Events.Events {
-		require.NotEqual(t, document.DateKind("sent"), event.DateKind)
-	}
-	metadata, err := ExtractSourceMetadata(ctx, sourceMetadataTestSpool(t), []byte("From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04:05 +1930\r\n\r\nSynthetic body"))
-	require.NoError(t, err)
-	canonical, _, err := document.MarshalSourceMetadataV1(metadata)
-	require.NoError(t, err)
-	_, err = catalog.PublishSourceMetadata(ctx, node.BlobHash, SourceMetadataExtractorFingerprint, canonical)
-	require.NoError(t, err)
-	require.NoError(t, RebuildDocumentEvents(ctx, catalog))
-	after, err := catalog.DocumentEventsForVersion(ctx, node.CurrentVersionID)
-	require.NoError(t, err)
-	event := requireEventKind(t, after.Events.Events, "sent")
-	require.Equal(t, document.EventTimezoneKind("invalid"), event.TimezoneKind)
-	require.Empty(t, event.UTCKey)
-}
-
-func TestExtractedCalendarRebuildMatchesSecondDay(t *testing.T) {
-	ctx := t.Context()
-	catalog := openDocumentEventTestStore(t)
-	node, err := catalog.CreateFile(ctx, catalog.RootID(), "meeting.ics", testDigest("calendar-upgrade"), 1, "text/calendar")
-	require.NoError(t, err)
-	publishDocumentEventTestMetadata(t, catalog, node.BlobHash, "old-calendar-extractor", nil)
-	require.NoError(t, RebuildDocumentEvents(ctx, catalog))
-	metadata, err := ExtractSourceMetadata(ctx, sourceMetadataTestSpool(t), []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260309\r\nDTEND;VALUE=DATE:20260311\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"))
-	require.NoError(t, err)
-	canonical, _, err := document.MarshalSourceMetadataV1(metadata)
-	require.NoError(t, err)
-	_, err = catalog.PublishSourceMetadata(ctx, node.BlobHash, SourceMetadataExtractorFingerprint, canonical)
-	require.NoError(t, err)
-	require.NoError(t, RebuildDocumentEvents(ctx, catalog))
-	q, err := query.Parse([]byte(`{"syntax":"advanced","text":"date:2026-03-10"}`))
-	require.NoError(t, err)
-	service := store.NewQuerySnapshotService(catalog)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	page, err := service.Create(ctx, "owner", store.SnapshotRequest{Query: q})
-	require.NoError(t, err)
-	require.Len(t, page.Rows, 1)
-	require.Equal(t, node.ID, page.Rows[0].NodeID)
 }

@@ -944,7 +944,7 @@ rows, membership snapshot, or executable SQL are returned. The endpoint is
 available to authenticated API clients and browser sessions. Browser requests
 must use POST without query parameters.
 
-Date operands `date:`, `date_kind:`, and `date_precision:` and `filters.document_date` use the query timezone. Invalid zones return `400 invalid_timezone`; malformed dates return `400 invalid_date`, and a requested day absent in the zone returns `400 date_not_in_zone`. The parse receipt describes the submitted canonical query; execution receipts include the zone actually used and `timezone_defaulted` when dates are used.
+Documents date operands `date:`, `date_kind:`, and `date_precision:`, `filters.document_date`, and `document_date` sort are not supported in Photos; Photos returns `422 invalid_query`. Date filters use the query timezone. Invalid zones return `400 invalid_timezone`; malformed dates return `400 invalid_date`, and a requested day absent in the zone returns `400 date_not_in_zone`. Unrepresentable date boundaries return `400 invalid_date`. The parse receipt describes the submitted canonical query; execution receipts include the zone actually used and `timezone_defaulted` when dates are used.
 
 The compiler preserves expression scope and separate structured filters.
 Missing references, including negative tag and collection operands, fail with
@@ -1131,7 +1131,6 @@ QueryV1 stores these fields. Defaults apply when a field is omitted:
 | `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, `import_time`, `added_time`, or `document_date` | `name` |
 | `sort.direction` | `asc` or `desc` | `asc` |
 | `timezone` | `UTC` or a loadable IANA zone containing `/` | `[web] timeline_timezone` for date queries |
-| `timezone_defaulted` | Receipt metadata for a pinned query; true when its zone was defaulted | `false` |
 
 The `filters` object accepts the following saved choices. These are storage
 fields, not additional parameters for `GET /search`:

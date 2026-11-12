@@ -144,6 +144,18 @@ func TestPhotoBrowsePageSizeLimits(t *testing.T) {
 func TestPhotoBrowseRouteContract(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
+	for _, raw := range []string{
+		`{"query":{"mode":"semantic","text":"anything","sort":{"field":"document_date"}}}`,
+		`{"query":{"filters":{"document_date":{"from":"2026-03-01","to":"2026-03-02"}}}}`,
+		`{"query":{"syntax":"advanced","text":"date:2026-03-01"}}`,
+		`{"query":{"syntax":"advanced","text":"date_kind:created"}}`,
+		`{"query":{"syntax":"advanced","text":"date_precision:day"}}`,
+	} {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"X-Api-Key": testAPIKey}, raw)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		require.Equal(t, "invalid_query", decodeProblem(t, body).Code)
+	}
+
 	var qualityNode store.Node
 	for _, name := range []string{"a.jpg", "b.jpg", "c.mp4"} {
 		mime := "image/jpeg"

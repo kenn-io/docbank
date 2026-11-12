@@ -53,6 +53,17 @@ func TestPhotoBrowseReportsCompilerRelevanceAvailability(t *testing.T) {
 
 func TestCompilePhotoPredicates(t *testing.T) {
 	t.Parallel()
+	for _, raw := range []string{
+		`{"sort":{"field":"document_date"}}`,
+		`{"filters":{"document_date":{"from":"2026-03-01","to":"2026-03-02"}}}`,
+		`{"syntax":"advanced","text":"date:2026-03-01"}`,
+		`{"syntax":"advanced","text":"date_kind:created"}`,
+		`{"syntax":"advanced","text":"date_precision:day"}`,
+	} {
+		_, err := (queryCompiler{photos: true}).compile(t.Context(), snapshotTestQuery(t, raw), nil)
+		require.ErrorContains(t, err, "only supported in Documents")
+	}
+
 	for _, tc := range []struct{ typed, expression string }{
 		{`{"rating_min":3}`, `rating_min:3`}, {`{"rating_max":3}`, `rating_max:3`}, {`{"flags":["pick"]}`, `flag:pick`}, {`{"labels":["red"]}`, `label:red`}, {`{"flags":[""]}`, `flag:""`}, {`{"labels":[""]}`, `label:""`},
 		{`{"kinds":["photo"]}`, `kind:photo`}, {`{"cameras":["Camera A"]}`, `camera:"Camera A"`}, {`{"lenses":["Lens B"]}`, `lens:"Lens B"`}, {`{"locations":["Paris"]}`, `location:Paris`}, {`{"iso_min":0}`, `iso_min:0`}, {`{"iso_max":400}`, `iso_max:400`}, {`{"capture_after":"2024-01-01"}`, `capture_after:2024-01-01`}, {`{"capture_before":"2025-01-01"}`, `capture_before:2025-01-01`}, {`{"gps_bounds":{"south":"-1","west":"170","north":"1","east":"-170"}}`, `gps:"-1,170,1,-170"`}, {`{"asset_ids":["00000000-0000-4000-8000-000000000001"]}`, `asset:00000000-0000-4000-8000-000000000001`},

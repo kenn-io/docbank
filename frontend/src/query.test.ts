@@ -12,14 +12,6 @@ import {
 } from "./query.js";
 
 describe("query identity", () => {
-  it("round trips document date search and timezone", () => {
-    const value = parseQuery(
-      '{"timezone":"America/Toronto","sort":{"field":"document_date","direction":"desc"},"filters":{"document_date":{"from":"2026-03-01","to":"2026-03-31","kinds":["sent"],"precisions":["day"]}}}',
-    );
-    expect(parseQuery(canonicalQuery(value))).toEqual(value);
-    expect(canonicalQuery(value)).toContain('"timezone":"America/Toronto"');
-  });
-
   for (const vector of fixture.queries) {
     it(vector.name, async () => {
       const value = parseQuery(vector.input_json);

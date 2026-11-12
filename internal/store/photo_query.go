@@ -150,7 +150,7 @@ func (s *Store) ListPhotoAssets(
 				return err
 			}
 		}
-		compiled, err := (queryCompiler{requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
+		compiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
 			ctx, request.Query, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -245,7 +245,7 @@ func (s *Store) ListPhotoAssets(
 		if boundary == nil {
 			countScope := scope
 			if len(request.assetIDs) == 0 {
-				countCompiled, err := (queryCompiler{requireFreshDates: true, photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
+				countCompiled, err := (queryCompiler{photos: true, requireFreshDates: true, photoDisplayMetadata: true, photoMetadataSet: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
 				if err != nil {
 					return err
 				}

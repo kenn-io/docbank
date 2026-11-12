@@ -53,8 +53,9 @@ type CompiledQuery struct {
 	Timezone          string
 	TimezoneDefaulted bool
 	FullDisclosure    bool
-	Query             query.Query
-	Dependencies      []query.Dependency
+
+	Query        query.Query
+	Dependencies []query.Dependency
 
 	photoHidden       bool
 	withoutSuggestion bool
@@ -72,6 +73,7 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
+	photos               bool
 	fullDisclosure       bool
 	requireFreshDates    bool
 	dateZone             string
@@ -89,7 +91,12 @@ func (c queryCompiler) compile(
 	if err != nil {
 		return CompiledQuery{}, err
 	}
-	zone, defaulted := resolveDocumentDateZones(&resolved, queryDefaultZone(ctx))
+	if c.photos {
+		if err := validateResolvedPhotoDates(resolved); err != nil {
+			return CompiledQuery{}, err
+		}
+	}
+	zone, defaulted := resolveDocumentDateZones(&resolved, QueryDefaultZone(ctx))
 	if zone != "" && c.requireFreshDates {
 		if r, ok := resolver.(queryResolver); ok {
 			if q, ok := r.q.(metadataQuerier); ok {
@@ -699,4 +706,36 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {
 	return &query.ExpressionError{Offset: start, End: end, Message: message}
+}
+
+// ValidatePhotoDocumentDates rejects document-only vocabulary before ranking changes intent.
+func ValidatePhotoDocumentDates(value query.Query) error {
+	if query.UsesDocumentDate(value) {
+		return compileExpressionError(0, len(value.Text), "document dates are only supported in Documents")
+	}
+	return nil
+}
+
+func validateResolvedPhotoDates(resolved query.ResolvedQuery) error {
+	if err := ValidatePhotoDocumentDates(resolved.Query); err != nil {
+		return err
+	}
+	var visit func(*query.ResolvedExpression) error
+	visit = func(e *query.ResolvedExpression) error {
+		if e == nil {
+			return nil
+		}
+		if e.Saved != nil {
+			if err := validateResolvedPhotoDates(*e.Saved); err != nil {
+				return err
+			}
+		}
+		for _, child := range e.Children {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return visit(resolved.Expression)
 }

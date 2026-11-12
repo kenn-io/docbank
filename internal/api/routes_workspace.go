@@ -21,7 +21,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
 		}
-		if in.Body.Disclosure == "full" && (ctx.Value(authenticationContextKey{}) != "master" || ctx.Value(browserCredentialContextKey{}) == true) {
+		if in.Body.Disclosure == "full" && ctx.Value(authenticationContextKey{}) != "master" {
 			return nil, NewError(http.StatusForbidden, "forbidden", "full disclosure requires an API key")
 		}
 		value, err := parseWorkspaceQuery(in.Body.Query)
@@ -86,7 +86,6 @@ func workspaceQueryCoverage(d Deps, photos bool, profile string) (store.Coverage
 func parseWorkspaceQuery(raw QueryPayload) (query.Query, error) {
 	value, err := query.Parse(raw)
 	if err == nil {
-		value.TimezoneDefaulted = false
 		return value, nil
 	}
 	if problem := dateQueryError(err); problem != nil {

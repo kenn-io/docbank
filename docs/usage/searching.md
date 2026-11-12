@@ -627,11 +627,11 @@ all-day dates use their written civil dates. Month and year claims match any
 range they overlap. A multi-day all-day calendar event matches each of its
 days. An omitted zone uses `[web] timeline_timezone`, which defaults to UTC.
 The result echoes the zone and whether it was defaulted. Saved searches retain
-the zone used when saved. Browser sessions see only claims whose event and
+the zone used when saved; running one reports that pinned zone as explicit. These date filters and the document date sort are available in Documents. Photos rejects them. Browser sessions see only claims whose event and
 actors are not sensitive.
 
 Date search can return `document_dates_pending` while the timeline
-index is rebuilding; check timeline coverage and retry after indexing. An
+index is rebuilding; check timeline coverage and retry after indexing. Failed or unavailable derivations hide older date claims and do not establish that a document is undated. An
 API-key caller may request `"disclosure":"full"` when creating a workspace
 query to include sensitive date claims. Browser sessions always use safe
 disclosure.

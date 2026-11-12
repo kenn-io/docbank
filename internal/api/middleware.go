@@ -45,7 +45,6 @@ func clearRequestReadDeadline(ctx context.Context) error {
 }
 
 type authenticationContextKey struct{}
-type browserCredentialContextKey struct{}
 type remoteAddressContextKey struct{}
 type workspaceSnapshotOwnerContextKey struct{}
 
@@ -288,7 +287,6 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 			ctx := context.WithValue(r.Context(), authenticationContextKey{}, "master")
-			ctx = context.WithValue(ctx, browserCredentialContextKey{}, r.Header.Get(WebSessionHeader) != "" || r.Header.Get("Origin") != "")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, masterOwner)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return

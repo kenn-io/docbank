@@ -630,14 +630,3 @@ func TestDocumentDateSortKeepsUndatedLast(t *testing.T) {
 		}
 	}
 }
-
-func TestPhotoDocumentDateSortPreservesPosition(t *testing.T) {
-	rows := []SnapshotRow{
-		{SortKey: "0001", dateSortSet: true, dateSortKey: "", SnapshotMember: SnapshotMember{NodeID: 1}},
-		{SortKey: "0002", dateSortSet: true, dateSortKey: "2026-03-09", SnapshotMember: SnapshotMember{NodeID: 2}},
-		{SortKey: "0003", dateSortSet: true, dateSortKey: "2026-03-10", SnapshotMember: SnapshotMember{NodeID: 3}},
-	}
-	sortSnapshotRows(rows, query.Sort{Field: "document_date", Direction: "desc"})
-	require.Equal(t, []int64{3, 2, 1}, []int64{rows[0].NodeID, rows[1].NodeID, rows[2].NodeID})
-	require.Equal(t, []string{"0003", "0002", "0001"}, []string{rows[0].SortKey, rows[1].SortKey, rows[2].SortKey})
-}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -12,7 +13,6 @@ func checkDocumentDateKeysFollowGeneration(t *testing.T, open func(*testing.T) *
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "date-fixture.txt", fakeHash("a1"), 10, "text/plain")
 	require.NoError(t, err)
-	require.ErrorIs(t, requireDocumentDateIndex(ctx, s.db), ErrDocumentDatesPending)
 	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
 	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "d1")
 	record.Events[0].Actors[0].Sensitive = true
@@ -27,17 +27,17 @@ func checkDocumentDateKeysFollowGeneration(t *testing.T, open func(*testing.T) *
 	require.NoError(t, requireDocumentDateIndex(ctx, s.db))
 	_, err = s.db.ExecContext(ctx, `UPDATE document_date_keys SET sensitive=0 WHERE generation_id=$1`, generation.GenerationID)
 	require.Error(t, err)
-	_, err = s.db.ExecContext(ctx, `DELETE FROM document_event_heads WHERE generation_id=$1`, generation.GenerationID)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `DELETE FROM document_event_generations WHERE generation_id=$1`, generation.GenerationID)
-	require.NoError(t, err)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := s.invalidateDocumentEventsForVersionsTx(ctx, tx, []string{node.CurrentVersionID})
+		return err
+	}))
 	var count int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM document_date_keys WHERE generation_id=$1`, generation.GenerationID).Scan(&count))
 	require.Zero(t, count)
 }
 
 // A terminal rebuild failure may retain an old head, but no date consumer may use it.
-func checkDocumentDateFailedHeadIsNotVisible(t *testing.T, open func(*testing.T) *Store) {
+func checkDocumentDateFailedHeadIsNotVisible(t *testing.T, open func(*testing.T) *Store, postgres bool) {
 	s := open(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "dated.txt", fakeHash("b1"), 1, "text/plain")
@@ -62,5 +62,16 @@ func checkDocumentDateFailedHeadIsNotVisible(t *testing.T, open func(*testing.T)
 		require.NoError(t, requireDocumentDateIndex(ctx, s.db))
 		read()
 		require.Zero(t, visible, state)
+		if !postgres {
+			service := NewQuerySnapshotService(s)
+			page, err := service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"date:2019-03-04"}`)})
+			require.NoError(t, err)
+			require.Empty(t, page.Rows)
+			page, err = service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"document_date"}}`)})
+			require.NoError(t, err)
+			require.Len(t, page.Rows, 1)
+			require.Empty(t, page.Rows[0].SortKey)
+			require.NoError(t, service.Close())
+		}
 	}
 }

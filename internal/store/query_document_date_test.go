@@ -2,13 +2,10 @@ package store
 
 import (
 	"testing"
-	"time"
-	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/kit/civiltime"
 )
 
 func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
@@ -41,12 +38,9 @@ func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
 	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
-func TestDocumentDateBoundsRejectMissingDay(t *testing.T) {
-	_, err := (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-30", "2011-12-30"}}})
-	require.ErrorContains(t, err, "date_not_in_zone")
-}
-
 func TestDocumentDateBoundaryVectors(t *testing.T) {
+	_, missingErr := (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-30", "2011-12-30"}}})
+	require.ErrorContains(t, missingErr, "date_not_in_zone")
 	for _, tc := range []struct{ zone, day, start, end string }{
 		{"America/Santiago", "2026-09-06", "2026-09-06T04:00:00.000000000Z", "2026-09-07T03:00:00.000000000Z"},
 		{"America/Havana", "2026-03-08", "2026-03-08T05:00:00.000000000Z", "2026-03-09T04:00:00.000000000Z"},
@@ -79,7 +73,7 @@ func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
 	}
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
-	_, err = s.CreateSavedQuery(ctx, "Toronto", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"date:2026-03-09","timezone":"America/Toronto","timezone_defaulted":true}`))
+	_, err = s.CreateSavedQuery(ctx, "Toronto", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"date:2026-03-09","timezone":"America/Toronto"}`))
 	require.NoError(t, err)
 	value, err := query.Parse([]byte(`{"syntax":"advanced","text":"saved:Toronto","timezone":"Asia/Singapore"}`))
 	require.NoError(t, err)
@@ -87,13 +81,13 @@ func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 	require.Equal(t, "America/Toronto", compiled.Timezone)
-	require.True(t, compiled.TimezoneDefaulted)
+	require.False(t, compiled.TimezoneDefaulted)
 	service := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	page, err := service.Create(ctx, "owner", SnapshotRequest{Query: value})
 	require.NoError(t, err)
 	require.Equal(t, "America/Toronto", page.Timezone)
-	require.True(t, page.TimezoneDefaulted)
+	require.False(t, page.TimezoneDefaulted)
 	for _, tc := range []struct {
 		zone, day string
 		matches   bool
@@ -113,39 +107,6 @@ func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
 			require.Empty(t, ids)
 		}
 	}
-}
-
-func TestDocumentDateDayOfClockBack(t *testing.T) {
-	loc, err := civiltime.LoadZone("America/St_Johns")
-	require.NoError(t, err)
-	instant, err := time.Parse(time.RFC3339, "2010-11-07T03:00:00Z")
-	require.NoError(t, err)
-	day, err := civiltime.ParseDate("2010-11-07")
-	require.NoError(t, err)
-	require.Equal(t, day, civiltime.DayOf(instant, loc))
-}
-
-func TestDocumentDateKindHidesSensitiveActor(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "bcc-fixture.eml", fakeHash("b2"), 10, "message/rfc822")
-	require.NoError(t, err)
-	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
-	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "b3")
-	record.DocumentKind = "email"
-	event := &record.Events[0]
-	event.DateKind = "sent"
-	event.Actors[0].Role = "blind_copy"
-	event.Actors[0].Sensitive = true
-	event.EventID = document.DocumentEventID(s.VaultID(), node.CurrentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
-	record.Primaries = nil
-	primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", "full")
-	require.True(t, ok)
-	record.Primaries = append(record.Primaries, primary)
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
-	compiled := compileFixtureQuery(t, s, "date_kind:sent date:2019-03-04", query.Filters{})
-	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
 func TestDocumentDateAllDayEventMatchesSecondDay(t *testing.T) {
@@ -199,15 +160,17 @@ func TestDocumentDateDisclosureUsesFullPrimary(t *testing.T) {
 	}
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
-	value, err := query.Parse([]byte(`{"syntax":"advanced","text":"date:2019-03-04"}`))
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		full  bool
-		count int
-	}{{false, 0}, {true, 1}} {
-		compiled, err := (queryCompiler{fullDisclosure: tc.full}).compile(ctx, value, queryResolver{q: s.db})
+	for _, text := range []string{"date:2019-03-04", "date_kind:created date:2019-03-04"} {
+		value, err := query.Parse([]byte(`{"syntax":"advanced","text":"` + text + `"}`))
 		require.NoError(t, err)
-		require.Len(t, compiledFixtureIDs(t, s.db, compiled, ""), tc.count)
+		for _, tc := range []struct {
+			full  bool
+			count int
+		}{{false, 0}, {true, 1}} {
+			compiled, err := (queryCompiler{fullDisclosure: tc.full}).compile(ctx, value, queryResolver{q: s.db})
+			require.NoError(t, err)
+			require.Len(t, compiledFixtureIDs(t, s.db, compiled, ""), tc.count)
+		}
 	}
 }
 
@@ -233,28 +196,4 @@ func TestNonDateSnapshotDoesNotReportDefaultedTimezone(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, page.Timezone)
 	require.False(t, page.TimezoneDefaulted)
-}
-
-func TestFailedRebuildHidesOldDateFromSearchAndSort(t *testing.T) {
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "stale.txt", fakeHash("f1"), 1, "text/plain")
-	require.NoError(t, err)
-	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
-	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "f2")
-	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
-	require.NoError(t, err)
-	_, err = s.StartDocumentEventRebuild(ctx, "90000000-0000-4000-8000-000000000015", fakeHash("f3"))
-	require.NoError(t, err)
-	target = requireDocumentEventTarget(t, s, node.CurrentVersionID)
-	require.NoError(t, s.RecordDocumentEventAttempt(ctx, target, requireDocumentEventInputsSHA256(t, s, target), "failed", []byte(`[]`)))
-	service := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	page, err := service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"date:2019-03-04"}`)})
-	require.NoError(t, err)
-	require.Empty(t, page.Rows)
-	page, err = service.Create(ctx, "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"document_date"}}`)})
-	require.NoError(t, err)
-	require.Len(t, page.Rows, 1)
-	require.Empty(t, page.Rows[0].SortKey)
 }

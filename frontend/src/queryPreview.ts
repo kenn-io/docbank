@@ -68,7 +68,6 @@ export async function previewQuery(
       "filters",
       "sort",
       ...(Object.hasOwn(rawQuery, "timezone") ? ["timezone"] : []),
-      ...(Object.hasOwn(rawQuery, "timezone_defaulted") ? ["timezone_defaulted"] : []),
     ],
     "query",
   );

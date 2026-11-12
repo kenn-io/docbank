@@ -46,14 +46,14 @@ func (SavedQueryPayload) Schema(r huma.Registry) *huma.Schema {
 }
 
 type savedQueryV1Schema struct {
-	Timezone          *string                 `json:"timezone,omitempty"`
-	TimezoneDefaulted bool                    `json:"timezone_defaulted,omitempty"`
-	V                 int                     `json:"v,omitempty" enum:"1" default:"1"`
-	Text              string                  `json:"text,omitempty" maxLength:"8192"`
-	Syntax            string                  `json:"syntax,omitempty" enum:"simple,advanced" default:"simple"`
-	Mode              string                  `json:"mode,omitempty" enum:"lexical,semantic,hybrid" default:"lexical"`
-	Filters           savedQueryFiltersSchema `json:"filters,omitzero"`
-	Sort              savedQuerySortSchema    `json:"sort,omitzero"`
+	Timezone *string `json:"timezone,omitempty"`
+
+	V       int                     `json:"v,omitempty" enum:"1" default:"1"`
+	Text    string                  `json:"text,omitempty" maxLength:"8192"`
+	Syntax  string                  `json:"syntax,omitempty" enum:"simple,advanced" default:"simple"`
+	Mode    string                  `json:"mode,omitempty" enum:"lexical,semantic,hybrid" default:"lexical"`
+	Filters savedQueryFiltersSchema `json:"filters,omitzero"`
+	Sort    savedQuerySortSchema    `json:"sort,omitzero"`
 }
 
 type savedQuerySortSchema struct {
@@ -69,14 +69,15 @@ type savedQueryGPSBoundsSchema struct {
 }
 
 type savedQueryDateSchema struct {
-	From       string   `json:"from" format:"date"`
-	To         string   `json:"to" format:"date"`
+	From       string   `json:"from"`
+	To         string   `json:"to"`
 	Kinds      []string `json:"kinds,omitempty"`
 	Precisions []string `json:"precisions,omitempty" enum:"exact,day,coarse"`
 }
 
 type savedQueryFiltersSchema struct {
-	DocumentDate         *savedQueryDateSchema              `json:"document_date,omitempty"`
+	DocumentDate *savedQueryDateSchema `json:"document_date,omitempty"`
+
 	RatingMin            *int64                             `json:"rating_min,omitempty" nullable:"true" minimum:"0" maximum:"5"`
 	RatingMax            *int64                             `json:"rating_max,omitempty" nullable:"true" minimum:"0" maximum:"5"`
 	Flags                []string                           `json:"flags,omitempty" maxItems:"64"`
