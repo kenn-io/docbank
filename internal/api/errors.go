@@ -121,6 +121,7 @@ var storeErrCodes = []struct {
 	{store.ErrNotDir, http.StatusUnprocessableEntity, "not_dir"},
 	{store.ErrNotFile, http.StatusUnprocessableEntity, "not_file"},
 	{store.ErrInvalidName, http.StatusUnprocessableEntity, "invalid_name"},
+	{store.ErrAmbiguousContractDocument, http.StatusConflict, "ambiguous_contract_document"},
 	{store.ErrInvalidContract, http.StatusUnprocessableEntity, "invalid_contract"},
 	{store.ErrPartyNotOwn, http.StatusUnprocessableEntity, "party_not_own"},
 	{store.ErrInvalidParty, http.StatusUnprocessableEntity, "invalid_party"},

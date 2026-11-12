@@ -2272,6 +2272,8 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkContractConcurrentRevisionFence(t, newPostgresQueryStore)
 		}},
+		{"ContractDocumentHistory", func(t *testing.T) { t.Helper(); checkContractDocumentHistory(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkContractDocumentHistory(t, newPostgresQueryStore) }},
+		{"ContractDocumentLifecycle", func(t *testing.T) { t.Helper(); checkContractDocumentLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkContractDocumentLifecycle(t, newPostgresQueryStore) }},
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
 			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)

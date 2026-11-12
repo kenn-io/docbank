@@ -35,10 +35,12 @@ type Contract struct {
 	Revision                                                 int64
 	CreatedAt, UpdatedAt                                     string
 	Parties                                                  []ContractParty
+	Documents                                                []ContractDocument
 }
 type ContractListOptions struct {
 	Status, ContractType, PartyID, ExpiringBefore, Q, AsOf string
 	Limit, Offset                                          int
+	NodeID                                                 int64
 }
 
 var contractTypePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
@@ -96,6 +98,7 @@ func scanContract(row interface{ Scan(dest ...any) error }, asOf string) (Contra
 		c.EffectiveStatus = "expired"
 	}
 	c.Parties = []ContractParty{}
+	c.Documents = []ContractDocument{}
 	return c, nil
 }
 func contractLinks(ctx context.Context, tx *sql.Tx, items []Contract) error {
@@ -126,6 +129,33 @@ func contractLinks(ctx context.Context, tx *sql.Tx, items []Contract) error {
 		p.Own = own == 1
 		if i, ok := ids[id]; ok {
 			items[i].Parties = append(items[i].Parties, p)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT cd.contract_id,cd.node_id,cd.content_version_id,cd.blob_sha256,cd.size,cd.role,cd.added_at,
+ CASE WHEN n.kind='file' AND n.trashed_at IS NULL AND v.node_id=cd.node_id AND v.blob_hash=cd.blob_sha256 AND v.size=cd.size THEN 1 ELSE 0 END,
+ CASE WHEN n.kind='file' AND n.trashed_at IS NULL AND v.node_id=cd.node_id AND v.blob_hash=cd.blob_sha256 AND v.size=cd.size AND n.current_version_id=cd.content_version_id THEN 1 ELSE 0 END
+ FROM contract_documents cd LEFT JOIN nodes n ON n.id=cd.node_id LEFT JOIN content_versions v ON v.version_id=cd.content_version_id
+ WHERE cd.contract_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY cd.role,cd.node_id,cd.content_version_id`, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var d ContractDocument
+		var available, current int
+		if err := rows.Scan(&d.ContractID, &d.NodeID, &d.ContentVersionID, &d.BlobSHA256, &d.Size, &d.Role, &d.AddedAt, &available, &current); err != nil {
+			return err
+		}
+		d.Available = available == 1
+		d.Current = current == 1
+		if i, ok := ids[d.ContractID]; ok {
+			items[i].Documents = append(items[i].Documents, d)
 		}
 	}
 	return rows.Err()
@@ -262,7 +292,7 @@ func (s *Store) DeleteContract(ctx context.Context, id string, rev int64) error 
 	})
 }
 func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Contract, error) {
-	if !validContractDate(o.AsOf) || o.Limit < 1 || o.Limit > maxPageSize || o.Offset < 0 || (o.Status != "" && o.Status != "expired" && !validContractStatus(o.Status)) || (o.ContractType != "" && !contractTypePattern.MatchString(o.ContractType)) || (o.PartyID != "" && validateUUIDv4(o.PartyID) != nil) || (o.ExpiringBefore != "" && !validContractDate(o.ExpiringBefore)) || !utf8.ValidString(o.Q) || strings.ContainsRune(o.Q, 0) {
+	if !validContractDate(o.AsOf) || o.Limit < 1 || o.Limit > maxPageSize || o.Offset < 0 || o.NodeID < 0 || (o.Status != "" && o.Status != "expired" && !validContractStatus(o.Status)) || (o.ContractType != "" && !contractTypePattern.MatchString(o.ContractType)) || (o.PartyID != "" && validateUUIDv4(o.PartyID) != nil) || (o.ExpiringBefore != "" && !validContractDate(o.ExpiringBefore)) || !utf8.ValidString(o.Q) || strings.ContainsRune(o.Q, 0) {
 		return nil, ErrInvalidContract
 	}
 	contains := `instr(lower(title),lower($9))>0`
@@ -278,7 +308,7 @@ func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Con
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT `+contractColumns+` FROM contracts WHERE ($1='' OR CASE WHEN status='active' AND expires_on IS NOT NULL AND expires_on<$2 THEN 'expired' ELSE status END=$3) AND ($4='' OR contract_type=$5) AND ($6='' OR EXISTS(SELECT 1 FROM contract_parties cp WHERE cp.contract_id=contracts.contract_id AND cp.party_id=$7)) AND ($8='' OR `+contains+`) AND ($10='' OR expires_on<$11) ORDER BY title,contract_id LIMIT $12 OFFSET $13`, o.Status, o.AsOf, o.Status, o.ContractType, o.ContractType, o.PartyID, o.PartyID, o.Q, o.Q, o.ExpiringBefore, o.ExpiringBefore, o.Limit, o.Offset)
+	rows, err := tx.QueryContext(ctx, `SELECT `+contractColumns+` FROM contracts WHERE ($1='' OR CASE WHEN status='active' AND expires_on IS NOT NULL AND expires_on<$2 THEN 'expired' ELSE status END=$3) AND ($4='' OR contract_type=$5) AND ($6='' OR EXISTS(SELECT 1 FROM contract_parties cp WHERE cp.contract_id=contracts.contract_id AND cp.party_id=$7)) AND ($8='' OR `+contains+`) AND ($10='' OR expires_on<$11) AND ($14=0 OR EXISTS(SELECT 1 FROM contract_documents cd WHERE cd.contract_id=contracts.contract_id AND cd.node_id=$15)) ORDER BY title,contract_id LIMIT $12 OFFSET $13`, o.Status, o.AsOf, o.Status, o.ContractType, o.ContractType, o.PartyID, o.PartyID, o.Q, o.Q, o.ExpiringBefore, o.ExpiringBefore, o.Limit, o.Offset, o.NodeID, o.NodeID)
 	if err != nil {
 		return nil, err
 	}

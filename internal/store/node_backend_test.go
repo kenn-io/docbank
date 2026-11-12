@@ -83,6 +83,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(kind,display_name,display_name_folded,legal_name,country,own,person_id,revision,updated_at,retired_at) ON "+schema+".parties TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(title,contract_type,status,starts_on,expires_on,signed_on,summary,purpose,consideration,termination,revision,updated_at) ON "+schema+".contracts TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".contract_parties TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".contract_documents TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(person_id) ON "+schema+".person_identities TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(person_id,uid_kind,uid_state,last_seen_revision,display_name_snapshot,updated_at) ON "+schema+".person_external_identities TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(surviving_uid,observed_at) ON "+schema+".person_external_uid_aliases TO "+quotedRole+

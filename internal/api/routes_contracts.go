@@ -48,23 +48,34 @@ type ContractParty struct {
 	Own         bool    `json:"own"`
 	RetiredAt   *string `json:"retired_at" nullable:"true"`
 }
+type ContractDocument struct {
+	NodeID           int64  `json:"node_id"`
+	ContentVersionID string `json:"content_version_id"`
+	BlobSHA256       string `json:"blob_sha256"`
+	Size             int64  `json:"size"`
+	Role             string `json:"role"`
+	AddedAt          string `json:"added_at"`
+	Current          bool   `json:"current"`
+	Available        bool   `json:"available"`
+}
 type Contract struct {
-	ContractID      string          `json:"contract_id"`
-	Title           string          `json:"title"`
-	ContractType    string          `json:"contract_type"`
-	Status          string          `json:"status"`
-	EffectiveStatus string          `json:"effective_status"`
-	StartsOn        *string         `json:"starts_on" nullable:"true"`
-	ExpiresOn       *string         `json:"expires_on" nullable:"true"`
-	SignedOn        *string         `json:"signed_on" nullable:"true"`
-	Summary         string          `json:"summary"`
-	Purpose         string          `json:"purpose"`
-	Consideration   string          `json:"consideration"`
-	Termination     string          `json:"termination"`
-	Revision        int64           `json:"revision"`
-	CreatedAt       string          `json:"created_at"`
-	UpdatedAt       string          `json:"updated_at"`
-	Parties         []ContractParty `json:"parties"`
+	ContractID      string             `json:"contract_id"`
+	Title           string             `json:"title"`
+	ContractType    string             `json:"contract_type"`
+	Status          string             `json:"status"`
+	EffectiveStatus string             `json:"effective_status"`
+	StartsOn        *string            `json:"starts_on" nullable:"true"`
+	ExpiresOn       *string            `json:"expires_on" nullable:"true"`
+	SignedOn        *string            `json:"signed_on" nullable:"true"`
+	Summary         string             `json:"summary"`
+	Purpose         string             `json:"purpose"`
+	Consideration   string             `json:"consideration"`
+	Termination     string             `json:"termination"`
+	Revision        int64              `json:"revision"`
+	CreatedAt       string             `json:"created_at"`
+	UpdatedAt       string             `json:"updated_at"`
+	Parties         []ContractParty    `json:"parties"`
+	Documents       []ContractDocument `json:"documents"`
 }
 type ContractPage struct {
 	Items  []Contract `json:"items"`
@@ -214,9 +225,12 @@ type contractOutput struct {
 type contractPageOutput struct{ Body ContractPage }
 
 func fromStoreContract(c store.Contract) Contract {
-	out := Contract{ContractID: c.ContractID, Title: c.Title, ContractType: c.ContractType, Status: c.Status, EffectiveStatus: c.EffectiveStatus, StartsOn: c.StartsOn, ExpiresOn: c.ExpiresOn, SignedOn: c.SignedOn, Summary: c.Summary, Purpose: c.Purpose, Consideration: c.Consideration, Termination: c.Termination, Revision: c.Revision, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Parties: []ContractParty{}}
+	out := Contract{ContractID: c.ContractID, Title: c.Title, ContractType: c.ContractType, Status: c.Status, EffectiveStatus: c.EffectiveStatus, StartsOn: c.StartsOn, ExpiresOn: c.ExpiresOn, SignedOn: c.SignedOn, Summary: c.Summary, Purpose: c.Purpose, Consideration: c.Consideration, Termination: c.Termination, Revision: c.Revision, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Parties: []ContractParty{}, Documents: []ContractDocument{}}
 	for _, p := range c.Parties {
 		out.Parties = append(out.Parties, ContractParty{PartyID: p.PartyID, Role: p.Role, DisplayName: p.DisplayName, Kind: p.Kind, Own: p.Own, RetiredAt: p.RetiredAt})
+	}
+	for _, d := range c.Documents {
+		out.Documents = append(out.Documents, ContractDocument{NodeID: d.NodeID, ContentVersionID: d.ContentVersionID, BlobSHA256: d.BlobSHA256, Size: d.Size, Role: d.Role, AddedAt: d.AddedAt, Current: d.Current, Available: d.Available})
 	}
 	return out
 }

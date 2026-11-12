@@ -3285,3 +3285,11 @@ CREATE TABLE IF NOT EXISTS contract_parties (
  party_id TEXT NOT NULL REFERENCES parties(party_id), role TEXT NOT NULL,
  PRIMARY KEY(contract_id, party_id, role)
 );
+
+CREATE TABLE IF NOT EXISTS contract_documents (
+ contract_id TEXT NOT NULL REFERENCES contracts(contract_id) ON DELETE CASCADE,
+ node_id INTEGER NOT NULL, content_version_id TEXT NOT NULL, blob_sha256 TEXT NOT NULL,
+ size INTEGER NOT NULL, role TEXT NOT NULL, added_at TEXT NOT NULL,
+ PRIMARY KEY(contract_id,content_version_id,role)
+);
+CREATE INDEX IF NOT EXISTS contract_documents_node ON contract_documents(node_id);

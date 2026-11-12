@@ -238,6 +238,7 @@ func NewServer(d Deps) *Server {
 	registerTagRoutes(humaAPI, d, g)
 	registerPartyRoutes(humaAPI, d, g)
 	registerContractRoutes(humaAPI, d, g)
+	registerContractDocumentRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)

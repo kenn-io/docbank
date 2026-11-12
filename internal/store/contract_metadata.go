@@ -6,6 +6,7 @@ import (
 )
 
 const contractsStorageSchemaVersion = partiesStorageSchemaVersion
+const contractDocumentsStorageSchemaVersion = contractsStorageSchemaVersion
 
 type metadataContract struct {
 	Type          string  `json:"type"`
@@ -59,5 +60,38 @@ func validateContractMetadataState(ctx context.Context, q metadataQuerier) error
 	if err := contractMetadata.validateRows(ctx, q); err != nil {
 		return err
 	}
-	return contractPartyMetadata.validateRows(ctx, q)
+	if err := contractPartyMetadata.validateRows(ctx, q); err != nil {
+		return err
+	}
+	if err := contractDocumentMetadata.validateRows(ctx, q); err != nil {
+		return err
+	}
+	var mismatch bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM contract_documents cd JOIN content_versions v ON v.version_id=cd.content_version_id WHERE v.node_id<>cd.node_id OR v.blob_hash<>cd.blob_sha256 OR v.size<>cd.size)`).Scan(&mismatch); err != nil {
+		return err
+	}
+	if mismatch {
+		return errors.New("contract document does not match retained version")
+	}
+	return nil
+}
+
+type metadataContractDocument struct {
+	Type             string `json:"type"`
+	ContractID       string `json:"contract_id" db:"contract_id"`
+	NodeID           int64  `json:"node_id" db:"node_id"`
+	ContentVersionID string `json:"content_version_id" db:"content_version_id"`
+	BlobSHA256       string `json:"blob_sha256" db:"blob_sha256"`
+	Size             int64  `json:"size" db:"size"`
+	Role             string `json:"role" db:"role"`
+	AddedAt          string `json:"added_at" db:"added_at"`
+}
+
+var contractDocumentMetadata = newMetadataTable(metadataTable[metadataContractDocument]{record: metadataContractDocument{Type: "contract_document"}, table: "contract_documents", suffix: "ORDER BY contract_id,content_version_id,role", validate: validateMetadataContractDocument, checkExport: true})
+
+func validateMetadataContractDocument(d metadataContractDocument) error {
+	if d.Type != "contract_document" || validateUUIDv4(d.ContractID) != nil || d.NodeID < 1 || validateUUIDv4(d.ContentVersionID) != nil || validateCatalogSHA256(d.BlobSHA256, "contract document hash") != nil || d.Size < 0 || !validContractDocumentRole(d.Role) {
+		return errors.New("invalid contract document metadata")
+	}
+	return validateMetadataTime("contract document added_at", d.AddedAt)
 }

@@ -92,3 +92,28 @@ A repeated PUT is a revision-fenced no-op; deleting a missing link returns
 party in the own role returns `party_not_own`, and a retired party returns
 `party_retired`. List filters include type, party ID and exclusive expiry;
 `limit` and `offset` select pages, with a short page indicating the end.
+
+## Linked documents
+
+Attach an exact document version to an agreement. The default is the current
+version; `--version` selects a retained version explicitly.
+
+```console
+docbank contract link <contract-id> /agreements/signed.pdf --role signed
+docbank contract show <contract-id>
+docbank contract unlink <contract-id> id:42 --role signed --version <version-id>
+```
+
+Roles are `draft`, `signed`, `audit_trail`, `amendment`, and `attachment`.
+A link keeps the recorded node ID, version, hash and size. Replacing the file
+leaves the link on its old version. `current` indicates that the linked version
+is the available head; `available` is false while the source is trashed or
+its version has been pruned or purged. Links do not prevent source deletion.
+Restoring a trashed file makes a retained version available again. If several
+versions have the same role, unlink requires `--version`. Link and unlink use
+the contract revision and do not change its status.
+
+The API uses `PUT` and `DELETE /api/v1/contracts/{contract_id}/documents/{node_id}`
+with `role` and optional `content_version_id` query parameters and an `If-Match`
+revision. `GET /api/v1/nodes/{node_id}/contracts` lists linked contracts even
+when that node has been purged. Metadata backup retains unavailable links.

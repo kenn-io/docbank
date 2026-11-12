@@ -2535,3 +2535,11 @@ CREATE TABLE {{schema}}.contract_parties (
  party_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.parties(party_id), role TEXT COLLATE "C" NOT NULL,
  PRIMARY KEY(contract_id, party_id, role)
 );
+
+CREATE TABLE {{schema}}.contract_documents (
+ contract_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.contracts(contract_id) ON DELETE CASCADE,
+ node_id BIGINT NOT NULL, content_version_id TEXT COLLATE "C" NOT NULL, blob_sha256 TEXT COLLATE "C" NOT NULL,
+ size BIGINT NOT NULL, role TEXT COLLATE "C" NOT NULL, added_at TEXT COLLATE "C" NOT NULL,
+ PRIMARY KEY(contract_id,content_version_id,role)
+);
+CREATE INDEX contract_documents_node ON {{schema}}.contract_documents(node_id);

@@ -561,7 +561,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= contractsStorageSchemaVersion {
-		if err := exportMetadataTables(ctx, tx, write, []metadataRecordCodec{contractMetadata, contractPartyMetadata}); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, []metadataRecordCodec{contractMetadata, contractPartyMetadata, contractDocumentMetadata}); err != nil {
 			return err
 		}
 	}
