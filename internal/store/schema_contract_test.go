@@ -25,7 +25,16 @@ type schemaContract struct {
 
 func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	data, err := canonical.Marshal(releasedSchemaCatalogRows(t, db, true))
+	rows := releasedSchemaCatalogRows(t, db, true)
+	rows = slices.DeleteFunc(rows, func(row [4]string) bool {
+		if row[0] != "index" {
+			return false
+		}
+		var unique bool
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, row[2], row[1]).Scan(&unique))
+		return !unique
+	})
+	data, err := canonical.Marshal(rows)
 	require.NoError(t, err)
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
@@ -93,11 +102,22 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 	return nil
 }
 
+func schemaContractReleased(records []schemaContract, version int, released []int) (bool, error) {
+	for _, record := range records {
+		if record.Version > version {
+			return false, fmt.Errorf("schema contract version %d exceeds currentStorageSchemaVersion %d", record.Version, version)
+		}
+	}
+	return slices.Contains(released, version), nil
+}
+
 func TestStorageSchemaVersionContract(t *testing.T) {
 	t.Parallel()
 	records, err := loadSchemaContracts("testdata/schema-contracts")
 	require.NoError(t, err)
-	if slices.Contains(releasedStorageSchemaVersions, currentStorageSchemaVersion) {
+	released, err := schemaContractReleased(records, currentStorageSchemaVersion, releasedStorageSchemaVersions)
+	require.NoError(t, err)
+	if released {
 		t.Skip("current schema version is released")
 	}
 	for _, driver := range v090UpgradeDrivers() {
@@ -123,6 +143,9 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: digest}}, records)
 	require.NoError(t, checkSchemaContract(records, 49, digest))
+	released, err := schemaContractReleased(records, 48, []int{48})
+	require.ErrorContains(t, err, "schema contract version 49 exceeds currentStorageSchemaVersion 48")
+	require.False(t, released)
 
 	path := filepath.Join(dir, names[0])
 	for _, body := range []string{"", " \n\t", "first\nsecond\n"} {
@@ -181,11 +204,11 @@ func TestStorageSchemaCatalogDigest(t *testing.T) {
 	trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
 	require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
 	digest := schemaCatalogDigest(t, db)
+	require.Equal(t, digest, probe(`CREATE INDEX contract_probe ON nodes(id)`))
 	for _, statement := range []string{
 		`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
-		`CREATE INDEX contract_probe ON nodes(id)`,
+		`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
 		trigger,
-		`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
 	} {
 		require.NotEqual(t, digest, probe(statement), statement)
 	}

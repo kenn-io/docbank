@@ -240,7 +240,9 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
-An unreleased `currentStorageSchemaVersion` needs a record. Run
+An unreleased `currentStorageSchemaVersion` needs a record. Its layout hash
+includes tables, views, triggers, and unique indexes. Non-unique indexes are
+excluded because startup creates them in place. Run
 `make schema-contract-check` and add a file under
 `internal/store/testdata/schema-contracts/` with a one-line summary of the change.
 Its name is `NNNNNN-<layout-sha256>-<summary-sha256>.schema`. The test prints
