@@ -84,3 +84,39 @@ func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) 
 	_, err := documentDatesPage(dates, 0)
 	require.ErrorIs(t, err, errToolResultTooLarge)
 }
+
+func TestDocumentPeoplePagePreservesAllArraysWithinEnvelope(t *testing.T) {
+	people := api.VersionPeople{ContentVersionID: "00000000-0000-4000-8000-000000000001", State: "published", Open: &api.FactOpen{Web: "https://example.test"}}
+	for i := range 105 {
+		people.Edges = append(people.Edges, api.VersionPersonEdge{PersonID: fmt.Sprint(i), RawLabel: strings.Repeat("x", 10000)})
+	}
+	people.Assertions = []api.VersionPersonAssertion{{DisplayName: "assertion"}}
+	people.Unresolved = []api.VersionUnresolvedName{{RawLabel: "unresolved"}}
+	var edges []api.VersionPersonEdge
+	var assertions []api.VersionPersonAssertion
+	var unresolved []api.VersionUnresolvedName
+	for offset := 0; ; {
+		page, err := documentPeoplePage(people, offset)
+		require.NoError(t, err)
+		size, err := toolEnvelopeBytes(page, nil)
+		require.NoError(t, err)
+		require.Less(t, size, maxToolResponseBytes)
+		require.Equal(t, people.ContentVersionID, page.ContentVersionID)
+		require.Equal(t, people.State, page.State)
+		require.Equal(t, people.Open, page.Open)
+		edges = append(edges, page.Edges...)
+		assertions = append(assertions, page.Assertions...)
+		unresolved = append(unresolved, page.Unresolved...)
+		if page.NextOffset == nil {
+			break
+		}
+		require.Greater(t, *page.NextOffset, offset)
+		offset = *page.NextOffset
+	}
+	require.Equal(t, people.Edges, edges)
+	require.Equal(t, people.Assertions, assertions)
+	require.Equal(t, people.Unresolved, unresolved)
+	people.Edges = []api.VersionPersonEdge{{RawLabel: strings.Repeat("x", maxToolResponseBytes)}}
+	_, err := documentPeoplePage(people, 0)
+	require.ErrorIs(t, err, errToolResultTooLarge)
+}

@@ -1061,8 +1061,8 @@ func fenceFingerprintSchema() schema {
 	return schema{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "maxLength": 71}
 }
 
-func documentFactsInputSchema() schema {
-	s := rootObjectSchema(schema{"node_id": integerSchema(1, 0), "content_version_id": uuidSchema()})
+func documentFactsInputSchema(maxOffset int64) schema {
+	s := rootObjectSchema(schema{"node_id": integerSchema(1, 0), "content_version_id": uuidSchema(), "offset": integerSchema(0, maxOffset)})
 	s["description"] = "Provide exactly one of node_id or content_version_id."
 	return s
 }
@@ -1074,8 +1074,7 @@ func getDocumentDatesSchemas() (schema, schema) {
 	claim := objectSchema(schema{"event_id": stringSchema(0), "date_kind": stringSchema(0), "primary": booleanSchema(), "date_value": stringSchema(0), "raw_value": stringSchema(0), "precision": stringSchema(0), "timezone_kind": stringSchema(0), "zone_text": stringSchema(0), "offset_seconds": schema{"type": "integer"}, "axis_key": stringSchema(0), "utc_key": stringSchema(0), "claim_basis": stringSchema(0), "parse_confidence": stringSchema(0), "evidence_kind": stringSchema(0), "evidence_id": stringSchema(0), "source_kind_raw": stringSchema(0), "when": factWhenSchema()}, "event_id", "date_kind", "primary", "date_value", "raw_value", "precision", "timezone_kind", "zone_text", "axis_key", "claim_basis", "parse_confidence", "evidence_kind", "evidence_id", "when")
 	primary := objectSchema(schema{"event_id": stringSchema(0), "reason": stringSchema(0), "rule_id": stringSchema(0), "disclosure": stringSchema(0)}, "event_id", "reason", "rule_id", "disclosure")
 	diagnostic := objectSchema(schema{"code": stringSchema(0), "detail": stringSchema(0)}, "code", "detail")
-	input := documentFactsInputSchema()
-	input["properties"].(schema)["offset"] = integerSchema(0, document.MaxDocumentEvents+document.MaxDocumentEventsEncodedBytes/32)
+	input := documentFactsInputSchema(document.MaxDocumentEvents + document.MaxDocumentEventsEncodedBytes/32)
 	return input, rootObjectSchema(withPrivateCache(schema{"content_version_id": uuidSchema(), "node_id": integerSchema(1, 0), schemaStateField: stringSchema(0), "document_kind": stringSchema(0), "primary": primary, "claims": arraySchema(claim, 0), "diagnostics": arraySchema(diagnostic, 0), "open": factOpenSchema(), "offset": integerSchema(0, 0), "next_offset": integerSchema(1, 0)}), cacheRequired("content_version_id", "node_id", schemaStateField, "claims", "diagnostics", "offset")...)
 }
 func getDocumentPeopleSchemas() (schema, schema) {
@@ -1083,5 +1082,5 @@ func getDocumentPeopleSchemas() (schema, schema) {
 	edge := objectSchema(schema{"person_id": uuidSchema(), "display_name": stringSchema(0), schemaRoleField: stringSchema(0), "basis": stringSchema(0), "confidence": stringSchema(0), "evidence_kind": stringSchema(0), "evidence_id": stringSchema(0), "raw_label": stringSchema(0), "claim_count": integerSchema(0, 0), "linked_contact": booleanSchema(), "external": arraySchema(external, 0)}, "person_id", "display_name", schemaRoleField, "basis", "confidence", "evidence_kind", "evidence_id", "raw_label", "claim_count", "linked_contact", "external")
 	assertion := objectSchema(schema{"assertion_id": uuidSchema(), "person_id": uuidSchema(), "display_name": stringSchema(0), schemaRoleField: stringSchema(0), "action": stringSchema(0), "note": stringSchema(0), "recorded_at": stringSchema(0), "revision": integerSchema(1, 0)}, "assertion_id", "person_id", "display_name", schemaRoleField, "action", "note", "recorded_at", "revision")
 	unresolved := objectSchema(schema{"raw_label": stringSchema(0), schemaRoleField: stringSchema(0), "candidate_id": uuidSchema(), "evidence_kind": stringSchema(0)}, "raw_label", schemaRoleField, "candidate_id", "evidence_kind")
-	return documentFactsInputSchema(), rootObjectSchema(withPrivateCache(schema{"content_version_id": uuidSchema(), schemaStateField: stringSchema(0), "edges": arraySchema(edge, 0), "assertions": arraySchema(assertion, 0), "unresolved": arraySchema(unresolved, 0), "open": factOpenSchema()}), cacheRequired("content_version_id", schemaStateField, "edges", "assertions", "unresolved")...)
+	return documentFactsInputSchema(1<<31 - 1), rootObjectSchema(withPrivateCache(schema{"content_version_id": uuidSchema(), schemaStateField: stringSchema(0), "edges": arraySchema(edge, 0), "assertions": arraySchema(assertion, 0), "unresolved": arraySchema(unresolved, 0), "open": factOpenSchema(), "offset": integerSchema(0, 0), "next_offset": integerSchema(1, 0)}), cacheRequired("content_version_id", schemaStateField, "edges", "assertions", "unresolved", "offset")...)
 }

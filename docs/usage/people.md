@@ -20,8 +20,7 @@ sensitive claims with an API key. The API reads a specific version at
 and `disclosure=full` requires an API key. Each assertion includes the person’s
 `display_name`, even when no derived edge is published. Browser sessions and MCP's
 `get_document_people` use safe disclosure, which omits blind-copy evidence and
-provisional people without visible support. The response reports the derivation
-state so an unavailable or stale publication is not mistaken for an empty one.
+provisional people without visible support. The response reports the people derivation state using the existing people staleness check. Unresolved names require fresh event evidence and may be absent when that evidence is stale.
 
 ## People in Photos
 

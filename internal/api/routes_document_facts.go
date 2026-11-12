@@ -84,14 +84,14 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 	out := VersionPeople{ContentVersionID: f.Version.ID, State: f.State, Edges: []VersionPersonEdge{}, Assertions: []VersionPersonAssertion{}, Unresolved: []VersionUnresolvedName{}, Open: factOpen(origin, f.Version.NodeID, f.Version.ID)}
 	for _, e := range f.Edges {
 		p, ok := f.Persons[e.PersonID]
-		if !ok || safe && (e.Sensitive || e.Role == "blind_copy" || !p.Visible) {
+		if !ok || safe && !p.Visible {
 			continue
 		}
 		name := p.Person.DisplayName
 		if safe && p.Person.State == "provisional" && p.Person.Origin == "derived" {
 			name = e.RawLabel
 		}
-		edge := VersionPersonEdge{PersonID: p.Person.PersonID, DisplayName: name, Role: e.Role, Basis: e.Basis, Confidence: e.Confidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, RawLabel: e.RawLabel, ClaimCount: e.ClaimCount, External: []FactExternal{}}
+		edge := VersionPersonEdge{PersonID: e.PersonID, DisplayName: name, Role: e.Role, Basis: e.Basis, Confidence: e.Confidence, EvidenceKind: e.EvidenceKind, EvidenceID: e.EvidenceID, RawLabel: e.RawLabel, ClaimCount: e.ClaimCount, External: []FactExternal{}}
 		for _, x := range p.External {
 			edge.External = append(edge.External, FactExternal{System: x.System, ArchiveID: x.ArchiveID, UID: x.UID})
 		}
