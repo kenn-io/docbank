@@ -2964,7 +2964,7 @@ it("replans a selection interrupted during its first plan without sending it", a
 });
 
 it("inspects a registered preview after another tab imports a group", async () => {
-  const selected = files().slice(0, 2);
+  const selected = [new File(["x"], "first.ARW"), new File(["y"], "second.ARW")];
   const saved = {
     import_id: "first",
     source_id: "source",
@@ -2976,6 +2976,7 @@ it("inspects a registered preview after another tab imports a group", async () =
       {
         status: "committed" as const,
         files: [{ relative_path: selected[0].name, size: selected[0].size }],
+        hashes: ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
         receipt: { status: "added" as const, asset_id: "asset" },
       },
       {
@@ -2995,12 +2996,7 @@ it("inspects a registered preview after another tab imports a group", async () =
   };
   const replacement: PhotoImportTransport = {
     ...original,
-    planPhotoImport: vi.fn().mockResolvedValue({
-      import_id: "second",
-      groups: [[0], [1]],
-      unsupported: [],
-      hashes: new Map([[selected[0], "a".repeat(64)]]),
-    }),
+    planPhotoImport: vi.fn(),
     registerPhotoImport: vi
       .fn()
       .mockRejectedValue(new APIError("Declaration changed", 500, "internal")),
@@ -3039,6 +3035,9 @@ it("inspects a registered preview after another tab imports a group", async () =
 });
 
 it("inspects an unconfirmed group on a replacement channel", async () => {
+  const selected = [new File(["x"], "first.ARW"), new File(["y"], "second.ARW")];
+  const firstHash = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881";
+  const secondHash = "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa";
   const original: PhotoImportTransport = {
     registerPhotoImport: vi.fn(async (id: string) => id),
     listPhotoImports: vi.fn(async () => []),
@@ -3047,9 +3046,10 @@ it("inspects an unconfirmed group on a replacement channel", async () => {
       import_id: "first",
       groups: [[0], [1]],
       unsupported: [],
-      hashes: new Map([[files[1], "b".repeat(64)]]),
+      hashes: new Map([[files[1], secondHash]]),
     })),
-    uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress) => {
+    uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress, hashes) => {
+      hashes[0] = firstHash;
       progress("uploading", { processed: 1, total: 1 });
       throw new UploadChannelError("Disconnected");
     }),
@@ -3064,11 +3064,16 @@ it("inspects an unconfirmed group on a replacement channel", async () => {
       groups: [
         {
           status: "committed",
-          files: [{ relative_path: "first.ARW", size: 1 }],
-          hashes: ["a".repeat(64)],
+          files: [{ relative_path: selected[0].name, size: selected[0].size }],
+          hashes: [firstHash],
           receipt: { status: "added", asset_id: "asset" },
         },
-        { status: "remaining", files: [{ relative_path: "second.ARW", size: 1 }] },
+        {
+          status: "remaining",
+          files: [
+            { relative_path: selected[1].name, size: selected[1].size, expected_hash: secondHash },
+          ],
+        },
       ],
     }),
     planPhotoImport: vi.fn(),
@@ -3086,7 +3091,7 @@ it("inspects an unconfirmed group on a replacement channel", async () => {
     expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
   );
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: files().slice(0, 2) },
+    target: { files: selected },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
   await screen.findByText("Unconfirmed: 1");
@@ -3102,10 +3107,10 @@ it("inspects an unconfirmed group on a replacement channel", async () => {
   expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
     "first",
     1,
-    expect.any(Array),
+    [selected[1]],
     expect.any(AbortSignal),
     expect.any(Function),
-    ["b".repeat(64)],
+    [secondHash],
   );
 });
 
