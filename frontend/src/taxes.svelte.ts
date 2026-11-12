@@ -93,9 +93,9 @@ export class TaxesView {
   retry(): Promise<void> {
     return this.page(this.failedOffset);
   }
-  // A filer whose party could not be read keeps a distinct label from its ID.
+  // A filer whose party could not be read is labelled by its complete ID.
   filerName(id: string): string {
-    return this.parties.get(id)?.display_name ?? `Filer ${id.slice(0, 8)}`;
+    return this.parties.get(id)?.display_name ?? `Filer ${id}`;
   }
   dispose(): void {
     this.disposed = true;
@@ -118,6 +118,9 @@ export class TaxesView {
     this.loading = offset === 0;
     this.more = offset > 0;
     this.error = "";
+    // A first-page read replaces the list, so no later page may append to it
+    // until that read succeeds; a failed refresh keeps rows but not paging.
+    if (offset === 0) this.nextOffset = null;
     try {
       const page = await listTaxRecords(recordParams(this.filters, offset), {
         session: this.session,

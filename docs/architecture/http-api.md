@@ -1282,7 +1282,7 @@ A hidden `GET /api/daemon/web-map-tiles/{z}/{x}/{y}` (not in the OpenAPI documen
 Browser session tokens authenticate only the routes used by the built-in
 document, photo browsing, album, tag-definition/assignment, saved-definition, recoverable-trash,
 folder-upload directory creation (`POST /api/v1/nodes`, directories only), storage, job,
-configured-backup, verified-download, map-tile, and usage-event workflows.
+configured-backup, verified-download, map-tile, tax-record list, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket
@@ -1565,6 +1565,13 @@ mutations return 409. Errors and request logs do not include supplied tax values
 The record's account and kind are immutable; copied account identity cannot be
 changed. Money input is decimal text; a currency change with an existing amount
 requires an explicit resend or clear. See [Tax records](../usage/tax-records.md).
+
+Browser sessions may call only two tax-related reads, both for the web Taxes
+page: `GET /api/v1/tax/records` with `limit`, `offset`, `filer`, and `year`,
+and `GET /api/v1/parties` with `include_retired`, `limit`, and `offset`. Each
+parameter may appear at most once; any other or repeated parameter is denied.
+Tax accounts, single-record and single-party reads, `reveal`, and every tax or
+party write require the API key.
 
 ## People search
 

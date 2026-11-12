@@ -128,7 +128,7 @@ The page only reads; add or change records with the CLI.
 - **Filer** lists **All filers**, your own parties, and any other filer of a
   listed record, such as a party that is no longer marked as your own. Retired
   parties are marked "· retired". If party names cannot be read, filers show as
-  "Filer" and the start of their ID, with **Try again**.
+  "Filer" and their complete ID, with **Try again**.
 - With all filers, the loaded records appear under one heading per filer. The
   page keeps the server's stable record order (not date order), and records
   from **Load more** join their filer's heading. Choosing a filer shows only its
@@ -142,5 +142,5 @@ The page only reads; add or change records with the CLI.
 The amount column shows exact minor units with the currency code and the
 direction, such as `123400 USD` and **Payable**, without converting or rounding.
 An amount above 9,007,199,254,740,991 minor units shows **Too large to show**;
-run `docbank tax record show RECORD_ID` to see it exactly. The page never shows
+its hint gives the `docbank tax record show` command with that record's ID. The page never shows
 account identifiers or event references, and records no usage screen while open.

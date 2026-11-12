@@ -65,7 +65,12 @@
       >
     {/snippet}
     {#each rows as row (row.record_id)}
-      {@const amount = formatTaxAmount(row.amount_minor, row.currency, row.direction)}
+      {@const amount = formatTaxAmount(
+        row.amount_minor,
+        row.currency,
+        row.direction,
+        row.record_id,
+      )}
       <tr>
         <td class="title"
           ><span title={row.title}>{row.title}</span>{#if row.form_code}<span class="sub"
@@ -156,7 +161,12 @@
           <p class="tool-muted"><Spinner size={14} /> Loading…</p>
         {:else if view.rows.length === 0}
           {#if view.error}{:else if filtered}
-            <EmptyState title="No records match these filters">
+            <EmptyState
+              title="No records match these filters"
+              description={view.filters.year === null
+                ? undefined
+                : `Nothing listed for tax year ${view.filters.year}.`}
+            >
               <Button size="sm" onclick={clearFilters}>Clear filters</Button>
             </EmptyState>
           {:else}
@@ -176,7 +186,10 @@
           {/each}
         {/if}
         {#if view && view.nextOffset !== null && view.rows.length}
-          <div>
+          <div class="tool-heading">
+            {#if !view.filters.filer}
+              <p class="tool-muted">Load more adds records to the filer groups above.</p>
+            {/if}
             <Button size="sm" disabled={view.more} onclick={() => void view?.loadMore()}
               >{view.more ? "Loading…" : "Load more"}</Button
             >

@@ -172,19 +172,21 @@ it("parties page until a short page and map names", async () => {
 });
 
 it("party failure keeps records readable with distinct names until reloaded", async () => {
+  // Same first eight digits as holdings: a prefix label would collide.
+  const twin = "11111111-2222-4222-8222-222222222222";
   let fail = true;
   serveTaxes(
-    () => ({ items: [record("h1", holdings), record("v1", ventures)] }),
+    () => ({ items: [record("h1", holdings), record("t1", twin), record("v1", ventures)] }),
     () => (fail ? new Response("{}", { status: 500 }) : { items: parties, limit: 1000 }),
   );
   const { taxes } = view();
   await taxes.load();
   expect(taxes.partyError).toBe("Filers could not be loaded.");
-  expect(taxes.rows.map((row) => row.record_id)).toEqual(["h1", "v1"]);
-  expect([holdings, ventures].map((id) => taxes.filerName(id))).toEqual([
-    "Filer 11111111",
-    "Filer 22222222",
-  ]);
+  expect(taxes.rows.map((row) => row.record_id)).toEqual(["h1", "t1", "v1"]);
+  const names = taxes.filers.map((filer) => filer.name);
+  expect(new Set(names).size).toBe(3);
+  expect(names).toContain(`Filer ${twin}`);
+  expect(taxes.filerName(holdings)).toBe(`Filer ${holdings}`);
   fail = false;
   await taxes.loadParties();
   expect(taxes.partyError).toBe("");
@@ -210,6 +212,32 @@ it("errors are fixed text and 401 signs out", async () => {
   await second.taxes.load();
   expect(second.onauthfailure).toHaveBeenCalledTimes(1);
   second.taxes.dispose();
+});
+
+it("a failed refresh keeps rows but stops paging until a first page succeeds", async () => {
+  let fail = false;
+  const fetch = serveTaxes((query) =>
+    fail && query.offset === "0"
+      ? new Response("{}", { status: 503 })
+      : { items: page(holdings, taxPageSize) },
+  );
+  const { taxes } = view();
+  await taxes.load();
+  expect(taxes.nextOffset).toBe(50);
+  fail = true;
+  await taxes.load();
+  expect(taxes.error).toBe("Tax records could not be loaded.");
+  expect(taxes.rows).toHaveLength(50);
+  expect(taxes.nextOffset).toBeNull();
+  const requests = recordQueries(fetch).length;
+  await taxes.loadMore();
+  expect(recordQueries(fetch)).toHaveLength(requests);
+  fail = false;
+  await taxes.retry();
+  expect(recordQueries(fetch).at(-1)?.offset).toBe("0");
+  expect(taxes.nextOffset).toBe(50);
+  expect(taxes.error).toBe("");
+  taxes.dispose();
 });
 
 it("retry repeats the failed load-more request", async () => {

@@ -9,6 +9,7 @@ export function formatTaxAmount(
   minor: number | null,
   currency: string,
   direction: string,
+  recordID: string,
 ): { text: string; direction: string; hint?: string } {
   const label = taxStateLabel(direction);
   if (minor === null) return { text: "Unknown", direction: label };
@@ -18,7 +19,7 @@ export function formatTaxAmount(
     return {
       text: "Too large to show",
       direction: label,
-      hint: "Use docbank tax record show to see the exact amount",
+      hint: `Run docbank tax record show ${recordID} to see the exact amount`,
     };
   return { text: `${minor} ${currency}`, direction: label };
 }

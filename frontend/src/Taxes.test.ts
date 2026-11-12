@@ -83,7 +83,7 @@ it("filer rail filters, marks the current filer and drops headings", async () =>
 });
 
 it("unsafe amount gives the hint to pointer and screen-reader users", async () => {
-  const hint = "Use docbank tax record show to see the exact amount";
+  const hint = "Run docbank tax record show h1 to see the exact amount";
   serveTaxes(() => ({ items: [{ ...q1, amount_minor: 9007199254740992 }] }));
   show();
   const cell = (await screen.findByText("Too large to show")).closest("td")!;
@@ -188,8 +188,8 @@ it("failed filer names stay distinct and can be reloaded", async () => {
     () => (fail ? new Response("{}", { status: 500 }) : { items: parties, limit: 1000 }),
   );
   show();
-  await screen.findByRole("table", { name: "Tax records for Filer 22222222" });
-  expect(screen.getByRole("table", { name: "Tax records for Filer 11111111" })).toBeTruthy();
+  await screen.findByRole("table", { name: `Tax records for Filer ${ventures}` });
+  expect(screen.getByRole("table", { name: `Tax records for Filer ${holdings}` })).toBeTruthy();
   expect(screen.getByRole("alert").textContent).toBe("Filers could not be loaded.");
   fail = false;
   await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
