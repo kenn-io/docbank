@@ -55,10 +55,14 @@ func TestFrontmatterAliasesMergesAndJSON(t *testing.T) {
 }
 
 func TestFrontmatterDiagnosticsLeaveBodyReadable(t *testing.T) {
-	for _, header := range []string{"title: [bad", "a: &a [*a]", "a: .nan", "a: .inf", "a: {1: value}", "a: !custom value", "title: first\ntitle: second", "a: *missing"} {
+	for _, header := range []string{
+		"title: [bad", "a: &a [*a]", "a: .nan", "a: .inf", "a: {1: value}", "a: !custom value", "title: first\ntitle: second", "a: *missing",
+		"title: A\n--- # next\ntags: x", "title: A\n--- # next\ntags: [x", "title: A\n... # end\nb: x",
+	} {
 		t.Run(header, func(t *testing.T) {
 			n, err := Parse(t.Context(), []byte("---\n"+header+"\n---\n# Body\n[[Target]]\n"), Limits{MaxDiagnostics: 1})
 			require.NoError(t, err)
+			require.Equal(t, Span{0, len(header) + 9}, Span{n.Frontmatter.Start, n.Frontmatter.End})
 			require.Nil(t, n.Frontmatter.Raw)
 			require.Empty(t, n.Frontmatter.Fields)
 			require.Len(t, n.Diagnostics, 1)
@@ -78,37 +82,6 @@ func TestFrontmatterDiagnosticsLeaveBodyReadable(t *testing.T) {
 	n, err = Parse(t.Context(), []byte("\n---\n# Body\n"), Limits{})
 	require.NoError(t, err)
 	require.Nil(t, n.Frontmatter)
-}
-
-func TestFrontmatterRejectsTrailingYAML(t *testing.T) {
-	for _, tc := range []struct {
-		name, trailing string
-	}{
-		{"valid extra document", "--- # next\ntags: x"},
-		{"invalid extra document", "--- # next\ntags: [x"},
-		{"malformed post-document content", "... # end\nb: x"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			header := "---\ntitle: A\n" + tc.trailing + "\n---\n"
-			n, err := Parse(t.Context(), []byte(header+"# Body\n[[Target]]\n"), Limits{})
-			require.NoError(t, err)
-			require.NotNil(t, n.Frontmatter)
-			require.Equal(t, 0, n.Frontmatter.Start)
-			require.Equal(t, len(header), n.Frontmatter.End)
-			require.Equal(t, len(header), n.BodyStart)
-			require.Equal(t, "Body", n.Title, "trailing YAML must invalidate the authored title")
-			require.Equal(t, "h1", n.TitleSource)
-			require.Nil(t, n.Frontmatter.Raw)
-			require.Nil(t, n.Frontmatter.Fields)
-			require.Nil(t, n.Frontmatter.Aliases)
-			require.Nil(t, n.Frontmatter.Tags)
-			require.Equal(t, []Diagnostic{{Code: "invalid_frontmatter", Span: Span{0, len(header)}}}, n.Diagnostics)
-			require.Len(t, n.Headings, 1)
-			require.Equal(t, "Body", n.Headings[0].Text)
-			require.Equal(t, len(header), n.Headings[0].Start)
-			require.Equal(t, []string{"Target"}, linkTargets(n.Links))
-		})
-	}
 }
 
 func TestYAMLAliasExpansionIsBounded(t *testing.T) {

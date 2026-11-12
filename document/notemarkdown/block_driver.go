@@ -312,14 +312,10 @@ func closeWork(g *blockGuard, node ast.Node) error {
 	if err := g.b.step(g.ctx, 1); err != nil {
 		return err
 	}
-	switch g.kind {
-	case blockList:
-		list, ok := node.(*ast.List)
-		if !ok {
-			return nil
-		}
+	switch node := node.(type) {
+	case *ast.List:
 		visits := 0
-		tight := list.IsTight
+		tight := node.IsTight
 		for c := node.FirstChild(); c != nil && tight; c = c.NextSibling() {
 			if err := g.b.step(g.ctx, 1); err != nil {
 				return err
@@ -343,12 +339,11 @@ func closeWork(g *blockGuard, node ast.Node) error {
 		}
 		// List.Close repeats this bounded direct-child walk.
 		return g.b.step(g.ctx, visits)
-	case blockIndentedCode:
-		code, ok := node.(*ast.CodeBlock)
-		if !ok {
-			return nil
+	case *ast.CodeBlock:
+		if g.kind != blockIndentedCode {
+			break
 		}
-		segments := code.Value.Segments()
+		segments := node.Value.Segments()
 		work := 0
 		for _, segment := range segments {
 			if err := g.b.step(g.ctx, 1); err != nil {
@@ -361,16 +356,11 @@ func closeWork(g *blockGuard, node ast.Node) error {
 		}
 		// CodeBlock.Close can inspect every trailing segment if all are blank.
 		return g.b.step(g.ctx, work)
-	case blockParagraph:
-		paragraph, ok := node.(*ast.Paragraph)
-		if !ok {
-			return nil
-		}
-		segments := paragraph.Source()
+	case *ast.Paragraph:
+		segments := node.Source()
 		if len(segments) != 0 {
 			return g.b.step(g.ctx, segments[len(segments)-1].Len())
 		}
-	default:
 	}
 	return nil
 }
