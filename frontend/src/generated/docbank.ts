@@ -8971,6 +8971,7 @@ export const TelemetryEventPropertiesScreen = {
   document: 'document',
   packages: 'packages',
   operations: 'operations',
+  contracts: 'contracts',
 } as const;
 
 /**

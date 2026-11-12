@@ -12,7 +12,7 @@ import {
   versionFixture,
 } from "./contract-test-fixtures.js";
 
-type Route = (url: URL) => Response | Promise<Response> | undefined;
+type Route = (url: URL) => Response | undefined | Promise<Response | undefined>;
 let requests: string[] = [];
 
 function page(items: Contract[], asOf = "2027-01-01", limit = 100, offset = 0): Response {
@@ -61,7 +61,10 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 afterEach(() => {
   cleanup();
@@ -103,13 +106,18 @@ describe("contracts page", () => {
     serve((url) => {
       if (!list(url)) return undefined;
       if (url.searchParams.get("type") === "licence") return page([]);
-      return page([contract(), contract({ contract_id: "b", title: "Software", contract_type: "licence" })]);
+      return page([
+        contract(),
+        contract({ contract_id: "b", title: "Software", contract_type: "licence" }),
+      ]);
     });
     show();
     await screen.findByRole("table", { name: "Contracts" });
     await choose(/^Status/, "Active");
     await waitFor(() =>
-      expect(requests.at(-1)).toBe("/api/v1/contracts?status=active&as_of=2027-01-01&limit=100&offset=0"),
+      expect(requests.at(-1)).toBe(
+        "/api/v1/contracts?status=active&as_of=2027-01-01&limit=100&offset=0",
+      ),
     );
     await choose(/^Type/, "Licence");
     await waitFor(() =>
@@ -256,8 +264,18 @@ describe("contract detail", () => {
       blob_sha256: "b".repeat(64),
       current: false,
     }),
-    contractLink({ role: "audit_trail", node_id: 414, available: false, current: false, size: 4096 }),
-    contractLink({ role: "attachment", node_id: 77, content_version_id: "77777777-7777-4777-8777-777777777777" }),
+    contractLink({
+      role: "audit_trail",
+      node_id: 414,
+      available: false,
+      current: false,
+      size: 4096,
+    }),
+    contractLink({
+      role: "attachment",
+      node_id: 77,
+      content_version_id: "77777777-7777-4777-8777-777777777777",
+    }),
   ];
   const draftNode = nodeFixture({
     id: 413,
@@ -318,7 +336,13 @@ describe("contract detail", () => {
   });
 
   it("shows empty parties, terms and documents", async () => {
-    const empty = contract({ parties: [], documents: [], summary: "", consideration: "", termination: "" });
+    const empty = contract({
+      parties: [],
+      documents: [],
+      summary: "",
+      consideration: "",
+      termination: "",
+    });
     serve(detailRoutes(() => Response.json(empty)));
     show();
     await fireEvent.click(await screen.findByRole("button", { name: /^Show contract/ }));
@@ -352,7 +376,9 @@ describe("contract detail", () => {
     );
     show();
     await fireEvent.click(await screen.findByRole("button", { name: /^Show contract/ }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Open Draft lease-draft.txt" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Open Draft lease-draft.txt" }),
+    );
     expect((await screen.findByRole("alert")).textContent).toContain("no longer matches");
     expect(screen.queryByRole("dialog")).toBeNull();
   });

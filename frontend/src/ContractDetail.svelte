@@ -6,7 +6,12 @@
   import DocumentReader from "./DocumentReader.svelte";
   import InspectorDetails from "./InspectorDetails.svelte";
   import { APIError } from "./api-transport.js";
-  import { getContract, getNode, type Contract, type ContractDocument } from "./generated/docbank.js";
+  import {
+    getContract,
+    getNode,
+    type Contract,
+    type ContractDocument,
+  } from "./generated/docbank.js";
   import {
     contractDocumentSource,
     contractStatusLabel,
@@ -65,11 +70,10 @@
     error = "";
     missing = false;
     try {
-      const value = await getContract(
-        contractID,
-        asOf ? { as_of: asOf } : undefined,
-        { session, signal: current.signal },
-      );
+      const value = await getContract(contractID, asOf ? { as_of: asOf } : undefined, {
+        session,
+        signal: current.signal,
+      });
       if (current.signal.aborted) return;
       contract = value;
       void loadNames(value.documents, current.signal);
@@ -144,8 +148,11 @@
 </script>
 
 {#snippet backButton()}
-  <IconButton size="sm" ariaLabel="All contracts" title="All contracts" onclick={() => onback(contractID)}
-    ><ArrowLeftIcon size="14" aria-hidden="true" /></IconButton
+  <IconButton
+    size="sm"
+    ariaLabel="All contracts"
+    title="All contracts"
+    onclick={() => onback(contractID)}><ArrowLeftIcon size="14" aria-hidden="true" /></IconButton
   >
 {/snippet}
 
@@ -246,13 +253,15 @@
                 {/if}
               </span>
             </div>
-            <span data-contract-link={linkKey(link)}><Button
-              size="sm"
-              disabled={!link.available || opening !== ""}
-              ariaLabel={`Open ${documentRoleLabel(link.role)} ${linkName(link)}`}
-              onclick={() => void open(link)}
-              >{opening === linkKey(link) ? "Opening…" : "Open"}</Button
-            ></span>
+            <span data-contract-link={linkKey(link)}
+              ><Button
+                size="sm"
+                disabled={!link.available || opening !== ""}
+                ariaLabel={`Open ${documentRoleLabel(link.role)} ${linkName(link)}`}
+                onclick={() => void open(link)}
+                >{opening === linkKey(link) ? "Opening…" : "Open"}</Button
+              ></span
+            >
           </li>
         {/each}
       </ul>

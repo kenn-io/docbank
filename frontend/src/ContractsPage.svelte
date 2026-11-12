@@ -149,7 +149,12 @@
   }
 </script>
 
-<DrawerShell title="Contracts" ariaLabel="Contracts" closeLabel="Close Contracts" onclose={() => {}}>
+<DrawerShell
+  title="Contracts"
+  ariaLabel="Contracts"
+  closeLabel="Close Contracts"
+  onclose={() => {}}
+>
   {#snippet actions()}
     <IconButton
       size="sm"

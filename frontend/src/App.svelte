@@ -4503,7 +4503,10 @@
                 openQueryEditor(parseQuery(JSON.stringify({ filters: { collection_ids: [id] } })))}
             />
           {:else if docsPage === "contracts"}
-            {#key webSession}<ContractsPage session={webSession} onauthfailure={handleFailure} />{/key}
+            {#key webSession}<ContractsPage
+                session={webSession}
+                onauthfailure={handleFailure}
+              />{/key}
           {:else if docsPage === "trash"}
             {@render trash(() => {})}
           {/if}

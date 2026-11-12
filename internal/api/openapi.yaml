@@ -21502,6 +21502,7 @@ components:
             - document
             - packages
             - operations
+            - contracts
           type: string
         search_type:
           description: The executed search mode. A search that ends on an empty filter has no executed mode, so it carries the requested mode, with auto sent as text. Required for search_run and search_empty.

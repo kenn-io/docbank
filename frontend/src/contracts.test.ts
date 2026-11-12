@@ -49,9 +49,10 @@ describe("contract helpers", () => {
       contract({ contract_id: "c", expires_on: "2027-01-31" }),
     ];
     const window = { ...noContractFilters, expiringDays: 30 as const };
-    expect(visibleContracts(items, window, "2027-01-01").map((c) => c.contract_id)).toStrictEqual(
-      ["b", "c"],
-    );
+    expect(visibleContracts(items, window, "2027-01-01").map((c) => c.contract_id)).toStrictEqual([
+      "b",
+      "c",
+    ]);
     expect(visibleContracts(items, noContractFilters, "2027-01-01")).toHaveLength(3);
   });
 
