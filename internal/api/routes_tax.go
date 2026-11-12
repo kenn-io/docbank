@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -101,7 +102,21 @@ func taxRouteError(logger *slog.Logger, err error) error {
 		logger.Warn("tax request rejected", "class", "maintenance_busy", "status", wire.Status)
 		detail = "vault maintenance is running or queued; retry this mutation after it finishes"
 	} else if wire.Status >= http.StatusInternalServerError {
-		logger.Error("tax request failed", "class", "tax_5xx", "status", wire.Status)
+		code := "internal"
+		for _, known := range storeErrCodes {
+			if known.status == wire.Status && known.code == wire.Code {
+				code = known.code
+				break
+			}
+		}
+		switch {
+		case errors.Is(err, context.Canceled):
+			logger.Warn("tax request failed", "class", "tax_5xx", "status", wire.Status, "code", code, "cause", "canceled")
+		case errors.Is(err, context.DeadlineExceeded):
+			logger.Warn("tax request failed", "class", "tax_5xx", "status", wire.Status, "code", code, "cause", "deadline")
+		default:
+			logger.Error("tax request failed", "class", "tax_5xx", "status", wire.Status, "code", code)
+		}
 	}
 	out := NewError(wire.Status, wire.Code, detail)
 	if field, ok := errors.AsType[*taxrecord.FieldError](err); ok && taxSafeFieldReason(field.Field, field.Reason) {
