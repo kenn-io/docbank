@@ -8,7 +8,7 @@
   import PhotoSearch from "./PhotoSearch.svelte";
   import { photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
-  import { onMount, tick, untrack } from "svelte";
+  import { onMount, setContext, tick, untrack } from "svelte";
   import ArchiveIcon from "@lucide/svelte/icons/archive";
   import ArrowLeftIcon from "@lucide/svelte/icons/arrow-left";
   import FileIcon from "@lucide/svelte/icons/file";
@@ -140,7 +140,13 @@
   import { parseNodeVersionLink, resolveNodeVersionLink } from "./nodeVersionLink.js";
   import { APIError, isCurrentSessionError, mutationsInFlight } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags } from "./receipts.js";
-  import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
+  import {
+    readerReloadContext,
+    reloadWithSession,
+    rememberSession,
+    takeFragmentSession,
+    type BrowserSession,
+  } from "./browser-session.js";
   import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startTelemetryReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -1099,6 +1105,7 @@
     );
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
+  let sessionChannel: VerifiedUploadChannel | null = null;
   let uploadChannelError = $state("");
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
@@ -1582,7 +1589,13 @@
     };
   });
 
+  setContext(readerReloadContext, async () => {
+    await sessionChannel?.closeAndWait();
+    reloadWithSession();
+  });
+
   function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    rememberSession(keyLogin ? null : session);
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
@@ -1602,6 +1615,7 @@
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
         : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
     });
+    sessionChannel = channel;
     void channel.connect().then(
       () => {
         if (mounted && webSession === session.token) uploadChannel = channel;
@@ -1889,6 +1903,7 @@
   }
 
   function resetLocalSessionUI(): void {
+    rememberSession(null);
     readerRequest++;
     reader = undefined;
     clearToasts();
@@ -1918,6 +1933,7 @@
     sessionReporting = undefined;
     uploadChannel?.close();
     uploadChannel = null;
+    sessionChannel = null;
     webSession = "";
     directory = null;
     replaceRows([], false);

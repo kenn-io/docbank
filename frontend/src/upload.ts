@@ -283,6 +283,27 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     this.retire(false, 1000, "browser closed");
   }
 
+  async closeAndWait(): Promise<void> {
+    const socket = this.socket;
+    if (!socket || socket.readyState === WebSocket.CLOSED) {
+      this.close();
+      return;
+    }
+    const closed = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      socket.addEventListener(
+        "close",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    this.close();
+    await closed;
+  }
+
   async uploadFile(
     parentID: number,
     file: File,

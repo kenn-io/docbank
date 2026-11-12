@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { ReaderReview, ReaderReviewStatus, PDFReviewBridge } from "./pdfReview.js";
-  import { onDestroy, untrack } from "svelte";
-  import { Spinner } from "@kenn-io/kit-ui";
+  import { getContext, onDestroy, untrack } from "svelte";
+  import { Button, Spinner } from "@kenn-io/kit-ui";
+  import { readerReloadContext } from "./browser-session.js";
   import AppTooltip from "./AppTooltip.svelte";
   import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
   import { APIError } from "./api-transport.js";
@@ -33,6 +34,14 @@
     onstatus?: (status: ReaderReviewStatus) => void;
     onbridge?: (bridge: PDFReviewBridge) => void;
   } = $props();
+  const reload = getContext<() => Promise<void>>(readerReloadContext);
+  let confirming = $state(false);
+  let reloadPending = $state(false);
+  async function startReload(): Promise<void> {
+    reloadPending = true;
+    await reload();
+    reloadPending = false;
+  }
   let preview = $state<Preview | null>(null);
   let progress = $state<DownloadProgress | null>(null);
   let loading = $state(false);
@@ -141,12 +150,39 @@
   <div class="preview-loading" role="status"><Spinner size={14} /> Loading reader…</div>
 {/snippet}
 {#snippet readerUnavailable()}
-  <div role="alert">
-    <p>The reader could not load. Reopen Docbank to try again.</p>
+  <div class="reader-error" role="alert">
+    {#if confirming}
+      <p>Reloading discards unsaved work in this tab.</p>
+      <div class="reader-actions">
+        <Button size="sm" disabled={reloadPending} onclick={() => (confirming = false)}
+          >Keep working</Button
+        >
+        <Button size="sm" tone="danger" disabled={reloadPending} onclick={() => void startReload()}
+          >Reload anyway</Button
+        >
+      </div>
+    {:else}
+      <p>The reader could not load.</p>
+      <Button size="sm" onclick={() => (confirming = true)}>Reload Docbank</Button>
+    {/if}
   </div>
 {/snippet}
 
 <style>
+  .reader-error {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    gap: var(--space-3);
+  }
+  .reader-error p {
+    margin: 0;
+  }
+  .reader-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
   .original-preview {
     display: grid;
     position: relative;

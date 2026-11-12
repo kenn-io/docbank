@@ -22,3 +22,25 @@ export function takeFragmentSession(
   }
   return token && uploadSecret ? { token, uploadSecret } : null;
 }
+
+let rememberedSession: BrowserSession | null = null;
+
+export const readerReloadContext = Symbol("reader reload");
+
+export function rememberSession(session: BrowserSession | null): void {
+  rememberedSession = session;
+}
+
+export function reloadWithSession(
+  location: Location = window.location,
+  history: History = window.history,
+): void {
+  if (rememberedSession) {
+    const params = new URLSearchParams(location.hash.slice(1));
+    params.set("web_session", rememberedSession.token);
+    params.set("web_upload_secret", rememberedSession.uploadSecret);
+    history.replaceState(history.state, "", `${location.pathname}${location.search}#${params}`);
+  }
+  location.reload();
+  takeFragmentSession(location, history);
+}

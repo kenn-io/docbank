@@ -372,7 +372,7 @@ for (const [filename, module] of [
   ["Sample.pdf", "PDFReader"],
   ["Notes.md", "MarkdownPreview"],
 ]) {
-  test(`recovers a missing ${module} chunk after reopening Docbank`, async ({
+  test(`recovers a missing ${module} chunk after reloading Docbank`, async ({
     page,
     readerURL,
   }) => {
@@ -388,12 +388,45 @@ for (const [filename, module] of [
     await expect(reader.getByRole("alert")).toContainText("The reader could not load");
     await expect(reader.getByRole("button", { name: "Download", exact: true })).toBeEnabled();
     await page.unroute(chunk);
-    await page.goto("about:blank");
-    await page.goto(readerURL);
+    await reader.getByRole("button", { name: "Reload Docbank" }).click();
+    await expect(reader.getByText("Reloading discards unsaved work in this tab.")).toBeVisible();
+    await reader.getByRole("button", { name: "Keep working" }).click();
+    await expect(reader.getByRole("button", { name: "Reload Docbank" })).toBeVisible();
+    await reader.getByRole("button", { name: "Reload Docbank" }).click();
+    await page.evaluate(() => {
+      window.onbeforeunload = (event) => {
+        event.preventDefault();
+        return "";
+      };
+    });
+    page.once("dialog", (dialog) => void dialog.dismiss());
+    await reader.getByRole("button", { name: "Reload anyway" }).click();
+    await expect(reader.getByRole("button", { name: "Reload anyway" })).toBeEnabled();
+    expect(new URL(page.url()).hash).not.toContain("web_session");
+    expect(new URL(page.url()).hash).not.toContain("web_upload_secret");
+    await page.evaluate(() => {
+      window.onbeforeunload = null;
+    });
+    await reader.getByRole("button", { name: "Reload anyway" }).click();
+    await expect(row).toBeVisible();
+    expect(new URL(page.url()).hash).not.toContain("web_session");
     await row.dblclick();
     if (module === "PDFReader")
       await expect(reader.locator("embedpdf-container img").first()).toBeVisible();
     else await expect(reader.getByRole("heading", { name: "Review notes" })).toBeVisible();
+    await reader.getByRole("button", { name: "Close" }).click();
+    await page
+      .locator(".browser-toolbar")
+      .getByRole("button", { name: "Add", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Upload files", exact: true }).click();
+    await page.getByLabel("Choose local files", { exact: true }).setInputFiles({
+      name: "after-reload.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("synthetic upload after reload"),
+    });
+    await page.getByRole("button", { name: "Upload 1 file", exact: true }).click();
+    await expect(page.getByText("Added", { exact: true })).toBeVisible();
   });
 }
 

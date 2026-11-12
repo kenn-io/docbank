@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { takeFragmentSession } from "./browser-session.js";
+import { rememberSession, reloadWithSession, takeFragmentSession } from "./browser-session.js";
 
 afterEach(() => {
+  rememberSession(null);
   vi.restoreAllMocks();
   history.replaceState(null, "", "/");
 });
@@ -45,3 +46,48 @@ it.each([
     expect(takeFragmentSession()).toBeNull();
   },
 );
+
+it("hands the command-line session to the reloaded page and clears the fragment", () => {
+  history.replaceState(null, "", "/?view=grid#node=42");
+  rememberSession({ token: "session token", uploadSecret: "upload proof" });
+  let loaded: { token: string; uploadSecret: string } | null = null;
+  const current = {
+    get hash() {
+      return location.hash;
+    },
+    get pathname() {
+      return location.pathname;
+    },
+    get search() {
+      return location.search;
+    },
+    reload() {
+      loaded = takeFragmentSession();
+    },
+  } as Location;
+  reloadWithSession(current, history);
+  expect(loaded).toEqual({ token: "session token", uploadSecret: "upload proof" });
+  expect(location.pathname + location.search + location.hash).toBe("/?view=grid#node=42");
+});
+
+it("does not carry a key login into the next load", () => {
+  rememberSession(null);
+  history.replaceState(null, "", "/#node=42");
+  let fragment = "";
+  const current = {
+    get hash() {
+      return location.hash;
+    },
+    get pathname() {
+      return location.pathname;
+    },
+    get search() {
+      return location.search;
+    },
+    reload() {
+      fragment = location.hash;
+    },
+  } as Location;
+  reloadWithSession(current, history);
+  expect(fragment).toBe("#node=42");
+});
