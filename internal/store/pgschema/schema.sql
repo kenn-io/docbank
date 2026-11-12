@@ -313,7 +313,6 @@ CREATE TABLE {{schema}}.browser_photo_imports (
     vault_id TEXT COLLATE "C" NOT NULL,
     format_version BIGINT NOT NULL,
     source_id TEXT COLLATE "C" NOT NULL,
-    picker_kind TEXT COLLATE "C" NOT NULL,
     label TEXT COLLATE "C" NOT NULL,
     destination TEXT COLLATE "C" NOT NULL,
     anchor_id BIGINT NOT NULL,

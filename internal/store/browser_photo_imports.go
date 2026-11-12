@@ -24,7 +24,6 @@ type BrowserPhotoGroupMember struct {
 type BrowserPhotoImport struct {
 	ID          uuid.UUID
 	SourceID    uuid.UUID
-	PickerKind  string
 	Label       string
 	Destination string
 	Directory   IngestDirectoryPlan
@@ -108,7 +107,7 @@ func (s *Store) ListBrowserPhotoImports(ctx context.Context, offset, limit int) 
 	if offset < 0 || limit < 1 || limit > 100 {
 		return nil, errors.New("invalid browser photo import page")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT i.import_id,i.source_id,i.picker_kind,i.label,i.destination,i.created_at,
+	rows, err := s.db.QueryContext(ctx, `SELECT i.import_id,i.source_id,i.label,i.destination,i.created_at,
 		(SELECT COUNT(*) FROM browser_photo_import_groups g WHERE g.import_id=i.import_id)
 		FROM browser_photo_imports i WHERE i.vault_id=$1 ORDER BY i.created_at DESC,i.import_id DESC LIMIT $2 OFFSET $3`,
 		s.VaultID(), limit, offset)
@@ -120,7 +119,7 @@ func (s *Store) ListBrowserPhotoImports(ctx context.Context, offset, limit int) 
 	for rows.Next() {
 		var item BrowserPhotoImport
 		var id, source string
-		if err := rows.Scan(&id, &source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &item.GroupCount); err != nil {
+		if err := rows.Scan(&id, &source, &item.Label, &item.Destination, &item.CreatedAt, &item.GroupCount); err != nil {
 			return nil, err
 		}
 		item.ID, err = uuid.Parse(id)
@@ -183,9 +182,9 @@ func (s *Store) readBrowserPhotoImport(ctx context.Context, id uuid.UUID, barrie
 		var source, suffix, skipped string
 		var anchor, formatVersion int64
 		var destination sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT source_id,picker_kind,label,destination,created_at,anchor_id,suffix_json,destination_id,skipped_json,format_version
+		if err := tx.QueryRowContext(ctx, `SELECT source_id,label,destination,created_at,anchor_id,suffix_json,destination_id,skipped_json,format_version
 			FROM browser_photo_imports WHERE import_id=$1 AND vault_id=$2`, id.String(), s.VaultID()).Scan(
-			&source, &item.PickerKind, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination, &skipped, &formatVersion); err != nil {
+			&source, &item.Label, &item.Destination, &item.CreatedAt, &anchor, &suffix, &destination, &skipped, &formatVersion); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -339,7 +338,7 @@ func saveBrowserPhotoReceiptTx(ctx context.Context, tx *sql.Tx, ref BrowserPhoto
 
 // RegisterBrowserPhotoImport saves the complete plan before any upload starts.
 func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhotoImport) (uuid.UUID, error) {
-	if plan.SourceID == uuid.Nil() || len(plan.Groups) == 0 || plan.PickerKind == "" {
+	if plan.SourceID == uuid.Nil() || len(plan.Groups) == 0 {
 		return uuid.Nil(), errors.New("invalid browser photo import declaration")
 	}
 	if err := validateIngestDirectoryPlan(plan.Directory); err != nil {
@@ -356,9 +355,9 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 	id := uuid.New()
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		inserted, err := tx.ExecContext(ctx, `INSERT INTO browser_photo_imports
-			(import_id, vault_id, source_id, picker_kind, label, destination, anchor_id, suffix_json, skipped_json, created_at, format_version)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1) ON CONFLICT (vault_id,source_id) DO NOTHING`, id.String(), s.VaultID(), plan.SourceID.String(),
-			plan.PickerKind, plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), string(skipped), nowRFC3339())
+			(import_id, vault_id, source_id, label, destination, anchor_id, suffix_json, skipped_json, created_at, format_version)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1) ON CONFLICT (vault_id,source_id) DO NOTHING`, id.String(), s.VaultID(), plan.SourceID.String(),
+			plan.Label, plan.Destination, plan.Directory.anchorID, string(segments), string(skipped), nowRFC3339())
 		if err != nil {
 			return err
 		}
@@ -367,12 +366,12 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 			return err
 		}
 		if count == 0 {
-			var existingID, picker, label, destination, existingSkipped string
+			var existingID, label, destination, existingSkipped string
 			var version int64
-			if err := tx.QueryRowContext(ctx, `SELECT import_id,picker_kind,label,destination,skipped_json,format_version FROM browser_photo_imports WHERE vault_id=$1 AND source_id=$2`, s.VaultID(), plan.SourceID.String()).Scan(&existingID, &picker, &label, &destination, &existingSkipped, &version); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT import_id,label,destination,skipped_json,format_version FROM browser_photo_imports WHERE vault_id=$1 AND source_id=$2`, s.VaultID(), plan.SourceID.String()).Scan(&existingID, &label, &destination, &existingSkipped, &version); err != nil {
 				return err
 			}
-			if version != 1 || picker != plan.PickerKind || label != plan.Label || destination != plan.Destination || existingSkipped != string(skipped) {
+			if version != 1 || label != plan.Label || destination != plan.Destination || existingSkipped != string(skipped) {
 				return errors.New("browser photo import declaration changed")
 			}
 			rows, err := tx.QueryContext(ctx, `SELECT members_json FROM browser_photo_import_groups WHERE import_id=$1 ORDER BY ordinal`, existingID)

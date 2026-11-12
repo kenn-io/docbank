@@ -95,7 +95,6 @@ type webSavedPhotoImport struct {
 	SourceID    string                          `json:"source_id"`
 	Label       string                          `json:"label"`
 	Destination string                          `json:"destination"`
-	PickerKind  string                          `json:"picker_kind"`
 	CreatedAt   string                          `json:"created_at"`
 	GroupCount  int                             `json:"group_count"`
 	Groups      []webSavedPhotoGroup            `json:"groups,omitzero"`
@@ -133,7 +132,6 @@ type webUploadMessage struct {
 	Status        int                   `json:"status,omitzero"`
 	Code          string                `json:"code,omitzero"`
 	Detail        string                `json:"detail,omitzero"`
-	PickerKind    string                `json:"picker_kind,omitzero"`
 	Offset        int                   `json:"offset,omitzero"`
 	Imports       []webSavedPhotoImport `json:"imports,omitzero"`
 	SavedImport   *webSavedPhotoImport  `json:"saved_import,omitzero"`
@@ -859,8 +857,7 @@ func (p *webPhotoImport) sourceDescription() string {
 func handleWebPhotoRegistration(
 	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage, plan *webPhotoImport,
 ) bool {
-	if plan == nil || plan.id != begin.ImportID || plan.registered ||
-		(begin.PickerKind != "files" && begin.PickerKind != "folder") {
+	if plan == nil || plan.id != begin.ImportID || plan.registered {
 		return writeWebUploadProblem(ctx, conn, begin.RequestID,
 			NewError(http.StatusUnprocessableEntity, "validation", "invalid photo import plan")) == nil
 	}
@@ -876,7 +873,7 @@ func handleWebPhotoRegistration(
 		}
 	}
 	id, err := d.Store.RegisterBrowserPhotoImport(ctx, store.BrowserPhotoImport{
-		SourceID: plan.sourceID, PickerKind: begin.PickerKind, Label: plan.sourceDescription(),
+		SourceID: plan.sourceID, Label: plan.sourceDescription(),
 		Destination: plan.destinationPath, Directory: plan.destination, Groups: groups, Skipped: plan.skipped,
 	})
 	if err != nil {
@@ -892,7 +889,7 @@ func handleWebPhotoRegistration(
 func savedPhotoImportHeader(item store.BrowserPhotoImport) webSavedPhotoImport {
 	return webSavedPhotoImport{
 		ImportID: item.ID.String(), SourceID: item.SourceID.String(), Label: item.Label, Destination: item.Destination,
-		PickerKind: item.PickerKind, CreatedAt: item.CreatedAt, GroupCount: item.GroupCount,
+		CreatedAt: item.CreatedAt, GroupCount: item.GroupCount,
 	}
 }
 

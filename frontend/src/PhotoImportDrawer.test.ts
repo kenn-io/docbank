@@ -73,7 +73,6 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     source_id: "saved-source",
     label: "Trip",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 2,
     skipped: [{ path: "notes.txt", reason: "Unsupported type" }],
@@ -169,7 +168,6 @@ it("keeps completed groups when selecting remaining files in batches", async () 
     source_id: "source",
     label: "Photos",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 2,
     groups: ["a.JPG", "b.JPG"].map((name) => ({
@@ -233,7 +231,6 @@ it("refreshes a group committed between inspection and resume", async () => {
     source_id: "source",
     label: "Trip",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
     groups: [{ status: "remaining" as const, files: [{ relative_path: "left.JPG", size: 1 }] }],
@@ -285,7 +282,6 @@ it("inspects a group claimed after inspection before offering another upload", a
     source_id: "source",
     label: "Photos",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
     groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
@@ -346,7 +342,6 @@ it("loads saved imports one page at a time", async () => {
     source_id: "source",
     label: "Photos",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
   };
@@ -384,7 +379,6 @@ it("keeps one inspect action for the selected pending import", async () => {
     source_id: "source",
     label: "Photos",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
     groups: [{ status: "pending" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
@@ -411,8 +405,149 @@ it("keeps one inspect action for the selected pending import", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("Still finishing");
   expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(1);
+  const options = screen.getAllByRole("option");
+  expect(options[1].textContent).not.toContain("/photos");
+  expect(options[2].textContent).toContain("/photos");
   await fireEvent.change(screen.getByLabelText("Saved import"), { target: { value: "other" } });
   expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(2);
+});
+
+it("retains the first matching selected file while a saved group is pending", async () => {
+  const hash = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb";
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      { status: "pending" as const, files: [{ relative_path: "é.JPG", size: 1 }], hashes: [hash] },
+    ],
+    skipped: [{ path: "é.JPG", reason: "Duplicate path" }],
+  };
+  const remaining = { ...saved, groups: [{ ...saved.groups[0], status: "remaining" as const }] };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValueOnce(saved).mockResolvedValue(remaining),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending-files",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Still finishing");
+  const first = new File(["a"], "é.JPG");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [first, new File(["b"], "e\u0301.JPG")] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      0,
+      [first],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [hash],
+    ),
+  );
+});
+
+it("uses inspected hashes when selecting files after a rejected upload", async () => {
+  const hash = "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d";
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const pinned = { ...saved, groups: [{ ...saved.groups[0], hashes: [hash] }] };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValue(pinned),
+    uploadPhotoGroup: vi
+      .fn()
+      .mockImplementationOnce(async (_id, _index, _files, _signal, _progress, hashes) => {
+        hashes[0] = "a".repeat(64);
+        throw new APIError("Content changed", 422, "validation");
+      })
+      .mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pinned-hashes",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["a"], "a.JPG")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await screen.findByText("Content changed");
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() => expect(channel.inspectPhotoImport).toHaveBeenCalledTimes(3));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["b"], "a.JPG")] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenLastCalledWith(
+      "saved",
+      0,
+      expect.any(Array),
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [hash],
+    ),
+  );
 });
 
 it("refuses changed bytes and lists files outside the saved import", async () => {
@@ -421,7 +556,6 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
     source_id: "source",
     label: "Trip",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 2,
     groups: [
@@ -500,7 +634,6 @@ it("refuses an unattempted file with a different modified time", async () => {
     source_id: "source",
     label: "Trip",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
     groups: [
@@ -610,7 +743,6 @@ it("inspects a checkpoint's saved receipt before sending groups", async () => {
     source_id: "source",
     label: "Photos",
     destination: "/photos",
-    picker_kind: "files" as const,
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
     groups: [

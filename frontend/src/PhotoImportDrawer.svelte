@@ -17,6 +17,7 @@
     type PhotoGroupReceipt,
     type TransferProgress,
     type SavedPhotoImport,
+    type SavedPhotoGroup,
     hashFile,
   } from "./upload.js";
 
@@ -205,7 +206,8 @@
     });
     const groups = `${saved.group_count} group${saved.group_count === 1 ? "" : "s"}`;
     const suggested = checkpoint?.sourceID === saved.source_id ? "Suggested · " : "";
-    return `${suggested}${created} · ${groups} → ${saved.destination}`;
+    const destination = savedImport?.import_id === saved.import_id ? "" : ` → ${saved.destination}`;
+    return `${suggested}${created} · ${groups}${destination}`;
   }
   // Explains a disabled "Resume remaining" after files were chosen again.
   const resumeHint = $derived.by(() => {
@@ -304,6 +306,7 @@
     if (preserve) {
       for (const [index, group] of (saved.groups ?? []).entries()) {
         const item = items[index];
+        reconcileSavedHashes(item, group);
         if (group.status === "committed") {
           setState(item, group.receipt!.status);
           item.error = receiptReason(group.receipt?.reason);
@@ -405,7 +408,9 @@
     if (!savedImport) return;
     planning = true;
     try {
-      const byPath = new Map(files.map((file) => [localFilePath(file), file]));
+      const byPath = new Map<string, File>();
+      for (const file of files)
+        if (!byPath.has(localFilePath(file))) byPath.set(localFilePath(file), file);
       const known = new Set([
         ...(savedImport.groups ?? []).flatMap((group) =>
           group.files.map((file) => file.relative_path),
@@ -436,13 +441,13 @@
             : receiptReason(group.receipt?.reason);
           continue;
         }
-        if (group.status !== "remaining") continue;
         if (changed || matched.some((file) => !file)) {
           item.files = [];
-          setState(item, changed ? "changed" : "missing");
+          if (group.status === "remaining") setState(item, changed ? "changed" : "missing");
         } else {
           item.files = matched as File[];
-          setState(item, "ready");
+          item.hashes = group.hashes ? [...group.hashes] : group.files.map(() => "");
+          if (group.status === "remaining") setState(item, "ready");
         }
       }
     } catch (cause) {
@@ -450,6 +455,12 @@
     } finally {
       planning = false;
     }
+  }
+
+  function reconcileSavedHashes(item: Item, group: SavedPhotoGroup): void {
+    if (!group.hashes) return;
+    if (item.hashes.some((hash, index) => hash !== group.hashes![index])) item.files = [];
+    item.hashes = [...group.hashes];
   }
 
   async function plan(validated = false, reconnect = false): Promise<void> {
@@ -633,6 +644,9 @@
       if (savedImport || (registered && plannedChannel !== runChannel)) {
         const latest = await channel.inspectPhotoImport(importID, controller.signal);
         for (const [index, group] of (latest.groups ?? []).entries()) {
+          reconcileSavedHashes(items[index], group);
+          if (group.status === "remaining" && !items[index].files.length)
+            setState(items[index], "missing");
           if (
             group.status === "committed" ||
             (items[index].state === "ready" && group.status !== "remaining")
@@ -653,7 +667,7 @@
       } else if (!registered) {
         registrationUncertain = true;
         try {
-          importID = await channel.registerPhotoImport(importID, pickerKind, controller.signal);
+          importID = await channel.registerPhotoImport(importID, controller.signal);
         } catch (cause) {
           if (cause instanceof APIError) registrationUncertain = false;
           throw cause;

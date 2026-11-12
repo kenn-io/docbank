@@ -274,7 +274,7 @@ func TestBrowserPhotoImportReceiptAfterReconnect(t *testing.T) {
 	conn := browserUploadSocket(t, ts)
 	files := photoGroupDeclaration([]string{"Trip/capture.xmp"}, false)
 	planID := previewBrowserPhotos(t, conn, files)
-	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "register_photo_import", "request_id": "register", "import_id": planID, "picker_kind": "folder"}))
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "register_photo_import", "request_id": "register", "import_id": planID}))
 	registered := readPhotoResponse(t, conn)
 	require.Equal(t, "photo_import_registered", registered.Type)
 	require.NotEmpty(t, registered.ImportID)
@@ -539,7 +539,7 @@ func previewBrowserPhotos(t *testing.T, conn *websocket.Conn, members []map[stri
 func registerBrowserPhotos(t *testing.T, conn *websocket.Conn, id string) string {
 	t.Helper()
 	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
-		"type": "register_photo_import", "request_id": "register", "import_id": id, "picker_kind": "files",
+		"type": "register_photo_import", "request_id": "register", "import_id": id,
 	}))
 	reply := readPhotoResponse(t, conn)
 	require.Equal(t, "photo_import_registered", reply.Type, "%s: %s", reply.Code, reply.Detail)
