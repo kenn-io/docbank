@@ -37,11 +37,13 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?extra=1"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false&hidden=true"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=%zz"},
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&mime_type=application%2Fpdf"},
+		{http.MethodPost, "/api/v1/search/text-coverage"},
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&tag_id=y"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.path)
 	}
 }
-
 func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
@@ -55,6 +57,8 @@ func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111/merge"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews"},
 		{http.MethodGet, "/api/v1/photos/people/11111111-1111-4111-8111-111111111111/face-previews?hidden=false"},
+		{http.MethodGet, "/api/v1/search/text-coverage"},
+		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.path)
 	}
@@ -154,21 +158,5 @@ func TestWebPages(t *testing.T) {
 			require.Contains(t, response.Header().Get("Content-Type"), "text/html")
 		}
 		require.Equal(t, status, response.Code, tc.path)
-	}
-}
-
-func TestWebSessionTextCoverage(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		method, path string
-		allowed      bool
-	}{
-		{http.MethodGet, "/api/v1/search/text-coverage", true},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x", true},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&mime_type=application%2Fpdf", false},
-		{http.MethodPost, "/api/v1/search/text-coverage", false},
-		{http.MethodGet, "/api/v1/search/text-coverage?tag_id=x&tag_id=y", false},
-	} {
-		require.Equal(t, tc.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)), tc.path)
 	}
 }
