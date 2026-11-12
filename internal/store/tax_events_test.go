@@ -345,3 +345,25 @@ func TestTaxCashCancellationAndWriteFailure(t *testing.T) {
 	assert.Equal(t, r, d.Record)
 	assert.Empty(t, d.Events)
 }
+
+func TestTaxRecordCurrencyEditChecksBalance(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("EUR")}
+	r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
+	require.NoError(t, err)
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+	require.NoError(t, err)
+	cash.Amount = new("0.01")
+	second, err := s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
+	require.NoError(t, err)
+	in.Currency = new("USD")
+	_, err = s.UpdateTaxRecord(ctx, r.RecordID, second.Record.Revision, in)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, "EUR", d.Record.Currency)
+	assert.Equal(t, second.Record.Revision, d.Record.Revision)
+	assert.Len(t, d.Events, 2)
+}
