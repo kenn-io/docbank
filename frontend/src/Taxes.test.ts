@@ -56,7 +56,14 @@ it("shows loading, then grouped rows with state, due and exact amount", async ()
   ]);
   expect(headings.some((heading) => /\d/.test(heading.textContent ?? ""))).toBe(false);
   const row = within(first).getAllByRole("row")[1]!;
-  for (const text of ["Form 100", "2031", "2031-04-30", "Expected", "123400 USD", "Payable"])
+  for (const text of [
+    "Form 100",
+    "2031",
+    "2031-04-30",
+    "Expected",
+    "123400 USD",
+    "Direction: Payable",
+  ])
     expect(within(row).getByText(text)).toBeTruthy();
   expect(within(first).getByRole("columnheader", { name: "Amount (minor units)" })).toBeTruthy();
   const second = screen.getByRole("table", { name: "Tax records for Example Ventures Ltd." });

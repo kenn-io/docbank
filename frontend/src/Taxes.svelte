@@ -80,7 +80,7 @@
         <td>{row.due_date ?? "—"}</td>
         <td>{taxStateLabel(row.state)}</td>
         <td class="amount"
-          ><span>{amount.text}</span><span class="sub">{amount.direction}</span
+          ><span>{amount.text}</span><span class="sub">Direction: {amount.direction}</span
           >{#if amount.hint}<span class="sub hint">{amount.hint}</span>{/if}</td
         >
       </tr>
