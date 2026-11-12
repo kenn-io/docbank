@@ -2171,7 +2171,6 @@ it("aborts coverage from an older search", async () => {
     String(url).startsWith("/api/v1/search/text-coverage"),
   );
   const signal = request?.[1]?.signal;
-  expect(signal).toBeTruthy();
   expect(signal?.aborted).toBe(false);
   await submitSearch("second");
   await waitFor(() => expect(coverage).toHaveBeenCalledTimes(2));

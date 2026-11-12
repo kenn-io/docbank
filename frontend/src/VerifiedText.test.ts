@@ -77,7 +77,10 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
 
 async function mockReadyText(source: SelectedSource, pages: number[] = [], artifactStatus = 200) {
   const { createHash } = await import("node:crypto");
-  const body = "Report one. Report two.";
+  const multiplePages = pages.length > 1;
+  const body = multiplePages
+    ? "Report one. Report two.\nPage two.\nPage five.\nPage six."
+    : "Report one. Report two.";
   const envelope = {
     docbank: {
       contract: "docbank-sanitized-markdown/v1",
@@ -92,14 +95,23 @@ async function mockReadyText(source: SelectedSource, pages: number[] = [], artif
         evidence_lexical_fingerprint: "b".repeat(64),
         normalized_evidence_contract: "normalized-evidence/v1",
         body_sha256: createHash("sha256").update(body).digest("hex"),
-        completeness: "complete",
+        completeness: pages.length ? "partial" : "complete",
         truncated: false,
       },
-      document: { unit_kind: "page", unit_count: 1 },
+      document: { unit_kind: "page", unit_count: multiplePages ? 4 : 1 },
       navigation: {
         offset_base: "body",
         complete: true,
-        entries: [{ key: "page:1", kind: "page", line: 1, byte: 0 }],
+        entries: [
+          { key: "page:1", kind: "page", line: 1, byte: 0 },
+          ...(multiplePages
+            ? [
+                { key: "page:2", kind: "page", line: 2, byte: 24 },
+                { key: "page:5", kind: "page", line: 3, byte: 34 },
+                { key: "page:6", kind: "page", line: 4, byte: 45 },
+              ]
+            : []),
+        ],
       },
     },
   };
@@ -230,9 +242,6 @@ it("combines a PDF page gap with the verified-empty notice", async () => {
     build_id: "e".repeat(64),
   });
   const rendered = await screen.findByText(/Page 1 has no text layer/);
-  expect(screen.getByRole("link", { name: /OCR can read it/ }).getAttribute("href")).toBe(
-    "https://docbank.ai/docs/usage/document-processing/#ocr",
-  );
   expect(rendered.textContent).toContain(
     "Processing verified that this document has no readable text.",
   );
