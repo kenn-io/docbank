@@ -44,13 +44,7 @@
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
-  let {
-    session,
-    initialExpression,
-    initialDocuments,
-    onclose,
-    onauthfailure,
-  }: Props = $props();
+  let { session, initialExpression, initialDocuments, onclose, onauthfailure }: Props = $props();
 
   const page = getContext<boolean>(drawerPage);
   let editing = $state(!page);
@@ -247,13 +241,10 @@
         $state.snapshot(draft.selected_documents),
         { session },
       );
+      if (epoch !== generation || currentSession !== session || !selectionConflict) return;
       if (
-        epoch !== generation ||
-        currentSession !== session ||
-        !selectionConflict
+        result.some((item) => !["current", "changed", "missing", "trashed"].includes(item.status))
       )
-        return;
-      if (result.some((item) => !["current", "changed", "missing", "trashed"].includes(item.status)))
         throw new Error("The selection response was incomplete or invalid.");
       if (result.every((item) => item.status === "current")) {
         clearSelectionConflict();
@@ -724,7 +715,9 @@
               <li>
                 <div class="tool-row-main">
                   <strong title={item.path || item.name}
-                    >{item.path?.replace(/^\//, "") || item.name || `Document ${item.selected.node_id}`}</strong
+                    >{item.path?.replace(/^\//, "") ||
+                      item.name ||
+                      `Document ${item.selected.node_id}`}</strong
                   ><span
                     >{item.status === "changed"
                       ? `Selected: ${item.selected_recorded ? formatDate(item.selected_recorded) : "date unavailable"} · Current: ${item.selected_recorded && formatDate(item.selected_recorded) === formatDate(item.modified ?? "") ? "different version" : formatDate(item.modified ?? "")}`
