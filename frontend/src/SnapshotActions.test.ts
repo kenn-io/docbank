@@ -163,7 +163,7 @@ it.each(["stale_revision", "not_found"])(
     expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Check/ })).toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(code === "not_found" ? 2 : 1);
+    expect(fetch).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -338,7 +338,7 @@ it("pages checked documents and resets to the first page on another check", asyn
 });
 
 it.each([true, false])(
-  "rechecks the entire selection after a confirmed retry (assign=%s)",
+  "offers a fresh check after a confirmed retry (assign=%s)",
   async (assign) => {
     const writes: BatchTagRequest[] = [];
     const selected = [1, 2, 3].map((node_id) => ({
@@ -384,6 +384,10 @@ it.each([true, false])(
         name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
       }),
     );
+    await screen.findByText(
+      assign ? "Added “Review” to 1 document." : "Removed “Review” from 1 document.",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
     await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
     expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
@@ -422,7 +426,7 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
     await fireEvent.click(
       await screen.findByRole("button", { name: "Add “Review” to 2 documents" }),
     );
-    await screen.findByText("Tag was deleted");
+    await screen.findByText("Some documents changed. Check their tags again.");
     await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   }
   await screen.findByText("Tag was deleted");
@@ -431,35 +435,7 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
   expect(writes).toBe(afterCheck ? 2 : 1);
 });
 
-it("allows a new tag after the chosen tag was deleted", async () => {
-  const other = { ...catalog[0], id: "33333333-3333-4333-8333-333333333333", name: "Other" };
-  const writes: BatchTagRequest[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-    if (init?.method !== "POST")
-      return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
-    const request = JSON.parse(String(init?.body)) as BatchTagRequest;
-    writes.push(request);
-    if (writes.length === 1)
-      return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
-    return Response.json(await receiptFor(request));
-  });
-  render(
-    SnapshotActions,
-    props({ scope: "selection", count: 2, targets, catalog: [...catalog, other] }),
-  );
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText("Tag was deleted");
-  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
-    target: { value: "Other" },
-  });
-  await fireEvent.click(screen.getByRole("option", { name: "Other (12)" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText(/Added “Other”/);
-  expect(writes[1].tag_id).toBe(other.id);
-});
-
-it("refreshes after a confirmed retry even when the next check fails", async () => {
+it("keeps the confirmed retry visible when a later check fails", async () => {
   let writes = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (init?.method === "POST") {
@@ -483,6 +459,9 @@ it("refreshes after a confirmed retry even when the next check fails", async () 
   await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
+  await screen.findByText("Added “Review” to 1 document.");
+  await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   await screen.findByText("Check failed");
+  expect(screen.getByText("Added “Review” to 1 document.")).toBeTruthy();
   expect(onchecked).toHaveBeenCalledTimes(3);
 });

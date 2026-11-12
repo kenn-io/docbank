@@ -130,9 +130,13 @@ operation fails without changing assignments. Documents whose assignment is
 already correct keep their node revisions. Actual changes record the normal
 audit events.
 
-If the result is uncertain, choose **Check tag results** to inspect each selected document.
-Review current membership, then choose whether to retry readable documents that still need the change. The retry uses their current revisions. Docbank checks the full selection again after a confirmed retry, including documents it couldn't read earlier.
-If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
+If the result is uncertain, choose **Check tag results** to inspect each selected
+document. Review current membership, then choose whether to retry readable
+documents that still need the change. The retry uses their current revisions.
+After a confirmed retry, check again to include documents that couldn't be read
+earlier. Docbank refreshes the view after an uncertain change and after each
+successful check or retry. If the initial change is refused because a document is
+stale, close the dialog, refresh, and select the documents again.
 
 API clients use `POST /api/v1/batch/tags` with one tag ID, an operation UUID,
 an assignment choice, and node/revision pairs. Docbank keeps receipts

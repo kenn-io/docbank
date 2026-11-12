@@ -381,9 +381,13 @@ on at most 1,000 documents. Type a new name and choose **Create “name”** to
 create the tag, then apply it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
-If the result is uncertain, choose **Check tag results** to inspect each selected document.
-Review current membership, then choose whether to retry readable documents that still need the change. The retry uses their current revisions. Docbank checks the full selection again after a confirmed retry, including documents it couldn't read earlier.
-If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
+If the result is uncertain, choose **Check tag results** to inspect each selected
+document. Review current membership, then choose whether to retry readable
+documents that still need the change. The retry uses their current revisions.
+After a confirmed retry, check again to include documents that couldn't be read
+earlier. Docbank refreshes the view after an uncertain change and after each
+successful check or retry. If the initial change is refused because a document is
+stale, close the dialog, refresh, and select the documents again.
 After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
@@ -402,9 +406,14 @@ automatically. **Remove** affects the whole selection, including documents
 that already had the tag before an addition.
 
 **Tag selected…** applies one atomic, revision-checked change to at most 1,000
-documents and reports how many changed. If the result is uncertain, choose **Check tag results** to inspect the selected documents.
-Review current membership, then choose whether to retry readable documents that still need the change. The retry uses their current revisions. Docbank checks the full selection again after a confirmed retry, including documents it couldn't read earlier.
-Docbank refreshes the view after an uncertain change and after each successful check or retry. If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
+documents and reports how many changed. If the result is uncertain, choose
+**Check tag results** to inspect each selected document. Review current
+membership, then choose whether to retry readable documents that still need the
+change. The retry uses their current revisions. After a confirmed retry, check
+again to include documents that couldn't be read earlier. Docbank refreshes the
+view after an uncertain change and after each successful check or retry. If the
+initial change is refused because a document is stale, close the dialog,
+refresh, and select the documents again.
 
 **Tag all…** → **Continue** captures every result, up to 250,000 documents,
 and prepares revision-checked batches of at most 1,000. The captured

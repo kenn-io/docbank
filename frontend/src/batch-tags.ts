@@ -170,15 +170,6 @@ export type BatchTagOutcome =
   // No answer arrived, so the change may have committed.
   | { kind: "unknown"; cause: unknown };
 
-// A refusal is about the documents unless the tag itself is gone, which leaves them valid.
-async function documentsChanged(session: string, tagID: string, cause: APIError): Promise<boolean> {
-  if (cause.code !== "not_found") return cause.code === "stale_revision";
-  return generated.getTag(tagID, { session }).then(
-    () => true,
-    (probe) => !(probe instanceof APIError && probe.status === 404),
-  );
-}
-
 export async function runBatchTagChange(
   session: string,
   request: BatchTagRequest,
@@ -192,7 +183,7 @@ export async function runBatchTagChange(
     return {
       kind: "rejected",
       cause,
-      stale: await documentsChanged(session, request.tag_id, cause),
+      stale: cause.code === "stale_revision" || cause.code === "not_found",
     };
   }
 }
