@@ -792,6 +792,26 @@ to the survivor and advances each affected party's revision and update time.
 Party records round-trip through metadata JSONL; restore validates their values,
 references, and active-name uniqueness. Audited vaults refuse party mutations.
 
+### Contract authority
+
+Schema 49 also stores contracts in `contracts` (UUID, title, type, stored
+status, optional start, expiry and signing dates, four free-text terms,
+revision, and creation and update times) and their party links in
+`contract_parties`. A link's primary key is the contract, party, and role, so a
+party can hold both roles; deleting a contract cascades to its links, while the
+party reference does not cascade. `contracts_expires_on` serves expiry filters.
+The effective status (`expired`) is derived on read from the stored status and
+expiry date and is never stored. Contracts and links round-trip through metadata
+JSONL as `contract` and `contract_party` records, which restore validates.
+
+Admission and retention differ. A new link requires an active party, and the own
+role also requires an own entity; both checks run in the mutation transaction.
+A link already present is retained after its party retires: attaching it again
+is a revision-fenced no-op that skips admission, and detaching it works. Link and
+field changes each advance the contract revision. Contract and link mutations
+use that single revision as their guard. Audited vaults refuse contract
+mutations.
+
 ### People search
 
 Person name search evaluates `docbank_person_name_starts_with_word_v1` at read time against folded display names, preserving literal punctuation and Unicode word starts. It stores no derived search rows. Browser search conceals automatically provisioned exact-identifier people during pending or failed processing until visible assertions or non-sensitive published document links support them.
