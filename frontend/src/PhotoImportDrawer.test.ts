@@ -2554,14 +2554,12 @@ it("inspects a registered preview after another tab imports a group", async () =
   };
   const replacement: PhotoImportTransport = {
     ...original,
-    planPhotoImport: vi
-      .fn()
-      .mockResolvedValue({
-        import_id: "second",
-        groups: [[0], [1]],
-        unsupported: [],
-        hashes: new Map([[selected[0], "a".repeat(64)]]),
-      }),
+    planPhotoImport: vi.fn().mockResolvedValue({
+      import_id: "second",
+      groups: [[0], [1]],
+      unsupported: [],
+      hashes: new Map([[selected[0], "a".repeat(64)]]),
+    }),
     registerPhotoImport: vi
       .fn()
       .mockRejectedValue(new APIError("Declaration changed", 500, "internal")),
