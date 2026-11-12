@@ -33,9 +33,12 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 			output := exportCall(t, server, name, selector)
 			require.Equal(t, file.VersionID, output["content_version_id"])
 			if name == "get_document_people" {
-				assertions := output["assertions"].([]any)
+				assertions, ok := output["assertions"].([]any)
+				require.True(t, ok)
 				require.Len(t, assertions, 1)
-				require.Equal(t, "Visible Author", assertions[0].(map[string]any)["display_name"])
+				assertion, ok := assertions[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, "Visible Author", assertion["display_name"])
 			}
 		}
 	}
@@ -44,5 +47,4 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 		require.Equal(t, "no_content_version", output["code"])
 		require.Contains(t, output["message"], "no current content version")
 	}
-
 }

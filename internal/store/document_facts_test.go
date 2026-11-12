@@ -8,17 +8,24 @@ import (
 )
 
 func TestDocumentFactsDatesState(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, _ := ingestDocumentEventTarget(t, s, "example.txt", "a1")
 	facts, err := s.DocumentDateFacts(t.Context(), version.ID)
 	require.NoError(t, err)
 	require.Equal(t, "none", facts.State)
 	require.Empty(t, facts.View.Events.Events)
+	other, _ := ingestDocumentEventTarget(t, s, "other.txt", "a3")
+	otherFacts, err := s.DocumentDateFacts(t.Context(), other.ID)
+	require.NoError(t, err)
+	require.Equal(t, other.ID, otherFacts.Version.ID)
+	require.Equal(t, "none", otherFacts.State)
 	_, err = s.DocumentDateFacts(t.Context(), "00000000-0000-4000-8000-000000000000")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestDocumentPeopleFactsMissingHead(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	version, _ := ingestDocumentEventTarget(t, s, "people.txt", "a2")
 	facts, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
@@ -118,6 +125,7 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 }
 
 func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	actor := document.DocumentEventActorV1{ActorKey: "name_alias:private author", Claim: `"Private Author"`, DisplayName: "Private Author", Role: "recipient", Sensitive: true}
 	version, target := ingestDocumentEventTarget(t, s, "sensitive.txt", "d9")
@@ -174,6 +182,7 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 }
 
 func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	photo := browsePhotoNode(t, s, "hidden-facts.jpg", fakeHash("c2"), "image/jpeg")
