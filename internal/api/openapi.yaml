@@ -3620,6 +3620,62 @@ components:
       required:
         - name
       type: object
+    CreateTaxAccountRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateTaxAccountRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        authority_party_id:
+          type:
+            - string
+            - "null"
+        cadence:
+          type: string
+        country:
+          type: string
+        currency:
+          type: string
+        due_note:
+          type: string
+        effective_end:
+          type:
+            - string
+            - "null"
+        effective_start:
+          type:
+            - string
+            - "null"
+        filer_party_id:
+          type: string
+        identifier:
+          type: string
+        lead_days:
+          format: int64
+          type: integer
+        note:
+          type: string
+        period_note:
+          type: string
+        subdivision:
+          type: string
+        tax_kind:
+          type: string
+      required:
+        - filer_party_id
+        - country
+        - tax_kind
+        - cadence
+        - currency
+      type: object
+      x-go-type: api.CreateTaxAccountRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CustodianAssignment:
       additionalProperties: false
       properties:
@@ -12583,6 +12639,44 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PatchTaxAccountRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PatchTaxAccountRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        cadence:
+          type: string
+        currency:
+          type: string
+        due_note:
+          type: string
+        effective_end:
+          type:
+            - string
+            - "null"
+        effective_start:
+          type:
+            - string
+            - "null"
+        identifier:
+          type: string
+        lead_days:
+          format: int64
+          type: integer
+        note:
+          type: string
+        period_note:
+          type: string
+      type: object
+      x-go-type: api.PatchTaxAccountRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Pending:
       additionalProperties: false
       properties:
@@ -21128,6 +21222,119 @@ components:
         - offset
       type: object
       x-go-type: api.TaggedNodePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxAccount:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxAccount.json
+          format: uri
+          readOnly: true
+          type: string
+        account_id:
+          format: uuid
+          type: string
+        authority_party_id:
+          type:
+            - string
+            - "null"
+        cadence:
+          type: string
+        country:
+          type: string
+        created_at:
+          type: string
+        currency:
+          type: string
+        due_note:
+          type: string
+        effective_end:
+          type:
+            - string
+            - "null"
+        effective_start:
+          type:
+            - string
+            - "null"
+        filer_party_id:
+          type: string
+        identifier:
+          type: string
+        lead_days:
+          format: int64
+          type: integer
+        note:
+          type: string
+        period_note:
+          type: string
+        retired_at:
+          type:
+            - string
+            - "null"
+        revision:
+          format: int64
+          type: integer
+        subdivision:
+          type: string
+        tax_kind:
+          type: string
+        updated_at:
+          type: string
+      required:
+        - account_id
+        - filer_party_id
+        - authority_party_id
+        - country
+        - subdivision
+        - tax_kind
+        - identifier
+        - cadence
+        - period_note
+        - due_note
+        - lead_days
+        - currency
+        - effective_start
+        - effective_end
+        - note
+        - revision
+        - created_at
+        - updated_at
+        - retired_at
+      type: object
+      x-go-type: api.TaxAccount
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxAccountPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxAccountPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/TaxAccount"
+          type: array
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - items
+        - limit
+        - offset
+      type: object
+      x-go-type: api.TaxAccountPage
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -33204,6 +33411,188 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List live and trashed nodes carrying a tag
+  /api/v1/tax/accounts:
+    get:
+      operationId: listTaxAccounts
+      parameters:
+        - explode: false
+          in: query
+          name: filer
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: country
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: taxkind
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: include_retired
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxAccountPage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List tax accounts
+    post:
+      operationId: createTaxAccount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaxAccountRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxAccount"
+          description: Created
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create a tax account
+  /api/v1/tax/accounts/{account_id}:
+    get:
+      operationId: getTaxAccount
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: reveal
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxAccount"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect a tax account
+    patch:
+      operationId: updateTaxAccount
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchTaxAccountRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxAccount"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Edit a tax account
+  /api/v1/tax/accounts/{account_id}/retire:
+    post:
+      operationId: retireTaxAccount
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxAccount"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Retire a tax account
   /api/v1/text-citations/outline:
     post:
       operationId: getTextOutline

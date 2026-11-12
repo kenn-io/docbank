@@ -1888,6 +1888,28 @@ export interface CreateTagRequest {
   name: string;
 }
 
+export interface CreateTaxAccountRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  authority_party_id?: string | null;
+  cadence: string;
+  country: string;
+  currency: string;
+  due_note?: string;
+  /** @nullable */
+  effective_end?: string | null;
+  /** @nullable */
+  effective_start?: string | null;
+  filer_party_id: string;
+  identifier?: string;
+  lead_days?: number;
+  note?: string;
+  period_note?: string;
+  subdivision?: string;
+  tax_kind: string;
+}
+
 export interface CustodianAssignment {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5219,6 +5241,22 @@ export type PatchPartyRequest = (unknown & ({
   /** @nullable */
   person_id?: string | null;
 }));
+
+export interface PatchTaxAccountRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  cadence?: string;
+  currency?: string;
+  due_note?: string;
+  /** @nullable */
+  effective_end?: string | null;
+  /** @nullable */
+  effective_start?: string | null;
+  identifier?: string;
+  lead_days?: number;
+  note?: string;
+  period_note?: string;
+}
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 
@@ -8785,6 +8823,42 @@ export interface TaggedNodePage {
   total: number;
 }
 
+export interface TaxAccount {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  account_id: string;
+  /** @nullable */
+  authority_party_id: string | null;
+  cadence: string;
+  country: string;
+  created_at: string;
+  currency: string;
+  due_note: string;
+  /** @nullable */
+  effective_end: string | null;
+  /** @nullable */
+  effective_start: string | null;
+  filer_party_id: string;
+  identifier: string;
+  lead_days: number;
+  note: string;
+  period_note: string;
+  /** @nullable */
+  retired_at: string | null;
+  revision: number;
+  subdivision: string;
+  tax_kind: string;
+  updated_at: string;
+}
+
+export interface TaxAccountPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: TaxAccount[];
+  limit: number;
+  offset: number;
+}
+
 /**
  * How long a session_ended session lasted.
  */
@@ -10505,6 +10579,34 @@ limit?: number;
  */
 offset?: number;
 live_only?: boolean;
+};
+
+export type ListTaxAccountsParams = {
+filer?: string;
+country?: string;
+taxkind?: string;
+include_retired?: boolean;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetTaxAccountParams = {
+reveal?: boolean;
+};
+
+export type UpdateTaxAccountHeaders = {
+'If-Match': string;
+};
+
+export type RetireTaxAccountHeaders = {
+'If-Match': string;
 };
 
 export type ListTrashParams = {
@@ -21941,6 +22043,187 @@ export const listTagNodes = async (tagId: string,
     ...options,
     method: 'GET'
 
+
+  }
+);}
+
+
+
+export const getListTaxAccountsUrl = (params?: ListTaxAccountsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/tax/accounts?${stringifiedParams}` : `/api/v1/tax/accounts`
+}
+
+/**
+ * @summary List tax accounts
+ */
+export const listTaxAccounts = async (params?: ListTaxAccountsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccountPage> => {
+
+  return sessionJSON<TaxAccountPage>(getListTaxAccountsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateTaxAccountUrl = () => {
+
+
+
+
+  return `/api/v1/tax/accounts`
+}
+
+/**
+ * @summary Create a tax account
+ */
+export const createTaxAccount = async (createTaxAccountRequest: NonReadonly<CreateTaxAccountRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxAccount>(getCreateTaxAccountUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createTaxAccountRequest)
+  }
+);}
+
+
+
+export const getGetTaxAccountUrl = (accountId: string,
+    params?: GetTaxAccountParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}?${stringifiedParams}` : `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}`
+}
+
+/**
+ * @summary Inspect a tax account
+ */
+export const getTaxAccount = async (accountId: string,
+    params?: GetTaxAccountParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+  return sessionJSON<TaxAccount>(getGetTaxAccountUrl(accountId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdateTaxAccountUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}`
+}
+
+/**
+ * @summary Edit a tax account
+ */
+export const updateTaxAccount = async (accountId: string,
+    patchTaxAccountRequest: NonReadonly<PatchTaxAccountRequest>,
+    headers: UpdateTaxAccountHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxAccount>(getUpdateTaxAccountUrl(accountId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchTaxAccountRequest)
+  }
+);}
+
+
+
+export const getRetireTaxAccountUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}/retire`
+}
+
+/**
+ * @summary Retire a tax account
+ */
+export const retireTaxAccount = async (accountId: string,
+    headers: RetireTaxAccountHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxAccount>(getRetireTaxAccountUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
