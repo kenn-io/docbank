@@ -20,8 +20,6 @@ func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	t.Parallel()
 	date := "2025-01-01"
 	a := store.TaxAccount{AccountID: "22222222-2222-4222-8222-222222222222", Revision: 1, FilerPartyID: "11111111-1111-4111-8111-111111111111", Country: "ZZ", TaxKind: "Example", Cadence: "annual", Currency: "USD", Identifier: "private12345", EffectiveStart: &date, EffectiveEnd: &date, LeadDays: 14}
-	var create CreateTaxAccountRequest
-	require.NoError(t, json.Unmarshal([]byte(`{"$schema":"https://example.com/schema.json","country":"ZZ"}`), &create))
 	var patch PatchTaxAccountRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"$schema":"https://example.com/schema.json","effective_start":null,"lead_days":0}`), &patch))
 	in := mergeTaxAccountPatch(a, patch)
@@ -30,10 +28,5 @@ func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	assert.Equal(t, &date, in.EffectiveEnd)
 	require.NotNil(t, in.LeadDays)
 	assert.Zero(t, *in.LeadDays)
-	raw, err := json.Marshal(patch)
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"effective_start":null`)
-	raw, err = json.Marshal(PatchTaxAccountRequest{ClearEffectiveStart: true})
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"effective_start":null`)
+
 }

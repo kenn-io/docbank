@@ -21,7 +21,7 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"period_note", "b"}, {"due_note", "b"}, {"lead_days", "b"}, {"currency", "b"},
 	{"effective_start", "b"}, {"effective_end", "b"}, {"note", "b"}, {"filer", "q"},
 	{"taxkind", "q"}, {"include_retired", "q"}, {packageLimitParameter, "q"}, {"offset", "q"},
-	{"reveal", "q"}, {"account_id", "p"}, {"If-Match", "h"},
+	{"reveal", "q"},
 }
 var taxDiagnosticReasons = []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization"}
 

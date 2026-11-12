@@ -1540,7 +1540,8 @@ Get-one includes retired accounts. Create returns 201; edit and retire return
 Responses mask identifiers except `GET /api/v1/tax/accounts/{account_id}?reveal=true`.
 PATCH omissions retain values and explicit null clears effective dates. Account
 identity is immutable. Validation and backend errors do not echo tax values;
-invalid tax values return 422 `invalid_tax`, retired accounts return 409
+schema-invalid inputs return 422 `validation`, domain-invalid tax values return
+422 `invalid_tax`, retired accounts return 409
 `tax_retired`, and audited vaults refuse mutations with 409
 `audit_mutation_unsupported`. See [Tax accounts](../usage/tax-records.md).
 

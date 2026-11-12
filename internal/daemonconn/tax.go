@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/taxrecord"
@@ -151,25 +154,43 @@ func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bo
 	return result, nil
 }
 
-func validTaxAccount(a api.TaxAccount) bool {
+func validTaxAccount(a api.TaxAccount, reveal bool) bool {
 	if !validUUIDv4(a.AccountID) || !validUUIDv4(a.FilerPartyID) || (a.AuthorityPartyID != nil && !validUUIDv4(*a.AuthorityPartyID)) || a.Revision < 1 {
 		return false
 	}
 	values := taxrecord.AccountValues{FilerPartyID: a.FilerPartyID, AuthorityPartyID: a.AuthorityPartyID, Country: a.Country, Subdivision: a.Subdivision, TaxKind: a.TaxKind, Cadence: a.Cadence, PeriodNote: a.PeriodNote, DueNote: a.DueNote, LeadDays: a.LeadDays, Currency: a.Currency, EffectiveStart: a.EffectiveStart, EffectiveEnd: a.EffectiveEnd, Note: a.Note}
+	if reveal {
+		values.Identifier = a.Identifier
+	}
 	if taxrecord.ValidateAccount(values) != nil {
 		return false
 	}
-	for _, timestamp := range []*string{&a.CreatedAt, &a.UpdatedAt, a.RetiredAt} {
-		if timestamp != nil {
-			if _, err := time.Parse(time.RFC3339Nano, *timestamp); err != nil {
-				return false
-			}
+	if !reveal && a.Identifier != "" && (!utf8.ValidString(a.Identifier) || !strings.HasPrefix(a.Identifier, "****") || (utf8.RuneCountInString(a.Identifier) != 4 && utf8.RuneCountInString(a.Identifier) != 8) || !document.ValidPersonIdentityText(strings.TrimPrefix(a.Identifier, "****"))) {
+		return false
+	}
+	return validTaxTimestamps(a.CreatedAt, a.UpdatedAt, a.RetiredAt)
+}
+
+func validTaxTimestamps(created, updated string, retired *string) bool {
+	start, err := time.Parse(time.RFC3339Nano, created)
+	if err != nil {
+		return false
+	}
+	end, err := time.Parse(time.RFC3339Nano, updated)
+	if err != nil || end.Before(start) {
+		return false
+	}
+	if retired != nil {
+		when, err := time.Parse(time.RFC3339Nano, *retired)
+		if err != nil || when.Before(start) || when.After(end) {
+			return false
 		}
 	}
 	return true
 }
-func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id string) (api.TaxAccount, error) {
-	if a == nil || response == nil || !validTaxAccount(*a) || (id != "" && a.AccountID != id) || response.Header.Get("ETag") != revisionIfMatch(a.Revision) {
+
+func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id string, reveal bool) (api.TaxAccount, error) {
+	if a == nil || response == nil || !validTaxAccount(*a, reveal) || (id != "" && a.AccountID != id) || response.Header.Get("ETag") != revisionIfMatch(a.Revision) {
 		return api.TaxAccount{}, &responseDecodeError{err: errors.New("invalid tax account response")}
 	}
 	return *a, nil
@@ -177,7 +198,7 @@ func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id s
 
 // A successful mutation advances exactly one revision and has the requested retirement state.
 func validateTaxMutationResponse(a *api.TaxAccount, response *http.Response, id string, previous int64, retired bool) (api.TaxAccount, error) {
-	result, err := validateTaxAccountResponse(a, response, id)
+	result, err := validateTaxAccountResponse(a, response, id, false)
 	if err == nil && (result.Revision-1 != previous || (result.RetiredAt != nil) != retired) {
 		return api.TaxAccount{}, taxMutationFailure(&responseDecodeError{err: errors.New("invalid tax account mutation response")})
 	}
@@ -201,7 +222,7 @@ func (c *Connection) TaxAccounts(ctx context.Context, filer, country, taxkind st
 		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account page")}
 	}
 	for _, a := range page.Items {
-		if !validTaxAccount(a) {
+		if !validTaxAccount(a, false) {
 			return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account page")}
 		}
 	}
@@ -220,7 +241,7 @@ func (c *Connection) TaxAccount(ctx context.Context, id string, reveal bool) (ap
 	if err != nil {
 		return api.TaxAccount{}, safeTaxError(err)
 	}
-	return validateTaxAccountResponse(&receipt.Items[0], response, id)
+	return validateTaxAccountResponse(&receipt.Items[0], response, id, reveal)
 }
 func (c *Connection) CreateTaxAccount(ctx context.Context, in api.CreateTaxAccountRequest) (api.TaxAccount, error) {
 	var response *http.Response

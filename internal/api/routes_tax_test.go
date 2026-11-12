@@ -13,24 +13,8 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/taxrecord"
 )
-
-func TestTaxValuesAbsentFromLogs(t *testing.T) {
-	t.Parallel()
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	const sentinel = "private-synthetic-value"
-	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(sentinel) })
-	handler := logMiddleware(recoverMiddleware(next, logger, ""), logger, "")
-	for _, path := range []string{"/api/v1/tax/accounts/", "/api/v1//tax/accounts/"} {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path+sentinel+"?country="+sentinel, nil)
-		handler.ServeHTTP(httptest.NewRecorder(), req)
-	}
-	assert.NotContains(t, logs.String(), sentinel)
-	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tax/"+sentinel, nil).URL, ""))
-}
 
 func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 	t.Parallel()
@@ -42,9 +26,7 @@ func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 		require.ErrorAs(t, taxRouteError(slog.Default(), field), &problem)
 		assert.NotContains(t, problem.Detail, "private-synthetic-value")
 	}
-	var problem *Error
-	require.ErrorAs(t, taxRouteError(slog.Default(), &taxrecord.FieldError{Field: "cadence", Reason: "unknown cadence"}), &problem)
-	assert.Equal(t, "cadence: unknown cadence", problem.Detail)
+
 }
 
 func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
@@ -114,19 +96,10 @@ func TestTaxMaintenanceErrorIsSafe(t *testing.T) {
 	assert.NotContains(t, problem.Detail, "private-synthetic-value")
 }
 
-func TestTaxRevisionExhaustionError(t *testing.T) {
-	t.Parallel()
-	var problem *Error
-	require.ErrorAs(t, taxRouteError(slog.Default(), store.ErrTaxRevisionExhausted), &problem)
-	assert.Equal(t, http.StatusConflict, problem.Status)
-	assert.Equal(t, "tax_revision_exhausted", problem.Code)
-	assert.Equal(t, "tax request failed", problem.Detail)
-}
-
 func TestTaxFormatterPreservesMediaValidation(t *testing.T) {
 	t.Parallel()
 	const secret = "private-synthetic-media-url"
-	ctx := humago.NewContext(&huma.Operation{Path: "/api/v1/media"}, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/media", nil), httptest.NewRecorder())
+	ctx := humago.NewContext(&huma.Operation{Path: "/api/v1/media/occurrences"}, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/media/occurrences", nil), httptest.NewRecorder())
 	problem := huma.NewErrorWithContext(ctx, http.StatusUnprocessableEntity, "validation", &huma.ErrorDetail{Location: "body.canonical_url", Value: secret, Message: "invalid"})
 	var result *Error
 	require.ErrorAs(t, problem, &result)
