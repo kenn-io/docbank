@@ -887,6 +887,18 @@ resulting revision, size, and hash. `--json` returns the node, new version, and
 complete source-version receipt. Repeating the same historical choice later is
 valid and records another operation.
 
+## docbank party
+
+```text
+docbank party list [--kind person|organization] [--own=true|false] [--include-retired] [--limit <n>] [--offset <n>] [--json]
+docbank party show <party-id> [--json]
+docbank party create <display-name> [--kind person|organization] [--legal-name <name>] [--country <code>] [--person <person-id>] [--own] [--json]
+docbank party edit <party-id> [--name <name>] [--kind <kind>] [--legal-name <name>] [--country <code> | --clear-country] [--person <person-id> | --clear-person] [--own=true|false] [--revision <n>] [--json]
+docbank party retire <party-id> [--revision <n>] [--json]
+```
+
+Manage reusable entities and counterparties. List excludes retired parties by default. Edit and retire read the current revision immediately before writing unless `--revision` supplies a positive expected revision. A stale revision is refused. See [Contracts](usage/contracts.md) for name matching and person links.
+
 ## docbank tag
 
 ```text

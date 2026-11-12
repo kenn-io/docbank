@@ -128,6 +128,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
+| `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
 | `GET\|POST /saved-queries` · `GET\|PATCH\|DELETE /saved-queries/{saved_query_id}` | list, create, inspect, edit, or delete named query and literal highlight definitions | Implemented |
@@ -1741,6 +1742,7 @@ and maintenance are exceptions:
 | `POST /nodes/{id}/trash` | required: target node's revision |
 | `POST /nodes/{id}/restore` | required: target node's revision |
 | `POST /nodes/{id}/verify` | required: binds the evidence to the node state the caller inspected |
+| `PATCH /parties/{party_id}`, `POST /parties/{party_id}/retire` | required: party revision |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required: tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required: saved-definition revision |
 | `POST /saved-queries/{saved_query_id}/runs` | required: executes the saved definition revision the caller inspected |
@@ -2524,6 +2526,8 @@ include a `position` span:
 | `snapshot_unavailable` | 503 | query snapshot exceeded its resource budget or its build was canceled |
 | `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
 | `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
+| `party_exists` / `party_retired` | 409 | An active folded name exists, or the party is retired |
+| `invalid_party` | 422 | The party input or reference is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |

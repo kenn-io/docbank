@@ -34,3 +34,5 @@ resource's `ETag`. The CLI reads the current revision unless `--revision` is
 provided. A stale revision fails without changing the party. Creation needs no
 revision. Party changes are refused in vaults with active audited history.
 Parties are included in metadata backup and restore.
+
+Duplicate detection compares display names exactly after Unicode normalization and case folding. Punctuation and legal suffix variants are not treated as duplicates. Linking a person requires an active person; an existing link remains readable and editable after that person retires. Merging people moves their linked parties to the survivor and advances each party revision.

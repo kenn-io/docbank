@@ -57,3 +57,21 @@ func TestPartyLifecycleHTTP(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	assert.Len(t, page.Items, 1)
 }
+
+func TestPartyPatchRejectsNoncanonicalAndNullFields(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "person", "display_name": "Example"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var party api.Party
+	require.NoError(t, json.Unmarshal([]byte(body), &party))
+	path := "/api/v1/parties/" + party.PartyID
+	for _, patch := range []map[string]any{{"OWN": true}, {"Country": nil}, {"own": nil}, {"display_name": nil}, {"kind": nil}, {"legal_name": nil}} {
+		resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, patch)
+		assert.GreaterOrEqual(t, resp.StatusCode, 400, body)
+	}
+	resp, body = get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &party))
+	assert.Equal(t, int64(1), party.Revision)
+}

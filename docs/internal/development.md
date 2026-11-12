@@ -538,6 +538,8 @@ GRANT INSERT, DELETE, UPDATE(name, description, payload, fingerprint, revision, 
 GRANT UPDATE(binding_epoch) ON documents.document_people_state TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(display_name, display_name_folded, state, revision,
     updated_at, key_face_id) ON documents.persons TO docbank_runtime;
+GRANT INSERT, UPDATE(kind, display_name, display_name_folded, legal_name, country,
+    own, person_id, revision, updated_at, retired_at) ON documents.parties TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(person_id) ON documents.person_identities TO docbank_runtime;
 GRANT INSERT, UPDATE(person_id, uid_kind, uid_state, last_seen_revision,
     display_name_snapshot, updated_at) ON documents.person_external_identities TO docbank_runtime;

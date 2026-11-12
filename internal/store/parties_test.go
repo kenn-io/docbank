@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -159,6 +160,7 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 	require.NotEqual(t, -1, partyLine)
 	for _, tc := range []struct{ name, from, to string }{
 		{"country", `"country":"CA"`, `"country":"ZZ"`},
+		{"NUL", `"display_name":"Example"`, `"display_name":"Exam\u0000ple"`},
 		{"own", `"own":1`, `"own":2`},
 		{"folded", `"display_name_folded":"example"`, `"display_name_folded":"wrong"`},
 		{"missing person", `"person_id":null`, `"person_id":"11111111-1111-4111-8111-111111111111"`},
@@ -241,4 +243,42 @@ func TestPartyRetireAndEditRace(t *testing.T) {
 	}
 	assert.Equal(t, 1, success)
 	assert.Equal(t, 1, stale)
+}
+
+func checkPartyPersonLifecycle(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Survivor", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Absorbed", "operator")
+	require.NoError(t, err)
+	input := PartyInput{Kind: "person", DisplayName: "Linked", PersonID: &absorbed.PersonID}
+	p, err := s.CreateParty(ctx, input)
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	moved, err := s.GetParty(ctx, p.PartyID)
+	require.NoError(t, err)
+	require.Equal(t, &survivor.PersonID, moved.PersonID)
+	require.Equal(t, p.Revision+1, moved.Revision)
+	_, err = s.UpdateParty(ctx, p.PartyID, p.Revision, input)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.RetirePerson(ctx, survivor.PersonID, survivor.Revision+1)
+	require.NoError(t, err)
+	input.PersonID = &survivor.PersonID
+	input.LegalName = "Historical link"
+	_, err = s.UpdateParty(ctx, p.PartyID, moved.Revision, input)
+	require.NoError(t, err)
+	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "New link", PersonID: &survivor.PersonID})
+	require.ErrorIs(t, err, ErrInvalidParty)
+	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Bad\x00name"})
+	require.ErrorIs(t, err, ErrInvalidParty)
+	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Valid", LegalName: "Bad\x00name"})
+	require.ErrorIs(t, err, ErrInvalidParty)
+}
+
+func TestPartyPersonLifecycle(t *testing.T) {
+	t.Parallel()
+	checkPartyPersonLifecycle(t, newTestStore)
 }

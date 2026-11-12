@@ -8349,6 +8349,247 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	return responseParser(ctx, resp)
 }
 
+// ListParties List parties
+func (c *Client) ListParties(ctx context.Context, options *ListPartiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPartiesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_retired": {Style: "form", Explode: &[]bool{false}[0]},
+		"kind":            {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"own":             {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/parties",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPartiesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPartiesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPartiesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPartiesErrorResponse](resp, "ListPartiesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateParty Create a party
+func (c *Client) CreateParty(ctx context.Context, options *CreatePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/parties",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePartyErrorResponse](resp, "CreatePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetParty Inspect a party
+func (c *Client) GetParty(ctx context.Context, options *GetPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPartyErrorResponse](resp, "GetPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateParty Edit a party
+func (c *Client) UpdateParty(ctx context.Context, options *UpdatePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdatePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdatePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdatePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdatePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdatePartyErrorResponse](resp, "UpdatePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireParty Retire a party
+func (c *Client) RetireParty(ctx context.Context, options *RetirePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetirePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetirePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetirePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetirePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetirePartyErrorResponse](resp, "RetirePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolvePath Resolve an absolute virtual path to its node
 func (c *Client) ResolvePath(ctx context.Context, options *ResolvePathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePathResponse, error) {
 	var err error
@@ -21847,6 +22088,176 @@ func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ListPartiesRequestOptions is the options needed to make a request to ListParties.
+type ListPartiesRequestOptions struct {
+	Query *ListPartiesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPartiesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPartiesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPartiesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPartiesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePartyRequestOptions is the options needed to make a request to CreateParty.
+type CreatePartyRequestOptions struct {
+	Body *CreatePartyBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePartyRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePartyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPartyRequestOptions is the options needed to make a request to GetParty.
+type GetPartyRequestOptions struct {
+	PathParams *GetPartyPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPartyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdatePartyRequestOptions is the options needed to make a request to UpdateParty.
+type UpdatePartyRequestOptions struct {
+	PathParams *UpdatePartyPath
+	Body       *UpdatePartyBody
+	Header     *UpdatePartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdatePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdatePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdatePartyRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdatePartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetirePartyRequestOptions is the options needed to make a request to RetireParty.
+type RetirePartyRequestOptions struct {
+	PathParams *RetirePartyPath
+	Header     *RetirePartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetirePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetirePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetirePartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetirePartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
 type ResolvePathRequestOptions struct {
 	Query *ResolvePathQuery
@@ -27269,6 +27680,14 @@ type UploadPackageChunkHeaders struct {
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
 }
 
+type UpdatePartyHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type RetirePartyHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type RenamePersonHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -27740,6 +28159,18 @@ type GetPageRenderJobPath struct {
 
 type CancelPageRenderJobPath struct {
 	ID uuid.UUID `json:"id"`
+}
+
+type GetPartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
+type UpdatePartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
+type RetirePartyPath struct {
+	PartyID string `json:"party_id"`
 }
 
 type UnassignTagPathPath struct {
@@ -28230,6 +28661,10 @@ type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
 
+type CreatePartyBody = CreatePartyRequest
+
+type UpdatePartyBody = PatchPartyRequest
+
 type MkdirPathBody = MkdirPathRequest
 
 type MovePathBody = MovePathRequest
@@ -28674,6 +29109,14 @@ type ReadPageImageQuery struct {
 	RecipeSha256 *string    `json:"recipe_sha256,omitempty"`
 	FrameSha256  *string    `json:"frame_sha256,omitempty"`
 	ImageSha256  *string    `json:"image_sha256,omitempty"`
+}
+
+type ListPartiesQuery struct {
+	Kind           *string `json:"kind,omitempty"`
+	Own            *string `json:"own,omitempty"`
+	IncludeRetired *bool   `json:"include_retired,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+	Offset         *int64  `json:"offset,omitempty"`
 }
 
 type ResolvePathQuery struct {
@@ -29157,6 +29600,7 @@ type GetExportJobEventsErrorResponse struct {
 	InaccessibleFaceConflict *bool                `json:"inaccessible_face_conflict,omitempty"`
 	More                     *bool                `json:"more,omitempty"`
 	ObservedScopeCount       *int64               `json:"observed_scope_count,omitempty"`
+	PartyID                  *string              `json:"party_id,omitempty"`
 	Position                 *ErrorPosition       `json:"position,omitempty"`
 	Redaction                *PDFRedactionProblem `json:"redaction,omitempty"`
 	Status                   int64                `json:"status"`
@@ -29652,6 +30096,26 @@ type GetPageRenderJobErrorResponse = Error
 type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
+
+type ListPartiesResponse = api.PartyPage
+
+type ListPartiesErrorResponse = Error
+
+type CreatePartyResponse = api.Party
+
+type CreatePartyErrorResponse = Error
+
+type GetPartyResponse = api.Party
+
+type GetPartyErrorResponse = Error
+
+type UpdatePartyResponse = api.Party
+
+type UpdatePartyErrorResponse = Error
+
+type RetirePartyResponse = api.Party
+
+type RetirePartyErrorResponse = Error
 
 type ResolvePathResponse = api.Node
 
@@ -30727,6 +31191,8 @@ type CreateNodeRequest struct {
 	ParentID int64                 `json:"parent_id"`
 }
 
+type CreatePartyRequest = api.CreatePartyRequest
+
 type CreatePersonRequest = api.CreatePersonRequest
 
 type CreatePhotoAlbumRequest = api.CreatePhotoAlbumRequest
@@ -31344,6 +31810,12 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type Party = api.Party
+
+type PartyPage = api.PartyPage
+
+type PatchPartyRequest = api.PatchPartyRequest
 
 type Pending = kataevidence.Pending
 

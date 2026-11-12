@@ -60,6 +60,17 @@ func (p *PatchPartyRequest) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &members); err != nil {
 		return err
 	}
+	for name, member := range members {
+		switch name {
+		case "kind", "display_name", "legal_name", "own":
+			if string(member) == "null" {
+				return fmt.Errorf("%s cannot be null", name)
+			}
+		case "country", "person_id":
+		default:
+			return fmt.Errorf("unknown party field %q", name)
+		}
+	}
 	*p = PatchPartyRequest(value)
 	_, p.countryPresent = members["country"]
 	_, p.personPresent = members["person_id"]

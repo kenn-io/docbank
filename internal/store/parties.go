@@ -51,10 +51,10 @@ func validatePartyInput(in PartyInput) error {
 	if in.Kind != "person" && in.Kind != "organization" {
 		return fmt.Errorf("%w: unknown kind", ErrInvalidParty)
 	}
-	if !utf8.ValidString(in.DisplayName) || strings.TrimSpace(in.DisplayName) == "" || utf8.RuneCountInString(in.DisplayName) > 200 || document.FoldPersonName(in.DisplayName) == "" {
+	if strings.ContainsRune(in.DisplayName, 0) || !utf8.ValidString(in.DisplayName) || strings.TrimSpace(in.DisplayName) == "" || utf8.RuneCountInString(in.DisplayName) > 200 || document.FoldPersonName(in.DisplayName) == "" {
 		return fmt.Errorf("%w: display name", ErrInvalidParty)
 	}
-	if !utf8.ValidString(in.LegalName) || utf8.RuneCountInString(in.LegalName) > 300 {
+	if strings.ContainsRune(in.LegalName, 0) || !utf8.ValidString(in.LegalName) || utf8.RuneCountInString(in.LegalName) > 300 {
 		return fmt.Errorf("%w: legal name", ErrInvalidParty)
 	}
 	if in.Country != nil && (len(*in.Country) != 2 || !strings.Contains(partyCountries, " "+*in.Country+" ")) {
@@ -97,10 +97,10 @@ func (s *Store) GetParty(ctx context.Context, id string) (Party, error) {
 	return getPartyQuery(ctx, s.db, id)
 }
 
-func checkPartyReferences(ctx context.Context, tx *sql.Tx, input PartyInput, exclude string) error {
-	if input.PersonID != nil {
+func checkPartyReferences(ctx context.Context, tx *sql.Tx, input PartyInput, exclude string, existingPerson *string) error {
+	if input.PersonID != nil && (existingPerson == nil || *input.PersonID != *existingPerson) {
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=$1)`, *input.PersonID).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=$1 AND state<>'retired')`, *input.PersonID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -129,7 +129,7 @@ func (s *Store) CreateParty(ctx context.Context, input PartyInput) (Party, error
 	now := nowRFC3339()
 	p := Party{PartyID: id, Kind: input.Kind, DisplayName: input.DisplayName, DisplayNameFolded: document.FoldPersonName(input.DisplayName), LegalName: input.LegalName, Country: input.Country, PersonID: input.PersonID, Own: input.Own, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if err := checkPartyReferences(ctx, tx, input, ""); err != nil {
+		if err := checkPartyReferences(ctx, tx, input, "", nil); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO parties (`+partyColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, p.PartyID, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, partyOwn(p.Own), p.PersonID, p.Revision, p.CreatedAt, p.UpdatedAt, p.RetiredAt)
@@ -181,7 +181,7 @@ func (s *Store) UpdateParty(ctx context.Context, id string, revision int64, inpu
 		if p.RetiredAt != nil {
 			return ErrPartyRetired
 		}
-		if err := checkPartyReferences(ctx, tx, input, id); err != nil {
+		if err := checkPartyReferences(ctx, tx, input, id, p.PersonID); err != nil {
 			return err
 		}
 		p.Kind = input.Kind

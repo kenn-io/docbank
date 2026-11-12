@@ -16,7 +16,17 @@ func newPartyCommand() *cobra.Command {
 		if jsonOutput {
 			return writeCLIJSON(cmd.OutOrStdout(), p)
 		}
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\trevision %d\n", p.PartyID, p.Kind, p.DisplayName, p.Revision)
+		country, person, retiredAt := "", "", ""
+		if p.Country != nil {
+			country = *p.Country
+		}
+		if p.PersonID != nil {
+			person = *p.PersonID
+		}
+		if p.RetiredAt != nil {
+			retiredAt = *p.RetiredAt
+		}
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tlegal name: %s\tcountry: %s\town: %t\tperson: %s\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", p.PartyID, p.Kind, p.DisplayName, p.LegalName, country, p.Own, person, retiredAt, p.Revision, p.CreatedAt, p.UpdatedAt)
 		return err
 	}
 	var kind string
@@ -123,7 +133,10 @@ func newPartyCommand() *cobra.Command {
 			return err
 		}
 		revision := editRevision
-		if revision == 0 {
+		if cmd.Flags().Changed("revision") && revision <= 0 {
+			return fmt.Errorf("revision must be positive")
+		}
+		if !cmd.Flags().Changed("revision") {
 			p, err := c.Party(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -152,7 +165,10 @@ func newPartyCommand() *cobra.Command {
 			return err
 		}
 		revision := retireRevision
-		if revision == 0 {
+		if cmd.Flags().Changed("revision") && revision <= 0 {
+			return fmt.Errorf("revision must be positive")
+		}
+		if !cmd.Flags().Changed("revision") {
 			p, err := c.Party(cmd.Context(), args[0])
 			if err != nil {
 				return err

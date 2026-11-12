@@ -233,6 +233,9 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE person_aliases SET surviving_person_id=$1 WHERE surviving_person_id=$2`, survivorID, absorbedID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE parties SET person_id=$1,revision=revision+1,updated_at=$2 WHERE person_id=$3`, survivorID, now, absorbedID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE person_id=$1`, absorbedID); err != nil {
 			return err
 		}
