@@ -303,10 +303,21 @@
   }
   :global(.contracts) {
     width: 100%;
+    border-collapse: collapse;
   }
+  /* Rows follow the app's table convention: left-aligned headers and
+     cells, a muted divider and vertical padding between rows. */
   :global(.contracts) td,
   :global(.contracts) th {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
+    text-align: left;
     white-space: nowrap;
+  }
+  :global(.contracts) thead th {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
   }
   :global(.contracts) .title-cell,
   :global(.contracts) .wrap-cell {
@@ -342,10 +353,6 @@
     }
     :global(.contracts) tbody .date-cell {
       white-space: normal;
-    }
-    /* The bare table's default border spacing is not needed on a phone. */
-    :global(.contracts) {
-      border-collapse: collapse;
     }
     /* A long status such as "Pending signature" breaks between its words
        instead of setting the column's width. */
