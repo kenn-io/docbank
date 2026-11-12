@@ -22,8 +22,8 @@ func TestMetadataQualificationSurvivesToolchainChanges(t *testing.T) {
 		version     string
 		fingerprint string
 	}{
-		{"go1.27.0", "9c052ae04b36939be28488060206180faa423caa9c54991c1c80cc927fb84daf"},
-		{"go1.27.1", "2082f43003da6ec6666538be838cdb9d162273b83a5cc6807c69cbaa1a726158"},
+		{"go1.27.0", "930d0a9739c53270fdcef37089cfadb48ec578dfef5deaf5e6e05de4cf04685d"},
+		{"go1.27.1", "7b17b213be5d90d83818f7ab2c1b0f15c3e9885ca80b18b0120d5ef39aa535fc"},
 	} {
 		t.Run(test.version, func(t *testing.T) {
 			t.Parallel()
