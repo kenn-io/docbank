@@ -350,9 +350,7 @@
   // unless a filter on it is active. Documents also hide a group that can't
   // narrow anything: no values, or one value that covers every result.
   function empty(facet: Facet): boolean {
-    // An unavailable People group stays while it filters, so its people are explained.
-    if (!facet.available)
-      return unit !== "photos" && !(facet.dimension === "person_role" && query.filters[people]);
+    if (!facet.available) return unit !== "photos";
     if (facet.dimension === "tags" && query.filters.no_tags) return false;
     const values = shown(facet);
     if (values.some((value) => selected(facet.dimension, value))) return false;
