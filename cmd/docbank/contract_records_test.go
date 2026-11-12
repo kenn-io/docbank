@@ -182,6 +182,10 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	require.NoError(t, err, out)
 	var replacement api.Party
 	require.NoError(t, json.Unmarshal([]byte(out), &replacement))
+	beforeCollision := read()
+	_, err = runCLI(t, "contract", "edit", contract.ContractID, "--title", "Should not apply", "--counterparty", "Synthetic Supplier")
+	require.ErrorContains(t, err, "use an ID")
+	require.Equal(t, beforeCollision, read())
 	out, err = runCLI(t, "contract", "edit", contract.ContractID, "--counterparty", replacement.PartyID)
 	require.NoError(t, err, out)
 	before := read()
