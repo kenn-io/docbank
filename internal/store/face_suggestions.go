@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -36,8 +37,8 @@ func (s *Store) faceSuggestionInputsTx(ctx context.Context, tx *sql.Tx, faceID, 
 		if candidates != "" {
 			namedPeople = " AND pa.person_id IN (SELECT persons.person_id FROM persons WHERE " + candidates + "persons.state<>'retired')"
 		}
-		versions += ` AND (h.content_version_id=(SELECT content_version_id FROM photo_faces WHERE face_id=?) OR EXISTS(SELECT 1 FROM photo_faces named JOIN person_document_assertions pa ON pa.assertion_id=named.assertion_id AND pa.action='assert' JOIN persons p ON p.person_id=pa.person_id AND p.state<>'retired' WHERE named.content_version_id=h.content_version_id` + namedPeople + `))`
-		args = append([]any{faceID}, args...)
+		versions += ` AND (EXISTS(SELECT 1 FROM photo_faces named JOIN person_document_assertions pa ON pa.assertion_id=named.assertion_id AND pa.action='assert' JOIN persons p ON p.person_id=pa.person_id AND p.state<>'retired' WHERE named.content_version_id=h.content_version_id` + namedPeople + `) OR h.content_version_id=(SELECT content_version_id FROM photo_faces WHERE face_id=$` + strconv.Itoa(len(args)+1) + `))`
+		args = append(args, faceID)
 	}
 	ids, err := stringColumnTx(ctx, tx, "face vector heads", `SELECT h.embedding_set_id FROM embedding_heads h JOIN embedding_sets es ON es.embedding_set_id=h.embedding_set_id WHERE h.input_kind='face' AND h.content_version_id IN (`+versions+`) ORDER BY h.embedding_set_id`, args...)
 	if err != nil {
