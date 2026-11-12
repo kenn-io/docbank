@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 var eventRecordFixture = strings.Replace(taxRecordFixture, `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"2026-01-01T00:00:00Z"`, 1)
@@ -89,4 +90,21 @@ func TestTaxEventClientAdvanceAndVoidPaths(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.VoidTaxEvent(t.Context(), id, eid, 2, api.VoidTaxEventRequest{Reason: "Correction"})
 	require.NoError(t, err)
+}
+
+func TestTaxEventVoidedTypedError(t *testing.T) {
+	t.Parallel()
+	const recordID = "11111111-1111-4111-8111-111111111111"
+	const eventID = "33333333-3333-4333-8333-333333333333"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/tax/records/"+recordID+"/events/"+eventID+"/void", r.URL.Path)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"status":409,"title":"Conflict","code":"tax_event_voided","detail":"private-synthetic"}`))
+	}))
+	t.Cleanup(server.Close)
+	_, err := New(server.URL, "").VoidTaxEvent(t.Context(), recordID, eventID, 2, api.VoidTaxEventRequest{Reason: "Correction"})
+	require.ErrorIs(t, err, store.ErrTaxEventVoided)
+	assert.NotContains(t, err.Error(), "private-synthetic")
 }
