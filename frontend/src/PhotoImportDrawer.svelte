@@ -395,6 +395,7 @@
   async function chooseSavedFiles(files: File[]): Promise<void> {
     if (!savedImport) return;
     planning = true;
+    const active = (controller = new AbortController());
     try {
       const byPath = new Map<string, File>();
       for (const file of files)
@@ -406,7 +407,6 @@
         ...(savedImport.skipped ?? []).map((file) => file.path),
       ]);
       extraFiles = files.map(localFilePath).filter((name) => !known.has(name));
-      const signal = new AbortController().signal;
       for (const [index, group] of (savedImport.groups ?? []).entries()) {
         const item = items[index];
         const prior = new Map(item.files.map((file) => [localFilePath(file), file]));
@@ -424,7 +424,7 @@
             file.lastModified !== group.files[i].modified_time
           )
             changed = true;
-          if (expectedHash && (await hashFile(file, signal, () => {})) !== expectedHash)
+          if (expectedHash && (await hashFile(file, active.signal, () => {})) !== expectedHash)
             changed = true;
         }
         if (group.status === "committed") {
@@ -443,9 +443,9 @@
         }
       }
     } catch (cause) {
-      showError(cause);
+      if (!active.signal.aborted && !destroyed) showError(cause);
     } finally {
-      planning = false;
+      [planning, controller] = [false, null];
     }
   }
 
