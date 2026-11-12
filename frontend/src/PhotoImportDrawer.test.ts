@@ -279,6 +279,67 @@ it("refreshes a group committed between inspection and resume", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("inspects a group claimed after inspection before offering another upload", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    picker_kind: "files" as const,
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const committed = {
+    ...saved,
+    groups: [
+      {
+        ...saved.groups[0],
+        status: "committed" as const,
+        receipt: { status: "added" as const, asset_id: "asset" },
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(committed),
+    uploadPhotoGroup: vi
+      .fn()
+      .mockRejectedValue(
+        new APIError("This group is still finishing.", 409, "photo_group_pending"),
+      ),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending-race",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "a.JPG")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await screen.findByText("Still finishing");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Imported earlier");
+  expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+});
+
 it("loads saved imports one page at a time", async () => {
   const saved = {
     import_id: "saved",
