@@ -96,9 +96,14 @@ func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 	return nil
 }
 func (c *Client) Check(ctx context.Context) (Status, error) {
-	var user map[string]any
+	var user struct {
+		ID int64 `json:"id"`
+	}
 	if err := c.get(ctx, "/user", &user); err != nil {
 		return Status{}, err
+	}
+	if user.ID <= 0 {
+		return Status{}, errors.New("docuseal_invalid_response")
 	}
 	return Status{Configured: true, Enabled: true, Endpoint: c.connection.Endpoint, Capability: "template_submission"}, nil
 }
@@ -111,7 +116,7 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 		suffix += fmt.Sprintf("?after=%d", cursor)
 	}
 	var wire struct {
-		Data []struct {
+		Data *[]struct {
 			ID         int64  `json:"id"`
 			Name       string `json:"name"`
 			Submitters []struct {
@@ -125,14 +130,14 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 	if err := c.get(ctx, suffix, &wire); err != nil {
 		return TemplatePage{}, err
 	}
-	if len(wire.Data) > 100 {
+	if wire.Data == nil || len(*wire.Data) > 100 {
 		return TemplatePage{}, errors.New("docuseal_invalid_response")
 	}
-	page := TemplatePage{Templates: make([]Template, 0, len(wire.Data))}
+	page := TemplatePage{Templates: make([]Template, 0, len(*wire.Data))}
 	if wire.Pagination.Next != nil {
 		page.Next = *wire.Pagination.Next
 	}
-	for _, t := range wire.Data {
+	for _, t := range *wire.Data {
 		if t.ID <= 0 || !safeText(t.Name, c.connection.APIKey) || len(t.Submitters) > 20 {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}

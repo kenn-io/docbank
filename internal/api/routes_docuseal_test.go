@@ -24,7 +24,7 @@ func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 		require.Equal(t, "synthetic-key", r.Header.Get("X-Auth-Token"))
 		switch r.URL.Path {
 		case "/api/user":
-			_, _ = w.Write([]byte(`{"email":"private@example.test"}`))
+			_, _ = w.Write([]byte(`{"id":7,"email":"private@example.test"}`))
 		case "/api/templates":
 			_, _ = w.Write([]byte(`{"data":[{"id":1,"name":"Lease","submitters":[{"name":"Tenant"}]}],"pagination":{"next":1}}`))
 		default:

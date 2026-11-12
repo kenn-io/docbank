@@ -8544,6 +8544,15 @@ export interface StartStorageSalvageRequest {
   preview_token: string;
 }
 
+export interface Status {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  capability: string;
+  configured: boolean;
+  enabled: boolean;
+  endpoint: string;
+}
+
 export interface StoragePackReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -8791,6 +8800,19 @@ export interface TelemetryEventProperties {
   search_type?: TelemetryEventPropertiesSearchType;
   /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
+}
+
+export interface Template {
+  id: number;
+  name: string;
+  roles: string[];
+}
+
+export interface TemplatePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  next: number;
+  templates: Template[];
 }
 
 export interface TermReportHistory {
@@ -9631,6 +9653,13 @@ format?: string;
  * @maxLength 16
  */
 extension?: string;
+};
+
+export type ListDocuSealTemplatesParams = {
+/**
+ * @minimum 0
+ */
+after?: number;
 };
 
 export type SetLaneControlHeaders = {
@@ -13646,6 +13675,61 @@ return sessionResponse<Response>(getStreamIngestUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(ingestRequest)
+  }
+);}
+
+
+
+export const getGetDocuSealStatusUrl = () => {
+
+
+
+
+  return `/api/v1/integrations/docuseal/status`
+}
+
+/**
+ * @summary Check the DocuSeal connection
+ */
+export const getDocuSealStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<Status> => {
+
+  return sessionJSON<Status>(getGetDocuSealStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getListDocuSealTemplatesUrl = (params?: ListDocuSealTemplatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/integrations/docuseal/templates?${stringifiedParams}` : `/api/v1/integrations/docuseal/templates`
+}
+
+/**
+ * @summary List DocuSeal templates
+ */
+export const listDocuSealTemplates = async (params?: ListDocuSealTemplatesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TemplatePage> => {
+
+  return sessionJSON<TemplatePage>(getListDocuSealTemplatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
