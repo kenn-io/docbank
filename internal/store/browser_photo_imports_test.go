@@ -153,12 +153,14 @@ func TestBrowserPhotoInspectionRejectsUnknownReceipts(t *testing.T) {
 }
 
 func TestBrowserPhotoImportMissing(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.InspectBrowserPhotoImport(t.Context(), uuid.New())
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
