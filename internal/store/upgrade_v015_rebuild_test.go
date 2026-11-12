@@ -121,10 +121,14 @@ func TestUpgradeReleasedV0150KeepsRebuildReceipts(t *testing.T) {
 			}
 			require.Equal(t, "completed", events[eventDone].State)
 			require.Equal(t, int64(2), events[eventDone].Published)
+			require.Equal(t, int64(2), events[eventDone].TargetEpoch)
 			require.Equal(t, "completed", people[peopleDone].State)
 			require.Equal(t, int64(2), people[peopleDone].Published)
+			require.Equal(t, int64(2), people[peopleDone].TargetEpoch)
 			require.Equal(t, "running", events[eventRunning].State)
+			require.Equal(t, int64(3), events[eventRunning].TargetEpoch)
 			require.Equal(t, "running", people[peopleRunning].State)
+			require.Equal(t, int64(3), people[peopleRunning].TargetEpoch)
 			sourceState := rebuildStateRows(t, legacy)
 			require.NoError(t, db.Close())
 
