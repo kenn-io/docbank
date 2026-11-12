@@ -219,3 +219,28 @@ func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, facts.Persons[person.PersonID].Visible)
 }
+
+func checkDocumentPeopleFactsFiltersBlindCopyEdge(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
+	version, target := ingestDocumentEventTarget(t, s, "bcc.eml", "e4")
+	record := documentEventRecord(t, s.VaultID(), version.ID, "e4")
+	record.Events[0].Actors[0].Role = "blind_copy"
+	record.Events[0].Actors[0].Sensitive = true
+	_, err := s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
+	require.NoError(t, err)
+	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+	require.NoError(t, err)
+	publication := documentPeoplePublicationForInput(t, input)
+	publication.People.Edges[0].Sensitive = true
+	_, err = s.PublishDocumentPeople(t.Context(), publication)
+	require.NoError(t, err)
+	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Len(t, full.Edges, 1)
+	require.Equal(t, "blind_copy", full.Edges[0].Role)
+	require.True(t, full.Edges[0].Sensitive)
+	safe, err := s.DocumentPeopleFacts(t.Context(), version.ID, true)
+	require.NoError(t, err)
+	require.Empty(t, safe.Edges)
+}

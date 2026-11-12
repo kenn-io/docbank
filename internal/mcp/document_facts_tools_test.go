@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -47,4 +50,37 @@ func TestDocumentFactsToolsUseSafeDisclosure(t *testing.T) {
 		require.Equal(t, "no_content_version", output["code"])
 		require.Contains(t, output["message"], "no current content version")
 	}
+}
+
+func TestDocumentDatesPagePreservesClaimsAndPrimaryWithinEnvelope(t *testing.T) {
+	dates := api.VersionDates{ContentVersionID: "00000000-0000-4000-8000-000000000001", NodeID: 1, State: "published", Primary: &api.VersionDatePrimary{EventID: "primary"}}
+	for i := range 12 {
+		dates.Claims = append(dates.Claims, api.VersionDateClaim{EventID: fmt.Sprint(i), RawValue: strings.Repeat("\\\"", 50000)})
+	}
+	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: "synthetic"}}
+	var claims []api.VersionDateClaim
+	var diagnostics []api.FactDiagnostic
+	offset := 0
+	for {
+		page, err := documentDatesPage(dates, offset)
+		require.NoError(t, err)
+		size, err := toolEnvelopeBytes(page, nil)
+		require.NoError(t, err)
+		require.Less(t, size, maxToolResponseBytes)
+		require.Equal(t, dates.Primary, page.Primary)
+		claims = append(claims, page.Claims...)
+		diagnostics = append(diagnostics, page.Diagnostics...)
+		if page.NextOffset == nil {
+			break
+		}
+		require.Greater(t, *page.NextOffset, offset)
+		offset = *page.NextOffset
+	}
+	require.Equal(t, dates.Claims, claims)
+	require.Equal(t, dates.Diagnostics, diagnostics)
+	require.Greater(t, offset, 0)
+	dates.Diagnostics = []api.FactDiagnostic{{Code: "warning", Detail: strings.Repeat("x", maxToolResponseBytes)}}
+	dates.Claims = nil
+	_, err := documentDatesPage(dates, 0)
+	require.ErrorIs(t, err, errToolResultTooLarge)
 }
