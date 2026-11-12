@@ -1,6 +1,7 @@
 package document
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -69,7 +70,7 @@ func DateKeysFor(events []DocumentEventV1) ([]DateKey, error) {
 			if end, ok := ends[component]; ok && end > key.CivilDate {
 				parsed, err := time.Parse("2006-01-02", end)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("parse calendar end date: %w", err)
 				}
 				key.CivilEndDate = parsed.AddDate(0, 0, -1).Format("2006-01-02")
 			}

@@ -65,7 +65,7 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 					}
 					dt, parseErr := civiltime.ParseDateTime(wall)
 					if parseErr != nil {
-						return document.DocumentEventV1{}, parseErr
+						return document.DocumentEventV1{}, fmt.Errorf("parse calendar date-time: %w", parseErr)
 					}
 					instant, _ := civiltime.ResolveLocal(dt, designator.Location)
 					_, offset := instant.Zone()
@@ -179,12 +179,10 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 		precision = "fraction"
 	}
 	zoneToken := match[8]
-	zone := document.EventTimezoneKind("omitted")
-	var zoneText string
 	var offset *int
 	designator := civiltime.ClassifyZone(zoneToken, civiltime.Email)
-	zone = document.EventTimezoneKind(designator.State)
-	zoneText = zoneToken
+	zone := document.EventTimezoneKind(designator.State)
+	zoneText := zoneToken
 	if designator.State == civiltime.ZoneOffset || designator.State == civiltime.ZoneRFC5322 {
 		offset = &designator.OffsetSeconds
 	}

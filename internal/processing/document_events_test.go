@@ -562,6 +562,7 @@ func testDigest(seed string) string {
 }
 
 func TestCalendarZoneGapAndOverlap(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ value, utc string }{
 		{"20260308T0230", "2026-03-08T07:00:00.000000000Z"},
 		{"20261101T0130", "2026-11-01T05:30:00.000000000Z"},
@@ -576,6 +577,7 @@ func TestCalendarZoneGapAndOverlap(t *testing.T) {
 }
 
 func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {
+	t.Parallel()
 	payload := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260309\r\nDTEND;VALUE=DATE:20260311\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260401\r\nDTEND;VALUE=DATE:20260403\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), payload)
 	require.NoError(t, err)

@@ -32,6 +32,7 @@ func TestDocumentEventRestoreDrainPublishesAnEmptyVault(t *testing.T) {
 }
 
 func TestRebuildReusesRetainedIANAInstant(t *testing.T) {
+	t.Parallel()
 	catalog := openDocumentEventTestStore(t)
 	ctx := t.Context()
 	node, err := catalog.CreateFile(ctx, catalog.RootID(), "event.ics", testDigest("retained-zone"), 4, "text/calendar")
@@ -551,6 +552,7 @@ func TestDocumentEventBackfillClassifiesOnlyCapturedTerminalEvidence(t *testing.
 }
 
 func TestDocumentEventReusePropagatesCorruptHead(t *testing.T) {
+	t.Parallel()
 	catalog := &gatedDocumentEventCatalog{gateDepth: 1, snapshot: store.DocumentEventEvidenceSnapshot{InputsSHA256: testDigest("captured")}, viewErr: store.ErrDocumentEventsCorrupt}
 	completed, err := BackfillDocumentEventTargets(t.Context(), catalog, []store.DocumentEventTarget{{ContentVersionID: "92000000-0000-4000-8000-000000000009"}})
 	require.ErrorIs(t, err, store.ErrDocumentEventsCorrupt)

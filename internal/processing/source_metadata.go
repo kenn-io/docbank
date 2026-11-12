@@ -1583,8 +1583,8 @@ func (c *metadataCollector) extractCalendar(data []byte) {
 				continue
 			}
 			if strings.EqualFold(name, "END") {
-				for i := len(stack) - 1; i >= 0; i-- {
-					if strings.EqualFold(stack[i].name, strings.TrimSpace(value)) {
+				for i, frame := range slices.Backward(stack) {
+					if strings.EqualFold(frame.name, strings.TrimSpace(value)) {
 						stack = stack[:i]
 						break
 					}

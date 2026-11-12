@@ -588,6 +588,7 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 }
 
 func TestQuerySnapshotRetainsTimezoneOnLaterPages(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for i := range 51 {
 		name := fmt.Sprintf("date-%02d.txt", i)
@@ -615,11 +616,12 @@ func TestQuerySnapshotRetainsTimezoneOnLaterPages(t *testing.T) {
 }
 
 func TestDocumentDateSortKeepsUndatedLast(t *testing.T) {
+	t.Parallel()
 	for _, direction := range []string{"asc", "desc"} {
 		rows := []SnapshotRow{
-			{SortKey: "", SnapshotMember: SnapshotMember{NodeID: 1}},
-			{SortKey: "2026-03-10T00:00:00.000000000", SnapshotMember: SnapshotMember{NodeID: 2}},
-			{SortKey: "2026-03-09T00:00:00.000000000", SnapshotMember: SnapshotMember{NodeID: 3}},
+			{SortKey: "", NodeID: 1},
+			{SortKey: "2026-03-10T00:00:00.000000000", NodeID: 2},
+			{SortKey: "2026-03-09T00:00:00.000000000", NodeID: 3},
 		}
 		sortSnapshotRows(rows, query.Sort{Field: "document_date", Direction: direction})
 		require.Equal(t, int64(1), rows[2].NodeID)

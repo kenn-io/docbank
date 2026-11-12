@@ -206,6 +206,7 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 }
 
 func TestQueryCompileTimelineErrors(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, tc := range []struct {
 		input, code string
@@ -247,6 +248,7 @@ func TestQueryCompileTimelineErrors(t *testing.T) {
 }
 
 func TestFullDateDisclosureRequiresNonBrowserAPIKey(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	resp, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)

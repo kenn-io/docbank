@@ -14,6 +14,7 @@ import (
 )
 
 func TestUpgradeReleasedV017RebuildsDocumentDateKeys(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			ctx := t.Context()

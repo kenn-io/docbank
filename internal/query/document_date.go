@@ -1,6 +1,7 @@
 package query
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -39,15 +40,12 @@ func ParseDocumentDate(value string) (string, string, error) {
 		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
 	if from > to {
-		return "", "", &DateError{Code: "invalid_date", Err: fmt.Errorf("date range is reversed")}
+		return "", "", &DateError{Code: "invalid_date", Err: errors.New("date range is reversed")}
 	}
 	return from, to, nil
 }
 
 func normalizeDocumentDate(value *DocumentDateFilter) (*DocumentDateFilter, error) {
-	if value == nil {
-		return nil, nil
-	}
 	from, to, err := ParseDocumentDate(value.From + ".." + value.To)
 	if err != nil {
 		return nil, err
@@ -87,12 +85,7 @@ func UsesDocumentDate(q Query) bool {
 		if e.Kind == ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, e.Field) {
 			return true
 		}
-		for _, child := range e.Children {
-			if has(child) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(e.Children, has)
 	}
 	return has(expr)
 }

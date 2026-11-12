@@ -52,6 +52,7 @@ func TestPhotoBrowseReportsCompilerRelevanceAvailability(t *testing.T) {
 }
 
 func TestValidatePhotoQueryKeepsSemanticIntent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	for _, mode := range []string{"semantic", "hybrid"} {
 		value := snapshotTestQuery(t, `{"mode":"`+mode+`","text":"sunset"}`)

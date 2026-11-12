@@ -22,7 +22,7 @@ func termReportError(err error) *Error {
 		return NewError(http.StatusRequestEntityTooLarge, "report_limit", limit.Error())
 	}
 	if problem := dateQueryError(err); problem != nil {
-		return problem.(*Error)
+		return problem
 	}
 	if errors.Is(err, store.ErrDocumentDatesPending) {
 		return NewError(http.StatusServiceUnavailable, "document_dates_pending", err.Error())

@@ -81,6 +81,7 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 }
 
 func TestTermReportDocumentDateUsesReportTimezone(t *testing.T) {
+	t.Parallel()
 	s, node := documentDateZoneFixture(t)
 	request := termFrameRequest()
 	request.Terms = []report.Term{{Number: 1, Expression: "date:2026-03-09", Syntax: "advanced", Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}}

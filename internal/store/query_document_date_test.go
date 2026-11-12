@@ -9,6 +9,7 @@ import (
 )
 
 func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "fixture.txt", fakeHash("a1"), 10, "text/plain")
@@ -49,6 +50,7 @@ func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
 }
 
 func TestDocumentDateBoundaryVectors(t *testing.T) {
+	t.Parallel()
 	_, missingErr := (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-30", "2011-12-30"}}})
 	require.ErrorContains(t, missingErr, "date_not_in_zone")
 	_, missingErr = (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-28", "2011-12-28"}, {"2011-12-29", "2011-12-29"}, {"2011-12-30", "2011-12-30"}}})
@@ -111,6 +113,7 @@ func documentDateZoneFixture(t *testing.T) (*Store, Node) {
 }
 
 func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
+	t.Parallel()
 	s, node := documentDateZoneFixture(t)
 	ctx := t.Context()
 	_, err := s.CreateSavedQuery(ctx, "Toronto", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"date:2026-03-09","timezone":"America/Toronto"}`))
@@ -131,6 +134,7 @@ func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
 }
 
 func TestDocumentDateAllDayEventMatchesSecondDay(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "calendar.ics", fakeHash("c1"), 10, "text/calendar")
@@ -179,6 +183,7 @@ func TestDocumentDateAllDayEventMatchesSecondDay(t *testing.T) {
 }
 
 func TestDocumentDateDisclosureUsesFullPrimary(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "private-date.txt", fakeHash("a7"), 10, "text/plain")
@@ -209,6 +214,7 @@ func TestDocumentDateDisclosureUsesFullPrimary(t *testing.T) {
 }
 
 func TestDocumentDateSnapshotWaitsForIndex(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.CreateFile(t.Context(), s.RootID(), "pending.txt", fakeHash("a8"), 1, "text/plain")
 	require.NoError(t, err)
@@ -223,6 +229,7 @@ func TestDocumentDateSnapshotWaitsForIndex(t *testing.T) {
 }
 
 func TestNonDateSnapshotDoesNotReportDefaultedTimezone(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	service := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })

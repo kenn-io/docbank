@@ -122,9 +122,9 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
 type WorkspaceQueryResponse struct {
+	PhotoSearchStatus
 	Timezone          string `json:"timezone,omitempty"`
 	TimezoneDefaulted bool   `json:"timezone_defaulted"`
-	PhotoSearchStatus
 
 	Query               QueryPayload               `json:"query"`
 	Dependencies        []WorkspaceQueryDependency `json:"dependencies"`

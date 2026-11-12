@@ -6,6 +6,7 @@ import (
 )
 
 func TestEmailDateZones(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ zone, kind string }{
 		{"+0000", "utc"}, {"-0000", "omitted"}, {"Z", "omitted"}, {"+1930", "invalid"}, {"+1260", "invalid"},
 	} {
@@ -20,6 +21,7 @@ func TestEmailDateZones(t *testing.T) {
 }
 
 func TestInvalidEmailOffsetRetainedThroughMetadata(t *testing.T) {
+	t.Parallel()
 	raw := "10 Mar 2026 12:30 +1930"
 	record := document.SourceMetadataV1{}
 	collector := metadataCollector{record: &record, seen: make(map[string]bool)}

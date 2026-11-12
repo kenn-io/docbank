@@ -18,6 +18,7 @@ import (
 // Its gotestsum JSON artifact retains the query plans and timings, including on
 // success. The synthetic data has one event per file and no multi-day spans.
 func TestDocumentDateIndexMeasurement(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("CI") != "true" || runtime.GOOS != "linux" {
 		t.Skip("100k synthetic index measurement runs only in Linux CI")
 	}
@@ -93,8 +94,8 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `CREATE INDEX measurement_events_lookup ON document_events(generation_id,precision,utc_key,date_value,axis_key,sensitive,event_id)`)
 	require.NoError(t, err)
 	for run := range 3 {
-		keys := measureDateLookup(t, ctx, s.db, "date_keys", keySQL, part.args...)
-		events := measureDateLookup(t, ctx, s.db, "document_events_indexed", eventSQL, part.args...)
+		keys := measureDateLookup(ctx, t, s.db, "date_keys", keySQL, part.args...)
+		events := measureDateLookup(ctx, t, s.db, "document_events_indexed", eventSQL, part.args...)
 		require.NotEmpty(t, keys)
 		require.Less(t, len(keys), versions)
 		require.Equal(t, events, keys)
@@ -129,13 +130,13 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 		t.Logf("pending full snapshot run %d: %s", run+1, time.Since(started))
 	}
 	t.Log("Limits: synthetic single-event current files, test-only event indexes, no multi-day spans; timings are observations, not latency requirements.")
-
 }
 
-func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, statement string, args ...any) []int64 {
+func measureDateLookup(ctx context.Context, t *testing.T, db *sql.DB, label, statement string, args ...any) []int64 {
 	t.Helper()
 	plan, err := db.QueryContext(ctx, `EXPLAIN QUERY PLAN `+statement, args...)
 	require.NoError(t, err)
+	defer func() { _ = plan.Close() }()
 	var details []string
 	for plan.Next() {
 		var id, parent, unused int
@@ -156,6 +157,7 @@ func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, sta
 	start := time.Now()
 	rows, err := db.QueryContext(ctx, statement, args...)
 	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64

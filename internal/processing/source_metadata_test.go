@@ -1776,6 +1776,7 @@ func TestSourceMetadataPDFFactsSearch(t *testing.T) {
 }
 
 func TestCalendarComponentDateIsolation(t *testing.T) {
+	t.Parallel()
 	for _, component := range []string{"VTODO", "VJOURNAL", "VFREEBUSY", ""} {
 		lines := "DTSTART:20260401T120000\r\n"
 		if component != "" {
