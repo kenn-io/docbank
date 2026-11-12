@@ -139,7 +139,7 @@ func contractLinks(ctx context.Context, tx *sql.Tx, items []Contract) error {
 	}
 	rows, err = tx.QueryContext(ctx, `SELECT cd.contract_id,cd.node_id,cd.content_version_id,cd.blob_sha256,cd.size,cd.role,cd.added_at,
  CASE WHEN n.kind='file' AND n.trashed_at IS NULL AND v.node_id=cd.node_id AND v.blob_hash=cd.blob_sha256 AND v.size=cd.size THEN 1 ELSE 0 END,
- CASE WHEN n.kind='file' AND n.trashed_at IS NULL AND v.node_id=cd.node_id AND v.blob_hash=cd.blob_sha256 AND v.size=cd.size AND n.current_version_id=cd.content_version_id THEN 1 ELSE 0 END
+ CASE WHEN n.current_version_id=cd.content_version_id THEN 1 ELSE 0 END
  FROM contract_documents cd LEFT JOIN nodes n ON n.id=cd.node_id LEFT JOIN content_versions v ON v.version_id=cd.content_version_id
  WHERE cd.contract_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY cd.role,cd.node_id,cd.content_version_id`, args...)
 	if err != nil {
@@ -153,7 +153,7 @@ func contractLinks(ctx context.Context, tx *sql.Tx, items []Contract) error {
 			return err
 		}
 		d.Available = available == 1
-		d.Current = current == 1
+		d.Current = d.Available && current == 1
 		if i, ok := ids[d.ContractID]; ok {
 			items[i].Documents = append(items[i].Documents, d)
 		}

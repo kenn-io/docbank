@@ -6,7 +6,6 @@ import (
 )
 
 const contractsStorageSchemaVersion = partiesStorageSchemaVersion
-const contractDocumentsStorageSchemaVersion = contractsStorageSchemaVersion
 
 type metadataContract struct {
 	Type          string  `json:"type"`

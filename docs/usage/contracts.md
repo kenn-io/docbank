@@ -107,11 +107,11 @@ docbank contract unlink <contract-id> id:42 --role signed --version <version-id>
 Roles are `draft`, `signed`, `audit_trail`, `amendment`, and `attachment`.
 A link keeps the recorded node ID, version, hash and size. Replacing the file
 leaves the link on its old version. `current` indicates that the linked version
-is the available head; `available` is false while the source is trashed or
+is the available head version, even if a later version has identical bytes; `available` is false while the source is trashed or
 its version has been pruned or purged. Links do not prevent source deletion.
 Restoring a trashed file makes a retained version available again. If several
 versions have the same role, unlink requires `--version`. Link and unlink use
-the contract revision and do not change its status.
+the contract revision and do not change its status. An unknown or trashed node returns 422 `invalid_contract`. An unlink matching multiple versions returns 409 `ambiguous_contract_document`. An explicitly empty version is invalid; omit it to select the default.
 
 The API uses `PUT` and `DELETE /api/v1/contracts/{contract_id}/documents/{node_id}`
 with `role` and optional `content_version_id` query parameters and an `If-Match`

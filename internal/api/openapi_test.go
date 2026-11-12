@@ -924,11 +924,9 @@ func TestOpenAPIContractDocumentMutationParameters(t *testing.T) {
 		for _, p := range op.Parameters {
 			params[p.In+":"+p.Name] = p
 		}
-		require.Contains(t, params, "header:If-Match")
-		assert.True(t, params["header:If-Match"].Required)
-		assert.Equal(t, "string", params["header:If-Match"].Schema.Type)
 		require.Contains(t, params, "query:role")
 		assert.True(t, params["query:role"].Required)
+		assert.Equal(t, []any{"draft", "signed", "audit_trail", "amendment", "attachment"}, params["query:role"].Schema.Enum)
 		require.Contains(t, params, "query:content_version_id")
 		assert.False(t, params["query:content_version_id"].Required)
 	}

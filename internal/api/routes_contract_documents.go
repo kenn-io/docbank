@@ -2,29 +2,42 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
 )
 
+type contractDocumentLinkInput struct {
+	ContractID       string `path:"contract_id"`
+	NodeID           int64  `path:"node_id" minimum:"1"`
+	Role             string `query:"role" required:"true" enum:"draft,signed,audit_trail,amendment,attachment"`
+	ContentVersionID string `query:"content_version_id"`
+	IfMatch          string `header:"If-Match"`
+	emptyVersion     bool
+}
+
+func (in *contractDocumentLinkInput) Resolve(ctx huma.Context) []error {
+	values, ok := ctx.URL().Query()["content_version_id"]
+	in.emptyVersion = ok && len(values) > 0 && values[0] == ""
+	return nil
+}
+
 func registerContractDocumentRoutes(api huma.API, d Deps, g *gate) {
-	type linkInput struct {
-		ContractID       string `path:"contract_id"`
-		NodeID           int64  `path:"node_id" minimum:"1"`
-		Role             string `query:"role" required:"true"`
-		ContentVersionID string `query:"content_version_id"`
-		IfMatch          string `header:"If-Match"`
-	}
+
 	for _, link := range []bool{true, false} {
 		method, operation := http.MethodPut, "linkContractDocument"
 		if !link {
 			method, operation = http.MethodDelete, "unlinkContractDocument"
 		}
-		huma.Register(api, huma.Operation{OperationID: operation, Method: method, Path: "/api/v1/contracts/{contract_id}/documents/{node_id}", Summary: "Change a contract document"}, func(ctx context.Context, in *linkInput) (*contractOutput, error) {
+		huma.Register(api, huma.Operation{OperationID: operation, Method: method, Path: "/api/v1/contracts/{contract_id}/documents/{node_id}", Summary: "Change a contract document"}, func(ctx context.Context, in *contractDocumentLinkInput) (*contractOutput, error) {
 			rev, err := parseIfMatch(in.IfMatch)
 			if err != nil {
 				return nil, err
+			}
+			if in.emptyVersion {
+				return nil, FromStoreError(fmt.Errorf("%w: content version ID must not be empty", store.ErrInvalidContract))
 			}
 			var out *contractOutput
 			err = g.mutate(ctx, func() error {

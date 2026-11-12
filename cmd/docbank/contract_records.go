@@ -31,11 +31,6 @@ func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	if err != nil {
 		return fmt.Errorf("write contract: %w", err)
 	}
-	for _, d := range c.Documents {
-		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
@@ -46,6 +41,11 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 	summary.Parties = nil
 	if err := printContract(cmd, summary, false); err != nil {
 		return err
+	}
+	for _, d := range c.Documents {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
+			return fmt.Errorf("write contract document: %w", err)
+		}
 	}
 	for _, p := range c.Parties {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Party: %s %s (%s)\n", p.Role, p.DisplayName, p.PartyID); err != nil {

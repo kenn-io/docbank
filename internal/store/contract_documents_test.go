@@ -58,11 +58,6 @@ func checkContractDocumentLifecycle(t *testing.T, open func(*testing.T) *Store) 
 	require.Len(t, got.Documents, 1)
 	assert.Equal(t, version, got.Documents[0].ContentVersionID)
 }
-func TestContractDocumentLifecycle(t *testing.T) {
-	t.Parallel()
-	checkContractDocumentLifecycle(t, newTestStore)
-}
-
 func checkContractDocumentHistory(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
@@ -89,7 +84,9 @@ func checkContractDocumentHistory(t *testing.T, open func(*testing.T) *Store) {
 	same, err := s.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", old)
 	require.NoError(t, err)
 	assert.Equal(t, c.Revision, same.Revision)
-	for _, d := range same.Documents {
+	c, err = s.GetContract(ctx, c.ContractID, "2024-01-01")
+	require.NoError(t, err)
+	for _, d := range c.Documents {
 		assert.False(t, d.Available)
 		assert.False(t, d.Current)
 	}
@@ -100,13 +97,24 @@ func checkContractDocumentHistory(t *testing.T, open func(*testing.T) *Store) {
 	for _, d := range c.Documents {
 		assert.True(t, d.Available)
 	}
+	pruned, err := s.PruneContentVersions(ctx, n.ID, n.Revision, VersionPruneSelector{VersionIDs: []string{old}}, true)
+	require.NoError(t, err)
+	n = pruned.Node
+	c, err = s.GetContract(ctx, c.ContractID, "2024-01-01")
+	require.NoError(t, err)
+	for _, d := range c.Documents {
+		if d.ContentVersionID == old {
+			assert.False(t, d.Available)
+			assert.False(t, d.Current)
+		}
+	}
 	n, _, err = s.Trash(ctx, n.ID, n.Revision)
 	require.NoError(t, err)
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
-	same, err = s.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", old)
+	c, err = s.GetContract(ctx, c.ContractID, "2024-01-01")
 	require.NoError(t, err)
-	for _, d := range same.Documents {
+	for _, d := range c.Documents {
 		assert.False(t, d.Available)
 		assert.False(t, d.Current)
 	}
@@ -126,32 +134,6 @@ func checkContractDocumentHistory(t *testing.T, open func(*testing.T) *Store) {
 	c, err = s.UnlinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", old)
 	require.NoError(t, err)
 	require.Len(t, c.Documents, 1)
-}
-func TestContractDocumentHistory(t *testing.T) {
-	t.Parallel()
-	checkContractDocumentHistory(t, newTestStore)
-}
-
-func TestContractDocumentPrune(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	n, err := s.CreateFile(ctx, s.RootID(), "prune.txt", fakeHash("c1"), 1, "text/plain")
-	require.NoError(t, err)
-	c, err := s.CreateContract(ctx, ContractInput{Title: "Prune"})
-	require.NoError(t, err)
-	c, err = s.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", "")
-	require.NoError(t, err)
-	old := n.CurrentVersionID
-	n, _, err = s.ReplaceContent(ctx, n.ID, n.Revision, fakeHash("c2"), 2, "text/plain")
-	require.NoError(t, err)
-	_, err = s.PruneContentVersions(ctx, n.ID, n.Revision, VersionPruneSelector{VersionIDs: []string{old}}, true)
-	require.NoError(t, err)
-	c, err = s.GetContract(ctx, c.ContractID, "2024-01-01")
-	require.NoError(t, err)
-	require.Len(t, c.Documents, 1)
-	assert.False(t, c.Documents[0].Available)
-	assert.False(t, c.Documents[0].Current)
 }
 
 // Competing document mutations share the contract revision fence.

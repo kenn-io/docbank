@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -40,8 +41,14 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 		if c.Revision != rev {
 			return ErrStaleRevision
 		}
-		if nodeID < 1 || !validContractDocumentRole(role) || (versionID != "" && validateUUIDv4(versionID) != nil) {
-			return ErrInvalidContract
+		if nodeID < 1 {
+			return fmt.Errorf("%w: node ID must be positive", ErrInvalidContract)
+		}
+		if !validContractDocumentRole(role) {
+			return fmt.Errorf("%w: document role must be draft, signed, audit_trail, amendment or attachment", ErrInvalidContract)
+		}
+		if versionID != "" && validateUUIDv4(versionID) != nil {
+			return fmt.Errorf("%w: invalid content version ID", ErrInvalidContract)
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT content_version_id FROM contract_documents WHERE contract_id=$1 AND node_id=$2 AND role=$3 ORDER BY content_version_id`, id, nodeID, role)
 		if err != nil {
@@ -78,13 +85,13 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 		if link {
 			n, e := nodeByIDQuery(ctx, tx, nodeID)
 			if errors.Is(e, ErrNotFound) {
-				return ErrInvalidContract
+				return fmt.Errorf("%w: node not found or content version does not belong to node", ErrInvalidContract)
 			}
 			if e != nil {
 				return e
 			}
 			if n.TrashedAt != nil {
-				return ErrInvalidContract
+				return fmt.Errorf("%w: node is trashed", ErrInvalidContract)
 			}
 			if n.Kind != nodeKindFile {
 				return ErrNotFile
@@ -98,7 +105,7 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 			}
 			v, e := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=$1 AND node_id=$2`, versionID, nodeID))
 			if errors.Is(e, ErrNotFound) {
-				return ErrInvalidContract
+				return fmt.Errorf("%w: node not found or content version does not belong to node", ErrInvalidContract)
 			}
 			if e != nil {
 				return e
