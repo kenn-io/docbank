@@ -210,8 +210,8 @@ it("canonicalizes person role filters without merging entries", () => {
     }),
   );
   expect(parsed.filters.people).toEqual([
-    { person_id: id, roles: ["sender"] },
     { person_id: id, roles: ["author"] },
+    { person_id: id, roles: ["sender"] },
   ]);
   expect(canonicalQuery(parseQuery(canonicalQuery(parsed)))).toBe(canonicalQuery(parsed));
   for (const roles of [[], null, ["mentioned"]]) {

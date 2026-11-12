@@ -581,8 +581,8 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   expect(added.text).toBe(originalQuery.text);
   expect(added.filters.person_ids).toEqual([mara]);
   expect(added.filters.people).toEqual([
-    { person_id: typed, roles: ["custodian"] },
     { person_id: jory, roles: ["author", "sender"] },
+    { person_id: typed, roles: ["custodian"] },
   ]);
 
   await view.rerender({ query: added });
@@ -592,9 +592,9 @@ it("narrows by a person with the roles the People group shows and keeps typed en
   expect(joryButton.getAttribute("aria-pressed")).toBe("true");
   await fireEvent.click(screen.getByRole("button", { name: /^Mara Okonkwo-Fell, Cc, 1/ }));
   expect(onchange.mock.lastCall?.[0].filters.people).toEqual([
-    { person_id: typed, roles: ["custodian"] },
     { person_id: jory, roles: ["author", "sender"] },
     { person_id: mara, roles: ["copied"] },
+    { person_id: typed, roles: ["custodian"] },
   ]);
 
   await fireEvent.click(joryButton);

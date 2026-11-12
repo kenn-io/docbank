@@ -675,7 +675,7 @@ it("validates frozen person roles and the People facet", async () => {
   const receipt = await createSnapshot(
     "session",
     query,
-    { page_size: 50 },
+    { page_size: 50, facets: ["person_role"] },
     new AbortController().signal,
   );
   expect(receipt.rows[0]!.matched_roles).toEqual(["sender"]);
@@ -684,6 +684,11 @@ it("validates frozen person roles and the People facet", async () => {
     jsonResponse(await page({ rows: [{ ...good, matched_roles: ["bogus"] }], facets: [facet] })),
   );
   await expect(
-    createSnapshot("session", query, { page_size: 50 }, new AbortController().signal),
-  ).rejects.toThrow();
+    createSnapshot(
+      "session",
+      query,
+      { page_size: 50, facets: ["person_role"] },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("rows[0].matched_roles contains an invalid role");
 });
