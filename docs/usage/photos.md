@@ -48,7 +48,7 @@ A lost receipt leaves the group unconfirmed. Choose **Inspect import** in the dr
 
 **Choose folder** and **Choose files** start a new selection. When a directory contains a photo with the same bytes as an earlier browser import, its new siblings join that folder's burst groups and share stack decisions with those earlier photos, even if the matching file has a different name. Directories without a matching photo keep their own source. When a directory matches several earlier folders, its new photos keep the fresh selection identity automatically. Exact duplicates retain their earliest folder provenance. Each selected directory resolves independently.
 
-Saved imports remain available after a daemon restart, including imports whose groups all completed. The original results record what happened during the import; later changes or deletion can change which files are currently available.
+Saved imports remain available after a daemon restart, including previews closed before upload and imports whose groups all completed. Abandoned previews remain in Saved imports. The original results record what happened during the import; later changes or deletion can change which files are currently available.
 
 Identical RAW, image, and video content returns as already in vault. Other files, including lone XMP sidecars, may be added again. Failed groups remain available through **Add N groups**.
 
