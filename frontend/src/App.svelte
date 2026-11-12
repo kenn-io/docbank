@@ -2027,7 +2027,7 @@
     const attempt = (restartAttempt = {});
     localText.error = "";
     localText.notice = "";
-    let notice = "Restart requested. Docbank may restart later; if it doesn't, try again.";
+    let notice = "Restart requested. Docbank may restart later.";
     try {
       const response = await generated.restartDaemon({
         session,
@@ -2058,8 +2058,7 @@
           return;
         }
       }
-      notice =
-        "Docbank couldn't confirm the restart. It may still happen later; if it doesn't, try again.";
+      notice = "Docbank couldn't confirm the restart. It may still happen later.";
     }
     if (!mounted || restartAttempt !== attempt) return;
     restartAttempt = undefined;

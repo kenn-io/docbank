@@ -2113,15 +2113,19 @@ it.each([
   await fireEvent.input(search, { target: { value: "unfinished draft" } });
   const drawer = await openSearchByMeaningTab();
   await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  expect(within(confirm).getByText("docbank web --no-browser")).toBeTruthy();
+  expect(within(confirm).getByText(/public address/)).toBeTruthy();
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
+  expect(await within(drawer).findByText("docbank web --no-browser")).toBeTruthy();
+  expect(within(drawer).getByText(/public address/)).toBeTruthy();
   expect(
     await within(drawer).findByText(new RegExp(notice.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))),
   ).toBeTruthy();
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
-  expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
   await fireEvent.click(
     within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
       name: "Restart",
@@ -2144,11 +2148,11 @@ it("keeps the session when restart fails", async () => {
   render(App);
   const drawer = await openSearchByMeaningTab();
   await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(/Docbank couldn't start the restart/)).toBeTruthy();
-  expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });
 
 it("keeps the workspace and shows a rejected restart", async () => {
@@ -2160,9 +2164,9 @@ it("keeps the workspace and shows a rejected restart", async () => {
   });
   render(App);
   const drawer = await openSearchByMeaningTab();
-  await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText("Restart denied")).toBeTruthy();
-  expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });

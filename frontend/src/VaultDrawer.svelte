@@ -129,14 +129,17 @@
       {#if searchByMeaning.error}
         <p class="error" role="alert">{searchByMeaning.error}</p>
       {/if}
-      {#if searchByMeaning.notice}<p role="status">{searchByMeaning.notice}</p>{/if}
+      {#if searchByMeaning.notice}
+        <p role="status">{searchByMeaning.notice}</p>
+        {@render restartRecovery()}
+      {/if}
       {#if searchByMeaning.readError}
         <p class="error" role="alert">{searchByMeaning.readError}</p>
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
       {/if}
       {#if meaning?.restart_required}
         {#if meaning.restart_available}
-          <Button size="sm" onclick={() => (confirmRestart = true)}>Restart Docbank</Button>
+          <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
         {:else}
           <p>
             If you started Docbank in a terminal, press Ctrl+C and repeat the original command. If
@@ -171,11 +174,11 @@
     }}
   >
     <div class="restart-confirmation">
-      <p>Search by meaning starts after the restart.</p>
       <p>
         Every open Docbank tab signs out. This may interrupt uploads, exports, and command-line
         requests.
       </p>
+      {@render restartRecovery()}
     </div>
     {#snippet footer()}
       <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
@@ -185,6 +188,14 @@
     {/snippet}
   </Modal>
 {/if}
+
+{#snippet restartRecovery()}
+  <p>
+    If a new tab doesn't open, run <code>docbank web --no-browser</code> in the vault's terminal
+    and open the printed URL. If the command reports an error, fix it and run the command again.
+    For a public address, reload it and sign in again.
+  </p>
+{/snippet}
 
 <style>
   .usage,

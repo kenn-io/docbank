@@ -217,11 +217,11 @@ it("confirms a restart and disables both actions while it is pending", async () 
         finish = resolve;
       }),
   );
-  await fireEvent.click(screen.getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   let dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(props.onrestart).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Restart" }));
   expect(props.onrestart).toHaveBeenCalledOnce();
