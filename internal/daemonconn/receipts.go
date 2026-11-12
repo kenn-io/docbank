@@ -48,6 +48,10 @@ type Connection struct {
 	base string
 	key  string
 	hc   *http.Client
+
+	// pinned is set only on ownership-proven connections. A transfer
+	// connection repeats the proof against this record.
+	pinned *pinnedDaemon
 }
 
 // ErrBackupRepositoryNotConfigured identifies only the absent configuration
