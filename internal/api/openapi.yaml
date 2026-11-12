@@ -22034,6 +22034,8 @@ components:
           type: string
         assertion_id:
           type: string
+        display_name:
+          type: string
         note:
           type: string
         person_id:
@@ -22048,6 +22050,7 @@ components:
       required:
         - assertion_id
         - person_id
+        - display_name
         - role
         - action
         - note

@@ -50,9 +50,8 @@ func whenFromClaim(event document.DocumentEventV1) WhenV1 {
 		// Stored events are decoded and validated before projection; UTCKey is
 		// recomputed by DecodeDocumentEventsV1 from its civil value.
 		w.State = "exact"
-		if at, err := time.Parse(time.RFC3339Nano, event.UTCKey); err == nil {
-			w.At = at.UTC().Format(time.RFC3339Nano)
-		}
+		at, _ := time.Parse(time.RFC3339Nano, event.UTCKey)
+		w.At = at.UTC().Format(time.RFC3339Nano)
 		w.SourceZone = event.ZoneText
 		w.SourceOffsetSeconds = event.OffsetSeconds
 		if event.TimezoneKind == "offset" && w.SourceZone == "" {
@@ -141,6 +140,7 @@ type VersionPersonEdge struct {
 type VersionPersonAssertion struct {
 	AssertionID string `json:"assertion_id"`
 	PersonID    string `json:"person_id"`
+	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 	Action      string `json:"action"`
 	Note        string `json:"note"`

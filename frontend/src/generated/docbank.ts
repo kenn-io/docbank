@@ -9155,6 +9155,7 @@ export interface VersionDates {
 export interface VersionPersonAssertion {
   action: string;
   assertion_id: string;
+  display_name: string;
   note: string;
   person_id: string;
   recorded_at: string;
