@@ -283,7 +283,7 @@ func newContractEditCommand() *cobra.Command {
 		}
 		hasFields := b.Title != nil || b.ContractType != nil || b.Status != nil || b.StartsOn != nil || b.ExpiresOn != nil || b.SignedOn != nil || b.Summary != nil || b.Purpose != nil || b.Consideration != nil || b.Termination != nil || clearStarts || clearExpires || clearSigned
 		if !hasFields && len(own)+len(other)+len(removeOwn)+len(removeOther) == 0 {
-			return fmt.Errorf("no changes requested")
+			return errors.New("no changes requested")
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {

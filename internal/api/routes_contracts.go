@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -132,7 +133,7 @@ func (p *CreateContractRequest) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	if _, ok := members["status"]; ok && value.Status == "" {
-		return fmt.Errorf("status cannot be empty")
+		return errors.New("status cannot be empty")
 	}
 	*p = CreateContractRequest(value)
 	return nil
@@ -174,7 +175,7 @@ func (p *PatchContractRequest) UnmarshalJSON(raw []byte) error {
 	}
 	delete(m, "$schema")
 	if len(m) == 0 {
-		return fmt.Errorf("contract patch must contain a field")
+		return errors.New("contract patch must contain a field")
 	}
 	var f fields
 	if err := json.Unmarshal(raw, &f); err != nil {
