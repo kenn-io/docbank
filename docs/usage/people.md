@@ -17,7 +17,8 @@ Run `docbank document people <path-or-id>` to see the current version's people
 and unresolved names. Add `--json` for structured output or `--full` to include
 sensitive claims with an API key. The API reads a specific version at
 `GET /api/v1/versions/{version_id}/people`; `disclosure=safe` is the default,
-and `disclosure=full` requires an API key. Browser sessions and MCP's
+and `disclosure=full` requires an API key. Each assertion includes the person’s
+`display_name`, even when no derived edge is published. Browser sessions and MCP's
 `get_document_people` use safe disclosure, which omits blind-copy evidence and
 provisional people without visible support. The response reports the derivation
 state so an unavailable or stale publication is not mistaken for an empty one.
