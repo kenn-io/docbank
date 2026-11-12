@@ -282,6 +282,6 @@ func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTran
 	if len(b) > 1<<20 {
 		return ErrMailboxLimit
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES(?,?,?,?,?,?)`, r.ID, r.Request.ArchiveID, r.Request.Reference, r.Target.VersionID, r.DocumentPublicationID, b)
+	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_receipts(id,archive_id,source_ref,target_version_id,document_publication_id,receipt_json) VALUES($1,$2,$3,$4,$5,$6)`, r.ID, r.Request.ArchiveID, r.Request.Reference, r.Target.VersionID, r.DocumentPublicationID, b)
 	return err
 }

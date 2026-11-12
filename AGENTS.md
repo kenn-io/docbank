@@ -19,6 +19,9 @@ Instructions for autonomous coding agents working in this repository.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.
+- Metadata-transfer tests populate every custom import hook with native records.
+  Assert expected derived rows exist before comparing backend projections;
+  equality between empty lists does not qualify their recovery.
 - Go 1.27+ (go.mod is authoritative). Go 1.26 value-form `new(v)` and Go
   1.27 generic methods, promoted struct-literal fields, and assignment-context
   inference are in use; verify against the toolchain before treating unfamiliar

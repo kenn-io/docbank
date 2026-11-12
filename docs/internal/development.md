@@ -902,10 +902,12 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
-PostgreSQL foreign keys that normally check immediately remain immediate for
-ordinary writes but allow explicit deferral during import. The complete stream
-is validated before commit, including foreign keys and audit replay. Interrupted
-streams or failed SQL roll back the logical rows, identity and node allocator.
+PostgreSQL foreign keys that normally check immediately allow explicit deferral.
+Logical import and collection snapshot sealing, including received packages,
+defer those keys until validation or commit. Other writes retain their existing
+check timing. The complete import stream is validated before commit, including
+foreign keys and audit replay. Interrupted streams or failed SQL roll back the
+logical rows, identity and node allocator.
 A failed first import can leave the pristine schema created by `Setup`; retry
 against that same target. Never overwrite or recreate a retained destination.
 

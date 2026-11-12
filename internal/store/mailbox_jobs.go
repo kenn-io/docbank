@@ -171,7 +171,7 @@ func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool) 
 		return ErrMailboxLimit
 	}
 	if insert {
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json) VALUES(?,?,?,?,?,?)`, j.ID, j.Owner, j.ContainerID, j.State, j.Claim, b)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json) VALUES($1,$2,$3,$4,$5,$6)`, j.ID, j.Owner, j.ContainerID, j.State, j.Claim, b)
 	} else {
 		_, err = tx.ExecContext(ctx, `UPDATE mailbox_jobs SET state=?,claim=?,job_json=? WHERE id=?`, j.State, j.Claim, b, j.ID)
 	}
