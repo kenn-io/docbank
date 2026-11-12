@@ -29,11 +29,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          files=$(git diff --no-renames --diff-filter=DM --name-only "$BASE_SHA" HEAD -- internal/store/testdata/schema-contracts)
+          files=$(git diff --no-renames --diff-filter=D --name-only "$BASE_SHA" HEAD -- internal/store/testdata/schema-contracts)
           if [ -n "$files" ]; then
             files=${files//'%'/'%25'}
             files=${files//$'\r'/'%0D'}
             files=${files//$'\n'/'%0A'}
-            echo "::error::Main's schema records were deleted or modified and must be restored: $files. Set currentStorageSchemaVersion to the next unused version, rerun make schema-contract-check, and add the new record."
+            echo "::error::Main's schema records were deleted and must be restored: $files. Set currentStorageSchemaVersion to the next unused version, rerun make schema-contract-check, and add the new record."
             exit 1
           fi

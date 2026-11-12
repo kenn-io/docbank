@@ -34,6 +34,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.10
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
+	github.com/sqlc-dev/meyer v0.1.2
 	github.com/stretchr/testify v1.12.1
 	github.com/tdewolff/parse/v2 v2.8.20
 	github.com/tetratelabs/wazero v1.12.0

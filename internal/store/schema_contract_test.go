@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sqlc-dev/meyer/lexer"
+	"github.com/sqlc-dev/meyer/token"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -23,11 +25,43 @@ type schemaContract struct {
 	Digest  string
 }
 
+type schemaDigestRow struct {
+	Type   string
+	Name   string
+	Table  string
+	Tokens []string
+}
+
+func schemaRowsDigest(rows [][4]string) (string, error) {
+	var catalog []schemaDigestRow
+	for _, row := range rows {
+		entry := schemaDigestRow{Type: row[0], Name: row[1], Table: row[2]}
+		for _, tok := range lexer.Lex(row[3]) {
+			switch tok.Kind {
+			case token.ILLEGAL:
+				return "", fmt.Errorf("invalid SQL token %q in %s", tok.Text(row[3]), row[1])
+			case token.EOF:
+				if tok.Pos != len(row[3]) {
+					return "", fmt.Errorf("incomplete SQL for %s", row[1])
+				}
+			default:
+				entry.Tokens = append(entry.Tokens, tok.Text(row[3]))
+			}
+		}
+		catalog = append(catalog, entry)
+	}
+	data, err := canonical.Marshal(catalog)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+}
+
 func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	data, err := canonical.Marshal(releasedSchemaCatalogRows(t, db, true))
+	digest, err := schemaRowsDigest(releasedSchemaCatalogRows(t, db, true))
 	require.NoError(t, err)
-	return fmt.Sprintf("%x", sha256.Sum256(data))
+	return digest
 }
 
 func schemaContractFile(record schemaContract, summaryDigest string) string {
@@ -224,5 +258,73 @@ func TestStorageSchemaCatalogDigest(t *testing.T) {
 		trigger,
 	} {
 		require.NotEqual(t, digest, probe(statement), statement)
+	}
+}
+
+func TestStorageSchemaTokenDigest(t *testing.T) {
+	t.Parallel()
+	row := [][4]string{{"table", "t", "t", "CREATE TABLE t (id INTEGER)"}}
+	digest, err := schemaRowsDigest(row)
+	require.NoError(t, err)
+	require.Equal(t, "b30c0e59243ff78aa209ca6ca6a9f5c95ab77385a8e91542969c4da4fdb40382", digest)
+	row[0][3] = "CREATE /* comment */ TABLE t\n(id INTEGER) -- comment"
+	formatted, err := schemaRowsDigest(row)
+	require.NoError(t, err)
+	require.Equal(t, digest, formatted)
+	for _, pair := range [][2]string{
+		{"SELECT 'a b'", "SELECT 'ab'"},
+		{`SELECT "a b"`, `SELECT "ab"`},
+		{"SELECT 1+2", "SELECT 1-2"},
+		{"SELECT 1", "select 1"},
+	} {
+		row[0][3] = pair[0]
+		first, err := schemaRowsDigest(row)
+		require.NoError(t, err)
+		row[0][3] = pair[1]
+		second, err := schemaRowsDigest(row)
+		require.NoError(t, err)
+		require.NotEqual(t, first, second, pair)
+	}
+	for _, sql := range []string{"SELECT 'unterminated", "SELECT !", "SELECT 1\x00+2"} {
+		row[0][3] = sql
+		_, err := schemaRowsDigest(row)
+		require.Error(t, err, sql)
+	}
+}
+
+func TestStorageSchemaCatalogChanges(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
+			probe := func(sql string) string {
+				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), sql)
+				require.NoError(t, err)
+				digest := schemaCatalogDigest(t, db)
+				_, err = db.ExecContext(t.Context(), "ROLLBACK TO probe; RELEASE probe")
+				require.NoError(t, err)
+				return digest
+			}
+			base := probe(`CREATE TABLE contract_a (id INTEGER CHECK (id > 1))`)
+			require.Equal(t, base, probe("CREATE TABLE contract_a  ( id INTEGER /* note */ CHECK(id>1) )"))
+			for _, pair := range [][2]string{
+				{`CREATE TABLE contract_a (id INTEGER CHECK(id>1))`, `CREATE TABLE contract_a (id INTEGER CHECK(id>2))`},
+				{`CREATE VIEW contract_v AS SELECT id FROM nodes WHERE id>1`, `CREATE VIEW contract_v AS SELECT id FROM nodes WHERE id>2`},
+				{`CREATE INDEX contract_i ON nodes(id)`, `CREATE INDEX contract_i ON nodes(name)`},
+				{`CREATE TRIGGER contract_t AFTER INSERT ON nodes BEGIN SELECT 1; END`, `CREATE TRIGGER contract_t AFTER INSERT ON nodes BEGIN SELECT 2; END`},
+			} {
+				require.NotEqual(t, probe(pair[0]), probe(pair[1]), pair)
+			}
+			first := probe(`CREATE TABLE contract_a (id INTEGER)`)
+			second := probe(`CREATE TABLE contract_b (id INTEGER)`)
+			combined := probe(`CREATE TABLE contract_a (id INTEGER); CREATE TABLE contract_b (id INTEGER)`)
+			records := []schemaContract{{Version: 49, Digest: first}, {Version: 49, Digest: second}}
+			require.NoError(t, checkSchemaContract(records[:1], 49, first))
+			require.NoError(t, checkSchemaContract(records[1:], 49, second))
+			require.ErrorContains(t, checkSchemaContract(records, 49, combined), "set currentStorageSchemaVersion to 50")
+			require.NoError(t, checkSchemaContract(append(records, schemaContract{Version: 50, Digest: combined}), 50, combined))
+		})
 	}
 }
