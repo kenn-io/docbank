@@ -1,15 +1,43 @@
 ---
-title: Tax record storage
+title: Tax accounts and records
 description: How Docbank preserves tax accounts and their initial records.
 ---
 
-# Tax record storage
+# Tax accounts and records
 
-Docbank's store can preserve tax accounts and initial tax records alongside
+Docbank preserves tax accounts and initial tax records alongside
 [parties](contracts.md). An account identifies a filer, an optional authority,
-a jurisdiction, and an owner-chosen tax kind. A record describes one matter
-and may belong to an account or stand alone. These store operations are not yet
-exposed through the CLI, HTTP API, MCP, or web application.
+a jurisdiction, and an owner-chosen tax kind. Manage accounts through the CLI
+or HTTP API. Record operations are not yet exposed through those interfaces,
+MCP, or the web application.
+
+## Manage an account
+
+Create an own filer with the canonical party command, then use its ID:
+
+```sh
+docbank party create "Example Holdings Ltd." --own --json
+docbank tax account add --filer FILER_ID --country ZZ --tax-kind Example --cadence annual --currency USD --json
+docbank tax account list --filer FILER_ID --country ZZ --taxkind Example
+docbank tax account show ACCOUNT_ID
+docbank tax account edit ACCOUNT_ID --lead-days 0 --clear-effective-start
+docbank tax account retire ACCOUNT_ID
+```
+
+Lists, edits, retirement and ordinary inspection mask identifiers. Only
+`tax account show ACCOUNT_ID --reveal` prints the complete identifier. Empty
+identifiers stay empty; one to four Unicode characters become `****`, and
+longer identifiers show `****` followed by the last four characters. List
+filters combine with AND; `--include-retired` includes retired accounts.
+`--limit` defaults to 100 and accepts 1–1000; `--offset` is nonnegative.
+Dates can be cleared with `--clear-effective-start` and `--clear-effective-end`.
+Identity fields cannot be edited.
+
+Edit and retire inspect the current revision once before writing unless you
+supply `--revision`. A stale revision fails without retry; inspect again before
+deciding what to do. The CLI replaces an incompatible older daemon before
+sending an account request. A vault with audited authority refuses account
+mutations with `audit_mutation_unsupported` (HTTP 409).
 
 An account's identity cannot change after creation. A record attached to it
 copies that identity and retains it even if the account is retired. New

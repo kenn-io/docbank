@@ -91,6 +91,20 @@ does not start a local daemon. Commands never open the vault directly. `docbank 
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
 
+## docbank tax account
+
+`tax account add` accepts `--filer`, `--authority`, `--country`, `--subdivision`,
+`--tax-kind`, `--identifier`, `--cadence`, `--period-note`, `--due-note`,
+`--lead-days`, `--currency`, `--effective-start`, `--effective-end`, and
+`--note`. Filer, country, tax kind, cadence, and currency are required.
+`list` accepts `--filer`, `--country`, `--taxkind`, `--include-retired`,
+`--limit`, and `--offset`. `show <account-id>` alone accepts `--reveal`.
+`edit <account-id>` accepts editable fields and `--clear-effective-start` or
+`--clear-effective-end`; `retire <account-id>` makes an account read-only.
+Edit and retire accept `--revision`; without it they inspect once and send one
+fenced write. `--json` is available on all account commands. See
+[Tax accounts](usage/tax-records.md) for masking and an example workflow.
+
 ## docbank changes
 
 ```text
