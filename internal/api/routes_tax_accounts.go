@@ -38,7 +38,7 @@ func fromStoreTaxAccount(a store.TaxAccount, reveal bool) TaxAccount {
 	return TaxAccount{AccountID: a.AccountID, FilerPartyID: a.FilerPartyID, AuthorityPartyID: a.AuthorityPartyID, Country: a.Country, Subdivision: a.Subdivision, TaxKind: a.TaxKind, Identifier: identifier, Cadence: a.Cadence, PeriodNote: a.PeriodNote, DueNote: a.DueNote, LeadDays: a.LeadDays, Currency: a.Currency, EffectiveStart: a.EffectiveStart, EffectiveEnd: a.EffectiveEnd, Note: a.Note, Revision: a.Revision, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, RetiredAt: a.RetiredAt}
 }
 func taxAccountResult(a store.TaxAccount, reveal bool) *taxAccountOutput {
-	return &taxAccountOutput{ETag: revisionETag(a.Revision), Body: fromStoreTaxAccount(a, reveal)}
+	return &taxAccountOutput{ETag: revisionETag(a.Revision), CacheControl: cacheControlNoStore, Body: fromStoreTaxAccount(a, reveal)}
 }
 func mergeTaxAccountPatch(a store.TaxAccount, p PatchTaxAccountRequest) store.TaxAccountInput {
 	in := store.TaxAccountInput{FilerPartyID: a.FilerPartyID, AuthorityPartyID: a.AuthorityPartyID, Country: a.Country, Subdivision: a.Subdivision, TaxKind: a.TaxKind, Identifier: a.Identifier, Cadence: a.Cadence, PeriodNote: a.PeriodNote, DueNote: a.DueNote, LeadDays: new(a.LeadDays), Currency: a.Currency, EffectiveStart: a.EffectiveStart, EffectiveEnd: a.EffectiveEnd, Note: a.Note}
@@ -98,9 +98,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, taxRouteError(d.Logger, err)
 		}
-		out := taxAccountResult(a, in.Reveal)
-		out.CacheControl = cacheControlNoStore
-		return out, nil
+		return taxAccountResult(a, in.Reveal), nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createTaxAccount", Method: http.MethodPost, Path: "/api/v1/tax/accounts", Summary: "Create a tax account", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreateTaxAccountRequest }) (*taxAccountOutput, error) {
 		var out *taxAccountOutput

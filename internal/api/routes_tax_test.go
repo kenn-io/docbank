@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +44,27 @@ func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
 	assert.Contains(t, logs.String(), "tax_5xx")
 	assert.NotContains(t, logs.String(), secret)
 	assert.NotContains(t, problem.Error(), secret)
+	assert.Contains(t, logs.String(), "code=internal")
+	for _, tc := range []struct {
+		err   error
+		cause string
+	}{{context.Canceled, "canceled"}, {context.DeadlineExceeded, "deadline"}} {
+		logs.Reset()
+		require.ErrorAs(t, taxRouteError(logger, fmt.Errorf("%w: %s", tc.err, secret)), &problem)
+		assert.Contains(t, logs.String(), "level=WARN")
+		assert.Contains(t, logs.String(), "cause="+tc.cause)
+		assert.Contains(t, logs.String(), "code=internal")
+		assert.NotContains(t, logs.String(), secret)
+		assert.NotContains(t, problem.Error(), secret)
+	}
+	logs.Reset()
+	require.ErrorAs(t, taxRouteError(logger, NewError(http.StatusInternalServerError, "timeline_index_corrupt", secret)), &problem)
+	assert.Contains(t, logs.String(), "code=timeline_index_corrupt")
+	assert.NotContains(t, logs.String(), secret)
+	logs.Reset()
+	require.ErrorAs(t, taxRouteError(logger, NewError(http.StatusInternalServerError, secret, secret)), &problem)
+	assert.Contains(t, logs.String(), "code=internal")
+	assert.NotContains(t, logs.String(), secret)
 }
 
 // Mounted cases wire the server.go middleware order around the base-path boundary.
