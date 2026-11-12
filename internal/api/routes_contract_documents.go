@@ -19,7 +19,8 @@ type contractDocumentLinkInput struct {
 }
 
 func (in *contractDocumentLinkInput) Resolve(ctx huma.Context) []error {
-	values, ok := ctx.URL().Query()["content_version_id"]
+	url := ctx.URL()
+	values, ok := url.Query()["content_version_id"]
 	in.emptyVersion = ok && len(values) > 0 && values[0] == ""
 	return nil
 }
