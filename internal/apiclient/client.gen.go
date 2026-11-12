@@ -29359,6 +29359,8 @@ type GetDocuSealStatusErrorResponse api.Error
 
 type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON api.Error
 
+type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON502 api.Error
+
 type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type GetDocuSealStatusErrorResponseApplicationProblemPlusJSON504 api.Error
@@ -29368,6 +29370,8 @@ type ListDocuSealTemplatesResponse = docusealclient.TemplatePage
 type ListDocuSealTemplatesErrorResponse api.Error
 
 type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON api.Error
+
+type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON422 api.Error
 
 type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON500 api.Error
 

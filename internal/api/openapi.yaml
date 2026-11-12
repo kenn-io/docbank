@@ -25271,6 +25271,12 @@ paths:
             Cache-Control:
               schema:
                 type: string
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
         "500":
           content:
             application/problem+json:
@@ -25324,6 +25330,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Bad Request
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
         "422":
           content:
             application/problem+json:
