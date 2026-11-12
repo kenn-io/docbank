@@ -185,7 +185,9 @@ func InitialState(kind string) (string, error) {
 }
 
 // ValidState reports whether state is in the tax record vocabulary.
-func ValidState(state string) bool { return slices.Contains(filingStates, state) || slices.Contains(auditStates, state) }
+func ValidState(state string) bool {
+	return slices.Contains(filingStates, state) || slices.Contains(auditStates, state)
+}
 
 // NormalizeTaxKind bounds and canonicalizes a tax kind.
 func NormalizeTaxKind(s string) (string, error) {
