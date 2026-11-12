@@ -39,12 +39,12 @@ type CreatePartyRequest struct {
 	Own         bool    `json:"own,omitzero"`
 }
 type PatchPartyRequest struct {
-	Kind                          *string `json:"kind,omitempty"`
-	DisplayName                   *string `json:"display_name,omitempty"`
-	LegalName                     *string `json:"legal_name,omitempty"`
-	Country                       *string `json:"country,omitempty" nullable:"true"`
-	PersonID                      *string `json:"person_id,omitempty" nullable:"true"`
-	Own                           *bool   `json:"own,omitempty"`
+	Kind                          *string `json:"kind,omitzero" nullable:"false"`
+	DisplayName                   *string `json:"display_name,omitzero" nullable:"false"`
+	LegalName                     *string `json:"legal_name,omitzero" nullable:"false"`
+	Country                       *string `json:"country,omitzero" nullable:"true"`
+	PersonID                      *string `json:"person_id,omitzero" nullable:"true"`
+	Own                           *bool   `json:"own,omitzero" nullable:"false"`
 	ClearCountry                  bool    `json:"-"`
 	ClearPerson                   bool    `json:"-"`
 	countryPresent, personPresent bool
