@@ -10,7 +10,10 @@ import (
 	"go.kenn.io/docbank/internal/taxrecord"
 )
 
-func registerTaxRoutes(api huma.API, d Deps, g *gate) { registerTaxAccountRoutes(api, d, g) }
+func registerTaxRoutes(api huma.API, d Deps, g *gate) {
+	registerTaxAccountRoutes(api, d, g)
+	registerTaxRecordRoutes(api, d, g)
+}
 
 // Each field records the Huma locations that may be reported for it. The
 // checked client uses the same names and reasons to filter untrusted responses.

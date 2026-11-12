@@ -951,4 +951,42 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	assert.Empty(t, identifier.Pattern)
 	assert.Contains(t, collection.Post.Responses, "201")
 	assert.Contains(t, item.Get.Responses, "200")
+	records := doc.Paths["/api/v1/tax/records"]
+	require.NotNil(t, records)
+	require.NotNil(t, records.Get)
+	require.NotNil(t, records.Post)
+	recordItem := doc.Paths["/api/v1/tax/records/{record_id}"]
+	require.NotNil(t, recordItem)
+	require.NotNil(t, recordItem.Get)
+	require.NotNil(t, recordItem.Patch)
+	recordRetire := doc.Paths["/api/v1/tax/records/{record_id}/retire"]
+	require.NotNil(t, recordRetire)
+	require.NotNil(t, recordRetire.Post)
+	for _, op := range []*huma.Operation{recordItem.Patch, recordRetire.Post} {
+		required := false
+		for _, param := range op.Parameters {
+			if param.In == "header" && param.Name == "If-Match" {
+				required = param.Required
+			}
+		}
+		assert.True(t, required)
+	}
+	rp := doc.Components.Schemas.Map()["PatchTaxRecordRequest"]
+	require.NotNil(t, rp)
+	assert.Equal(t, false, rp.AdditionalProperties)
+	assert.NotContains(t, rp.Properties, "state")
+	assert.NotContains(t, rp.Properties, "account_id")
+	assert.Equal(t, "string", rp.Properties["amount"].Type)
+	var recordPresence []string
+	for _, option := range rp.AnyOf {
+		recordPresence = append(recordPresence, option.Required...)
+	}
+	assert.Contains(t, recordPresence, "amount")
+	assert.Contains(t, recordPresence, "title")
+	output := doc.Components.Schemas.Map()["TaxRecord"]
+	require.NotNil(t, output)
+	assert.True(t, output.Properties["amount_minor"].Nullable)
+	for _, param := range recordItem.Get.Parameters {
+		assert.NotEqual(t, "reveal", param.Name)
+	}
 }
