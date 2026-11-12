@@ -28,7 +28,7 @@ func registerPhotoTimelineRoute(api huma.API, service *store.QuerySnapshotServic
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "photo timeline counts are unavailable")
 		}
 		projection, err := service.CreateFacets(ctx, owner, store.SnapshotRequest{
-			FacetsOnly: true, Query: value, Facets: []string{"capture_day"},
+			FacetsOnly: true, PhotoScope: true, Query: value, Facets: []string{"capture_day"},
 			Coverage: store.CoverageSelection{
 				Configuration:      in.Body.Coverage.Configuration,
 				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,

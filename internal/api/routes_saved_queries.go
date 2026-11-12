@@ -282,7 +282,7 @@ func registerSavedQueryRunRoute(
 				return nil, workspaceQueryError(err)
 			}
 			request.Query = value
-			if err := store.ValidatePhotoDocumentDates(value); err != nil {
+			if err := d.Store.ValidatePhotoQuery(ctx, value); err != nil {
 				return nil, workspaceQueryError(err)
 			}
 			value = photoRankingQuery(value)

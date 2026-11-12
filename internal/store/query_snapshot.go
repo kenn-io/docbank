@@ -37,6 +37,8 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
+	PhotoScope bool `json:"-"`
+
 	FullDisclosure     bool                                        `json:"-"`
 	RankPhotos         func(context.Context) (PhotoRanking, error) `json:"-"`
 	PhotoProjection    string                                      `json:"-"`
@@ -118,9 +120,10 @@ type SnapshotFacet struct {
 
 // SnapshotProjection is a complete immutable materialization without cache ownership.
 type SnapshotProjection struct {
-	FullDisclosure      bool               `json:"full_disclosure,omitempty"`
-	Timezone            string             `json:"timezone,omitempty"`
-	TimezoneDefaulted   bool               `json:"timezone_defaulted"`
+	FullDisclosure    bool   `json:"full_disclosure,omitempty"`
+	Timezone          string `json:"timezone,omitempty"`
+	TimezoneDefaulted bool   `json:"timezone_defaulted"`
+
 	PhotoProjection     string             `json:"photo_projection,omitempty"`
 	PhotoRanking        *PhotoRanking      `json:"photo_ranking,omitempty"`
 	Photos              bool               `json:"photos,omitempty"`
@@ -254,7 +257,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			executionValue.Mode = query.ModeLexical
 		}
 		options.Photos = request.Photos
-		compiler := queryCompiler{photos: options.Photos, requireFreshDates: true, fullDisclosure: request.FullDisclosure, photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
+		compiler := queryCompiler{photos: options.Photos || request.PhotoScope, requireFreshDates: true, fullDisclosure: request.FullDisclosure, photoDisplayMetadata: request.FacetsOnly || options.Photos, photoMetadataSet: request.FacetsOnly}
 		compiled, err := compiler.compile(ctx, executionValue, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -662,15 +665,16 @@ type snapshotFingerprintPayload struct {
 	Timezone          string `json:"timezone,omitempty"`
 	TimezoneDefaulted bool   `json:"timezone_defaulted,omitempty"`
 
-	FullDisclosure bool               `json:"full_disclosure,omitempty"`
-	PhotoRanking   *PhotoRanking      `json:"photo_ranking,omitempty"`
-	Photos         bool               `json:"photos"`
-	Query          query.Query        `json:"query"`
-	Dependencies   []query.Dependency `json:"dependencies"`
-	Generation     SnapshotGeneration `json:"generation"`
-	Coverage       CoverageSelection  `json:"coverage"`
-	Rows           []SnapshotRow      `json:"rows"`
-	Facets         []SnapshotFacet    `json:"facets"`
+	FullDisclosure bool `json:"full_disclosure,omitempty"`
+
+	PhotoRanking *PhotoRanking      `json:"photo_ranking,omitempty"`
+	Photos       bool               `json:"photos"`
+	Query        query.Query        `json:"query"`
+	Dependencies []query.Dependency `json:"dependencies"`
+	Generation   SnapshotGeneration `json:"generation"`
+	Coverage     CoverageSelection  `json:"coverage"`
+	Rows         []SnapshotRow      `json:"rows"`
+	Facets       []SnapshotFacet    `json:"facets"`
 }
 
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {

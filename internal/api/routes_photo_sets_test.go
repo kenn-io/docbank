@@ -31,6 +31,11 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	require.Equal(t, "invalid_photo_album", decodeProblem(t, body).Code)
 	_, err = c.CreatePhotoAlbum(ctx, "   ")
 	require.ErrorIs(t, err, store.ErrInvalidPhotoAlbum)
+	createSavedQuery(t, ts.URL, "Dated", `{"syntax":"advanced","text":"date:2026-03-01"}`)
+	createSavedQuery(t, ts.URL, "Outer", `{"syntax":"advanced","text":"saved:Dated"}`)
+	response, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/photos/albums/"+album.ID+"/members/add", map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"query":{"syntax":"advanced","text":"saved:Outer"}}`)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, responseBody)
+	require.Equal(t, "invalid_query", decodeProblem(t, responseBody).Code)
 	path := "/api/v1/photos/albums/" + album.ID
 	resp, body = do(t, ts, http.MethodPut, path, nil, map[string]string{"name": "Trip"})
 	require.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)

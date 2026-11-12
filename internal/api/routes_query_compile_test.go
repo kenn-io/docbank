@@ -151,6 +151,39 @@ func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *tes
 	require.Equal(t, "saved", preview.Dependencies[0].Kind)
 	require.NotContains(t, body, "hidden")
 	require.NotContains(t, body, "caption")
+
+	// All three receipts identify submitted intent even when execution defaults a zone.
+	input := `{"syntax":"advanced","text":"date:2026-03-01 AND alpha"}`
+	var fingerprint string
+	for _, path := range []string{queryParsePath, queryHighlightsPath} {
+		response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, input)
+		require.Equal(t, http.StatusOK, response.StatusCode, payload)
+		var receipt struct {
+			QueryFingerprint string `json:"query_fingerprint"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(payload), &receipt))
+		if fingerprint == "" {
+			fingerprint = receipt.QueryFingerprint
+		} else {
+			require.Equal(t, fingerprint, receipt.QueryFingerprint)
+		}
+	}
+	response, payload := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":`+input+`}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	var snapshot api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(payload), &snapshot))
+	require.Equal(t, fingerprint, snapshot.QueryFingerprint)
+	require.Equal(t, "UTC", snapshot.Timezone)
+	require.True(t, snapshot.TimezoneDefaulted)
+
+	saved, etag := createSavedQuery(t, ts.URL, "Pinned date", input)
+	response, payload = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": etag}, `{}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, payload)
+	var run api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(payload), &run))
+	require.Equal(t, "UTC", run.Snapshot.Timezone)
+	require.False(t, run.Snapshot.TimezoneDefaulted)
+	require.Equal(t, saved.Fingerprint, run.Snapshot.QueryFingerprint)
 }
 
 func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) {
@@ -181,6 +214,8 @@ func TestQueryCompileTimelineErrors(t *testing.T) {
 		{`{"timezone":"Local"}`, "invalid_timezone", false},
 		{`{"syntax":"advanced","text":"date:2026-02-30"}`, "invalid_date", true},
 		{`{"syntax":"advanced","text":"date:2011-12-30","timezone":"Pacific/Apia"}`, "date_not_in_zone", true},
+		{`{"filters":{"document_date":{"from":"2026-02-30","to":"2026-03-01"}}}`, "invalid_date", false},
+		{`{"filters":{"document_date":{"from":"0001-01-01","to":"0001-01-01"}},"timezone":"Asia/Singapore"}`, "invalid_date", false},
 		{`{"filters":{"document_date":{"from":"0000-01-01","to":"0000-01-01"}}}`, "invalid_date", false},
 		{`{"filters":{"document_date":{"from":"9999-12-31","to":"9999-12-31"}},"timezone":"UTC"}`, "invalid_date", false},
 	} {
@@ -196,6 +231,9 @@ func TestQueryCompileTimelineErrors(t *testing.T) {
 			}
 		}
 	}
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries", map[string]string{"X-Api-Key": testAPIKey}, `{"name":"Invalid date","kind":"query","payload":{"filters":{"document_date":{"from":"2026-02-30","to":"2026-03-01"}}}}`)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	require.Equal(t, "invalid_date", decodeProblem(t, body).Code)
 }
 
 func TestFullDateDisclosureRequiresNonBrowserAPIKey(t *testing.T) {

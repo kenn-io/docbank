@@ -78,7 +78,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			return nil, queryInputError(err)
 		}
 		metadataSort := value.Sort
-		if err := store.ValidatePhotoDocumentDates(value); err != nil {
+		if err := d.Store.ValidatePhotoQuery(ctx, value); err != nil {
 			return nil, workspaceQueryError(err)
 		}
 		value = photoRankingQuery(value)

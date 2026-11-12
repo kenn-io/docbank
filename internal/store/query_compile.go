@@ -73,10 +73,11 @@ func compileQuery(
 
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
-	photos               bool
-	fullDisclosure       bool
-	requireFreshDates    bool
-	dateZone             string
+	photos            bool
+	fullDisclosure    bool
+	requireFreshDates bool
+	dateZone          string
+
 	photoDisplayMetadata bool
 	photoMetadataSet     bool
 	photoMetadataDensity func(string) (bool, error)
@@ -87,6 +88,11 @@ type queryCompiler struct {
 func (c queryCompiler) compile(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
+	if c.photos {
+		if err := ValidatePhotoDocumentDates(value); err != nil {
+			return CompiledQuery{}, err
+		}
+	}
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
@@ -97,15 +103,6 @@ func (c queryCompiler) compile(
 		}
 	}
 	zone, defaulted := resolveDocumentDateZones(&resolved, QueryDefaultZone(ctx))
-	if zone != "" && c.requireFreshDates {
-		if r, ok := resolver.(queryResolver); ok {
-			if q, ok := r.q.(metadataQuerier); ok {
-				if err := requireDocumentDateIndex(ctx, q); err != nil {
-					return CompiledQuery{}, err
-				}
-			}
-		}
-	}
 	if r, ok := resolver.(queryResolver); ok && c.photoDisplayMetadata && c.photoMetadataSet {
 		c.photoMetadataDensity = func(value string) (bool, error) {
 			return r.photoMetadataHeadsFirst(ctx, value)
@@ -114,6 +111,15 @@ func (c queryCompiler) compile(
 	predicate, err := c.compileResolvedQuery(resolved)
 	if err != nil {
 		return CompiledQuery{}, err
+	}
+	if zone != "" && c.requireFreshDates {
+		if r, ok := resolver.(queryResolver); ok {
+			if q, ok := r.q.(metadataQuerier); ok {
+				if err := requireDocumentDateIndex(ctx, q); err != nil {
+					return CompiledQuery{}, err
+				}
+			}
+		}
 	}
 	compiled := CompiledQuery{
 		Query: resolved.Query, Dependencies: resolved.Dependencies, Timezone: zone, TimezoneDefaulted: defaulted, FullDisclosure: c.fullDisclosure,
@@ -714,6 +720,18 @@ func ValidatePhotoDocumentDates(value query.Query) error {
 		return compileExpressionError(0, len(value.Text), "document dates are only supported in Documents")
 	}
 	return nil
+}
+
+// ValidatePhotoQuery resolves saved scopes before a photo ranking operation starts.
+func (s *Store) ValidatePhotoQuery(ctx context.Context, value query.Query) error {
+	if err := ValidatePhotoDocumentDates(value); err != nil {
+		return err
+	}
+	resolved, err := query.ResolveQuery(ctx, value, queryResolver{q: s.db})
+	if err != nil {
+		return err
+	}
+	return validateResolvedPhotoDates(resolved)
 }
 
 func validateResolvedPhotoDates(resolved query.ResolvedQuery) error {
