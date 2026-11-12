@@ -109,7 +109,7 @@ export interface PhotoGroupReceipt {
 }
 
 export interface SavedPhotoGroup {
-  files: { relative_path: string; size: number; modified_time?: number }[];
+  files: { relative_path: string; size: number; modified_time?: number; expected_hash?: string }[];
   hashes?: string[];
   status: "remaining" | "pending" | "committed";
   receipt?: PhotoGroupReceipt;

@@ -659,6 +659,77 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it.each([
+  { bytes: "y", modified: 1000, changed: true },
+  { bytes: "x", modified: 2000, changed: false },
+])("checks a planned hash on reselected files: $changed", async ({ bytes, modified, changed }) => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [
+          {
+            relative_path: "a.JPG",
+            size: 1,
+            modified_time: 1000,
+            expected_hash: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          },
+        ],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "planned-hash",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("File missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File([bytes], "a.JPG", { lastModified: modified })] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      changed,
+    ),
+  );
+  if (changed) await screen.findByText("File changed");
+  else {
+    await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+    await waitFor(() =>
+      expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+        "saved",
+        0,
+        expect.any(Array),
+        expect.any(AbortSignal),
+        expect.any(Function),
+        ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+      ),
+    );
+  }
+});
+
 it("refuses an unattempted file with a different modified time", async () => {
   const saved = {
     import_id: "saved-import",

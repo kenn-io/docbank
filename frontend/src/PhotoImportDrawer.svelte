@@ -409,14 +409,15 @@
         let changed = false;
         for (const [i, file] of matched.entries()) {
           if (!file) continue;
+          const expectedHash = group.hashes?.[i] || group.files[i].expected_hash;
           if (file.size !== group.files[i].size) changed = true;
           if (
-            !group.hashes?.[i] &&
+            !expectedHash &&
             group.files[i].modified_time !== undefined &&
             file.lastModified !== group.files[i].modified_time
           )
             changed = true;
-          if (group.hashes?.[i] && (await hashFile(file, signal, () => {})) !== group.hashes[i])
+          if (expectedHash && (await hashFile(file, signal, () => {})) !== expectedHash)
             changed = true;
         }
         if (group.status === "committed") {
@@ -430,7 +431,7 @@
           if (group.status === "remaining") setState(item, changed ? "changed" : "missing");
         } else {
           item.files = matched as File[];
-          item.hashes = group.hashes ? [...group.hashes] : group.files.map(() => "");
+          item.hashes = group.files.map((file, i) => group.hashes?.[i] || file.expected_hash || "");
           if (group.status === "remaining") setState(item, "ready");
         }
       }
