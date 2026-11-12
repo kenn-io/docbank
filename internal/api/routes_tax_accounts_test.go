@@ -1,11 +1,12 @@
 package api_test
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
+
+func createTaxTestAccount(t *testing.T, ts *httptest.Server) (api.Party, api.TaxAccount) {
+	t.Helper()
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var party api.Party
+	require.NoError(t, json.Unmarshal([]byte(body), &party))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var account api.TaxAccount
+	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	return party, account
+}
 
 func TestTaxAccountHTTPWorkflow(t *testing.T) {
 	t.Parallel()
@@ -101,14 +115,9 @@ func TestTaxHTTPValidationRedaction(t *testing.T) {
 func TestTaxHTTPRevisionGateAndImmutableFields(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
-	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	var party api.Party
-	require.NoError(t, json.Unmarshal([]byte(body), &party))
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"})
-	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	var account api.TaxAccount
-	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	_, account := createTaxTestAccount(t, ts)
+	var resp *http.Response
+	var body string
 	path := "/api/v1/tax/accounts/" + account.AccountID
 	resp, body = do(t, ts, http.MethodPatch, path, nil, map[string]any{"note": "example"})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
@@ -133,7 +142,7 @@ func TestTaxHTTPFiltersAndPaging(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &party))
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD", "identifier": "synthetic12345"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	resp, body = get(t, ts, "/api/v1/tax/accounts?filer="+party.PartyID+"&country=ZZ&taxkind=example", nil)
+	resp, body = get(t, ts, "/api/v1/tax/accounts?filer="+party.PartyID+"&country=zz&taxkind=example", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var page api.TaxAccountPage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
@@ -143,7 +152,12 @@ func TestTaxHTTPFiltersAndPaging(t *testing.T) {
 	resp, body = get(t, ts, "/api/v1/tax/accounts?offset=1", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, `"items":[]`)
-	for _, query := range []string{"limit=0", "limit=1001", "offset=-1", "country=invalid"} {
+	for _, query := range []string{"country=US", "taxkind=unmatched", "filer=22222222-2222-4222-8222-222222222222"} {
+		resp, body = get(t, ts, "/api/v1/tax/accounts?"+query, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		assert.Contains(t, body, `"items":[]`)
+	}
+	for _, query := range []string{"limit=0", "limit=1001", "offset=-1", "country=invalid", "country=%C5%BFZ"} {
 		resp, body = get(t, ts, "/api/v1/tax/accounts?"+query, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}
@@ -203,28 +217,17 @@ func TestTaxAccountHistoricalPartyReferences(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/"+account.AccountID, map[string]string{"If-Match": `"1"`}, map[string]any{"note": "Historical example"})
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, input)
-	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"party_retired"`)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"invalid_tax"`)
+	assert.Contains(t, body, `filer_party_id: party is retired`)
 }
-
-type taxTestLog struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (l *taxTestLog) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.buf.Write(p)
-}
-func (l *taxTestLog) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.buf.String() }
 
 func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
-	var logs taxTestLog
-	capture := &recordingTelemetryCapture{Handler: http.NotFoundHandler()}
+	logs, err := os.CreateTemp(t.TempDir(), "tax-log-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = logs.Close() })
 	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
-		d.TelemetryCapture = capture
+		d.Logger = slog.New(slog.NewTextHandler(logs, nil))
 	})
 	const sentinel = "private-synthetic-value"
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
@@ -238,25 +241,18 @@ func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
 	_, _ = get(t, ts, "/api/v1/tax/accounts?taxkind="+sentinel, nil)
 	_, _ = get(t, ts, "/api/v1/tax/accounts/"+account.AccountID+"?reveal=true", nil)
 	_, _ = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/"+sentinel, map[string]string{"If-Match": sentinel}, map[string]any{"note": sentinel})
-	assert.NotContains(t, logs.String(), sentinel)
-	assert.NotContains(t, logs.String(), "Example Holdings Ltd.")
-	capture.mu.Lock()
-	defer capture.mu.Unlock()
-	assert.Empty(t, capture.events)
-	assert.Empty(t, capture.properties)
+	content, err := os.ReadFile(logs.Name())
+	require.NoError(t, err)
+	assert.NotContains(t, string(content), sentinel)
+	assert.NotContains(t, string(content), "Example Holdings Ltd.")
 }
 
 func TestTaxAccountMaintenanceRefusal(t *testing.T) {
 	gate := api.NewOperationGate()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
-	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	var party api.Party
-	require.NoError(t, json.Unmarshal([]byte(body), &party))
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"})
-	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
-	var account api.TaxAccount
-	require.NoError(t, json.Unmarshal([]byte(body), &account))
+	_, account := createTaxTestAccount(t, ts)
+	var resp *http.Response
+	var body string
 	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })

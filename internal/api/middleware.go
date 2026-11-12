@@ -237,7 +237,7 @@ func rejectDeclaredOversizeBodies(api huma.API, logger *slog.Logger) func(huma.C
 			return
 		}
 		if err := huma.WriteErr(api, ctx, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body is too large limit=%d bytes", limit)); err != nil {
-			logger.Debug("write oversize body rejection", "path", r.URL.Path, "error", err)
+			logger.Debug("write oversize body rejection", "path", requestLogPath(r.URL.Path), "error", err)
 		}
 	}
 }
@@ -395,12 +395,6 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 }
 
 func requestLogPath(path string) string {
-	if strings.HasPrefix(path, "/api/v1/tax/accounts/") {
-		return "/api/v1/tax/accounts/{account_id}"
-	}
-	if path == "/api/v1/tax/accounts" {
-		return path
-	}
 	if strings.HasPrefix(path, "/api/v1/tax/") {
 		return "/api/v1/tax/{redacted}"
 	}

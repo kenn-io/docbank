@@ -57,10 +57,10 @@ func mergeTaxAccountPatch(a store.TaxAccount, p PatchTaxAccountRequest) (store.T
 	if p.Note != nil {
 		in.Note = *p.Note
 	}
-	if p.present["effective_start"] || p.ClearEffectiveStart {
+	if p.startPresent || p.ClearEffectiveStart {
 		in.EffectiveStart = p.EffectiveStart
 	}
-	if p.present["effective_end"] || p.ClearEffectiveEnd {
+	if p.endPresent || p.ClearEffectiveEnd {
 		in.EffectiveEnd = p.EffectiveEnd
 	}
 	return in, nil
@@ -74,7 +74,13 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" default:"0" minimum:"0"`
 	}) (*taxAccountPageOutput, error) {
-		rows, err := d.Store.ListTaxAccounts(ctx, store.TaxAccountListOptions{FilerPartyID: in.Filer, Country: in.Country, TaxKind: in.TaxKind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
+		country := []byte(in.Country)
+		for i, c := range country {
+			if c >= 'a' && c <= 'z' {
+				country[i] = c - ('a' - 'A')
+			}
+		}
+		rows, err := d.Store.ListTaxAccounts(ctx, store.TaxAccountListOptions{FilerPartyID: in.Filer, Country: string(country), TaxKind: in.TaxKind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
 		if err != nil {
 			return nil, taxRouteError(err)
 		}
@@ -120,9 +126,6 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			a, err := d.Store.GetTaxAccount(ctx, in.AccountID)
 			if err != nil {
 				return err
-			}
-			if a.Revision != revision {
-				return store.ErrStaleRevision
 			}
 			input, err := mergeTaxAccountPatch(a, in.Body)
 			if err != nil {

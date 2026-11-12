@@ -61,18 +61,18 @@ type CreateTaxAccountRequest struct {
 }
 
 type PatchTaxAccountRequest struct {
-	Identifier          *string `json:"identifier,omitzero" nullable:"false"`
-	Cadence             *string `json:"cadence,omitzero" nullable:"false"`
-	PeriodNote          *string `json:"period_note,omitzero" nullable:"false"`
-	DueNote             *string `json:"due_note,omitzero" nullable:"false"`
-	LeadDays            *int64  `json:"lead_days,omitzero" nullable:"false"`
-	Currency            *string `json:"currency,omitzero" nullable:"false"`
-	EffectiveStart      *string `json:"effective_start,omitzero" nullable:"true"`
-	EffectiveEnd        *string `json:"effective_end,omitzero" nullable:"true"`
-	Note                *string `json:"note,omitzero" nullable:"false"`
-	ClearEffectiveStart bool    `json:"-"`
-	ClearEffectiveEnd   bool    `json:"-"`
-	present             map[string]bool
+	Identifier               *string `json:"identifier,omitzero" nullable:"false"`
+	Cadence                  *string `json:"cadence,omitzero" nullable:"false"`
+	PeriodNote               *string `json:"period_note,omitzero" nullable:"false"`
+	DueNote                  *string `json:"due_note,omitzero" nullable:"false"`
+	LeadDays                 *int64  `json:"lead_days,omitzero" nullable:"false"`
+	Currency                 *string `json:"currency,omitzero" nullable:"false"`
+	EffectiveStart           *string `json:"effective_start,omitzero" nullable:"true"`
+	EffectiveEnd             *string `json:"effective_end,omitzero" nullable:"true"`
+	Note                     *string `json:"note,omitzero" nullable:"false"`
+	ClearEffectiveStart      bool    `json:"-"`
+	ClearEffectiveEnd        bool    `json:"-"`
+	startPresent, endPresent bool
 }
 
 func taxAccountMembers(raw []byte, patch bool) (map[string]jsontext.Value, error) {
@@ -118,10 +118,6 @@ func (p *CreateTaxAccountRequest) UnmarshalJSON(raw []byte) error {
 	type fields CreateTaxAccountRequest
 	return json.Unmarshal(raw, (*fields)(p))
 }
-func (p CreateTaxAccountRequest) MarshalJSON() ([]byte, error) {
-	type fields CreateTaxAccountRequest
-	return json.Marshal(fields(p))
-}
 func (p *PatchTaxAccountRequest) UnmarshalJSON(raw []byte) error {
 	members, err := taxAccountMembers(raw, true)
 	if err != nil {
@@ -133,10 +129,8 @@ func (p *PatchTaxAccountRequest) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	*p = PatchTaxAccountRequest(value)
-	p.present = make(map[string]bool, len(members))
-	for name := range members {
-		p.present[name] = true
-	}
+	_, p.startPresent = members["effective_start"]
+	_, p.endPresent = members["effective_end"]
 	return nil
 }
 func (p PatchTaxAccountRequest) MarshalJSON() ([]byte, error) {
@@ -149,10 +143,10 @@ func (p PatchTaxAccountRequest) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(raw, &members); err != nil {
 		return nil, err
 	}
-	if p.ClearEffectiveStart || (p.present["effective_start"] && p.EffectiveStart == nil) {
+	if p.ClearEffectiveStart || (p.startPresent && p.EffectiveStart == nil) {
 		members["effective_start"] = jsontext.Value("null")
 	}
-	if p.ClearEffectiveEnd || (p.present["effective_end"] && p.EffectiveEnd == nil) {
+	if p.ClearEffectiveEnd || (p.endPresent && p.EffectiveEnd == nil) {
 		members["effective_end"] = jsontext.Value("null")
 	}
 	return json.Marshal(members)

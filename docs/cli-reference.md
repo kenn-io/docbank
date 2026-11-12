@@ -93,6 +93,14 @@ and [Ownership and concurrency](architecture/locking.md).
 
 ## docbank tax account
 
+```text
+docbank tax account add --filer ID --country CODE --tax-kind KIND --cadence CADENCE --currency CODE [flags]
+docbank tax account list [flags]
+docbank tax account show <account-id> [--reveal] [--json]
+docbank tax account edit <account-id> [flags]
+docbank tax account retire <account-id> [--revision N] [--json]
+```
+
 `tax account add` accepts `--filer`, `--authority`, `--country`, `--subdivision`,
 `--tax-kind`, `--identifier`, `--cadence`, `--period-note`, `--due-note`,
 `--lead-days`, `--currency`, `--effective-start`, `--effective-end`, and

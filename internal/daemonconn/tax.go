@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -20,8 +21,27 @@ func (e *taxClientError) Error() string {
 	}
 	if code, ok := ProblemCode(e.cause); ok {
 		switch code {
-		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "party_retired", "audit_mutation_unsupported", "maintenance_busy", "internal":
+		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "audit_mutation_unsupported", "maintenance_busy", "internal":
 			message += ": " + code
+			if code == "invalid_tax" || code == "validation" {
+				var problem *problemError
+				if errors.As(e.cause, &problem) {
+					detail := problem.Error()
+					fields := []string{"filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind", "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note", "filer", "taxkind", "include_retired", "limit", "offset", "reveal", "account_id", "If-Match"}
+					reasons := []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization"}
+					for _, field := range fields {
+						for _, reason := range reasons {
+							for _, prefix := range []string{"", "body.", "query.", "path.", "header."} {
+								safe := prefix + field + ": " + reason
+								if strings.Contains(detail, safe) {
+									message += "; " + safe
+									return message
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	return message

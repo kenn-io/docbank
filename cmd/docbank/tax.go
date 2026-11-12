@@ -3,22 +3,43 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func newTaxCommand() *cobra.Command {
 	root := &cobra.Command{Use: "tax", Short: "Manage tax accounts", Long: "Manage tax accounts and their registration details.\nAccount identifiers are masked unless explicitly revealed.", GroupID: groupDocuments}
-	root.SetFlagErrorFunc(func(_ *cobra.Command, _ error) error { return usageError(errors.New("invalid tax command flags")) })
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		message := "invalid tax command flags"
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if strings.Contains(err.Error(), `for "--`+f.Name+`" flag`) || strings.Contains(err.Error(), "flag needs an argument: --"+f.Name) {
+				message = "invalid value for --" + f.Name
+			}
+		})
+		return usageError(errors.New(message))
+	})
+	root.Args = taxNoArgs
+	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	root.PersistentFlags().Bool("json", false, "print JSON")
 	root.AddCommand(newTaxAccountCommand())
 	return root
 }
 
+func taxNoArgs(_ *cobra.Command, args []string) error {
+	if len(args) != 0 {
+		return usageError(errors.New("unexpected tax command arguments"))
+	}
+	return nil
+}
+
 func newTaxAccountCommand() *cobra.Command {
 	account := &cobra.Command{Use: "account", Short: "Manage tax accounts", Long: "Create, inspect, edit, list, and retire tax accounts.\nEdits and retirement use the current revision unless one is supplied."}
+	account.Args = taxNoArgs
+	account.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	printAccount := func(cmd *cobra.Command, a api.TaxAccount) error {
 		if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
 			return writeCLIJSON(cmd.OutOrStdout(), a)
@@ -29,11 +50,11 @@ func newTaxAccountCommand() *cobra.Command {
 			}
 			return *p
 		}
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %s\tidentifier: %s\tcadence: %s\tperiod: %s\tdue: %s\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %s\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, value(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, value(a.EffectiveStart), value(a.EffectiveEnd), a.Note, value(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %q\tidentifier: %q\tcadence: %s\tperiod: %q\tdue: %q\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %q\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, value(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, value(a.EffectiveStart), value(a.EffectiveEnd), a.Note, value(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
 		return err
 	}
 	var filters api.TaxAccountListOptions
-	list := &cobra.Command{Use: "list", Short: "List tax accounts", Example: "docbank tax account list --country ZZ", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: "List tax accounts", Example: "docbank tax account list --country ZZ", Args: taxNoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -74,12 +95,7 @@ func newTaxAccountCommand() *cobra.Command {
 	var add api.CreateTaxAccountRequest
 	var authority, start, end string
 	var lead int64
-	create := &cobra.Command{Use: "add", Short: "Create a tax account", Example: "docbank tax account add --filer 11111111-1111-4111-8111-111111111111 --country ZZ --tax-kind Example --cadence annual --currency USD", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		for _, name := range []string{"filer", "country", "tax-kind", "cadence", "currency"} {
-			if !cmd.Flags().Changed(name) {
-				return usageError(errors.New("required account flags are missing"))
-			}
-		}
+	create := &cobra.Command{Use: "add", Short: "Create a tax account", Example: "docbank tax account add --filer 11111111-1111-4111-8111-111111111111 --country ZZ --tax-kind Example --cadence annual --currency USD", Args: taxNoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if cmd.Flags().Changed("authority") {
 			add.AuthorityPartyID = &authority
 		}
@@ -116,6 +132,9 @@ func newTaxAccountCommand() *cobra.Command {
 	create.Flags().StringVar(&start, "effective-start", "", "effective start date")
 	create.Flags().StringVar(&end, "effective-end", "", "effective end date")
 	create.Flags().StringVar(&add.Note, "note", "", "account note")
+	for _, name := range []string{"filer", "country", "tax-kind", "cadence", "currency"} {
+		_ = create.MarkFlagRequired(name)
+	}
 	var editIdentifier, editCadence, periodNote, dueNote, currency, editStart, editEnd, note string
 	var editLead, revision int64
 	var clearStart, clearEnd bool

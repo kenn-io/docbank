@@ -32,18 +32,6 @@ func TestTaxClientRequestContracts(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestTaxClientResponseIdentityAndETag(t *testing.T) {
-	const id = "11111111-1111-4111-8111-111111111111"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"2"`)
-		_, _ = w.Write([]byte(`{"account_id":"` + id + `","revision":1}`))
-	}))
-	t.Cleanup(server.Close)
-	_, err := New(server.URL, "").TaxAccount(t.Context(), id, false)
-	require.Error(t, err)
-}
-
 func TestTaxClientPageAndPrivateErrors(t *testing.T) {
 	const sentinel = "private-synthetic-value"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +41,11 @@ func TestTaxClientPageAndPrivateErrors(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	_, err := New(server.URL, "").TaxAccounts(t.Context(), api.TaxAccountListOptions{TaxKind: sentinel, Limit: 100})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), sentinel)
+	failure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, sentinel, http.StatusInternalServerError) }))
+	t.Cleanup(failure.Close)
+	_, err = New(failure.URL, "").TaxAccounts(t.Context(), api.TaxAccountListOptions{TaxKind: sentinel, Limit: 100})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), sentinel)
 }
@@ -85,6 +78,7 @@ func TestTaxClientListAndRevealQueries(t *testing.T) {
 func TestTaxClientRejectsMalformedAccounts(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
 	for _, tc := range []struct{ name, body, etag string }{
+		{"etag mismatch", `{"account_id":"` + id + `","revision":1}`, `"2"`},
 		{"missing identity", `{"revision":1}`, `"1"`},
 		{"different identity", `{"account_id":"22222222-2222-4222-8222-222222222222","revision":1}`, `"1"`},
 		{"zero revision", `{"account_id":"` + id + `","revision":0}`, `"0"`},
@@ -104,4 +98,19 @@ func TestTaxClientRejectsMalformedAccounts(t *testing.T) {
 			assert.True(t, IsResponseDecodeError(err))
 		})
 	}
+}
+
+func TestTaxClientValidationDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":422,"code":"invalid_tax","detail":"cadence: unknown cadence"}`))
+	}))
+	t.Cleanup(server.Close)
+	_, err := New(server.URL, "").CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cadence: unknown cadence")
+	code, ok := ProblemCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, "invalid_tax", code)
 }

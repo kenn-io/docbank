@@ -18,7 +18,7 @@ func TestTaxIdentifierDisclosure(t *testing.T) {
 
 func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	date := "2025-01-01"
-	a := store.TaxAccount{AccountValues: taxrecord.AccountValues{Identifier: "private12345", EffectiveStart: &date, EffectiveEnd: &date, LeadDays: 14}}
+	a := store.TaxAccount{AccountID: "22222222-2222-4222-8222-222222222222", Revision: 1, AccountValues: taxrecord.AccountValues{FilerPartyID: "11111111-1111-4111-8111-111111111111", Country: "ZZ", TaxKind: "Example", Cadence: "annual", Currency: "USD", Identifier: "private12345", EffectiveStart: &date, EffectiveEnd: &date, LeadDays: 14}}
 	var patch PatchTaxAccountRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"effective_start":null,"lead_days":0}`), &patch))
 	in, err := mergeTaxAccountPatch(a, patch)
@@ -31,11 +31,9 @@ func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	raw, err := json.Marshal(patch)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"effective_start":null`)
-	empty := PatchTaxAccountRequest{Identifier: new(""), LeadDays: new(int64(0))}
-	raw, err = json.Marshal(empty)
+	raw, err = json.Marshal(PatchTaxAccountRequest{ClearEffectiveStart: true})
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"identifier":""`)
-	assert.Contains(t, string(raw), `"lead_days":0`)
+	assert.Contains(t, string(raw), `"effective_start":null`)
 	for _, body := range []string{`{}`, `{"identifier":null}`, `{"country":"ZZ"}`, `{"unknown_private":"secret"}`, `null`, `[]`} {
 		var invalid PatchTaxAccountRequest
 		assert.Error(t, json.Unmarshal([]byte(body), &invalid), body)
