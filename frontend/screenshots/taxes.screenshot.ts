@@ -43,10 +43,12 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
       ...["--form-code", "Form 100", "--period-start", "2031-04-01", "--period-end", "2031-06-30"],
       ...["--due-date", "2031-07-31", "--direction", "unknown"],
     );
-    await add(
+    // 9007199254740993 minor units is above 2^53 - 1, so the page withholds
+    // the digits and shows this record's CLI command instead.
+    const { record_id: unsafe } = await add(
       ...["--account", account, "--kind", "notice", "--title", "Refund notice 2031"],
       ...["--tax-year", "2031", "--due-date", "2032-03-31", "--direction", "refundable"],
-      ...["--amount", "250.00"],
+      ...["--amount", "90071992547409.93"],
     );
 
     const url = new URL(await fixture.run("web", "--no-browser"));
@@ -61,7 +63,8 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
     for (const response of [await listed, await named])
       expect(response.status(), await response.text()).toBe(200);
     // Record IDs are random, and the list returns them in ID order, so the
-    // expected order comes from the page's own response, not creation order.
+    // expected row order comes from the page's own response, not creation
+    // order. Filer headings are sorted by name.
     const { items } = (await (await listed).json()) as TaxRecordPage;
     expect(items).toHaveLength(4);
     const names: Record<string, string> = {
@@ -76,9 +79,10 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
         .getByRole("table", { name, exact: true })
         .locator("tbody tr td:first-child > span:first-child");
     await expect(main.locator("tbody tr")).toHaveCount(4);
-    await expect(main.getByRole("heading", { level: 3 })).toHaveText(
-      [...new Set(items.map((item) => item.filer_party_id))].map((id) => names[id]!),
-    );
+    await expect(main.getByRole("heading", { level: 3 })).toHaveText([
+      "Example Holdings Ltd.",
+      "Example Ventures Ltd.",
+    ]);
     for (const filer of [holdings, ventures])
       await expect(rowTitles(`Tax records for ${names[filer]}`)).toHaveText(titlesOf(filer));
     await expect(main.getByText("123400 USD", { exact: true })).toBeVisible();
@@ -92,6 +96,10 @@ test("Taxes page groups synthetic records by filer", async ({ page }) => {
       .click();
     await expect(rowTitles("Tax records")).toHaveText(titlesOf(holdings));
     await expect(main.getByRole("heading", { level: 3 })).toHaveCount(0);
+    await expect(main.getByText("Too large to show", { exact: true })).toBeVisible();
+    await expect(
+      main.getByText(`Run docbank tax record show ${unsafe} to see the exact amount`),
+    ).toBeVisible();
     // Hover outranks the current-item fill, so show the selection as a user
     // sees it once the pointer leaves the rail.
     await page.mouse.move(0, 0);

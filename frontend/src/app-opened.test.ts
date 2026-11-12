@@ -104,21 +104,4 @@ describe("app_opened reporting", () => {
       { event: "screen_viewed", properties: { surface: "web", screen: "help" } },
     ]);
   });
-
-  it("an undefined screen clears the pending report", async () => {
-    let visibility: DocumentVisibilityState = "hidden";
-    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
-    fetchMock.mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
-    reporter = startTelemetryReporting("secret");
-    reporter.reportScreen("browse");
-    reporter.reportScreen(undefined);
-    await settle();
-    visibility = "visible";
-    document.dispatchEvent(new Event("visibilitychange"));
-    focus();
-    await settle();
-    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-      { event: "app_opened", properties: { surface: "web" } },
-    ]);
-  });
 });

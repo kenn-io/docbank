@@ -46,7 +46,8 @@ it("shows loading, then grouped rows with state, due and exact amount", async ()
   serveTaxes(() => new Promise((resolve) => (answer = resolve)));
   show();
   expect(await screen.findByText(/Loading…/)).toBeTruthy();
-  answer({ items: [q1, notice, q2] });
+  // Ventures' record comes first from the server; headings still sort by name.
+  answer({ items: [notice, q1, q2] });
   const first = await screen.findByRole("table", { name: "Tax records for Example Holdings Ltd." });
   const headings = screen.getAllByRole("heading", { level: 3 });
   expect(headings.map((heading) => heading.textContent)).toEqual([
@@ -82,13 +83,14 @@ it("filer rail filters, marks the current filer and drops headings", async () =>
   expect(recordQueries(fetch).some((query) => query.filer === ventures)).toBe(true);
 });
 
-it("unsafe amount gives the hint to pointer and screen-reader users", async () => {
+it("unsafe amount shows the row's CLI command as visible text", async () => {
   const hint = "Run docbank tax record show h1 to see the exact amount";
   serveTaxes(() => ({ items: [{ ...q1, amount_minor: 9007199254740992 }] }));
   show();
   const cell = (await screen.findByText("Too large to show")).closest("td")!;
-  expect(cell.title).toBe(hint);
-  expect(cell.querySelector(".kit-sr-only")?.textContent).toBe(hint);
+  const shown = within(cell).getByText(hint);
+  expect(shown.classList.contains("kit-sr-only")).toBe(false);
+  expect(cell.title).toBe("");
 });
 
 it("year field applies valid years and rejects others without a request", async () => {

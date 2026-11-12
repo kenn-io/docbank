@@ -23,8 +23,8 @@ export function recordParams(f: TaxFilters, offset: number): ListTaxRecordsParam
   };
 }
 
-// groupByFiler keeps server order: groups by each filer's first row, rows
-// within a group as listed. It counts nothing.
+// groupByFiler groups rows by filer, in order of each filer's first row, and
+// keeps rows within a group in server order. It counts nothing.
 export function groupByFiler<T extends { filer_party_id: string }>(
   rows: readonly T[],
 ): FilerGroup<T>[] {
@@ -42,7 +42,11 @@ export function groupByFiler<T extends { filer_party_id: string }>(
 export class TaxesView {
   filters = $state<TaxFilters>({ filer: "", year: null });
   rows = $state.raw<TaxRecord[]>([]);
-  groups = $derived(groupByFiler(this.rows));
+  // Loaded filer headings follow the rail's order (live before retired, then
+  // by name); rows inside each group keep the server's record-ID order.
+  groups = $derived(
+    groupByFiler(this.rows).sort((a, b) => this.byFiler(a.filerPartyID, b.filerPartyID)),
+  );
   parties = $state.raw<Map<string, Party>>(new Map());
   // The rail lists current own parties plus every filer that the loaded rows
   // or the selection reference, so a filer that is no longer own (or whose
@@ -51,14 +55,15 @@ export class TaxesView {
     const ids = new Set([...this.parties.values()].filter((p) => p.own).map((p) => p.party_id));
     for (const row of this.rows) ids.add(row.filer_party_id);
     if (this.filters.filer) ids.add(this.filters.filer);
-    return [...ids]
-      .map((id) => ({
-        party_id: id,
-        name: this.filerName(id),
-        retired: !!this.parties.get(id)?.retired_at,
-      }))
-      .sort((a, b) => Number(a.retired) - Number(b.retired) || a.name.localeCompare(b.name));
+    return [...ids].sort(this.byFiler).map((id) => ({
+      party_id: id,
+      name: this.filerName(id),
+      retired: !!this.parties.get(id)?.retired_at,
+    }));
   });
+  private byFiler = (a: string, b: string) =>
+    Number(!!this.parties.get(a)?.retired_at) - Number(!!this.parties.get(b)?.retired_at) ||
+    this.filerName(a).localeCompare(this.filerName(b));
   loading = $state(false);
   more = $state(false);
   error = $state("");

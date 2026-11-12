@@ -110,6 +110,26 @@ it("groups rows by filer in first-appearance order and keeps server order", () =
   ]);
 });
 
+it("orders loaded filer groups by name and keeps server order inside each", async () => {
+  serveTaxes(() => ({
+    items: [
+      record("v1", ventures),
+      record("h1", holdings),
+      record("v2", ventures),
+      record("h2", holdings),
+    ],
+  }));
+  const { taxes } = view();
+  await taxes.load();
+  expect(
+    taxes.groups.map((group) => [group.filerPartyID, group.rows.map((row) => row.record_id)]),
+  ).toEqual([
+    [holdings, ["h1", "h2"]],
+    [ventures, ["v1", "v2"]],
+  ]);
+  taxes.dispose();
+});
+
 it("keeps historical filers selectable while their rows reload", async () => {
   const former = "44444444-4444-4444-8444-444444444444";
   let answer!: (body: object) => void;

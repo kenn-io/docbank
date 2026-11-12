@@ -131,18 +131,20 @@ The page only reads; add or change records with the CLI.
   listed record, such as a party that is no longer marked as your own. Retired
   parties are marked "· retired". If party names cannot be read, filers show as
   "Filer" and their complete ID, with **Try again**.
-- With all filers, the loaded records appear under one heading per filer. The
-  page keeps the server's stable record order (not date order), and records
-  from **Load more** join their filer's heading. Choosing a filer shows only its
-  records.
+- With all filers, the loaded records appear under one heading per filer.
+  Headings follow the **Filer** list order: live filers by name, then retired
+  ones. Within a heading, records keep the server's stable record order (not
+  date order), and records from **Load more** join their filer's heading.
+  Choosing a filer shows only its records.
 - **Tax year** accepts a year from 1 to 9999; press Enter or leave the field to
   apply it. **All years** and **Clear filters** remove filters.
 - Each row shows the title and form code, tax year, due date, state, and the
-  amount. **Load more** fetches the next 50 records. Retired records are not
-  shown; list them with `docbank tax record list --include-retired`.
+  amount. **Load more** fetches the next 50 records. Refresh starts again from
+  the first 50. Retired records are not shown; list them with
+  `docbank tax record list --include-retired`.
 
 The amount column shows exact minor units with the currency code and the
 direction, such as `123400 USD` and **Payable**, without converting or rounding.
 An amount above 9,007,199,254,740,991 minor units shows **Too large to show**;
-its hint gives the `docbank tax record show` command with that record's ID. The page never shows
+the cell then shows the `docbank tax record show` command with that record's ID. The page never shows
 account identifiers or event references, and records no usage screen while open.

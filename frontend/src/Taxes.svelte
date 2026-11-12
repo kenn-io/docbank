@@ -19,7 +19,6 @@
   let yearText = $state("");
   let yearError = $state("");
   const filtered = $derived(!!view && (view.filters.filer !== "" || view.filters.year !== null));
-  const filerName = (id: string) => view?.filerName(id) ?? "";
 
   onMount(() => {
     const taxes = new TaxesView(session, onauthfailure);
@@ -80,9 +79,9 @@
         <td>{row.tax_year ?? "—"}</td>
         <td>{row.due_date ?? "—"}</td>
         <td>{taxStateLabel(row.state)}</td>
-        <td class="amount" title={amount.hint}
-          ><span>{amount.text}</span>{#if amount.hint}<span class="kit-sr-only">{amount.hint}</span
-            >{/if}<span class="sub">{amount.direction}</span></td
+        <td class="amount"
+          ><span>{amount.text}</span><span class="sub">{amount.direction}</span
+          >{#if amount.hint}<span class="sub hint">{amount.hint}</span>{/if}</td
         >
       </tr>
     {/each}
@@ -175,8 +174,8 @@
         {:else}
           {#each view.groups as group (group.filerPartyID)}
             <div class="tool-section">
-              <h3>{filerName(group.filerPartyID)}</h3>
-              {@render records(group.rows, `Tax records for ${filerName(group.filerPartyID)}`)}
+              <h3>{view.filerName(group.filerPartyID)}</h3>
+              {@render records(group.rows, `Tax records for ${view.filerName(group.filerPartyID)}`)}
             </div>
           {/each}
         {/if}
@@ -264,6 +263,13 @@
 
   td:not(.title) {
     white-space: nowrap;
+  }
+
+  /* The CLI command for an unsafe amount stays visible and wraps inside the
+     fixed Amount column. */
+  .hint {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .title > span:first-child {

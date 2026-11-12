@@ -1570,8 +1570,10 @@ Browser sessions may call only two tax-related reads, both for the web Taxes
 page: `GET /api/v1/tax/records` with `limit`, `offset`, `filer`, and `year`,
 and `GET /api/v1/parties` with `include_retired`, `limit`, and `offset`. Each
 parameter may appear at most once; any other or repeated parameter is denied.
-Tax accounts, single-record and single-party reads, `reveal`, and every tax or
-party write require the API key.
+Both return their full existing record and party objects, not a projection of
+the fields the page shows, including retired parties. Tax accounts,
+single-record and single-party reads, `reveal`, and every tax or party write
+require the API key.
 
 ## People search
 
