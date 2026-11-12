@@ -126,8 +126,7 @@ it("empty vault and no-match states", async () => {
   await fireEvent.input(year, { target: { value: "2032" } });
   await fireEvent.blur(year);
   expect(await screen.findByText("No records match these filters")).toBeTruthy();
-  const clear = screen.getAllByRole("button", { name: "Clear filters" });
-  await fireEvent.click(clear.at(-1)!);
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(await screen.findByText("No tax records yet")).toBeTruthy();
   expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year");
   expect((year as HTMLInputElement).value).toBe("");

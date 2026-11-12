@@ -160,9 +160,7 @@
           <p class="tool-muted"><Spinner size={14} /> Loading…</p>
         {:else if view.rows.length === 0}
           {#if view.error}{:else if filtered}
-            <EmptyState title="No records match these filters">
-              <Button size="sm" onclick={clearFilters}>Clear filters</Button>
-            </EmptyState>
+            <EmptyState title="No records match these filters" />
           {:else}
             <EmptyState
               title="No tax records yet"
