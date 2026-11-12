@@ -715,7 +715,9 @@ The contract list is live, not a snapshot. To continue a full page, add the
 returned `limit` to `offset` and retain the filters and returned `as_of`. A
 full last page can be followed by an empty page. `get_contract` returns the
 complete detail or `contract_result_too_large`; use the CLI or HTTP API if it
-does not fit. List rows omit terms, parties, and documents.
+does not fit. List rows omit terms, parties, and documents. `contract_type` is a
+lowercase label of letters, digits and underscores, at most 64 characters; a
+list type filter must be non-empty.
 
 With contract writes enabled, a synthetic workflow is:
 
@@ -733,7 +735,8 @@ Use the latest revision from a read or receipt. A stale revision is rejected;
 read again before deciding whether to retry. If a write returns
 `contract_outcome_unknown`, inspect the contract before retrying. For a create,
 list and inspect possible matches first; titles are not unique. Never retry
-blindly. The tools do not manage parties or send, cancel, or refresh signatures.
+blindly. The tools do not manage parties, unlink documents (use
+`docbank contract unlink`), or send, cancel, or refresh signatures.
 The daemon-hosted catalog provides the two reads only.
 
 ## Optional processing start

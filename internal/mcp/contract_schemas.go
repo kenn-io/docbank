@@ -1,18 +1,20 @@
 package mcp
 
-import "maps"
-
-const contractSafeInteger = 9_007_199_254_740_991
+const (
+	contractSafeInteger     = 9_007_199_254_740_991
+	contractSchemaString    = "string"
+	contractSchemaMinLength = "minLength"
+)
 
 func contractDateSchema(nullable bool) schema {
-	d := schema{"type": "string", "format": "date", jsonSchemaPattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+	d := schema{"type": contractSchemaString, "format": "date", jsonSchemaPattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
 	if nullable {
 		return schema{"anyOf": []schema{d, {"type": "null"}}}
 	}
 	return d
 }
 func contractEditableProperties() schema {
-	p := schema{"title": schema{"type": "string", "minLength": 1, jsonSchemaMaxLength: 300}, "contract_type": schema{"type": "string", jsonSchemaPattern: "^([a-z0-9_]{1,64})?$"}, "status": enumSchema("draft", "pending_signature", "active", "terminated", "cancelled")}
+	p := schema{"title": schema{"type": contractSchemaString, contractSchemaMinLength: 1, jsonSchemaMaxLength: 300}, "contract_type": schema{"type": contractSchemaString, jsonSchemaPattern: "^([a-z0-9_]{1,64})?$"}, "status": enumSchema("draft", "pending_signature", "active", "terminated", "cancelled")}
 	for _, k := range []string{"starts_on", "expires_on", "signed_on"} {
 		p[k] = contractDateSchema(true)
 	}
@@ -35,11 +37,11 @@ func contractDetailProperties() schema {
 	p["created_at"] = dateTimeSchema()
 	p["updated_at"] = dateTimeSchema()
 	p["parties"] = arraySchema(objectSchema(schema{"party_id": uuidSchema(), roleField: stringSchema(32), "display_name": stringSchema(200), conflictKindField: stringSchema(32), "own": booleanSchema(), "retired_at": schema{"anyOf": []schema{dateTimeSchema(), {"type": "null"}}}}, "party_id", roleField, "display_name", conflictKindField, "own", "retired_at"), 0)
-	p["documents"] = arraySchema(objectSchema(schema{"node_id": integerSchema(1, contractSafeInteger), versionField: uuidSchema(), "blob_sha256": sha256Schema(), sizeField: integerSchema(0, contractSafeInteger), roleField: stringSchema(32), "added_at": dateTimeSchema(), "current": booleanSchema(), "available": booleanSchema()}, "node_id", versionField, "blob_sha256", sizeField, roleField, "added_at", "current", "available"), 0)
+	p["documents"] = arraySchema(objectSchema(schema{nodeField: integerSchema(1, contractSafeInteger), versionField: uuidSchema(), "blob_sha256": sha256Schema(), sizeField: integerSchema(0, contractSafeInteger), roleField: stringSchema(32), "added_at": dateTimeSchema(), "current": booleanSchema(), "available": booleanSchema()}, nodeField, versionField, "blob_sha256", sizeField, roleField, "added_at", "current", "available"), 0)
 	return p
 }
 func listContractsSchemas() (schema, schema) {
-	in := rootObjectSchema(schema{"status": enumSchema("draft", "pending_signature", "active", "expired", "terminated", "cancelled"), "contract_type": schema{"type": "string", jsonSchemaPattern: "^[a-z0-9_]{1,64}$"}, "party_id": uuidSchema(), "expiring_before": contractDateSchema(false), "q": stringSchema(0), "as_of": contractDateSchema(false), "limit": integerSchema(1, 100), "offset": integerSchema(0, contractSafeInteger)})
+	in := rootObjectSchema(schema{"status": enumSchema("draft", "pending_signature", "active", "expired", "terminated", "cancelled"), "contract_type": schema{"type": contractSchemaString, jsonSchemaPattern: "^[a-z0-9_]{1,64}$"}, "party_id": uuidSchema(), "expiring_before": contractDateSchema(false), "q": stringSchema(0), "as_of": contractDateSchema(false), "limit": integerSchema(1, 100), "offset": integerSchema(0, contractSafeInteger)})
 	out := rootObjectSchema(withPrivateCache(schema{jsonSchemaItems: arraySchema(objectSchema(contractListItemProperties(), contractItemRequired...), 100), "limit": integerSchema(1, 100), "offset": integerSchema(0, contractSafeInteger), "as_of": contractDateSchema(false)}), cacheRequired(jsonSchemaItems, "limit", "offset", "as_of")...)
 	return in, out
 }
@@ -58,10 +60,10 @@ func createContractSchemas() (schema, schema) {
 	return rootObjectSchema(p, "title"), contractWriteReceiptSchema()
 }
 func updateContractSchemas() (schema, schema) {
-	patch := objectSchema(maps.Clone(contractEditableProperties()))
+	patch := objectSchema(contractEditableProperties())
 	patch["minProperties"] = 1
 	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, contractSafeInteger), "patch": patch}, "contract_id", "revision", "patch"), contractWriteReceiptSchema()
 }
 func linkContractDocumentSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, contractSafeInteger), "node_id": integerSchema(1, contractSafeInteger), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", "node_id", versionField, roleField), contractWriteReceiptSchema()
+	return rootObjectSchema(schema{"contract_id": uuidSchema(), "revision": integerSchema(1, contractSafeInteger), nodeField: integerSchema(1, contractSafeInteger), versionField: uuidSchema(), roleField: enumSchema("draft", "signed", "audit_trail", "amendment", "attachment")}, "contract_id", "revision", nodeField, versionField, roleField), contractWriteReceiptSchema()
 }

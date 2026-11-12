@@ -362,3 +362,38 @@ func TestContractMCPDaemonProjectionPrivacy(t *testing.T) {
 	assert.NotContains(t, string(wire), secret)
 	assert.NotContains(t, logs.String(), secret)
 }
+
+func TestContractMCPGetContractTooLargeWire(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	hash := strings.Repeat("a", 64)
+	documents := make([]api.ContractDocument, 3000)
+	for i := range documents {
+		documents[i] = api.ContractDocument{
+			NodeID: int64(i + 1), ContentVersionID: fmt.Sprintf("22222222-2222-4222-8222-%012x", i+1),
+			BlobSHA256: hash, Size: 12, Role: "signed", AddedAt: "2026-01-01T00:00:00Z", Current: true, Available: true,
+		}
+	}
+	contract := api.Contract{
+		ContractID: id, Title: "Synthetic", Status: "draft", EffectiveStatus: "draft", Revision: 1,
+		CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z",
+		Parties: []api.ContractParty{}, Documents: documents,
+	}
+	payload, err := json.Marshal(contract)
+	require.NoError(t, err)
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(daemon.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, exportTestLease(t, daemon.URL))
+	wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_contract", "arguments": map[string]any{"contract_id": id}}))
+	result := decodeResult(t, wire)
+	assert.Equal(t, true, result["isError"])
+	detail := objectField(t, result, "structuredContent")
+	assert.Equal(t, "contract_result_too_large", detail["code"])
+	assert.Equal(t, "The contract result exceeds the MCP response limit; reduce the list limit or inspect this contract with the CLI or HTTP API.", detail["message"])
+	assert.NotContains(t, string(wire), hash)
+	assert.NotContains(t, string(wire), `"documents"`)
+	assert.NotContains(t, string(wire), id)
+}

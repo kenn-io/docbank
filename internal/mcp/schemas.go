@@ -30,6 +30,7 @@ const (
 	jsonSchemaItems           = "items"
 	roleField                 = "role"
 	sizeField                 = "size"
+	nodeField                 = "node_id"
 	jsonSchemaConst           = "const"
 	jsonSchemaNumber          = "number"
 	maxToolResponseBytes      = 1 << 20

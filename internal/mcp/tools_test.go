@@ -90,7 +90,6 @@ func TestToolCatalogBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := NewServerWithOptions(tc.options)
 			result := listCatalogThroughClient(t, server)
-			t.Logf("catalog %s: %d bytes (budget %d)", tc.name, len(catalogJSON(t, result)), tc.ceiling)
 			require.Len(t, catalogJSON(t, result), len(catalogWireJSON(t, server)))
 			require.NoError(t, toolCatalogBudgetError(t, result, tc.ceiling))
 		})
