@@ -2482,7 +2482,6 @@ CREATE TABLE IF NOT EXISTS browser_photo_imports (
     vault_id TEXT NOT NULL,
     format_version INTEGER NOT NULL,
     source_id TEXT NOT NULL,
-    picker_kind TEXT NOT NULL,
     label TEXT NOT NULL,
     destination TEXT NOT NULL,
     anchor_id INTEGER NOT NULL,

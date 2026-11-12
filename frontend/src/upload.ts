@@ -120,7 +120,6 @@ export interface SavedPhotoImport {
   source_id?: string;
   label: string;
   destination: string;
-  picker_kind: "files" | "folder";
   created_at: string;
   group_count: number;
   groups?: SavedPhotoGroup[];
@@ -162,11 +161,7 @@ export function photoImportDeclaration(
 }
 
 export interface PhotoImportTransport {
-  registerPhotoImport(
-    importID: string,
-    pickerKind: "files" | "folder",
-    signal: AbortSignal,
-  ): Promise<string>;
+  registerPhotoImport(importID: string, signal: AbortSignal): Promise<string>;
   listPhotoImports(offset: number, signal: AbortSignal): Promise<SavedPhotoImport[]>;
   inspectPhotoImport(
     importID: string,
@@ -228,7 +223,6 @@ interface UploadMessage {
   status?: number;
   code?: string;
   detail?: string;
-  picker_kind?: "files" | "folder";
   offset?: number;
   imports?: SavedPhotoImport[];
   saved_import?: SavedPhotoImport;
@@ -340,13 +334,9 @@ export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransp
     }
   }
 
-  async registerPhotoImport(
-    importID: string,
-    pickerKind: "files" | "folder",
-    signal: AbortSignal,
-  ): Promise<string> {
+  async registerPhotoImport(importID: string, signal: AbortSignal): Promise<string> {
     const reply = await this.photoControl(
-      { type: "register_photo_import", import_id: importID, picker_kind: pickerKind },
+      { type: "register_photo_import", import_id: importID },
       signal,
     );
     if (reply.type !== "photo_import_registered" || !reply.import_id) throw this.protocolError();

@@ -16,7 +16,7 @@ func checkBrowserPhotoGroupReceiptReplay(t *testing.T, open func(*testing.T) *St
 	require.NoError(t, err)
 	members := []BrowserPhotoGroupMember{{Path: "Trip/capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/Trip/capture.xmp", Size: 4}}
 	plan := BrowserPhotoImport{
-		SourceID: uuid.New(), PickerKind: "folder", Label: "Trip", Destination: "/photos", Directory: directory,
+		SourceID: uuid.New(), Label: "Trip", Destination: "/photos", Directory: directory,
 		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	}
 	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
@@ -56,7 +56,7 @@ func checkBrowserPhotoReceiptOutcomes(t *testing.T, open func(*testing.T) *Store
 		directory, err := s.PrepareIngestDirectory(ctx, "/photos")
 		require.NoError(t, err)
 		id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
-			SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
+			SourceID: uuid.New(), Label: "Choose files", Destination: "/photos", Directory: directory,
 			Groups: []BrowserPhotoImportGroup{{Members: declarations}},
 		})
 		require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestBrowserPhotoReceiptFailureRollsBackGroup(t *testing.T) {
 	require.NoError(t, err)
 	members := []BrowserPhotoGroupMember{{Path: "capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/capture.xmp", Size: 4}}
 	id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
-		SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
+		SourceID: uuid.New(), Label: "Choose files", Destination: "/photos", Directory: directory,
 		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	})
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestBrowserPhotoInspectionRejectsUnknownReceipts(t *testing.T) {
 	require.NoError(t, err)
 	members := []BrowserPhotoGroupMember{{Path: "capture.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/capture.xmp", Size: 4}}
 	id, err := s.RegisterBrowserPhotoImport(ctx, BrowserPhotoImport{
-		SourceID: uuid.New(), PickerKind: "files", Label: "Choose files", Destination: "/photos", Directory: directory,
+		SourceID: uuid.New(), Label: "Choose files", Destination: "/photos", Directory: directory,
 		Groups: []BrowserPhotoImportGroup{{Members: members}},
 	})
 	require.NoError(t, err)
@@ -165,7 +165,7 @@ func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
 	ctx := t.Context()
 	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
 	require.NoError(t, err)
-	plan := BrowserPhotoImport{SourceID: uuid.New(), PickerKind: "files", Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/a.xmp", Size: 1}}}}}
+	plan := BrowserPhotoImport{SourceID: uuid.New(), Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.xmp", Role: PhotoRoleSidecar, SourcePath: "browser:source/a.xmp", Size: 1}}}}}
 	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
 	require.NoError(t, err)
 	again, err := s.RegisterBrowserPhotoImport(ctx, plan)
