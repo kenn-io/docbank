@@ -853,6 +853,8 @@ pinning are not browser workflows.
 
 Open **System → Search by meaning** to enable text search by meaning, approve setup, and follow the restart and recovery instructions in the drawer. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
 
+The **Restart** button appears when Docbank runs in the background. Restarting signs out open tabs. A locally opened session gets a new tab; reload a public URL and sign in again.
+
 If the browser cannot open a new tab after a local restart, run `docbank web --no-browser` and open the printed link.
 
 Enter a word or phrase in the search box and press Enter. Results can match a

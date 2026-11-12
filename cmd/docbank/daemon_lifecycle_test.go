@@ -6,9 +6,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,17 +53,12 @@ func buildDocbank(tb testing.TB) string {
 // when v is non-empty (an unstamped build reports "dev").
 func buildDocbankVersion(tb testing.TB, v string) string {
 	tb.Helper()
-	return buildDocbankWithWebOverlay(tb, v, false)
-}
-
-func buildDocbankWithWebOverlay(tb testing.TB, v string, webOverlay bool) string {
-	tb.Helper()
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
 	docbankBuildMu.Lock()
 	defer docbankBuildMu.Unlock()
-	key := fmt.Sprintf("%s:%t", v, webOverlay)
+	key := v
 	build, ok := docbankBuilds[key]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
@@ -80,25 +71,6 @@ func buildDocbankWithWebOverlay(tb testing.TB, v string, webOverlay bool) string
 			}
 			bin := filepath.Join(docbankBuildDir, name)
 			args := []string{"build", "-tags", "fts5"}
-			if webOverlay {
-				entry := filepath.Join(docbankBuildDir, "index.html")
-				if err := os.WriteFile(entry, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0o600); err != nil {
-					return "", err
-				}
-				webIndex, err := filepath.Abs(filepath.Join("..", "..", "internal", "web", "dist", "index.html"))
-				if err != nil {
-					return "", err
-				}
-				overlay, err := json.Marshal(map[string]any{"Replace": map[string]string{webIndex: entry}})
-				if err != nil {
-					return "", err
-				}
-				overlayPath := filepath.Join(docbankBuildDir, "overlay.json")
-				if err := os.WriteFile(overlayPath, overlay, 0o600); err != nil {
-					return "", err
-				}
-				args = append(args, "-overlay", overlayPath)
-			}
 			if v != "" {
 				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
 			}
@@ -649,72 +621,24 @@ func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 }
 
 func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
-	bin := buildDocbankWithWebOverlay(t, "", true)
+	bin := buildDocbank(t)
 	root := t.TempDir()
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	env := append(os.Environ(), "DOCBANK_HOME="+root, "DOCBANK_TELEMETRY_ENABLED=0", "BROWSER=/bin/false")
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-	launchWeb := func() *url.URL {
-		cmd := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, string(out))
-		launch, err := url.Parse(strings.TrimSpace(string(out)))
-		require.NoError(t, err)
-		return launch
-	}
-	launch := launchWeb()
-	fragment, err := url.ParseQuery(launch.Fragment)
-	require.NoError(t, err)
-	token := fragment.Get("web_session")
-	require.NotEmpty(t, token)
+	start := exec.CommandContext(t.Context(), bin, "ls", "/")
+	out, err := start.CombinedOutput()
+	require.NoError(t, err, string(out))
 	old := waitForDaemon(t, root)
 	require.False(t, daemonconn.Explicit(old))
-	watcher, err := fsnotify.NewWatcher()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = watcher.Close() })
-	require.NoError(t, watcher.Add(root))
-	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		_, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, fmt.Errorf("split host and port: %w", err)
-		}
-		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
-	}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, launch.Scheme+"://"+launch.Host+"/api/v1/processing/local/restart", nil)
-	require.NoError(t, err)
-	request.Header.Set("Origin", launch.Scheme+"://"+launch.Host)
-	request.Header.Set(api.WebSessionHeader, token)
-	response, err := client.Do(request)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusAccepted, response.StatusCode)
-	require.NoError(t, response.Body.Close())
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
-	defer cancel()
-	for {
-		select {
-		case <-ctx.Done():
-			logs, _ := filepath.Glob(filepath.Join(root, "logs", "*.log"))
-			for _, path := range logs {
-				data, err := os.ReadFile(path)
-				t.Logf("daemon log %s (read error: %v):\n%s", filepath.Base(path), err, data)
-			}
-			t.Fatalf("replacement daemon did not appear: %v", ctx.Err())
-		case err := <-watcher.Errors:
-			require.NoError(t, err)
-		case <-watcher.Events:
-			records, err := daemonconn.RuntimeStore(root).List()
-			require.NoError(t, err)
-			for _, rec := range records {
-				if rec.PID != old.PID {
-					require.False(t, daemonconn.Explicit(rec))
-					return
-				}
-			}
-		}
-	}
+	restart := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
+	restart.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
+	out, err = restart.CombinedOutput()
+	require.NoError(t, err, string(out))
+	replacement := waitForDaemon(t, root)
+	require.NotEqual(t, old.PID, replacement.PID)
+	require.False(t, daemonconn.Explicit(replacement))
 }
 
 func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {

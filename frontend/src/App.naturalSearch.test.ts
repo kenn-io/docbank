@@ -2123,6 +2123,15 @@ it.each([
     async () => new Response(null, { status: 504 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
+  [
+    "rejected",
+    async () =>
+      new Response(JSON.stringify({ code: "restart_failed", detail: "Helper could not start" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+    "Docbank couldn't restart: Helper could not start",
+  ],
 ])("keeps the workspace when the restart outcome is %s", async (_kind, restart, notice) => {
   const request = vi.fn(restart);
   const harness = searchWithMeaningOff({
@@ -2145,4 +2154,28 @@ it.each([
     ([input]) => String(input) === "/api/v1/processing/local/restart",
   );
   expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
+});
+
+it("clears the restart notice after status no longer requires a restart", async () => {
+  let status = { ...localSaved, restart_available: true };
+  searchWithMeaningOff({
+    status: () => status,
+    restart: async () => new Response(null, { status: 202 }),
+  });
+  render(App);
+  await screen.findByRole("button", { name: "System" });
+  let drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+      name: "Restart",
+    }),
+  );
+  await within(drawer).findByText("Restart requested. Docbank may restart later.");
+  await closeSystem();
+  status = { ...localOff, active: true, restart_available: true };
+  drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("On");
+  expect(within(drawer).queryByText("Restart requested. Docbank may restart later.")).toBeNull();
 });
