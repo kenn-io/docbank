@@ -220,8 +220,15 @@
     white-space: nowrap;
   }
 
-  /* Fixed widths keep every filer group's columns on the same edges; Title
-     takes the rest. */
+  /* Each filer group is its own table. A fixed layout takes the header widths
+     below as given, so every group shares the same column edges and Title
+     takes the rest; the minimum keeps Title readable before narrow screens
+     scroll the table sideways. */
+  .records :global(.kit-table) {
+    min-width: 46rem;
+    table-layout: fixed;
+  }
+
   .year {
     width: 4.5rem;
   }
@@ -240,11 +247,6 @@
 
   td:not(.title) {
     white-space: nowrap;
-  }
-
-  .title {
-    width: 100%;
-    max-width: 0;
   }
 
   .title > span:first-child {
