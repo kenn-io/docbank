@@ -106,6 +106,25 @@ describe("contract helpers", () => {
       { value: "licence", label: "Licence" },
     ]);
   });
+
+  it("gives every valid type a visible label distinct from the others", () => {
+    // Store labels are lower-case letters, digits and underscores, so lease
+    // and lease_ are different types and any_type is not the placeholder.
+    const options = contractTypeOptions(["lease_", "_", "any_type", "lease"]);
+    expect(new Set(options.map((option) => option.value))).toStrictEqual(
+      new Set(["", "service", "lease", "loan", "nda", "offer_letter", "lease_", "_", "any_type"]),
+    );
+    expect(options[0]).toStrictEqual({ value: "", label: "Any type" });
+    for (const value of ["", "lease", "lease_", "_", "any_type"])
+      expect(options.filter((option) => option.value === value)).toHaveLength(1);
+    // Labels compare as displayed: surrounding spaces are not visible.
+    const labels = options.map((option) => option.label.trim());
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(contractTypeLabel("lease_").trim()).not.toBe(contractTypeLabel("lease").trim());
+    expect(contractTypeLabel("_").trim()).not.toBe("");
+    expect(contractTypeLabel("_")).not.toBe(contractTypeLabel(""));
+    expect(contractTypeLabel("any_type")).not.toBe(options[0]!.label);
+  });
 });
 
 describe("contract document source", () => {

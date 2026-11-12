@@ -152,6 +152,13 @@ describe("contracts page", () => {
     expect(screen.getByText(/in any status/).textContent).toMatch(/through/);
     await choose(/^Status/, "Active");
     await waitFor(() => expect(screen.queryByText(/in any status/)).toBeNull());
+    // Any chosen status narrows the window; only an unset status says "any".
+    await choose(/^Status/, "Draft");
+    await waitFor(() => expect(requests.at(-1)).toContain("status=draft"));
+    await screen.findByRole("button", { name: "Show contract Due soon" });
+    const caption = screen.getByText(/Shows agreements expiring/).textContent ?? "";
+    expect(caption).toMatch(/through/);
+    expect(caption).not.toMatch(/in any status/);
   });
 
   it("shows the filtered empty state only after the last hidden page", async () => {
