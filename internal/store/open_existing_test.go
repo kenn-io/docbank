@@ -115,6 +115,7 @@ func TestOpenExistingScratchUsesProvidedDirectory(t *testing.T) {
 
 type recordingScratchDriver struct {
 	docsqlite.Driver
+
 	paths []string
 }
 

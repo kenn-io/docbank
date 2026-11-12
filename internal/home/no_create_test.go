@@ -11,17 +11,24 @@ import (
 
 func TestNoCreateLock(t *testing.T) {
 	l := Layout{Root: t.TempDir()}
-	_, _, _, err := l.OpenExistingAndLockExclusiveNoCreate()
+	root, lock, registry, err := l.OpenExistingAndLockExclusiveNoCreate()
 	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Nil(t, root)
+	require.Nil(t, lock)
+	require.NotEmpty(t, registry)
 	_, err = os.Lstat(filepath.Join(l.Root, "vault.lock"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	owner, err := l.TryLockExclusive()
 	require.NoError(t, err)
-	_, _, _, err = l.OpenExistingAndLockExclusiveNoCreate()
+	root, lock, registry, err = l.OpenExistingAndLockExclusiveNoCreate()
 	require.ErrorIs(t, err, ErrVaultLocked)
+	require.Nil(t, root)
+	require.Nil(t, lock)
+	require.NotEmpty(t, registry)
 	require.NoError(t, owner.Release())
-	root, lock, _, err := l.OpenExistingAndLockExclusiveNoCreate()
+	root, lock, registry, err = l.OpenExistingAndLockExclusiveNoCreate()
 	require.NoError(t, err)
+	require.NotEmpty(t, registry)
 	_, err = l.TryLockExclusive()
 	require.ErrorIs(t, err, ErrVaultLocked)
 	child := Layout{Root: filepath.Join(l.Root, "child")}
@@ -118,8 +125,11 @@ func TestNoCreateDefaultRegistryInsideVault(t *testing.T) {
 	resolve := func() (string, error) {
 		return targetLockRegistryPathWithBase(func() (string, error) { return registry, nil })
 	}
-	_, _, _, err = (Layout{Root: root}).openExistingAndLockExclusiveNoCreate(resolve)
+	opened, lock, gotRegistry, err := (Layout{Root: root}).openExistingAndLockExclusiveNoCreate(resolve)
 	require.ErrorIs(t, err, ErrRegistryInsideVault)
+	require.Nil(t, opened)
+	require.Nil(t, lock)
+	require.Empty(t, gotRegistry)
 	after, err := os.Stat(root)
 	require.NoError(t, err)
 	require.Equal(t, before.ModTime(), after.ModTime())
