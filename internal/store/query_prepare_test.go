@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -68,21 +67,41 @@ func TestPreparedPredicateDuplicateAndPath(t *testing.T) {
 	}
 }
 
+// withPopulationRead runs fn on a real pinned lexical read, the only handle
+// that owns TEMP population state; a pooled connection cannot carry it.
+func withPopulationRead(t *testing.T, s *Store, fn func(q populationQuerier)) {
+	t.Helper()
+	require.NoError(t, s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, _ LexicalGeneration) error {
+		pinned, ok := q.(populationQuerier)
+		require.True(t, ok)
+		fn(pinned)
+		return nil
+	}))
+}
+
 func TestPreparedDocumentPopulationCancellation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err := materializeDocumentPopulation(ctx, s.db, compiled, "", CoverageSelection{})
+	err := s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, _ LexicalGeneration) error {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := materializeDocumentPopulation(ctx, q, compiled, "", CoverageSelection{})
+		return err
+	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want canceled", err)
 	}
+	// Cleanup of a relation whose creation was canceled must not fail the read.
+	require.NotContains(t, err.Error(), "dropping population scratch")
 }
 
-// The connector supplies only cursor lifecycle behavior. SQL membership is
-// exercised by the real-store tests; these rows are exact synthetic identities.
-type preparationLifecycleConnector struct{ rows *preparationLifecycleRows }
+// The connector supplies only statement-execution lifecycle behavior. SQL
+// membership and cleanup against SQLite are exercised by the real-store tests;
+// no statement is evaluated and no row is fabricated. The carrier holds no
+// cursor (the former cursor cases are removed with that mechanism): it executes
+// one INSERT...SELECT per set, so only cancellation and an exec error reach it.
+type preparationLifecycleConnector struct{ exec *preparationLifecycleExec }
 
 func (c preparationLifecycleConnector) Connect(context.Context) (driver.Conn, error) {
 	return preparationLifecycleConn(c), nil
@@ -92,7 +111,7 @@ func (c preparationLifecycleConnector) Open(string) (driver.Conn, error) {
 	return preparationLifecycleConn(c), nil
 }
 
-type preparationLifecycleConn struct{ rows *preparationLifecycleRows }
+type preparationLifecycleConn struct{ exec *preparationLifecycleExec }
 
 func (preparationLifecycleConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("unexpected prepare")
@@ -101,101 +120,160 @@ func (preparationLifecycleConn) Begin() (driver.Tx, error) {
 	return nil, errors.New("unexpected transaction")
 }
 func (preparationLifecycleConn) Close() error { return nil }
-func (c preparationLifecycleConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	c.rows.queries++
-	return c.rows, nil
+func (c preparationLifecycleConn) ExecContext(_ context.Context, statement string, _ []driver.NamedValue) (driver.Result, error) {
+	c.exec.statements = append(c.exec.statements, statement)
+	if !strings.HasPrefix(statement, "INSERT INTO") {
+		return driver.RowsAffected(0), nil
+	}
+	if c.exec.cancel != nil {
+		c.exec.cancel()
+	}
+	return driver.RowsAffected(1), c.exec.insertErr
 }
 
-type preparationLifecycleRows struct {
-	queries, next, closed  int
-	cancel                 context.CancelFunc
-	iterationErr, closeErr error
+type preparationLifecycleExec struct {
+	statements []string
+	cancel     context.CancelFunc
+	insertErr  error
 }
 
-func (*preparationLifecycleRows) Columns() []string { return []string{"node_id", "content_version_id"} }
-func (r *preparationLifecycleRows) Close() error    { r.closed++; return r.closeErr }
-func (r *preparationLifecycleRows) Next(values []driver.Value) error {
-	r.next++
-	if r.next == 1 {
-		values[0], values[1] = int64(42), "synthetic-version"
-		return nil
-	}
-	if r.cancel != nil {
-		r.cancel()
-	}
-	if r.iterationErr != nil {
-		return r.iterationErr
-	}
-	return io.EOF
-}
-
-func TestPreparedMembershipCursorLifecycle(t *testing.T) {
+func TestPreparedMembershipExecLifecycle(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	final := compileFixtureQuery(t, s, `name:synthetic`, query.Filters{})
 	_, err := s.CreatePerson(t.Context(), "Lifecycle Absent", "operator")
 	require.NoError(t, err)
-	// A person-edge leaf is read first; its failing cursor must stop before
-	// any final membership query or payload.
+	// A person-edge leaf is stored first; its failure must stop before any
+	// final membership statement.
 	leaf := compileFixtureQuery(t, s, `NOT author:"Lifecycle Absent" AND path:/missing`, query.Filters{})
 	require.True(t, leaf.predicate.personEdges)
 	require.Len(t, leaf.predicate.leaves, 1)
-	iterationErr := errors.New("synthetic iteration error")
-	closeErr := errors.New("synthetic close error")
+	execErr := errors.New("synthetic exec error")
 	for _, route := range []struct {
 		name     string
 		compiled CompiledQuery
 	}{{"final", final}, {"leaf", leaf}} {
-		for _, failure := range []string{"cancel", "iteration", "close"} {
+		for _, failure := range []string{"cancel", "exec"} {
 			t.Run(route.name+"/"+failure, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				r := &preparationLifecycleRows{}
+				r := &preparationLifecycleExec{}
 				want := context.Canceled
 				switch failure {
 				case "cancel":
 					r.cancel = cancel
-				case "iteration":
-					r.iterationErr, want = iterationErr, iterationErr
-				case "close":
-					r.closeErr, want = closeErr, closeErr
+				case "exec":
+					r.insertErr, want = execErr, execErr
 				}
 				db := sql.OpenDB(preparationLifecycleConnector{r})
 				t.Cleanup(func() { _ = db.Close() })
-				got, err := materializeDocumentPopulation(ctx, db, route.compiled, "", CoverageSelection{})
+				conn, err := db.Conn(t.Context())
+				require.NoError(t, err)
+				read := &pinnedLexicalRead{Conn: conn}
+				got, err := materializeDocumentPopulation(ctx, read, route.compiled, "", CoverageSelection{})
 				if !errors.Is(err, want) {
 					t.Fatalf("got error %v, want %v", err, want)
 				}
 				if got.sql != "" || len(got.args) != 0 {
 					t.Fatalf("fabricated membership: %+v", got)
 				}
-				if r.queries != 1 || r.next != 2 || r.closed != 1 {
-					t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
+				// One create and the one failing insert; nothing runs after it.
+				if len(r.statements) != 2 {
+					t.Fatalf("statements before release: %q", r.statements)
+				}
+				// The read's own cleanup drops the relation once, even though its
+				// context is canceled, and returns the connection.
+				require.NoError(t, read.release(ctx))
+				if len(r.statements) != 3 || r.statements[2] != "DROP TABLE IF EXISTS "+populationMembersTable {
+					t.Fatalf("statements after release: %q", r.statements)
 				}
 			})
 		}
 	}
 }
 
+// The pinned read drops its TEMP relation on every exit and returns a clean
+// pooled connection. One open connection makes the next read reuse this one.
+func TestPopulationScratchCleanupAndPooledReuse(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	dir, err := s.Mkdir(ctx, s.RootID(), "reuse")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "Reuse Absent", "operator")
+	require.NoError(t, err)
+	for i := range 3 {
+		_, err = s.CreateFile(ctx, dir.ID, fmt.Sprintf("reuse-%d.txt", i), testSHA256([]byte(fmt.Sprintf("reuse-%d", i))), 10, "text/plain")
+		require.NoError(t, err)
+	}
+	compiled := compileFixtureQuery(t, s, `NOT author:"Reuse Absent" AND path:/reuse`, query.Filters{})
+	s.db.SetMaxOpenConns(1)
+	scratchTables := func(q metadataQuerier) (n int) {
+		require.NoError(t, q.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_temp_master WHERE name='query_population_members'`).Scan(&n))
+		return n
+	}
+	boom := errors.New("synthetic read failure")
+	for _, route := range []string{"success", "error", "cancel"} {
+		readCtx, cancel := context.WithCancel(ctx)
+		err := s.withLexicalGenerationRead(readCtx, func(q metadataQuerier, _ LexicalGeneration) error {
+			recording := &populationSizeQuerier{populationQuerier: q.(populationQuerier)}
+			fragment, err := documentSnapshotPopulation(readCtx, recording, compiled, "", CoverageSelection{})
+			require.NoError(t, err, route)
+			require.Positive(t, recording.calls, route)
+			// The leaf set is rows (0,3] and the final set (3,6]: a relation or
+			// counter carried over from an earlier snapshot would shift both.
+			require.Equal(t, []any{int64(3), int64(6)}, fragment.args, route)
+			require.Equal(t, 1, scratchTables(q), route)
+			ids, _ := preparedLeafMembers(t, q, fragment.sql, fragment.args)
+			require.Len(t, ids, 3, route)
+			switch route {
+			case "error":
+				return boom
+			case "cancel":
+				cancel()
+				return readCtx.Err()
+			}
+			return nil
+		})
+		cancel()
+		switch route {
+		case "success":
+			require.NoError(t, err)
+		case "error":
+			require.ErrorIs(t, err, boom)
+		case "cancel":
+			require.ErrorIs(t, err, context.Canceled)
+		}
+		require.NotContains(t, fmt.Sprint(err), "dropping population scratch", route)
+		// The reused pooled connection carries no scratch relation or rows.
+		require.NoError(t, s.withLexicalGenerationRead(ctx, func(q metadataQuerier, _ LexicalGeneration) error {
+			require.Zero(t, scratchTables(q), route)
+			return nil
+		}), route)
+	}
+}
+
 // Recording the statements at the existing querier boundary checks the actual
 // consumer route without introducing a second query evaluator.
 type populationRecordingQuerier struct {
-	metadataQuerier
+	populationQuerier
 
 	statements []string
 }
 
 func (q *populationRecordingQuerier) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
 	q.statements = append(q.statements, statement)
-	return q.metadataQuerier.QueryContext(ctx, statement, args...)
+	return q.populationQuerier.QueryContext(ctx, statement, args...)
 }
 
-// Record the largest individual value handed across the query boundary. A
-// stream of constant-size operations is different from one corpus-sized value.
+// Record the largest individual value handed across every SQL path of the
+// pinned read: queries, single-row queries and exec. A stream of constant-size
+// operations is different from one corpus-sized value. Each call is forwarded
+// to the real pinned implementation.
 type populationSizeQuerier struct {
-	metadataQuerier
+	populationQuerier
 
-	maxArgument, maxStatement int
+	maxArgument, maxStatement, calls int
 }
 
 func populationArgumentSize(args []any) int {
@@ -211,10 +289,25 @@ func populationArgumentSize(args []any) int {
 	return largest
 }
 
-func (q *populationSizeQuerier) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
+func (q *populationSizeQuerier) record(statement string, args []any) {
+	q.calls++
 	q.maxStatement = max(q.maxStatement, len(statement))
 	q.maxArgument = max(q.maxArgument, populationArgumentSize(args))
-	return q.metadataQuerier.QueryContext(ctx, statement, args...)
+}
+
+func (q *populationSizeQuerier) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
+	q.record(statement, args)
+	return q.populationQuerier.QueryContext(ctx, statement, args...)
+}
+
+func (q *populationSizeQuerier) QueryRowContext(ctx context.Context, statement string, args ...any) *sql.Row {
+	q.record(statement, args)
+	return q.populationQuerier.QueryRowContext(ctx, statement, args...)
+}
+
+func (q *populationSizeQuerier) ExecContext(ctx context.Context, statement string, args ...any) (sql.Result, error) {
+	q.record(statement, args)
+	return q.populationQuerier.ExecContext(ctx, statement, args...)
 }
 
 func TestDocumentPopulationCarrierDoesNotGrowWithCorpus(t *testing.T) {
@@ -231,11 +324,15 @@ func TestDocumentPopulationCarrierDoesNotGrowWithCorpus(t *testing.T) {
 	measure := func() sizes {
 		var got sizes
 		err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-			recording := &populationSizeQuerier{metadataQuerier: q}
+			pinned, ok := q.(populationQuerier)
+			require.True(t, ok)
+			recording := &populationSizeQuerier{populationQuerier: pinned}
 			fragment, err := documentSnapshotPopulation(ctx, recording, compiled, generation.ID, CoverageSelection{})
 			if err != nil {
 				return err
 			}
+			// The carrier's own SQL went through the recorded paths.
+			require.Positive(t, recording.calls)
 			got = sizes{recording.maxArgument, recording.maxStatement, populationArgumentSize(fragment.args), len(fragment.sql)}
 			ids, _ := preparedLeafMembers(t, q, fragment.sql, fragment.args)
 			require.Equal(t, expected, ids)
@@ -300,9 +397,11 @@ func TestDocumentPopulationPersonEdgeRouting(t *testing.T) {
 			if tc.name == "negative role" {
 				require.Empty(t, compiled.roleMatches)
 			}
-			rows, err := documentSnapshotPopulation(ctx, s.db, compiled, "", CoverageSelection{})
-			require.NoError(t, err)
-			require.Equal(t, tc.edges, strings.Contains(rows.sql, "FROM json_each(?)"))
+			withPopulationRead(t, s, func(q populationQuerier) {
+				rows, err := documentSnapshotPopulation(ctx, q, compiled, "", CoverageSelection{})
+				require.NoError(t, err)
+				require.Equal(t, tc.edges, strings.Contains(rows.sql, populationMembersTable))
+			})
 		})
 	}
 }
@@ -315,12 +414,42 @@ func TestDocumentFacetPopulationRoutes(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateSavedQuery(ctx, "Facet Role", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID)))
 	require.NoError(t, err)
-	for _, text := range []string{`NOT author:"Facet Route"`, `NOT saved:"Facet Role"`} {
-		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[{"person_id":%q,"roles":["author"]}],"collection_ids":[%q]}}`, text, person.PersonID, fixture.collections[0].ID()))
-		original, err := compileQuery(ctx, value, queryResolver{q: s.db})
+	withPopulationRead(t, s, func(q populationQuerier) {
+		for _, text := range []string{`NOT author:"Facet Route"`, `NOT saved:"Facet Role"`} {
+			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[{"person_id":%q,"roles":["author"]}],"collection_ids":[%q]}}`, text, person.PersonID, fixture.collections[0].ID()))
+			original, err := compileQuery(ctx, value, queryResolver{q: s.db})
+			require.NoError(t, err)
+			facetQueries := &populationRecordingQuerier{populationQuerier: q}
+			_, err = materializeSnapshotFacet(ctx, facetQueries, original, "", fixture.selection, "collections", nil, 1000)
+			require.NoError(t, err)
+			var facetSQL string
+			for _, statement := range facetQueries.statements {
+				if strings.HasPrefix(statement, "WITH matched_members AS (") {
+					facetSQL = statement
+					break
+				}
+			}
+			require.Contains(t, facetSQL, populationMembersTable)
+			for _, dimension := range []string{"person_role", "collections"} {
+				scoped := queryWithoutSnapshotFacet(value, dimension)
+				compiled, err := compileQuery(ctx, scoped, queryResolver{q: s.db})
+				require.NoError(t, err)
+				require.True(t, compiled.predicate.personEdges)
+				population, err := documentSnapshotPopulation(ctx, q, compiled, "", fixture.selection)
+				require.NoError(t, err)
+				require.Contains(t, population.sql, populationMembersTable)
+			}
+		}
+		rootOnly := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID))
+		withoutPeople, err := compileQuery(ctx, queryWithoutSnapshotFacet(rootOnly, "person_role"), queryResolver{q: s.db})
 		require.NoError(t, err)
-		facetQueries := &populationRecordingQuerier{metadataQuerier: s.db}
-		_, err = materializeSnapshotFacet(ctx, facetQueries, original, "", fixture.selection, "collections", nil, 1000)
+		require.False(t, withoutPeople.predicate.personEdges)
+		// A generic facet recomputes its own self-excluded population inline.
+		plain := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"path:/missing","filters":{"collection_ids":[%q]}}`, fixture.collections[0].ID()))
+		plainCompiled, err := compileQuery(ctx, plain, queryResolver{q: s.db})
+		require.NoError(t, err)
+		facetQueries := &populationRecordingQuerier{populationQuerier: q}
+		_, err = materializeSnapshotFacet(ctx, facetQueries, plainCompiled, "", fixture.selection, "collections", nil, 1000)
 		require.NoError(t, err)
 		var facetSQL string
 		for _, statement := range facetQueries.statements {
@@ -329,45 +458,17 @@ func TestDocumentFacetPopulationRoutes(t *testing.T) {
 				break
 			}
 		}
-		require.Contains(t, facetSQL, "FROM json_each(?)")
-		for _, dimension := range []string{"person_role", "collections"} {
-			scoped := queryWithoutSnapshotFacet(value, dimension)
-			compiled, err := compileQuery(ctx, scoped, queryResolver{q: s.db})
-			require.NoError(t, err)
-			require.True(t, compiled.predicate.personEdges)
-			population, err := documentSnapshotPopulation(ctx, s.db, compiled, "", fixture.selection)
-			require.NoError(t, err)
-			require.Contains(t, population.sql, "FROM json_each(?)")
-		}
-	}
-	rootOnly := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, person.PersonID))
-	withoutPeople, err := compileQuery(ctx, queryWithoutSnapshotFacet(rootOnly, "person_role"), queryResolver{q: s.db})
-	require.NoError(t, err)
-	require.False(t, withoutPeople.predicate.personEdges)
-	// A generic facet recomputes its own self-excluded population inline.
-	plain := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"path:/missing","filters":{"collection_ids":[%q]}}`, fixture.collections[0].ID()))
-	plainCompiled, err := compileQuery(ctx, plain, queryResolver{q: s.db})
-	require.NoError(t, err)
-	facetQueries := &populationRecordingQuerier{metadataQuerier: s.db}
-	_, err = materializeSnapshotFacet(ctx, facetQueries, plainCompiled, "", fixture.selection, "collections", nil, 1000)
-	require.NoError(t, err)
-	var facetSQL string
-	for _, statement := range facetQueries.statements {
-		if strings.HasPrefix(statement, "WITH matched_members AS (") {
-			facetSQL = statement
-			break
-		}
-	}
-	require.NotEmpty(t, facetSQL)
-	require.NotContains(t, facetSQL, "FROM json_each(?)")
-	// The People facet keeps a role-free population inline before joining edges.
-	compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
-	require.False(t, compiled.predicate.personEdges)
-	recording := &populationRecordingQuerier{metadataQuerier: s.db}
-	_, err = materializePersonRoleFacet(ctx, recording, compiled, "", fixture.selection, 1000)
-	require.NoError(t, err)
-	require.NotEmpty(t, recording.statements)
-	require.NotContains(t, recording.statements[len(recording.statements)-1], "FROM json_each(?)")
+		require.NotEmpty(t, facetSQL)
+		require.NotContains(t, facetSQL, populationMembersTable)
+		// The People facet keeps a role-free population inline before joining edges.
+		compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
+		require.False(t, compiled.predicate.personEdges)
+		recording := &populationRecordingQuerier{populationQuerier: q}
+		_, err = materializePersonRoleFacet(ctx, recording, compiled, "", fixture.selection, 1000)
+		require.NoError(t, err)
+		require.NotEmpty(t, recording.statements)
+		require.NotContains(t, recording.statements[len(recording.statements)-1], populationMembersTable)
+	})
 }
 
 // preparedLeafFixture holds live, trashed and replaced files so leaf sets are
@@ -499,36 +600,38 @@ func TestPreparedLeafMembershipMatchesInlineSQL(t *testing.T) {
 		require.NoError(t, err, tc.text)
 		_, wantPairs := preparedLeafMembers(t, s.db, statement, args)
 
-		bound, err := compiled.bind("", nil)
-		require.NoError(t, err, tc.text)
-		prepared, err := preparedPopulation(ctx, s.db, compiled, "", nil, f.selection)
-		require.NoError(t, err, tc.text)
-		require.Zero(t, prepared.relations, tc.text)
-		require.Empty(t, prepared.leaves, tc.text)
-		for _, cte := range []string{"query_ancestry", "collection_members", "current_content_members", "processing_coverage"} {
-			require.NotContains(t, prepared.sql, cte, tc.text)
-		}
-		leafArgs := 0
-		for _, leaf := range bound.leaves {
-			leafArgs += leaf.argEnd - leaf.argStart
-		}
-		require.Len(t, prepared.args, len(bound.args)-leafArgs+len(bound.leaves), tc.text)
+		withPopulationRead(t, s, func(q populationQuerier) {
+			bound, err := compiled.bind("", nil)
+			require.NoError(t, err, tc.text)
+			prepared, err := preparedPopulation(ctx, q, compiled, "", nil, f.selection)
+			require.NoError(t, err, tc.text)
+			require.Zero(t, prepared.relations, tc.text)
+			require.Empty(t, prepared.leaves, tc.text)
+			for _, cte := range []string{"query_ancestry", "collection_members", "current_content_members", "processing_coverage"} {
+				require.NotContains(t, prepared.sql, cte, tc.text)
+			}
+			leafArgs := 0
+			for _, leaf := range bound.leaves {
+				leafArgs += leaf.argEnd - leaf.argStart
+			}
+			require.Len(t, prepared.args, len(bound.args)-leafArgs+2*len(bound.leaves), tc.text)
 
-		handoff, err := materializeDocumentPopulation(ctx, s.db, compiled, "", f.selection)
-		require.NoError(t, err, tc.text)
-		ids, pairs := preparedLeafMembers(t, s.db, handoff.sql, handoff.args)
-		require.Equal(t, wantPairs, pairs, tc.text)
-		for i, id := range ids {
-			require.Equal(t, fmt.Sprintf("%d/%s", id, f.current[id]), pairs[i], tc.text)
-		}
-		switch {
-		case tc.want != nil:
-			require.Equal(t, tc.want, append([]int64{}, ids...), tc.text)
-		case tc.count == 1:
-			require.Len(t, ids, 1, tc.text)
-			require.Contains(t, duplicates, ids[0], tc.text)
-		case tc.count > 0:
-			require.Len(t, ids, tc.count, tc.text)
-		}
+			handoff, err := materializeDocumentPopulation(ctx, q, compiled, "", f.selection)
+			require.NoError(t, err, tc.text)
+			ids, pairs := preparedLeafMembers(t, q, handoff.sql, handoff.args)
+			require.Equal(t, wantPairs, pairs, tc.text)
+			for i, id := range ids {
+				require.Equal(t, fmt.Sprintf("%d/%s", id, f.current[id]), pairs[i], tc.text)
+			}
+			switch {
+			case tc.want != nil:
+				require.Equal(t, tc.want, append([]int64{}, ids...), tc.text)
+			case tc.count == 1:
+				require.Len(t, ids, 1, tc.text)
+				require.Contains(t, duplicates, ids[0], tc.text)
+			case tc.count > 0:
+				require.Len(t, ids, tc.count, tc.text)
+			}
+		})
 	}
 }

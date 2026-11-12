@@ -946,60 +946,64 @@ func TestRoleSearchPreparedLeafGatesAndFacets(t *testing.T) {
 
 		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
 		require.NoError(t, err, tc.text)
-		recording := &populationRecordingQuerier{metadataQuerier: s.db}
-		rows := []SnapshotRow{{NodeID: tc.want}}
-		require.NoError(t, annotateMatchedRoles(ctx, recording, compiled, "", CoverageSelection{}, rows), tc.text)
-		require.Equal(t, []string{"author"}, rows[0].MatchedRoles, tc.text)
-		gates := 0
+		withPopulationRead(t, s, func(q populationQuerier) {
+			recording := &populationRecordingQuerier{populationQuerier: q}
+			rows := []SnapshotRow{{NodeID: tc.want}}
+			require.NoError(t, annotateMatchedRoles(ctx, recording, compiled, "", CoverageSelection{}, rows), tc.text)
+			require.Equal(t, []string{"author"}, rows[0].MatchedRoles, tc.text)
+			gates := 0
+			for _, statement := range recording.statements {
+				if !strings.HasPrefix(statement, "SELECT n.id FROM json_each(?) ids") || !strings.Contains(statement, "person_document_assertions") {
+					continue
+				}
+				gates++
+				for _, cte := range leafCTEs {
+					require.NotContains(t, statement, cte, tc.text)
+				}
+			}
+			require.Positive(t, gates, tc.text)
+		})
+	}
+
+	withPopulationRead(t, s, func(q populationQuerier) {
+		// The People facet drops only the people filter and keeps the leaf.
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"NOT author:\"Leaf Absent\" AND has_duplicates:false","filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, f.author))
+		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
+		require.NoError(t, err)
+		recording := &populationRecordingQuerier{populationQuerier: q}
+		facet, err := materializePersonRoleFacet(ctx, recording, compiled, "", CoverageSelection{}, 1000)
+		require.NoError(t, err)
+		require.True(t, facet.Available)
+		var author *SnapshotFacetValue
+		for i := range facet.Values {
+			if facet.Values[i].Key == f.author {
+				author = &facet.Values[i]
+			}
+		}
+		require.NotNil(t, author)
+		require.Equal(t, int64(1), author.Count)
+		require.Equal(t, []string{"author"}, author.Roles)
+		facetSQL := recording.statements[len(recording.statements)-1]
+		require.True(t, strings.HasPrefix(facetSQL, "WITH matched_members AS ("))
+		require.Contains(t, facetSQL, populationMembersTable)
+		for _, cte := range leafCTEs {
+			require.NotContains(t, facetSQL, cte)
+		}
+
+		// A generic facet recompiles without its own filter and still prepares leaves.
+		value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"author:\"Leaf Author\" AND NOT has_duplicates:true AND path:/dir","filters":{"collection_ids":[%q]}}`, f.collection))
+		compiled, err = compileQuery(ctx, value, queryResolver{q: s.db})
+		require.NoError(t, err)
+		recording = &populationRecordingQuerier{populationQuerier: q}
+		facet, err = materializeSnapshotFacet(ctx, recording, compiled, "", CoverageSelection{}, "collections", nil, 1000)
+		require.NoError(t, err)
+		require.True(t, facet.Available)
+		prepared := false
 		for _, statement := range recording.statements {
-			if !strings.HasPrefix(statement, "SELECT n.id FROM json_each(?) ids") || !strings.Contains(statement, "person_document_assertions") {
-				continue
-			}
-			gates++
-			for _, cte := range leafCTEs {
-				require.NotContains(t, statement, cte, tc.text)
+			if strings.HasPrefix(statement, "WITH matched_members AS (") {
+				prepared = strings.Contains(statement, populationMembersTable) && !strings.Contains(statement, "current_content_members") && !strings.Contains(statement, "query_ancestry")
 			}
 		}
-		require.Positive(t, gates, tc.text)
-	}
-
-	// The People facet drops only the people filter and keeps the leaf.
-	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"NOT author:\"Leaf Absent\" AND has_duplicates:false","filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, f.author))
-	compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
-	require.NoError(t, err)
-	recording := &populationRecordingQuerier{metadataQuerier: s.db}
-	facet, err := materializePersonRoleFacet(ctx, recording, compiled, "", CoverageSelection{}, 1000)
-	require.NoError(t, err)
-	require.True(t, facet.Available)
-	var author *SnapshotFacetValue
-	for i := range facet.Values {
-		if facet.Values[i].Key == f.author {
-			author = &facet.Values[i]
-		}
-	}
-	require.NotNil(t, author)
-	require.Equal(t, int64(1), author.Count)
-	require.Equal(t, []string{"author"}, author.Roles)
-	facetSQL := recording.statements[len(recording.statements)-1]
-	require.True(t, strings.HasPrefix(facetSQL, "WITH matched_members AS ("))
-	require.Contains(t, facetSQL, "FROM json_each(?)")
-	for _, cte := range leafCTEs {
-		require.NotContains(t, facetSQL, cte)
-	}
-
-	// A generic facet recompiles without its own filter and still prepares leaves.
-	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"author:\"Leaf Author\" AND NOT has_duplicates:true AND path:/dir","filters":{"collection_ids":[%q]}}`, f.collection))
-	compiled, err = compileQuery(ctx, value, queryResolver{q: s.db})
-	require.NoError(t, err)
-	recording = &populationRecordingQuerier{metadataQuerier: s.db}
-	facet, err = materializeSnapshotFacet(ctx, recording, compiled, "", CoverageSelection{}, "collections", nil, 1000)
-	require.NoError(t, err)
-	require.True(t, facet.Available)
-	prepared := false
-	for _, statement := range recording.statements {
-		if strings.HasPrefix(statement, "WITH matched_members AS (") {
-			prepared = strings.Contains(statement, "FROM json_each(?)") && !strings.Contains(statement, "current_content_members") && !strings.Contains(statement, "query_ancestry")
-		}
-	}
-	require.True(t, prepared)
+		require.True(t, prepared)
+	})
 }

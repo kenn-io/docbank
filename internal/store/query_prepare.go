@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
-	"encoding/json/v2"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -11,7 +13,9 @@ import (
 // annotation SQL as exact identities. A supported 64-person/11-role query
 // failed pure-Go SQLite row materialization ("VIEWs and/or subqueries nested
 // too deep") when its predicate stayed inline. Person-edge-free queries stay
-// inline. The engine guard's exact site and threshold are unmeasured.
+// inline. The engine guard's exact site and threshold are unmeasured. The
+// identities stay in SQLite on the pinned read connection (see storePopulation)
+// and q must be that connection.
 func documentSnapshotPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {
 	if !compiled.predicate.personEdges {
 		return matchedPopulation(compiled, generation, nil)
@@ -30,11 +34,11 @@ func materializeDocumentPopulation(ctx context.Context, q metadataQuerier, compi
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	encoded, err := readPopulationIdentities(ctx, q, statement, args)
+	set, err := storePopulation(ctx, q, statement, args)
 	if err != nil {
 		return compiledQueryFragment{}, fmt.Errorf("materializing document membership: %w", err)
 	}
-	return compiledQueryFragment{sql: `SELECT json_extract(value,'$.node_id') AS node_id,json_extract(value,'$.content_version_id') AS content_version_id FROM json_each(?)`, args: []any{encoded}}, nil
+	return compiledQueryFragment{sql: set.selection(), args: set.args()}, nil
 }
 
 // preparedPopulation is matchedPopulation with a person-edge predicate's
@@ -57,12 +61,13 @@ func preparedPopulation(ctx context.Context, q metadataQuerier, compiled Compile
 // role query when a leaf's CTE followed its person subqueries. Each leaf is
 // its own SQL over all live files, so AND/OR/NOT, duplicate false and saved
 // collapse keep their meaning. Admission already happened in bind; the
-// prepared fragment is not bound again and may carry more arguments.
+// prepared fragment is not bound again. Each leaf contributes its two set
+// bounds, never its identities.
 func prepareCompiledLeaves(ctx context.Context, q metadataQuerier, predicate compiledQueryFragment, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {
 	if !predicate.personEdges || len(predicate.leaves) == 0 {
 		return predicate, nil
 	}
-	payloads := make([]string, len(predicate.leaves))
+	sets := make([]populationSet, len(predicate.leaves))
 	for i, leaf := range predicate.leaves {
 		population := selectCompiledPopulation(compiledQueryFragment{
 			sql:       predicate.sql[leaf.sqlStart:leaf.sqlEnd],
@@ -73,19 +78,18 @@ func prepareCompiledLeaves(ctx context.Context, q metadataQuerier, predicate com
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
-		if payloads[i], err = readPopulationIdentities(ctx, q, statement, args); err != nil {
+		if sets[i], err = storePopulation(ctx, q, statement, args); err != nil {
 			return compiledQueryFragment{}, fmt.Errorf("preparing query leaf: %w", err)
 		}
 	}
-	const membership = `(n.id,cv.version_id) IN (SELECT json_extract(value,'$.node_id'),json_extract(value,'$.content_version_id') FROM json_each(?))`
 	var rebuilt strings.Builder
-	args := make([]any, 0, len(predicate.args)+len(payloads))
+	args := make([]any, 0, len(predicate.args)+2*len(sets))
 	sqlAt, argAt := 0, 0
 	for i, leaf := range predicate.leaves {
 		rebuilt.WriteString(predicate.sql[sqlAt:leaf.sqlStart])
-		rebuilt.WriteString(membership)
+		rebuilt.WriteString(`(n.id,cv.version_id) IN (` + sets[i].selection() + `)`)
 		args = append(args, predicate.args[argAt:leaf.argStart]...)
-		args = append(args, payloads[i])
+		args = append(args, sets[i].args()...)
 		sqlAt, argAt = leaf.sqlEnd, leaf.argEnd
 	}
 	rebuilt.WriteString(predicate.sql[sqlAt:])
@@ -96,43 +100,96 @@ func prepareCompiledLeaves(ctx context.Context, q metadataQuerier, predicate com
 	return predicate, nil
 }
 
-// readPopulationIdentities executes a node/current-version selection and
-// encodes its rows as a non-null JSON array of exact identities.
-func readPopulationIdentities(ctx context.Context, q metadataQuerier, statement string, args []any) (string, error) {
-	type identity struct {
-		NodeID    int64  `json:"node_id"`
-		VersionID string `json:"content_version_id"`
-	}
-	members := make([]identity, 0)
-	err := func() (err error) {
-		rows, err := q.QueryContext(ctx, statement, args...)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if closeErr := rows.Close(); err == nil {
-				err = closeErr
-			}
-		}()
-		for rows.Next() {
-			var member identity
-			if err := rows.Scan(&member.NodeID, &member.VersionID); err != nil {
-				return err
-			}
-			members = append(members, member)
-		}
-		return rows.Err()
-	}()
+// populationMembersTable holds every node/current-version set one pinned
+// lexical read prepares. It is TEMP state of that read's connection, created
+// once on first use, and dropped when the read ends (pinnedLexicalRead.release).
+const populationMembersTable = "temp.query_population_members"
+
+// populationScratch tracks the pinned read's TEMP relation: whether it exists
+// and how many rows it holds. Rows are only appended, so their rowids are
+// consecutive and a prepared set is the rowid interval its insert added.
+type populationScratch struct {
+	created bool
+	rows    int64
+}
+
+// populationSet is the rowid interval (after, through] of one prepared set.
+type populationSet struct{ after, through int64 }
+
+func (s populationSet) selection() string {
+	return `SELECT node_id,content_version_id FROM ` + populationMembersTable + ` WHERE rowid>? AND rowid<=?`
+}
+
+func (s populationSet) args() []any { return []any{s.after, s.through} }
+
+// populationQuerier is the narrow pinned-read owner the carrier needs: the
+// read's queries, its exec, and its TEMP relation state. The pooled database
+// has no such state, so a pooled handle cannot be used by mistake.
+type populationQuerier interface {
+	metadataQuerier
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	scratch() *populationScratch
+}
+
+// pinnedLexicalRead is the one connection of a lexical generation read and
+// the owner of its TEMP population relation.
+type pinnedLexicalRead struct {
+	*sql.Conn
+
+	population populationScratch
+}
+
+func (r *pinnedLexicalRead) scratch() *populationScratch { return &r.population }
+
+func (s *Store) pinLexicalRead(ctx context.Context) (*pinnedLexicalRead, error) {
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("acquiring lexical generation connection: %w", err)
 	}
-	encoded, err := json.Marshal(members)
-	members = nil
+	return &pinnedLexicalRead{Conn: conn}, nil
+}
+
+// release drops the TEMP relation, which outlives a pooled connection's Close,
+// then returns the connection. It runs after the read's rollback or commit and
+// is not canceled with the read. A connection that could not drop it is
+// discarded rather than pooled, so no later snapshot can see these rows.
+func (r *pinnedLexicalRead) release(ctx context.Context) error {
+	if r.population.created {
+		if _, err := r.ExecContext(context.WithoutCancel(ctx), `DROP TABLE IF EXISTS `+populationMembersTable); err != nil {
+			_ = r.Raw(func(any) error { return driver.ErrBadConn })
+			return fmt.Errorf("dropping population scratch: %w", err)
+		}
+	}
+	return r.Close()
+}
+
+// storePopulation appends a node/current-version selection to the pinned read's
+// TEMP relation in one INSERT...SELECT. Neither the identities nor any copy of
+// them enters Go or comes back as an argument, and the selection is inserted as
+// written so the statement that failed a supported 64-person/11-role query
+// gains no nesting level (its limit is unmeasured).
+func storePopulation(ctx context.Context, q metadataQuerier, statement string, args []any) (populationSet, error) {
+	pinned, ok := q.(populationQuerier)
+	if !ok {
+		return populationSet{}, errors.New("population preparation needs a pinned lexical generation read")
+	}
+	scratch := pinned.scratch()
+	if !scratch.created {
+		// Marked first so a failed attempt is still dropped on release.
+		scratch.created = true
+		if _, err := pinned.ExecContext(ctx, `CREATE TABLE `+populationMembersTable+`(node_id INTEGER NOT NULL,content_version_id TEXT NOT NULL)`); err != nil {
+			return populationSet{}, err
+		}
+	}
+	result, err := pinned.ExecContext(ctx, `INSERT INTO `+populationMembersTable+`(node_id,content_version_id) `+statement, args...)
 	if err != nil {
-		return "", err
+		return populationSet{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
+	added, err := result.RowsAffected()
+	if err != nil {
+		return populationSet{}, err
 	}
-	return string(encoded), nil
+	set := populationSet{scratch.rows, scratch.rows + added}
+	scratch.rows = set.through
+	return set, ctx.Err()
 }
