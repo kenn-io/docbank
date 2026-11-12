@@ -25,6 +25,7 @@ nav = [
     {"Photo assets" = "usage/photos.md"},
     {"People" = "usage/people.md"},
     {"Parties" = "usage/contracts.md"},
+    {"Tax record storage" = "usage/tax-records.md"},
     {"Email PDFs" = "usage/email-pdf.md"},
     {"Organizing and tagging" = "usage/organizing.md"},
     {"Searching" = "usage/searching.md"},

@@ -304,6 +304,14 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				var current int
 				require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT schema_version FROM vault_metadata`).Scan(&current))
 				assert.Equal(t, currentStorageSchemaVersion, current)
+				if version == 48 {
+					accounts, err := s.ListTaxAccounts(t.Context(), TaxAccountListOptions{Limit: 100})
+					require.NoError(t, err)
+					assert.Empty(t, accounts)
+					records, err := s.ListTaxRecords(t.Context(), TaxRecordListOptions{Limit: 100})
+					require.NoError(t, err)
+					assert.Empty(t, records)
+				}
 				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				require.Nil(t, asset.HiddenAt)
@@ -960,6 +968,12 @@ func TestUpgradeReleasedV0170KeepsOperationalState(t *testing.T) {
 			party, err := upgraded.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Ltd"})
 			require.NoError(t, err)
 			assert.Equal(t, "Example Ltd", party.DisplayName)
+			accounts, err := upgraded.ListTaxAccounts(ctx, TaxAccountListOptions{Limit: 100})
+			require.NoError(t, err)
+			assert.Empty(t, accounts)
+			records, err := upgraded.ListTaxRecords(ctx, TaxRecordListOptions{Limit: 100})
+			require.NoError(t, err)
+			assert.Empty(t, records)
 			var absence, explicit int
 			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_source_absences WHERE watch_name='fixture' AND source_ref='fixture.txt'`).Scan(&absence))
 			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, waiter.ID).Scan(&explicit))

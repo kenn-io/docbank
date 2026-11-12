@@ -83,6 +83,13 @@ This is why an automation should remember node and version IDs, not paths
 alone. It is also why finding a correctly named file under `blobs/` does not
 make that file part of the vault. Only a committed catalog reference does.
 
+## Tax authority
+
+The store preserves [tax accounts and initial records](../usage/tax-records.md)
+as structured metadata. Accounts refer to parties; attached records copy the
+account identity. Snapshot recovery validates and restores this authority in
+party, account, and record order.
+
 ## How a write becomes authoritative
 
 Every content-write surface follows one ordering rule: prove and publish bytes

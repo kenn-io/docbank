@@ -2520,3 +2520,63 @@ CREATE TABLE {{schema}}.parties (
     retired_at TEXT COLLATE "C"
 );
 CREATE INDEX parties_name_folded ON {{schema}}.parties(display_name_folded);
+
+CREATE TABLE {{schema}}.tax_accounts (
+    account_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    filer_party_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.parties(party_id),
+    authority_party_id TEXT COLLATE "C" REFERENCES {{schema}}.parties(party_id),
+    country TEXT COLLATE "C" NOT NULL,
+    subdivision TEXT COLLATE "C" NOT NULL,
+    tax_kind TEXT COLLATE "C" NOT NULL,
+    tax_kind_folded TEXT COLLATE "C" NOT NULL,
+    identifier TEXT COLLATE "C" NOT NULL,
+    cadence TEXT COLLATE "C" NOT NULL,
+    period_note TEXT COLLATE "C" NOT NULL,
+    due_note TEXT COLLATE "C" NOT NULL,
+    lead_days BIGINT NOT NULL,
+    currency TEXT COLLATE "C" NOT NULL,
+    effective_start TEXT COLLATE "C" ,
+    effective_end TEXT COLLATE "C" ,
+    note TEXT COLLATE "C" NOT NULL,
+    revision BIGINT NOT NULL,
+    created_at TEXT COLLATE "C" NOT NULL,
+    updated_at TEXT COLLATE "C" NOT NULL,
+    retired_at TEXT COLLATE "C"
+);
+CREATE INDEX tax_accounts_filer ON {{schema}}.tax_accounts(filer_party_id);
+
+CREATE TABLE {{schema}}.tax_records (
+    record_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    account_id TEXT COLLATE "C" REFERENCES {{schema}}.tax_accounts(account_id),
+    filer_party_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.parties(party_id),
+    authority_party_id TEXT COLLATE "C" REFERENCES {{schema}}.parties(party_id),
+    kind TEXT COLLATE "C" NOT NULL,
+    title TEXT COLLATE "C" NOT NULL,
+    country TEXT COLLATE "C" NOT NULL,
+    subdivision TEXT COLLATE "C" NOT NULL,
+    tax_kind TEXT COLLATE "C" NOT NULL,
+    tax_kind_folded TEXT COLLATE "C" NOT NULL,
+    form_code TEXT COLLATE "C" NOT NULL,
+    tax_year BIGINT ,
+    period_start TEXT COLLATE "C" ,
+    period_end TEXT COLLATE "C" ,
+    due_date TEXT COLLATE "C" ,
+    lead_days BIGINT ,
+    state TEXT COLLATE "C" NOT NULL,
+    direction TEXT COLLATE "C" NOT NULL,
+    amount_minor BIGINT ,
+    currency TEXT COLLATE "C" NOT NULL,
+    verification TEXT COLLATE "C" NOT NULL,
+    verified_on TEXT COLLATE "C" ,
+    verified_revision BIGINT ,
+    verification_note TEXT COLLATE "C" NOT NULL,
+    note TEXT COLLATE "C" NOT NULL,
+    revision BIGINT NOT NULL,
+    created_at TEXT COLLATE "C" NOT NULL,
+    updated_at TEXT COLLATE "C" NOT NULL,
+    retired_at TEXT COLLATE "C"
+);
+CREATE INDEX tax_records_filer_year ON {{schema}}.tax_records(filer_party_id,tax_year);
+CREATE INDEX tax_records_due_date ON {{schema}}.tax_records(due_date);
+CREATE INDEX tax_records_account_period ON {{schema}}.tax_records(account_id,period_end);
+CREATE UNIQUE INDEX tax_records_live_period ON {{schema}}.tax_records(account_id,period_start,period_end,kind) WHERE account_id IS NOT NULL AND retired_at IS NULL;

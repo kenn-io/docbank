@@ -559,6 +559,9 @@ func exportMetadataSnapshotWithVaultIdentity(
 		if err := partyMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
+		if err := exportMetadataTables(ctx, tx, write, taxMetadataTables); err != nil {
+			return err
+		}
 	}
 	if layout.schemaVersion >= photoFacesStorageSchemaVersion {
 		var codec metadataRecordCodec = photoFaceMetadata
@@ -1669,6 +1672,9 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.schemaVersion >= partiesStorageSchemaVersion {
 			if err := validatePartyMetadataState(ctx, tx); err != nil {
+				return err
+			}
+			if err := validateTaxMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}
