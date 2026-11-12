@@ -29,7 +29,6 @@ func TestEmailDateZones(t *testing.T) {
 			t.Errorf("%s: %+v parsed %v", tc.zone, event, ok)
 		}
 	}
-
 }
 
 func TestInvalidEmailOffsetRetainedThroughMetadata(t *testing.T) {
