@@ -740,7 +740,7 @@ var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces
 type VersionCandidate struct {
 	CandidateID, DisplayName, ActorKey string
 	Occurrences                        []PersonCandidateOccurrence
-	SafeLabels                         map[PersonCandidateOccurrence]string
+	OccurrenceLabels                   map[PersonCandidateOccurrence]string
 }
 
 func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
