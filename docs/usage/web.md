@@ -382,7 +382,7 @@ create the tag, then apply it to every selected document.
 Folders and undisplayed query results are not included in page selection.
 
 If the result is uncertain, choose **Check tag results** to inspect each selected document.
-You can explicitly retry the documents that still need the change using their current revisions. Unavailable documents are omitted from the retry; check again to include them.
+Review the list, then choose whether to retry documents that still need the change. The retry uses their current revisions and leaves out documents that couldn't be checked.
 If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
 After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
@@ -403,9 +403,8 @@ that already had the tag before an addition.
 
 **Tag selected…** applies one atomic, revision-checked change to at most 1,000
 documents and reports how many changed. If the result is uncertain, choose **Check tag results** to inspect the selected documents.
-You can explicitly retry the documents that still need the change using their current revisions. Unavailable documents are omitted from the retry; check again to include them.
-Closing recovery reruns the snapshot query. If the rerun fails, the accepted frozen page remains visible with an error. Refresh and select again before another change.
-If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again. Confirmed changes keep the frozen results and their receipt overlays.
+Review the list, then choose whether to retry documents that still need the change. The retry uses their current revisions and leaves out documents that couldn't be checked.
+Closing recovery reruns the snapshot query. If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
 
 **Tag all…** → **Continue** captures every result, up to 250,000 documents,
 and prepares revision-checked batches of at most 1,000. The captured

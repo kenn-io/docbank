@@ -14,7 +14,6 @@
   import CheckIcon from "@lucide/svelte/icons/check";
   import DownloadIcon from "@lucide/svelte/icons/download";
   import { Disclosure, Button, Modal, Spinner, Table } from "@kenn-io/kit-ui";
-  import DocumentPager from "./DocumentPager.svelte";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
   import { encodeRecovery } from "./actionRecovery.js";
@@ -286,11 +285,22 @@
           {/snippet}
         </Table>
       </div>
-      <DocumentPager
-        total={batch.members.length}
-        offset={targetOffset}
-        onoffset={(value) => (targetOffset = value)}
-      />
+      {#if batch.members.length > 50}
+        <nav class="pager" aria-label="Document pages">
+          <span
+            >{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members
+              .length}</span
+          >
+          <Button size="sm" disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}
+            >Previous</Button
+          >
+          <Button
+            size="sm"
+            disabled={targetOffset + 50 >= batch.members.length}
+            onclick={() => (targetOffset += 50)}>Next</Button
+          >
+        </nav>
+      {/if}
     </Disclosure>
 
     {#if abandonWarning}
@@ -368,7 +378,8 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
-  .confirm {
+  .confirm,
+  .pager {
     display: flex;
     align-items: center;
     flex-wrap: wrap;

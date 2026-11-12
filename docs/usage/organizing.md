@@ -131,7 +131,7 @@ already correct keep their node revisions. Actual changes record the normal
 audit events.
 
 If the result is uncertain, choose **Check tag results** to inspect each selected document.
-You can explicitly retry documents that still need the change using their current revisions. Unavailable documents are omitted from the retry; check again to include them.
+Review the list, then choose whether to retry documents that still need the change. The retry uses their current revisions and leaves out documents that couldn't be checked.
 If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
 
 API clients use `POST /api/v1/batch/tags` with one tag ID, an operation UUID,

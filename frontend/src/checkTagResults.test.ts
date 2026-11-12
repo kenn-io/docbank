@@ -15,7 +15,7 @@ const request: BatchTagRequest = {
 };
 afterEach(() => vi.restoreAllMocks());
 
-it("keeps matched, trashed, and missing documents", async () => {
+it("keeps matched and unavailable documents", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.includes("/nodes/2"))
@@ -34,7 +34,7 @@ it("keeps matched, trashed, and missing documents", async () => {
   const progress: number[] = [];
   expect(await checkTagResults("session", request, (count) => progress.push(count))).toEqual([
     { node_id: 1, name: "/Live", revision: 4, status: "matched" },
-    { node_id: 2, name: "/Trash", status: "trash" },
+    { node_id: 2, name: "Document 2", status: "unavailable" },
     { node_id: 3, name: "Document 3", status: "unavailable" },
   ]);
   expect(progress).toEqual([1, 2, 3]);
@@ -51,56 +51,29 @@ it("retains all documents when reads fail", async () => {
   );
 });
 
-it.each(["inspection", "metadata"])("propagates authentication failure from %s", async (source) => {
-  let reads = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-    reads++;
-    return Response.json(
-      { detail: "failure" },
-      { status: source === "inspection" || reads > 3 ? 401 : 404 },
-    );
-  });
+it("propagates authentication failure", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ detail: "expired" }, { status: 401 }),
+  );
   await expect(checkTagResults("session", request, () => {})).rejects.toMatchObject({
     status: 401,
   });
 });
 
-it("stops in-flight reads and queued documents when cancelled", async () => {
-  const controller = new AbortController();
-  const many = {
-    ...request,
-    nodes: Array.from({ length: 16 }, (_, i) => ({ node_id: i + 1, revision: 1 })),
-  };
-  const signals: AbortSignal[] = [];
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
-    signals.push(init!.signal as AbortSignal);
-    return new Promise<Response>((_resolve, reject) =>
-      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
-    );
+it("orders remaining documents before matches", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    if (url.includes("/tags?")) {
+      const items = id === 1 ? [{ id: request.tag_id }] : [];
+      return Response.json({ items, total: items.length, limit: 1000, offset: 0 });
+    }
+    return Response.json({ id, name: `File ${id}`, revision: id + 1 });
   });
-  const result = checkTagResults("session", many, () => {}, controller.signal);
-  controller.abort();
-  await expect(result).rejects.toBeDefined();
-  expect(fetcher).toHaveBeenCalledTimes(8);
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
-});
-
-it("cancels other reads and queued documents on authentication failure", async () => {
-  const many = {
-    ...request,
-    nodes: Array.from({ length: 16 }, (_, i) => ({ node_id: i + 1, revision: 1 })),
-  };
-  const signals: AbortSignal[] = [];
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-    if (String(input).endsWith("/nodes/1"))
-      return Promise.resolve(Response.json({ detail: "expired" }, { status: 401 }));
-    signals.push(init!.signal as AbortSignal);
-    return new Promise<Response>((_resolve, reject) =>
-      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)),
-    );
-  });
-  await expect(checkTagResults("session", many, () => {})).rejects.toMatchObject({ status: 401 });
-  expect(fetcher).toHaveBeenCalledTimes(8);
-  expect(signals).toHaveLength(7);
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
+  const rows = await checkTagResults("session", request, () => {});
+  expect(rows.map((row) => [row.node_id, row.status, row.revision])).toEqual([
+    [2, "remaining", 3],
+    [3, "remaining", 4],
+    [1, "matched", 2],
+  ]);
 });

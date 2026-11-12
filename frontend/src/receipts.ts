@@ -1076,9 +1076,8 @@ export async function deleteTag(
 export async function liveNodeTags(
   session: string,
   nodeID: number,
-  signal?: AbortSignal,
 ): Promise<{ node: Node; items: Tag[]; total: number }> {
-  const before = await generated.getNode(nodeID, { session, signal });
+  const before = await generated.getNode(nodeID, { session });
   if (before.id !== nodeID || before.revision < 1 || before.trashed_at) {
     throw new Error("The daemon returned invalid live node authority for tag inspection.");
   }
@@ -1089,7 +1088,7 @@ export async function liveNodeTags(
     const page = await generated.listNodeTags(
       nodeID,
       { limit: 1000, offset: items.length },
-      { session, signal },
+      { session },
     );
     if (
       !Number.isSafeInteger(page.total) ||
@@ -1110,7 +1109,7 @@ export async function liveNodeTags(
       items.push(tag);
     }
   }
-  const after = await generated.getNode(nodeID, { session, signal });
+  const after = await generated.getNode(nodeID, { session });
   if (after.id !== before.id || after.revision !== before.revision || after.trashed_at) {
     throw new Error("The selected node changed while tags were loading; refresh and try again.");
   }

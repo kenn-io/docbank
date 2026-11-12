@@ -26,9 +26,7 @@ export class TagChangeRun {
     this.alive = false;
   }
 
-  async submit(
-    request: BatchTagRequest,
-  ): Promise<"confirmed" | "unknown" | "stale" | "rejected" | "auth" | undefined> {
+  async submit(request: BatchTagRequest): Promise<void> {
     this.pending = true;
     this.failure = "";
     this.unknown = false;
@@ -37,7 +35,7 @@ export class TagChangeRun {
     this.pending = false;
     if (outcome.kind === "confirmed") {
       this.options.onconfirmed(outcome.receipt);
-      return "confirmed";
+      return;
     }
     if (outcome.kind === "unknown") {
       this.stale = true;
@@ -46,7 +44,7 @@ export class TagChangeRun {
     }
     if (outcome.kind === "auth") {
       this.options.onauthfailure(outcome.cause);
-      return "auth";
+      return;
     }
     if (outcome.kind === "rejected") this.stale = outcome.stale;
     const text = outcome.cause instanceof Error ? outcome.cause.message : String(outcome.cause);
@@ -54,6 +52,5 @@ export class TagChangeRun {
       (outcome.kind === "unknown" ? this.options.unknownMessage : undefined) ??
       (outcome.kind === "rejected" && outcome.stale ? this.options.staleMessage : undefined) ??
       text;
-    return outcome.kind === "rejected" && outcome.stale ? "stale" : outcome.kind;
   }
 }

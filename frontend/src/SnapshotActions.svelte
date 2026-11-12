@@ -17,7 +17,6 @@
   import type { SelectionTarget } from "./selection.js";
   import { ACTION_MAX_BYTES } from "./actionRecovery.js";
   import type { BatchTagRequest, BatchTagReceipt } from "./batch-tags.js";
-  import DocumentPager from "./DocumentPager.svelte";
   import { APIError } from "./api-transport.js";
   import { checkTagResults, type TagResult } from "./checkTagResults.js";
   import { TagChangeRun } from "./tagChangeRun.svelte.js";
@@ -37,7 +36,6 @@
     onstart?: (choice: SnapshotActionChoice) => void;
     onchanged?: (receipt: BatchTagReceipt) => void;
     onunknown?: () => void;
-    onchecked?: () => void;
     oncreated?: () => void;
     onimport?: (bytes: Uint8Array) => void;
     onclose: () => void;
@@ -56,7 +54,6 @@
     onstart,
     onchanged,
     onunknown,
-    onchecked,
     oncreated,
     onimport,
     onclose,
@@ -75,15 +72,13 @@
   let results = $state<TagResult[]>();
   let offset = $state(0);
   const remaining = $derived(results?.filter((row) => row.status === "remaining") ?? []);
-  const unavailable = $derived(
-    results?.filter((row) => row.status === "trash" || row.status === "unavailable").length ?? 0,
-  );
+  const unavailable = $derived(results?.filter((row) => row.status === "unavailable").length ?? 0);
   const matched = $derived(results?.filter((row) => row.status === "matched").length ?? 0);
   const run = new TagChangeRun({
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      if (!recovering) receipt = confirmed;
+      receipt = confirmed;
       onchanged?.(confirmed);
     },
     onunknown: () => {
@@ -106,10 +101,8 @@
   // The selection is captured when the dialog opens; later clicks on the page do not change it.
   const captured = untrack(() => targets.map((target) => ({ ...target })));
   let alive = true;
-  let checkController: AbortController | undefined;
   onDestroy(() => {
     alive = false;
-    checkController?.abort();
     run.destroy();
   });
 
@@ -144,50 +137,31 @@
     checked = 0;
     results = undefined;
     run.failure = "";
-    const controller = new AbortController();
-    checkController = controller;
     try {
-      const rows = await checkTagResults(
-        session,
-        request,
-        (value) => {
-          if (alive) checked = value;
-        },
-        controller.signal,
-      );
+      const rows = await checkTagResults(session, request, (value) => {
+        if (alive) checked = value;
+      });
       if (!alive) return;
       results = rows;
       offset = 0;
-      onchecked?.();
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
       else run.failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      if (checkController === controller) checkController = undefined;
       if (alive) checking = false;
     }
   }
 
-  async function retry(): Promise<void> {
+  function retry(): void {
     if (!request || !remaining.length || busy) return;
-    const attempted = new Set(remaining.map((row) => row.node_id));
-    const outcome = await run.submit({
+    const nodes = remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! }));
+    results = undefined;
+    void run.submit({
       ...request,
       operation_id: randomUUID(),
-      nodes: remaining.map((row) => ({ node_id: row.node_id, revision: row.revision! })),
+      nodes,
     });
-    if (alive && outcome === "confirmed") {
-      await check();
-      return;
-    }
-    if (alive && (outcome === "stale" || outcome === "unknown")) {
-      results = results?.map((row) =>
-        attempted.has(row.node_id)
-          ? { node_id: row.node_id, name: row.name, status: "unavailable" }
-          : row,
-      );
-    }
   }
 
   async function importFile(event: Event): Promise<void> {
@@ -212,7 +186,6 @@
 
   function close(): void {
     if (applying) return;
-    checkController?.abort();
     onclose();
   }
 </script>
@@ -314,24 +287,34 @@
               {#each (results ?? []).slice(offset, offset + 50) as row (row.node_id)}
                 <tr
                   ><td>{row.name}</td><td
-                    >{row.status === "trash"
-                      ? "In Trash"
-                      : row.status === "unavailable"
-                        ? "Couldn't check"
-                        : row.status === "matched"
-                          ? assign
-                            ? `Has “${tag?.name}”`
-                            : `Doesn't have “${tag?.name}”`
-                          : assign
-                            ? `Missing “${tag?.name}”`
-                            : `Still has “${tag?.name}”`}</td
+                    >{row.status === "unavailable"
+                      ? "Couldn't check"
+                      : row.status === "matched"
+                        ? assign
+                          ? `Has “${tag?.name}”`
+                          : `Doesn't have “${tag?.name}”`
+                        : assign
+                          ? `Missing “${tag?.name}”`
+                          : `Still has “${tag?.name}”`}</td
                   ></tr
                 >
               {/each}
             {/snippet}
           </Table>
         </div>
-        <DocumentPager total={results.length} {offset} onoffset={(value) => (offset = value)} />
+        {#if results.length > 50}
+          <nav class="pager" aria-label="Document pages">
+            <span>{offset + 1}–{Math.min(offset + 50, results.length)} of {results.length}</span>
+            <Button size="sm" disabled={offset === 0} onclick={() => (offset -= 50)}
+              >Previous</Button
+            >
+            <Button
+              size="sm"
+              disabled={offset + 50 >= results.length}
+              onclick={() => (offset += 50)}>Next</Button
+            >
+          </nav>
+        {/if}
       </Disclosure>
     {/if}
   </div>
@@ -374,8 +357,7 @@
           tone="info"
           surface="solid"
           disabled={checking || applying}
-          onclick={() => void check()}
-          >{checking ? "Checking…" : !run.unknown ? "Check again" : "Check tag results"}</Button
+          onclick={() => void check()}>{!run.unknown ? "Check again" : "Check tag results"}</Button
         >
       {/if}
     {:else if stale}
@@ -430,6 +412,13 @@
   }
   .footer-start {
     margin-inline-end: auto;
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
   }
   .tag-change :global(.kit-disclosure--plain > .kit-disclosure__content) {
     padding-block-end: 0;

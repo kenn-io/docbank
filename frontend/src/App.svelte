@@ -3068,13 +3068,7 @@
     // A replay describes a historical success. Reload current observations
     // instead of overwriting newer rows with the receipt's old revisions.
     refreshCurrentView();
-    reloadSelectedTags();
-  }
-
-  function reloadSelectedTags(): void {
-    const source = selectedSource;
-    if (source) void loadSelectedTags(source.nodeID, source.key);
-    else if (selectedID !== undefined) void loadSelectedTags(selectedID);
+    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
   }
 
   function leaveSnapshotMode(resumeLive = false): void {
@@ -3364,7 +3358,6 @@
   let snapshotTagRefreshPending = false;
   function handleUnknownTagging(): void {
     refreshCurrentView();
-    reloadSelectedTags();
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -5543,10 +5536,6 @@
         disabled={loading}
         onchanged={handleBatchTagsChanged}
         onunknown={handleUnknownTagging}
-        onchecked={() => {
-          refreshCurrentView();
-          reloadSelectedTags();
-        }}
         oncreated={() => void loadTagCatalog(false, true)}
         onclose={() => (batchTagsTargets = null)}
         onauthfailure={handleFailure}
@@ -5567,10 +5556,6 @@
         onstart={(choice) => void startSnapshotAction(choice)}
         onchanged={handleSnapshotSelectionTagged}
         onunknown={() => (snapshotTagRefreshPending = true)}
-        onchecked={() => {
-          void loadTagCatalog();
-          reloadSelectedTags();
-        }}
         oncreated={() => void loadTagCatalog(false, true)}
         onimport={(bytes) => void snapshot.importAction(bytes)}
         onclose={() => {

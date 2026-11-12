@@ -553,33 +553,3 @@ it("does not expire the session from a replaced view's pending error reload", as
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(onauthfailure).not.toHaveBeenCalled();
 });
-
-it("pages documents and resets the page when the batch changes", async () => {
-  const base = await prepared();
-  const members = Array.from({ length: 51 }, (_, i) => ({ ...member, node_id: i + 1 }));
-  const action = {
-    ...base,
-    batches: [
-      { ...base.batches[0], members },
-      { ...base.batches[0], index: 1, members: [member] },
-    ],
-  };
-  render(ActionRecoveryModal, {
-    session: "session",
-    sessionVaultID: vaultID,
-    journal: new MemoryJournal(action),
-    initialAction: action,
-    tag,
-    onprogress: vi.fn(),
-    onclose: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.click(screen.getByText("Review documents"));
-  expect(screen.getByText("1–50 of 51")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  expect(screen.getByText("51–51 of 51")).toBeTruthy();
-  await fireEvent.change(screen.getByLabelText("Batch"), { target: { value: "1" } });
-  expect(screen.getByRole("cell", { name: "7" })).toBeTruthy();
-  await fireEvent.change(screen.getByLabelText("Batch"), { target: { value: "0" } });
-  expect(screen.getByText("1–50 of 51")).toBeTruthy();
-});

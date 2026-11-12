@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import SnapshotActions from "./SnapshotActions.svelte";
 import { ACTION_MAX_BYTES } from "./actionRecovery.js";
 import { batchTagRequestDigest, type BatchTagRequest } from "./batch-tags.js";
@@ -80,56 +80,6 @@ async function receiptFor(request: BatchTagRequest, unchanged: number[] = []) {
   };
 }
 
-it("checks each document independently and keeps its path through retry", async () => {
-  const writes: BatchTagRequest[] = [];
-  let reads = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (init?.method === "POST") {
-      if (url.includes("preview"))
-        return Response.json({ code: "stale_revision" }, { status: 409 });
-      const request = JSON.parse(String(init.body)) as BatchTagRequest;
-      writes.push(request);
-      if (writes.length === 1) throw new TypeError("Lost response");
-      return Response.json(await receiptFor(request));
-    }
-    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
-    if (url.includes("/tags?")) {
-      const items = id === 9 && writes.length > 1 ? catalog : [];
-      return Response.json({ items, total: items.length, limit: 1000, offset: 0 });
-    }
-    const revision = id === 7 && ++reads > 1 ? 11 : id === 7 ? 10 : 12;
-    return Response.json({
-      id,
-      name: "report.pdf",
-      path: id === 7 ? "/alpha/report.pdf" : "/beta/report.pdf",
-      revision,
-    });
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  const retry = await screen.findByRole("button", { name: "Add “Review” to 1 document" });
-  expect(writes).toHaveLength(1);
-  await fireEvent.click(screen.getByText("Review documents"));
-  expect(
-    within(screen.getByText("/alpha/report.pdf").closest("tr")!).getByText("Couldn't check"),
-  ).toBeTruthy();
-  expect(
-    within(screen.getByText("/beta/report.pdf").closest("tr")!).getByText("Missing “Review”"),
-  ).toBeTruthy();
-  await fireEvent.click(retry);
-  await screen.findByText("Has “Review”");
-  expect(
-    within(screen.getByText("/alpha/report.pdf").closest("tr")!).getByText("Missing “Review”"),
-  ).toBeTruthy();
-  expect(
-    within(screen.getByText("/beta/report.pdf").closest("tr")!).getByText("Has “Review”"),
-  ).toBeTruthy();
-  expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
-});
-
 it("states what a whole-result change does before continuing", async () => {
   const onstart = vi.fn();
   render(SnapshotActions, props({ onstart }));
@@ -189,9 +139,22 @@ it("refreshes observations and locks an unknown selection result", async () => {
   );
   expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Add “Review” to/ })).toBeNull();
   expect(screen.getByRole("button", { name: "Check tag results" })).toBeTruthy();
   expect(fetch).toHaveBeenCalledOnce();
   expect(onunknown).toHaveBeenCalledOnce();
+});
+
+it("reports an expired session while checking", async () => {
+  vi.spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError("Lost response"))
+    .mockResolvedValue(Response.json({ detail: "expired" }, { status: 401 }));
+  const onauthfailure = vi.fn();
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets, onauthfailure }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await waitFor(() => expect(onauthfailure).toHaveBeenCalledOnce());
 });
 
 it("requires a refreshed selection after an initial stale refusal", async () => {
@@ -299,55 +262,11 @@ it.each([true, false])(
     await fireEvent.click(screen.getByText("Review documents"));
     expect(screen.getByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeTruthy();
     await fireEvent.click(retry);
-    await screen.findByText(assign ? "Has “Review”" : "Doesn't have “Review”");
-    expect(screen.getByText("Couldn't check")).toBeTruthy();
-    await screen.findByRole("button", { name: "Check again" });
-    expect(screen.getByText("Document 7")).toBeTruthy();
-    expect(screen.queryByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeNull();
+    await screen.findByRole("button", { name: "Done" });
     expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
     expect(writes[1].operation_id).not.toBe(writes[0].operation_id);
   },
 );
-
-it("reads membership after a retry receipt and allows another check", async () => {
-  const writes: BatchTagRequest[] = [];
-  let assigned = false;
-  let tagReads = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (init?.method === "POST") {
-      const request = JSON.parse(String(init.body)) as BatchTagRequest;
-      writes.push(request);
-      if (writes.length === 1) throw new TypeError("Lost response");
-      // Another client removes the tag before the successful receipt arrives.
-      assigned = false;
-      return Response.json(await receiptFor(request));
-    }
-    if (url.includes("/tags?")) {
-      tagReads++;
-      return Response.json({
-        items: assigned ? catalog : [],
-        total: assigned ? 1 : 0,
-        limit: 1000,
-        offset: 0,
-      });
-    }
-    return Response.json({ id: 7, name: "report.pdf", revision: writes.length > 1 ? 5 : 4 });
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]] }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
-  await waitFor(() => expect(writes).toHaveLength(2));
-  await waitFor(() => expect(tagReads).toBe(2));
-  await screen.findByText("The document doesn't have “Review” yet.");
-  await screen.findByRole("button", { name: "Check again" });
-  assigned = true;
-  await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-  await screen.findByText("The document has “Review”.");
-  expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
-});
 
 it.each(["unknown", "rejected", "stale"])(
   "keeps the original selection after a %s retry",
@@ -394,15 +313,18 @@ it.each(["unknown", "rejected", "stale"])(
     expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
     if (outcome === "rejected") {
       await screen.findByText("Retry refused");
-      expect(screen.getByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
-      expect(screen.getByText(/0 of 2 documents/)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Add “Review” to 1 document" })).toBeNull();
     } else {
       if (outcome === "stale")
         await screen.findByText("Some documents changed. Check their tags again.");
       await waitFor(() =>
         expect(screen.queryByRole("button", { name: "Add “Review” to 1 document" })).toBeNull(),
       );
-      await fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+      await fireEvent.click(
+        await screen.findByRole("button", {
+          name: outcome === "unknown" ? "Check tag results" : "Check again",
+        }),
+      );
       await screen.findByText(outcome === "unknown" ? /1 of 2 documents/ : /0 of 2 documents/);
     }
   },
@@ -430,52 +352,4 @@ it("pages checked documents and resets to the first page on another check", asyn
   expect(screen.getByText("/File 51")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
   await screen.findByText("1–50 of 51");
-});
-
-it("refreshes consumers before a follow-up check can be closed", async () => {
-  let writes = 0;
-  let reads = 0;
-  const onchanged = vi.fn();
-  const view = render(
-    SnapshotActions,
-    props({ scope: "selection", count: 1, targets: [targets[0]], onchanged }),
-  );
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (init?.method === "POST") {
-      const request = JSON.parse(String(init.body)) as BatchTagRequest;
-      if (++writes === 1) throw new TypeError("Lost response");
-      return Response.json(await receiptFor(request));
-    }
-    if (++reads > 3) return new Promise<Response>(() => {});
-    if (String(input).includes("/tags?"))
-      return Response.json({ items: [], total: 0, limit: 1000, offset: 0 });
-    return Response.json({ id: 7, name: "report.pdf", revision: 4 });
-  });
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Add “Review” to 1 document" }));
-  await waitFor(() => expect(reads).toBeGreaterThan(3));
-  view.unmount();
-  expect(onchanged).toHaveBeenCalledOnce();
-});
-
-it("cancels a check when the user closes recovery", async () => {
-  let signal: AbortSignal | undefined;
-  const onclose = vi.fn();
-  vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
-    if (init?.method === "POST") return Promise.reject(new TypeError("Lost response"));
-    signal = init?.signal as AbortSignal;
-    return new Promise<Response>((_resolve, reject) =>
-      signal!.addEventListener("abort", () => reject(signal!.reason)),
-    );
-  });
-  render(SnapshotActions, props({ scope: "selection", count: 1, targets: [targets[0]], onclose }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-  await waitFor(() => expect(signal).toBeDefined());
-  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(signal!.aborted).toBe(true);
-  expect(onclose).toHaveBeenCalledOnce();
 });
