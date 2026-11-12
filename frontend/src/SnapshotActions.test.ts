@@ -303,9 +303,11 @@ it.each(["unknown", "rejected", "stale"])(
           name: "Check tag results",
         }),
       );
-      await screen.findByText(
-        outcome === "unknown" ? /1 matched · 0 remaining/ : /0 matched · 1 couldn't be checked/,
-      );
+      const summary =
+        outcome === "unknown"
+          ? "1 matched · 0 remaining · 1 couldn't be checked"
+          : "0 matched · 1 couldn't be checked";
+      expect((await screen.findByText(summary)).textContent?.trim()).toBe(summary);
     }
   },
 );
