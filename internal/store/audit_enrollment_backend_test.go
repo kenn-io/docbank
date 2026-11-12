@@ -112,10 +112,6 @@ func checkAuditEnrollmentPhotosPostgres(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	party, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Synthetic owner", Own: true})
-	require.NoError(t, err)
-	_, err = source.CreateContract(ctx, ContractInput{Title: "Synthetic agreement", Parties: []ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
-	require.NoError(t, err)
 	for _, target := range []int64{scope.ID, sidecars.ID, originals.ID} {
 		// Classification after the first enrollment settles the global audit-state
 		// change. Enrolling just the sidecar must requeue its original's asset.

@@ -343,20 +343,6 @@ func newContractEditCommand() *cobra.Command {
 					return err
 				}
 				changes = append(changes, change{group.role, name, id, group.attach})
-				// Track the planned link state so later removals can refer to earlier attaches.
-				linked := false
-				for i := 0; i < len(v.Parties); i++ {
-					if v.Parties[i].PartyID == id && v.Parties[i].Role == group.role {
-						linked = true
-						if !group.attach {
-							v.Parties = append(v.Parties[:i], v.Parties[i+1:]...)
-						}
-						break
-					}
-				}
-				if group.attach && !linked {
-					v.Parties = append(v.Parties, api.ContractParty{PartyID: id, Role: group.role, DisplayName: party.DisplayName})
-				}
 			}
 		}
 		var applied []string

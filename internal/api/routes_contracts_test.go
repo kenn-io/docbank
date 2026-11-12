@@ -17,12 +17,16 @@ func TestContractRoutesExpiryAndRevision(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var c api.Contract
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
-	resp, body = get(t, ts, "/api/v1/contracts/"+c.ContractID+"?as_of=2024-03-02", nil)
+	resp, body = get(t, ts, "/api/v1/contracts/"+c.ContractID+"?as_of=2024-02-28", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
-	require.Equal(t, "expired", c.EffectiveStatus)
+	require.Equal(t, "active", c.EffectiveStatus)
 	path := "/api/v1/contracts/" + c.ContractID
 	for _, patch := range []map[string]any{{}, {"$schema": "https://example.com/schemas/PatchContractRequest.json"}} {
+		raw, err := json.Marshal(patch)
+		require.NoError(t, err)
+		var direct api.PatchContractRequest
+		require.Error(t, json.Unmarshal(raw, &direct))
 		resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, patch)
 		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}

@@ -105,6 +105,17 @@ func checkContractFilters(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "Draft", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", ContractType: "lease", Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "Rate 100%", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", PartyID: p.PartyID, Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "Rate 100%", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
 	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", ContractType: "lease", PartyID: p.PartyID, Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -162,17 +173,17 @@ func TestContractMetadataInvalidImport(t *testing.T) {
 		}
 	}
 	require.NotEqual(t, -1, contractLine)
-	for _, tc := range []struct{ name, from, to string }{
-		{"title control", `"title":"Agreement"`, `"title":"Bad\u001btitle"`},
-		{"created encoding", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`},
-		{"updated encoding", `"updated_at":"2000-01-01T00:00:00.000000000Z"`, `"updated_at":"2000-01-01T00:00:00+00:00"`},
+	for _, tc := range []struct{ name, from, to, want string }{
+		{"title control", `"title":"Agreement"`, `"title":"Bad\u001btitle"`, "invalid contract: title"},
+		{"created encoding", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`, "invalid contract created_at"},
+		{"updated encoding", `"updated_at":"2000-01-01T00:00:00.000000000Z"`, `"updated_at":"2000-01-01T00:00:00+00:00"`, "invalid contract updated_at"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := append([]string(nil), lines...)
 			mutated[contractLine] = strings.Replace(mutated[contractLine], tc.from, tc.to, 1)
 			require.NotEqual(t, lines[contractLine], mutated[contractLine])
 			empty := newTestStore(t)
-			require.Error(t, empty.ImportMetadata(t.Context(), strings.NewReader(strings.Join(mutated, "\n"))))
+			require.ErrorContains(t, empty.ImportMetadata(t.Context(), strings.NewReader(strings.Join(mutated, "\n"))), tc.want)
 			items, err := empty.ListContracts(t.Context(), ContractListOptions{AsOf: "2024-01-01", Limit: 100})
 			require.NoError(t, err)
 			assert.Empty(t, items)
@@ -181,7 +192,7 @@ func TestContractMetadataInvalidImport(t *testing.T) {
 	malformed := strings.Replace(buf.String(), `"role":"own"`, `"role":"unknown"`, 1)
 	require.NotEqual(t, buf.String(), malformed)
 	empty := newTestStore(t)
-	require.Error(t, empty.ImportMetadata(ctx, strings.NewReader(malformed)))
+	require.ErrorContains(t, empty.ImportMetadata(ctx, strings.NewReader(malformed)), "invalid contract party metadata")
 }
 
 // Two writers with the same revision cannot both change the aggregate.
@@ -311,7 +322,7 @@ func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
 				return
 			}
 			if action == "update" || action == "attach" || action == "detach" {
-				assert.ErrorIs(t, err, ErrInvalidContract)
+				require.ErrorIs(t, err, ErrInvalidContract)
 			}
 			got, getErr := s.GetContract(ctx, contract.ContractID, "2024-01-01")
 			if assert.NoError(t, getErr) {
