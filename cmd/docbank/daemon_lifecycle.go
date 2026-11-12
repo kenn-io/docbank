@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -182,12 +183,8 @@ daemon was running.`,
 				logger.Error("web restart failed", "error", err)
 				return err
 			}
-			if restarted && restartOpenWeb {
-				c, openErr := daemonconn.EnsureWeb(ctx)
-				if openErr == nil {
-					defer func() { _ = c.Close() }()
-					openErr = runWeb(ctx, cmd.OutOrStdout(), layout.Root, c, false, openWebBrowser)
-				}
+			if restarted != nil && restartOpenWeb {
+				openErr := reopenWeb(ctx, cmd.OutOrStdout(), layout.Root, *restarted, openWebBrowser)
 				if openErr != nil {
 					logger.Error("web restart browser open failed", "error", openErr)
 					return openErr
@@ -208,6 +205,15 @@ daemon was running.`,
 		}
 		return nil
 	},
+}
+
+func reopenWeb(ctx context.Context, out io.Writer, root string, rec kitdaemon.RuntimeRecord, open func(context.Context, string) error) error {
+	c, err := daemonconn.ConnectWeb(ctx, rec)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	return runWeb(ctx, out, root, c, false, open)
 }
 
 func init() {

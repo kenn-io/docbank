@@ -697,3 +697,56 @@ func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {
 		})
 	}
 }
+
+func TestWebReopenUsesRestartedDaemon(t *testing.T) {
+	bin := buildDocbank(t)
+	root := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
+
+	start := exec.CommandContext(t.Context(), bin, "ls", "/")
+	out, err := start.CombinedOutput()
+	require.NoError(t, err, string(out))
+	old := waitForDaemon(t, root)
+	restart := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
+	restart.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
+	out, err = restart.CombinedOutput()
+	require.NoError(t, err, string(out))
+	restarted := waitForDaemon(t, root)
+	require.NotEqual(t, old.PID, restarted.PID)
+	require.False(t, daemonconn.Explicit(restarted))
+
+	opened := false
+	open := func(_ context.Context, _ string) error {
+		opened = true
+		return nil
+	}
+	var output bytes.Buffer
+	require.NoError(t, reopenWeb(t.Context(), &output, root, restarted, open))
+	require.True(t, opened)
+
+	_, err = daemonconn.Stop(t.Context(), root)
+	require.NoError(t, err)
+	opened = false
+	err = reopenWeb(t.Context(), &output, root, restarted, open)
+	require.Error(t, err)
+	require.False(t, opened)
+	_, _, found, err := daemonconn.Find(t.Context(), root)
+	require.NoError(t, err)
+	require.False(t, found)
+
+	updatedBin := buildDocbankVersion(t, "v9.9.9-test")
+	updated := exec.CommandContext(t.Context(), updatedBin, "daemon", "start")
+	out, err = updated.CombinedOutput()
+	require.NoError(t, err, string(out))
+	replacement := waitForDaemon(t, root)
+	err = reopenWeb(t.Context(), &output, root, restarted, open)
+	require.Error(t, err)
+	require.False(t, opened)
+	current, _, found, err := daemonconn.Find(t.Context(), root)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, replacement.PID, current.PID)
+}
