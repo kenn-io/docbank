@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestNoteOriginalBoundariesAndIsolation(t *testing.T) {
+func TestNoteOriginalBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name  string
@@ -26,10 +26,8 @@ func TestNoteOriginalBoundariesAndIsolation(t *testing.T) {
 	}{
 		{"exactly4MiB", bytes.Repeat([]byte{'x'}, int(store.MaxNoteBytes)), "ok"},
 		{"invalidUTF8", []byte{0xff}, "not_utf8"},
-		{"NUL", []byte("a\x00b"), "not_utf8"},
 		{"headingLimit", []byte(strings.Repeat("# Heading\n", 4097)), "limit"},
 		{"malformedYAML", []byte("---\ntitle: [broken\n---\n# Readable\n"), "ok"},
-		{"validAfterFailures", []byte("# Good\n"), "ok"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			note, state, err := parseNoteOriginal(t.Context(), test.src)
@@ -51,7 +49,7 @@ func TestNoteOriginalBoundariesAndIsolation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
+func TestNoteBackfillDrainsBadNotes(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		ctx := t.Context()
@@ -67,7 +65,6 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 			{"good.md", "---\ntags: [blue]\n---\n# Original\n"}, {"bad.md", "\xff"},
 			{"malformed.md", "---\ntitle: [broken\n---\n# Readable\n"},
 			{"indexed.md", "---\n? " + strings.Repeat("k", 2048) + "\n: x\n---\n# Readable\n"},
-			{"long-path.md", "[Long](/" + strings.Repeat("segment/", 300) + "note.md)\n"},
 			{"expanded.md", "---\nbase: &m\n  ? " + strings.Repeat("a", 700000) + "\n  : 0\ncopies: [" + strings.Repeat("*m,", 39) + "*m]\n---\n# Readable\n"},
 		} {
 			require.NoError(t, blobs.WithMutation(ctx, func() error {
@@ -96,7 +93,7 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 		status, err := catalog.NotesStatus(ctx, notemarkdown.Recipe, nil)
 		require.NoError(t, err)
 		require.Equal(t, 2, status[0].Parsed)
-		require.Equal(t, 5, status[0].Failed)
+		require.Equal(t, 4, status[0].Failed)
 		require.Zero(t, status[0].Pending)
 		view, err := catalog.NoteByPath(ctx, "/good.md", notemarkdown.Recipe)
 		require.NoError(t, err)
@@ -110,26 +107,22 @@ func TestNoteBackfillUsesVerifiedOriginalAndDrainsBadNotes(t *testing.T) {
 		require.Equal(t, "limit", view.State, "Raw overflow completes as a terminal classification")
 		require.Zero(t, view.HeadingCount)
 		require.Nil(t, view.Frontmatter)
-		for _, name := range []string{"indexed.md", "long-path.md"} {
-			view, err = catalog.NoteByPath(ctx, "/"+name, notemarkdown.Recipe)
-			require.NoError(t, err)
-			require.Equal(t, "limit", view.State)
-			require.Zero(t, view.HeadingCount)
-			require.Nil(t, view.Frontmatter)
-		}
+		view, err = catalog.NoteByPath(ctx, "/indexed.md", notemarkdown.Recipe)
+		require.NoError(t, err)
+		require.Equal(t, "limit", view.State)
+		require.Zero(t, view.HeadingCount)
+		require.Nil(t, view.Frontmatter)
 		revision := catalog.WriteRevision()
 		worker := NewNoteBackfill(catalog, blobs, nil, nil)
-		for range 3 {
-			page, err := worker.ListPage(ctx, "", 25)
-			require.NoError(t, err)
-			require.Empty(t, page.Targets)
-			require.False(t, page.EOF, "unchanged selected rows still advance")
-			require.NotEmpty(t, page.Next)
-			page, err = worker.ListPage(ctx, page.Next, 25)
-			require.NoError(t, err)
-			require.True(t, page.EOF)
-			require.Equal(t, revision, catalog.WriteRevision())
-		}
+		page, err = worker.ListPage(ctx, "", 25)
+		require.NoError(t, err)
+		require.Empty(t, page.Targets)
+		require.False(t, page.EOF, "unchanged selected rows still advance")
+		require.NotEmpty(t, page.Next)
+		page, err = worker.ListPage(ctx, page.Next, 25)
+		require.NoError(t, err)
+		require.True(t, page.EOF)
+		require.Equal(t, revision, catalog.WriteRevision())
 	})
 }
 

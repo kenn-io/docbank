@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-11
+last_edited: 2026-11-12
 title: Document processing
 description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
@@ -111,14 +111,12 @@ operational state omitted from metadata JSONL.
 PostgreSQL mirrors these catalogs using its canonical schema fingerprint.
 
 The bounded worker starts with the daemon and uses the shared `WriteRevision`
-signal after catalog writes. This is an approved deviation from P03's proposed
-`vault_changes` event wake: it uses the existing backfill owner without another
-event consumer or authority. An unrelated global revision can still require
+signal after catalog writes. An unrelated global revision can still require
 O(N) candidate revalidation; incremental discovery is not delivered here.
 It replaces obsolete recipes, removes projections without a current live note,
-and refreshes relative link paths after a node or ancestor moves. Each page
-selects at most 25 current-note or cached version identities before checking
-their ancestry and bounded cached links. Unchanged and trashed rows advance the
+and refreshes relative link paths after a node or ancestor moves. The scan
+selects a bounded page of current-note and cached version identities before
+checking ancestry and cached links. Unchanged and trashed rows advance the
 scan cursor; only EOF completes a pass. Cleanup rechecks live ownership in its
 write transaction. An unchanged no-work pass settles until a catalog write.
 Filtered pages continue without a timer. Publication checks the observed
@@ -129,15 +127,10 @@ without blocking other notes. Malformed or unclosed YAML leaves readable body
 structure and retains its bounded parser diagnostic alongside null frontmatter.
 Operational blob or database errors remain retryable.
 
-Frontmatter JSON has an independent 24 MiB encoded limit. One standard JSON
-traversal counts each string's quoted size in UTF-8 aligned chunks using at
-most 6,146 bytes of scratch, including mapping keys and buffered nested prefixes.
-An admitted quoted token and the destination each contain at most 24 MiB;
-encoder and object-name tracking storage are O(limit + nesting depth).
-Encoding stops at the remaining byte budget, with cancellation checks between
-chunks and destination writes. Escaping, separators and container bytes count
-toward the limit, with no trailing newline. Overflow publishes a fenced
-terminal `limit` with no partial frontmatter, fields, headings, links or aliases.
+Frontmatter JSON has an independent 24 MiB encoded limit. Mapping keys,
+escaping, separators and container bytes count toward the limit, with no
+trailing newline. Overflow publishes a fenced terminal `limit` with no partial
+frontmatter, fields, headings, links or aliases.
 Cancellation and other encoding failures keep their original error behavior.
 
 Indexed text has a separate shared SQLite/PostgreSQL admission boundary:
@@ -145,10 +138,9 @@ each index tuple contains at most 2,048 UTF-8 text bytes, with 128 bytes reserve
 for headers, alignment, length words and fixed-width ordinals. Fields count
 key, value and actual version ID together; aliases count normalized alias key
 and version ID. Link path and key indexes each count their canonical text
-individually. Version-only and version-plus-ordinal primary keys count version
-text. Admission happens before the publication transaction. Overflow completes
-as the same zero-structure `limit`; many individually admissible rows remain
-valid regardless of their combined size.
+individually. Admission happens before the publication transaction. Overflow
+completes as the same zero-structure `limit`; many individually admissible rows
+remain valid regardless of their combined size.
 
 Restore rebuilds note structure from restored original blobs before publishing
 the target vault. A bad note's terminal classification does not fail restore.

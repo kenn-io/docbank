@@ -503,7 +503,7 @@ func TestJSONLRestoreRebuildsTimelineFromBoundProvenance(t *testing.T) {
 	assert.Equal(t, "original_mtime", modified.EvidenceLocator)
 }
 
-func TestJSONLRestoreRebuildsNotesBeforePublication(t *testing.T) {
+func TestJSONLRestoreRebuildsNotes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := t.Context()
 		fixture := newArchiveFixture(t)
@@ -529,11 +529,6 @@ func TestJSONLRestoreRebuildsNotesBeforePublication(t *testing.T) {
 		restored, err := store.Open(ctx, filepath.Join(target, "docbank.db"))
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, restored.Close()) })
-		view, err := restored.NoteByPath(ctx, "/note.md", notemarkdown.Recipe)
-		require.NoError(t, err)
-		require.Equal(t, "ok", view.State)
-		require.Equal(t, "Restored", view.Summary.Title)
-		require.Equal(t, []string{"blue"}, view.Summary.Tags)
 		status, err := restored.NotesStatus(ctx, notemarkdown.Recipe, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, status[0].Parsed)

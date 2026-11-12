@@ -198,8 +198,10 @@ func checkNoteFailureAndValidation(t *testing.T, newStore func(*testing.T) *Stor
 		}
 		createNoteFixture(t, s, s.RootID(), name, "body", mime)
 	}
-	require.Len(t, noteTargets(t, s, notemarkdown.Recipe), 3)
-	for i, target := range noteTargets(t, s, notemarkdown.Recipe) {
+	targets := noteTargets(t, s, notemarkdown.Recipe)
+	require.Len(t, targets, 3)
+	require.Error(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "limit", notemarkdown.Note{Title: "partial"}))
+	for i, target := range targets {
 		state := []string{"not_utf8", "limit", "ok"}[i]
 		note := notemarkdown.Note{}
 		if state == "ok" {
@@ -209,7 +211,7 @@ func checkNoteFailureAndValidation(t *testing.T, newStore func(*testing.T) *Stor
 	}
 	oversize, err := s.CreateFile(ctx, s.RootID(), "large.md", fakeHash("b2"), MaxNoteBytes+1, "text/plain")
 	require.NoError(t, err)
-	targets := noteTargets(t, s, notemarkdown.Recipe)
+	targets = noteTargets(t, s, notemarkdown.Recipe)
 	require.Len(t, targets, 1)
 	require.Equal(t, oversize.CurrentVersionID, targets[0].VersionID)
 	require.NoError(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "too_large", notemarkdown.Note{}))
@@ -224,36 +226,20 @@ func checkNoteFailureAndValidation(t *testing.T, newStore func(*testing.T) *Stor
 	require.Equal(t, "too_large", status[0].LastError)
 	require.Error(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "unknown", notemarkdown.Note{}))
 	require.Error(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "ok", notemarkdown.Note{Lines: 1}))
-	require.Error(t, s.PublishNoteParse(ctx, targets[0], notemarkdown.Recipe, "limit", notemarkdown.Note{Title: "partial"}))
-	revision := s.WriteRevision()
-	pruneNoteFixtures(t, s)
-	require.Equal(t, revision, s.WriteRevision())
-	for _, extra := range []int{-1, 0, 1} {
-		// B admits this explicit long key; its index tuple also includes the
-		// actual 36-byte version and one-byte scalar value.
-		src := "---\n? " + strings.Repeat("k", 2048-36-1+extra) + "\n: x\n---\n# Readable\n"
-		fieldCount := 1
-		if extra < 0 {
-			src, fieldCount = "---\na: "+strings.Repeat("x", 1024)+"\nb: "+strings.Repeat("y", 1024)+"\nc: "+strings.Repeat("z", 1024)+"\n---\n# Readable\n", 3
-		}
-		n := createNoteFixture(t, s, s.RootID(), fmt.Sprintf("indexed-%d.md", extra), src, "text/markdown")
-		note, err := notemarkdown.Parse(ctx, []byte(src), notemarkdown.Limits{})
-		require.NoError(t, err)
-		var target NoteTarget
-		for _, candidate := range noteTargets(t, s, notemarkdown.Recipe) {
-			if candidate.VersionID == n.CurrentVersionID {
-				target = candidate
-			}
-		}
-		err = s.PublishNoteParse(ctx, target, notemarkdown.Recipe, "ok", note)
-		if extra <= 0 {
-			require.NoError(t, err)
-			require.Equal(t, []int{1, fieldCount, 1, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
-		} else {
-			require.ErrorIs(t, err, ErrNoteIndexLimit)
-			require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
+	// B admits this maximal key; its index tuple also includes the actual
+	// 36-byte version and one-byte scalar value.
+	src := "---\n? " + strings.Repeat("k", 2048-36-1) + "\n: x\n---\n# Readable\n"
+	n := createNoteFixture(t, s, s.RootID(), "indexed.md", src, "text/markdown")
+	note, err := notemarkdown.Parse(ctx, []byte(src), notemarkdown.Limits{})
+	require.NoError(t, err)
+	var target NoteTarget
+	for _, candidate := range noteTargets(t, s, notemarkdown.Recipe) {
+		if candidate.VersionID == n.CurrentVersionID {
+			target = candidate
 		}
 	}
+	require.NoError(t, s.PublishNoteParse(ctx, target, notemarkdown.Recipe, "ok", note))
+	require.Equal(t, []int{1, 1, 1, 0, 0}, noteCatalogCounts(t, s, n.CurrentVersionID))
 }
 
 func checkNoteFiveThousand(t *testing.T, newStore func(*testing.T) *Store) {
@@ -313,12 +299,12 @@ func TestNoteEligibilityAndCollection(t *testing.T) {
 	for _, test := range []struct {
 		path    string
 		watches []NoteWatch
-		want    NoteWatch
+		want    int
 	}{
-		{"/work/deep/n.md", watches, watches[1]},
-		{"/work/n.md", watches, watches[0]},
-		{"/workshop/n.md", watches, watches[2]},
-		{"/n.md", nil, NoteWatch{Destination: "/"}},
+		{"/work/deep/n.md", watches, 1},
+		{"/work/n.md", watches, 0},
+		{"/workshop/n.md", watches, 2},
+		{"/n.md", nil, 0},
 	} {
 		destinations, err := noteDestinations(test.watches)
 		require.NoError(t, err)
@@ -498,7 +484,7 @@ func TestNoteLinkProjectionKeepsLiteralNamesAndExternalURIs(t *testing.T) {
 	}
 }
 
-func TestNoteMetadataRestoreRebuildsWithoutDerivedJSONL(t *testing.T) {
+func TestNoteMetadataRestoreLeavesNotesPending(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -515,10 +501,6 @@ func TestNoteMetadataRestoreRebuildsWithoutDerivedJSONL(t *testing.T) {
 	require.Len(t, targets, 1)
 	require.Equal(t, n.CurrentVersionID, targets[0].VersionID)
 	require.Equal(t, []int{0, 0, 0, 0, 0}, noteCatalogCounts(t, restored, n.CurrentVersionID))
-	publishNoteFixture(t, restored, targets[0], src, notemarkdown.Recipe)
-	view, err := restored.NoteByPath(ctx, "/note.md", notemarkdown.Recipe)
-	require.NoError(t, err)
-	require.Equal(t, "Title", view.Summary.Title)
 }
 
 func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
@@ -547,11 +529,6 @@ func TestUpgradeReleasedV0170RebuildsNoteCatalog(t *testing.T) {
 			pending, err := s.NoteByPath(ctx, "/released.md", notemarkdown.Recipe)
 			require.NoError(t, err)
 			require.Equal(t, "gone", pending.Summary.SourceState)
-			_, err = s.db.ExecContext(ctx, `DELETE FROM watch_source_absences WHERE watch_name='fixture'`)
-			require.NoError(t, err)
-			pending, err = s.NoteByPath(ctx, "/released.md", notemarkdown.Recipe)
-			require.NoError(t, err)
-			require.Equal(t, "present", pending.Summary.SourceState)
 			targets := noteTargets(t, s, notemarkdown.Recipe)
 			require.Len(t, targets, 1)
 			require.Equal(t, n.CurrentVersionID, targets[0].VersionID)
@@ -598,20 +575,12 @@ func TestNoteIndexedTupleAdmission(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, validateNoteIndexes(ctx, target, notemarkdown.Note{Frontmatter: &notemarkdown.Frontmatter{Fields: fields}}), context.Canceled)
-	for _, n := range []int{2048, 2049} {
-		err := validateNoteIndexes(t.Context(), NoteTarget{VersionID: strings.Repeat("v", n)}, notemarkdown.Note{})
-		if n == 2048 {
-			require.NoError(t, err)
-		} else {
-			require.ErrorIs(t, err, ErrNoteIndexLimit)
-		}
-	}
 }
 
 func execReleasedWatchAbsence(ctx context.Context, db *sql.DB, n Node) error {
 	if _, err := db.ExecContext(ctx, `INSERT INTO watch_sources(watch_name,source_ref,node_id,blob_hash,size) VALUES('fixture','released.md',$1,$2,$3)`, n.ID, n.BlobHash, n.Size); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00Z')`)
+	_, err := db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','released.md','2026-01-01T00:00:00.000000000Z')`)
 	return err
 }

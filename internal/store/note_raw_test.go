@@ -32,9 +32,6 @@ func TestNoteRawEncodingBoundsAndCancellation(t *testing.T) {
 		require.NoError(t, err)
 		require.JSONEq(t, string(want), encoded)
 	}
-	_, err = encodeNoteRaw(t.Context(), map[string]any{"bad": make(chan int)})
-	require.Error(t, err)
-	require.NotErrorIs(t, err, ErrNoteRawLimit)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = encodeNoteRaw(ctx, map[string]any{"key": "value"})

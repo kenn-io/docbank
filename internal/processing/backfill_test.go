@@ -198,7 +198,7 @@ func TestBackfillRejectsAmbiguousListingsAndInvalidPageProgress(t *testing.T) {
 	worker.ListPage = func(context.Context, string, int) (BackfillPage[string], error) {
 		return BackfillPage[string]{EOF: true}, nil
 	}
-	require.Error(t, worker.Run(t.Context()), "two listing owners are ambiguous")
+	require.EqualError(t, worker.Run(t.Context()), "backfill requires exactly one of List or ListPage, plus Key and Process")
 	worker.List = nil
 	for _, page := range []BackfillPage[string]{
 		{}, {Next: "b"}, {Next: "a"},
@@ -211,6 +211,15 @@ func TestBackfillRejectsAmbiguousListingsAndInvalidPageProgress(t *testing.T) {
 		_, err := worker.scan(t.Context(), "b")
 		require.ErrorIs(t, err, errBackfillPage)
 	}
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		worker.ListPage = func(context.Context, string, int) (BackfillPage[string], error) {
+			calls++
+			return BackfillPage[string]{}, nil
+		}
+		require.ErrorIs(t, worker.Run(t.Context()), errBackfillPage)
+		require.Equal(t, 1, calls, "invalid pages fail without retrying")
+	})
 }
 
 func TestBackfillPagedNoActionPassSettlesOnlyAtUnchangedRevision(t *testing.T) {

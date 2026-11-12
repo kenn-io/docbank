@@ -89,16 +89,15 @@ func noteDestinations(watches []NoteWatch) ([]string, error) {
 	return destinations, nil
 }
 
-func noteCollection(notePath string, watches []NoteWatch, destinations []string) NoteWatch {
-	best := NoteWatch{Destination: "/"}
-	bestLength := 1
+func noteCollection(notePath string, watches []NoteWatch, destinations []string) int {
+	best, bestLength := len(watches), 1
 	for i, watch := range watches {
 		dest := destinations[i]
 		if dest != "/" && !strings.HasPrefix(notePath, dest+"/") {
 			continue
 		}
-		if len(dest) > bestLength || (len(dest) == bestLength && (best.Name == "" || watch.Name < best.Name)) {
-			best = watch
+		if len(dest) > bestLength || (len(dest) == bestLength && (best == len(watches) || watch.Name < watches[best].Name)) {
+			best = i
 			bestLength = len(dest)
 		}
 	}
@@ -316,9 +315,6 @@ func validateNoteParse(ctx context.Context, target NoteTarget, recipe, state str
 		return invalid()
 	}
 	if state != "ok" {
-		if len(target.VersionID) > maxNoteIndexTextBytes {
-			return nil, nil, ErrNoteIndexLimit
-		}
 		if note.Frontmatter != nil || len(note.Headings) > 0 || len(note.Links) > 0 || len(note.Diagnostics) > 0 || note.Title != "" || note.TitleSource != "" || note.BodyStart != 0 || note.Lines != 0 {
 			return invalid()
 		}
@@ -400,9 +396,6 @@ func validateNoteIndexes(ctx context.Context, target NoteTarget, note notemarkdo
 		return err
 	}
 	versionBytes := len(target.VersionID)
-	if versionBytes > maxNoteIndexTextBytes {
-		return ErrNoteIndexLimit
-	}
 	if f := note.Frontmatter; f != nil {
 		for _, field := range f.Fields {
 			if err := ctx.Err(); err != nil {
@@ -564,16 +557,11 @@ func (s *Store) NotesStatus(ctx context.Context, recipe string, watches []NoteWa
 	if err != nil {
 		return nil, err
 	}
-	items := make([]NoteWatchStatus, 0, len(watches)+1)
-	positions := map[string]int{}
-	for _, watch := range append(append([]NoteWatch{}, watches...), NoteWatch{Destination: "/"}) {
-		key := watch.Name + "\x00" + watch.Destination
-		if _, exists := positions[key]; exists {
-			continue
-		}
-		positions[key] = len(items)
-		items = append(items, NoteWatchStatus{Name: watch.Name, Destination: watch.Destination})
+	items := make([]NoteWatchStatus, len(watches)+1)
+	for i, watch := range watches {
+		items[i] = NoteWatchStatus{Name: watch.Name, Destination: watch.Destination}
 	}
+	items[len(watches)].Destination = "/"
 	lastAt := make(map[int]string)
 	err = queryRows(ctx, s.db, noteTreeCTE+`SELECT t.path,COALESCE(p.state,'pending'),COALESCE(p.parsed_at,'')
  FROM note_tree t JOIN nodes n ON n.id=t.id JOIN content_versions cv ON cv.version_id=n.current_version_id
@@ -582,8 +570,7 @@ func (s *Store) NotesStatus(ctx context.Context, recipe string, watches []NoteWa
 		if err := rows.Scan(&notePath, &state, &at); err != nil {
 			return err
 		}
-		watch := noteCollection(notePath, watches, destinations)
-		index := positions[watch.Name+"\x00"+watch.Destination]
+		index := noteCollection(notePath, watches, destinations)
 		item := &items[index]
 		switch state {
 		case "pending":
