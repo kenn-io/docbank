@@ -17,8 +17,7 @@ import (
 func TestSearchSimilarPlanWriteFailure(t *testing.T) {
 	cmd, _ := processingTestCommand()
 	cmd.SetOut(searchFailingWriter{})
-	report := api.DocumentSimilarReport{State: "unavailable", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: processingTestVersionID}, BindingID: "semantic",
-		MissingCoverage: &api.DocumentMissingCoverage{Kind: "embedding", BindingID: "semantic", ProfileFingerprint: strings.Repeat("a", 64), ContentVersionID: processingTestVersionID}, Coverage: api.DocumentSearchCoverage{State: "unknown"}}
+	report := api.DocumentSimilarReport{State: "unavailable"}
 	err := writeSimilarSearchReport(cmd, report, "docbank processing plan id:42 --profile private")
 	require.ErrorContains(t, err, "writing processing plan command: output closed")
 }
@@ -83,12 +82,12 @@ func TestSearchSimilarUsesDaemonSelectorAnd4096Fence(t *testing.T) {
 	options := documentSearchCLIOptions{Profile: "private", ContentVersionIDs: versions, Limit: 20}
 	require.NoError(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, "", options))
 	assert.Contains(t, output.String(), "unavailable: no current embedding")
-	assert.Contains(t, output.String(), "docbank processing plan id:42 --profile private\n")
+	assert.Contains(t, output.String(), "next: docbank processing plan id:42 --profile private\n")
 	assert.Equal(t, 1, calls)
 	options.Agent = true
 	output.Reset()
 	require.NoError(t, runSimilarSearch(command, daemonconn.New(server.URL, "key"), selector, "", options))
-	assert.Contains(t, output.String(), "docbank processing plan id:42 --profile private")
+	assert.Contains(t, output.String(), "next=\"docbank processing plan id:42 --profile private\"")
 	options.Agent = false
 	options.JSON = true
 	output.Reset()

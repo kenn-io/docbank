@@ -388,7 +388,7 @@ func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarRepo
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "similar to: id:%d (version %s)\nbinding: %s\n", report.Source.NodeID, report.Source.ContentVersionID, report.BindingID)
 	if report.State == "unavailable" {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unavailable: no current embedding for binding %q on version %s\n", report.BindingID, report.Source.ContentVersionID)
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), planCommand); err != nil {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "next:", planCommand); err != nil {
 			return fmt.Errorf("writing processing plan command: %w", err)
 		}
 		return nil
