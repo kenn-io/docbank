@@ -31,7 +31,7 @@
     onclick={() => void controller.cancel()}>Cancel</Button
   >{/if}
 {#if active}
-  {#if building}<p class="status" role="status">Checking the PDF and preparing the ZIP…</p>
+  {#if building}<p class="status" role="status">Checking the PDF…</p>
   {:else if controller.message}<p class="status" role="status">{controller.message}</p>{/if}
   {#if controller.error}<p class="error" role="alert">{controller.error}</p>{/if}
 {/if}
