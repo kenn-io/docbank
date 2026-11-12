@@ -11,6 +11,7 @@ import (
 )
 
 func TestDocuSealUnconfigured(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	for _, path := range []string{"/api/v1/integrations/docuseal/status", "/api/v1/integrations/docuseal/templates"} {
 		resp, body := do(t, ts, http.MethodGet, path, nil, nil)
@@ -47,9 +48,10 @@ func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 }
 
 func TestDocuSealUnknownQueryAndInvalidConfig(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true} })
 	resp, body := do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/templates?aftre=1", nil, nil)
-	require.Equal(t, 400, resp.StatusCode, body)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/status", nil, nil)
 	require.Equal(t, 503, resp.StatusCode, body)
 	require.Contains(t, body, "docuseal_config_invalid")
@@ -81,6 +83,7 @@ func TestDocuSealProviderFailuresAreSafe(t *testing.T) {
 }
 
 func TestDocuSealDisabledMalformedConfig(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		enabled any
 		code    string

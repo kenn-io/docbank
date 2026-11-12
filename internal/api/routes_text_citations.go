@@ -42,7 +42,7 @@ func registerTextCitationRoute(api huma.API, d Deps) {
 			}
 			return nil, problem
 		}
-		return &output{CacheControl: "no-store", Body: result}, nil
+		return &output{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 }
 

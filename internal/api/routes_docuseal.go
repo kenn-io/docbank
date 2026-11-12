@@ -60,7 +60,7 @@ func registerDocuSealRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, docuSealProblem(err)
 		}
-		return &statusOutput{CacheControl: "no-store", Body: result}, nil
+		return &statusOutput{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 	type templatesOutput struct {
 		CacheControl string `header:"Cache-Control"`
@@ -78,6 +78,6 @@ func registerDocuSealRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, docuSealProblem(err)
 		}
-		return &templatesOutput{CacheControl: "no-store", Body: result}, nil
+		return &templatesOutput{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 }

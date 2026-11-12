@@ -39,7 +39,7 @@ func registerRedactionRoutes(mux *http.ServeMux, api huma.API, d Deps) {
 			logRedactionFailure(ctx, d, problem, err)
 			return nil, (*redactionWireError)(problem)
 		}
-		return &output{CacheControl: "no-store", Body: result}, nil
+		return &output{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 	registerNumberedReservationRoute(api, d)
 	registerRedactionPublicationRoute(api, d)
@@ -193,6 +193,6 @@ func registerNumberedReservationRoute(api huma.API, d Deps) {
 			logRedactionFailure(ctx, d, problem, err)
 			return nil, (*redactionWireError)(problem)
 		}
-		return &output{CacheControl: "no-store", Body: result}, nil
+		return &output{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 }

@@ -47,7 +47,7 @@ func registerTextOutlineRoute(api huma.API, d Deps) {
 			}
 			return nil, problem
 		}
-		return &output{CacheControl: "no-store", Body: result}, nil
+		return &output{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 }
 
@@ -83,7 +83,7 @@ func registerTextSectionRoute(api huma.API, d Deps) {
 			}
 			return nil, problem
 		}
-		return &output{CacheControl: "no-store", Body: result}, nil
+		return &output{CacheControl: cacheControlNoStore, Body: result}, nil
 	})
 }
 

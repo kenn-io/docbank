@@ -25,9 +25,9 @@ func TestConnectionChecksAndListsTemplates(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/api/user":
-			fmt.Fprint(w, `{"id":7,"email":"private@example.test"}`)
+			_, _ = fmt.Fprint(w, `{"id":7,"email":"private@example.test"}`)
 		case "/api/templates":
-			fmt.Fprint(w, `{"data":[{"id":12,"name":"Lease","submitters":[{"name":"Tenant"}]}],"pagination":{"next":12}}`)
+			_, _ = fmt.Fprint(w, `{"data":[{"id":12,"name":"Lease","submitters":[{"name":"Tenant"}]}],"pagination":{"next":12}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -59,7 +59,7 @@ func TestConnectionRejectsMalformedProviderShapes(t *testing.T) {
 			}
 		})
 	}
-	for _, body := range []string{`{"data":null}`} {
+	for _, body := range []string{`{}`, `{"data":null}`, `{"Data":[]}`, `{"data":[],"data":[]}`} {
 		t.Run("templates/"+body, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
 			defer s.Close()
@@ -123,7 +123,7 @@ func TestTemplatesContinuationAndUnsafeText(t *testing.T) {
 				if count > 0 {
 					next = strconv.Itoa(200 - count)
 				}
-				fmt.Fprintf(w, `{"data":[%s],"pagination":{"next":%s}}`, strings.Join(items, ","), next)
+				_, _ = fmt.Fprintf(w, `{"data":[%s],"pagination":{"next":%s}}`, strings.Join(items, ","), next)
 			}))
 			defer s.Close()
 			c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
@@ -144,7 +144,7 @@ func TestTemplatesContinuationAndUnsafeText(t *testing.T) {
 	}
 	// A credential in a template name must not be projected.
 	cName := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"id":1,"name":"synthetic-key","submitters":[]}]}`))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"id":1,"name":"synthetic-key","submitters":[]}]}`))}, nil
 	})}}
 	if _, err := cName.Templates(t.Context(), 0); err == nil {
 		t.Fatal("accepted credential in template name")
@@ -171,21 +171,21 @@ func TestTemplatesOversizedPages(t *testing.T) {
 			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 			after := r.URL.Query().Get("after")
 			if after == "51" {
-				fmt.Fprint(w, `{"data":[{"id":50,"name":"Last","submitters":[]}],"pagination":{"next":50}}`)
+				_, _ = fmt.Fprint(w, `{"data":[{"id":50,"name":"Last","submitters":[]}],"pagination":{"next":50}}`)
 				return
 			}
 			if limit > 50 {
 				_, _ = io.WriteString(w, strings.Repeat("x", maxResponse+1))
 				return
 			}
-			fmt.Fprint(w, `{"data":[`)
+			_, _ = fmt.Fprint(w, `{"data":[`)
 			for i := range limit {
 				if i > 0 {
-					fmt.Fprint(w, ",")
+					_, _ = fmt.Fprint(w, ",")
 				}
-				fmt.Fprintf(w, `{"id":%d,"name":"Template","submitters":[],"fields":"%s"}`, 100-i, strings.Repeat("x", 1000))
+				_, _ = fmt.Fprintf(w, `{"id":%d,"name":"Template","submitters":[],"fields":"%s"}`, 100-i, strings.Repeat("x", 1000))
 			}
-			fmt.Fprint(w, `],"pagination":{"next":51}}`)
+			_, _ = fmt.Fprint(w, `],"pagination":{"next":51}}`)
 		}))
 		defer s.Close()
 		c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
@@ -236,7 +236,7 @@ func (b docusealErrorBody) Close() error             { return nil }
 func TestCheckPreservesBodyContextErrors(t *testing.T) {
 	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
 		c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: docusealErrorBody{err: want}}, nil
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: docusealErrorBody{err: want}}, nil
 		})}}
 		_, err := c.Check(t.Context())
 		if !errors.Is(err, want) {
@@ -247,7 +247,7 @@ func TestCheckPreservesBodyContextErrors(t *testing.T) {
 
 func TestCheckRedactsKeyInEndpoint(t *testing.T) {
 	c := &Client{connection: config.DocuSealConnection{Endpoint: "https://key.example.test", APIKey: "key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":1}`))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":1}`))}, nil
 	})}}
 	status, err := c.Check(t.Context())
 	if err != nil || strings.Contains(status.Endpoint, "key") || status.Endpoint != "*" {
@@ -262,7 +262,7 @@ func TestTemplatesRequiresSubmitters(t *testing.T) {
 	}{{"", false}, {`,"submitters":null`, false}, {`,"submitters":[]`, true}} {
 		c := &Client{connection: config.DocuSealConnection{Endpoint: "https://example.test", APIKey: "synthetic-key"}, http: &http.Client{Transport: docusealRoundTripFunc(func(*http.Request) (*http.Response, error) {
 			body := `{"data":[{"id":1,"name":"Lease"` + tc.field + `}]}`
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 		})}}
 		_, err := c.Templates(t.Context(), 0)
 		if (err == nil) != tc.valid {
@@ -279,7 +279,7 @@ func TestTemplatesAggregateDeadline(t *testing.T) {
 			calls++
 			select {
 			case <-time.After(9 * time.Second):
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Repeat("x", maxResponse+1)))}, nil
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Repeat("x", maxResponse+1)))}, nil
 			case <-r.Context().Done():
 				return nil, r.Context().Err()
 			}

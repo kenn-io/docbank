@@ -14,7 +14,7 @@ func TestContractSignDaemonWalk(t *testing.T) {
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if !configured {
-			w.WriteHeader(503)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, `{"status":503,"title":"Unconfigured","detail":"Enable DocuSeal","code":"docuseal_unconfigured"}`)
 			return
 		}

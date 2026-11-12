@@ -1,3 +1,9 @@
+---
+last_edited: 2026-11-12
+title: DocuSeal connection
+description: Check an optional DocuSeal connection and list its templates.
+---
+
 # DocuSeal connection
 
 Docbank can check an optional DocuSeal connection and list its templates. This

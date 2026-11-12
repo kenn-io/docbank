@@ -535,7 +535,7 @@ func registerEvidenceWindowRoute(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromEvidenceWindowError(err)
 		}
-		return &evidenceWindowOutput{CacheControl: "no-store", Body: EvidenceWindow{
+		return &evidenceWindowOutput{CacheControl: cacheControlNoStore, Body: EvidenceWindow{
 			VaultUID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID, ContentSHA256: window.ContentSHA256,
 			RenditionAttachmentID: window.AttachmentID, BuildID: window.BuildID, RenditionSHA256: window.Checksum, Text: window.Text,
 			ActualStart: window.ActualStart, ActualEnd: window.ActualEnd, NextOffset: window.NextOffset, EOF: window.EOF, ResponseBytes: window.ResponseBytes, MediaType: window.MediaType,
