@@ -122,7 +122,7 @@ docbank tax record show <record-id> [--reveal] [--json]
 docbank tax record edit <record-id> [flags]
 docbank tax record retire <record-id> [--revision N] [--json]
 docbank tax record advance <record-id> --state STATE --occurred-on DATE [flags]
-docbank tax event add <record-id> --kind note --occurred-on DATE [flags]
+docbank tax event add <record-id> --kind note|payment|refund --occurred-on DATE [--amount AMOUNT --currency CODE] [flags]
 docbank tax event void <record-id> <event-id> --reason REASON [--revision N] [--json]
 ```
 

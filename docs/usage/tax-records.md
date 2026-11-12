@@ -110,7 +110,7 @@ overridden. A tax year defaults to the year of the period end. Amounts are exact
 nonnegative minor units; direction records whether an amount is payable or refundable.
 Currencies missing from the pinned currency catalog are rejected.
 
-Records start in their kind's initial state and unverified. Payments, document evidence, deadlines, and verification operations are not
+Records start in their kind's initial state and unverified. Document evidence, deadlines, and verification operations are not
 available yet. Mutations are refused when the vault
 has audited authority. Revisions reject stale updates. Retired accounts and records are read-only
 and cannot be unretired; create a new row when needed.
@@ -126,6 +126,7 @@ restores them empty. See [backup and restore](backup.md) for vault recovery.
 docbank tax record advance RECORD_ID --state filed --occurred-on 2026-04-30 --reference "Example reference"
 docbank tax record advance RECORD_ID --state assessed --occurred-on 2026-05-31 --amount 1234.00 --currency USD
 docbank tax event add RECORD_ID --kind note --occurred-on 2026-06-01 --note "Example Revenue Agency confirmed receipt"
+docbank tax event add RECORD_ID --kind payment --occurred-on 2026-06-02 --amount 100.00 --currency USD
 docbank tax record show RECORD_ID --reveal
 docbank tax event void RECORD_ID EVENT_ID --reason "Entered in error"
 ```
@@ -133,10 +134,9 @@ docbank tax event void RECORD_ID EVENT_ID --reason "Entered in error"
 State comes from the latest non-void state event by append revision, not the
 occurred date. Voiding preserves the event and its reason, and can restore a
 previous state. Correcting an earlier milestone by voiding and re-entering it makes the re-entered state current; re-enter later states if they still apply. Assessment amounts are available for `assessed` and
-`decision_issued` events; they do not calculate a balance. References are masked
+`decision_issued` events; they do not change the record amount or balance. Add payments and refunds with `tax event add`; no separate payment command exists. The balance subtracts non-void payments from a payable amount or refunds from a refundable amount when currencies match. Other cash events, including opposite kinds and unmatched or missing record currency, are counted separately. An overpayment produces a negative balance. Editing direction or currency can change which cash events count; an edit that would overflow is rejected. Nil amounts yield zero and unknown amounts yield null. References are masked
 in mutation receipts and ordinary detail reads; only record show with `--reveal`
 returns complete references. Empty references stay empty; masking follows the
 account identifier rule. Events and records share a revision: advance, add and
 void inspect once unless `--revision` is supplied, then send one fenced write
-without retry. Retired records are read-only. Payments and document evidence
-are not available.
+without retry. Retired records are read-only. Document evidence is not available.

@@ -88,20 +88,26 @@ func newTaxRecordAdvanceCommand() *cobra.Command {
 	return cmd
 }
 func newTaxEventCommand() *cobra.Command {
-	group := &cobra.Command{Use: "event", Short: "Manage tax record events", Long: "Append notes or void events. Writes use a revision fence and are not retried.", Args: taxGroupArgs, Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	group := &cobra.Command{Use: "event", Short: "Manage tax record events", Long: "Append notes, payments or refunds, or void events. Writes use a revision fence and are not retried.", Args: taxGroupArgs, Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var f eventFlags
-	add := &cobra.Command{Use: "add <record-id>", Short: "Append a note", Example: "docbank tax event add 11111111-1111-4111-8111-111111111111 --kind note --occurred-on 2026-01-01", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	add := &cobra.Command{Use: "add <record-id>", Short: "Append a tax event", Example: "docbank tax event add 11111111-1111-4111-8111-111111111111 --kind note --occurred-on 2026-01-01", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, rev, err := eventConnection(cmd, args[0], f.revision)
 		if err != nil {
 			return err
 		}
-		m, err := c.AddTaxEvent(cmd.Context(), args[0], rev, api.AddTaxEventRequest{Kind: f.kind, OccurredOn: f.date, Reference: f.reference, Note: f.note})
+		in := api.AddTaxEventRequest{Kind: f.kind, OccurredOn: f.date, Currency: f.currency, Reference: f.reference, Note: f.note}
+		if cmd.Flags().Changed("amount") {
+			in.Amount = &f.amount
+		}
+		m, err := c.AddTaxEvent(cmd.Context(), args[0], rev, in)
 		if err != nil {
 			return err
 		}
 		return printTaxEventMutation(cmd, m)
 	}}
-	f.bind(add, "kind", "event kind: note")
+	f.bind(add, "kind", "event kind: note, payment, refund")
+	add.Flags().StringVar(&f.amount, "amount", "", "exact cash amount")
+	add.Flags().StringVar(&f.currency, "currency", "", "currency code")
 	var reason string
 	var revision int64
 	void := &cobra.Command{Use: "void <record-id> <event-id>", Short: "Void a tax event", Example: "docbank tax event void 11111111-1111-4111-8111-111111111111 33333333-3333-4333-8333-333333333333 --reason correction", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {

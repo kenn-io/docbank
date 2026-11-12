@@ -186,3 +186,37 @@ func TestTaxEventInputDiagnostics(t *testing.T) {
 		assert.NotContains(t, body, "private-synthetic")
 	}
 }
+
+func TestTaxCashHTTPWorkflow(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	_, account := createTaxTestAccount(t, ts, nil)
+	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example", "direction": "payable", "amount": "1234.00", "currency": "USD"})
+	path := "/api/v1/tax/records/" + r.RecordID
+	secret := "synthetic-payment-reference"
+	resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "amount": "100.00", "currency": "USD", "reference": secret})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	assert.NotContains(t, body, secret)
+	var receipt api.TaxEventMutation
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	resp, body = do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"2"`}, map[string]any{"kind": "refund", "occurred_on": "2026-01-01", "amount": "1.00", "currency": "EUR"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	resp, body = get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, body, `"outstanding_minor":113400`)
+	assert.Contains(t, body, `"other_currency_events":1`)
+	assert.NotContains(t, body, secret)
+	resp, body = get(t, ts, path+"?reveal=true", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, body, secret)
+	resp, body = do(t, ts, http.MethodPost, path+"/events/"+receipt.Event.EventID+"/void", map[string]string{"If-Match": `"3"`}, map[string]any{"reason": "correction"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, body, `"outstanding_minor":123400`)
+	for _, amount := range []string{"0", "-1", "1e3", "99999999999999999999999999999999"} {
+		resp, body = do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"4"`}, map[string]any{"kind": "payment", "occurred_on": "2026-01-01", "amount": amount, "currency": "USD", "reference": secret})
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		assert.NotContains(t, body, secret)
+	}
+}

@@ -1047,6 +1047,7 @@ func TestTaxEventOpenAPIContract(t *testing.T) {
 	add := doc.Components.Schemas.Map()["AddTaxEventRequest"]
 	assert.Contains(t, add.Properties, "amount")
 	assert.Contains(t, add.Properties, "currency")
+	assert.Equal(t, []any{"note", "payment", "refund"}, add.Properties["kind"].Enum)
 	advance := doc.Components.Schemas.Map()["AdvanceTaxRecordRequest"]
 	assert.Contains(t, advance.Properties, "amount")
 	assert.Contains(t, advance.Properties, "currency")

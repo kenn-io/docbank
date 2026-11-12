@@ -28,7 +28,7 @@ func TestTaxCLIEventRevision(t *testing.T) {
 				if r.Method == http.MethodGet {
 					reads++
 					w.Header().Set("ETag", `"1"`)
-					_, _ = w.Write([]byte(strings.TrimSuffix(taxRecordTestReceipt, "}") + `,"events":[]}`))
+					_, _ = w.Write([]byte(strings.TrimSuffix(taxRecordTestReceipt, "}") + `,"events":[],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
 					return
 				}
 				writes++
@@ -56,13 +56,38 @@ func TestTaxCLIEventReveal(t *testing.T) {
 			e = strings.Replace(e, "****1234", "private-synthetic-1234", 1)
 		}
 		record := strings.Replace(strings.Replace(taxRecordTestReceipt, `"revision":1`, `"revision":2`, 1), `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"2026-01-01T00:00:00Z"`, 1)
-		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + e + `]}`))
+		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + e + `],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
 	})
 	out, err := runCLI(t, "tax", "record", "show", id)
 	require.NoError(t, err)
 	assert.Contains(t, out, "****1234")
+	assert.Contains(t, out, "other currency events: 0")
 	assert.NotContains(t, out, "private-synthetic")
 	out, err = runCLI(t, "tax", "record", "show", id, "--reveal", "--json")
 	require.NoError(t, err)
 	assert.Contains(t, out, "private-synthetic-1234")
+}
+
+func TestTaxCLICashWorkflow(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const eid = "33333333-3333-4333-8333-333333333333"
+	record := strings.Replace(strings.Replace(strings.Replace(taxRecordTestReceipt, `"direction":"unknown"`, `"direction":"payable"`, 1), `"amount_minor":null`, `"amount_minor":123400`, 1), `"currency":""`, `"currency":"USD"`, 1)
+	event := `{"event_id":"` + eid + `","record_id":"` + id + `","kind":"payment","occurred_on":"2026-01-01","sets_state":"","amount_minor":10000,"currency":"USD","reference":"****1234","note":"","recorded_at":"2026-01-01T00:00:00Z","voided_at":null,"void_reason":"","record_revision":2}`
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"2"`)
+		current := strings.Replace(strings.Replace(record, `"revision":1`, `"revision":2`, 1), `"updated_at":"2025-01-01T00:00:00Z"`, `"updated_at":"2026-01-01T00:00:00Z"`, 1)
+		if r.Method == http.MethodPost {
+			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"record":` + current + `,"event":` + event + `}`))
+			return
+		}
+		_, _ = w.Write([]byte(strings.TrimSuffix(current, "}") + `,"events":[` + event + `],"balance":{"outstanding_minor":113400,"currency":"USD","other_currency_events":0}}`))
+	})
+	_, err := runCLI(t, "tax", "event", "add", id, "--kind", "payment", "--occurred-on", "2026-01-01", "--amount", "100.00", "--currency", "USD", "--revision", "1")
+	require.NoError(t, err)
+	out, err := runCLI(t, "tax", "record", "show", id)
+	require.NoError(t, err)
+	assert.Contains(t, out, "outstanding minor: 113400")
 }

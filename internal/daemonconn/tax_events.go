@@ -87,7 +87,7 @@ func (c *Connection) AddTaxEvent(ctx context.Context, id string, revision int64,
 		return api.TaxEventMutation{}, taxMutationFailure(mutationRequestError(response, err), "record")
 	}
 	out, err := c.taxEventReceipt(ctx, response, id, "", revision, false)
-	if err == nil && out.Event.Kind != "note" {
+	if err == nil && out.Event.Kind != in.Kind {
 		return api.TaxEventMutation{}, taxMutationFailure(invalidEventReceipt(), "record")
 	}
 	return out, err

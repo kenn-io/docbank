@@ -24,7 +24,7 @@ func TestTaxEventClientContracts(t *testing.T) {
 		w.Header().Set("ETag", `"2"`)
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "true", r.URL.Query().Get("reveal"))
-		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + eventFixture + `]}`))
+		_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + eventFixture + `],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
 	}))
 	t.Cleanup(server.Close)
 	c := New(server.URL, "")

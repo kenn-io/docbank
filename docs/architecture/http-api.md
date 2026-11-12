@@ -130,6 +130,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
 | `GET\|POST /tax/accounts` · `GET\|PATCH /tax/accounts/{account_id}` · `POST /tax/accounts/{account_id}/retire` | manage tax accounts | Implemented |
 | `GET\|POST /tax/records` · `GET\|PATCH /tax/records/{record_id}` · `POST /tax/records/{record_id}/retire` | manage tax records | Implemented |
+| `POST /tax/records/{record_id}/events` · `POST /tax/records/{record_id}/events/{event_id}/void` | append notes, payments, or refunds and void events | Implemented |
 | `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |

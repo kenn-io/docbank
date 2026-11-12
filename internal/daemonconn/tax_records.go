@@ -90,13 +90,13 @@ func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api
 	if err != nil {
 		return out, safeTaxError(err)
 	}
-	data, err := readTaxReceiptLimit(ctx, response, false, append(append([]string{}, recordFields...), "events"), recordNullable, maxTaxReceiptBytes)
+	data, err := readTaxReceiptLimit(ctx, response, false, append(append([]string{}, recordFields...), "events", "balance"), recordNullable, maxTaxReceiptBytes)
 	if err != nil {
 		return out, safeTaxError(err)
 	}
 	var raw map[string]jsontext.Value
 	var events []jsontext.Value
-	if json.Unmarshal(data, &raw) != nil || json.Unmarshal(raw["events"], &events) != nil || events == nil || json.Unmarshal(data, &out) != nil {
+	if json.Unmarshal(data, &raw) != nil || !taxMembers(raw["balance"], []string{"outstanding_minor", "currency", "other_currency_events"}, map[string]bool{"outstanding_minor": true}) || json.Unmarshal(raw["events"], &events) != nil || events == nil || json.Unmarshal(data, &out) != nil {
 		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
 	}
 	if _, err = validateTaxRecordResponse(&out.TaxRecord, response, id); err != nil {
@@ -116,6 +116,10 @@ func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api
 	}
 	state, err := taxrecord.StateFromEvents(out.Kind, facts)
 	if err != nil || state != out.State {
+		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
+	}
+	balance, err := taxrecord.CalculateBalance(taxrecord.RecordValues{Direction: out.Direction, AmountMinor: out.AmountMinor, Currency: out.Currency}, facts)
+	if err != nil || balance.Currency != out.Balance.Currency || balance.OtherCurrencyEvents != out.Balance.OtherCurrencyEvents || (balance.OutstandingMinor == nil) != (out.Balance.OutstandingMinor == nil) || (balance.OutstandingMinor != nil && *balance.OutstandingMinor != *out.Balance.OutstandingMinor) {
 		return api.TaxRecordDetail{}, safeTaxError(invalidEventReceipt())
 	}
 	return out, nil

@@ -234,7 +234,7 @@ func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	assert.Equal(t, data.String(), restored.String())
 	for _, replacement := range []struct{ old, new string }{
-		{`"amount_minor":1234`, `"amount_minor":0`}, {`"currency":"USD"`, `"currency":""`}, {`"sets_state":""`, `"sets_state":"filed"`},
+		{`"amount_minor":1234`, `"amount_minor":0`}, {`"amount_minor":1234,"currency":"USD"`, `"amount_minor":1234,"currency":""`}, {`"sets_state":""`, `"sets_state":"filed"`},
 	} {
 		corrupted := strings.Replace(data.String(), replacement.old, replacement.new, 1)
 		require.NotEqual(t, data.String(), corrupted)
@@ -261,4 +261,30 @@ func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, b.Record.Revision, d.Record.Revision)
 	assert.Len(t, d.Events, 2)
+}
+
+func TestTaxCashAppendVoidAtomic(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("USD")}
+	r, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, in)
+	require.NoError(t, err)
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	first, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+	require.NoError(t, err)
+	cash.Amount = new("0.01")
+	_, err = s.AddTaxEvent(ctx, r.RecordID, first.Record.Revision, cash)
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	d, err := s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Len(t, d.Events, 1)
+	assert.Equal(t, first.Record.Revision, d.Record.Revision)
+	_, err = s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, r.Revision, "correction")
+	require.ErrorIs(t, err, ErrStaleRevision)
+	voided, err := s.VoidTaxEvent(ctx, r.RecordID, first.Event.EventID, first.Record.Revision, "correction")
+	require.NoError(t, err)
+	d, err = s.GetTaxRecordDetail(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, first.Record.Revision+1, voided.Record.Revision)
+	assert.Equal(t, new(int64(100)), d.Balance.OutstandingMinor)
 }

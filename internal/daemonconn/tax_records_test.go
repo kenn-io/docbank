@@ -50,7 +50,7 @@ func TestTaxRecordClientRejectsUntrustedResponses(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("ETag", tc.etag)
-			_, _ = w.Write([]byte(strings.TrimSuffix(tc.body, "}") + `,"events":[]}`))
+			_, _ = w.Write([]byte(strings.TrimSuffix(tc.body, "}") + `,"events":[],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`))
 		}))
 		_, err := New(server.URL, "").TaxRecord(t.Context(), id, false)
 		require.Error(t, err)
@@ -98,7 +98,7 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.Header().Set("ETag", `"1"`)
-					_, _ = w.Write(append(body[:len(body)-1], []byte(`,"events":[]}`)...))
+					_, _ = w.Write(append(body[:len(body)-1], []byte(`,"events":[],"balance":{"outstanding_minor":null,"currency":"","other_currency_events":0}}`)...))
 				}))
 				t.Cleanup(server.Close)
 				c := New(server.URL, "")
