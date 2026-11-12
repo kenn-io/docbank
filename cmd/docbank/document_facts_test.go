@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json/v2"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,5 +76,57 @@ func TestDocumentFactsCommands(t *testing.T) {
 			require.Equal(t, "author", roles[person.PersonID])
 			require.Equal(t, "blind_copy", roles[blind.PersonID])
 		}
+	}
+}
+
+func TestDocumentPeopleTableAssertionSupport(t *testing.T) {
+	edge := api.VersionPersonEdge{PersonID: "person", DisplayName: "Author", Role: "author", Basis: "operator_assigned", EvidenceKind: "operator_assertion", EvidenceID: "assertion"}
+	assertion := api.VersionPersonAssertion{AssertionID: "assertion", PersonID: "person", DisplayName: "Author", Role: "author", Action: "assert"}
+	for _, tc := range []struct {
+		name      string
+		state     string
+		edges     []api.VersionPersonEdge
+		assertion api.VersionPersonAssertion
+		wantRow   bool
+	}{
+		{name: "represented", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: assertion},
+		{name: "none", state: "none", assertion: assertion, wantRow: true},
+		{name: "pending", state: "pending", assertion: assertion, wantRow: true},
+		{name: "failed", state: "failed", assertion: assertion, wantRow: true},
+		{name: "published without edge", state: "published", assertion: assertion, wantRow: true},
+		{name: "suppress", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "suppress"; return a }(), wantRow: true},
+		{name: "withdrawn", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Action = "withdrawn"; return a }(), wantRow: true},
+		{name: "new assertion", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.AssertionID = "new"; return a }(), wantRow: true},
+		{name: "different person", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.PersonID = "other"; return a }(), wantRow: true},
+		{name: "different role", state: "published", edges: []api.VersionPersonEdge{edge}, assertion: func() api.VersionPersonAssertion { a := assertion; a.Role = "sender"; return a }(), wantRow: true},
+		{name: "different evidence kind", state: "published", edges: []api.VersionPersonEdge{func() api.VersionPersonEdge { e := edge; e.EvidenceKind = "custodian_assignment"; return e }()}, assertion: assertion, wantRow: true},
+		{name: "empty identity", state: "published", edges: []api.VersionPersonEdge{func() api.VersionPersonEdge { e := edge; e.EvidenceID = ""; return e }()}, assertion: func() api.VersionPersonAssertion { a := assertion; a.AssertionID = ""; return a }(), wantRow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := api.VersionPeople{State: tc.state, Edges: tc.edges, Assertions: []api.VersionPersonAssertion{tc.assertion}, Unresolved: []api.VersionUnresolvedName{{Role: "author", RawLabel: "Unknown"}}}
+			var before strings.Builder
+			require.NoError(t, writeVersionJSON(&before, &result))
+			var table strings.Builder
+			require.NoError(t, writeVersionPeopleTable(&table, &result))
+			require.Contains(t, table.String(), "Unknown  unresolved")
+			if len(tc.edges) != 0 {
+				require.Contains(t, table.String(), "Assigned by you")
+			}
+			if tc.wantRow {
+				require.Contains(t, table.String(), tc.assertion.Action+"\n")
+			} else {
+				require.NotContains(t, table.String(), "assert\n")
+			}
+			var output strings.Builder
+			require.NoError(t, writeVersionJSON(&output, &result))
+			var decoded api.VersionPeople
+			require.NoError(t, json.Unmarshal([]byte(output.String()), &decoded))
+			require.Equal(t, before.String(), output.String())
+			require.Equal(t, result.Assertions, decoded.Assertions)
+			require.Len(t, decoded.Edges, len(tc.edges))
+			if len(tc.edges) != 0 {
+				require.Equal(t, tc.edges[0].EvidenceID, decoded.Edges[0].EvidenceID)
+			}
+		})
 	}
 }

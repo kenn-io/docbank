@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"text/tabwriter"
 	"uuid"
 
@@ -68,23 +69,38 @@ func documentFactsCommand(kind string) *cobra.Command {
 		if asJSON {
 			return writeVersionJSON(cmd.OutOrStdout(), result)
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		for _, edge := range result.Edges {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
-		}
-		for _, assertion := range result.Assertions {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
-		}
-		for _, unresolved := range result.Unresolved {
-			_, _ = fmt.Fprintf(w, "%s\t%s\tunresolved\n", unresolved.Role, unresolved.RawLabel)
-		}
-		return w.Flush()
+		return writeVersionPeopleTable(cmd.OutOrStdout(), result)
 	}}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	cmd.Flags().BoolVar(&full, "full", false, "include sensitive claims")
 	return cmd
 }
+func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) error {
+	_, _ = fmt.Fprintf(out, "State: %s\n", result.State)
+	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
+	for _, edge := range result.Edges {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
+	}
+	for _, assertion := range result.Assertions {
+		represented := false
+		if assertion.Action == "assert" && assertion.AssertionID != "" {
+			for _, edge := range result.Edges {
+				if edge.EvidenceKind == "operator_assertion" && edge.EvidenceID == assertion.AssertionID && edge.PersonID == assertion.PersonID && edge.Role == assertion.Role {
+					represented = true
+					break
+				}
+			}
+		}
+		if !represented {
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
+		}
+	}
+	for _, unresolved := range result.Unresolved {
+		_, _ = fmt.Fprintf(w, "%s\t%s\tunresolved\n", unresolved.Role, unresolved.RawLabel)
+	}
+	return w.Flush()
+}
+
 func documentFactLabel(value string) string {
 	switch value {
 	case "source_asserted":
