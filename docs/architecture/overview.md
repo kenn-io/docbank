@@ -83,6 +83,23 @@ This is why an automation should remember node and version IDs, not paths
 alone. It is also why finding a correctly named file under `blobs/` does not
 make that file part of the vault. Only a committed catalog reference does.
 
+## Tax authority
+
+The store preserves [tax accounts and initial records](../usage/tax-records.md)
+as structured metadata. Accounts refer to parties; attached records copy the
+account identity. Snapshot recovery validates and restores this authority in
+party, account, and record order.
+
+Store updates replace the record's content and nullable fields. Callers must
+supply the dates, year, lead time, form code and amount they want to retain;
+null clears the corresponding nullable value. Identity and currency pointers
+retain their values when omitted. An empty direction retains its current value,
+which must remain consistent with the supplied amount. The account binding and
+kind must match the existing record.
+
+A successful update advances the revision even when supplied values are
+unchanged. Tax writes use the logical audit gate.
+
 ## How a write becomes authoritative
 
 Every content-write surface follows one ordering rule: prove and publish bytes

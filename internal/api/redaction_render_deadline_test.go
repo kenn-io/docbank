@@ -59,7 +59,7 @@ func TestRedactionRenderHTTPDeadline(t *testing.T) {
 					return err
 				}
 				const timeout = 10 * time.Minute // the route's production limit
-				server := httptest.NewTestServer(t, recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { serveRedactionRender(w, r, run, timeout) }), slog.New(slog.DiscardHandler)))
+				server := httptest.NewTestServer(t, recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { serveRedactionRender(w, r, run, timeout) }), slog.New(slog.DiscardHandler), ""))
 				client := server.Client()
 				request := processing.RedactionRenderRequest{ReviewSHA256: strings.Repeat("b", 64), Masks: []processing.RedactionMask{{ID: uuid.New(), Selector: redaction.Selector{Kind: "page", MapSHA256: strings.Repeat("c", 64), Pages: []int{1}}}}}
 				body, err := json.Marshal(request)

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -237,7 +238,7 @@ func rejectDeclaredOversizeBodies(api huma.API, logger *slog.Logger) func(huma.C
 			return
 		}
 		if err := huma.WriteErr(api, ctx, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body is too large limit=%d bytes", limit)); err != nil {
-			logger.Debug("write oversize body rejection", "path", r.URL.Path, "error", err)
+			logger.Debug("write oversize body rejection", "path", requestLogPath(r.URL, ""), "error", err)
 		}
 	}
 }
@@ -394,23 +395,52 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
-func logMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
+// Check both the original path and ServeMux-cleaned escaped path before unescaping segments.
+// Tax paths are recognized at the root and under the configured web base path.
+func isTaxLogPath(u *url.URL, basePath string) bool {
+	for _, candidate := range []string{u.EscapedPath(), path.Clean(u.EscapedPath())} {
+		segments := strings.FieldsFunc(candidate, func(r rune) bool { return r == '/' })
+		for _, prefix := range []string{"", basePath} {
+			expected := append(strings.FieldsFunc(prefix, func(r rune) bool { return r == '/' }), "api", "v1", "tax")
+			if len(segments) >= len(expected) && slices.EqualFunc(segments[:len(expected)], expected, func(segment, want string) bool {
+				value, err := url.PathUnescape(segment)
+				return err == nil && value == want
+			}) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func requestLogPath(u *url.URL, basePath string) string {
+	if isTaxLogPath(u, basePath) {
+		return "/api/v1/tax/{redacted}"
+	}
+	return u.Path
+}
+
+func logMiddleware(next http.Handler, logger *slog.Logger, basePath string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("request", "method", r.Method, "path", r.URL.Path,
+		logger.Info("request", "method", r.Method, "path", requestLogPath(r.URL, basePath),
 			"remote", r.RemoteAddr, "duration", time.Since(start))
 	})
 }
 
-func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
+func recoverMiddleware(next http.Handler, logger *slog.Logger, basePath string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
 				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(v)
 				}
-				logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
+				if isTaxLogPath(r.URL, basePath) {
+					logger.Error("panic in tax handler", "path", requestLogPath(r.URL, basePath))
+				} else {
+					logger.Error("panic in handler", "path", r.URL.Path, "panic", v)
+				}
 				writeError(w, NewError(http.StatusInternalServerError, "internal", "internal server error"))
 			}
 		}()

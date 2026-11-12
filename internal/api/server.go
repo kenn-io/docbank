@@ -236,6 +236,8 @@ func NewServer(d Deps) *Server {
 	registerContentPruneRoute(humaAPI, d, g)
 	registerProvenanceRoutes(humaAPI, d, g)
 	registerTagRoutes(humaAPI, d, g)
+	registerPartyRoutes(humaAPI, d, g)
+	registerTaxRoutes(humaAPI, d, g)
 	registerBatchTagRoutes(humaAPI, d, g)
 	registerSavedQueryRoutes(humaAPI, d, g, s.snapshots)
 	registerQueryCompileRoutes(humaAPI, d)
@@ -300,8 +302,8 @@ func NewServer(d Deps) *Server {
 	h = timeoutMiddleware(h)
 	h = webBasePathMiddleware(h, d.Cfg.Web.BasePath)
 	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
-	h = recoverMiddleware(h, d.Logger)
-	h = logMiddleware(h, d.Logger)
+	h = recoverMiddleware(h, d.Logger, d.Cfg.Web.BasePath)
+	h = logMiddleware(h, d.Logger, d.Cfg.Web.BasePath)
 	h = trackMiddleware(h, d.Tracker)
 	s.handler = h
 	return s
@@ -416,6 +418,10 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/split", http.MethodPost},
+		{"/api/v1/parties/{party_id}", http.MethodPatch},
+		{"/api/v1/parties/{party_id}/retire", http.MethodPost},
+		{"/api/v1/tax/accounts/{account_id}", http.MethodPatch},
+		{"/api/v1/tax/accounts/{account_id}/retire", http.MethodPost},
 	} {
 		markDocumentedHeaderRequired(api, route.path, route.method, "If-Match")
 	}

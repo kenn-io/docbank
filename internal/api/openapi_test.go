@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func TestOpenAPIDocumentOffline(t *testing.T) {
@@ -668,6 +669,8 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
 		doc.Paths["/api/v1/tags/{tag_id}"].Delete,
+		doc.Paths["/api/v1/parties/{party_id}"].Patch,
+		doc.Paths["/api/v1/parties/{party_id}/retire"].Post,
 	} {
 		require.NotNil(t, operation)
 		required := map[string]bool{}
@@ -853,4 +856,99 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	require.NotNil(t, edit)
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
 	require.NotContains(t, edit.Required, "content_version_id")
+}
+
+func TestPartyRequestSchemas(t *testing.T) {
+	t.Parallel()
+	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas.Map()
+	for _, name := range []string{"CreatePartyRequest", "PatchPartyRequest"} {
+		schema := schemas[name]
+		require.NotNil(t, schema)
+		assert.ElementsMatch(t, []any{"person", "organization"}, schema.Properties["kind"].Enum)
+		assert.Equal(t, 1, *schema.Properties["display_name"].MinLength)
+		assert.Equal(t, 200, *schema.Properties["display_name"].MaxLength)
+		assert.Equal(t, 300, *schema.Properties["legal_name"].MaxLength)
+		assert.Equal(t, "uuid", schema.Properties["person_id"].Format)
+	}
+	patch := schemas["PatchPartyRequest"]
+	var fields []string
+	for _, option := range patch.AnyOf {
+		fields = append(fields, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"kind", "display_name", "legal_name", "country", "person_id", "own"}, fields)
+}
+
+func TestTaxOpenAPIContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	collection := doc.Paths["/api/v1/tax/accounts"]
+	require.NotNil(t, collection)
+	require.NotNil(t, collection.Get)
+	require.NotNil(t, collection.Post)
+	item := doc.Paths["/api/v1/tax/accounts/{account_id}"]
+	require.NotNil(t, item)
+	require.NotNil(t, item.Get)
+	require.NotNil(t, item.Patch)
+	retire := doc.Paths["/api/v1/tax/accounts/{account_id}/retire"]
+	require.NotNil(t, retire)
+	require.NotNil(t, retire.Post)
+	for _, operation := range []*huma.Operation{item.Patch, retire.Post} {
+		required := false
+		for _, parameter := range operation.Parameters {
+			if parameter.In == "header" && parameter.Name == "If-Match" {
+				required = parameter.Required
+			}
+		}
+		assert.True(t, required)
+	}
+	create := doc.Components.Schemas.Map()["CreateTaxAccountRequest"]
+	require.NotNil(t, create)
+	assert.Equal(t, "uuid", create.Properties["filer_party_id"].Format)
+	assert.Equal(t, "uuid", create.Properties["authority_party_id"].Format)
+	assert.Equal(t, 2, *create.Properties["country"].MaxLength)
+	assert.Equal(t, 256, *create.Properties["tax_kind"].MaxLength)
+	patch := doc.Components.Schemas.Map()["PatchTaxAccountRequest"]
+	require.NotNil(t, patch)
+	var cadences []any
+	for _, cadence := range taxrecord.AccountCadences() {
+		cadences = append(cadences, cadence)
+	}
+	for _, schema := range []*huma.Schema{create, patch} {
+		assert.ElementsMatch(t, cadences, schema.Properties["cadence"].Enum)
+		assert.Equal(t, new(float64(0)), schema.Properties["lead_days"].Minimum)
+		assert.Equal(t, new(float64(366)), schema.Properties["lead_days"].Maximum)
+		assert.Equal(t, 3, *schema.Properties["currency"].MaxLength)
+		assert.Equal(t, 8192, *schema.Properties["note"].MaxLength)
+	}
+	assert.NotContains(t, patch.Properties, "country")
+	assert.NotContains(t, patch.Properties, "clear_effective_start")
+	assert.Equal(t, false, patch.AdditionalProperties)
+	var presence []string
+	for _, option := range patch.AnyOf {
+		presence = append(presence, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", "note"}, presence)
+	for _, field := range []string{"cadence", "currency", "due_note", "identifier", "lead_days", "note", "period_note"} {
+		require.Contains(t, patch.Properties, field)
+		assert.False(t, patch.Properties[field].Nullable, field)
+		assert.NotContains(t, patch.Required, field)
+	}
+	for _, field := range []string{"effective_start", "effective_end"} {
+		require.Contains(t, patch.Properties, field)
+		assert.True(t, patch.Properties[field].Nullable, field)
+		assert.NotContains(t, patch.Required, field)
+	}
+	account := doc.Components.Schemas.Map()["TaxAccount"]
+	require.NotNil(t, account)
+	for _, field := range []string{"authority_party_id", "effective_start", "effective_end", "retired_at"} {
+		require.Contains(t, account.Properties, field)
+		assert.True(t, account.Properties[field].Nullable, field)
+	}
+	assert.Equal(t, 64, *account.Properties["tax_kind"].MaxLength)
+	identifier := account.Properties["identifier"]
+	require.NotNil(t, identifier)
+	assert.Nil(t, identifier.MaxLength)
+	assert.Empty(t, identifier.Pattern)
+	assert.Contains(t, collection.Post.Responses, "201")
+	assert.Contains(t, item.Get.Responses, "200")
 }

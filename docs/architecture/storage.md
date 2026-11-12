@@ -156,6 +156,10 @@ vault, so it also keeps state that a restore deliberately resets:
 
 - Export sources, plans, and jobs with their owners, so export handles still
   resolve, interrupted exports resume, and completed archives are kept.
+- Watch-source absence observations and explicit photo-description waiters from
+  v0.17.0, so pending observations and requests keep their intent.
+- Photo provider answers and completed scan markers from v0.17.0, so pending
+  suggestions stay searchable and completed scans do not reopen.
 - Embedding jobs, so failed or retry-exhausted jobs are not queued again with
   a fresh retry budget.
 - Media receipts, so an admitted request that has no rendition job yet still
@@ -166,6 +170,10 @@ vault, so it also keeps state that a restore deliberately resets:
 - Unexpired package preflights and in-progress mailbox uploads with their
   accepted chunks, so the user can continue within the 24-hour session instead
   of starting again.
+
+The new database gets a fresh change-feed epoch, so old feed cursors expire and
+clients must rescan. Vector membership epochs are derived from retained
+authority during import rather than copied.
 
 A copied source table whose columns differ from the current schema stops the
 upgrade before the vault changes. Restoring a backup still requires fresh

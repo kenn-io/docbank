@@ -650,6 +650,7 @@ export interface Error {
   inaccessible_face_conflict?: boolean;
   more?: boolean;
   observed_scope_count?: number;
+  party_id?: string;
   position?: ErrorPosition;
   redaction?: PDFRedactionProblem;
   status: number;
@@ -1786,6 +1787,32 @@ export interface CreateNodeRequest {
   parent_id: number;
 }
 
+export type CreatePartyRequestKind = typeof CreatePartyRequestKind[keyof typeof CreatePartyRequestKind];
+
+
+export const CreatePartyRequestKind = {
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export interface CreatePartyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  country?: string | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  display_name: string;
+  kind: CreatePartyRequestKind;
+  /** @maxLength 300 */
+  legal_name?: string;
+  own?: boolean;
+  /** @nullable */
+  person_id?: string | null;
+}
+
 export interface CreatePersonRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1859,6 +1886,68 @@ export interface CreateTagRequest {
   readonly $schema?: string;
   /** @minLength 1 */
   name: string;
+}
+
+export type CreateTaxAccountRequestCadence = typeof CreateTaxAccountRequestCadence[keyof typeof CreateTaxAccountRequestCadence];
+
+
+export const CreateTaxAccountRequestCadence = {
+  monthly: 'monthly',
+  bimonthly: 'bimonthly',
+  quarterly: 'quarterly',
+  semiannual: 'semiannual',
+  annual: 'annual',
+  event: 'event',
+  other: 'other',
+} as const;
+
+export interface CreateTaxAccountRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  authority_party_id?: string | null;
+  cadence: CreateTaxAccountRequestCadence;
+  /** @maxLength 2 */
+  country: string;
+  /** @maxLength 3 */
+  currency: string;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
+  due_note?: string;
+  /** @nullable */
+  effective_end?: string | null;
+  /** @nullable */
+  effective_start?: string | null;
+  filer_party_id: string;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 256
+     */
+  identifier?: string;
+  /**
+     * @minimum 0
+     * @maximum 366
+     */
+  lead_days?: number;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
+  note?: string;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
+  period_note?: string;
+  /** @maxLength 6 */
+  subdivision?: string;
+  /**
+     * At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.
+     * @maxLength 256
+     */
+  tax_kind: string;
 }
 
 export interface CustodianAssignment {
@@ -5139,6 +5228,109 @@ export interface PageSelectionRequest {
   readonly $schema?: string;
   selection: PageBinding;
 }
+
+export interface Party {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  country: string | null;
+  created_at: string;
+  display_name: string;
+  kind: string;
+  legal_name: string;
+  own: boolean;
+  party_id: string;
+  /** @nullable */
+  person_id: string | null;
+  /** @nullable */
+  retired_at: string | null;
+  revision: number;
+  updated_at: string;
+}
+
+export interface PartyPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: Party[];
+  limit: number;
+  offset: number;
+}
+
+export type PatchPartyRequestKind = typeof PatchPartyRequestKind[keyof typeof PatchPartyRequestKind];
+
+
+export const PatchPartyRequestKind = {
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export type PatchPartyRequest = (unknown & ({
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  country?: string | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  display_name?: string;
+  kind?: PatchPartyRequestKind;
+  /** @maxLength 300 */
+  legal_name?: string;
+  own?: boolean;
+  /** @nullable */
+  person_id?: string | null;
+}));
+
+export type PatchTaxAccountRequestCadence = typeof PatchTaxAccountRequestCadence[keyof typeof PatchTaxAccountRequestCadence];
+
+
+export const PatchTaxAccountRequestCadence = {
+  monthly: 'monthly',
+  bimonthly: 'bimonthly',
+  quarterly: 'quarterly',
+  semiannual: 'semiannual',
+  annual: 'annual',
+  event: 'event',
+  other: 'other',
+} as const;
+
+export type PatchTaxAccountRequest = (unknown & ({
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  cadence?: PatchTaxAccountRequestCadence;
+  /** @maxLength 3 */
+  currency?: string;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
+  due_note?: string;
+  /** @nullable */
+  effective_end?: string | null;
+  /** @nullable */
+  effective_start?: string | null;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 256
+     */
+  identifier?: string;
+  /**
+     * @minimum 0
+     * @maximum 366
+     */
+  lead_days?: number;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
+  note?: string;
+  /**
+     * The limit also applies to UTF-8 bytes.
+     * @maxLength 8192
+     */
+  period_note?: string;
+}));
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 
@@ -8705,6 +8897,43 @@ export interface TaggedNodePage {
   total: number;
 }
 
+export interface TaxAccount {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  account_id: string;
+  /** @nullable */
+  authority_party_id: string | null;
+  cadence: string;
+  country: string;
+  created_at: string;
+  currency: string;
+  due_note: string;
+  /** @nullable */
+  effective_end: string | null;
+  /** @nullable */
+  effective_start: string | null;
+  filer_party_id: string;
+  identifier: string;
+  lead_days: number;
+  note: string;
+  period_note: string;
+  /** @nullable */
+  retired_at: string | null;
+  revision: number;
+  subdivision: string;
+  /** @maxLength 64 */
+  tax_kind: string;
+  updated_at: string;
+}
+
+export interface TaxAccountPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: TaxAccount[];
+  limit: number;
+  offset: number;
+}
+
 /**
  * How long a session_ended session lasted.
  */
@@ -9596,6 +9825,7 @@ export type GetExportJobEventsDefault = {
   inaccessible_face_conflict?: boolean;
   more?: boolean;
   observed_scope_count?: number;
+  party_id?: string;
   position?: ErrorPosition;
   redaction?: PDFRedactionProblem;
   status: number;
@@ -9965,6 +10195,47 @@ frame_sha256?: string;
  * @pattern ^[0-9a-f]{64}$
  */
 image_sha256?: string;
+};
+
+export type ListPartiesParams = {
+kind?: ListPartiesKind;
+own?: ListPartiesOwn;
+include_retired?: boolean;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListPartiesKind = typeof ListPartiesKind[keyof typeof ListPartiesKind];
+
+
+export const ListPartiesKind = {
+  '': '',
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export type ListPartiesOwn = typeof ListPartiesOwn[keyof typeof ListPartiesOwn];
+
+
+export const ListPartiesOwn = {
+  '': '',
+  true: 'true',
+  false: 'false',
+} as const;
+
+export type UpdatePartyHeaders = {
+'If-Match': string;
+};
+
+export type RetirePartyHeaders = {
+'If-Match': string;
 };
 
 export type ResolvePathParams = {
@@ -10383,6 +10654,34 @@ limit?: number;
  */
 offset?: number;
 live_only?: boolean;
+};
+
+export type ListTaxAccountsParams = {
+filer?: string;
+country?: string;
+taxkind?: string;
+include_retired?: boolean;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetTaxAccountParams = {
+reveal?: boolean;
+};
+
+export type UpdateTaxAccountHeaders = {
+'If-Match': string;
+};
+
+export type RetireTaxAccountHeaders = {
+'If-Match': string;
 };
 
 export type ListTrashParams = {
@@ -16392,6 +16691,178 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
 
 
 
+export const getListPartiesUrl = (params?: ListPartiesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/parties?${stringifiedParams}` : `/api/v1/parties`
+}
+
+/**
+ * @summary List parties
+ */
+export const listParties = async (params?: ListPartiesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PartyPage> => {
+
+  return sessionJSON<PartyPage>(getListPartiesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePartyUrl = () => {
+
+
+
+
+  return `/api/v1/parties`
+}
+
+/**
+ * @summary Create a party
+ */
+export const createParty = async (createPartyRequest: NonReadonly<CreatePartyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Party>(getCreatePartyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPartyRequest)
+  }
+);}
+
+
+
+export const getGetPartyUrl = (partyId: string,) => {
+
+
+
+
+  return `/api/v1/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Inspect a party
+ */
+export const getParty = async (partyId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+  return sessionJSON<Party>(getGetPartyUrl(partyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdatePartyUrl = (partyId: string,) => {
+
+
+
+
+  return `/api/v1/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Edit a party
+ */
+export const updateParty = async (partyId: string,
+    patchPartyRequest: NonReadonly<PatchPartyRequest>,
+    headers: UpdatePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Party>(getUpdatePartyUrl(partyId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchPartyRequest)
+  }
+);}
+
+
+
+export const getRetirePartyUrl = (partyId: string,) => {
+
+
+
+
+  return `/api/v1/parties/${encodeURIComponent(String(partyId))}/retire`
+}
+
+/**
+ * @summary Retire a party
+ */
+export const retireParty = async (partyId: string,
+    headers: RetirePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Party>(getRetirePartyUrl(partyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
 export const getResolvePathUrl = (params: ResolvePathParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -21647,6 +22118,187 @@ export const listTagNodes = async (tagId: string,
     ...options,
     method: 'GET'
 
+
+  }
+);}
+
+
+
+export const getListTaxAccountsUrl = (params?: ListTaxAccountsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/tax/accounts?${stringifiedParams}` : `/api/v1/tax/accounts`
+}
+
+/**
+ * @summary List tax accounts
+ */
+export const listTaxAccounts = async (params?: ListTaxAccountsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccountPage> => {
+
+  return sessionJSON<TaxAccountPage>(getListTaxAccountsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateTaxAccountUrl = () => {
+
+
+
+
+  return `/api/v1/tax/accounts`
+}
+
+/**
+ * @summary Create a tax account
+ */
+export const createTaxAccount = async (createTaxAccountRequest: NonReadonly<CreateTaxAccountRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxAccount>(getCreateTaxAccountUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createTaxAccountRequest)
+  }
+);}
+
+
+
+export const getGetTaxAccountUrl = (accountId: string,
+    params?: GetTaxAccountParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}?${stringifiedParams}` : `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}`
+}
+
+/**
+ * @summary Inspect a tax account
+ */
+export const getTaxAccount = async (accountId: string,
+    params?: GetTaxAccountParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+  return sessionJSON<TaxAccount>(getGetTaxAccountUrl(accountId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdateTaxAccountUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}`
+}
+
+/**
+ * @summary Edit a tax account
+ */
+export const updateTaxAccount = async (accountId: string,
+    patchTaxAccountRequest: NonReadonly<PatchTaxAccountRequest>,
+    headers: UpdateTaxAccountHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxAccount>(getUpdateTaxAccountUrl(accountId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchTaxAccountRequest)
+  }
+);}
+
+
+
+export const getRetireTaxAccountUrl = (accountId: string,) => {
+
+
+
+
+  return `/api/v1/tax/accounts/${encodeURIComponent(String(accountId))}/retire`
+}
+
+/**
+ * @summary Retire a tax account
+ */
+export const retireTaxAccount = async (accountId: string,
+    headers: RetireTaxAccountHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<TaxAccount> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TaxAccount>(getRetireTaxAccountUrl(accountId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
