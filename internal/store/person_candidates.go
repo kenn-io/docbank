@@ -756,6 +756,7 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 	}
 	type orderedCandidate struct {
 		VersionCandidate
+
 		createdAt string
 	}
 	var candidates []orderedCandidate
@@ -772,33 +773,33 @@ func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier,
 		columns := `candidate_id,actor_key,evidence_json,created_at`
 		query := `SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NULL AND ` + filter +
 			` UNION ALL SELECT ` + columns + ` FROM person_match_candidates WHERE suggested_person_id IS NOT NULL AND ` + filter
-		rows, err := q.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var c orderedCandidate
-			var raw []byte
-			if err := rows.Scan(&c.CandidateID, &c.ActorKey, &raw, &c.createdAt); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			occurrences, err := decodeStoredCandidateEvidence(raw)
+		err := func() error {
+			rows, err := q.QueryContext(ctx, query, args...)
 			if err != nil {
-				_ = rows.Close()
-				return nil, err
+				return err
 			}
-			for _, occurrence := range occurrences {
-				if occurrence.ContentVersionID == versionID {
-					c.Occurrences = append(c.Occurrences, occurrence)
+			defer rows.Close()
+			for rows.Next() {
+				var c orderedCandidate
+				var raw []byte
+				if err := rows.Scan(&c.CandidateID, &c.ActorKey, &raw, &c.createdAt); err != nil {
+					return err
+				}
+				occurrences, err := decodeStoredCandidateEvidence(raw)
+				if err != nil {
+					return err
+				}
+				for _, occurrence := range occurrences {
+					if occurrence.ContentVersionID == versionID {
+						c.Occurrences = append(c.Occurrences, occurrence)
+					}
+				}
+				if len(c.Occurrences) > 0 {
+					candidates = append(candidates, c)
 				}
 			}
-			if len(c.Occurrences) > 0 {
-				candidates = append(candidates, c)
-			}
-		}
-		err = rows.Err()
-		_ = rows.Close()
+			return rows.Err()
+		}()
 		if err != nil {
 			return nil, err
 		}

@@ -840,9 +840,12 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newPostgresQueryStore)
 		}},
-		{"OpenCandidatesForVersionScopesOccurrences", func(t *testing.T) { t.Helper(); checkOpenCandidatesForVersionScopesOccurrences(t, newTestStore) }, func(t *testing.T) {
+		{"OpenCandidatesForVersionScopesOccurrences", func(t *testing.T) {
 			t.Helper()
-			checkOpenCandidatesForVersionScopesOccurrences(t, newPostgresQueryStore)
+			checkOpenCandidatesForVersionScopesOccurrences(t, false)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkOpenCandidatesForVersionScopesOccurrences(t, true)
 		}},
 		{"OpenPersonCandidateReplaysDecisionAndSeparatesNewEvidence", func(t *testing.T) {
 			t.Helper()
