@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
@@ -43,14 +42,7 @@ func validTaxRecord(r api.TaxRecord) bool {
 	if taxrecord.ValidateRecord(v) != nil {
 		return false
 	}
-	for _, timestamp := range []*string{&r.CreatedAt, &r.UpdatedAt, r.RetiredAt} {
-		if timestamp != nil {
-			if _, err := time.Parse(time.RFC3339Nano, *timestamp); err != nil {
-				return false
-			}
-		}
-	}
-	return true
+	return validTaxTimestamps(r.CreatedAt, r.UpdatedAt, r.RetiredAt)
 }
 func validateTaxRecordResponse(r *api.TaxRecord, response *http.Response, id string) (api.TaxRecord, error) {
 	if r == nil || response == nil || !validTaxRecord(*r) || (id != "" && r.RecordID != id) || response.Header.Get("ETag") != revisionIfMatch(r.Revision) {
@@ -108,6 +100,9 @@ func (c *Connection) CreateTaxRecord(ctx context.Context, in api.CreateTaxRecord
 		return api.TaxRecord{}, taxMutationFailure(err, "record")
 	}
 	result, err := validateTaxRecordResponse(&receipt.Items[0], response, "")
+	if err == nil && (result.Revision != 1 || result.RetiredAt != nil) {
+		err = &responseDecodeError{err: errors.New("invalid tax record response")}
+	}
 	return result, taxMutationFailure(err, "record")
 }
 func (c *Connection) UpdateTaxRecord(ctx context.Context, id string, revision int64, in api.PatchTaxRecordRequest) (api.TaxRecord, error) {
@@ -124,6 +119,9 @@ func (c *Connection) UpdateTaxRecord(ctx context.Context, id string, revision in
 		return api.TaxRecord{}, taxMutationFailure(err, "record")
 	}
 	result, err := validateTaxRecordResponse(&receipt.Items[0], response, id)
+	if err == nil && (result.Revision-1 != revision || result.RetiredAt != nil) {
+		err = &responseDecodeError{err: errors.New("invalid tax record response")}
+	}
 	return result, taxMutationFailure(err, "record")
 }
 func (c *Connection) RetireTaxRecord(ctx context.Context, id string, revision int64) (api.TaxRecord, error) {
@@ -140,5 +138,8 @@ func (c *Connection) RetireTaxRecord(ctx context.Context, id string, revision in
 		return api.TaxRecord{}, taxMutationFailure(err, "record")
 	}
 	result, err := validateTaxRecordResponse(&receipt.Items[0], response, id)
+	if err == nil && (result.Revision-1 != revision || result.RetiredAt == nil) {
+		err = &responseDecodeError{err: errors.New("invalid tax record response")}
+	}
 	return result, taxMutationFailure(err, "record")
 }

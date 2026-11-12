@@ -64,19 +64,37 @@ func readTaxTestRecord(t *testing.T, ts *httptest.Server, id string) api.TaxReco
 func TestTaxRecordFiltersAndReferences(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	_, account := createTaxTestAccount(t, ts, nil)
-	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
-	for _, q := range []string{"country=zz", "kind=filing"} {
+	filer, account := createTaxTestAccount(t, ts, nil)
+	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example", "tax_year": 2026, "period_start": "2026-01-01", "period_end": "2026-12-31"})
+	for _, q := range []string{"country=zz", "kind=filing", "year=2026", "state=expected", "taxkind=example", "filer=" + filer.PartyID} {
 		resp, body := get(t, ts, "/api/v1/tax/records?"+q, nil)
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		assert.Contains(t, body, r.RecordID)
 	}
+	for _, q := range []string{"kind=audit", "year=2025", "state=opened", "taxkind=other", "filer=33333333-3333-4333-8333-333333333333"} {
+		resp, body := get(t, ts, "/api/v1/tax/records?"+q, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		assert.NotContains(t, body, r.RecordID)
+	}
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Duplicate", "period_start": "2026-01-01", "period_end": "2026-12-31"})
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Equal(t, r, readTaxTestRecord(t, ts, r.RecordID))
 	for _, q := range []string{"filer=bad", "country=%C5%BFZ", "country=bad", "year=0", "year=10000", "year=bad", "state=bad", "kind=bad", "limit=0", "limit=1001", "offset=-1"} {
 		resp, body := get(t, ts, "/api/v1/tax/records?"+q, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records/"+r.RecordID+"/retire", map[string]string{"If-Match": `"1"`}, nil)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/records/"+r.RecordID+"/retire", map[string]string{"If-Match": `"1"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	retired := readTaxTestRecord(t, ts, r.RecordID)
+	for _, op := range []struct {
+		method, path string
+		body         any
+	}{{http.MethodPatch, "/api/v1/tax/records/" + r.RecordID, map[string]any{"note": "example"}}, {http.MethodPost, "/api/v1/tax/records/" + r.RecordID + "/retire", nil}} {
+		resp, body = do(t, ts, op.method, op.path, map[string]string{"If-Match": `"2"`}, op.body)
+		assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+		assert.Contains(t, body, "tax_retired")
+		assert.Equal(t, retired, readTaxTestRecord(t, ts, r.RecordID))
+	}
 	resp, body = get(t, ts, "/api/v1/tax/records?include_retired=true", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, r.RecordID)

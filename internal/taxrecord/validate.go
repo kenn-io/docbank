@@ -375,8 +375,6 @@ func ValidateRecord(v RecordValues) error {
 		if v.AmountMinor == nil || *v.AmountMinor != 0 {
 			return invalid("amount", "zero required")
 		}
-	default:
-		return invalid("direction", "unknown direction")
 	}
 	return nil
 }

@@ -132,19 +132,8 @@ func (p CreateTaxRecordRequest) MarshalJSON() ([]byte, error) {
 	if err = json.Unmarshal(raw, &members); err != nil {
 		return nil, err
 	}
-	if p.ClearAuthority || (p.present["authority_party_id"] && p.AuthorityPartyID == nil) {
+	if p.ClearAuthority {
 		members["authority_party_id"] = jsontext.Value("null")
-	}
-	for _, field := range []struct {
-		name  string
-		isNil bool
-	}{
-		{"account_id", p.AccountID == nil}, {"tax_year", p.TaxYear == nil}, {"period_start", p.PeriodStart == nil},
-		{"period_end", p.PeriodEnd == nil}, {"due_date", p.DueDate == nil}, {"lead_days", p.LeadDays == nil}, {"amount", p.Amount == nil},
-	} {
-		if p.present[field.name] && field.isNil {
-			members[field.name] = jsontext.Value("null")
-		}
 	}
 	return json.Marshal(members)
 }
@@ -175,25 +164,25 @@ func (p PatchTaxRecordRequest) MarshalJSON() ([]byte, error) {
 	if err = json.Unmarshal(raw, &members); err != nil {
 		return nil, err
 	}
-	if p.ClearAuthority || (p.present["authority_party_id"] && p.AuthorityPartyID == nil) {
+	if p.ClearAuthority {
 		members["authority_party_id"] = jsontext.Value("null")
 	}
-	if p.ClearTaxYear || (p.present["tax_year"] && p.TaxYear == nil) {
+	if p.ClearTaxYear {
 		members["tax_year"] = jsontext.Value("null")
 	}
-	if p.ClearPeriodStart || (p.present["period_start"] && p.PeriodStart == nil) {
+	if p.ClearPeriodStart {
 		members["period_start"] = jsontext.Value("null")
 	}
-	if p.ClearPeriodEnd || (p.present["period_end"] && p.PeriodEnd == nil) {
+	if p.ClearPeriodEnd {
 		members["period_end"] = jsontext.Value("null")
 	}
-	if p.ClearDueDate || (p.present["due_date"] && p.DueDate == nil) {
+	if p.ClearDueDate {
 		members["due_date"] = jsontext.Value("null")
 	}
-	if p.ClearLeadDays || (p.present["lead_days"] && p.LeadDays == nil) {
+	if p.ClearLeadDays {
 		members["lead_days"] = jsontext.Value("null")
 	}
-	if p.ClearAmount || (p.present["amount"] && p.Amount == nil) {
+	if p.ClearAmount {
 		members["amount"] = jsontext.Value("null")
 	}
 	return json.Marshal(members)

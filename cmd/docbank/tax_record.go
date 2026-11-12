@@ -194,7 +194,7 @@ func taxRecordID(id string) error {
 	return nil
 }
 func newTaxRecordCommand() *cobra.Command {
-	group := &cobra.Command{Use: "record", Short: "Manage tax records", Long: "Create, inspect, edit, list, and retire initial tax records.\nEdits and retirement inspect the current revision unless one is supplied.", Args: taxNoArgs, Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	group := &cobra.Command{Use: "record", Short: "Manage tax records", Long: "Create, inspect, edit, list, and retire initial tax records.\nEdits and retirement inspect the current revision unless one is supplied.", Args: taxGroupArgs, Annotations: map[string]string{helpOnlyAnnotation: helpOnlyMarker}, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var filer, country, taxkind, state, kind string
 	var year int64
 	var include bool

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json/v2"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,15 +23,27 @@ func TestTaxCLIRecordWorkflow(t *testing.T) {
 	require.NoError(t, err, out)
 	var account api.TaxAccount
 	require.NoError(t, json.Unmarshal([]byte(out), &account))
-	out, err = runCLI(t, "tax", "record", "add", "--account", account.AccountID, "--kind", "filing", "--title", "Example return", "--direction", "payable", "--amount", "1234.00", "--note", "line one\nline two", "--json")
+	out, err = runCLI(t, "tax", "record", "add", "--account", account.AccountID, "--kind", "filing", "--title", "Example return", "--tax-year", "2026", "--direction", "payable", "--amount", "1234.00", "--note", "line one\nline two", "--json")
 	require.NoError(t, err, out)
 	var record api.TaxRecord
 	require.NoError(t, json.Unmarshal([]byte(out), &record))
-	out, err = runCLI(t, "tax", "record", "list", "--filer", party.PartyID, "--country", "zz", "--taxkind", "example", "--kind", "filing", "--state", "expected", "--limit", "1")
+	out, err = runCLI(t, "tax", "record", "list", "--filer", party.PartyID, "--country", "zz", "--taxkind", "example", "--kind", "filing", "--state", "expected", "--year", "2026", "--limit", "1")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, record.RecordID)
 	assert.Contains(t, out, "--offset 1")
 	assert.Contains(t, out, `line one\nline two`)
+	for _, args := range [][]string{{"--filer", "33333333-3333-4333-8333-333333333333"}, {"--year", "2025"}, {"--state", "opened"}, {"--kind", "audit"}, {"--taxkind", "different"}} {
+		out, err = runCLI(t, append([]string{"tax", "record", "list"}, args...)...)
+		require.NoError(t, err, out)
+		assert.NotContains(t, out, record.RecordID)
+	}
+	out, err = runCLI(t, "tax", "record", "show", record.RecordID)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `title: "Example return"`)
+	out, err = runCLI(t, "tax", "record", "edit", record.RecordID, "--note", "text example")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, `note: "text example"`)
+	record.Revision++
 	_, err = runCLI(t, "tax", "record", "edit", record.RecordID, "--direction", "")
 	require.Error(t, err)
 	out, err = runCLI(t, "tax", "record", "show", record.RecordID, "--json")
@@ -71,6 +84,13 @@ func TestTaxRecordUsageErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "private-synthetic")
 	}
+	cmd := newTaxCommand()
+	cmd.SetArgs([]string{"record", "private-synthetic"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown command")
 }
 
 func TestTaxRecordRevisionInspectNoRetry(t *testing.T) {
@@ -104,10 +124,17 @@ func TestTaxRecordHelpAndCommittedOutputFailure(t *testing.T) {
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"1"`)
+		body := taxRecordTestReceipt
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/records" {
 			w.WriteHeader(http.StatusCreated)
+		} else {
+			w.Header().Set("ETag", `"2"`)
+			body = strings.Replace(body, `"revision":1`, `"revision":2`, 1)
+			if r.Method == http.MethodPost {
+				body = strings.Replace(body, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1)
+			}
 		}
-		_, _ = w.Write([]byte(taxRecordTestReceipt))
+		_, _ = w.Write([]byte(body))
 	})
 	for _, args := range [][]string{{"record", "add", "--kind", "filing", "--title", "Example"}, {"record", "edit", id, "--note", "Example", "--revision=1"}, {"record", "retire", id, "--revision=1"}} {
 		cmd := newTaxCommand()
