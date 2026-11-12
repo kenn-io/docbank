@@ -39,7 +39,7 @@ func TestWhenFieldTable(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
 				t.Fatal(err)
 			}
-			delete(got, "placed_by")
+			want["placed_by"] = map[string]any{"source": string(tc.claim.DateKind), "rule": "primary-rule/v1", "fallback": tc.claim.DateKind == "imported" || tc.claim.DateKind == "vault_recorded", "event_id": tc.claim.EventID, "claim_basis": tc.claim.ClaimBasis}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("got %s; want %s", raw, tc.want)
 			}
@@ -63,13 +63,20 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 
 func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
+	f.Persons["visible"] = store.FactPerson{Person: store.Person{DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
+	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
-	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Private Name", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, SafeLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
+	safeFacts.Candidates = []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Private Name", Occurrences: []store.PersonCandidateOccurrence{{Role: "author"}}, OccurrenceLabels: map[store.PersonCandidateOccurrence]string{{Role: "author"}: "Recipient"}}}
 	safe := versionPeopleAPI(safeFacts, true, "")
-	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
+	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
 		t.Fatalf("safe: %+v", safe)
 	}
+	safeFacts.Persons["visible"] = store.FactPerson{Person: store.Person{DisplayName: "Confirmed Name", State: "confirmed", Origin: "derived"}, Visible: true}
+	if got := versionPeopleAPI(safeFacts, true, "").Edges[0].DisplayName; got != "Confirmed Name" {
+		t.Fatalf("confirmed name = %q", got)
+	}
+	f.Candidates[0].OccurrenceLabels = map[store.PersonCandidateOccurrence]string{{Role: "blind_copy"}: "Blind", {Role: "author"}: "Recipient"}
 	f.Persons["hidden"] = store.FactPerson{Person: store.Person{DisplayName: "Hidden"}, Visible: true}
 	full := versionPeopleAPI(f, false, "")
 	if len(full.Edges) != 3 || len(full.Assertions) != 1 || full.Assertions[0].DisplayName != "Hidden" || len(full.Unresolved) != 2 {
@@ -79,19 +86,21 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 
 func TestEmittedWhenMatchesContractExamples(t *testing.T) {
 	cases := []struct {
-		path   string
-		claim  document.DocumentEventV1
-		fields []string
+		path  string
+		claim document.DocumentEventV1
 	}{
-		{"example-1.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", ZoneText: "-04:00", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}, []string{"state", "precision", "at", "local", "zone_state", "source_zone", "source_offset_seconds"}},
-		{"example-2.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}, []string{"state", "precision", "at", "zone_state"}},
-		{"example-3.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:30:00", TimezoneKind: "omitted"}, []string{"state", "precision", "local", "zone_state"}},
-		{"example-4.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, []string{"state", "precision", "date"}},
-		{"example-5.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-09"}, []string{"state", "precision", "date"}},
-		{"example-6.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "UTC", UTCKey: "2026-03-10T23:50:00.000000000Z"}, []string{"state", "precision", "at", "local", "zone_state", "source_zone", "source_offset_seconds"}},
+		{"example-1.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", ZoneText: "-04:00", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}},
+		{"example-2.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:40:00", TimezoneKind: "offset", OffsetSeconds: new(-14400), UTCKey: "2026-03-11T03:40:00.000000000Z"}},
+		{"example-3.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:30:00", TimezoneKind: "omitted"}},
+		{"example-4.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}},
+		{"example-5.json", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-09"}},
+		{"example-6.json", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T23:50:00", TimezoneKind: "utc", ZoneText: "UTC", UTCKey: "2026-03-10T23:50:00.000000000Z"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
+			tc.claim.EventID = "evt-55"
+			tc.claim.DateKind = "imported"
+			tc.claim.ClaimBasis = "source_asserted"
 			raw, err := os.ReadFile(filepath.Join("testdata/when", tc.path))
 			if err != nil {
 				t.Fatal(err)
@@ -107,10 +116,14 @@ func TestEmittedWhenMatchesContractExamples(t *testing.T) {
 			if err := json.Unmarshal(emitted, &got); err != nil {
 				t.Fatal(err)
 			}
-			for _, field := range tc.fields {
-				if !reflect.DeepEqual(want[field], got[field]) {
-					t.Errorf("%s: got %v want %v", field, got[field], want[field])
-				}
+			// The examples are zoned and some describe ranges or other providers.
+			// This route emits single Docbank claims with its own provenance.
+			for _, field := range []string{"day", "axis_minute", "end_at", "end_local", "end_date"} {
+				delete(want, field)
+			}
+			want["placed_by"] = map[string]any{"source": string(tc.claim.DateKind), "rule": "primary-rule/v1", "fallback": true, "event_id": tc.claim.EventID, "claim_basis": tc.claim.ClaimBasis}
+			if !reflect.DeepEqual(want, got) {
+				t.Errorf("got %s; want %v", emitted, want)
 			}
 		})
 	}

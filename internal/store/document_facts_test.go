@@ -100,22 +100,6 @@ func checkDocumentPeopleFactsPublicationAndFailure(t *testing.T, newStore func(*
 	require.NoError(t, err)
 	require.Equal(t, "published", facts.State)
 	require.NotEmpty(t, facts.Edges)
-	_, err = s.StartDocumentEventRebuild(t.Context(), "77777777-7777-4777-8777-777777777777", DocumentEventRebuildRequestSHA256)
-	require.NoError(t, err)
-	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "pending", facts.State)
-	require.Empty(t, facts.Edges)
-	target.InputEpoch++
-	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
-	require.NoError(t, err)
-	input, err = s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
-	require.NoError(t, err)
-	_, err = s.PublishDocumentPeople(t.Context(), documentPeoplePublicationForInput(t, input))
-	require.NoError(t, err)
-	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
-	require.NoError(t, err)
-	require.Equal(t, "published", facts.State)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
 	require.NoError(t, err)
 	facts, err = s.DocumentPeopleFacts(t.Context(), version.ID, false)
@@ -140,12 +124,12 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	record := documentEventRecord(t, s.VaultID(), version.ID, "d9")
 	record.Events[0].Actors = []document.DocumentEventActorV1{actor,
 		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `"Private Name" <sender@example.test>`, DisplayName: "Private Name", Role: "blind_copy", Sensitive: true},
-		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `"Public Sender" <sender@example.test>`, DisplayName: "Public Sender", Role: "sender"}}
+		{ActorKey: "email:sender@example.test", Address: "sender@example.test", Claim: `<sender@example.test>`, Role: "sender"}}
 	raw, _, err := document.MarshalDocumentEventsV1(record)
 	require.NoError(t, err)
 	_, err = s.PublishDocumentEvents(t.Context(), target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), raw)
 	require.NoError(t, err)
-	_, err = s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
+	input, err := s.PrepareDocumentPeopleInputs(t.Context(), version.ID)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(t.Context(), `UPDATE person_match_candidates SET display_name=$1 WHERE actor_key=$2`, "Private Name", "email:sender@example.test")
 	require.NoError(t, err)
@@ -157,7 +141,7 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 		if c.ActorKey == "email:sender@example.test" {
 			require.Len(t, c.Occurrences, 1)
 			require.Equal(t, "Private Name", c.DisplayName)
-			require.Equal(t, "Public Sender", c.SafeLabels[c.Occurrences[0]])
+			require.Equal(t, "sender@example.test", c.OccurrenceLabels[c.Occurrences[0]])
 			foundSender = true
 		} else {
 			require.Empty(t, c.Occurrences)
@@ -167,6 +151,26 @@ func TestDocumentPeopleFactsSensitiveUnresolvedActor(t *testing.T) {
 	full, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
 	require.NoError(t, err)
 	require.Len(t, full.Candidates, 3)
+	for _, c := range full.Candidates {
+		if c.ActorKey == "email:sender@example.test" {
+			for _, o := range c.Occurrences {
+				if o.Role == "sender" {
+					require.Equal(t, "sender@example.test", c.OccurrenceLabels[o])
+				}
+			}
+		}
+	}
+	require.NoError(t, s.MarkDocumentPeopleFailed(t.Context(), input, "derivation_failed"))
+	failed, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "failed", failed.State)
+	require.Empty(t, failed.Candidates)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE document_people_heads SET resolver_fingerprint=$1 WHERE content_version_id=$2`, "old-resolver", version.ID)
+	require.NoError(t, err)
+	pending, err := s.DocumentPeopleFacts(t.Context(), version.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, "pending", pending.State)
+	require.Empty(t, pending.Candidates)
 }
 
 func TestDocumentPeopleFactsSafeHiddenVisibilityUsesCallerSession(t *testing.T) {

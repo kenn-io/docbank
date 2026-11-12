@@ -95,7 +95,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
-	eventState, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
+	_, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
 	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
@@ -112,15 +112,14 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		switch {
 		case head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable:
 			facts.State = "failed"
-		case head.State == documentPeopleStatePublished && head.GenerationID != "" && eventState == "published":
+		case head.State == documentPeopleStatePublished && head.GenerationID != "":
 			facts.State = "published"
 			facts.Edges = edges
 		default:
 			facts.State = "pending"
 		}
 	}
-	// Assertions and candidates are current independent evidence, even when the
-	// derived publication is unavailable.
+	// Assertions are independent operator evidence.
 	facts.Assertions, err = documentPersonAssertionsTx(ctx, tx, versionID)
 	if err != nil {
 		return DocumentPeopleFacts{}, err
@@ -128,41 +127,40 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
-	facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID)
-	if err != nil {
-		return DocumentPeopleFacts{}, err
+	if facts.State != "pending" && facts.State != "failed" {
+		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID)
+		if err != nil {
+			return DocumentPeopleFacts{}, err
+		}
 	}
-	if safe {
-		// Candidates omit sensitivity. Match each occurrence to the current event
-		// generation and fail closed when its authoritative evidence is absent.
-		events := eventView.Events.Events
-		for i := range facts.Candidates {
-			c := &facts.Candidates[i]
-			c.SafeLabels = make(map[PersonCandidateOccurrence]string)
-			c.Occurrences = slices.DeleteFunc(c.Occurrences, func(o PersonCandidateOccurrence) bool {
-				if o.Role == "blind_copy" {
-					return true
-				}
-				found := false
-				for _, event := range events {
-					for _, actor := range event.Actors {
-						kind, id := actor.EvidenceKind, actor.EvidenceID
-						if kind == "" {
-							kind, id = event.EvidenceKind, event.EvidenceID
+	// Candidates omit sensitivity. Match each occurrence to the current event
+	// generation and fail closed when its authoritative evidence is absent.
+	events := eventView.Events.Events
+	for i := range facts.Candidates {
+		c := &facts.Candidates[i]
+		c.OccurrenceLabels = make(map[PersonCandidateOccurrence]string)
+		c.Occurrences = slices.DeleteFunc(c.Occurrences, func(o PersonCandidateOccurrence) bool {
+			if safe && o.Role == "blind_copy" {
+				return true
+			}
+			found := false
+			for _, event := range events {
+				for _, actor := range event.Actors {
+					kind, id := actor.EvidenceKind, actor.EvidenceID
+					if kind == "" {
+						kind, id = event.EvidenceKind, event.EvidenceID
+					}
+					if actor.ActorKey == c.ActorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
+						if safe && (event.Sensitive || actor.Sensitive) {
+							return true
 						}
-						if actor.ActorKey == c.ActorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
-							if event.Sensitive || actor.Sensitive {
-								return true
-							}
-							found = true
-							c.SafeLabels[o] = actor.DisplayName
-						}
+						found = true
+						c.OccurrenceLabels[o] = (DocumentPeopleActor{DisplayName: actor.DisplayName, Address: actor.Address, ActorKey: actor.ActorKey}).DisplayLabel()
 					}
 				}
-				return !found
-			})
-		}
-
+			}
+			return !found
+		})
 	}
 	ids := map[string]bool{}
 	for _, e := range facts.Edges {
@@ -187,11 +185,11 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		}
 		fp := FactPerson{Person: person, Visible: true, External: []PersonExternalIdentity{}}
 		if safe && person.State == "provisional" {
-			if err := tx.QueryRowContext(ctx, visiblePersonByIDSQL, id, boolInt(hideLocked)).Scan(&fp.Visible); err != nil {
+			if err := tx.QueryRowContext(ctx, visiblePersonByIDSQL, person.PersonID, boolInt(hideLocked)).Scan(&fp.Visible); err != nil {
 				return DocumentPeopleFacts{}, err
 			}
 		}
-		identities, err := personExternalIdentitiesTx(ctx, tx, id)
+		identities, err := personExternalIdentitiesTx(ctx, tx, person.PersonID)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
 		}
