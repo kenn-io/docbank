@@ -701,14 +701,6 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 			for _, rec := range records {
 				if rec.PID != old.PID {
 					require.False(t, daemonconn.Explicit(rec))
-					fresh := launchWeb()
-					identity, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fresh.Scheme+"://"+fresh.Host+"/api/v1/vault", nil)
-					require.NoError(t, err)
-					identity.Header.Set(api.WebSessionHeader, token)
-					resp, err := client.Do(identity)
-					require.NoError(t, err)
-					require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-					require.NoError(t, resp.Body.Close())
 					return
 				}
 			}

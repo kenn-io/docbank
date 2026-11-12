@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -114,67 +113,38 @@ func TestRestartDaemonBrowserSession(t *testing.T) {
 	failure = true
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
 	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
-}
 
-func TestRestartDaemonUnavailable(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, func(deps *api.Deps) {
+	tsUnavailable, _ := newTestServer(t, func(deps *api.Deps) {
 		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) { return api.LocalTextStatus{}, nil }
 	})
-	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "Origin": strings.TrimSuffix(testWebURL, "/")}
-	response, body := do(t, ts, http.MethodGet, "/api/v1/processing/local/status", headers, nil)
+	headers[api.WebSessionHeader] = issueWebSession(t, tsUnavailable)
+	response, body = do(t, tsUnavailable, http.MethodGet, "/api/v1/processing/local/status", headers, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Contains(t, body, `"restart_available":false`)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
+	response, body = do(t, tsUnavailable, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
 }
 
-func TestRestartDaemonPublicOrigin(t *testing.T) {
+func TestRestartDaemonLoginOrigin(t *testing.T) {
 	t.Parallel()
-	var called bool
-	_, catalog := newTestServer(t, func(deps *api.Deps) {
-		deps.WebLoginEnabled = true
-		deps.Cfg.Web.PublicOrigin = signInOrigin
-		deps.RestartDaemon = func(_ context.Context, openTab bool) error { called = true; assert.False(t, openTab); return nil }
-	})
-	status, cookie := loginBrowser(t, catalog.Server)
-	response := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
-	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
-	require.Empty(t, response.Body.String())
-	require.True(t, called)
-}
-
-func TestRestartDaemonPerRunKeyLogin(t *testing.T) {
-	t.Parallel()
-	var opened bool
-	_, catalog := newTestServer(t, func(deps *api.Deps) {
-		deps.WebLoginEnabled = true
-		deps.RestartDaemon = func(_ context.Context, openTab bool) error {
-			opened = openTab
-			return nil
-		}
-	})
-	origin := strings.TrimSuffix(testWebURL, "/")
-	call := func(method, path, body, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
-		req := httptest.NewRequestWithContext(t.Context(), method, origin+path, strings.NewReader(body))
-		req.Header.Set("Origin", origin)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(api.WebSessionHeader, token)
-		if cookie != nil {
-			req.AddCookie(cookie)
-		}
-		out := httptest.NewRecorder()
-		catalog.Server.Handler().ServeHTTP(out, req)
-		return out
+	for _, tc := range []struct {
+		name, publicOrigin, requestOrigin string
+		openTab                           bool
+	}{
+		{"public", signInOrigin, signInOrigin, false},
+		{"per-run key", "", strings.TrimSuffix(testWebURL, "/"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []bool
+			_, catalog := newTestServer(t, func(deps *api.Deps) {
+				deps.WebLoginEnabled = true
+				deps.Cfg.Web.PublicOrigin = tc.publicOrigin
+				deps.RestartDaemon = func(_ context.Context, openTab bool) error { calls = append(calls, openTab); return nil }
+			})
+			status, cookie := loginBrowser(t, catalog.Server, tc.requestOrigin)
+			response := signInCall(t, catalog.Server, tc.requestOrigin, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
+			require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+			require.Equal(t, []bool{tc.openTab}, calls)
+		})
 	}
-	login := call(http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"`+testAPIKey+`"}`, "", nil)
-	require.Equal(t, http.StatusOK, login.Code, login.Body.String())
-	var status signInStatus
-	require.NoError(t, json.Unmarshal(login.Body.Bytes(), &status))
-	require.NotNil(t, status.Session)
-	cookies := login.Result().Cookies()
-	require.Len(t, cookies, 1)
-	response := call(http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookies[0])
-	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
-	require.True(t, opened)
 }

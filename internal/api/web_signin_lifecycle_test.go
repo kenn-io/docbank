@@ -22,11 +22,11 @@ type signInStatus struct {
 	} `json:"session"`
 }
 
-func signInCall(t *testing.T, s *api.Server, method, path, body, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
+func signInCall(t *testing.T, s *api.Server, origin, method, path, body, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequestWithContext(t.Context(), method, signInOrigin+path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, origin+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", signInOrigin)
+	req.Header.Set("Origin", origin)
 	if token != "" {
 		req.Header.Set(api.WebSessionHeader, token)
 	}
@@ -38,16 +38,20 @@ func signInCall(t *testing.T, s *api.Server, method, path, body, token string, c
 	return w
 }
 
-func loginBrowser(t *testing.T, s *api.Server) (signInStatus, *http.Cookie) {
+func loginBrowser(t *testing.T, s *api.Server, origin string) (signInStatus, *http.Cookie) {
 	t.Helper()
-	good := signInCall(t, s, http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"`+testAPIKey+`"}`, "", nil)
+	good := signInCall(t, s, origin, http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"`+testAPIKey+`"}`, "", nil)
 	require.Equal(t, http.StatusOK, good.Code, good.Body.String())
 	cookies := good.Result().Cookies()
 	require.Len(t, cookies, 1)
 	cookie := cookies[0]
 	require.True(t, cookie.HttpOnly)
-	require.True(t, cookie.Secure)
-	require.True(t, strings.HasPrefix(cookie.Name, "__Host-docbank_session_"))
+	require.Equal(t, strings.HasPrefix(origin, "https://"), cookie.Secure)
+	prefix := "docbank_session_"
+	if cookie.Secure {
+		prefix = "__Host-" + prefix
+	}
+	require.True(t, strings.HasPrefix(cookie.Name, prefix))
 	require.Equal(t, "/", cookie.Path)
 	require.Equal(t, http.SameSiteStrictMode, cookie.SameSite)
 	require.Empty(t, cookie.Domain)
@@ -65,17 +69,17 @@ func TestWebSignInKeyExchangeScopeAndRestart(t *testing.T) {
 	var deps api.Deps
 	_, catalog := newTestServer(t, func(d *api.Deps) { d.WebLoginEnabled = true; d.Cfg.Web.PublicOrigin = signInOrigin; deps = *d })
 	s := catalog.Server
-	bad := signInCall(t, s, http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"wrong"}`, "", nil)
+	bad := signInCall(t, s, signInOrigin, http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"wrong"}`, "", nil)
 	require.Equal(t, http.StatusUnauthorized, bad.Code)
-	status, cookie := loginBrowser(t, s)
+	status, cookie := loginBrowser(t, s, signInOrigin)
 	token := status.Session.Token
-	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", token, cookie).Code)
-	require.Equal(t, http.StatusForbidden, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", token, nil).Code)
-	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodPost, "/api/v1/tags", `{"name":"synthetic"}`, "", cookie).Code)
-	require.Equal(t, http.StatusForbidden, signInCall(t, s, http.MethodPost, "/api/v1/tags", `{"name":"synthetic"}`, token, nil).Code)
-	require.Equal(t, http.StatusCreated, signInCall(t, s, http.MethodPost, "/api/v1/tags", `{"name":"synthetic"}`, token, cookie).Code)
-	require.Equal(t, http.StatusForbidden, signInCall(t, s, http.MethodGet, "/api/daemon/web-auth/sessions", "", token, cookie).Code)
-	require.Equal(t, http.StatusForbidden, signInCall(t, s, http.MethodPost, "/api/daemon/web-session", "", token, cookie).Code)
+	require.Equal(t, http.StatusOK, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", token, cookie).Code)
+	require.Equal(t, http.StatusForbidden, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", token, nil).Code)
+	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, signInOrigin, http.MethodPost, "/api/v1/tags", `{"name":"synthetic"}`, "", cookie).Code)
+	require.Equal(t, http.StatusForbidden, signInCall(t, s, signInOrigin, http.MethodPost, "/api/v1/tags", `{"name":"synthetic"}`, token, nil).Code)
+	require.Equal(t, http.StatusCreated, signInCall(t, s, signInOrigin, http.MethodPost, "/api/v1/tags", `{"name":"synthetic"}`, token, cookie).Code)
+	require.Equal(t, http.StatusForbidden, signInCall(t, s, signInOrigin, http.MethodGet, "/api/daemon/web-auth/sessions", "", token, cookie).Code)
+	require.Equal(t, http.StatusForbidden, signInCall(t, s, signInOrigin, http.MethodPost, "/api/daemon/web-session", "", token, cookie).Code)
 	// A same-host proxy makes every peer loopback, so the browser scope check
 	// is what keeps sign-in sessions away from server-path ingest.
 	ingest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, signInOrigin+"/api/v1/ingest", strings.NewReader(`{}`))
@@ -91,27 +95,27 @@ func TestWebSignInKeyExchangeScopeAndRestart(t *testing.T) {
 	s.Close()
 	s = api.NewServer(deps)
 	t.Cleanup(s.Close)
-	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", token, cookie).Code, "restart discards browser authority")
-	bootstrap := signInCall(t, s, http.MethodGet, "/api/daemon/web-auth", "", "", cookie)
+	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", token, cookie).Code, "restart discards browser authority")
+	bootstrap := signInCall(t, s, signInOrigin, http.MethodGet, "/api/daemon/web-auth", "", "", cookie)
 	require.JSONEq(t, `{"enabled":true}`, bootstrap.Body.String(), "restart asks for a new key exchange")
-	renewed, newCookie := loginBrowser(t, s)
+	renewed, newCookie := loginBrowser(t, s, signInOrigin)
 	require.NotEqual(t, cookie.Value, newCookie.Value)
-	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", renewed.Session.Token, newCookie).Code)
+	require.Equal(t, http.StatusOK, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", renewed.Session.Token, newCookie).Code)
 }
 
 func TestWebSignInTabLogoutAndAdminRevocation(t *testing.T) {
 	t.Parallel()
 	_, catalog := newTestServer(t, func(d *api.Deps) { d.WebLoginEnabled = true; d.Cfg.Web.PublicOrigin = signInOrigin })
 	s := catalog.Server
-	first, cookie := loginBrowser(t, s)
-	second, secondCookie := loginBrowser(t, s)
+	first, cookie := loginBrowser(t, s, signInOrigin)
+	second, secondCookie := loginBrowser(t, s, signInOrigin)
 	require.Equal(t, cookie.Name, secondCookie.Name, "tabs at one origin share the instance cookie name")
 	require.Equal(t, cookie.Value, secondCookie.Value, "shared cookie must not rotate across tabs")
-	logout := signInCall(t, s, http.MethodDelete, "/api/daemon/web-session", "", first.Session.Token, cookie)
+	logout := signInCall(t, s, signInOrigin, http.MethodDelete, "/api/daemon/web-session", "", first.Session.Token, cookie)
 	require.Equal(t, http.StatusNoContent, logout.Code)
 	require.Empty(t, logout.Result().Cookies(), "logout must not delete another tab's ambient cookie")
-	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", first.Session.Token, cookie).Code)
-	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", second.Session.Token, cookie).Code)
+	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", first.Session.Token, cookie).Code)
+	require.Equal(t, http.StatusOK, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", second.Session.Token, cookie).Code)
 	listReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, signInOrigin+"/api/daemon/web-auth/sessions", nil)
 	listReq.Header.Set("X-Api-Key", testAPIKey)
 	listed := httptest.NewRecorder()
@@ -127,7 +131,7 @@ func TestWebSignInTabLogoutAndAdminRevocation(t *testing.T) {
 	revoked := httptest.NewRecorder()
 	s.Handler().ServeHTTP(revoked, revoke)
 	require.Equal(t, http.StatusNoContent, revoked.Code)
-	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", second.Session.Token, cookie).Code)
+	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", second.Session.Token, cookie).Code)
 }
 
 func TestWebSignInCookieNamesArePortScoped(t *testing.T) {
@@ -196,14 +200,14 @@ func TestWebSignInHostOriginAndProxyHeaders(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "allowed backend authority keeps CLI/API traffic working")
-	status, cookie := loginBrowser(t, s)
+	status, cookie := loginBrowser(t, s, signInOrigin)
 	originless := httptest.NewRequestWithContext(t.Context(), http.MethodPost, signInOrigin+"/api/v1/tags", strings.NewReader(`{"name":"originless"}`))
 	originless.Header.Set(api.WebSessionHeader, status.Session.Token)
 	originless.AddCookie(cookie)
 	denied := httptest.NewRecorder()
 	s.Handler().ServeHTTP(denied, originless)
 	require.Equal(t, http.StatusForbidden, denied.Code, "browser mutations require the exact public Origin")
-	read := signInCall(t, s, http.MethodGet, "/api/v1/tags", "", status.Session.Token, cookie)
+	read := signInCall(t, s, signInOrigin, http.MethodGet, "/api/v1/tags", "", status.Session.Token, cookie)
 	require.Equal(t, "private, no-store", read.Header().Get("Cache-Control"))
 	vary := strings.Join(read.Header().Values("Vary"), ",")
 	require.Contains(t, vary, "Cookie")
@@ -322,7 +326,7 @@ func TestWebSignInAcceptsEscapeHeavyMaximumKey(t *testing.T) {
 		},
 	} {
 		body := encode(key)
-		response := signInCall(t, catalog.Server, http.MethodPost, "/api/daemon/web-auth/login", body, "", nil)
+		response := signInCall(t, catalog.Server, signInOrigin, http.MethodPost, "/api/daemon/web-auth/login", body, "", nil)
 		require.Equal(t, http.StatusOK, response.Code, "a %d-byte login body must fit: %s", len(body), response.Body.String())
 	}
 }
@@ -332,19 +336,19 @@ func TestWebSignInRejectsMalformedLoginWithoutLockout(t *testing.T) {
 	_, catalog := newTestServer(t, func(d *api.Deps) { d.WebLoginEnabled = true; d.Cfg.Web.PublicOrigin = signInOrigin })
 	s := catalog.Server
 	for _, body := range []string{`{"api_key":"synthetic","unknown":true}`, `{"api_key":`} {
-		response := signInCall(t, s, http.MethodPost, "/api/daemon/web-auth/login", body, "", nil)
+		response := signInCall(t, s, signInOrigin, http.MethodPost, "/api/daemon/web-auth/login", body, "", nil)
 		require.Equal(t, http.StatusBadRequest, response.Code)
 		require.NotContains(t, response.Body.String(), "synthetic")
 	}
 	validLogin := `{"api_key":"` + testAPIKey + `"}`
 	oversized := validLogin + strings.Repeat(" ", (32<<10)+1-len(validLogin))
-	response := signInCall(t, s, http.MethodPost, "/api/daemon/web-auth/login", oversized, "", nil)
+	response := signInCall(t, s, signInOrigin, http.MethodPost, "/api/daemon/web-auth/login", oversized, "", nil)
 	require.Equal(t, http.StatusBadRequest, response.Code, "a valid login over 32 KiB must be rejected")
 	for range 5 {
-		response := signInCall(t, s, http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"synthetic-wrong-key"}`, "", nil)
+		response := signInCall(t, s, signInOrigin, http.MethodPost, "/api/daemon/web-auth/login", `{"api_key":"synthetic-wrong-key"}`, "", nil)
 		require.Equal(t, http.StatusUnauthorized, response.Code)
 		require.NotContains(t, response.Body.String(), "synthetic-wrong-key")
 	}
-	response = signInCall(t, s, http.MethodPost, "/api/daemon/web-auth/login", validLogin, "", nil)
+	response = signInCall(t, s, signInOrigin, http.MethodPost, "/api/daemon/web-auth/login", validLogin, "", nil)
 	require.Equal(t, http.StatusOK, response.Code, "failed guesses must not lock out the operator")
 }
