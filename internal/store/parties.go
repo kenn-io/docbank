@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -13,6 +14,32 @@ import (
 
 var ErrInvalidParty = errors.New("invalid party")
 var ErrPartyRetired = errors.New("party is retired")
+
+// errPartyRevisionExhausted refuses a write that would advance a party past the integer limit.
+var errPartyRevisionExhausted = fmt.Errorf("%w: revision cannot advance", ErrInvalidParty)
+
+// touchParty advances the revision and update time of a party.
+func touchParty(p *Party, now string) error {
+	if p.Revision == math.MaxInt64 {
+		return errPartyRevisionExhausted
+	}
+	p.Revision++
+	p.UpdatedAt = now
+	return nil
+}
+
+// movePartiesTx points the parties of one person at another, advancing each revision.
+func movePartiesTx(ctx context.Context, tx *sql.Tx, from, to, now string) error {
+	var exhausted bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM parties WHERE person_id=$1 AND revision>=$2)`, from, int64(math.MaxInt64)).Scan(&exhausted); err != nil {
+		return err
+	}
+	if exhausted {
+		return errPartyRevisionExhausted
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE parties SET person_id=$1,revision=revision+1,updated_at=$2 WHERE person_id=$3`, to, now, from)
+	return err
+}
 
 // PartyExistsError identifies the active party with an equivalent name.
 type PartyExistsError struct{ PartyID string }
@@ -190,9 +217,9 @@ func (s *Store) UpdateParty(ctx context.Context, id string, revision int64, inpu
 		p.Country = input.Country
 		p.PersonID = input.PersonID
 		p.Own = input.Own
-		p.Revision++
-		p.UpdatedAt = nowRFC3339()
-		_, err = tx.ExecContext(ctx, `UPDATE parties SET kind=$1,display_name=$2,display_name_folded=$3,legal_name=$4,country=$5,own=$6,person_id=$7,revision=$8,updated_at=$9 WHERE party_id=$10`, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, boolInt(p.Own), p.PersonID, p.Revision, p.UpdatedAt, p.PartyID)
+		if err = touchParty(&p, nowRFC3339()); err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE parties SET kind=$1,display_name=$2,display_name_folded=$3,legal_name=$4,country=$5,own=$6,person_id=$7,revision=$8,updated_at=$9 WHERE party_id=$10`, p.Kind, p.DisplayName, p.DisplayNameFolded, p.LegalName, p.Country, boolInt(p.Own), p.PersonID, p.Revision, p.UpdatedAt, p.PartyID)
+		}
 		updated = p
 		return err
 	})
@@ -216,9 +243,9 @@ func (s *Store) RetireParty(ctx context.Context, id string, revision int64) (Par
 		}
 		now := nowRFC3339()
 		p.RetiredAt = &now
-		p.UpdatedAt = now
-		p.Revision++
-		_, err = tx.ExecContext(ctx, `UPDATE parties SET retired_at=$1,updated_at=$2,revision=$3 WHERE party_id=$4`, p.RetiredAt, p.UpdatedAt, p.Revision, p.PartyID)
+		if err = touchParty(&p, now); err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE parties SET retired_at=$1,updated_at=$2,revision=$3 WHERE party_id=$4`, p.RetiredAt, p.UpdatedAt, p.Revision, p.PartyID)
+		}
 		updated = p
 		return err
 	})
