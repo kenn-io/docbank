@@ -25,14 +25,10 @@ const maxDerived = 32 << 20
 type budget struct {
 	work, derived, nodes int
 	limits               Limits
-	diagnostics          int
 }
 
 func (b *budget) diagnostic(ctx context.Context, code string, span Span) ([]Diagnostic, error) {
 	if err := b.step(ctx, 1); err != nil {
-		return nil, err
-	}
-	if err := addLimit("diagnostics", &b.diagnostics, 1, b.limits.MaxDiagnostics); err != nil {
 		return nil, err
 	}
 	return []Diagnostic{{Code: code, Span: span}}, nil

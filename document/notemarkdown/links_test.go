@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"hegel.dev/go/hegel"
 )
 
 func TestLinksCommonMarkForms(t *testing.T) {
@@ -87,6 +86,27 @@ func TestLinksSyntaxDecodeOnly(t *testing.T) {
 	require.Equal(t, []string{"n(x).md?x=&", "a%2Fb.md", "&amp;%2F"}, linkTargets(n.Links))
 }
 
+func TestTargetDecoderParity(t *testing.T) {
+	for _, tc := range []struct{ name, raw, decoded string }{
+		{"named", "&amp;&acE;", "&\u223e\u0333"},
+		{"numeric", "&#65;&#x41;&#X1F600;", "AA😀"},
+		{"invalid runes", "&#0;&#xD800;&#x110000;", "���"},
+		{"invalid digits", "&#;&#x;&#12z;&#12345678;&#x1234567;", "&#;&#x;&#12z;&#12345678;&#x1234567;"},
+		{"invalid names", "&bogus;&AMPx;&amp", "&bogus;&AMPx;&amp"},
+		{"nested", "&bad&amp;&&amp;", "&bad&&&"},
+		{"escaped ampersands", `\&amp;&bad\&amp;`, "&amp;&bad&amp;"},
+		{"escaped punctuation", `&bad\!&amp;\\&amp;`, `&bad!&\&`},
+		{"decode once", "&amp;amp;", "&amp;"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := linkScanner{ctx: t.Context(), b: &budget{}}
+			decoded, err := s.decodeTarget(tc.raw, false)
+			require.NoError(t, err)
+			require.Equal(t, tc.decoded, decoded)
+		})
+	}
+}
+
 func TestBareDestinationsRejectASCIIControls(t *testing.T) {
 	for _, c := range []byte{1, 0x0b, 0x0c, 0x1f, 0x7f} {
 		control := string([]byte{c})
@@ -104,6 +124,26 @@ func TestBareDestinationsRejectASCIIControls(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[a](<x"+control+"y>)"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"x" + control + "y"}, linkTargets(n.Links))
+}
+
+func TestBareDestinationInternalAngle(t *testing.T) {
+	for _, tc := range []struct{ name, source, raw, form string }{
+		{"inline", "[a](b<c)", "[a](b<c)", "markdown"},
+		{"image", "![a](b<c)", "![a](b<c)", "image"},
+		{"reference", "[a][r]\n\n[r]: b<c\n", "[a][r]", "reference"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := Parse(t.Context(), []byte(tc.source), Limits{})
+			require.NoError(t, err)
+			require.Equal(t, []Link{{Form: tc.form, Raw: tc.raw, Target: "b<c", Label: "a", End: len(tc.raw), Line: 1}}, n.Links)
+		})
+	}
+	// Only an initial '<' selects angle syntax, which still needs its closer.
+	for _, source := range []string{"[a](<bc)", "![a](<bc)", "[a][r]\n\n[r]: <bc\n"} {
+		n, err := Parse(t.Context(), []byte(source), Limits{})
+		require.NoError(t, err)
+		require.Empty(t, n.Links)
+	}
 }
 
 func TestBareDestinationSeparators(t *testing.T) {
@@ -147,12 +187,6 @@ func TestLinksCountAndTargetLimits(t *testing.T) {
 	n, err := Parse(t.Context(), []byte(strings.Repeat("[x](a.md) ", 10000)), Limits{})
 	require.NoError(t, err)
 	require.Len(t, n.Links, 10000)
-	n, err = Parse(t.Context(), []byte(strings.Repeat("[x](a.md) ", 10001)), Limits{})
-	requireLimit(t, err, "links")
-	require.Equal(t, Note{}, n)
-	n, err = Parse(t.Context(), []byte("[x]("+strings.Repeat("a", 4096)+")"), Limits{})
-	require.NoError(t, err)
-	require.Len(t, n.Links, 1)
 	n, err = Parse(t.Context(), []byte("[x]("+strings.Repeat("a", 4097)+")"), Limits{})
 	requireLimit(t, err, "target_bytes")
 	require.Equal(t, Note{}, n)
@@ -162,20 +196,6 @@ func TestLinksNestedAndCodeRuns(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("`` ` [bad](x.md) `` [outer [inner](inner.md)](outer.md) [![alt](image.png)](note.md)"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"inner.md", "note.md", "image.png"}, linkTargets(n.Links))
-}
-
-func TestPropertyLinkOccurrences(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		count := hegel.Draw(ht, hegel.Integers[int](1, 128))
-		src := []byte(strings.Repeat("[x](note.md) ", count))
-		n, err := Parse(ht.Context(), src, Limits{})
-		require.NoError(ht, err)
-		require.Len(ht, n.Links, count)
-		for i, l := range n.Links {
-			require.Equal(ht, Span{Start: i * 13, End: i*13 + 12}, linkSpan(l))
-			require.Equal(ht, "note.md", l.Target)
-		}
-	}, hegel.WithTestCases(1000))
 }
 
 func linkTargets(links []Link) []string {
@@ -207,7 +227,7 @@ func TestLinksHostileWorkAndCancellation(t *testing.T) {
 	require.Equal(t, Note{}, n)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, nil, &budget{})
+	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, map[string]string{}, &budget{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 

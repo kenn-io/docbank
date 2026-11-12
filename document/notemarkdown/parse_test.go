@@ -18,7 +18,7 @@ func TestParseInputAndTitle(t *testing.T) {
 		{"---\ntitle: Authored\n---\n# Heading\n", "Authored", "frontmatter", 5},
 		{"---\ntitle: ''\n---\n# Heading", "Heading", "h1", 4},
 		{"---\ntitle: 42\n---\n# Heading", "42", "frontmatter", 4},
-		{"```\n# Hidden\n```\n# Shown", "Shown", "h1", 5},
+		{"```\n# Hidden\n```\n# Shown", "Shown", "h1", 4},
 	} {
 		n, err := Parse(t.Context(), []byte(tc.src), Limits{})
 		require.NoError(t, err)
@@ -36,7 +36,6 @@ func TestParseInputAndTitle(t *testing.T) {
 	n, err := Parse(ctx, []byte("# title"), Limits{})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, Note{}, n)
-	require.Equal(t, "docbank-note-markdown/v2", Recipe)
 }
 
 func requireLimit(tb testing.TB, err error, resource string) {

@@ -1,3 +1,5 @@
+//go:build !darwin || arm64
+
 package notemarkdown
 
 import (
@@ -11,15 +13,53 @@ import (
 	"hegel.dev/go/hegel"
 )
 
+func TestPropertyLinkOccurrences(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		count := hegel.Draw(ht, hegel.Integers[int](1, 128))
+		src := []byte(strings.Repeat("[x](note.md) ", count))
+		n, err := Parse(ht.Context(), src, Limits{})
+		require.NoError(ht, err)
+		require.Len(ht, n.Links, count)
+		for i, l := range n.Links {
+			require.Equal(ht, Span{Start: i * 13, End: i*13 + 12}, linkSpan(l))
+			require.Equal(ht, "note.md", l.Target)
+		}
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
+}
+
+func TestPropertyContainerMultilineLinks(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		prefix := hegel.Draw(ht, hegel.SampledFrom([]string{"> ", "> > ", "- ", "> - "}))
+		continued := strings.ReplaceAll(prefix, "-", " ")
+		label := strings.Repeat("é", hegel.Draw(ht, hegel.Integers[int](1, 20)))
+		src := []byte(prefix + "[" + label + "\n" + continued + "tail](n&amp;amp;.md)\n")
+		n, err := Parse(ht.Context(), src, Limits{})
+		require.NoError(ht, err)
+		require.Equal(ht, []string{"n&amp;.md"}, linkTargets(n.Links))
+		require.Equal(ht, "["+label+"\n"+continued+"tail](n&amp;amp;.md)", string(src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End]))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
+}
+
 func TestPropertyParseDeterministicImmutableAndBounded(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		src := hegel.Draw(ht, hegel.Binary(0, 1024))
+		structured := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
+		if structured {
+			label := strings.Repeat(hegel.Draw(ht, hegel.SampledFrom([]string{"a", "é", "星"})), hegel.Draw(ht, hegel.Integers[int](1, 32)))
+			eol := hegel.Draw(ht, hegel.SampledFrom([]string{"\n", "\r\n", "\r"}))
+			src = []byte("# " + label + eol + eol + "[" + label + "](note.md)" + eol)
+		}
 		before := bytes.Clone(src)
 		a, ea := Parse(ht.Context(), src, Limits{})
 		b, eb := Parse(ht.Context(), src, Limits{})
 		require.Equal(ht, fmt.Sprint(ea), fmt.Sprint(eb))
 		require.Equal(ht, a, b)
 		require.Equal(ht, before, src)
+		if structured {
+			require.NoError(ht, ea)
+			require.Len(ht, a.Headings, 1)
+			require.Len(ht, a.Links, 1)
+		}
 		if ea != nil {
 			require.Equal(ht, Note{}, a)
 			return
@@ -36,7 +76,7 @@ func TestPropertyParseDeterministicImmutableAndBounded(t *testing.T) {
 		for _, d := range a.Diagnostics {
 			assertOriginalSpan(ht, src, d.Span)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func TestPropertyOriginalOffsets(t *testing.T) {
@@ -74,7 +114,7 @@ func TestPropertyOriginalOffsets(t *testing.T) {
 			require.Equal(ht, "n#x.md", l.Target)
 			require.Empty(ht, l.Fragment)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func TestPropertyExcludedRegions(t *testing.T) {
@@ -87,7 +127,7 @@ func TestPropertyExcludedRegions(t *testing.T) {
 			require.NoError(ht, err)
 			require.Empty(ht, n.Links)
 		}
-	}, hegel.WithTestCases(1000))
+	}, hegel.WithTestCases(1000), hegel.WithDatabase(t.TempDir()))
 }
 
 func assertOriginalSpan(tb testing.TB, src []byte, s Span) {

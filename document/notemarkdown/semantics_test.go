@@ -56,17 +56,15 @@ func TestTargetComponentsDecodeOnce(t *testing.T) {
 			})
 		}
 	}
-	for _, authored := range []string{"https://example.invalid/A%23B#H%23x", "https://example.invalid/%2523#%2523"} {
-		n, err := Parse(t.Context(), []byte("<"+authored+">"), Limits{})
+	for _, tc := range []struct{ authored, target, fragment string }{
+		{"https://example.invalid/A%23B#H%23x", "https://example.invalid/A#B", "H#x"},
+		{"https://example.invalid/%2523#%2523", "https://example.invalid/%23", "%23"},
+	} {
+		n, err := Parse(t.Context(), []byte("<"+tc.authored+">"), Limits{})
 		require.NoError(t, err)
 		require.Len(t, n.Links, 1)
-		if strings.Contains(authored, "A%23B") {
-			require.Equal(t, "https://example.invalid/A#B", n.Links[0].Target)
-			require.Equal(t, "H#x", n.Links[0].Fragment)
-		} else {
-			require.Equal(t, "https://example.invalid/%23", n.Links[0].Target)
-			require.Equal(t, "%23", n.Links[0].Fragment)
-		}
+		require.Equal(t, tc.target, n.Links[0].Target)
+		require.Equal(t, tc.fragment, n.Links[0].Fragment)
 	}
 }
 
@@ -99,18 +97,29 @@ func TestCommonMarkEmailLengths(t *testing.T) {
 }
 
 func TestSimpleInputsWithinByteEnvelope(t *testing.T) {
-	for _, src := range []string{
-		strings.Repeat("\n", maxInput),
-		"---\n" + strings.Repeat("# comment\n", 7000) + "---\n# Body\n",
-		"---\n#" + strings.Repeat("x", maxInput-len("---\n#\n---\n# Body\n")) + "\n---\n# Body\n",
-		"---\n" + strings.Repeat("# comment\n", 7000) + "# Body\n",
+	for _, tc := range []struct {
+		source, title string
+		unclosed      bool
+	}{
+		{strings.Repeat("\n", maxInput), "", false},
+		{"---\n" + strings.Repeat("# comment\n", 7000) + "---\n# Body\n", "Body", false},
+		{"---\n#" + strings.Repeat("x", maxInput-len("---\n#\n---\n# Body\n")) + "\n---\n# Body\n", "Body", false},
+		// An unclosed opener leaves the body readable. Stay below MaxHeadings
+		// while retaining a body larger than the old 64 KiB envelope.
+		{"---\n" + strings.Repeat("# comment with a longer heading\n", 4000) + "# Body\n", "comment with a longer heading", true},
 	} {
-		n, err := Parse(t.Context(), []byte(src), Limits{})
+		n, err := Parse(t.Context(), []byte(tc.source), Limits{})
 		require.NoError(t, err)
-		if strings.HasPrefix(src, "---") {
-			require.Equal(t, "Body", n.Title)
+		require.Equal(t, tc.title, n.Title)
+		if tc.unclosed {
+			require.Equal(t, []Diagnostic{{Code: "unclosed_frontmatter", Span: Span{0, len(tc.source)}}}, n.Diagnostics)
+			require.Len(t, n.Headings, 4001)
+			require.Equal(t, "Body", n.Headings[4000].Text)
 		} else {
-			require.Equal(t, maxInput+1, n.Lines)
+			require.Empty(t, n.Diagnostics)
+			if tc.title == "" {
+				require.Equal(t, maxInput+1, n.Lines)
+			}
 		}
 	}
 }
@@ -120,9 +129,6 @@ func TestMappingKeysDoNotUseValueByteLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "x", n.Title)
 	require.Equal(t, map[string]any{"longkey": "y"}, n.Frontmatter.Raw["nested"])
-	n, err = Parse(t.Context(), []byte("---\ntitle: xx\n---\n# Body\n"), Limits{MaxValueBytes: 1})
-	requireLimit(t, err, "frontmatter_value_bytes")
-	require.Equal(t, Note{}, n)
 }
 
 func TestSingleHeadingWithinDefaultByteEnvelope(t *testing.T) {

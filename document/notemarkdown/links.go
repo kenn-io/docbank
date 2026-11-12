@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yuin/goldmark/v2/text"
 	"github.com/yuin/goldmark/v2/util"
 )
 
@@ -215,7 +216,7 @@ func (s *linkScanner) destination(start, end int) (Span, int, bool, error) {
 			return Span{}, 0, false, err
 		}
 		c := s.src[i]
-		if c == '\\' && i+1 < end && asciiPunctuation(s.src[i+1]) {
+		if c == '\\' && i+1 < end && util.IsPunct(s.src[i+1]) {
 			i += 2
 			continue
 		}
@@ -244,9 +245,6 @@ func (s *linkScanner) destination(start, end int) (Span, int, bool, error) {
 					break
 				}
 				depth--
-			}
-			if c == '<' {
-				return Span{}, 0, false, nil
 			}
 		}
 		i++
@@ -405,8 +403,7 @@ func (s *linkScanner) targetParts(authored string) (string, string, error) {
 }
 
 func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
-	// The decoded byte count is bounded before constructing the result. HTML
-	// entities are individually tiny; one entity can expand to at most 8 bytes.
+	// Bound the decoded byte count before constructing the final result.
 	var size int
 	walk := func(write func(string)) error {
 		for i := 0; i < len(raw); {
@@ -415,17 +412,29 @@ func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
 			}
 			j := i + 1
 			value := raw[i:j]
-			if raw[i] == '\\' && j < len(raw) && ((!wiki && asciiPunctuation(raw[j])) || wiki && strings.ContainsRune("\\]|", rune(raw[j]))) {
+			if raw[i] == '\\' && j < len(raw) && ((!wiki && util.IsPunct(raw[j])) || wiki && strings.ContainsRune("\\]|", rune(raw[j]))) {
 				value = raw[j : j+1]
 				j++
 			} else if !wiki && raw[i] == '&' {
 				if semi := strings.IndexByte(raw[i:min(len(raw), i+34)], ';'); semi >= 0 {
 					candidateEnd := i + semi + 1
-					decoded := decodeEntity(raw[i:candidateEnd])
-					if decoded != raw[i:candidateEnd] {
-						j = candidateEnd
-						value = decoded
+					width := candidateEnd - i
+					if err := s.ctx.Err(); err != nil {
+						return err
 					}
+					// Pinned Decode scans/copies a <=34-byte chunk. Its sole
+					// reference can expand by <=2 bytes; COW capacity is n+20.
+					if err := s.b.step(s.ctx, 9*width+10); err != nil {
+						return err
+					}
+					if err := s.b.reserveStrings(3*width + 28); err != nil {
+						return err
+					}
+					value = string(text.NewDecoder().Decode([]byte(raw[i:candidateEnd])))
+					if err := s.ctx.Err(); err != nil {
+						return err
+					}
+					j = candidateEnd
 				}
 			}
 			write(value)
@@ -497,7 +506,7 @@ func (s *linkScanner) inline(start, end int) error {
 			return err
 		}
 		c := s.src[i]
-		if c == '\\' && i+1 < end && asciiPunctuation(s.src[i+1]) {
+		if c == '\\' && i+1 < end && util.IsPunct(s.src[i+1]) {
 			i += 2
 			continue
 		}
@@ -619,7 +628,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (string, int, s
 	if finish < end && s.src[finish] == '[' {
 		j := finish + 1
 		for j < end && j-finish <= 4*999+1 && s.src[j] != ']' && s.src[j] != '[' {
-			if err := s.b.step(s.ctx, 1); err != nil {
+			if err := s.b.step(s.ctx, 2); err != nil {
 				return "", 0, "", false, err
 			}
 			if s.src[j] == '\\' && j+1 < end {
@@ -628,7 +637,7 @@ func (s *linkScanner) closeLink(op linkOpener, closing, end int) (string, int, s
 			j++
 		}
 		if j < end && s.src[j] == ']' {
-			if j > finish+1 {
+			if !util.IsBlank(s.src[finish+1 : j]) {
 				labelStart, labelEnd = finish+1, j
 			}
 			finish = j + 1

@@ -135,7 +135,6 @@ func (d *blockDriver) parseBlocks(parent ast.Node) {
 				// Paragraph continuation is decided by openBlocks, as in Goldmark.
 				if !ast.IsParagraph(be.Node) {
 					continueState := be.Parser.Continue(be.Node, d.reader, d.pc)
-					contextCheckpoint(d.ctx)
 					if continueState&parser.Continue != 0 {
 						if continueState&parser.HasChildren != 0 && i == lastIndex {
 							isBlank := isBlankLine(i+1, prevLineBlank)
@@ -237,15 +236,12 @@ retry:
 		last := lastBlock.Node
 		_, blockPos := d.reader.Position()
 		node, state := bp.Open(parent, d.reader, d.pc)
-		contextCheckpoint(d.ctx)
 		if node == nil {
 			continue
 		}
 		node.SetPos(blockPos.Start + max(d.pc.BlockOffset()-seg.Padding, 0))
 		if state&parser.RequireParagraph != 0 && last == parent.LastChild() {
-			contextCheckpoint(d.ctx)
 			lastBlock.Parser.Close(last, d.reader, d.pc)
-			contextCheckpoint(d.ctx)
 			blocks := d.pc.OpenedBlocks()
 			d.pc.SetOpenedBlocks(blocks[:len(blocks)-1])
 			if d.transformParagraph(last.(*ast.Paragraph)) {
@@ -270,9 +266,7 @@ retry:
 
 continuable:
 	if result == noBlocksOpened && continuable {
-		contextCheckpoint(d.ctx)
 		state := lastBlock.Parser.Continue(lastBlock.Node, d.reader, d.pc)
-		contextCheckpoint(d.ctx)
 		if state&parser.Continue != 0 {
 			result = paragraphContinuation
 		}
@@ -283,14 +277,11 @@ continuable:
 func (d *blockDriver) closeBlocks(from, to int) {
 	blocks := d.pc.OpenedBlocks()
 	for i := from; i >= to; i-- {
-		contextCheckpoint(d.ctx)
 		node := blocks[i].Node
 		blocks[i].Parser.Close(node, d.reader, d.pc)
-		contextCheckpoint(d.ctx)
 		paragraph, ok := node.(*ast.Paragraph)
 		if ok && node.Parent() != nil {
 			d.transformParagraph(paragraph)
-			continue
 		}
 	}
 	if from == len(blocks)-1 {
@@ -302,9 +293,7 @@ func (d *blockDriver) closeBlocks(from, to int) {
 }
 
 func (d *blockDriver) transformParagraph(node *ast.Paragraph) bool {
-	contextCheckpoint(d.ctx)
 	d.transformer.Transform(node, d.reader, d.pc)
-	contextCheckpoint(d.ctx)
 	return node.Parent() == nil
 }
 
@@ -368,13 +357,6 @@ func closeWork(g *blockGuard, node ast.Node) error {
 		segments := node.(*ast.Paragraph).Source()
 		if len(segments) != 0 {
 			return g.b.step(g.ctx, segments[len(segments)-1].Len())
-		}
-	case blockSetext:
-		// In this configuration Setext.Close always reuses a surviving
-		// paragraph's nonempty source; charge the underline access defensively.
-		segments := node.(*ast.Heading).Source()
-		if len(segments) != 0 {
-			return g.b.step(g.ctx, segments[0].Len())
 		}
 	}
 	return nil

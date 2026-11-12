@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
 )
 
 func TestRawHeadingAndTargetEntityRecovery(t *testing.T) {
@@ -63,6 +65,7 @@ func TestHeadingHTMLAttributeBrackets(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("# [a <span title=\"]\">b</span>](target.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, `[a <span title="]">b</span>](target.md)`, n.Headings[0].Text)
+	require.Equal(t, []Link{{Form: "markdown", Raw: `[a <span title="]">b</span>](target.md)`, Target: "target.md", Label: `a <span title="]">b</span>`, Start: 2, End: 2 + len(`[a <span title="]">b</span>](target.md)`), Line: 1}}, n.Links)
 }
 
 func TestSelfClosingScriptBlock(t *testing.T) {
@@ -107,14 +110,19 @@ func TestSetextAfterReferenceDefinition(t *testing.T) {
 }
 
 func TestListTabResidualIndent(t *testing.T) {
-	for _, src := range []string{
-		"-\t  [hidden](bad.md)\n\n# Visible\n",
-		">  -\t  [hidden](bad.md)\n\n# Visible\n",
+	// Pin Goldmark v2.1.13's container-relative tab padding. The nested
+	// row becomes a paragraph even though the root row is indented code.
+	for _, tc := range []struct {
+		source string
+		links  []string
+	}{
+		{"-\t  [hidden](bad.md)\n\n# Visible\n", []string{}},
+		{">  -\t  [hidden](bad.md)\n\n# Visible\n", []string{"bad.md"}},
 	} {
-		n, err := Parse(t.Context(), []byte(src), Limits{})
-		require.NoError(t, err, src)
-		require.Empty(t, n.Links, src)
-		require.Len(t, n.Headings, 1, src)
+		n, err := Parse(t.Context(), []byte(tc.source), Limits{})
+		require.NoError(t, err, tc.source)
+		require.Equal(t, tc.links, linkTargets(n.Links), tc.source)
+		require.Equal(t, []string{"Visible"}, headingTexts(n.Headings), tc.source)
 	}
 }
 
@@ -135,6 +143,7 @@ func TestHeadingHTMLCommentBrackets(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("# [a <!-- [ -->b](target.md)\n"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, "[a <!-- [ -->b](target.md)", n.Headings[0].Text)
+	require.Equal(t, []Link{{Form: "markdown", Raw: "[a <!-- [ -->b](target.md)", Target: "target.md", Label: "a <!-- [ -->b", Start: 2, End: 2 + len("[a <!-- [ -->b](target.md)"), Line: 1}}, n.Links)
 }
 
 func TestFlowCommentDoesNotInjectValues(t *testing.T) {
@@ -167,17 +176,43 @@ func TestEscapedBacktickPrefix(t *testing.T) {
 	require.Empty(t, n.Links)
 }
 
-func TestDefinitionDoesNotInterruptList(t *testing.T) {
+func TestDefinitionDoesNotStartOrderedList(t *testing.T) {
 	n, err := Parse(t.Context(), []byte("[r]: target.md\n2. item\nSetext\n=====\n\n[use][r]\n"), Limits{})
 	require.NoError(t, err)
-	require.Empty(t, n.Headings)
+	require.Len(t, n.Headings, 1)
+	require.Equal(t, "2. item Setext", n.Headings[0].Text)
+	require.Equal(t, 1, n.Headings[0].Level)
 	require.Equal(t, []string{"target.md"}, linkTargets(n.Links))
 }
 
-func TestReferenceShortcutIncompleteSuffix(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("[foo][\n\n[foo]: note.md\n"), Limits{})
-	require.NoError(t, err)
-	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+func TestReferenceTailsMatchGoldmark(t *testing.T) {
+	for _, tc := range []struct{ name, use, raw, target string }{
+		{"incomplete shortcut", "[foo][", "[foo]", "note.md"},
+		{"empty collapsed", "[foo][]", "[foo][]", "note.md"},
+		{"space collapsed", "[foo][ ]", "[foo][ ]", "note.md"},
+		{"tab collapsed", "[foo][\t]", "[foo][\t]", "note.md"},
+		{"CRLF collapsed", "[foo][ \t\r\n ]", "[foo][ \t\r\n ]", "note.md"},
+		{"nonblank full", "[foo][bar]", "[foo][bar]", "other.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const prefix = "pré "
+			src := []byte(prefix + tc.use + "\n\n[foo]: note.md\n[bar]: other.md\n")
+			var goldTargets []string
+			// Stock Goldmark owns this oracle, without B's driver or guard.
+			require.NoError(t, ast.Walk(parser.New().Parse(src), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+				if link, ok := node.(*ast.Link); entering && ok {
+					goldTargets = append(goldTargets, string(link.Destination.Bytes(src)))
+				}
+				return ast.WalkContinue, nil
+			}))
+			require.Equal(t, []string{tc.target}, goldTargets)
+			n, err := Parse(t.Context(), src, Limits{})
+			require.NoError(t, err)
+			require.Equal(t, goldTargets, linkTargets(n.Links))
+			require.Equal(t, []Link{{Form: "reference", Raw: tc.raw, Target: tc.target, Label: "foo", Start: len(prefix), End: len(prefix) + len(tc.raw), Line: 1}}, n.Links)
+			require.Equal(t, tc.raw, string(src[n.Links[0].Start:n.Links[0].End]))
+		})
+	}
 }
 
 func TestUnicodeReferenceLabelLimit(t *testing.T) {
@@ -232,9 +267,18 @@ func TestQuoteTabIndent(t *testing.T) {
 }
 
 func TestReferenceOnlyBeforeHTML(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("[r]: n.md\n<span>\n[x](ghost.md)\n"), Limits{})
-	require.NoError(t, err)
-	require.Empty(t, n.Links)
+	// Type 7 HTML cannot interrupt the reference-prefix paragraph.
+	for _, tc := range []struct {
+		source string
+		links  []string
+	}{
+		{"[r]: n.md\n<span>\n[x](ghost.md)\n", []string{"ghost.md"}},
+		{"[r]: n.md\n\n<span>\n[x](ghost.md)\n", []string{}},
+	} {
+		n, err := Parse(t.Context(), []byte(tc.source), Limits{})
+		require.NoError(t, err)
+		require.Equal(t, tc.links, linkTargets(n.Links), tc.source)
+	}
 }
 
 func TestDefinitionOnlySetext(t *testing.T) {
@@ -245,10 +289,18 @@ func TestDefinitionOnlySetext(t *testing.T) {
 }
 
 func TestContainerMultilineDefinitionsBeforeBlocks(t *testing.T) {
-	src := "> [long\n> label]: note.md\n> <span>\n> [hidden](ghost.md)\n\n[use][long label]\n"
-	n, err := Parse(t.Context(), []byte(src), Limits{})
-	require.NoError(t, err)
-	require.Equal(t, []string{"note.md"}, linkTargets(n.Links))
+	for _, tc := range []struct {
+		separator string
+		links     []string
+	}{
+		{"", []string{"note.md", "ghost.md"}},
+		{">\n", []string{"note.md"}},
+	} {
+		src := "> [long\n> label]: note.md\n" + tc.separator + "> <span>\n> [hidden](ghost.md)\n\n[use][long label]\n"
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		require.Equal(t, tc.links, linkTargets(n.Links), src)
+	}
 }
 
 func TestInvalidFenceCannotInterruptContainer(t *testing.T) {
@@ -259,11 +311,30 @@ func TestInvalidFenceCannotInterruptContainer(t *testing.T) {
 }
 
 func TestBlockScalarContentTab(t *testing.T) {
-	src := "---\ntitle: Good\nunknown: |-\n  \tcontent\n---\n"
-	n, err := Parse(t.Context(), []byte(src), Limits{})
-	require.NoError(t, err)
-	require.Equal(t, "valid", frontmatterState(n))
-	require.Equal(t, "Good", n.Title)
+	// Pin yaml.v3 v3.0.1 behavior: auto-detected indentation rejects a
+	// first-content tab; an explicit indentation indicator admits it.
+	for _, tc := range []struct {
+		indicator string
+		valid     bool
+	}{
+		{"|-", false}, {"|2-", true},
+	} {
+		src := "---\ntitle: Good\nunknown: " + tc.indicator + "\n  \tcontent\n---\n# Body\n"
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		require.Equal(t, []string{"Body"}, headingTexts(n.Headings))
+		if tc.valid {
+			require.Equal(t, "valid", frontmatterState(n))
+			require.Equal(t, "Good", n.Title)
+			require.Equal(t, "\tcontent", n.Frontmatter.Raw["unknown"])
+			require.Empty(t, n.Diagnostics)
+		} else {
+			require.Equal(t, "invalid", frontmatterState(n))
+			require.Nil(t, n.Frontmatter.Raw)
+			require.Equal(t, "Body", n.Title)
+			require.Equal(t, []Diagnostic{{Code: "invalid_frontmatter", Span: Span{0, strings.Index(src, "# Body")}}}, n.Diagnostics)
+		}
+	}
 }
 
 func TestRepeatedContainerDefinitionsBudget(t *testing.T) {
@@ -273,10 +344,17 @@ func TestRepeatedContainerDefinitionsBudget(t *testing.T) {
 }
 
 func TestDefinitionBeforeRootHeading(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("> [r]: target.md\nHeading\n===\n"), Limits{})
-	require.NoError(t, err)
-	require.Len(t, n.Headings, 1)
-	require.Equal(t, "Heading", n.Headings[0].Text)
+	for _, tc := range []struct {
+		separator string
+		headings  []string
+	}{
+		{"", nil}, {"\n", []string{"Heading"}},
+	} {
+		src := "> [r]: target.md\n" + tc.separator + "Heading\n===\n"
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		require.Equal(t, tc.headings, headingTexts(n.Headings), src)
+	}
 }
 
 func TestCompactMappingInUnknownSequence(t *testing.T) {
@@ -294,13 +372,20 @@ func TestOrdinaryContainerParagraphBudget(t *testing.T) {
 }
 
 func TestReferenceBeforeIndentedCode(t *testing.T) {
-	for _, src := range []string{
-		"[r]: target.md\n    [hidden](ghost.md)\n",
-		"> [r]: target.md\n>     [hidden](ghost.md)\n",
+	for _, tc := range []struct{ definition, blank, content string }{
+		{"[r]: target.md\n", "\n", "    [hidden](ghost.md)\n"},
+		{"> [r]: target.md\n", ">\n", ">     [hidden](ghost.md)\n"},
 	} {
-		n, err := Parse(t.Context(), []byte(src), Limits{})
-		require.NoError(t, err, src)
-		require.Empty(t, n.Links, src)
+		for _, blank := range []string{"", tc.blank} {
+			src := tc.definition + blank + tc.content
+			n, err := Parse(t.Context(), []byte(src), Limits{})
+			require.NoError(t, err, src)
+			want := []string{"ghost.md"}
+			if blank != "" {
+				want = []string{}
+			}
+			require.Equal(t, want, linkTargets(n.Links), src)
+		}
 	}
 }
 
@@ -321,15 +406,22 @@ func TestGrowingDefinitionLikeParagraphBudget(t *testing.T) {
 }
 
 func TestReferenceBeforeMixedIndent(t *testing.T) {
-	for _, src := range []string{
-		"[r]: note.md\n  \t[hidden](ghost.md)\n",
-		"> > [r]: note.md\n> >     [hidden](ghost.md)\n",
-		"- [r]: note.md\n      [hidden](ghost.md)\n",
-		"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n",
+	for _, tc := range []struct{ definition, blank, content string }{
+		{"[r]: note.md\n", "\n", "  \t[hidden](ghost.md)\n"},
+		{"> > [r]: note.md\n", "> >\n", "> >     [hidden](ghost.md)\n"},
+		{"- [r]: note.md\n", "\n", "      [hidden](ghost.md)\n"},
+		{"[r]: note.md\n", "\n", "    \"unclosed [hidden](ghost.md)\n"},
 	} {
-		n, err := Parse(t.Context(), []byte(src), Limits{})
-		require.NoError(t, err, src)
-		require.Empty(t, n.Links, src)
+		for _, blank := range []string{"", tc.blank} {
+			src := tc.definition + blank + tc.content
+			n, err := Parse(t.Context(), []byte(src), Limits{})
+			require.NoError(t, err, src)
+			want := []string{"ghost.md"}
+			if blank != "" {
+				want = []string{}
+			}
+			require.Equal(t, want, linkTargets(n.Links), src)
+		}
 	}
 }
 
@@ -354,10 +446,17 @@ func TestLazySetextDoesNotEndParagraph(t *testing.T) {
 }
 
 func TestInvalidContinuationTitleDoesNotHideCode(t *testing.T) {
-	src := "[r]: note.md\n    \"title\" trailing [hidden](ghost.md)\n"
-	n, err := Parse(t.Context(), []byte(src), Limits{})
-	require.NoError(t, err)
-	require.Empty(t, n.Links)
+	for _, blank := range []string{"", "\n"} {
+		// Keep the invalid title text in the code-hiding companion too.
+		src := "[r]: note.md\n" + blank + "    \"title\" trailing [hidden](ghost.md)\n"
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
+		want := []string{"ghost.md"}
+		if blank != "" {
+			want = []string{}
+		}
+		require.Equal(t, want, linkTargets(n.Links), src)
+	}
 }
 
 func TestInvalidDestinationDoesNotRepeatWork(t *testing.T) {
@@ -370,8 +469,8 @@ func TestTitleLookaheadStopsAtHeading(t *testing.T) {
 	src := "[r]: note.md\n    \"unclosed [hidden](ghost.md)\n# Heading\nend\"\n"
 	n, err := Parse(t.Context(), []byte(src), Limits{})
 	require.NoError(t, err)
-	require.Empty(t, n.Links)
-	require.Len(t, n.Headings, 1)
+	require.Equal(t, []string{"ghost.md"}, linkTargets(n.Links))
+	require.Equal(t, []string{"Heading"}, headingTexts(n.Headings))
 }
 
 func TestTitleLookaheadContainerAndIndent(t *testing.T) {
@@ -379,7 +478,8 @@ func TestTitleLookaheadContainerAndIndent(t *testing.T) {
 		source string
 		links  []string
 	}{
-		{"> [r]: n.md\n\"outside [x](x.md)\"\n", []string{"x.md"}},
+		{"> [r]: n.md\n\"outside [x](x.md)\"\n", []string{}},
+		{"> [r]: n.md\n\n\"outside [x](x.md)\"\n", []string{"x.md"}},
 		{"[r]: n.md\n    \"one\n    # literal\n[ghost](g.md)\"\n\n[use][r]\n", []string{"n.md"}},
 		{"> [r]: n.md\n>     \"one\n>     # literal\n> [ghost](g.md)\"\n\n[use][r]\n", []string{"n.md"}},
 	} {
@@ -406,13 +506,17 @@ func TestInvalidReferenceTailBudget(t *testing.T) {
 }
 
 func TestTitleLookaheadStopsAtFenceAndContainerExit(t *testing.T) {
-	for _, src := range []string{
-		"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n```\nend\"\n```\n",
-		"> [r]: note.md\n>     \"unclosed [hidden](ghost.md)\n# Outside\nend\"\n",
+	for _, tc := range []struct {
+		source   string
+		headings []string
+	}{
+		{"[r]: note.md\n    \"unclosed [hidden](ghost.md)\n```\nend\" [code](code.md)\n```\n", nil},
+		{"> [r]: note.md\n>     \"unclosed [hidden](ghost.md)\n# Outside\nend\"\n", []string{"Outside"}},
 	} {
-		n, err := Parse(t.Context(), []byte(src), Limits{})
-		require.NoError(t, err, src)
-		require.Empty(t, n.Links, src)
+		n, err := Parse(t.Context(), []byte(tc.source), Limits{})
+		require.NoError(t, err, tc.source)
+		require.Equal(t, []string{"ghost.md"}, linkTargets(n.Links), tc.source)
+		require.Equal(t, tc.headings, headingTexts(n.Headings), tc.source)
 	}
 }
 

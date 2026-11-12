@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // These anchored RE2 patterns validate one already bounded/metered tag. They
@@ -165,7 +166,7 @@ func validAutolinkEmail(ctx context.Context, value []byte, b *budget) (bool, err
 		if err := b.step(ctx, 1); err != nil {
 			return false, err
 		}
-		if !asciiLetter(c) && (c < '0' || c > '9') && !strings.ContainsRune(".!#$%&'*+-/=?^_`{|}~", rune(c)) {
+		if !util.IsAlphaNumeric(c) && !strings.ContainsRune(".!#$%&'*+-/=?^_`{|}~", rune(c)) {
 			return false, nil
 		}
 	}
@@ -182,7 +183,7 @@ func validAutolinkEmail(ctx context.Context, value []byte, b *budget) (bool, err
 			continue
 		}
 		c := value[i]
-		if !asciiLetter(c) && (c < '0' || c > '9') && c != '-' {
+		if !util.IsAlphaNumeric(c) && c != '-' {
 			return false, nil
 		}
 	}
@@ -211,5 +212,3 @@ func (r *htmlRuneReader) ReadRune() (rune, int, error) {
 	r.pos += size
 	return c, size, nil
 }
-
-func asciiLetter(c byte) bool { return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' }
