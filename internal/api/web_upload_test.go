@@ -176,8 +176,10 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 }
 
 func TestBrowserUploadRetryRechecksVerifiedFile(t *testing.T) {
+	t.Parallel()
 	for _, replace := range []bool{false, true} {
 		t.Run(fmt.Sprintf("replace=%t", replace), func(t *testing.T) {
+			t.Parallel()
 			gate := api.NewOperationGate()
 			verified := make(chan struct{})
 			release := make(chan struct{})
@@ -239,6 +241,7 @@ func TestBrowserUploadRetryRechecksVerifiedFile(t *testing.T) {
 }
 
 func TestBrowserUploadVerificationDoesNotBlockMaintenance(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		gate := api.NewOperationGate()
 		started := make(chan struct{})
@@ -280,8 +283,7 @@ func TestBrowserUploadVerificationDoesNotBlockMaintenance(t *testing.T) {
 			require.NoError(t, err)
 		default:
 			close(release)
-			<-maintenance
-			t.Fatal("maintenance waited for upload verification")
+			t.Fatalf("maintenance waited for upload verification: %v", <-maintenance)
 		}
 		close(release)
 		require.NoError(t, wsjson.Read(t.Context(), conn, &message))
