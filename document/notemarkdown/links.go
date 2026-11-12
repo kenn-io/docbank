@@ -227,11 +227,11 @@ func (s *linkScanner) destination(start, end int) (Span, int, bool, error) {
 				return Span{}, 0, false, nil
 			}
 		} else {
-			if c < 0x20 || c == 0x7f {
-				return Span{}, 0, false, nil
-			}
 			if linkSpace(c) {
 				break
+			}
+			if c < 0x20 || c == 0x7f {
+				return Span{}, 0, false, nil
 			}
 			if c == '(' {
 				depth++

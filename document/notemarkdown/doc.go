@@ -35,8 +35,8 @@
 // Forms are markdown (including autolinks), reference, image, wikilink and embed.
 // Parenthesized link titles reject unescaped opening parentheses in inline and
 // reference forms; backslash-escaped punctuation remains literal.
-// Bare link destinations reject ASCII control bytes; angle destinations retain
-// their existing contract.
+// Bare link destinations end at space/tab/line separators and reject other
+// ASCII control bytes; angle destinations retain their existing contract.
 // Raw spans the whole occurrence. Targets decode Markdown syntax where allowed,
 // split at the first structural #, then percent-decode each component once.
 // Autolinks retain literal entity/backslash spelling. Invalid escapes, decoded
@@ -54,8 +54,9 @@
 // candidate block Open; failed candidates refund, successful (including
 // abandoned Setext) nodes retain admission. A full node budget fails closed
 // before trying another candidate. Open/Continue scans use conservative
-// per-parser byte-pass bounds; list closes charge their child visits, code
-// closes charge every value segment conservatively, and retries/depth are
+// per-parser byte-pass bounds (ATX Open uses two passes with attributes disabled);
+// list closes charge their child visits, code closes charge every value segment
+// conservatively, and retries/depth are
 // metered. Context is checked directly at line and callback boundaries; no
 // checkpoint runs inside an opaque callback. One callback may scan a source
 // line or accumulated code segments during Close up to MaxBytes (4 MiB), and a
