@@ -336,6 +336,7 @@
 
   async function inspectCurrentImport(): Promise<void> {
     if ((!registered && !registrationUncertain) || running || planning || disabledReason) return;
+    const activeChannel = channel;
     planning = true;
     try {
       await inspectAndApply(
@@ -344,7 +345,17 @@
         registrationUncertain,
       );
     } catch (cause) {
-      showError(cause);
+      if (
+        registrationUncertain &&
+        cause instanceof APIError &&
+        cause.status === 404 &&
+        channel === activeChannel &&
+        !destroyed
+      ) {
+        registrationUncertain = false;
+        plannedChannel = undefined;
+        error = "";
+      } else showError(cause);
     } finally {
       planning = false;
     }
@@ -653,7 +664,7 @@
           setState(item, state);
           item.error =
             state === "unconfirmed"
-              ? "Import outcome is unconfirmed. Open Saved imports, select this import, and choose Inspect import."
+              ? "Import outcome is unconfirmed. Inspect import before retrying."
               : cause instanceof Error
                 ? cause.message
                 : String(cause);

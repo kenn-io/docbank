@@ -946,12 +946,8 @@ func handleInspectWebPhotoImport(
 	plan := &webPhotoImport{id: id.String(), sourceID: saved.SourceID, destination: saved.Directory, destinationPath: saved.Destination, registered: true}
 	for ordinal, group := range saved.Groups {
 		entry := webSavedPhotoGroup{Status: "remaining", Hashes: group.Hashes}
-		if len(active) > 0 {
-			if active[id.String()+"/"+strconv.Itoa(ordinal)] {
-				entry.Status = "pending"
-			} else if len(group.Hashes) != 0 {
-				entry.Status = "unconfirmed"
-			}
+		if active[id.String()+"/"+strconv.Itoa(ordinal)] {
+			entry.Status = "pending"
 		}
 		if group.Receipt != nil {
 			entry.Status = "committed"

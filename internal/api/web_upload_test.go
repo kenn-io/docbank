@@ -310,6 +310,10 @@ func TestBrowserPhotoInspectionWhileUploading(t *testing.T) {
 	observer := browserUploadSocket(t, ts)
 	files := photoGroupDeclaration([]string{"capture.xmp", "other.xmp"}, false)
 	id := planBrowserPhotos(t, writer, files)
+	require.NoError(t, wsjson.Write(ctx, writer, map[string]any{"type": "begin_photo_group", "request_id": "cancelled", "import_id": id, "group": 1, "hashes": photoGroupHashes(t, files[1:])}))
+	require.Equal(t, "ready", readPhotoResponse(t, writer).Type)
+	require.NoError(t, wsjson.Write(ctx, writer, map[string]string{"type": "cancel", "request_id": "cancelled"}))
+	require.Equal(t, 499, readPhotoResponse(t, writer).Status)
 	require.NoError(t, wsjson.Write(ctx, writer, map[string]any{"type": "begin_photo_group", "request_id": "group", "import_id": id, "group": 0, "hashes": photoGroupHashes(t, files[:1])}))
 	require.Equal(t, "ready", readPhotoResponse(t, writer).Type)
 	require.NoError(t, wsjson.Write(ctx, observer, map[string]any{"type": "inspect_photo_import", "request_id": "inspect", "import_id": id}))
@@ -823,7 +827,8 @@ func TestBrowserPhotoDestinationIdentity(t *testing.T) {
 				}
 			} else {
 				assert.Equal(t, "not_found", reply.Code)
-				assert.Contains(t, reply.Detail, "trashed or removed")
+				assert.Contains(t, reply.Detail, "Restore the original folder from Trash")
+				assert.Contains(t, reply.Detail, "start a new import")
 			}
 			_, err = catalog.NodeByPath(t.Context(), "/photos")
 			require.ErrorIs(t, err, store.ErrNotFound)
