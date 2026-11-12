@@ -529,7 +529,7 @@ func (s *Store) PublishDocumentPeople(ctx context.Context, p DocumentPeoplePubli
 				for _, edge := range p.People.Edges {
 					if _, err := tx.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,first_axis_key,last_axis_key,sensitive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 						p.People.ContentVersionID, p.NodeID, edge.PersonID, generationID, edge.Role, edge.ActorKey,
-						edge.EvidenceKind, edge.EvidenceID, edge.Confidence, edge.Basis, edge.RawLabel, edge.ClaimCount,
+						edge.EvidenceKind, edge.EvidenceID, edge.Confidence, edge.Basis, storedString(s.postgresSchema != "", edge.RawLabel), edge.ClaimCount,
 						nullablePeopleText(edge.FirstAxisKey), nullablePeopleText(edge.LastAxisKey), boolInt(edge.Sensitive)); err != nil {
 						return err
 					}

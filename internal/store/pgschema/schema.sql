@@ -214,15 +214,15 @@ CREATE TABLE {{schema}}.source_metadata_heads (
 CREATE TABLE {{schema}}.photo_technical_metadata (
     generation_id          TEXT COLLATE "C" PRIMARY KEY
         REFERENCES {{schema}}.source_metadata_generations(generation_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    camera_make            TEXT COLLATE "C",
-    camera_model           TEXT COLLATE "C",
-    body_serial_number     TEXT COLLATE "C",
-    lens_make              TEXT COLLATE "C",
-    lens_model             TEXT COLLATE "C",
-    camera_make_folded     TEXT COLLATE "C" NOT NULL DEFAULT '',
-    camera_model_folded    TEXT COLLATE "C" NOT NULL DEFAULT '',
-    lens_make_folded       TEXT COLLATE "C" NOT NULL DEFAULT '',
-    lens_model_folded      TEXT COLLATE "C" NOT NULL DEFAULT '',
+    camera_make            BYTEA,
+    camera_model           BYTEA,
+    body_serial_number     BYTEA,
+    lens_make              BYTEA,
+    lens_model             BYTEA,
+    camera_make_folded     BYTEA NOT NULL DEFAULT '',
+    camera_model_folded    BYTEA NOT NULL DEFAULT '',
+    lens_make_folded       BYTEA NOT NULL DEFAULT '',
+    lens_model_folded      BYTEA NOT NULL DEFAULT '',
     iso                    BIGINT,
     exposure_time_seconds  DOUBLE PRECISION,
     f_number               DOUBLE PRECISION,
@@ -231,7 +231,7 @@ CREATE TABLE {{schema}}.photo_technical_metadata (
     width_px               BIGINT,
     height_px              BIGINT,
     capture_time           TEXT COLLATE "C",
-    capture_time_raw       TEXT COLLATE "C",
+    capture_time_raw       BYTEA,
     capture_time_precision TEXT COLLATE "C",
     capture_time_timezone  TEXT COLLATE "C",
     capture_time_offset    TEXT COLLATE "C",
@@ -240,7 +240,7 @@ CREATE TABLE {{schema}}.photo_technical_metadata (
     orientation            BIGINT,
     latitude               DOUBLE PRECISION,
     longitude              DOUBLE PRECISION,
-    location_label         TEXT COLLATE "C"
+    location_label         BYTEA
 );
 
 CREATE TABLE {{schema}}.tags (
@@ -312,6 +312,7 @@ CREATE TABLE {{schema}}.photo_sets (
 );
 
 CREATE TABLE {{schema}}.photo_change_receipts (
+    face_version_id TEXT COLLATE "C",
     receipt_order BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
     receipt_id     TEXT COLLATE "C" PRIMARY KEY,
     operation      TEXT COLLATE "C" NOT NULL,
@@ -382,7 +383,7 @@ CREATE INDEX photo_change_receipts_xmp_sidecar
     ON {{schema}}.photo_change_receipts(((after_json::jsonb #>> '{sync,sidecar,file_id}') COLLATE "C"))
     WHERE operation='xmp_sync';
 CREATE INDEX photo_change_receipts_face_version
-    ON {{schema}}.photo_change_receipts(((before_json::jsonb ->> 'content_version_id') COLLATE "C"),receipt_id)
+    ON {{schema}}.photo_change_receipts(face_version_id,receipt_id)
     WHERE operation='face_decision';
 
 -- Keep the token byte-for-byte equal to SQLite, including 0/1 booleans and
@@ -792,8 +793,8 @@ CREATE TABLE {{schema}}.storage_operations (
 CREATE TABLE {{schema}}.media_sources (
     source_id       TEXT COLLATE "C" PRIMARY KEY,
     kind            TEXT COLLATE "C" NOT NULL,
-    provider        TEXT COLLATE "C" NOT NULL,
-    origin_scope    TEXT COLLATE "C" NOT NULL,
+    provider        BYTEA NOT NULL,
+    origin_scope    BYTEA NOT NULL,
     identity_sha256 TEXT COLLATE "C" NOT NULL UNIQUE,
     created_at      TEXT COLLATE "C" NOT NULL
 );
@@ -1521,7 +1522,7 @@ CREATE TABLE {{schema}}.person_document_assertions (
     person_id TEXT COLLATE "C" NOT NULL,
     role TEXT COLLATE "C" NOT NULL,
     action TEXT COLLATE "C" NOT NULL,
-    note TEXT COLLATE "C" NOT NULL,
+    note BYTEA NOT NULL,
     recorded_at TEXT COLLATE "C" NOT NULL,
     revision BIGINT NOT NULL DEFAULT 1,
     UNIQUE (content_version_id, person_id, role)
@@ -1620,7 +1621,7 @@ CREATE TABLE {{schema}}.document_people (
     evidence_id TEXT COLLATE "C" NOT NULL,
     confidence TEXT COLLATE "C" NOT NULL,
     basis TEXT COLLATE "C" NOT NULL,
-    raw_label TEXT COLLATE "C" NOT NULL,
+    raw_label BYTEA NOT NULL,
     claim_count BIGINT NOT NULL,
     first_axis_key TEXT COLLATE "C",
     last_axis_key TEXT COLLATE "C",
@@ -1657,7 +1658,7 @@ CREATE TABLE {{schema}}.mailbox_chunks (
 CREATE TABLE {{schema}}.mailbox_archives (
     id TEXT COLLATE "C" PRIMARY KEY,
     owner TEXT COLLATE "C" NOT NULL,
-    description TEXT COLLATE "C" NOT NULL
+    description BYTEA NOT NULL
 );
 
 CREATE TABLE {{schema}}.mailbox_transfer_receipts (

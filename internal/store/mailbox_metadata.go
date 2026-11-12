@@ -89,7 +89,7 @@ func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArch
 	if !mailboxText(a.ID, 128) || !mailboxText(a.Owner, 256) || !mailboxText(a.Description, 1024) {
 		return ErrMailboxInvalid
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, a.ID, a.Owner, a.Description)
+	_, err := tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, a.ID, a.Owner, storedString(postgres, a.Description))
 	return err
 }
 

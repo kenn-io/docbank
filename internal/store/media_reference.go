@@ -34,7 +34,7 @@ func (s *Store) RetainMediaReference(
 			_, err = tx.ExecContext(ctx, `INSERT INTO media_sources(
 				source_id,kind,provider,origin_scope,identity_sha256,created_at
 			) VALUES($1,'remote_recording',$2,$3,$4,$5)`, request.Operation.SourceID,
-				request.Provider, request.OriginScope, request.IdentitySHA256, nowRFC3339())
+				storedString(s.postgresSchema != "", request.Provider), storedString(s.postgresSchema != "", request.OriginScope), request.IdentitySHA256, nowRFC3339())
 		} else if err == nil && (existingKind != "remote_recording" || existingProvider != request.Provider ||
 			existingScope != request.OriginScope || existingIdentity != request.IdentitySHA256) {
 			return "", ErrMediaSourceConflict

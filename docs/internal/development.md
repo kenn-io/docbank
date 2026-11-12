@@ -902,8 +902,10 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
-Provenance strings, person names, extracted text and caller-supplied occurrence
-attributes retain U+0000 across logical transfer and native operations.
+Provenance strings, person names and assertion notes, archive descriptions,
+remote source provider/scope values, extracted text, technical photo labels and
+caller-supplied occurrence attributes retain U+0000 across logical transfer and
+native operations.
 PostgreSQL stores unrestricted provenance strings, person names and retained
 name snapshots, extracted text/error strings and retained rendition text, and
 caller-supplied media occurrence attributes as `BYTEA`. The metadata codec marks these fields with
@@ -925,6 +927,24 @@ preceding Unicode rune; it never decodes a NUL-bearing value as PostgreSQL text
 or filters a bounded page after reading it. Recent-name exclusions use a native
 `bytea[]` parameter. These differences add no database round trip or storage
 escaping layer.
+
+PostgreSQL also stores published custodian labels and technical photo string
+projections as bytes. Rebuilding those projections preserves the original source
+metadata. Authored photo fields keep their existing validation.
+
+Archive registration needs only `SELECT` and `INSERT` on `mailbox_archives`:
+
+```sql
+GRANT SELECT, INSERT ON documents.mailbox_archives TO docbank_runtime;
+```
+
+Face-decision receipts can contain NUL-bearing candidate names. PostgreSQL's
+JSON operators decode strings throughout a record and cannot inspect those
+receipts. Native writes and import therefore populate an indexed
+`photo_change_receipts.face_version_id` lookup in Go. Receipt readers use that
+lookup and the shared Go decoder. The lookup is derived, stays outside logical
+exports, and does not change receipt bytes. Face-protection reads keep one
+query, including candidate and receipt references.
 
 PostgreSQL foreign keys that normally check immediately allow explicit deferral.
 Logical import and collection snapshot sealing, including received packages,

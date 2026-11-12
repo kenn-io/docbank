@@ -441,7 +441,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 				return ErrStaleRevision
 			}
 			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=$1,note=$2,photo_mark=$3,revision=revision+1 WHERE assertion_id=$4 AND revision=$5`,
-				assertion.Action, assertion.Note, boolInt(assertion.PhotoMark), existing.AssertionID, existing.Revision)
+				assertion.Action, storedString(s.postgresSchema != "", assertion.Note), boolInt(assertion.PhotoMark), existing.AssertionID, existing.Revision)
 			if err != nil {
 				return err
 			}
@@ -469,7 +469,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			assertion.RecordedAt = nowRFC3339()
 			_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES($1,$2,$3,$4,$5,$6,$7,1)`,
 				assertion.AssertionID, assertion.ContentVersionID, assertion.PersonID, assertion.Role,
-				assertion.Action, assertion.Note, assertion.RecordedAt)
+				assertion.Action, storedString(s.postgresSchema != "", assertion.Note), assertion.RecordedAt)
 			if err != nil {
 				return err
 			}

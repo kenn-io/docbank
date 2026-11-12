@@ -45,6 +45,12 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	assert.Equal(t, backendColumn{Kind: "text", Required: true}, right["vault_metadata"].Columns["schema_fingerprint"])
 	delete(left["vault_metadata"].Columns, "schema_version")
 	delete(right["vault_metadata"].Columns, "schema_fingerprint")
+	assert.Equal(t, backendColumn{Kind: "text"}, right["photo_change_receipts"].Columns["face_version_id"])
+	delete(right["photo_change_receipts"].Columns, "face_version_id")
+	assert.Equal(t, backendIndex{Columns: []string{"<expression>", "receipt_id"}, Partial: true}, left["photo_change_receipts"].Indexes["photo_change_receipts_face_version"])
+	assert.Equal(t, backendIndex{Columns: []string{"face_version_id", "receipt_id"}, Partial: true}, right["photo_change_receipts"].Indexes["photo_change_receipts_face_version"])
+	delete(left["photo_change_receipts"].Indexes, "photo_change_receipts_face_version")
+	delete(right["photo_change_receipts"].Indexes, "photo_change_receipts_face_version")
 	// Accepted provenance strings permit NUL. PostgreSQL stores bytes while
 	// SQLite retains its released TEXT; logical exports remain strings.
 	for table, columns := range backendByteStringColumns {
@@ -345,6 +351,11 @@ func describePostgresIndexes(t *testing.T, s *Store, table string) map[string]ba
 // Accepted UTF-8 evidence and names need byte storage on PostgreSQL. This list
 // makes those intentional schema differences visible to the drift check.
 var backendByteStringColumns = map[string][]string{
+	"person_document_assertions": {"note"},
+	"document_people":            {"raw_label"},
+	"mailbox_archives":           {"description"},
+	"media_sources":              {"provider", "origin_scope"},
+	"photo_technical_metadata":   {"camera_make", "camera_model", "body_serial_number", "lens_make", "lens_model", "camera_make_folded", "camera_model_folded", "lens_make_folded", "lens_model_folded", "capture_time_raw", "location_label"},
 	"ingests":                    {"source_kind", "source_desc"},
 	"provenance":                 {"original_path"},
 	"photo_source_claims":        {"original_path"},

@@ -137,7 +137,7 @@ type metadataPersonDocumentAssertion struct {
 	PersonID         string `json:"person_id" db:"person_id"`
 	Role             string `json:"role" db:"role"`
 	Action           string `json:"action" db:"action"`
-	Note             string `json:"note" db:"note"`
+	Note             string `json:"note" db:"note,bytes"`
 	RecordedAt       string `json:"recorded_at" db:"recorded_at"`
 	Revision         int64  `json:"revision" db:"revision"`
 }
@@ -611,7 +611,7 @@ type metadataPersonAssertionBeforePhotoMark struct {
 	PersonID         string `json:"person_id" db:"person_id"`
 	Role             string `json:"role" db:"role"`
 	Action           string `json:"action" db:"action"`
-	Note             string `json:"note" db:"note"`
+	Note             string `json:"note" db:"note,bytes"`
 	RecordedAt       string `json:"recorded_at" db:"recorded_at"`
 	Revision         int64  `json:"revision" db:"revision"`
 }

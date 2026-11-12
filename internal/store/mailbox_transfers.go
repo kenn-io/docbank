@@ -69,7 +69,7 @@ func (s *Store) RegisterMailboxArchive(ctx context.Context, a MailboxArchive) er
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var old MailboxArchive
-		err := tx.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id=?`, a.ID).Scan(&old.ID, &old.Owner, &old.Description)
+		err := tx.QueryRowContext(ctx, `SELECT id,owner,description FROM mailbox_archives WHERE id=$1`, a.ID).Scan(&old.ID, &old.Owner, &old.Description)
 		if err == nil {
 			if old != a {
 				return ErrMailboxConflict
@@ -79,7 +79,7 @@ func (s *Store) RegisterMailboxArchive(ctx context.Context, a MailboxArchive) er
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES(?,?,?)`, a.ID, a.Owner, a.Description)
+		_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_archives(id,owner,description) VALUES($1,$2,$3)`, a.ID, a.Owner, storedString(s.postgresSchema != "", a.Description))
 		return err
 	})
 }
@@ -171,7 +171,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 		return MailboxTransferReceipt{}, err
 	}
 	var owner string
-	if err = tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_archives WHERE id=?`, p.Request.ArchiveID).Scan(&owner); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT owner FROM mailbox_archives WHERE id=$1`, p.Request.ArchiveID).Scan(&owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return MailboxTransferReceipt{}, ErrNotFound
 		}

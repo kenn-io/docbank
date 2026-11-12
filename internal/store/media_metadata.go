@@ -212,7 +212,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaSource(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`, record.SourceID, record.Kind, record.Provider, record.OriginScope, record.IdentitySHA256, record.CreatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES($1,$2,$3,$4,$5,$6)`, record.SourceID, record.Kind, storedString(s.postgresSchema != "", record.Provider), storedString(s.postgresSchema != "", record.OriginScope), record.IdentitySHA256, record.CreatedAt)
 		return err
 	case metadataMediaSourceVersionType:
 		var record metadataMediaSourceVersion

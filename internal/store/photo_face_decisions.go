@@ -172,7 +172,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	return state, nil
 }
 
-func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after PhotoFaceDecisionState, createdPerson faceDecisionPerson, undo, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
+func (s *Store) writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after PhotoFaceDecisionState, createdPerson faceDecisionPerson, undo, operationID, requestSHA string) (PhotoFaceDecisionReceipt, error) {
 	id := operationID
 	var err error
 	if id == "" {
@@ -253,7 +253,20 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	if err = tx.QueryRowContext(ctx, `SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=$1`, before.VersionID).Scan(&assetID); err != nil {
 		return result, err
 	}
-	err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
+	if s.postgresSchema == "" {
+		err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
+	} else {
+		beforeJSON, e := json.Marshal(before, json.Deterministic(true))
+		if e != nil {
+			return result, e
+		}
+		afterJSON, e := json.Marshal(afterState, json.Deterministic(true))
+		if e != nil {
+			return result, e
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,before_revision,after_revision,before_json,after_json,created_at,face_version_id) VALUES($1,'face_decision',$2,0,1,$3,$4,$5,$6)`, id, assetID, string(beforeJSON), string(afterJSON), nowRFC3339(), before.VersionID)
+	}
+
 	return result, err
 }
 
@@ -444,7 +457,7 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	return writeFaceDecisionReceiptTx(ctx, tx, before, after, createdPerson, "", request.OperationID, requestSHA)
+	return s.writeFaceDecisionReceiptTx(ctx, tx, before, after, createdPerson, "", request.OperationID, requestSHA)
 }
 
 // decisionFaceTx loads the requested face and checks its revision. A key
@@ -693,7 +706,7 @@ func (s *Store) undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceD
 	if err != nil {
 		return PhotoFaceDecisionReceipt{}, err
 	}
-	return writeFaceDecisionReceiptTx(ctx, tx, current, after, faceDecisionPerson{}, r.ReceiptID, operationID, requestSHA)
+	return s.writeFaceDecisionReceiptTx(ctx, tx, current, after, faceDecisionPerson{}, r.ReceiptID, operationID, requestSHA)
 }
 
 // fenceFaceDecisionUndoTx returns the current rows the receipt touched,
@@ -1248,7 +1261,7 @@ func (s *Store) faceDecisionReceiptsTx(ctx context.Context, tx *sql.Tx, versionI
 	version := d.text("before_json", "content_version_id")
 	if d.postgres {
 		index = ""
-		version = d.indexedText("before_json", "content_version_id")
+		version = "face_version_id"
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts`+index+` WHERE operation='face_decision' AND `+version+`=$1`, versionID)
 	if err != nil {

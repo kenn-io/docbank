@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -25,6 +26,63 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	t.Helper()
 	t.Parallel()
 	seeds := retainedMetadataCatalogSeeds()
+	seeds["NUL assertion note"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		node, face := faceForDecisionTest(t, s, "")
+		person, err := s.CreatePerson(t.Context(), "Candidate\x00Name", "operator")
+		require.NoError(t, err)
+		_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Note: "note\x00evidence", Revision: 1})
+		require.NoError(t, err)
+		_, err = s.DecidePhotoFace(t.Context(), node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, PersonID: person.PersonID, Action: "name", Revision: face.Revision})
+		require.NoError(t, err)
+		return s
+	}
+	seeds["NUL face receipt"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("d9"), "image/jpeg")
+		require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+			return s.publishFaceDetectionTx(t.Context(), tx, node.CurrentVersionID, fakeHash("d8"), document.FaceDetection{Faces: []document.FaceObservation{{Box: document.FaceBox{Width: .3, Height: .4}}}}, time.Now())
+		}))
+		faces, _, _, err := s.PhotoFacePersonNames(t.Context(), node.CurrentVersionID)
+		require.NoError(t, err)
+		require.Len(t, faces, 1)
+		face := faces[0]
+		raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
+		require.NoError(t, err)
+		candidate, err := normalizePersonCandidate(PersonMatchCandidate{ActorKey: "face:" + face.FaceID, DisplayName: "Face\x00Name", Reason: personCandidateReasonFaceMatch, Evidence: raw})
+		require.NoError(t, err)
+		require.NoError(t, s.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
+			_, retained, err := s.OpenPersonCandidate(t.Context(), tx, candidate)
+			require.True(t, retained)
+			return err
+		}))
+		_, err = s.DecidePhotoFace(t.Context(), node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: face.Revision})
+		require.NoError(t, err)
+		return s
+	}
+	seeds["NUL archive"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		require.NoError(t, s.RegisterMailboxArchive(t.Context(), MailboxArchive{ID: "archive", Owner: "operator", Description: "archive\x00description"}))
+		return s
+	}
+	seeds["NUL photo facts"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		node := browsePhotoNode(t, s, "camera.jpg", fakeHash("c7"), "image/jpeg")
+		browsePhotoMetadata(t, s, node, "nul-photo", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera\x00Make")), photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens\x00Model")))
+		return s
+	}
+	seeds["NUL remote source"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		source := fakeHash("c6")
+		_, err := s.RetainMediaReference(t.Context(), MediaReferencePublicationRequest{Operation: MediaOperation{ID: "00000000-0000-4000-8000-000000000801", Principal: "operator", Verb: "submit_remote_recording", RequestSHA256: fakeHash("c5"), SourceID: source}, Provider: "url\x00provider", OriginScope: "scope\x00origin", IdentitySHA256: fakeHash("c4"), Outcome: "unsupported", Occurrence: MediaOccurrenceInput{ID: "occurrence", SourceID: source, Principal: "operator", Ref: "ref", Revision: "1", Filename: "recording.wav", MessageJSON: "{}"}})
+		require.NoError(t, err)
+		return s
+	}
 	seeds["NUL source description"] = func(t *testing.T) *Store {
 		t.Helper()
 		s := newTestStore(t)
@@ -77,7 +135,8 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.CreatePerson(t.Context(), "Zoe", "operator")
 		require.NoError(t, err)
-		node, err := s.CreateFile(t.Context(), s.RootID(), "claim.txt", fakeHash("c9"), 9, "text/plain")
+		version := seedDocumentPeopleEvent(t, s, "claim.txt", "c9", nil)
+		node, err := s.NodeByID(t.Context(), version.NodeID)
 		require.NoError(t, err)
 		_, err = s.SetCustodian(t.Context(), CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: person.PersonID, RawLabel: "Ada\x00label", Rank: "primary", Basis: "operator_assigned", SourceRef: "claim\x00reference", IfMatchRevision: 1})
 		require.NoError(t, err)
@@ -272,6 +331,12 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 	// Verify these native fixtures actually produce the custom records whose
 	// insertion behavior the round trip must exercise.
 	requiredKinds := map[string][]string{
+		"NUL assertion note": {"person_document_assertion", "photo_change_receipt"},
+		"NUL archive":        {"mailbox_archive"},
+		"NUL photo facts":    {"source_metadata_generation"},
+		"NUL remote source":  {"media_source", "media_occurrence"},
+		"NUL face receipt":   {"photo_change_receipt", "person_match_candidate"},
+
 		"mailbox job":                  {"mailbox_job"},
 		"mailbox work":                 {"mailbox_job", "mailbox_occurrence", "mailbox_archive", "mailbox_transfer_receipt", "mailbox_container", "email_document_publication"},
 		"photo suggestions":            {"photo_suggestion"},
@@ -355,6 +420,70 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			after, err := runtime.VerifyAudit(ctx, nil)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			if name == "NUL assertion note" {
+				for _, store := range []*Store{runtime, recovered} {
+					node, err := store.NodeByPath(ctx, "/portrait.jpg")
+					require.NoError(t, err)
+					person, err := store.CreatePerson(ctx, "Author", "operator")
+					require.NoError(t, err)
+					assertion, err := store.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "author", Action: "assert", Note: "new\x00note", Revision: 1})
+					require.NoError(t, err)
+					require.Equal(t, "new\x00note", assertion.Note)
+				}
+			}
+
+			if name == "NUL archive" {
+				for _, store := range []*Store{runtime, recovered} {
+					require.NoError(t, store.RegisterMailboxArchive(ctx, MailboxArchive{ID: "archive", Owner: "operator", Description: "archive\x00description"}))
+					require.NoError(t, store.RegisterMailboxArchive(ctx, MailboxArchive{ID: "new-archive", Owner: "operator", Description: "new\x00description"}))
+				}
+			}
+
+			if name == "NUL photo facts" {
+				for _, store := range []*Store{runtime, recovered} {
+					node, err := store.NodeByPath(ctx, "/camera.jpg")
+					require.NoError(t, err)
+					facts, err := store.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+					require.NoError(t, err)
+					require.Equal(t, "Camera\x00Make", *facts.Fields.CameraMake)
+					require.Equal(t, "Lens\x00Model", *facts.Fields.LensModel)
+					browsePhotoMetadata(t, store, node, "changed-nul", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("New\x00Camera")))
+					facts, err = store.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+					require.NoError(t, err)
+					require.Equal(t, "New\x00Camera", *facts.Fields.CameraMake)
+				}
+			}
+			if name == "NUL face receipt" {
+				for _, store := range []*Store{runtime, recovered} {
+					var id string
+					require.NoError(t, store.db.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE operation='face_decision' LIMIT 1`).Scan(&id))
+					_, err = store.UndoPhotoFaceDecision(ctx, id)
+					require.NoError(t, err)
+					candidates, _, err := store.PersonCandidates(ctx, "open", 10, 0)
+					require.NoError(t, err)
+					require.Len(t, candidates, 1)
+					require.Equal(t, "Face\x00Name", candidates[0].DisplayName)
+					node, err := store.NodeByPath(ctx, "/portrait.jpg")
+					require.NoError(t, err)
+					faces, _, _, err := store.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+					require.NoError(t, err)
+					require.Len(t, faces, 1)
+					_, err = store.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: faces[0].FaceID, Action: "dismiss", Revision: faces[0].Revision})
+					require.NoError(t, err)
+					require.NoError(t, store.withStorageTx(ctx, func(tx *sql.Tx) error {
+						return store.publishFaceDetectionTx(ctx, tx, node.CurrentVersionID, fakeHash("b9"), document.FaceDetection{}, time.Now())
+					}))
+					protected, _, _, err := store.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+					require.NoError(t, err)
+					require.Len(t, protected, 1)
+					require.Equal(t, faces[0].FaceID, protected[0].FaceID)
+					fresh, _, err := store.CreatePhotoFace(ctx, node.CurrentVersionID, "00000000-0000-4000-8000-000000000903", document.FaceBox{Width: .1, Height: .1}, "")
+					require.NoError(t, err)
+					_, err = store.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: fresh.FaceID, Action: "name", PersonName: "New\x00Person", Revision: fresh.Revision})
+					require.NoError(t, err)
+					require.NoError(t, store.ValidateMetadata(ctx))
+				}
+			}
 			if name == "NUL person name" {
 				first, _, err := source.PeopleByDisplayName(ctx, "", "", "", 1, false, PeopleSearchOptions{})
 				require.NoError(t, err)
@@ -389,6 +518,28 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 						require.NoError(t, err)
 						require.Len(t, matches, 1)
 					}
+				}
+				for _, store := range []*Store{runtime, recovered} {
+					node, err := store.NodeByPath(ctx, "/claim.txt")
+					require.NoError(t, err)
+					target := requireDocumentEventTarget(t, store, node.CurrentVersionID)
+					record := documentEventRecord(t, store.VaultID(), node.CurrentVersionID, "c9")
+					raw, _, err := document.MarshalDocumentEventsV1(record)
+					require.NoError(t, err)
+					_, err = store.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, store, target), raw)
+					require.NoError(t, err)
+					input, err := store.PrepareDocumentPeopleInputs(ctx, node.CurrentVersionID)
+					require.NoError(t, err)
+					require.Len(t, input.Custodians, 1)
+					claim := input.Custodians[0]
+					require.Equal(t, "Ada\x00label", claim.RawLabel)
+					publication := DocumentPeoplePublication{People: document.DocumentPeopleV1{ContractVersion: document.PersonContractV1, ContentVersionID: input.ContentVersionID, EventGenerationID: input.EventGenerationID, Edges: []document.DocumentPersonEdgeV1{{PersonID: *claim.PersonID, Role: "custodian", EvidenceKind: "custodian_assignment", EvidenceID: claim.AssignmentID, Confidence: "operator_asserted", Basis: "operator_assigned", RawLabel: claim.RawLabel, ClaimCount: 1}}}, InputsSHA256: fakeHash("c3"), ResolverFingerprint: document.PersonResolverFingerprint(), NodeID: input.NodeID, BindingEpoch: input.BindingEpoch, NodeRevision: input.NodeRevision}
+					_, err = store.PublishDocumentPeople(ctx, publication)
+					require.NoError(t, err)
+					edges, _, err := store.DocumentPeopleForVersion(ctx, node.CurrentVersionID)
+					require.NoError(t, err)
+					require.Len(t, edges, 1)
+					require.Equal(t, "Ada\x00label", edges[0].RawLabel)
 				}
 				created, err := runtime.CreatePerson(ctx, "New\x00Person", "operator")
 				require.NoError(t, err)

@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -218,16 +217,20 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		columns, err := rows.Columns()
 		require.NoError(t, err)
 		values, destinations := make([]any, len(columns)), make([]any, len(columns))
-		parameters := make([]string, len(columns))
+
 		for i := range columns {
 			destinations[i] = &values[i]
-			parameters[i] = fmt.Sprintf("$%d", i+1)
 		}
 		override := ""
 		if table == "extracted_text" || table == "photo_hidden_failures" {
 			override = " OVERRIDING SYSTEM VALUE"
 		}
-		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
+		faceReceipt := table == "photo_change_receipts"
+		if faceReceipt {
+			columns = append(columns, "face_version_id")
+		}
+
+		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + numberedPlaceholders(len(columns), 0) + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
 			for _, column := range backendByteStringColumns[table] {
@@ -239,7 +242,17 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 				}
 			}
 
-			_, err := to.ExecContext(ctx, insert, values...)
+			args := values
+			if faceReceipt {
+				operation, ok := values[slices.Index(columns, "operation")].(string)
+				require.True(t, ok)
+				before, ok := values[slices.Index(columns, "before_json")].(string)
+				require.True(t, ok)
+				version, err := photoReceiptFaceVersion(operation, before)
+				require.NoError(t, err)
+				args = append(slices.Clone(values), nullableString(version))
+			}
+			_, err := to.ExecContext(ctx, insert, args...)
 			require.NoError(t, err)
 		}
 		require.NoError(t, rows.Err())

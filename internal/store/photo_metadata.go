@@ -225,7 +225,7 @@ var photoMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPhotoSetMember]{record: metadataPhotoSetMember{Type: "photo_set_member"}, table: "photo_set_members", suffix: "ORDER BY set_id,added_at,asset_id", validate: validatePhotoSetMemberRecord, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPhotoReceipt]{record: metadataPhotoReceipt{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: validatePhotoReceiptMetadataRecord,
-		checkExport: true}),
+		checkExport: true, insert: importPhotoReceipt}),
 }
 
 // photoMetadataTablesV28 exports the photo records of v0.15.0, which predate
@@ -643,3 +643,31 @@ var photoHiddenMetadataTables = []metadataRecordCodec{
 var photoAssetMetadataBeforeHidden = newMetadataTable(metadataTable[metadataPhotoAssetBeforeHidden]{record: metadataPhotoAssetBeforeHidden{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetBeforeHidden) error {
 	return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 }, checkExport: true})
+
+func importPhotoReceipt(ctx context.Context, tx *sql.Tx, v metadataPhotoReceipt, postgres bool) error {
+	if err := insertMetadataRecord(ctx, tx, "photo_change_receipts", v, postgres); err != nil {
+		return err
+	}
+	if postgres {
+		version, err := photoReceiptFaceVersion(v.Operation, v.BeforeJSON)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE photo_change_receipts SET face_version_id=$1 WHERE receipt_id=$2`, nullableString(version), v.ReceiptID)
+		return err
+	}
+	return nil
+}
+
+// PostgreSQL JSON operators decode all strings in a receipt and reject NUL.
+// Keep the structural lookup separate from the unmodified receipt evidence.
+func photoReceiptFaceVersion(operation, before string) (string, error) {
+	if operation != "face_decision" {
+		return "", nil
+	}
+	var state PhotoFaceDecisionState
+	if err := json.Unmarshal([]byte(before), &state); err != nil {
+		return "", err
+	}
+	return state.VersionID, nil
+}
