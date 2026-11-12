@@ -239,6 +239,7 @@
       return;
     }
     if (resuming && checkpoint) {
+      planning = true;
       try {
         await inspectAndApply(checkpoint.sourceID, false, true);
         if (savedImport) await chooseSavedFiles(files);
@@ -251,6 +252,8 @@
         [resuming, missingCheckpoint] = [false, checkpoint];
         error = missingImportMessage;
         return;
+      } finally {
+        planning = false;
       }
     }
     try {

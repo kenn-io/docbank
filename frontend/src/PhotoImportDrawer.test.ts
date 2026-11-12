@@ -1158,6 +1158,73 @@ it("inspects a checkpoint's saved receipt before sending groups", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("holds selection while shortcut inspection is pending", async () => {
+  savedImports.set("pending-shortcut", {
+    sourceID: "old-source",
+    revision: "revision",
+    destination: "/",
+    manifestVersion: 2,
+    manifestHash: "a".repeat(64),
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "old-source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "old.xmp", size: 1 }] }],
+  };
+  let resolveInspection!: (value: typeof saved) => void;
+  const inspection = new Promise<typeof saved>((resolve) => (resolveInspection = resolve));
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "new", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("new"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn().mockReturnValue(inspection),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending-shortcut",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["a"], "old.xmp")] },
+  });
+  expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", true);
+  resolveInspection(saved);
+  await screen.findByText("old.xmp");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Start new import" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  const fresh = new File(["b"], "new.xmp");
+  await fireEvent.click(screen.getByRole("button", { name: "Choose files" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [fresh] },
+  });
+  await screen.findByText("new.xmp");
+  expect(screen.queryByText("old.xmp")).toBeNull();
+  expect(channel.planPhotoImport).toHaveBeenCalledWith(
+    [fresh],
+    "/",
+    expect.any(String),
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+});
+
 it("starts a new selection after resuming a saved import", async () => {
   const original = files()[0];
   const fresh = new File(["new"], "fresh.JPG");
