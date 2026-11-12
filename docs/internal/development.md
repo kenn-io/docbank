@@ -217,9 +217,11 @@ canonical path stays discoverable and legacy successful stdout stays compatible.
 Update the API types, route tests, client decoding, OpenAPI assertions, public
 HTTP documentation, and agent examples together.
 
-Check whether an older running daemon could misinterpret the new request. If
-it could, bump the daemon protocol revision. `Ensure` then replaces that daemon
-before sending a data call.
+Bump the daemon protocol revision whenever a newer CLI cannot safely use an
+older daemon’s HTTP or runtime-record contract, including when a new route is
+missing or a request could be misinterpreted. This also protects binaries that
+report the same version. `Ensure` replaces the older daemon before a data call.
+When branches both bump the revision, the second to merge takes the next value.
 
 Never rely on an optional JSON field to make a formerly destructive endpoint
 safe against a daemon that ignores unknown fields. Use capability/protocol

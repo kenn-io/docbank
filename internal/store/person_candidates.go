@@ -817,6 +817,10 @@ type VersionCandidate struct {
 }
 
 func (s *Store) openCandidatesForVersion(ctx context.Context, q metadataQuerier, versionID string) ([]VersionCandidate, error) {
+	// Candidates can outlive the event generation that created them, including
+	// during rebuilds, so current actor keys cannot find every pending occurrence.
+	// Normal admission caps open candidates at maxOpenPersonCandidates; this
+	// scan can still grow if retained data exceeds that limit. Do not truncate.
 	evidenceHex := "hex(evidence_json)"
 	if s.postgresSchema != "" {
 		evidenceHex = "upper(encode(evidence_json, 'hex'))"

@@ -30,9 +30,23 @@ func (s *Store) DocumentDateFacts(ctx context.Context, versionID string) (Docume
 	if err := s.fenceFactsVersionTx(ctx, tx, versionID); err != nil {
 		return DocumentDateFacts{}, err
 	}
-	state, err := effectiveDocumentEventState(ctx, tx, DocumentEventsDeriverFingerprint)
+	state, view, err := s.freshEventsInTx(ctx, tx, versionID)
 	if err != nil {
 		return DocumentDateFacts{}, err
+	}
+	facts := DocumentDateFacts{Version: version, State: state, View: view}
+	if err := tx.Commit(); err != nil {
+		return DocumentDateFacts{}, err
+	}
+	return facts, nil
+}
+
+// freshEventsInTx checks the current input epoch and decodes the head in the
+// caller's snapshot. A retained head is not fresh while its inputs rebuild.
+func (s *Store) freshEventsInTx(ctx context.Context, tx *sql.Tx, versionID string) (string, DocumentEventView, error) {
+	state, err := effectiveDocumentEventState(ctx, tx, DocumentEventsDeriverFingerprint)
+	if err != nil {
+		return "", DocumentEventView{}, err
 	}
 	var attempt, head, fresh, failed bool
 	err = tx.QueryRowContext(ctx, `SELECT a.content_version_id IS NOT NULL,h.content_version_id IS NOT NULL,
@@ -43,25 +57,19 @@ func (s *Store) DocumentDateFacts(ctx context.Context, versionID string) (Docume
  LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
  LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id WHERE cv.version_id=$1`, versionID, state.InputEpoch, state.ContractVersion, state.DeriverFingerprint).Scan(&attempt, &head, &fresh, &failed)
 	if err != nil {
-		return DocumentDateFacts{}, fmt.Errorf("reading date state: %w", err)
+		return "", DocumentEventView{}, fmt.Errorf("reading date state: %w", err)
 	}
-	facts := DocumentDateFacts{Version: version, State: "pending"}
-	switch {
-	case fresh:
-		facts.State = "published"
-		facts.View, err = s.documentEventsForVersionTx(ctx, tx, versionID)
-		if err != nil {
-			return DocumentDateFacts{}, err
-		}
-	case failed:
-		facts.State = "failed"
-	case !attempt && !head:
-		facts.State = "none"
+	if fresh {
+		view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
+		return "published", view, err
 	}
-	if err := tx.Commit(); err != nil {
-		return DocumentDateFacts{}, err
+	if failed {
+		return "failed", DocumentEventView{}, nil
 	}
-	return facts, nil
+	if !attempt && !head {
+		return "none", DocumentEventView{}, nil
+	}
+	return "pending", DocumentEventView{}, nil
 }
 
 // DocumentPeopleFacts is an attribution snapshot with version-scoped evidence.
@@ -93,6 +101,10 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if err := s.fenceFactsVersionTx(ctx, tx, versionID); err != nil {
 		return DocumentPeopleFacts{}, err
 	}
+	eventState, eventView, err := s.freshEventsInTx(ctx, tx, versionID)
+	if err != nil {
+		return DocumentPeopleFacts{}, err
+	}
 	facts := DocumentPeopleFacts{Version: version, State: "none", Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
 	edges, head, err := documentPeopleForVersionTx(ctx, tx, versionID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -106,7 +118,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		switch {
 		case head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable:
 			facts.State = "failed"
-		case head.State == documentPeopleStatePublished && head.GenerationID != "":
+		case head.State == documentPeopleStatePublished && head.GenerationID != "" && eventState == "published":
 			facts.State = "published"
 			facts.Edges = edges
 		default:
@@ -129,29 +141,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		// Candidates omit sensitivity. Match each occurrence to the current event
 		// generation and fail closed when its authoritative evidence is absent.
-		var generation string
-		eventState, err := effectiveDocumentEventState(ctx, tx, DocumentEventsDeriverFingerprint)
-		if err != nil {
-			return DocumentPeopleFacts{}, err
-		}
-		err = tx.QueryRowContext(ctx, `SELECT h.generation_id FROM content_versions cv
-			LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
-			JOIN document_event_attempts a ON a.content_version_id=cv.version_id
-			JOIN document_event_heads h ON h.content_version_id=cv.version_id
-			JOIN document_event_generations g ON g.generation_id=h.generation_id
-			WHERE cv.version_id=$1 AND `+documentEventFreshIndexedSQL("$2", "$3", "$4"),
-			versionID, eventState.InputEpoch, eventState.ContractVersion, eventState.DeriverFingerprint).Scan(&generation)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return DocumentPeopleFacts{}, err
-		}
-		var events []document.DocumentEventV1
-		if err == nil {
-			view, err := s.documentEventsForVersionTx(ctx, tx, versionID)
-			if err != nil {
-				return DocumentPeopleFacts{}, err
-			}
-			events = view.Events.Events
-		}
+		events := eventView.Events.Events
 		for i := range facts.Candidates {
 			c := &facts.Candidates[i]
 			c.Occurrences = slices.DeleteFunc(c.Occurrences, func(o PersonCandidateOccurrence) bool {
@@ -166,7 +156,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 							kind, id = event.EvidenceKind, event.EvidenceID
 						}
 						if actor.ActorKey == c.ActorKey && string(actor.Role) == o.Role && string(kind) == o.EvidenceKind && id == o.EvidenceID {
-							if document.EventHasSensitiveEvidence(event) {
+							if event.Sensitive || actor.Sensitive {
 								return true
 							}
 							found = true
@@ -177,6 +167,14 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 			})
 		}
 
+	}
+	hideLocked := false
+	if visible, _ := ctx.Value(visiblePersonContextKey{}).(bool); visible {
+		_, err := s.hiddenSession(ctx, tx)
+		if err != nil && !errors.Is(err, ErrHiddenLocked) {
+			return DocumentPeopleFacts{}, err
+		}
+		hideLocked = errors.Is(err, ErrHiddenLocked)
 	}
 	ids := map[string]bool{}
 	for _, e := range facts.Edges {
@@ -197,7 +195,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		}
 		fp := FactPerson{Person: person, Visible: true, External: []PersonExternalIdentity{}}
 		if safe && person.State == "provisional" {
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1 AND `+personVisibleAssertionSQL("a", "$2")+`) OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1 AND `+personVisibleActorSQL("p", "$2")+`)`, id, 1).Scan(&fp.Visible); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=$1 AND `+personVisibleAssertionSQL("a", "$2")+`) OR EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=$1 AND `+personVisibleActorSQL("p", "$2")+`)`, id, boolInt(hideLocked)).Scan(&fp.Visible); err != nil {
 				return DocumentPeopleFacts{}, err
 			}
 		}

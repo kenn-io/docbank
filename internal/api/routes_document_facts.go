@@ -94,16 +94,14 @@ func versionPeopleAPI(f store.DocumentPeopleFacts, safe bool, origin string) Ver
 		out.Edges = append(out.Edges, edge)
 	}
 	for _, a := range f.Assertions {
-		if p, ok := f.Persons[a.PersonID]; safe && (!ok || !p.Visible) {
+		p, ok := f.Persons[a.PersonID]
+		if !ok || safe && !p.Visible {
 			continue
 		}
-		out.Assertions = append(out.Assertions, VersionPersonAssertion{AssertionID: a.AssertionID, PersonID: a.PersonID, Role: a.Role, Action: a.Action, Note: a.Note, RecordedAt: a.RecordedAt, Revision: a.Revision})
+		out.Assertions = append(out.Assertions, VersionPersonAssertion{AssertionID: a.AssertionID, PersonID: a.PersonID, DisplayName: p.Person.DisplayName, Role: a.Role, Action: a.Action, Note: a.Note, RecordedAt: a.RecordedAt, Revision: a.Revision})
 	}
 	for _, c := range f.Candidates {
 		for _, o := range c.Occurrences {
-			if safe && o.Role == "blind_copy" {
-				continue
-			}
 			out.Unresolved = append(out.Unresolved, VersionUnresolvedName{RawLabel: c.DisplayName, Role: o.Role, CandidateID: c.CandidateID, EvidenceKind: o.EvidenceKind})
 		}
 	}
