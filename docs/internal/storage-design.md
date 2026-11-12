@@ -778,6 +778,20 @@ in history but cannot receive new assignments or assertions. The derived
 rebuild after restore. An audited vault refuses ordinary person mutations
 until audit-aware mutation records exist.
 
+### Party authority
+
+Schema 49 stores each party's UUID, kind, display and folded names, legal name,
+optional country and person link, own flag, revision, creation and update times,
+and optional retirement time. Active parties have unique folded display names.
+Retirement advances the revision and hides the party from default lists while
+retaining its record and releasing its name for reuse.
+
+A new person link requires a live person; an existing link survives that
+person's retirement and unrelated party edits. A person merge relinks parties
+to the survivor and advances each affected party's revision and update time.
+Party records round-trip through metadata JSONL; restore validates their values,
+references, and active-name uniqueness. Audited vaults refuse party mutations.
+
 ### People search
 
 Person name search evaluates `docbank_person_name_starts_with_word_v1` at read time against folded display names, preserving literal punctuation and Unicode word starts. It stores no derived search rows. Browser search conceals automatically provisioned exact-identifier people during pending or failed processing until visible assertions or non-sensitive published document links support them.
