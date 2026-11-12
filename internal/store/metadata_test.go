@@ -1096,9 +1096,10 @@ func TestImportMetadataRejectsNonPristineTarget(t *testing.T) {
 func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 	t.Parallel()
 	const (
-		header = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
-		blob   = `{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
-		root   = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
+		version = "10000000-0000-4000-8000-000000000001"
+		header  = `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+		blob    = `{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n"
+		root    = `{"type":"node","id":1,"parent_id":null,"name":"","kind":"dir","current_version_id":null,"revision":1,"created_at":"2026-01-01T00:00:00.000000000Z","modified_at":"2026-01-01T00:00:00.000000000Z","trashed_at":null,"trash_parent":null,"trash_name":null}` + "\n"
 	)
 	tests := []struct {
 		name       string
@@ -1106,6 +1107,39 @@ func TestImportMetadataRejectsOperationalRestoreState(t *testing.T) {
 		countQuery string
 		input      string
 	}{
+		{
+			name: "note parse",
+			insert: `INSERT INTO note_parses(version_id,recipe,parsed_at,state,title,title_source,body_start,lines)
+				VALUES('` + version + `','test','2026-01-01T00:00:00Z','ok','','',0,0)`,
+			countQuery: `SELECT COUNT(*) FROM note_parses`,
+			input:      header + root,
+		},
+		{
+			name:       "note field",
+			insert:     `INSERT INTO note_fields(version_id,key,ordinal,value) VALUES('` + version + `','tags',0,'blue')`,
+			countQuery: `SELECT COUNT(*) FROM note_fields`,
+			input:      header + root,
+		},
+		{
+			name: "note heading",
+			insert: `INSERT INTO note_headings(version_id,ordinal,level,text,slug,path,start,line_end,section_end,line,section_end_line)
+				VALUES('` + version + `',0,1,'Title','title','title',0,8,8,1,1)`,
+			countQuery: `SELECT COUNT(*) FROM note_headings`,
+			input:      header + root,
+		},
+		{
+			name: "note link",
+			insert: `INSERT INTO note_links(version_id,ordinal,form,raw,target,fragment,label,start,"end",line)
+				VALUES('` + version + `',0,'wikilink','[[target]]','target','','',0,10,1)`,
+			countQuery: `SELECT COUNT(*) FROM note_links`,
+			input:      header + root,
+		},
+		{
+			name:       "note alias",
+			insert:     `INSERT INTO note_aliases(version_id,alias_key,alias) VALUES('` + version + `','alias','Alias')`,
+			countQuery: `SELECT COUNT(*) FROM note_aliases`,
+			input:      header + root,
+		},
 		{
 			name: "document people rebuild receipt",
 			insert: `INSERT INTO document_people_builds(operation_id,request_sha256,resolver_fingerprint,target_epoch,
