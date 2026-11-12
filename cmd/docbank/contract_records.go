@@ -420,14 +420,15 @@ func newContractDeleteCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if revision == 0 {
+		expected := revision
+		if !cmd.Flags().Changed("revision") {
 			v, err := c.Contract(cmd.Context(), args[0], "")
 			if err != nil {
 				return err
 			}
-			revision = v.Revision
+			expected = v.Revision
 		}
-		if err = c.DeleteContract(cmd.Context(), args[0], revision); err != nil {
+		if err = c.DeleteContract(cmd.Context(), args[0], expected); err != nil {
 			return contractMutationError("delete contract", err)
 		}
 		if jsonOutput {

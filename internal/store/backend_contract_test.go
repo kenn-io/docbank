@@ -2216,6 +2216,7 @@ var backendSuites = []backendSuite{
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "PostgreSQL metadata import, portable packages and physical backup/restore remain unqualified; metadata-export covers pinned logical export and recovery into fresh SQLite."},
 	{name: "organization", postgres: "native operations", scope: "Tags, parties, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
+		{"PartyRevisionExhaustion", func(t *testing.T) { t.Helper(); checkPartyRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkPartyRevisionExhaustion(t, true) }},
 		{"PartyPersonLifecycle", func(t *testing.T) {
 			t.Helper()
 			checkPartyPersonLifecycle(t, newTestStore)
