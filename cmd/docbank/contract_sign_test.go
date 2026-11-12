@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestContractSignDaemonWalk(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &page); err != nil || len(page.Templates) != 100 || page.Next != 101 || <-queries != "after=0" {
 		t.Fatalf("first JSON page: %q: %v", out, err)
 	}
-	out, err = runCLI(t, "contract", "sign", "templates", "--after", fmt.Sprint(page.Next), "--json")
+	out, err = runCLI(t, "contract", "sign", "templates", "--after", strconv.FormatInt(page.Next, 10), "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
