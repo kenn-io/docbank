@@ -3701,6 +3701,101 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    CreateTaxRecordRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreateTaxRecordRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        account_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        amount:
+          maxLength: 32
+          type:
+            - string
+            - "null"
+        authority_party_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        country:
+          maxLength: 2
+          type:
+            - string
+            - "null"
+        currency:
+          maxLength: 3
+          type:
+            - string
+            - "null"
+        direction:
+          type: string
+        due_date:
+          type:
+            - string
+            - "null"
+        filer_party_id:
+          format: uuid
+          type: string
+        form_code:
+          maxLength: 256
+          type: string
+        kind:
+          type: string
+        lead_days:
+          format: int64
+          maximum: 366
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        note:
+          maxLength: 8192
+          type: string
+        period_end:
+          type:
+            - string
+            - "null"
+        period_start:
+          type:
+            - string
+            - "null"
+        subdivision:
+          maxLength: 6
+          type:
+            - string
+            - "null"
+        tax_kind:
+          maxLength: 256
+          type:
+            - string
+            - "null"
+        tax_year:
+          format: int64
+          maximum: 9999
+          minimum: 1
+          type:
+            - integer
+            - "null"
+        title:
+          maxLength: 1200
+          type: string
+      required:
+        - kind
+        - title
+      type: object
+      x-go-type: api.CreateTaxRecordRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CustodianAssignment:
       additionalProperties: false
       properties:
@@ -12740,6 +12835,116 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PatchTaxRecordRequest:
+      additionalProperties: false
+      anyOf:
+        - required:
+            - filer_party_id
+        - required:
+            - authority_party_id
+        - required:
+            - title
+        - required:
+            - country
+        - required:
+            - subdivision
+        - required:
+            - tax_kind
+        - required:
+            - form_code
+        - required:
+            - tax_year
+        - required:
+            - period_start
+        - required:
+            - period_end
+        - required:
+            - due_date
+        - required:
+            - lead_days
+        - required:
+            - direction
+        - required:
+            - amount
+        - required:
+            - currency
+        - required:
+            - note
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PatchTaxRecordRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        amount:
+          maxLength: 32
+          type:
+            - string
+            - "null"
+        authority_party_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        country:
+          maxLength: 2
+          type: string
+        currency:
+          maxLength: 3
+          type: string
+        direction:
+          type: string
+        due_date:
+          type:
+            - string
+            - "null"
+        filer_party_id:
+          format: uuid
+          type: string
+        form_code:
+          maxLength: 256
+          type: string
+        lead_days:
+          format: int64
+          maximum: 366
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        note:
+          maxLength: 8192
+          type: string
+        period_end:
+          type:
+            - string
+            - "null"
+        period_start:
+          type:
+            - string
+            - "null"
+        subdivision:
+          maxLength: 6
+          type: string
+        tax_kind:
+          maxLength: 256
+          type: string
+        tax_year:
+          format: int64
+          maximum: 9999
+          minimum: 1
+          type:
+            - integer
+            - "null"
+        title:
+          maxLength: 1200
+          type: string
+      type: object
+      x-go-type: api.PatchTaxRecordRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Pending:
       additionalProperties: false
       properties:
@@ -21399,6 +21604,163 @@ components:
         - offset
       type: object
       x-go-type: api.TaxAccountPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxRecord:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxRecord.json
+          format: uri
+          readOnly: true
+          type: string
+        account_id:
+          type:
+            - string
+            - "null"
+        amount_minor:
+          format: int64
+          type:
+            - integer
+            - "null"
+        authority_party_id:
+          type:
+            - string
+            - "null"
+        country:
+          type: string
+        created_at:
+          type: string
+        currency:
+          type: string
+        direction:
+          type: string
+        due_date:
+          type:
+            - string
+            - "null"
+        filer_party_id:
+          type: string
+        form_code:
+          type: string
+        kind:
+          type: string
+        lead_days:
+          format: int64
+          type:
+            - integer
+            - "null"
+        note:
+          type: string
+        period_end:
+          type:
+            - string
+            - "null"
+        period_start:
+          type:
+            - string
+            - "null"
+        record_id:
+          format: uuid
+          type: string
+        retired_at:
+          type:
+            - string
+            - "null"
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+        subdivision:
+          type: string
+        tax_kind:
+          type: string
+        tax_year:
+          format: int64
+          type:
+            - integer
+            - "null"
+        title:
+          type: string
+        updated_at:
+          type: string
+        verification:
+          type: string
+        verification_note:
+          type: string
+        verified_on:
+          type:
+            - string
+            - "null"
+        verified_revision:
+          format: int64
+          type:
+            - integer
+            - "null"
+      required:
+        - record_id
+        - account_id
+        - filer_party_id
+        - authority_party_id
+        - kind
+        - title
+        - country
+        - subdivision
+        - tax_kind
+        - form_code
+        - tax_year
+        - period_start
+        - period_end
+        - due_date
+        - lead_days
+        - state
+        - direction
+        - amount_minor
+        - currency
+        - verification
+        - verified_on
+        - verified_revision
+        - verification_note
+        - note
+        - revision
+        - created_at
+        - updated_at
+        - retired_at
+      type: object
+      x-go-type: api.TaxRecord
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    TaxRecordPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TaxRecordPage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/TaxRecord"
+          type: array
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+      required:
+        - items
+        - limit
+        - offset
+      type: object
+      x-go-type: api.TaxRecordPage
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -33673,6 +34035,217 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Retire a tax account
+  /api/v1/tax/records:
+    get:
+      operationId: listTaxRecords
+      parameters:
+        - explode: false
+          in: query
+          name: filer
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: country
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: taxkind
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: year
+          schema:
+            format: int64
+            maximum: 9999
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: state
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: kind
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: include_retired
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+        - explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRecordPage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List tax records
+    post:
+      operationId: createTaxRecord
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaxRecordRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRecord"
+          description: Created
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create a tax record
+  /api/v1/tax/records/{record_id}:
+    get:
+      operationId: getTaxRecord
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRecord"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect a tax record
+    patch:
+      operationId: updateTaxRecord
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchTaxRecordRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRecord"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Edit a tax record
+  /api/v1/tax/records/{record_id}/retire:
+    post:
+      operationId: retireTaxRecord
+      parameters:
+        - in: path
+          name: record_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRecord"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Retire a tax record
   /api/v1/text-citations/outline:
     post:
       operationId: getTextOutline
