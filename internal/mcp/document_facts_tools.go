@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"uuid"
 
 	"go.kenn.io/docbank/document"
@@ -67,7 +68,7 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 		}
 		version, err := uuid.Parse(id)
 		if err != nil {
-			return factsResponse{}, err
+			return factsResponse{}, fmt.Errorf("parse content version ID: %w", err)
 		}
 		if kind == "dates" {
 			d := apiclient.GetVersionDatesQueryDisclosure("safe")
