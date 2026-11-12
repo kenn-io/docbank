@@ -40,14 +40,12 @@ func (e *taxClientError) Error() string {
 	}
 	if code, ok := ProblemCode(e.cause); ok {
 		switch code {
-		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "tax_revision_exhausted", "audit_mutation_unsupported", "maintenance_busy", "internal":
+		case "maintenance_busy":
+			message += ": retry this mutation after maintenance finishes"
+		case "audit_mutation_unsupported":
+			message += ": tax writes are unavailable in audited vaults"
+		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "tax_revision_exhausted", "internal":
 			message += ": " + code
-			if code == "maintenance_busy" {
-				message += "; retry this mutation after maintenance finishes"
-			}
-			if code == "audit_mutation_unsupported" {
-				message += "; tax writes are unavailable in audited vaults"
-			}
 			if code == "invalid_tax" || code == "validation" {
 				if problem, ok := errors.AsType[*problemError](e.cause); ok {
 					if detail := api.SafeTaxDiagnostic(problem.Error()); detail != "" {
