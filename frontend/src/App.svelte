@@ -2034,7 +2034,6 @@
       await generated.restartDaemon(undefined, { session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
       if (!mounted || webSession !== session) return;
-      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
       notice = restartFailureNotice(cause);
     }
     if (mounted && webSession === session) {
@@ -2043,7 +2042,7 @@
   }
 
   function restartFailureNotice(cause: unknown): string {
-    if (cause instanceof APIError && ![502, 503, 504].includes(cause.status))
+    if (cause instanceof APIError && cause.status === 500 && cause.code === "restart_failed")
       return `Docbank couldn't restart: ${cause.message}`;
     return "Docbank couldn't confirm the restart. It may still happen later.";
   }

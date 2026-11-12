@@ -1290,32 +1290,21 @@ it("keeps the restart step after setup when the first re-read fails", async () =
   expect(within(drawer).getByText("Restart required")).toBeTruthy();
 });
 
-it.each(["reading status", "turning on", "restarting"])(
+it.each(["reading status", "turning on"])(
   "hands a rejected session to sign-in while %s",
   async (step) => {
     searchWithMeaningOff({
       status: () =>
         step === "reading status"
           ? new Response("{}", { status: 401 })
-          : step === "restarting"
-            ? { ...localSaved, restart_available: true }
-            : localOff,
+          : localOff,
       apply: () => Promise.resolve(new Response("{}", { status: 401 })),
-      restart: () => Promise.resolve(new Response("{}", { status: 401 })),
     });
     render(App);
     await submitSearch("notes");
     const drawer = await openSearchByMeaning();
     if (step === "turning on")
       await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
-    if (step === "restarting") {
-      await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart" }));
-      await fireEvent.click(
-        within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-          name: "Restart",
-        }),
-      );
-    }
     expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "System" })).toBeNull();
   },
@@ -2121,6 +2110,22 @@ it.each([
   [
     "gateway timeout",
     async () => new Response(null, { status: 504 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
+    "proxy error",
+    async () => new Response("Proxy error", { status: 500 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
+    "unverified authorization error",
+    async () => new Response(null, { status: 401 }),
+    "Docbank couldn't confirm the restart. It may still happen later.",
+  ],
+  [
+    "unrecognized structured error",
+    async () =>
+      new Response(JSON.stringify({ code: "internal", detail: "Proxy error" }), { status: 500 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
   [

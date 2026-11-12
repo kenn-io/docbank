@@ -58,8 +58,7 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 	}
 	docbankBuildMu.Lock()
 	defer docbankBuildMu.Unlock()
-	key := v
-	build, ok := docbankBuilds[key]
+	build, ok := docbankBuilds[v]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
 			if err := ensureDocbankBuildDir(); err != nil {
@@ -82,7 +81,7 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 			}
 			return bin, nil
 		}()
-		docbankBuilds[key] = build
+		docbankBuilds[v] = build
 	}
 	require.NoError(tb, build.err)
 	return build.bin
