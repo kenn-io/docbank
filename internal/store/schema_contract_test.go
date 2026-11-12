@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/canonical"
+	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 type schemaContract struct {
@@ -137,6 +138,16 @@ func schemaContractReleased(records []schemaContract, version int, released []in
 	return slices.Contains(released, version), nil
 }
 
+func schemaContractDB(t *testing.T, driver docsqlite.Driver, schema string) *sql.DB {
+	t.Helper()
+	db, err := driver.Open(filepath.Join(t.TempDir(), "current.db"), docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(t.Context(), schema)
+	require.NoError(t, err)
+	return db
+}
+
 func TestStorageSchemaVersionContract(t *testing.T) {
 	t.Parallel()
 	records, err := loadSchemaContracts("testdata/schema-contracts")
@@ -148,8 +159,23 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 	}
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
+			db := schemaContractDB(t, driver.driver, schemaSQL)
 			require.NoError(t, checkSchemaContract(records, currentStorageSchemaVersion, schemaCatalogDigest(t, db)))
+		})
+	}
+}
+
+func TestReviewRequiredColumnCanBeRecorded(t *testing.T) {
+	t.Parallel()
+	schema := strings.Replace(schemaSQL, "CREATE TABLE IF NOT EXISTS nodes (", "CREATE TABLE IF NOT EXISTS nodes (\n    required_label TEXT NOT NULL,", 1)
+	require.NotEqual(t, schemaSQL, schema)
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			db := schemaContractDB(t, driver.driver, schema)
+			digest := schemaCatalogDigest(t, db)
+			err := checkSchemaContract(nil, 49, digest)
+			require.ErrorContains(t, err, schemaContractFile(schemaContract{Version: 49, Digest: digest}, "<summary-slug>"))
+			require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}}, 49, digest))
 		})
 	}
 }
@@ -247,7 +273,7 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
+			db := schemaContractDB(t, driver.driver, schemaSQL)
 			probe := func(sql string) string {
 				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
 				require.NoError(t, err)
