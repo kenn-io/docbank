@@ -304,7 +304,7 @@ it.each(["unknown", "rejected", "stale"])(
         }),
       );
       await screen.findByText(
-        outcome === "unknown" ? /1 matched · 0 remaining/ : /0 matched · 1 remaining/,
+        outcome === "unknown" ? /1 matched · 0 remaining/ : /0 matched · 1 couldn't be checked/,
       );
     }
   },
@@ -409,7 +409,7 @@ it.each([true, false])(
         : "Earlier retry: Removed “Review” from 1 document.",
     );
     await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
-    await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
+    await screen.findByText("1 matched · 1 couldn't be checked");
     expect(
       screen.getByText(
         assign

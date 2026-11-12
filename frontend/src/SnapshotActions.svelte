@@ -245,7 +245,7 @@
     {#if results && tag}
       <p class="consequence">Last check</p>
       <p class="status">
-        {matched} matched · {remaining.length} remaining · {unavailable} couldn't be checked
+        {matched} matched · {#if !(recovering && request && remaining.length)}{remaining.length} remaining · {/if}{unavailable} couldn't be checked
       </p>
     {:else if !receipt}
       <p class="consequence" class:pending={!tag}>{consequence}</p>
