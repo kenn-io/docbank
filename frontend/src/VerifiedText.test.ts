@@ -243,11 +243,6 @@ it("shows only the page gap notice for a verified-empty PDF", async () => {
   expect(screen.getAllByRole("status")).toHaveLength(1);
 });
 
-it("shows unavailable PDF page evidence without claiming there are no gaps", async () => {
-  renderPDF({ state: "unprocessed", page_coverage: "unavailable" });
-  expect(await screen.findByText("PDF page text coverage is unavailable.")).toBeTruthy();
-});
-
 it("retains PDF page gaps when reading the text artifact fails", async () => {
   await mockReadyText(pdf, [2], 500);
   renderPDF();

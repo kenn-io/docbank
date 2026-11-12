@@ -2122,9 +2122,8 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
   await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
   await submitSearch("missing");
   await screen.findByText(
-    "With this tag: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
+    "With this tag: some PDFs have pages without a text layer. OCR can read scanned pages.",
   );
-  expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
   const liveRequest = fetchMock.mock.calls
     .map(([url]) => String(url))
     .find((url) => url.startsWith("/api/v1/search/text-coverage"));
@@ -2138,10 +2137,9 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
   await screen.findByRole("region", { name: "Frozen query results" });
   expect(
     await screen.findByText(
-      "Across the current vault: 2 PDFs have 3 pages without a text layer. OCR can read scanned pages.",
+      "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
     ),
   ).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
   const requests = fetchMock.mock.calls
     .map(([url]) => String(url))
     .filter((url) => url.startsWith("/api/v1/search/text-coverage"));
@@ -2151,17 +2149,17 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
 it.each([
   [
     "singular",
-    "Across the current vault: 1 PDF has 1 page without a text layer. OCR can read scanned pages.",
+    "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
     textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
   ],
   [
     "partial",
-    "Across the current vault: at least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
+    "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
     textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_partial: true }),
   ],
   [
     "unavailable",
-    "Across the current vault: at least 2 PDFs have at least 3 pages without a text layer. OCR can read scanned pages.",
+    "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
     textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_unavailable: 1 }),
   ],
   [
@@ -2169,15 +2167,10 @@ it.each([
     "PDF text coverage is incomplete; some pages may not be searchable.",
     textCoverage({ pdf_page_coverage_partial: true }),
   ],
-  ["failure", "PDF text coverage is unavailable.", null],
-] as const)("shows %s PDF coverage", async (kind, message, coverage) => {
-  renderEmptySearch(async () =>
-    coverage === null ? new Response("{}", { status: 500 }) : json(coverage),
-  );
+] as const)("shows %s PDF coverage", async (_kind, message, coverage) => {
+  renderEmptySearch(async () => json(coverage));
   await submitSearch("missing");
   expect(await screen.findByText(message)).toBeTruthy();
-  if (kind !== "failure")
-    expect(screen.getByRole("link", { name: "Learn about OCR" })).toBeTruthy();
 });
 
 it("aborts coverage from an older search", async () => {

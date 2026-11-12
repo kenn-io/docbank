@@ -465,7 +465,6 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   await search.press("Enter");
   await expect(page.getByText("No matching documents")).toBeVisible();
   await expect(page.getByText(/without a text layer/)).toBeVisible();
-  await expect(page.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-search-empty.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },
@@ -479,7 +478,6 @@ test("shows PDF text gaps in the inspector and empty search", async ({ page, rea
   const frozen = page.getByRole("region", { name: "Frozen query results" });
   await expect(frozen.getByText("No matching documents")).toBeVisible();
   await expect(frozen.getByText(/Across the current vault:.*without a text layer/)).toBeVisible();
-  await expect(frozen.getByRole("link", { name: "Learn about OCR" })).toBeVisible();
   await page.screenshot({
     path: path.join(output!, "pdf-frozen-search-empty-dark.png"),
     clip: { x: 231, y: 56, width: 746, height: 700 },

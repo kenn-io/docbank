@@ -267,9 +267,6 @@
   {#if !loading && missingPages.length}
     {@render pdfNotice()}
   {/if}
-  {#if !loading && resolution?.pageCoverage === "unavailable"}
-    <p class="notice" role="status">PDF page text coverage is unavailable.</p>
-  {/if}
   {#if loading}
     <div class="loading" role="status"><Spinner size={14} /> Loading text…</div>
   {:else if error}

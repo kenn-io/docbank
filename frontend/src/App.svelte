@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { ocrGuideURL } from "./processing-summary.js";
   import { webURL, webPath } from "./web-path.js";
   import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
   import TelemetryNotice from "./TelemetryNotice.svelte";
@@ -1109,7 +1108,6 @@
   let searchQuery = $state("");
   let activeQuery = $state("");
   let pdfCoverage = $state<generated.SearchTextCoverage | null>(null);
-  let pdfCoverageUnavailable = $state(false);
   const pdfCoverageIncomplete = $derived(
     !!pdfCoverage &&
       (pdfCoverage.pdf_page_coverage_partial || pdfCoverage.pdf_page_coverage_unavailable > 0),
@@ -1247,13 +1245,10 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const pdfCoverageDescription = $derived(
     pdfCoverage?.pdfs_without_text
-      ? `${activeTagID && !snapshotActive ? "With this tag" : "Across the current vault"}: ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pdfs_without_text} PDF${pdfCoverage.pdfs_without_text === 1 ? " has" : "s have"} ${pdfCoverageIncomplete ? "at least " : ""}${pdfCoverage.pages_without_text} page${pdfCoverage.pages_without_text === 1 ? "" : "s"} without a text layer.` +
-          " OCR can read scanned pages."
+      ? `${activeTagID && !snapshotActive ? "With this tag" : "Across the current vault"}: some PDFs have pages without a text layer. OCR can read scanned pages.`
       : pdfCoverageIncomplete
         ? "PDF text coverage is incomplete; some pages may not be searchable."
-        : pdfCoverageUnavailable
-          ? "PDF text coverage is unavailable."
-          : undefined,
+        : undefined,
   );
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
@@ -2179,7 +2174,6 @@
       ? frozenReady && frozenPage?.rows.length === 0
       : !!query && !loading && !searchPending && rows.length === 0;
     pdfCoverage = null;
-    pdfCoverageUnavailable = false;
     if (!eligible) return;
     const controller = new AbortController();
     let current = true;
@@ -2194,7 +2188,6 @@
       .catch((cause: unknown) => {
         if (!current) return;
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
-        else pdfCoverageUnavailable = true;
       });
     return () => {
       current = false;
@@ -3897,10 +3890,6 @@
   />
 {/snippet}
 
-{#snippet pdfOCRGuide()}
-  <a class="pdf-ocr-link" href={ocrGuideURL} target="_blank" rel="noreferrer">Learn about OCR</a>
-{/snippet}
-
 {#snippet emptyAddMenu()}
   {@render addMenu("start")}
 {/snippet}
@@ -4628,9 +4617,6 @@
                       <EmptyState
                         title="No matching documents"
                         description={pdfCoverageDescription}
-                        children={pdfCoverage?.pdfs_without_text || pdfCoverageIncomplete
-                          ? pdfOCRGuide
-                          : undefined}
                       >
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
@@ -4921,11 +4907,7 @@
                       : emptyRoot
                         ? "Add files or a folder to start your vault."
                         : undefined}
-                  children={activeQuery && (pdfCoverage?.pdfs_without_text || pdfCoverageIncomplete)
-                    ? pdfOCRGuide
-                    : emptyRoot
-                      ? emptyAddMenu
-                      : undefined}
+                  children={emptyRoot ? emptyAddMenu : undefined}
                 >
                   {#snippet icon()}
                     {#if activeQuery}
@@ -5658,11 +5640,6 @@
 {#if hiddenAccess?.setupPrompt}<HiddenSetupModal access={hiddenAccess} />{/if}
 
 <style>
-  .pdf-ocr-link {
-    color: var(--accent-blue);
-    font-size: var(--font-size-sm);
-  }
-
   .vault-nav {
     margin-top: auto;
   }
