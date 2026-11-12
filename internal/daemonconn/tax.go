@@ -82,11 +82,17 @@ func taxMutationFailure(err error) error {
 // 256-byte fields and location codes expand by at most six JSON bytes per
 // source byte; 4,096 bytes per row covers names, IDs, dates and framing.
 // The remaining space covers the page envelope and harmless metadata.
-const maxTaxReceiptBytes = 1000*(6*(3*8192+2*256+2+6+3)+4096) + 1024*1024
+const maxTaxReceiptRowBytes = 6*(3*8192+2*256+2+6+3) + 4096
+const maxTaxAccountReceiptBytes = maxTaxReceiptRowBytes + 1024*1024
+const maxTaxReceiptBytes = 1000*maxTaxReceiptRowBytes + 1024*1024
 
 // decodeTaxReceipt checks wire presence before zero values can hide omissions.
 func decodeTaxReceipt(ctx context.Context, response *http.Response, page bool) (api.TaxAccountPage, error) {
-	return decodeTaxReceiptLimit(ctx, response, page, maxTaxReceiptBytes)
+	limit := int64(maxTaxAccountReceiptBytes)
+	if page {
+		limit = maxTaxReceiptBytes
+	}
+	return decodeTaxReceiptLimit(ctx, response, page, limit)
 }
 
 func decodeTaxReceiptLimit(ctx context.Context, response *http.Response, page bool, limit int64) (api.TaxAccountPage, error) {

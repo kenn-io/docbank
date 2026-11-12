@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -39,17 +40,18 @@ func taxSafeFieldReason(field, reason string) bool {
 // SafeTaxDiagnostic extracts only a fixed field and reason from untrusted text.
 // It never returns any surrounding server-supplied text.
 func SafeTaxDiagnostic(detail string) string {
+	best, result := len(detail), ""
 	for _, field := range taxDiagnosticFields {
 		for _, reason := range taxDiagnosticReasons {
 			for _, prefix := range []string{"", "body.", "query.", "path.", "header."} {
 				safe := prefix + field.name + ": " + reason
-				if strings.Contains(detail, safe) {
-					return safe
+				if index := strings.Index(detail, safe); index >= 0 && index < best {
+					best, result = index, safe
 				}
 			}
 		}
 	}
-	return ""
+	return result
 }
 
 func taxSafeLocation(location string) bool {
@@ -83,7 +85,7 @@ func taxValidationError(_ huma.Context, status int, _ string, errs ...error) hum
 	}
 	return out
 }
-func taxRouteError(err error) error {
+func taxRouteError(logger *slog.Logger, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -91,8 +93,8 @@ func taxRouteError(err error) error {
 	if !errors.As(err, &wire) {
 		wire, _ = errors.AsType[*Error](FromStoreError(err))
 	}
-	if wire == nil {
-		return NewError(http.StatusInternalServerError, "internal", "tax request failed")
+	if wire.Status >= http.StatusInternalServerError {
+		logger.Error("tax request failed", "class", "tax_5xx", "status", wire.Status)
 	}
 	out := NewError(wire.Status, wire.Code, "tax request failed")
 	if field, ok := errors.AsType[*taxrecord.FieldError](err); ok && taxSafeFieldReason(field.Field, field.Reason) {
@@ -102,4 +104,15 @@ func taxRouteError(err error) error {
 }
 func isTaxOperation(ctx huma.Context) bool {
 	return ctx.Operation() != nil && strings.HasPrefix(ctx.Operation().Path, "/api/v1/tax/")
+}
+
+// taxCountrySelector uppercases ASCII without folding non-ASCII input.
+func taxCountrySelector(value string) string {
+	country := []byte(value)
+	for i, c := range country {
+		if c >= 'a' && c <= 'z' {
+			country[i] = c - ('a' - 'A')
+		}
+	}
+	return string(country)
 }

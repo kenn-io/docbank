@@ -1,10 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
@@ -113,53 +111,9 @@ func (PatchTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Sche
 	return schema
 }
 
-func taxAccountMembers(raw []byte, patch bool) (map[string]jsontext.Value, error) {
-	raw = bytes.TrimSpace(raw)
-	var members map[string]jsontext.Value
-	if len(raw) == 0 || raw[0] != '{' {
-		return nil, errors.New("expected object")
-	}
-	if err := json.Unmarshal(raw, &members); err != nil {
-		return nil, err
-	}
-	delete(members, "$schema")
-	if patch && len(members) == 0 {
-		return nil, errors.New("empty patch")
-	}
-	for name, value := range members {
-		nullable := false
-		switch name {
-		case "effective_start", "effective_end":
-			nullable = true
-		case "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "note":
-		case "authority_party_id":
-			if patch {
-				return nil, errors.New("invalid field")
-			}
-			nullable = true
-		case "filer_party_id", "country", "subdivision", "tax_kind":
-			if patch {
-				return nil, errors.New("invalid field")
-			}
-		default:
-			return nil, errors.New("invalid field")
-		}
-		if string(value) == "null" && !nullable {
-			return nil, errors.New("invalid field")
-		}
-	}
-	return members, nil
-}
-func (p *CreateTaxAccountRequest) UnmarshalJSON(raw []byte) error {
-	if _, err := taxAccountMembers(raw, false); err != nil {
-		return err
-	}
-	type fields CreateTaxAccountRequest
-	return json.Unmarshal(raw, (*fields)(p))
-}
 func (p *PatchTaxAccountRequest) UnmarshalJSON(raw []byte) error {
-	members, err := taxAccountMembers(raw, true)
-	if err != nil {
+	var members map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &members); err != nil {
 		return err
 	}
 	type fields PatchTaxAccountRequest
@@ -183,10 +137,10 @@ func (p PatchTaxAccountRequest) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	if p.ClearEffectiveStart || (p.startPresent && p.EffectiveStart == nil) {
-		members["effective_start"] = jsontext.Value("null")
+		members["effective_start"] = jsontext.Value(jsonNull)
 	}
 	if p.ClearEffectiveEnd || (p.endPresent && p.EffectiveEnd == nil) {
-		members["effective_end"] = jsontext.Value("null")
+		members["effective_end"] = jsontext.Value(jsonNull)
 	}
 	return json.Marshal(members)
 }

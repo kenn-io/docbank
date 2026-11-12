@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -394,8 +395,13 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 	})
 }
 
+func isTaxLogPath(raw string) bool {
+	clean := path.Clean(raw)
+	return clean == "/api/v1/tax" || strings.HasPrefix(clean, "/api/v1/tax/")
+}
+
 func requestLogPath(path string) string {
-	if strings.HasPrefix(path, "/api/v1/tax/") {
+	if isTaxLogPath(path) {
 		return "/api/v1/tax/{redacted}"
 	}
 	return path
@@ -417,7 +423,7 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(v)
 				}
-				if strings.HasPrefix(r.URL.Path, "/api/v1/tax/") {
+				if isTaxLogPath(r.URL.Path) {
 					logger.Error("panic in tax handler", "path", requestLogPath(r.URL.Path))
 				} else {
 					logger.Error("panic in handler", "path", r.URL.Path, "panic", v)

@@ -80,15 +80,9 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" default:"0" minimum:"0"`
 	}) (*taxAccountPageOutput, error) {
-		country := []byte(in.Country)
-		for i, c := range country {
-			if c >= 'a' && c <= 'z' {
-				country[i] = c - ('a' - 'A')
-			}
-		}
-		rows, err := d.Store.ListTaxAccounts(ctx, store.TaxAccountListOptions{FilerPartyID: in.Filer, Country: string(country), TaxKind: in.TaxKind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
+		rows, err := d.Store.ListTaxAccounts(ctx, store.TaxAccountListOptions{FilerPartyID: in.Filer, Country: taxCountrySelector(in.Country), TaxKind: in.TaxKind, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
 		if err != nil {
-			return nil, taxRouteError(err)
+			return nil, taxRouteError(d.Logger, err)
 		}
 		out := &taxAccountPageOutput{CacheControl: cacheControlNoStore, Body: TaxAccountPage{Items: []TaxAccount{}, Limit: in.Limit, Offset: in.Offset}}
 		for _, a := range rows {
@@ -102,7 +96,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 	}) (*taxAccountOutput, error) {
 		a, err := d.Store.GetTaxAccount(ctx, in.AccountID)
 		if err != nil {
-			return nil, taxRouteError(err)
+			return nil, taxRouteError(d.Logger, err)
 		}
 		out := taxAccountResult(a, in.Reveal)
 		out.CacheControl = cacheControlNoStore
@@ -118,7 +112,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			out = taxAccountResult(a, false)
 			return nil
 		})
-		return out, taxRouteError(err)
+		return out, taxRouteError(d.Logger, err)
 	})
 	huma.Register(api, huma.Operation{OperationID: "updateTaxAccount", Method: http.MethodPatch, Path: "/api/v1/tax/accounts/{account_id}", Summary: "Edit a tax account"}, func(ctx context.Context, in *struct {
 		AccountID string `path:"account_id"`
@@ -127,7 +121,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 	}) (*taxAccountOutput, error) {
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
-			return nil, taxRouteError(err)
+			return nil, taxRouteError(d.Logger, err)
 		}
 		var out *taxAccountOutput
 		err = g.mutate(ctx, func() error {
@@ -143,7 +137,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			out = taxAccountResult(a, false)
 			return nil
 		})
-		return out, taxRouteError(err)
+		return out, taxRouteError(d.Logger, err)
 	})
 	huma.Register(api, huma.Operation{OperationID: "retireTaxAccount", Method: http.MethodPost, Path: "/api/v1/tax/accounts/{account_id}/retire", Summary: "Retire a tax account"}, func(ctx context.Context, in *struct {
 		AccountID string `path:"account_id"`
@@ -151,7 +145,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 	}) (*taxAccountOutput, error) {
 		revision, err := parseIfMatch(in.IfMatch)
 		if err != nil {
-			return nil, taxRouteError(err)
+			return nil, taxRouteError(d.Logger, err)
 		}
 		var out *taxAccountOutput
 		err = g.mutate(ctx, func() error {
@@ -162,6 +156,6 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			out = taxAccountResult(a, false)
 			return nil
 		})
-		return out, taxRouteError(err)
+		return out, taxRouteError(d.Logger, err)
 	})
 }

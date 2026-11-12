@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -23,8 +24,10 @@ func TestTaxValuesAbsentFromLogs(t *testing.T) {
 	const sentinel = "private-synthetic-value"
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(sentinel) })
 	handler := logMiddleware(recoverMiddleware(next, logger), logger)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tax/accounts/"+sentinel+"?country="+sentinel, nil)
-	handler.ServeHTTP(httptest.NewRecorder(), req)
+	for _, path := range []string{"/api/v1/tax/accounts/", "/api/v1//tax/accounts/"} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path+sentinel+"?country="+sentinel, nil)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
 	assert.NotContains(t, logs.String(), sentinel)
 	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath("/api/v1/tax/"+sentinel))
 }
@@ -46,18 +49,47 @@ func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 		{Field: "cadence", Reason: "private-synthetic-value"},
 	} {
 		var problem *Error
-		require.ErrorAs(t, taxRouteError(field), &problem)
+		require.ErrorAs(t, taxRouteError(slog.Default(), field), &problem)
 		assert.NotContains(t, problem.Detail, "private-synthetic-value")
 	}
 	var problem *Error
-	require.ErrorAs(t, taxRouteError(&taxrecord.FieldError{Field: "cadence", Reason: "unknown cadence"}), &problem)
+	require.ErrorAs(t, taxRouteError(slog.Default(), &taxrecord.FieldError{Field: "cadence", Reason: "unknown cadence"}), &problem)
 	assert.Equal(t, "cadence: unknown cadence", problem.Detail)
+}
+
+func TestTaxSafeDiagnosticOrderAndServerFailure(t *testing.T) {
+	t.Parallel()
+	const secret = "private-synthetic-value"
+	assert.Equal(t, "body.note: invalid length or text", SafeTaxDiagnostic("body.note: invalid length or text; body.cadence: unknown cadence "+secret))
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	var problem *Error
+	require.ErrorAs(t, taxRouteError(logger, errors.New(secret)), &problem)
+	assert.Equal(t, http.StatusInternalServerError, problem.Status)
+	assert.Contains(t, logs.String(), "tax_5xx")
+	assert.NotContains(t, logs.String(), secret)
+	assert.NotContains(t, problem.Error(), secret)
+}
+
+func TestTaxMalformedPathMuxRedirectIsRedacted(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/tax/accounts/{id}", func(http.ResponseWriter, *http.Request) {})
+	handler := logMiddleware(recoverMiddleware(mux, logger), logger)
+	const secret = "private-synthetic-value"
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1//tax/accounts/"+secret, nil))
+	assert.Equal(t, http.StatusMovedPermanently, recorder.Code)
+	assert.NotContains(t, logs.String(), secret)
+	assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
 }
 
 func TestTaxRevisionExhaustionError(t *testing.T) {
 	t.Parallel()
 	var problem *Error
-	require.ErrorAs(t, taxRouteError(store.ErrTaxRevisionExhausted), &problem)
+	require.ErrorAs(t, taxRouteError(slog.Default(), store.ErrTaxRevisionExhausted), &problem)
 	assert.Equal(t, http.StatusConflict, problem.Status)
 	assert.Equal(t, "tax_revision_exhausted", problem.Code)
 	assert.Equal(t, "tax request failed", problem.Detail)
@@ -107,6 +139,10 @@ func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
 		{"filer_party_id", "required", func(v *taxrecord.AccountValues) { v.FilerPartyID = "" }},
 		{"tax_kind", "not canonical", func(v *taxrecord.AccountValues) { v.TaxKind = " example " }},
 		{"identifier", "control character", func(v *taxrecord.AccountValues) { v.Identifier = "\x00" }},
+		{"identifier", "invalid length or text", func(v *taxrecord.AccountValues) { v.Identifier = strings.Repeat("x", 257) }},
+		{"tax_kind", "invalid length or text", func(v *taxrecord.AccountValues) { v.TaxKind = "" }},
+		{"country", "invalid length or text", func(v *taxrecord.AccountValues) { v.Country = "ZZZ" }},
+		{"period_note", "control character", func(v *taxrecord.AccountValues) { v.PeriodNote = "\x00" }},
 		{"note", "invalid length or text", func(v *taxrecord.AccountValues) { v.Note = string(make([]byte, 8193)) }},
 		{"country", "invalid country", func(v *taxrecord.AccountValues) { v.Country = "AA" }},
 		{"subdivision", "invalid subdivision", func(v *taxrecord.AccountValues) { v.Subdivision = "AA-A" }},
@@ -129,7 +165,7 @@ func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
 			assert.Equal(t, tc.field, field.Field)
 			assert.Equal(t, tc.reason, field.Reason)
 			var problem *Error
-			require.ErrorAs(t, taxRouteError(field), &problem)
+			require.ErrorAs(t, taxRouteError(slog.Default(), field), &problem)
 			assert.Equal(t, field.Error(), problem.Detail)
 		})
 	}
@@ -141,7 +177,7 @@ func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
 		}
 		field := &taxrecord.FieldError{Field: name, Reason: reason}
 		var problem *Error
-		require.ErrorAs(t, taxRouteError(field), &problem)
+		require.ErrorAs(t, taxRouteError(slog.Default(), field), &problem)
 		assert.Equal(t, field.Error(), problem.Detail)
 	}
 }
