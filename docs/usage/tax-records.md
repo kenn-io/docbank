@@ -59,6 +59,9 @@ docbank tax record edit RECORD_ID --note "Example note" --due-date 2027-01-31
 docbank tax record retire RECORD_ID
 ```
 
+When setting `--amount`, the direction must be `payable`, `refundable`, or `nil`. On create, set `--direction` explicitly; on edit, the existing direction may already be suitable.
+
+
 `list` combines filters with AND and supports `--include-retired`, `--limit`
 and `--offset` as for accounts. A full text page prints a continuation offset.
 Retired records remain available with `show` and cannot be edited. Account-bound

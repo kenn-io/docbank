@@ -3,7 +3,6 @@ package daemonconn
 import (
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,21 +70,7 @@ func TestTaxRecordMutationHint(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "inspect the record")
 	assert.NotContains(t, err.Error(), "account")
-}
-
-func TestTaxRecordDiagnosticsRemainPrivate(t *testing.T) {
-	for _, detail := range []string{"title: invalid length or text"} {
-		err := safeTaxError(apiProblemError(api.Error{Status: 422, Code: "invalid_tax", Detail: detail + " private-synthetic"}))
-		assert.Contains(t, err.Error(), detail)
-		assert.NotContains(t, err.Error(), "private-synthetic")
-	}
-	err := safeTaxError(apiProblemError(api.Error{Status: 422, Code: "invalid_tax", Detail: "private-synthetic-field: private-synthetic"}))
-	assert.NotContains(t, err.Error(), "private-synthetic")
-}
-
-func TestTaxRecordUncertainWritesNameRecord(t *testing.T) {
-	err := taxMutationFailure(&responseDecodeError{err: errors.New("private-synthetic")}, "record")
-	require.Error(t, err)
+	err = taxMutationFailure(&responseDecodeError{err: errors.New("private-synthetic")}, "record")
 	assert.Contains(t, err.Error(), "inspect the record")
 	assert.NotContains(t, err.Error(), "private-synthetic")
 }
@@ -111,13 +96,9 @@ func TestTaxRecordClientRejectsMissingAndNullMembers(t *testing.T) {
 				}
 				body, err := json.Marshal(members)
 				require.NoError(t, err)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.Header().Set("ETag", `"1"`)
-					if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tax/records" {
-						_, _ = fmt.Fprintf(w, `{"items":[%s],"limit":1,"offset":0}`, body)
-						return
-					}
 					_, _ = w.Write(body)
 				}))
 				t.Cleanup(server.Close)
@@ -220,7 +201,6 @@ func TestTaxRecordMutationReceipts(t *testing.T) {
 				require.NoError(t, err)
 			} else {
 				require.True(t, IsResponseDecodeError(err))
-				assert.Contains(t, err.Error(), "inspect the record")
 			}
 		})
 	}

@@ -161,6 +161,9 @@ func registerTaxRecordRoutes(api huma.API, d Deps, g *gate) {
 			if r.Revision != revision {
 				return store.ErrStaleRevision
 			}
+			if r.RetiredAt != nil {
+				return store.ErrTaxRetired
+			}
 			input, err := mergeTaxRecordPatch(r, in.Body)
 			if err != nil {
 				return err

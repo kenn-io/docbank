@@ -54,13 +54,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
 			return writeCLIJSON(cmd.OutOrStdout(), a)
 		}
-		value := func(p *string) string {
-			if p == nil {
-				return ""
-			}
-			return *p
-		}
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %q\tidentifier: %q\tcadence: %s\tperiod: %q\tdue: %q\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %q\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, value(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, value(a.EffectiveStart), value(a.EffectiveEnd), a.Note, value(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %q\tidentifier: %q\tcadence: %s\tperiod: %q\tdue: %q\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %q\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, taxValue(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, taxValue(a.EffectiveStart), taxValue(a.EffectiveEnd), a.Note, taxValue(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("write tax account: %w", err)
 		}

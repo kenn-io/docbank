@@ -37,7 +37,7 @@ explains how.
 - Refer to a live document by path, or by a numeric node ID that stays the same
   through moves, renames, trash, and restore.
 - Keep reusable [parties](usage/contracts.md) for entities and counterparties.
-- Manage [tax accounts](usage/tax-records.md) through the CLI or HTTP API, with identifiers masked by default.
+- Manage [tax accounts and records](usage/tax-records.md) through the CLI or HTTP API, with account identifiers masked by default.
 - Define tags and assign them regardless of folder. Renaming a tag changes its
   display name and nothing else. The web app groups slash-separated tag names
   and keeps each tag's color when its name changes.

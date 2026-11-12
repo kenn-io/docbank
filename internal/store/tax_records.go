@@ -148,8 +148,16 @@ func taxRecordValues(in TaxRecordInput, old *TaxRecord, account *TaxAccount) (ta
 	}
 	return taxrecord.NormalizeRecord(v)
 }
-func taxRecordMatchesAccount(v taxrecord.RecordValues, a TaxAccount) bool {
-	return v.FilerPartyID == a.FilerPartyID && equalOptionalStrings(v.AuthorityPartyID, a.AuthorityPartyID) && v.Country == a.Country && v.Subdivision == a.Subdivision && v.TaxKind == a.TaxKind
+func taxRecordIdentityError(v, expected taxrecord.RecordValues) error {
+	for _, item := range []struct {
+		field string
+		equal bool
+	}{{"filer_party_id", v.FilerPartyID == expected.FilerPartyID}, {"authority_party_id", equalOptionalStrings(v.AuthorityPartyID, expected.AuthorityPartyID)}, {"country", v.Country == expected.Country}, {"subdivision", v.Subdivision == expected.Subdivision}, {"tax_kind", v.TaxKind == expected.TaxKind}} {
+		if !item.equal {
+			return &taxrecord.FieldError{Field: item.field, Reason: "account identity mismatch"}
+		}
+	}
+	return nil
 }
 func (s *Store) taxRecordWriteError(err error) error {
 	if err != nil && s.isUniqueViolation(err) {
@@ -181,8 +189,11 @@ func (s *Store) CreateTaxRecord(ctx context.Context, in TaxRecordInput) (TaxReco
 		if err != nil {
 			return err
 		}
-		if account != nil && !taxRecordMatchesAccount(v, *account) {
-			return fmt.Errorf("%w: account identity mismatch", taxrecord.ErrInvalid)
+		if account != nil {
+			expected := taxrecord.RecordValues{FilerPartyID: account.FilerPartyID, AuthorityPartyID: account.AuthorityPartyID, Country: account.Country, Subdivision: account.Subdivision, TaxKind: account.TaxKind}
+			if err := taxRecordIdentityError(v, expected); err != nil {
+				return err
+			}
 		}
 		if err := checkTaxParties(ctx, tx, v.FilerPartyID, v.AuthorityPartyID, "", nil); err != nil {
 			return err
@@ -219,8 +230,10 @@ func (s *Store) UpdateTaxRecord(ctx context.Context, id string, revision int64, 
 		if err != nil {
 			return err
 		}
-		if r.AccountID != nil && (v.FilerPartyID != r.FilerPartyID || !equalOptionalStrings(v.AuthorityPartyID, r.AuthorityPartyID) || v.Country != r.Country || v.Subdivision != r.Subdivision || v.TaxKind != r.TaxKind) {
-			return fmt.Errorf("%w: account identity is immutable", taxrecord.ErrInvalid)
+		if r.AccountID != nil {
+			if err := taxRecordIdentityError(v, r.RecordValues); err != nil {
+				return err
+			}
 		}
 		if err := checkTaxParties(ctx, tx, v.FilerPartyID, v.AuthorityPartyID, r.FilerPartyID, r.AuthorityPartyID); err != nil {
 			return err

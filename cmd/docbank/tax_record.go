@@ -37,7 +37,7 @@ func (f *recordFlags) bind(cmd *cobra.Command, create bool) {
 	flags.StringVar(&f.due, "due-date", "", "due date")
 	flags.Int64Var(&f.lead, "lead-days", 0, "lead days")
 	flags.StringVar(&f.direction, "direction", "", "amount direction: "+strings.Join(taxrecord.RecordDirections(), ", "))
-	flags.StringVar(&f.amount, "amount", "", "exact decimal amount")
+	flags.StringVar(&f.amount, "amount", "", "exact decimal amount; direction must be payable, refundable, or nil")
 	flags.StringVar(&f.currency, "currency", "", "currency code")
 	flags.StringVar(&f.note, "note", "", "record note")
 	flags.BoolVar(&f.clearAuthority, "clear-authority", false, "clear authority")

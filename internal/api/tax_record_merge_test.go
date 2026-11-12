@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestTaxPatchOmissionNullAndMoney(t *testing.T) {
+func TestTaxRecordCurrencyMerge(t *testing.T) {
 	t.Parallel()
 	value := int64(0)
 	r := store.TaxRecord{Currency: "USD", AmountMinor: &value, Direction: "payable"}

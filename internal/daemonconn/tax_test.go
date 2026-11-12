@@ -129,6 +129,23 @@ func TestTaxClientValidationDetails(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "invalid_tax", code)
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	for _, detail := range []string{"title: invalid length or text", "country: account identity mismatch"} {
+		err := safeTaxError(apiProblemError(api.Error{Status: 422, Code: "invalid_tax", Detail: detail + " private-synthetic"}))
+		assert.Contains(t, err.Error(), detail)
+		assert.NotContains(t, err.Error(), "private-synthetic")
+	}
+	unknown := safeTaxError(apiProblemError(api.Error{Status: 422, Code: "invalid_tax", Detail: "private-synthetic-field: private-synthetic"}))
+	assert.NotContains(t, unknown.Error(), "private-synthetic")
+	recordServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":422,"code":"invalid_tax","detail":"country: account identity mismatch private-synthetic"}`))
+	}))
+	t.Cleanup(recordServer.Close)
+	_, err = New(recordServer.URL, "").CreateTaxRecord(t.Context(), api.CreateTaxRecordRequest{})
+	require.ErrorIs(t, err, taxrecord.ErrInvalid)
+	assert.Contains(t, err.Error(), "country: account identity mismatch")
+	assert.NotContains(t, err.Error(), "private-synthetic")
 	untrusted := safeTaxError(apiProblemError(api.Error{Status: http.StatusUnprocessableEntity, Code: "invalid_tax", Detail: "cadence: unknown cadence private-synthetic-value"}))
 	assert.Contains(t, untrusted.Error(), "cadence: unknown cadence")
 	assert.NotContains(t, untrusted.Error(), "private-synthetic-value")
