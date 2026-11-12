@@ -2034,11 +2034,11 @@
       await generated.restartDaemon(undefined, { session, signal: AbortSignal.timeout(10000) });
     } catch (cause) {
       if (!mounted || webSession !== session) return;
+      if (cause instanceof APIError && cause.status === 401 && cause.code === "unauthorized")
+        return handleFailure(cause);
       notice = restartFailureNotice(cause);
     }
-    if (mounted && webSession === session) {
-      localText.notice = notice;
-    }
+    if (mounted && webSession === session) localText.notice = notice;
   }
 
   function restartFailureNotice(cause: unknown): string {

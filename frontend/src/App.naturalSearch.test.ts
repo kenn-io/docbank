@@ -334,6 +334,27 @@ async function submitSearch(value: string): Promise<void> {
   await fireEvent.submit(input.closest("form")!);
 }
 
+it("prompts for sign-in when the restart request rejects the browser session", async () => {
+  searchWithMeaningOff({
+    status: () => ({ ...localSaved, restart_available: true }),
+    restart: async () =>
+      Response.json(
+        { code: "unauthorized", detail: "missing or invalid API key or browser session" },
+        { status: 401 },
+      ),
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
+  await fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
+      name: "Restart",
+    }),
+  );
+  expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
+});
+
 it.each([
   [true, false],
   [true, true],
