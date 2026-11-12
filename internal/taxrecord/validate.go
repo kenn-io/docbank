@@ -120,7 +120,7 @@ func location(country, subdivision, code string, requireCurrency bool) error {
 			return invalid("subdivision", "invalid subdivision")
 		}
 		for _, c := range subdivision[3:] {
-			if !(c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			if (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
 				return invalid("subdivision", "invalid subdivision")
 			}
 		}
