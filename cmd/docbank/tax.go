@@ -66,12 +66,6 @@ func newTaxAccountCommand() *cobra.Command {
 		}
 		return nil
 	}
-	printMutation := func(cmd *cobra.Command, a api.TaxAccount) error {
-		if err := printAccount(cmd, a); err != nil {
-			return errors.New("tax account change was committed, but output failed; inspect the account before trying again")
-		}
-		return nil
-	}
 	validateID := func(id string) error {
 		if canonical.ValidateUUIDv4(id) != nil {
 			return usageError(errors.New("invalid account ID"))
@@ -158,7 +152,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printMutation(cmd, a)
+		return printAccount(cmd, a)
 	}}
 	create.Flags().StringVar(&add.FilerPartyID, "filer", "", "filer party ID")
 	create.Flags().StringVar(&authority, "authority", "", "authority party ID")
@@ -238,7 +232,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printMutation(cmd, a)
+		return printAccount(cmd, a)
 	}}
 	edit.Flags().StringVar(&editIdentifier, "identifier", "", "account identifier")
 	edit.Flags().StringVar(&editCadence, "cadence", "", "filing cadence")
@@ -276,7 +270,7 @@ func newTaxAccountCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printMutation(cmd, a)
+		return printAccount(cmd, a)
 	}}
 	retire.Flags().Int64Var(&retireRevision, "revision", 0, "expected revision (default: current)")
 	account.AddCommand(create, edit, list, show, retire)

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json/v2"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,35 +146,4 @@ func TestTaxCLIRevisionInspectAndNoRetry(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 1, reads)
 	assert.Equal(t, 1, writes)
-}
-
-func TestTaxCLICommittedOutputFailure(t *testing.T) {
-	const id = "11111111-1111-4111-8111-111111111111"
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		body := `{"account_id":"` + id + `","filer_party_id":"22222222-2222-4222-8222-222222222222","authority_party_id":null,"country":"ZZ","subdivision":"","tax_kind":"Example","identifier":"","cadence":"annual","period_note":"","due_note":"","lead_days":0,"currency":"USD","effective_start":null,"effective_end":null,"note":"","retired_at":null,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","revision":1}`
-		w.Header().Set("ETag", `"1"`)
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/accounts" {
-			w.WriteHeader(http.StatusCreated)
-		} else {
-			w.Header().Set("ETag", `"2"`)
-			body = strings.Replace(body, `"revision":1`, `"revision":2`, 1)
-			if strings.HasSuffix(r.URL.Path, "/retire") {
-				body = strings.Replace(body, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1)
-			}
-		}
-		_, _ = w.Write([]byte(body))
-	})
-	for _, args := range [][]string{{"account", "add", "--filer", id, "--country", "ZZ", "--tax-kind", "Example", "--cadence", "annual", "--currency", "USD"}, {"account", "edit", id, "--note", "example", "--revision=1"}, {"account", "retire", id, "--revision=1"}} {
-		cmd := newTaxCommand()
-		cmd.SetOut(searchFailingWriter{})
-		cmd.SilenceErrors = true
-		cmd.SilenceUsage = true
-		cmd.SetArgs(args)
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "committed")
-		assert.Contains(t, err.Error(), "inspect")
-		assert.NotContains(t, err.Error(), "output closed")
-	}
 }
