@@ -112,3 +112,14 @@ func TestContractSignDaemonWalk(t *testing.T) {
 		t.Fatalf("unconfigured: %v", err)
 	}
 }
+
+func TestContractSignTemplateNameEscapesBidi(t *testing.T) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"templates":[{"id":1,"name":"Lease\u202eExample","roles":[]}],"next":0}`)
+	})
+	out, err := runCLI(t, "contract", "sign", "templates")
+	if err != nil || strings.Contains(out, "\u202e") || !strings.Contains(out, `\u202e`) {
+		t.Fatalf("template name must escape bidi control: %q: %v", out, err)
+	}
+}

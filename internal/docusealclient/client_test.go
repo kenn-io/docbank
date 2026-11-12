@@ -364,4 +364,9 @@ func TestTemplatesEmptyNameUsesPlaceholder(t *testing.T) {
 	if err != nil || len(page.Templates) != 1 || page.Templates[0].Name != "(unnamed)" {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
+	c.connection.APIKey = "(unnamed)"
+	page, err = c.Templates(t.Context(), 0)
+	if err == nil || err.Error() != "docuseal_invalid_response" || strings.Contains(fmt.Sprint(page), c.connection.APIKey) {
+		t.Fatalf("placeholder credential echoed or not rejected: page=%+v err=%v", page, err)
+	}
 }
