@@ -243,13 +243,10 @@ imported and validated logical authority and restored its physical pack catalog.
 For a catalog change starting from a released SQLite schema version, bump
 `currentStorageSchemaVersion`. Run `make schema-contract-check` and add the named file under
 `internal/store/testdata/schema-contracts/` with a one-line summary of the change.
-The digest covers the SQLite catalog SQL of every table, trigger, view, and index.
 If you change your own unmerged layout, replace its record with the newly named
 file. If `main` already records that version, preserve its record, remove your
 old record, bump `currentStorageSchemaVersion`, rerun the test against the
-combined layout, and add the new record. After release,
-`TestReleasedSchemaFixturesMatchVersions` still allows compatible non-unique
-indexes to be added in place.
+combined layout, and add the new record.
 
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact

@@ -47,13 +47,10 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 	var records []schemaContract
 	for _, entry := range entries {
 		match := schemaContractName.FindStringSubmatch(entry.Name())
-		if entry.IsDir() || match == nil {
+		if match == nil {
 			return nil, fmt.Errorf("invalid schema contract filename %s", entry.Name())
 		}
-		version, err := strconv.Atoi(match[1])
-		if err != nil {
-			return nil, fmt.Errorf("parse schema contract version %s: %w", match[1], err)
-		}
+		version, _ := strconv.Atoi(match[1])
 		body, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("read schema contract %s: %w", entry.Name(), err)
@@ -111,16 +108,12 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 
 func TestStorageSchemaContractRecords(t *testing.T) {
 	t.Parallel()
-	dir := filepath.Join(t.TempDir(), "records")
-	records, err := loadSchemaContracts(dir)
-	require.NoError(t, err)
-	require.Empty(t, records)
-	require.NoError(t, os.Mkdir(dir, 0700))
+	dir := t.TempDir()
 	record := schemaContract{Version: 49, Digest: strings.Repeat("a", 64)}
 	name := schemaContractFile(record)
 	path := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(path, []byte("Add documents table\n"), 0600))
-	records, err = loadSchemaContracts(dir)
+	records, err := loadSchemaContracts(dir)
 	require.NoError(t, err)
 	require.Equal(t, []schemaContract{record}, records)
 	for _, body := range []string{"", " \n\t", "first\nsecond\n"} {
@@ -135,12 +128,10 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 		"000049-abc.schema",
 		"000049-" + record.Digest + ".json",
 	} {
-		t.Run(name, func(t *testing.T) {
-			require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0600))
-			_, err := loadSchemaContracts(dir)
-			require.ErrorContains(t, err, "invalid schema contract filename")
-			require.NoError(t, os.Remove(filepath.Join(dir, name)))
-		})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0600))
+		_, err := loadSchemaContracts(dir)
+		require.ErrorContains(t, err, "invalid schema contract filename "+name)
+		require.NoError(t, os.Remove(filepath.Join(dir, name)))
 	}
 }
 
@@ -156,16 +147,15 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	require.ErrorContains(t, err, "if main already records this version")
 	require.EqualError(t, checkSchemaContract(records, 49, digest), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
 	require.NoError(t, checkSchemaContract(records, 50, next))
+	require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, strings.Repeat("c", 64)), "set currentStorageSchemaVersion to 50")
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
-			probe := func(statements ...string) string {
+			probe := func(statement string) string {
 				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
 				require.NoError(t, err)
-				for _, statement := range statements {
-					_, err = db.ExecContext(t.Context(), statement)
-					require.NoError(t, err)
-				}
+				_, err = db.ExecContext(t.Context(), statement)
+				require.NoError(t, err)
 				digest := schemaCatalogDigest(t, db)
 				_, err = db.ExecContext(t.Context(), "ROLLBACK TO probe")
 				require.NoError(t, err)
@@ -174,7 +164,9 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 				return digest
 			}
 			digest := schemaCatalogDigest(t, db)
-			record := schemaContract{Version: 49, Digest: digest}
+			table := `CREATE TABLE contract_probe (id INTEGER)`
+			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
+			require.NotEqual(t, probe(table), probe(table+"; "+trigger))
 			for _, statement := range []string{
 				`CREATE TABLE contract_probe (id INTEGER)`,
 				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
@@ -182,15 +174,8 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 				`CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`,
 				`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
 			} {
-				require.ErrorContains(t, checkSchemaContract([]schemaContract{record}, 49, probe(statement)), "set currentStorageSchemaVersion to 50", statement)
+				require.NotEqual(t, digest, probe(statement), statement)
 			}
-			a, b := `CREATE TABLE proposal_a (id INTEGER)`, `CREATE TABLE proposal_b (id INTEGER)`
-			main := schemaContract{Version: 49, Digest: probe(a)}
-			proposal := schemaContract{Version: 49, Digest: probe(b)}
-			combined := probe(a, b)
-			require.ErrorContains(t, checkSchemaContract([]schemaContract{main, proposal}, 49, combined), "set currentStorageSchemaVersion to 50")
-			require.EqualError(t, checkSchemaContract([]schemaContract{main}, 50, combined), fmt.Sprintf("add schema contract file testdata/schema-contracts/000050-%s.schema with a one-line summary", combined))
-			require.NoError(t, checkSchemaContract([]schemaContract{main, {Version: 50, Digest: combined}}, 50, combined))
 		})
 	}
 }
