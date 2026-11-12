@@ -27,16 +27,24 @@ type TaxEventMutation struct {
 	Record TaxRecord `json:"record"`
 	Event  TaxEvent  `json:"event"`
 }
+type TaxBalance struct {
+	OutstandingMinor    *int64 `json:"outstanding_minor" nullable:"true"`
+	Currency            string `json:"currency"`
+	OtherCurrencyEvents int64  `json:"other_currency_events"`
+}
 type TaxRecordDetail struct {
 	TaxRecord
 
-	Events []TaxEvent `json:"events"`
+	Events  []TaxEvent `json:"events"`
+	Balance TaxBalance `json:"balance"`
 }
 type AddTaxEventRequest struct {
-	Kind       string `json:"kind"`
-	OccurredOn string `json:"occurred_on"`
-	Reference  string `json:"reference,omitzero"`
-	Note       string `json:"note,omitzero"`
+	Kind       string  `json:"kind"`
+	OccurredOn string  `json:"occurred_on"`
+	Amount     *string `json:"amount,omitzero" nullable:"true"`
+	Currency   string  `json:"currency,omitzero"`
+	Reference  string  `json:"reference,omitzero"`
+	Note       string  `json:"note,omitzero"`
 }
 type AdvanceTaxRecordRequest struct {
 	State      string  `json:"state"`
@@ -52,7 +60,7 @@ type VoidTaxEventRequest struct {
 
 // UnmarshalJSON enforces exact names and no null for event text fields.
 func (p *AddTaxEventRequest) UnmarshalJSON(raw []byte) error {
-	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "reference", taxNoteField}); err != nil {
+	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "amount", "currency", "reference", taxNoteField}, "amount"); err != nil {
 		return err
 	}
 	type fields AddTaxEventRequest
@@ -82,6 +90,7 @@ func taxEventRequestSchema(schema *huma.Schema) *huma.Schema {
 	return schema
 }
 func (AddTaxEventRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["kind"].Enum = []any{"note", "payment", "refund"}
 	return taxEventRequestSchema(schema)
 }
 func (AdvanceTaxRecordRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -99,7 +108,7 @@ func fromStoreTaxEvent(e store.TaxEvent, reveal bool) TaxEvent {
 	return TaxEvent{EventID: e.EventID, RecordID: e.RecordID, Kind: e.Kind, OccurredOn: e.OccurredOn, SetsState: e.SetsState, AmountMinor: e.AmountMinor, Currency: e.Currency, Reference: ref, Note: e.Note, RecordedAt: e.RecordedAt, VoidedAt: e.VoidedAt, VoidReason: e.VoidReason, RecordRevision: e.RecordRevision}
 }
 func fromStoreTaxRecordDetail(d store.TaxRecordDetail, reveal bool) TaxRecordDetail {
-	out := TaxRecordDetail{TaxRecord: fromStoreTaxRecord(d.Record), Events: make([]TaxEvent, 0, len(d.Events))}
+	out := TaxRecordDetail{TaxRecord: fromStoreTaxRecord(d.Record), Events: make([]TaxEvent, 0, len(d.Events)), Balance: TaxBalance{OutstandingMinor: d.Balance.OutstandingMinor, Currency: d.Balance.Currency, OtherCurrencyEvents: d.Balance.OtherCurrencyEvents}}
 	for _, e := range d.Events {
 		out.Events = append(out.Events, fromStoreTaxEvent(e, reveal))
 	}

@@ -43,7 +43,7 @@ func registerTaxEventRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, taxRouteError(d.Logger, err)
 	})
-	huma.Register(api, huma.Operation{OperationID: "addTaxEvent", Method: http.MethodPost, Path: "/api/v1/tax/records/{record_id}/events", Summary: "Add a tax record note", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{OperationID: "addTaxEvent", Method: http.MethodPost, Path: "/api/v1/tax/records/{record_id}/events", Summary: "Add a tax record event", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct {
 		RecordID string `path:"record_id"`
 		IfMatch  string `header:"If-Match"`
 		Body     AddTaxEventRequest
@@ -54,7 +54,7 @@ func registerTaxEventRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *taxEventMutationOutput
 		err = g.mutate(ctx, func() error {
-			m, err := d.Store.AddTaxEvent(ctx, in.RecordID, revision, store.TaxEventInput{Kind: in.Body.Kind, OccurredOn: in.Body.OccurredOn, Reference: in.Body.Reference, Note: in.Body.Note})
+			m, err := d.Store.AddTaxEvent(ctx, in.RecordID, revision, store.TaxEventInput{Kind: in.Body.Kind, OccurredOn: in.Body.OccurredOn, Amount: in.Body.Amount, Currency: in.Body.Currency, Reference: in.Body.Reference, Note: in.Body.Note})
 			if err != nil {
 				return err
 			}
