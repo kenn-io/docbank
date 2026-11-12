@@ -146,7 +146,7 @@
             <Button size="sm" onclick={() => setYear(null)}>All years</Button>
           {/if}
         </div>
-        {#if view && view.filters.filer !== ""}
+        {#if view && view.filters.filer !== "" && view.filters.year !== null}
           <Button size="sm" onclick={clearFilters}>Clear filters</Button>
         {/if}
       </nav>

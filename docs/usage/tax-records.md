@@ -137,8 +137,9 @@ The page only reads; add or change records with the CLI.
   date order), and records from **Load more** join their filer's heading.
   Choosing a filer shows only its records.
 - **Tax year** accepts a year from 1 to 9999; press Enter or leave the field to
-  apply it. **All years** removes the year and keeps the chosen filer.
-  **Clear filters** appears once a filer is chosen and removes both.
+  apply it. **All filers** and **All years** each remove their own filter.
+  **Clear filters** appears when both a filer and a year are chosen and removes
+  both.
 - Each row shows the title and form code, tax year, due date, state, and the
   amount. **Load more** fetches the next 50 records. Refresh starts again from
   the first 50. Retired records are not shown; list them with
