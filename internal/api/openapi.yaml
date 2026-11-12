@@ -3591,8 +3591,10 @@ components:
         consideration:
           type: string
         contract_type:
+          pattern: ^([a-z0-9_]{1,64})?$
           type: string
         expires_on:
+          format: date
           type:
             - string
             - "null"
@@ -3603,20 +3605,30 @@ components:
         purpose:
           type: string
         signed_on:
+          format: date
           type:
             - string
             - "null"
         starts_on:
+          format: date
           type:
             - string
             - "null"
         status:
+          enum:
+            - draft
+            - pending_signature
+            - active
+            - terminated
+            - cancelled
           type: string
         summary:
           type: string
         termination:
           type: string
         title:
+          maxLength: 300
+          minLength: 1
           type: string
       required:
         - title
@@ -12730,6 +12742,27 @@ components:
         name: api
     PatchContractRequest:
       additionalProperties: false
+      anyOf:
+        - required:
+            - title
+        - required:
+            - contract_type
+        - required:
+            - status
+        - required:
+            - starts_on
+        - required:
+            - expires_on
+        - required:
+            - signed_on
+        - required:
+            - summary
+        - required:
+            - purpose
+        - required:
+            - consideration
+        - required:
+            - termination
       properties:
         $schema:
           description: A URL to the JSON Schema for this object.
@@ -12741,28 +12774,40 @@ components:
         consideration:
           type: string
         contract_type:
+          pattern: ^([a-z0-9_]{1,64})?$
           type: string
         expires_on:
+          format: date
           type:
             - string
             - "null"
         purpose:
           type: string
         signed_on:
+          format: date
           type:
             - string
             - "null"
         starts_on:
+          format: date
           type:
             - string
             - "null"
         status:
+          enum:
+            - draft
+            - pending_signature
+            - active
+            - terminated
+            - cancelled
           type: string
         summary:
           type: string
         termination:
           type: string
         title:
+          maxLength: 300
+          minLength: 1
           type: string
       type: object
       x-go-type: api.PatchContractRequest

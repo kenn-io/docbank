@@ -1818,10 +1818,22 @@ export interface CoverageSourcesV1 {
   extractor_id: string;
 }
 
+export type CreateContractRequestStatus = typeof CreateContractRequestStatus[keyof typeof CreateContractRequestStatus];
+
+
+export const CreateContractRequestStatus = {
+  draft: 'draft',
+  pending_signature: 'pending_signature',
+  active: 'active',
+  terminated: 'terminated',
+  cancelled: 'cancelled',
+} as const;
+
 export interface CreateContractRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   consideration?: string;
+  /** @pattern ^([a-z0-9_]{1,64})?$ */
   contract_type?: string;
   /** @nullable */
   expires_on?: string | null;
@@ -1831,9 +1843,13 @@ export interface CreateContractRequest {
   signed_on?: string | null;
   /** @nullable */
   starts_on?: string | null;
-  status?: string;
+  status?: CreateContractRequestStatus;
   summary?: string;
   termination?: string;
+  /**
+     * @minLength 1
+     * @maxLength 300
+     */
   title: string;
 }
 
@@ -5261,10 +5277,22 @@ export interface PartyPage {
   offset: number;
 }
 
-export interface PatchContractRequest {
+export type PatchContractRequestStatus = typeof PatchContractRequestStatus[keyof typeof PatchContractRequestStatus];
+
+
+export const PatchContractRequestStatus = {
+  draft: 'draft',
+  pending_signature: 'pending_signature',
+  active: 'active',
+  terminated: 'terminated',
+  cancelled: 'cancelled',
+} as const;
+
+export type PatchContractRequest = (unknown & ({
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   consideration?: string;
+  /** @pattern ^([a-z0-9_]{1,64})?$ */
   contract_type?: string;
   /** @nullable */
   expires_on?: string | null;
@@ -5273,11 +5301,15 @@ export interface PatchContractRequest {
   signed_on?: string | null;
   /** @nullable */
   starts_on?: string | null;
-  status?: string;
+  status?: PatchContractRequestStatus;
   summary?: string;
   termination?: string;
+  /**
+     * @minLength 1
+     * @maxLength 300
+     */
   title?: string;
-}
+}));
 
 export type PatchPartyRequestKind = typeof PatchPartyRequestKind[keyof typeof PatchPartyRequestKind];
 
