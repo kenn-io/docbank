@@ -8547,9 +8547,6 @@ export interface StartStorageSalvageRequest {
 export interface Status {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  capability: string;
-  configured: boolean;
-  enabled: boolean;
   endpoint: string;
 }
 

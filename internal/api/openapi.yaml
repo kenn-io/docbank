@@ -20252,19 +20252,10 @@ components:
           format: uri
           readOnly: true
           type: string
-        capability:
-          type: string
-        configured:
-          type: boolean
-        enabled:
-          type: boolean
         endpoint:
           type: string
       required:
-        - configured
-        - enabled
         - endpoint
-        - capability
       type: object
       x-go-type: docusealclient.Status
       x-go-type-import:
