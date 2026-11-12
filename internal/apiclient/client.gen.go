@@ -7020,6 +7020,102 @@ func (c *Client) PruneNodeContentVersions(ctx context.Context, options *PruneNod
 	return responseParser(ctx, resp)
 }
 
+// GetNoteByPath Read a current Markdown note summary and frontmatter
+func (c *Client) GetNoteByPath(ctx context.Context, options *GetNoteByPathRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetNoteByPathResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"path": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/notes/by-path",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNoteByPathResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNoteByPathResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNoteByPathResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNoteByPathErrorResponse](resp, "GetNoteByPathErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/by-path")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetNotesStatus Count parsed, pending and failed current notes per watch collection
+func (c *Client) GetNotesStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetNotesStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/notes/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetNotesStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetNotesStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetNotesStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetNotesStatusErrorResponse](resp, "GetNotesStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/notes/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListPackages List received and produced packages
 func (c *Client) ListPackages(ctx context.Context, options *ListPackagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPackagesResponse, error) {
 	var err error
@@ -20969,6 +21065,37 @@ func (o *PruneNodeContentVersionsRequestOptions) GetHeader() (map[string]string,
 	return headers, err
 }
 
+// GetNoteByPathRequestOptions is the options needed to make a request to GetNoteByPath.
+type GetNoteByPathRequestOptions struct {
+	Query *GetNoteByPathQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetNoteByPathRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetNoteByPathRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetNoteByPathRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetNoteByPathRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListPackagesRequestOptions is the options needed to make a request to ListPackages.
 type ListPackagesRequestOptions struct {
 	Query *ListPackagesQuery
@@ -28623,6 +28750,10 @@ type ListContentVersionsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type GetNoteByPathQuery struct {
+	Path string `json:"path"`
+}
+
 type ListPackagesQuery struct {
 	Direction *ListPackagesQueryDirection `json:"direction,omitempty"`
 	After     *string                     `json:"after,omitempty"`
@@ -29464,6 +29595,14 @@ type ListContentVersionsErrorResponse = Error
 type PruneNodeContentVersionsResponse = api.VersionPruneReport
 
 type PruneNodeContentVersionsErrorResponse = Error
+
+type GetNoteByPathResponse = api.NoteByPath
+
+type GetNoteByPathErrorResponse = Error
+
+type GetNotesStatusResponse = api.NotesStatus
+
+type GetNotesStatusErrorResponse = Error
 
 type ListPackagesResponse = api.PackagePage
 
@@ -31210,6 +31349,12 @@ type NativeTextPage = pdfproduction.NativeTextPage
 type Node = api.Node
 
 type NodePage = api.NodePage
+
+type NoteByPath = api.NoteByPath
+
+type NoteWatchStatus = api.NoteWatchStatus
+
+type NotesStatus = api.NotesStatus
 
 type NumberedDelivery = processing.NumberedDelivery
 
