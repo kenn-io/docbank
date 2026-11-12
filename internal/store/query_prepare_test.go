@@ -194,6 +194,7 @@ func (q *populationRecordingQuerier) QueryContext(ctx context.Context, statement
 // stream of constant-size operations is different from one corpus-sized value.
 type populationSizeQuerier struct {
 	metadataQuerier
+
 	maxArgument, maxStatement int
 }
 

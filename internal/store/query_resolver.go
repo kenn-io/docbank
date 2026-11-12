@@ -157,9 +157,8 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 	if !ok {
 		return nil, errors.New("person aliases require a rows querier")
 	}
-	visible, _ := ctx.Value(visiblePersonContextKey{}).(bool)
 	rows, err := q.QueryContext(ctx, `SELECT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias'
-		AND (?=0 OR i.origin='operator') ORDER BY i.value_normalized,i.identity_id`, id, boolInt(visible))
+		ORDER BY i.value_normalized,i.identity_id`, id)
 	if err != nil {
 		return nil, err
 	}
