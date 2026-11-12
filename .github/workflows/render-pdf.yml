@@ -124,6 +124,54 @@ jobs:
           cp -R frontend/dist/. internal/web/dist/
           node frontend/screenshots/redaction-review.run.mjs
 
+  taxes-browser-screenshots:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}
+    name: Taxes page screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26.13.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Install Chromium
+        run: |
+          # Match runner-images' bounded mirror failover, including Playwright's apt calls.
+          # https://github.com/actions/runner-images/issues/14594
+          printf '%s\n' 'Acquire::Retries "1";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' |
+            sudo tee /etc/apt/apt.conf.d/zz-retries
+          kit-retry 3 5 npm --prefix frontend ci
+          kit-retry 3 5 node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Embed frontend and capture the Taxes page
+        run: |
+          npm --prefix frontend run build
+          find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
+          cp -R frontend/dist/. internal/web/dist/
+          node frontend/screenshots/taxes.run.mjs
+      - name: Upload Taxes screenshots
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: taxes-screenshots-attempt-${{ github.run_attempt }}
+          path: .superpowers/taxes-shots/*.png
+          # The capture directory is hidden, which the action skips by default.
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: error
+
   bates-browser-recovery:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go') || contains(fromJSON(needs.changes.outputs.groups), 'frontend')) }}

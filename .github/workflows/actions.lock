@@ -28,6 +28,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
+        - 'actions/upload-artifact@v7.0.2'
         - 'kenn-io/actions@main'
         - 'kenn-io/kit@v0.48.4'
     '.github/workflows/sibling-pins.yml':
