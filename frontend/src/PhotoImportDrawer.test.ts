@@ -460,6 +460,15 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await screen.findByText("File missing");
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["a"], "left.JPG", { lastModified: 1000 })] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: {
       files: [
         new File(["b"], "left.JPG", { lastModified: 1000 }),
@@ -471,6 +480,16 @@ it("refuses changed bytes and lists files outside the saved import", async () =>
   await screen.findByText("File changed");
   await screen.findByText("Outside this import");
   await screen.findByText("Files changed since this group was imported.");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() => expect(channel.inspectPhotoImport).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await screen.findByText("File changed");
   expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
