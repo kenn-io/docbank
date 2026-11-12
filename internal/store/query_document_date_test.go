@@ -86,6 +86,25 @@ func TestSavedDateQueryUsesItsOwnTimezone(t *testing.T) {
 	compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
 	require.NoError(t, err)
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
+	for _, tc := range []struct {
+		zone, day string
+		matches   bool
+	}{
+		{"America/Toronto", "2026-03-09", true}, {"America/Toronto", "2026-03-10", false},
+		{"Asia/Singapore", "2026-03-09", false}, {"Asia/Singapore", "2026-03-10", true},
+	} {
+		input := `{"syntax":"advanced","text":"date:` + tc.day + `","timezone":"` + tc.zone + `"}`
+		q, err := query.Parse([]byte(input))
+		require.NoError(t, err)
+		c, err := compileQuery(ctx, q, queryResolver{q: s.db})
+		require.NoError(t, err)
+		ids := compiledFixtureIDs(t, s.db, c, "")
+		if tc.matches {
+			require.Equal(t, []int64{node.ID}, ids)
+		} else {
+			require.Empty(t, ids)
+		}
+	}
 }
 
 func TestDocumentDateDayOfClockBack(t *testing.T) {
