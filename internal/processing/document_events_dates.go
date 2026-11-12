@@ -163,6 +163,9 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 	if strings.HasPrefix(zoneToken, "+") || strings.HasPrefix(zoneToken, "-") {
 		if zoneToken == "-0000" {
 			zoneText = zoneToken
+		} else if zoneToken == "+0000" {
+			zone = "utc"
+			zoneText = zoneToken
 		} else {
 			colon := zoneToken[:3] + ":" + zoneToken[3:]
 			seconds, offsetErr := offsetTokenSeconds(colon)
