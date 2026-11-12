@@ -207,6 +207,10 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 	return nil
 }
 
+func checkSchemaLayout(records []schemaContract, version int, digest string, indexes map[string]string) error {
+	return errors.Join(checkSchemaContract(records, version, digest), checkSchemaIndexes(records, version, digest, indexes))
+}
+
 func schemaContractReleased(records []schemaContract, version int, released []int) (bool, error) {
 	for _, record := range records {
 		if record.Version > version {
@@ -239,8 +243,7 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 		t.Run(driver.name, func(t *testing.T) {
 			db := schemaContractDB(t, driver.driver, schemaSQL)
 			digest := schemaCatalogDigest(t, db)
-			require.NoError(t, checkSchemaContract(records, currentStorageSchemaVersion, digest))
-			require.NoError(t, checkSchemaIndexes(records, currentStorageSchemaVersion, digest, schemaIndexDigests(t, db)))
+			require.NoError(t, checkSchemaLayout(records, currentStorageSchemaVersion, digest, schemaIndexDigests(t, db)))
 		})
 	}
 }
@@ -290,6 +293,8 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	first := strings.Repeat("a", 64)
 	second := strings.Repeat("b", 64)
 	combined := strings.Repeat("c", 64)
+	err := checkSchemaLayout(nil, 49, first, map[string]string{"index_a": second})
+	require.ErrorContains(t, err, "000049-"+first+"-<summary-slug>.schema with these index records:\nindex_a "+second+"\n")
 	records := []schemaContract{{Version: 49, Digest: first}, {Version: 49, Digest: second}}
 	require.ErrorContains(t, checkSchemaContract(nil, 49, first), "000049-"+first+"-<summary-slug>.schema")
 	require.NoError(t, checkSchemaContract(records[:1], 49, first))
