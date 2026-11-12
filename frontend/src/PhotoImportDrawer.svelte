@@ -227,18 +227,21 @@
         throw new Error(
           "These files or destination differ from the saved import. Reselect the original files or folder and destination.",
         );
-      const next = {
-        sourceID: reconnect ? sourceID : resuming ? checkpoint!.sourceID : randomUUID(),
-        revision: randomUUID(),
-        destination: target,
-        manifestVersion: 2,
-        manifestHash: digest,
-        pickerKind,
-      };
+      const nextSourceID = reconnect ? sourceID : resuming ? checkpoint!.sourceID : randomUUID();
+      const next = reconnect
+        ? undefined
+        : {
+            sourceID: nextSourceID,
+            revision: randomUUID(),
+            destination: target,
+            manifestVersion: 2,
+            manifestHash: digest,
+            pickerKind,
+          };
       const plan = await planChannel.planPhotoImport(
         files,
         target,
-        next.sourceID,
+        nextSourceID,
         active.signal,
         (progress) => {
           hashProgress = progress;
@@ -272,7 +275,7 @@
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       if (!plan.groups.length) resuming = false;
       plannedDestination = target;
-      sourceID = next.sourceID;
+      sourceID = nextSourceID;
       plannedChannel = planChannel;
       items = plan.groups.map((group, index) => {
         const groupFiles = group.map((index) => files[index]);

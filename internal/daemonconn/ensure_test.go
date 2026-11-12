@@ -259,6 +259,15 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	}
 }
 
+func TestWebDiscoveryRejectsDaemonsBeforeUploadReconnect(t *testing.T) {
+	info := kitdaemon.PingInfo{Version: version.Version}
+	rec := NewRecord("127.0.0.1:1", "key", "tok", "127.0.0.1:2")
+	for _, revision := range []string{"126", "127"} {
+		rec.Metadata[metaProtocolVersion] = revision
+		assert.False(t, webDiscoverOptions().Accept(rec, info), "daemon revision %s cannot serve upload reconnect", revision)
+	}
+}
+
 func TestEnsureProbesVaultOwnershipBeforeStarting(t *testing.T) {
 	for _, test := range []struct {
 		name    string

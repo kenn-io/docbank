@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -174,6 +175,122 @@ func TestBrowserUploadUsesAuthenticatedPinnedChannel(t *testing.T) {
 	require.Contains(t, message.Detail, "docbank vault verify")
 }
 
+func TestBrowserUploadRetryRechecksVerifiedFile(t *testing.T) {
+	t.Parallel()
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replace=%t", replace), func(t *testing.T) {
+			t.Parallel()
+			gate := api.NewOperationGate()
+			verified := make(chan struct{})
+			release := make(chan struct{})
+			api.SetAfterUploadVerification(gate, func() {
+				close(verified)
+				<-release
+			})
+			ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+			conn := browserUploadSocket(t, ts)
+			content := []byte("original content")
+			digest := sha256.Sum256(content)
+			begin := map[string]any{"type": "begin", "request_id": "upload", "parent_id": s.RootID(), "name": "report.txt", "mime_type": "text/plain", "expected_hash": hex.EncodeToString(digest[:]), "expected_size": len(content)}
+			var message struct {
+				Type    string            `json:"type"`
+				Code    string            `json:"code"`
+				Receipt api.UploadReceipt `json:"receipt"`
+			}
+			require.NoError(t, wsjson.Write(t.Context(), conn, begin))
+			require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+			require.Equal(t, "ready", message.Type)
+			require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, content))
+			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "end", "request_id": "upload"}))
+			require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+			require.Equal(t, "receipt", message.Type)
+			node, err := s.NodeByID(t.Context(), message.Receipt.Node.ID)
+			require.NoError(t, err)
+			begin["check_existing"] = true
+			require.NoError(t, wsjson.Write(t.Context(), conn, begin))
+			<-verified
+			err = gate.MutateContext(t.Context(), func() error {
+				_, _, err := s.Trash(t.Context(), node.ID, node.Revision)
+				return err
+			})
+			require.NoError(t, err)
+			if replace {
+				other := browserUploadSocket(t, ts)
+				delete(begin, "check_existing")
+				require.NoError(t, wsjson.Write(t.Context(), other, begin))
+				require.NoError(t, wsjson.Read(t.Context(), other, &message))
+				require.Equal(t, "ready", message.Type)
+				require.NoError(t, other.Write(t.Context(), websocket.MessageBinary, content))
+				require.NoError(t, wsjson.Write(t.Context(), other, map[string]string{"type": "end", "request_id": "upload"}))
+				require.NoError(t, wsjson.Read(t.Context(), other, &message))
+				require.Equal(t, "receipt", message.Type)
+			}
+			close(release)
+			require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+			require.Equal(t, "error", message.Type)
+			require.Equal(t, "upload_changed", message.Code)
+		})
+	}
+}
+
+func TestBrowserUploadVerificationDoesNotBlockMaintenance(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		gate := api.NewOperationGate()
+		started := make(chan struct{})
+		release := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		})
+		api.SetBeforeUploadVerification(gate, func() {
+			close(started)
+			<-release
+		})
+		ts, s := newBubbleTestServer(t, func(d *api.Deps) { d.Gate = gate })
+		conn := browserUploadSocket(t, ts)
+		content := []byte("original content")
+		digest := sha256.Sum256(content)
+		begin := map[string]any{"type": "begin", "request_id": "upload", "parent_id": s.RootID(), "name": "report.txt", "mime_type": "text/plain", "expected_hash": hex.EncodeToString(digest[:]), "expected_size": len(content)}
+		var message struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, wsjson.Write(t.Context(), conn, begin))
+		require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+		require.Equal(t, "ready", message.Type)
+		require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, content))
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "end", "request_id": "upload"}))
+		require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+		require.Equal(t, "receipt", message.Type)
+		begin["check_existing"] = true
+		require.NoError(t, wsjson.Write(t.Context(), conn, begin))
+		<-started
+		maintenance := make(chan error, 1)
+		go func() { maintenance <- gate.MaintainContext(t.Context(), func() error { return nil }) }()
+		synctest.Wait()
+		select {
+		case err := <-maintenance:
+			require.NoError(t, err)
+		default:
+			close(release)
+			t.Fatalf("maintenance waited for upload verification: %v", <-maintenance)
+		}
+		close(release)
+		require.NoError(t, wsjson.Read(t.Context(), conn, &message))
+		require.Equal(t, "receipt", message.Type)
+	})
+}
+
 func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
 	t.Parallel()
 	gate := api.NewOperationGate()
@@ -211,7 +328,7 @@ func TestServerShutdownDrainsActiveBrowserUpload(t *testing.T) {
 func browserUploadSocket(t *testing.T, ts *httptest.Server) *websocket.Conn {
 	t.Helper()
 	token := issueWebSession(t, ts)
-	conn, response, err := websocket.Dial(t.Context(), "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/daemon/web-upload", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {strings.TrimSuffix(testWebURL, "/")}}})
+	conn, response, err := websocket.Dial(t.Context(), "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/daemon/web-upload", &websocket.DialOptions{HTTPClient: ts.Client(), HTTPHeader: http.Header{"Origin": {strings.TrimSuffix(testWebURL, "/")}}})
 	require.NoError(t, err)
 	if response != nil && response.Body != nil {
 		require.NoError(t, response.Body.Close())

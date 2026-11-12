@@ -310,45 +310,63 @@ func handleWebUploadConnection(
 		}
 		var result ingest.UploadResult
 		ready := false
-		uploadErr := g.mutate(ctx, func() error {
+		var matched store.Node
+		var found bool
+		var uploadErr error
+		if request.checkExisting {
 			if problem := validateWebUploadDestination(ctx, d, request.parentID); problem != nil {
-				return problem
+				uploadErr = problem
+			} else {
+				matched, found, uploadErr = d.Store.FindUploadedFile(ctx, request.parentID, request.name, request.expectedHash, request.expectedSize)
 			}
-			if request.checkExisting {
-				node, found, err := d.Store.FindUploadedFile(ctx, request.parentID, request.name, request.expectedHash, request.expectedSize)
-				if err != nil {
-					return err
+			if uploadErr == nil && found {
+				uploadErr = verifyWebUpload(ctx, conn, request.requestID, matched.Size, g.verification, func(ctx context.Context) (io.ReadCloser, int64, error) {
+					if g.beforeUploadVerification != nil {
+						g.beforeUploadVerification()
+					}
+					return d.Blobs.OpenStreamContext(ctx, matched.BlobHash)
+				})
+				if errors.Is(uploadErr, errWebVerifyBusy) {
+					uploadErr = NewError(http.StatusServiceUnavailable, "verification_busy", "Upload verification is unavailable. Restart Docbank, sign in again, and retry the upload.")
+				} else if uploadErr != nil && !errors.Is(uploadErr, errWebVerifyStalled) {
+					if ctx.Err() != nil {
+						uploadErr = ctx.Err()
+					} else {
+						uploadErr = NewError(http.StatusConflict, "content_unavailable", "Stored content could not be verified. Run docbank vault verify to identify the problem.")
+					}
+				}
+				if uploadErr == nil && g.afterUploadVerification != nil {
+					g.afterUploadVerification()
+				}
+			}
+		}
+		if uploadErr == nil {
+			uploadErr = g.mutate(ctx, func() error {
+				if problem := validateWebUploadDestination(ctx, d, request.parentID); problem != nil {
+					return problem
 				}
 				if found {
-					err := verifyWebUpload(ctx, conn, request.requestID, node.Size, g.verification, func(ctx context.Context) (io.ReadCloser, int64, error) {
-						return d.Blobs.OpenStreamContext(ctx, node.BlobHash)
-					})
+					current, found, err := d.Store.FindUploadedFile(ctx, request.parentID, request.name, request.expectedHash, request.expectedSize)
 					if err != nil {
-						if errors.Is(err, errWebVerifyBusy) {
-							return NewError(http.StatusServiceUnavailable, "verification_busy", "Upload verification is unavailable. Restart Docbank, sign in again, and retry the upload.")
-						}
-						if errors.Is(err, errWebVerifyStalled) {
-							return err
-						}
-						if ctx.Err() != nil {
-							return ctx.Err()
-						}
-						return NewError(http.StatusConflict, "content_unavailable", "Stored content could not be verified. Run docbank vault verify to identify the problem.")
+						return err
 					}
-					result = ingest.UploadResult{Node: node, ComputedHash: node.BlobHash, ComputedSize: node.Size}
+					if !found || current.ID != matched.ID || current.Revision != matched.Revision || current.CurrentVersionID != matched.CurrentVersionID {
+						return NewError(http.StatusConflict, "upload_changed", "The matching document changed during verification. Retry the upload.")
+					}
+					result = ingest.UploadResult{Node: current, ComputedHash: current.BlobHash, ComputedSize: current.Size}
 					return nil
 				}
-			}
-			if err := wsjson.Write(ctx, conn, webUploadMessage{
-				Type: "ready", RequestID: request.requestID,
-			}); err != nil {
-				return fmt.Errorf("writing browser upload readiness: %w", err)
-			}
-			ready = true
-			var err error
-			result, err = executeWebUpload(ctx, d, request, reader)
-			return err
-		})
+				if err := wsjson.Write(ctx, conn, webUploadMessage{
+					Type: "ready", RequestID: request.requestID,
+				}); err != nil {
+					return fmt.Errorf("writing browser upload readiness: %w", err)
+				}
+				ready = true
+				var err error
+				result, err = executeWebUpload(ctx, d, request, reader)
+				return err
+			})
+		}
 		if uploadErr != nil {
 			if errors.Is(uploadErr, errWebVerifyStalled) {
 				return
@@ -383,8 +401,7 @@ func handleWebUploadConnection(
 	}
 }
 
-// A blocked storage read cannot always be interrupted. Keep its slot until it
-// returns, but let an abandoned verification release the mutation gate.
+// A blocked storage read cannot always be interrupted. Keep its slot until it returns.
 func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string, expected int64, slots chan struct{}, open func(context.Context) (io.ReadCloser, int64, error)) error {
 	select {
 	case slots <- struct{}{}:
@@ -421,7 +438,7 @@ func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string
 			if err == nil && readCtx.Err() != nil {
 				err = readCtx.Err()
 			}
-			if err == nil && (size != expected || total != expected) {
+			if err == nil && size != expected {
 				err = io.ErrUnexpectedEOF
 			}
 			err = errors.Join(err, stream.Close())
