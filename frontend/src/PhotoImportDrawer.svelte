@@ -309,7 +309,10 @@
           item.error = receiptReason(group.receipt?.reason);
           item.importedEarlier = true;
         } else if (group.status === "remaining") {
-          setState(item, item.files.length ? "ready" : "missing");
+          setState(
+            item,
+            item.files.length ? "ready" : item.state === "changed" ? "changed" : "missing",
+          );
           item.error = undefined;
         } else setState(item, group.status);
       }
@@ -434,9 +437,10 @@
           continue;
         }
         if (group.status !== "remaining") continue;
-        if (changed) setState(item, "changed");
-        else if (matched.some((file) => !file)) setState(item, "missing");
-        else {
+        if (changed || matched.some((file) => !file)) {
+          item.files = [];
+          setState(item, changed ? "changed" : "missing");
+        } else {
           item.files = matched as File[];
           setState(item, "ready");
         }
