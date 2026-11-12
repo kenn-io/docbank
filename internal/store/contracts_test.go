@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -103,6 +105,17 @@ func checkContractFilters(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "Draft", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", ContractType: "lease", Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "Rate 100%", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", PartyID: p.PartyID, Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "Rate 100%", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
 	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", ContractType: "lease", PartyID: p.PartyID, Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -160,17 +173,17 @@ func TestContractMetadataInvalidImport(t *testing.T) {
 		}
 	}
 	require.NotEqual(t, -1, contractLine)
-	for _, tc := range []struct{ name, from, to string }{
-		{"title control", `"title":"Agreement"`, `"title":"Bad\u001btitle"`},
-		{"created encoding", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`},
-		{"updated encoding", `"updated_at":"2000-01-01T00:00:00.000000000Z"`, `"updated_at":"2000-01-01T00:00:00+00:00"`},
+	for _, tc := range []struct{ name, from, to, want string }{
+		{"title control", `"title":"Agreement"`, `"title":"Bad\u001btitle"`, "invalid contract: title"},
+		{"created encoding", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`, "invalid contract created_at"},
+		{"updated encoding", `"updated_at":"2000-01-01T00:00:00.000000000Z"`, `"updated_at":"2000-01-01T00:00:00+00:00"`, "invalid contract updated_at"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := append([]string(nil), lines...)
 			mutated[contractLine] = strings.Replace(mutated[contractLine], tc.from, tc.to, 1)
 			require.NotEqual(t, lines[contractLine], mutated[contractLine])
 			empty := newTestStore(t)
-			require.Error(t, empty.ImportMetadata(t.Context(), strings.NewReader(strings.Join(mutated, "\n"))))
+			require.ErrorContains(t, empty.ImportMetadata(t.Context(), strings.NewReader(strings.Join(mutated, "\n"))), tc.want)
 			items, err := empty.ListContracts(t.Context(), ContractListOptions{AsOf: "2024-01-01", Limit: 100})
 			require.NoError(t, err)
 			assert.Empty(t, items)
@@ -179,7 +192,7 @@ func TestContractMetadataInvalidImport(t *testing.T) {
 	malformed := strings.Replace(buf.String(), `"role":"own"`, `"role":"unknown"`, 1)
 	require.NotEqual(t, buf.String(), malformed)
 	empty := newTestStore(t)
-	require.Error(t, empty.ImportMetadata(ctx, strings.NewReader(malformed)))
+	require.ErrorContains(t, empty.ImportMetadata(ctx, strings.NewReader(malformed)), "invalid contract party metadata")
 }
 
 // Two writers with the same revision cannot both change the aggregate.
@@ -235,4 +248,90 @@ func TestContractAuditRefusal(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.UnlinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", "")
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+}
+
+// checkContractRevisionExhaustion exercises contracts restored at the integer limit.
+func checkContractRevisionExhaustion(t *testing.T, postgres bool) {
+	t.Helper()
+	for _, action := range []string{"update", "attach", "detach", "noop", "stale", "boundary"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := t.Context()
+			source := newTestStore(t)
+			linked, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Linked"})
+			require.NoError(t, err)
+			other, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Other"})
+			require.NoError(t, err)
+			input := ContractInput{Title: "Agreement", Status: "draft", Parties: []ContractPartyInput{{PartyID: linked.PartyID, Role: "counterparty"}}}
+			contract, err := source.CreateContract(ctx, input)
+			require.NoError(t, err)
+			var original bytes.Buffer
+			require.NoError(t, source.ExportMetadata(ctx, &original))
+			lines := strings.Split(original.String(), "\n")
+			revision := int64(math.MaxInt64)
+			if action == "boundary" {
+				revision--
+			}
+			found := false
+			for i, line := range lines {
+				if strings.Contains(line, `"type":"contract"`) && strings.Contains(line, contract.ContractID) {
+					lines[i] = strings.Replace(line, `"revision":1`, `"revision":`+strconv.FormatInt(revision, 10), 1)
+					require.NotEqual(t, line, lines[i])
+					found = true
+				}
+			}
+			require.True(t, found)
+			s := newTestStore(t)
+			require.NoError(t, s.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
+			}
+			before, err := s.GetContract(ctx, contract.ContractID, "2024-01-01")
+			require.NoError(t, err)
+			require.Equal(t, revision, before.Revision)
+			var snapshot bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &snapshot))
+			switch action {
+			case "update", "boundary":
+				input.Title = "Changed"
+				_, err = s.UpdateContract(ctx, contract.ContractID, revision, input)
+			case "attach":
+				_, err = s.AttachContractParty(ctx, contract.ContractID, revision, other.PartyID, "counterparty")
+			case "detach":
+				_, err = s.DetachContractParty(ctx, contract.ContractID, revision, linked.PartyID, "counterparty")
+			case "noop":
+				var same Contract
+				same, err = s.UpdateContract(ctx, contract.ContractID, revision, input)
+				require.NoError(t, err)
+				require.Equal(t, before, same)
+				same, err = s.AttachContractParty(ctx, contract.ContractID, revision, linked.PartyID, "counterparty")
+				require.NoError(t, err)
+				require.Equal(t, before, same)
+			case "stale":
+				input.Title = "Changed"
+				_, err = s.UpdateContract(ctx, contract.ContractID, revision-1, input)
+				require.ErrorIs(t, err, ErrStaleRevision)
+			}
+			if action == "boundary" {
+				require.NoError(t, err)
+				got, getErr := s.GetContract(ctx, contract.ContractID, "2024-01-01")
+				require.NoError(t, getErr)
+				assert.Equal(t, int64(math.MaxInt64), got.Revision)
+				assert.Equal(t, "Changed", got.Title)
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &exported))
+				return
+			}
+			if action == "update" || action == "attach" || action == "detach" {
+				require.ErrorIs(t, err, ErrInvalidContract)
+			}
+			got, getErr := s.GetContract(ctx, contract.ContractID, "2024-01-01")
+			if assert.NoError(t, getErr) {
+				assert.Equal(t, before, got)
+			}
+			var after bytes.Buffer
+			if assert.NoError(t, s.ExportMetadata(ctx, &after)) {
+				assert.Equal(t, snapshot.Bytes(), after.Bytes())
+			}
+		})
+	}
 }

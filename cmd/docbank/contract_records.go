@@ -33,6 +33,16 @@ func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	}
 	return nil
 }
+
+// confirmedCreateOutputError adds the created contract's ID to an output failure after
+// CreateContract succeeded, so callers do not retry a create that already committed.
+func confirmedCreateOutputError(contractID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("contract %s created, but writing output failed: %w", contractID, err)
+}
+
 func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	if jsonOutput {
 		return writeCLIJSON(cmd.OutOrStdout(), c)
@@ -43,7 +53,7 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 		return err
 	}
 	for _, d := range c.Documents {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Document: %s\tid:%d\t%s\t%s\tcurrent=%t\tavailable=%t\n", d.Role, d.NodeID, d.ContentVersionID, d.BlobSHA256, d.Current, d.Available); err != nil {
 			return fmt.Errorf("write contract document: %w", err)
 		}
 	}
@@ -240,7 +250,7 @@ func newContractCreateCommand() *cobra.Command {
 		if err != nil {
 			return contractMutationError("create contract", err)
 		}
-		return printContract(cmd, v, jsonOutput)
+		return confirmedCreateOutputError(v.ContractID, printContract(cmd, v, jsonOutput))
 	}}
 	f := cmd.Flags()
 	f.StringVar(&b.ContractType, "type", "", "contract type")
@@ -343,20 +353,6 @@ func newContractEditCommand() *cobra.Command {
 					return err
 				}
 				changes = append(changes, change{group.role, name, id, group.attach})
-				// Track the planned link state so later removals can refer to earlier attaches.
-				linked := false
-				for i := 0; i < len(v.Parties); i++ {
-					if v.Parties[i].PartyID == id && v.Parties[i].Role == group.role {
-						linked = true
-						if !group.attach {
-							v.Parties = append(v.Parties[:i], v.Parties[i+1:]...)
-						}
-						break
-					}
-				}
-				if group.attach && !linked {
-					v.Parties = append(v.Parties, api.ContractParty{PartyID: id, Role: group.role, DisplayName: party.DisplayName})
-				}
 			}
 		}
 		var applied []string

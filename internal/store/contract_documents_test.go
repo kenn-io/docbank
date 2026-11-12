@@ -6,6 +6,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +81,88 @@ func checkContractDocumentNodeHighWater(t *testing.T, open func(*testing.T) *Sto
 	require.Error(t, err, "retained node ID must not exceed the allocation high-water mark")
 	_, err = target.GetContract(ctx, c.ContractID, "2024-01-01")
 	assert.ErrorIs(t, err, ErrNotFound, "rejected import must leave no contract authority")
+}
+
+// checkContractDocumentRevisionExhaustion exercises imported contract authority at the integer limit.
+func checkContractDocumentRevisionExhaustion(t *testing.T, postgres bool) {
+	t.Helper()
+	for _, action := range []string{"link", "unlink", "noop", "stale", "boundary", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := t.Context()
+			source := newTestStore(t)
+			n, err := source.CreateFile(ctx, source.RootID(), "agreement.txt", fakeHash("a1"), 12, "text/plain")
+			require.NoError(t, err)
+			c, err := source.CreateContract(ctx, ContractInput{Title: "Agreement"})
+			require.NoError(t, err)
+			c, err = source.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", n.CurrentVersionID)
+			require.NoError(t, err)
+			var original bytes.Buffer
+			require.NoError(t, source.ExportMetadata(ctx, &original))
+			lines := strings.Split(original.String(), "\n")
+			revision := int64(math.MaxInt64)
+			if action == "boundary" {
+				revision--
+			}
+			found := false
+			for i, line := range lines {
+				if strings.Contains(line, `"type":"contract"`) && strings.Contains(line, c.ContractID) {
+					lines[i] = strings.Replace(line, `"revision":2`, `"revision":`+strconv.FormatInt(revision, 10), 1)
+					require.NotEqual(t, line, lines[i])
+					found = true
+				}
+			}
+			require.True(t, found)
+			s := newTestStore(t)
+			require.NoError(t, s.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+			if postgres {
+				s, _ = copyRetentionStore(t, s)
+			}
+			before, err := s.GetContract(ctx, c.ContractID, "2024-01-01")
+			require.NoError(t, err)
+			require.Equal(t, revision, before.Revision)
+			require.Len(t, before.Documents, 1)
+			var snapshot bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &snapshot))
+			switch action {
+			case "link", "boundary":
+				_, err = s.LinkContractDocument(ctx, c.ContractID, revision, n.ID, "draft", n.CurrentVersionID)
+			case "unlink":
+				_, err = s.UnlinkContractDocument(ctx, c.ContractID, revision, n.ID, "signed", n.CurrentVersionID)
+			case "noop":
+				_, err = s.LinkContractDocument(ctx, c.ContractID, revision, n.ID, "signed", n.CurrentVersionID)
+			case "stale":
+				_, err = s.LinkContractDocument(ctx, c.ContractID, revision-1, n.ID, "draft", n.CurrentVersionID)
+			case "delete":
+				err = s.DeleteContract(ctx, c.ContractID, revision)
+			}
+			switch action {
+			case "link", "unlink":
+				require.ErrorIs(t, err, ErrInvalidContract)
+			case "stale":
+				require.ErrorIs(t, err, ErrStaleRevision)
+			default:
+				require.NoError(t, err)
+			}
+			if action == "delete" {
+				_, err = s.GetContract(ctx, c.ContractID, "2024-01-01")
+				require.ErrorIs(t, err, ErrNotFound)
+				return
+			}
+			got, getErr := s.GetContract(ctx, c.ContractID, "2024-01-01")
+			if assert.NoError(t, getErr) {
+				if action == "boundary" {
+					assert.Equal(t, int64(math.MaxInt64), got.Revision)
+					assert.Len(t, got.Documents, 2)
+				} else {
+					assert.Equal(t, before, got)
+				}
+			}
+			var after bytes.Buffer
+			if assert.NoError(t, s.ExportMetadata(ctx, &after)) && action != "boundary" {
+				assert.Equal(t, snapshot.Bytes(), after.Bytes())
+			}
+		})
+	}
 }
 
 func checkContractDocumentLifecycle(t *testing.T, open func(*testing.T) *Store) {

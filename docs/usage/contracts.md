@@ -76,14 +76,25 @@ Each short term is limited to 8,192 bytes.
 
 An own-party link requires an own entity. Retired parties remain on existing
 contracts but cannot be newly attached. Edit party links with `--own`,
-`--counterparty`, `--remove-own`, and `--remove-counterparty`. Names for removals match linked parties in the requested role, including retired parties; use an ID when a name is ambiguous. Each change
-uses the contract revision. The CLI checks requested party links before changing fields. An existing link can be attached again even after the party is retired. A name that matches a retained link while another active party uses the same name is refused; use an ID. If a later change fails, the command reports confirmed steps. If a mutation outcome is unknown, inspect the contract before retrying. Deleting a contract removes its party links, not
-stored documents. Contract mutations are refused in audited vaults. Metadata
-backups include contracts and their links.
+`--counterparty`, `--remove-own`, and `--remove-counterparty`. Names for
+removals match linked parties in the requested role, including retired parties;
+use an ID when a name is ambiguous. Each change uses the contract revision.
+
+The CLI checks requested party links before changing fields. An existing link
+can be attached again even after the party is retired. A name that matches a
+retained link while another active party uses the same name is refused; use an
+ID. If a later change fails, the command reports confirmed steps. If a mutation
+outcome is unknown, inspect the contract before retrying.
+
+Deleting a contract removes its party links, not stored documents. Contract
+mutations are refused in audited vaults. Metadata backups include contracts and
+their links.
 
 The HTTP API exposes `/api/v1/contracts` and individual contracts at
 `/api/v1/contracts/{contract_id}`. Mutations of existing records use the
 revision in `If-Match`; a stale revision fails without changing that operation.
+The contract ETag carries the aggregate revision for `If-Match` and does not
+change when a linked party is renamed or the date-derived status changes.
 The web app's browser session may only read: `GET /api/v1/contracts` with
 `status`, `type`, `expiring_before`, `as_of`, `limit` and `offset`, each at
 most once, and `GET /api/v1/contracts/{contract_id}` with a canonical UUID and
