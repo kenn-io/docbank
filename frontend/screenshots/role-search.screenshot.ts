@@ -62,12 +62,42 @@ async function capture(page: Page, testInfo: TestInfo, name: string, theme: "lig
     document.documentElement.classList.toggle("dark", value === "dark");
     await document.fonts.ready;
   }, theme);
+  // Park the pointer so a clicked control keeps no hover style. The top-left
+  // corner is the navigation's padding at wide and the top bar's when compact.
+  await page.mouse.move(0, 0);
+  expect(
+    await page.evaluate(
+      () =>
+        document
+          .elementFromPoint(0, 0)
+          ?.closest(
+            "a[href], button, input, label, select, summary, textarea, tr, [role=button], [role=link], [role=tab]",
+          ) ?? null,
+    ),
+  ).toBeNull();
   // The JSON reporter embeds the body as base64 in the uploaded CI report.
   const body = await page.screenshot({ animations: "disabled" });
   await testInfo.attach(`role-search-${proof}-${name}-${theme}.png`, {
     body,
     contentType: "image/png",
   });
+}
+
+// The first result is selected on load, so the inspector reads its email and
+// history; a capture taken earlier shows their loading states. The base binary
+// predates this proof's inspector, so it only waits for the loading to end.
+async function inspectorLoaded(page: Page) {
+  if (proof === "branch") {
+    const inspector = page.getByRole("complementary", { name: "Document inspector" });
+    await expect(
+      inspector.getByRole("region", { name: "Email reader" }).getByLabel("Decoded email headers"),
+    ).toBeAttached();
+    await expect(
+      inspector.getByRole("region", { name: "History", exact: true }).locator(":scope > ol"),
+    ).toBeAttached();
+  }
+  await expect(page.getByText("Loading and verifying the email…")).toHaveCount(0);
+  await expect(page.getByText("Loading history…")).toHaveCount(0);
 }
 
 async function captureStates(
@@ -79,10 +109,12 @@ async function captureStates(
 ) {
   await page.setViewportSize({ width: 1440, height: 960 });
   await ready();
+  await inspectorLoaded(page);
   await capture(page, testInfo, `${state}-wide`, "dark");
   await capture(page, testInfo, `${state}-wide`, "light");
   await page.setViewportSize({ width: 860, height: 1100 });
   await ready();
+  await inspectorLoaded(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await capture(page, testInfo, `${state}-narrow`, "dark");
   await capture(page, testInfo, `${state}-narrow`, "light");
@@ -90,6 +122,7 @@ async function captureStates(
   // scrolls inside a fixed-height frame, so each part is brought wholly into view.
   await page.setViewportSize({ width: 390, height: 844 });
   await ready();
+  await inspectorLoaded(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   for (const [part, target] of parts) {
     await target.scrollIntoViewIfNeeded();
