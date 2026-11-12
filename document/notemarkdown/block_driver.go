@@ -196,6 +196,7 @@ func (d *blockDriver) openBlocks(parent ast.Node, blankLine bool) blockOpenResul
 	if lastBlock.Node != nil {
 		continuable = ast.IsParagraph(lastBlock.Node)
 	}
+	var bps []parser.BlockParser
 retry:
 	contextCheckpoint(d.ctx)
 	line, seg := d.reader.PeekLine()
@@ -213,7 +214,7 @@ retry:
 	if line == nil || line[0] == '\n' {
 		goto continuable
 	}
-	bps := d.free
+	bps = d.free
 	if pos < len(line) {
 		if triggered := d.byTrigger[line[pos]]; triggered != nil {
 			bps = triggered
