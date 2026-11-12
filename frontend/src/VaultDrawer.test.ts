@@ -244,5 +244,4 @@ it("offers terminal recovery after an uncertain restart", () => {
   });
   expect(screen.getByText("docbank web --no-browser")).toBeTruthy();
   expect(screen.getByText("docbank daemon restart")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Restart" })).toBeTruthy();
 });

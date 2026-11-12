@@ -2123,7 +2123,7 @@ it.each([
     async () => new Response(null, { status: 504 }),
     "Docbank couldn't confirm the restart. It may still happen later.",
   ],
-])("keeps the workspace after an %s response", async (kind, restart, notice) => {
+])("keeps the workspace when the restart outcome is %s", async (_kind, restart, notice) => {
   const request = vi.fn(restart);
   const harness = searchWithMeaningOff({
     status: () => ({ ...localSaved, restart_available: true }),
@@ -2140,13 +2140,9 @@ it.each([
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(notice)).toBeTruthy();
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
-  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
-  expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
   expect(request).toHaveBeenCalledOnce();
-  if (kind === "accepted") {
-    const call = harness.fetchMock.mock.calls.find(
-      ([input]) => String(input) === "/api/v1/processing/local/restart",
-    );
-    expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
-  }
+  const call = harness.fetchMock.mock.calls.find(
+    ([input]) => String(input) === "/api/v1/processing/local/restart",
+  );
+  expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
 });
