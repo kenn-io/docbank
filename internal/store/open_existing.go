@@ -28,9 +28,6 @@ func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver, scr
 	if inside {
 		return nil, fmt.Errorf("schema scratch directory is inside vault: %s", scratchDir)
 	}
-	if err := docsqlite.Validate(driver); err != nil {
-		return nil, err
-	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("database missing: %w", ErrNeedsOwner)
@@ -70,12 +67,8 @@ func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver, scr
 		return nil, fmt.Errorf("database requires initialization or upgrade: %w", ErrNeedsOwner)
 	}
 	s := &Store{db: db, path: path, driver: driver}
-	var version int
-	if err := db.QueryRowContext(ctx, `SELECT vault_uid, schema_version FROM vault_metadata WHERE singleton = 1`).Scan(&s.vaultID, &version); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT vault_uid FROM vault_metadata WHERE singleton = 1`).Scan(&s.vaultID); err != nil {
 		return nil, fmt.Errorf("reading vault identity: %w", err)
-	}
-	if version != currentStorageSchemaVersion {
-		return nil, fmt.Errorf("schema version %d does not match binary schema %d", version, currentStorageSchemaVersion)
 	}
 	if err := validateUUIDv4(s.vaultID); err != nil {
 		return nil, fmt.Errorf("validating vault identity: %w", err)

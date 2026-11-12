@@ -131,11 +131,11 @@ func (l Layout) openExistingAndLockExclusiveNoCreate(resolveRegistry func() (str
 }
 
 func (l Layout) lockExisting(createLeaf bool, registry string) (*os.Root, *Lock, error) {
-	acquisition, err := l.tryLockOwnershipAcquisitionWithRegistry(registry)
+	acquisition, err := l.tryLockOwnershipAcquisition(registry)
 	if err != nil {
 		return nil, nil, err
 	}
-	root, lock, openErr := l.openExistingAndLockExclusiveWithRegistry(createLeaf, registry)
+	root, lock, openErr := l.openExistingAndLockExclusive(createLeaf, registry)
 	if !createLeaf && errors.Is(openErr, os.ErrNotExist) {
 		openErr = fmt.Errorf("%w: %w", ErrExistingVaultMissing, openErr)
 	}
@@ -151,16 +151,12 @@ func (l Layout) lockExisting(createLeaf bool, registry string) (*os.Root, *Lock,
 	return root, lock, openErr
 }
 
-func (l Layout) openExistingAndLockExclusive(createLeaf bool) (*os.Root, *Lock, error) {
-	return l.openExistingAndLockExclusiveWithRegistry(createLeaf, "")
-}
-
-func (l Layout) openExistingAndLockExclusiveWithRegistry(createLeaf bool, registry string) (*os.Root, *Lock, error) {
+func (l Layout) openExistingAndLockExclusive(createLeaf bool, registry string) (*os.Root, *Lock, error) {
 	root, err := os.OpenRoot(l.Root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening vault root %s: %w", l.Root, err)
 	}
-	lock, err := l.tryLockExclusiveRootWithRegistry(root, createLeaf, registry)
+	lock, err := l.tryLockExclusiveRoot(root, createLeaf, registry)
 	if err != nil {
 		_ = root.Close()
 		return nil, nil, err
@@ -279,7 +275,7 @@ func (t *OwnershipTransition) OpenExistingAndLockExclusive() (*os.Root, *Lock, e
 	if t == nil || t.state == nil || t.state.lock == nil {
 		return nil, nil, errors.New("vault ownership transition is not held")
 	}
-	return t.state.layout.openExistingAndLockExclusive(true)
+	return t.state.layout.openExistingAndLockExclusive(true, "")
 }
 
 // OpenAndLockExclusive opens or creates a root while this transition keeps
@@ -304,7 +300,7 @@ func (t *OwnershipTransition) OpenExistingForReplacement() (*os.Root, error) {
 	if t.state.replacement != nil {
 		return nil, errors.New("vault ownership replacement is already active")
 	}
-	root, replacement, err := t.state.layout.openExistingAndLockExclusive(true)
+	root, replacement, err := t.state.layout.openExistingAndLockExclusive(true, "")
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +462,7 @@ func (t *OwnershipTransition) Release() error {
 // through a held parent while coordinating every existing ancestor. The
 // returned root is the same directory protected by the returned lock.
 func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
-	acquisition, err := l.tryLockOwnershipAcquisition()
+	acquisition, err := l.tryLockOwnershipAcquisition("")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -487,7 +483,7 @@ func (l Layout) OpenAndLockExclusive() (*os.Root, *Lock, error) {
 func (l Layout) openAndLockExclusive() (*os.Root, *Lock, error) {
 	root, err := os.OpenRoot(l.Root)
 	if err == nil {
-		lk, lockErr := l.tryLockExclusiveRoot(root, true)
+		lk, lockErr := l.tryLockExclusiveRoot(root, true, "")
 		if lockErr != nil {
 			_ = root.Close()
 			return nil, nil, lockErr
@@ -596,11 +592,11 @@ func (l Layout) OpenLaunchOutput() (*os.File, string, error) {
 // identity make an owner conflict with restores of parent or descendant trees;
 // the target's ordinary vault.lock preserves coordination with older builds.
 func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
-	acquisition, err := l.tryLockOwnershipAcquisition()
+	acquisition, err := l.tryLockOwnershipAcquisition("")
 	if err != nil {
 		return nil, err
 	}
-	lock, lockErr := l.tryLockExclusiveRoot(root, true)
+	lock, lockErr := l.tryLockExclusiveRoot(root, true, "")
 	releaseErr := acquisition.Release()
 	if releaseErr != nil {
 		if lock != nil {
@@ -611,11 +607,7 @@ func (l Layout) TryLockExclusiveRoot(root *os.Root) (*Lock, error) {
 	return lock, lockErr
 }
 
-func (l Layout) tryLockExclusiveRoot(root *os.Root, createLeaf bool) (*Lock, error) {
-	return l.tryLockExclusiveRootWithRegistry(root, createLeaf, "")
-}
-
-func (l Layout) tryLockExclusiveRootWithRegistry(root *os.Root, createLeaf bool, registry string) (*Lock, error) {
+func (l Layout) tryLockExclusiveRoot(root *os.Root, createLeaf bool, registry string) (*Lock, error) {
 	target, err := filepath.Abs(l.Root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root %s: %w", l.Root, err)
@@ -809,11 +801,7 @@ func (lk *Lock) lockIdentities(
 	return nil
 }
 
-func (l Layout) tryLockOwnershipAcquisition() (*Lock, error) {
-	return l.tryLockOwnershipAcquisitionWithRegistry("")
-}
-
-func (l Layout) tryLockOwnershipAcquisitionWithRegistry(registry string) (*Lock, error) {
+func (l Layout) tryLockOwnershipAcquisition(registry string) (*Lock, error) {
 	target, err := CanonicalRoot(l.Root)
 	if err != nil {
 		return nil, err

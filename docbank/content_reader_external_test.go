@@ -352,14 +352,79 @@ func TestNilContentReader(t *testing.T) {
 }
 
 func TestContentReaderRejectsRegistryInsideVault(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		for _, name := range []string{"root", "child", "missing descendant", "root alias", "alias descendant"} {
+			t.Run(fmt.Sprintf("%s_leaf_%t", name, present), func(t *testing.T) {
+				registry := t.TempDir()
+				t.Setenv("DOCBANK_LOCK_DIR", registry)
+				root := t.TempDir()
+				vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+				require.NoError(t, err)
+				require.NoError(t, vault.Close())
+				if !present {
+					require.NoError(t, os.Remove(filepath.Join(root, "vault.lock")))
+				}
+				alias := filepath.Join(t.TempDir(), "alias")
+				if strings.HasPrefix(name, "root alias") || strings.HasPrefix(name, "alias ") {
+					if err := os.Symlink(root, alias); err != nil {
+						t.Skipf("symlinks unavailable: %v", err)
+					}
+				}
+				path := map[string]string{
+					"root": root, "child": filepath.Join(root, "locks"),
+					"missing descendant": filepath.Join(root, "missing", "locks"),
+					"root alias":         alias, "alias descendant": filepath.Join(alias, "locks"),
+				}[name]
+				t.Setenv("DOCBANK_LOCK_DIR", path)
+				before := snapshotReaderTree(t, root)
+				for range 2 {
+					_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+					require.ErrorContains(t, err, "DOCBANK_LOCK_DIR")
+					require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+					require.Equal(t, before, snapshotReaderTree(t, root))
+				}
+				t.Setenv("DOCBANK_LOCK_DIR", registry)
+				lock, err := (home.Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				require.NoError(t, lock.Release())
+			})
+		}
+	}
+}
+
+func TestContentReaderRefusesReleasedSchema(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
-	t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "missing", "locks"))
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: root})
+	require.NoError(t, err)
+	id := vault.ID()
+	require.NoError(t, vault.Close())
+	path := filepath.Join(root, "docbank.db")
+	require.NoError(t, os.Remove(path))
+	schema, err := os.ReadFile(filepath.Join("..", "internal", "store", "testdata", "schema-v0.15.0.sql"))
+	require.NoError(t, err)
+	db, err := store.DefaultSQLiteDriver().Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), string(schema))
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,28)`, id)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO nodes(id,parent_id,name,kind,revision,created_at,modified_at)
+		VALUES(1,NULL,'','dir',1,'2026-08-16T12:00:00.000000000Z','2026-08-16T12:00:00.000000000Z')`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		_, err = os.Lstat(path + suffix)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
 	before := snapshotReaderTree(t, root)
 	for range 2 {
-		_, err := docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
-		require.Error(t, err)
-		require.ErrorContains(t, err, "DOCBANK_LOCK_DIR")
-		require.NotErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		_, err = docbank.OpenContentReader(t.Context(), docbank.ContentReaderConfig{Root: root})
+		require.ErrorIs(t, err, docbank.ErrVaultNeedsOwner)
+		require.ErrorContains(t, err, "database requires initialization or upgrade")
+		lock, err := (home.Layout{Root: root}).TryLockExclusive()
+		require.NoError(t, err)
+		require.NoError(t, lock.Release())
 		require.Equal(t, before, snapshotReaderTree(t, root))
 	}
 }
