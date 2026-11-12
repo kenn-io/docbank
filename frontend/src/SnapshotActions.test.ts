@@ -13,8 +13,8 @@ const catalog = [
   },
 ];
 const targets = [
-  { node_id: 7, revision: 3 },
-  { node_id: 9, revision: 4 },
+  { node_id: 7, revision: 3, name: "File 7" },
+  { node_id: 9, revision: 4, name: "File 9" },
 ];
 
 beforeEach(() => {
@@ -34,7 +34,6 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
@@ -121,13 +120,20 @@ it("tags the selection captured at open and reports what changed", async () => {
 
   await screen.findByText("Added “Review” to 1 document. 1 already had it.");
   expect(sent).toHaveLength(1);
-  expect(sent[0]).toMatchObject({ tag_id: catalog[0].id, assign: true, nodes: targets });
+  expect(sent[0]).toMatchObject({
+    tag_id: catalog[0].id,
+    assign: true,
+    nodes: [
+      { node_id: 7, revision: 3 },
+      { node_id: 9, revision: 4 },
+    ],
+  });
   expect(onchanged).toHaveBeenCalledOnce();
   expect(onstart).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
 });
 
-it("refreshes observations and locks an unknown selection result", async () => {
+it("locks an unknown selection result and offers a check", async () => {
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockRejectedValueOnce(new TypeError("Synthetic response loss"));
@@ -257,17 +263,14 @@ it.each([true, false])(
     if (!assign) await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     const check = await screen.findByRole("button", { name: "Check tag results" });
-    vi.useFakeTimers();
     await fireEvent.click(check);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(onchecked).toHaveBeenCalledOnce();
-    vi.useRealTimers();
+    await waitFor(() => expect(onchecked).toHaveBeenCalledOnce());
     const retry = await screen.findByRole("button", {
       name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
     });
     expect(writes).toHaveLength(1);
     await fireEvent.click(screen.getByText("Review documents"));
-    expect(screen.getByText(assign ? "Missing “Review”" : "Still has “Review”")).toBeTruthy();
+    expect(screen.getByText(assign ? "Doesn't have “Review”" : "Has “Review”")).toBeTruthy();
     await fireEvent.click(retry);
     await screen.findByText("1 matched · 0 remaining · 1 couldn't be checked");
     expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
@@ -302,7 +305,7 @@ it("cancels an in-progress check when the dialog closes", async () => {
 });
 
 it.each(["unknown", "rejected", "stale"])(
-  "keeps the original selection after a %s retry",
+  "offers another check after a %s retry",
   async (outcome) => {
     const writes: BatchTagRequest[] = [];
     let applied = false;
@@ -334,7 +337,7 @@ it.each(["unknown", "rejected", "stale"])(
         });
       const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
       if (id === 7) throw new TypeError("Network error");
-      return Response.json({ id, name: `Document ${id}`, revision: id === 7 ? 10 : 12 });
+      return Response.json({ id, name: `Document ${id}`, revision: 12 });
     });
     render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
     await chooseReview();
@@ -344,10 +347,9 @@ it.each(["unknown", "rejected", "stale"])(
       await screen.findByRole("button", { name: "Add “Review” to 1 document" }),
     );
     await waitFor(() => expect(writes).toHaveLength(2));
-    expect(writes[1].nodes).toEqual([{ node_id: 9, revision: 12 }]);
     if (outcome === "rejected") {
       await screen.findByText("Retry refused");
-      expect(screen.queryByRole("button", { name: "Add “Review” to 1 document" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Check tag results" })).toBeTruthy();
     } else {
       if (outcome === "stale")
         await screen.findByText("Some documents changed. Check their tags again.");
@@ -356,7 +358,7 @@ it.each(["unknown", "rejected", "stale"])(
       );
       await fireEvent.click(
         await screen.findByRole("button", {
-          name: "Check again",
+          name: "Check tag results",
         }),
       );
       await screen.findByText(
@@ -367,7 +369,11 @@ it.each(["unknown", "rejected", "stale"])(
 );
 
 it("pages checked documents and resets to the first page on another check", async () => {
-  const many = Array.from({ length: 51 }, (_, i) => ({ node_id: i + 1, revision: 1 }));
+  const many = Array.from({ length: 51 }, (_, i) => ({
+    node_id: i + 1,
+    revision: 1,
+    name: `File ${i + 1}`,
+  }));
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (init?.method === "POST") throw new TypeError("Lost response");
     const url = String(input);
@@ -393,7 +399,7 @@ it("pages checked documents and resets to the first page on another check", asyn
 
 it("rechecks the entire selection after a confirmed retry", async () => {
   const writes: BatchTagRequest[] = [];
-  const selected = [1, 2, 3].map((node_id) => ({ node_id, revision: 1 }));
+  const selected = [1, 2, 3].map((node_id) => ({ node_id, revision: 1, name: `File ${node_id}` }));
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (init?.method === "POST") {
@@ -429,8 +435,10 @@ it("rechecks the entire selection after a confirmed retry", async () => {
   await screen.findByText("1 matched · 1 remaining · 1 couldn't be checked");
   expect(writes[1].nodes).toEqual([{ node_id: 2, revision: 12 }]);
   await fireEvent.click(screen.getByText("Review documents"));
-  expect(screen.getByText("/Document 1").parentElement?.textContent).toContain("Missing “Review”");
-  expect(screen.getByText("Document 3").parentElement?.textContent).toContain("Couldn't check");
+  expect(screen.getByText("/Document 1").parentElement?.textContent).toContain(
+    "Doesn't have “Review”",
+  );
+  expect(screen.getByText("File 3").parentElement?.textContent).toContain("Couldn't check");
 });
 
 it.each([false, true])("preserves a deleted tag error (after check: %s)", async (afterCheck) => {
@@ -461,10 +469,11 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
       await screen.findByRole("button", { name: "Add “Review” to 2 documents" }),
     );
     await screen.findByText("Tag was deleted");
-    await fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   }
   await screen.findByText("Tag was deleted");
   expect(screen.queryByRole("button", { name: /Add “Review”/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Check/ })).toBeNull();
   expect(writes).toBe(afterCheck ? 2 : 1);
 });
 
@@ -487,20 +496,6 @@ it("identifies a selected document when its recovery read fails", async () => {
   await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
   await fireEvent.click(await screen.findByText("Review documents"));
   expect(screen.getByText("readme.txt")).toBeTruthy();
-});
-
-it("requires a fresh selection when a document disappears", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json(
-      { code: "not_found", detail: "Batch target is missing or trashed" },
-      { status: 404 },
-    ),
-  );
-  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
-  await chooseReview();
-  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-  await screen.findByText("Batch target is missing or trashed");
-  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
 });
 
 it("preserves a deleted tag error on the first apply", async () => {

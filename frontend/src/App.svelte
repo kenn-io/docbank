@@ -3065,7 +3065,7 @@
     batchTagsTargets = targets.map((target) => ({ ...target }));
   }
 
-  function handleBatchTagsChanged(_receipt: BatchTagReceipt): void {
+  function handleBatchTagsChanged(_receipt?: BatchTagReceipt): void {
     // A replay describes a historical success. Reload current observations
     // instead of overwriting newer rows with the receipt's old revisions.
     refreshCurrentView();
@@ -3354,11 +3354,6 @@
     void hiddenWorkspace?.refresh();
     void loadTagCatalog();
     refreshDocumentsView();
-  }
-
-  function refreshAfterTagRecovery(): void {
-    refreshCurrentView();
-    if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
   }
 
   function failToast(cause: unknown, session: string): void {
@@ -5540,7 +5535,7 @@
         onchecked={refreshDocumentsView}
         onclose={(recovered) => {
           batchTagsTargets = null;
-          if (recovered) refreshAfterTagRecovery();
+          if (recovered) handleBatchTagsChanged();
         }}
         onauthfailure={handleFailure}
       />
@@ -5564,7 +5559,7 @@
         onchecked={refreshDocumentsView}
         onclose={(recovered) => {
           snapshot.cancelAction();
-          if (recovered) refreshAfterTagRecovery();
+          if (recovered) handleBatchTagsChanged();
         }}
         onauthfailure={handleFailure}
       />

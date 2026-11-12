@@ -8,9 +8,9 @@ const request: BatchTagRequest = {
   tag_id: "22222222-2222-4222-8222-222222222222",
   assign: true,
   nodes: [
-    { node_id: 1, revision: 1 },
-    { node_id: 2, revision: 1 },
-    { node_id: 3, revision: 1 },
+    { node_id: 1, revision: 1, name: "Live" },
+    { node_id: 2, revision: 1, name: "Trash" },
+    { node_id: 3, revision: 1, name: "Missing" },
   ],
 };
 afterEach(() => vi.restoreAllMocks());
@@ -34,13 +34,17 @@ it("keeps matched and unavailable documents", async () => {
     return Response.json({ id: 1, name: "Live", path: "/Live", revision: 4 });
   });
   const progress: number[] = [];
-  expect((await checkTagResults("session", request, (count) => progress.push(count))).rows).toEqual(
-    [
-      { node_id: 1, name: "/Live", revision: 4, status: "matched" },
-      { node_id: 2, name: "Document 2", status: "unavailable" },
-      { node_id: 3, name: "Document 3", status: "unavailable" },
-    ],
-  );
+  const withUnnamed = {
+    ...request,
+    nodes: [request.nodes[0], request.nodes[1], { node_id: 3, revision: 1 }],
+  };
+  expect(
+    (await checkTagResults("session", withUnnamed, (count) => progress.push(count))).rows,
+  ).toEqual([
+    { node_id: 1, name: "/Live", revision: 4, status: "matched" },
+    { node_id: 2, name: "Trash", status: "unavailable" },
+    { node_id: 3, name: "Document 3", status: "unavailable" },
+  ]);
   expect(progress).toEqual([1, 2, 3]);
 });
 
@@ -50,18 +54,18 @@ it("retains all documents when reads fail", async () => {
       return Response.json({ id: request.tag_id, name: "Review" });
     throw new TypeError("offline");
   });
-  expect((await checkTagResults("session", request, () => {})).rows).toEqual(
-    request.nodes.map(({ node_id }) => ({
-      node_id,
-      name: `Document ${node_id}`,
-      status: "unavailable",
-    })),
-  );
+  expect((await checkTagResults("session", request, () => {})).rows).toEqual([
+    { node_id: 1, name: "Live", status: "unavailable" },
+    { node_id: 2, name: "Trash", status: "unavailable" },
+    { node_id: 3, name: "Missing", status: "unavailable" },
+  ]);
 });
 
 it("propagates authentication failure", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({ detail: "expired" }, { status: 401 }),
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input).endsWith(`/tags/${request.tag_id}`)
+      ? Response.json({ id: request.tag_id, name: "Review" })
+      : Response.json({ detail: "expired" }, { status: 401 }),
   );
   await expect(checkTagResults("session", request, () => {})).rejects.toMatchObject({
     status: 401,

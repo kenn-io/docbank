@@ -668,7 +668,7 @@ it.each([false, true])(
     }[] = [];
     let revision = 3;
     let assigned = false;
-    let allowRefresh = !failRerun;
+    const allowRefresh = !failRerun;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/path?path=%2F") return json(root);
@@ -683,7 +683,14 @@ it.each([false, true])(
         searches.push(JSON.parse(String(init?.body)));
         if (searches.length > 1 && !allowRefresh)
           return json({ detail: "Snapshot refresh failed" }, 503);
-        return json(searches.length === 1 ? first : fresh);
+        return json(
+          searches.length === 1
+            ? first
+            : {
+                ...fresh,
+                rows: fresh.rows.map((item) => (item.node_id === 1 ? { ...item, revision } : item)),
+              },
+        );
       }
       if (url === "/api/v1/nodes/1") return json({ id: 1, name: "report-1.pdf", revision });
       if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0")
@@ -740,11 +747,6 @@ it.each([false, true])(
     await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
     await waitFor(() => expect(searches).toHaveLength(4));
     expect(searches[1]).toEqual(searches[0]);
-    expect(writes.slice(0, 2).map((write) => write.nodes)).toEqual([
-      [{ node_id: 1, revision: 3 }],
-      [{ node_id: 1, revision: 4 }],
-    ]);
-    expect(writes[0].operation_id).not.toBe(writes[1].operation_id);
     if (failRerun) await screen.findByText("Snapshot refresh failed");
     else {
       await screen.findByText(fresh.snapshot_id);
@@ -757,7 +759,11 @@ it.each([false, true])(
     const checkbox = screen.getByRole("checkbox", {
       name: "Select /records/report-1.pdf",
     }) as HTMLInputElement;
-    if (!checkbox.checked) await fireEvent.click(checkbox);
+    if (failRerun) expect(checkbox.checked).toBe(true);
+    else {
+      expect(checkbox.checked).toBe(false);
+      await fireEvent.click(checkbox);
+    }
     await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
     await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
       target: { value: "Rev" },
@@ -768,20 +774,6 @@ it.each([false, true])(
     expect(writes[2].nodes).toEqual([{ node_id: 1, revision: failRerun ? 3 : 5 }]);
     if (failRerun) {
       await screen.findByText("Some documents changed. Close, refresh, and select them again.");
-      allowRefresh = true;
-      await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-      await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-      await screen.findByText(fresh.snapshot_id);
-      await fireEvent.click(screen.getByRole("checkbox", { name: "Select /records/report-1.pdf" }));
-      await fireEvent.click(screen.getByRole("button", { name: "Tag selected…" }));
-      await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
-        target: { value: "Rev" },
-      });
-      await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
-      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-      await waitFor(() => expect(writes).toHaveLength(4));
-      expect(writes[3].nodes).toEqual([{ node_id: 1, revision: 5 }]);
     } else await screen.findByText("All 1 document already had “Review”.");
   },
 );

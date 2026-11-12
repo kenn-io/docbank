@@ -72,7 +72,6 @@
   let checking = $state(false);
   let checked = $state(0);
   let results = $state<TagResult[]>();
-  let checkedOnce = $state(false);
   let tagMissing = $state(false);
   let checkController: AbortController | undefined;
   let offset = $state(0);
@@ -145,7 +144,6 @@
   async function check(): Promise<void> {
     if (!recovering || !request || checking || applying) return;
     checking = true;
-    checkedOnce = true;
     checked = 0;
     results = undefined;
     run.failure = "";
@@ -293,13 +291,9 @@
                   ><td>{row.name}</td><td
                     >{row.status === "unavailable"
                       ? "Couldn't check"
-                      : row.status === "matched"
-                        ? assign
-                          ? `Has “${tag?.name}”`
-                          : `Doesn't have “${tag?.name}”`
-                        : assign
-                          ? `Missing “${tag?.name}”`
-                          : `Still has “${tag?.name}”`}</td
+                      : (row.status === "matched") === assign
+                        ? `Has “${tag?.name}”`
+                        : `Doesn't have “${tag?.name}”`}</td
                   ></tr
                 >
               {/each}
@@ -349,7 +343,7 @@
           tone="info"
           surface="solid"
           disabled={checking || applying}
-          onclick={() => void check()}>{checkedOnce ? "Check again" : "Check tag results"}</Button
+          onclick={() => void check()}>Check tag results</Button
         >
       {/if}
     {:else if stale || tagMissing}
