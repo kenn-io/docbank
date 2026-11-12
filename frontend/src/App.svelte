@@ -1985,7 +1985,6 @@
       .then((status) => {
         if (controller.signal.aborted || session !== webSession) return;
         localText.status = status;
-        if (!status.restart_required) localText.notice = "";
         if (status.active || status.restart_required) localText.error = "";
       })
       .catch((cause: unknown) => {

@@ -2154,27 +2154,3 @@ it.each([
   );
   expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
 });
-
-it("clears the restart notice after status no longer requires a restart", async () => {
-  let status = { ...localSaved, restart_available: true };
-  searchWithMeaningOff({
-    status: () => status,
-    restart: async () => new Response(null, { status: 202 }),
-  });
-  render(App);
-  await screen.findByRole("button", { name: "System" });
-  let drawer = await openSearchByMeaningTab();
-  await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-  await fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-      name: "Restart",
-    }),
-  );
-  await within(drawer).findByText("Restart requested. Docbank may restart later.");
-  await closeSystem();
-  status = { ...localOff, active: true, restart_available: true };
-  drawer = await openSearchByMeaningTab();
-  await within(drawer).findByText("On");
-  expect(within(drawer).queryByText("Restart requested. Docbank may restart later.")).toBeNull();
-});

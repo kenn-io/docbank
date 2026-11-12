@@ -30,7 +30,7 @@ import (
 
 var docbankBuildDir string // Allocated on first build; TestMain removes it.
 var docbankBuildMu sync.Mutex
-var docbankBuilds = map[string]struct {
+var docbankBuilds = map[struct{ version, overlay string }]struct {
 	bin string
 	err error
 }{}
@@ -53,12 +53,18 @@ func buildDocbank(tb testing.TB) string {
 // when v is non-empty (an unstamped build reports "dev").
 func buildDocbankVersion(tb testing.TB, v string) string {
 	tb.Helper()
+	return buildDocbankVersionWithOverlay(tb, v, "")
+}
+
+func buildDocbankVersionWithOverlay(tb testing.TB, v, overlay string) string {
+	tb.Helper()
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
 	docbankBuildMu.Lock()
 	defer docbankBuildMu.Unlock()
-	build, ok := docbankBuilds[v]
+	key := struct{ version, overlay string }{v, overlay}
+	build, ok := docbankBuilds[key]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
 			if err := ensureDocbankBuildDir(); err != nil {
@@ -70,6 +76,9 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 			}
 			bin := filepath.Join(docbankBuildDir, name)
 			args := []string{"build", "-tags", "fts5"}
+			if overlay != "" {
+				args = append(args, "-overlay", overlay)
+			}
 			if v != "" {
 				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
 			}
@@ -81,7 +90,7 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 			}
 			return bin, nil
 		}()
-		docbankBuilds[v] = build
+		docbankBuilds[key] = build
 	}
 	require.NoError(tb, build.err)
 	return build.bin
@@ -678,7 +687,16 @@ func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {
 }
 
 func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T) {
-	bin := buildDocbank(t)
+	dir := t.TempDir()
+	index := filepath.Join(dir, "index.html")
+	require.NoError(t, os.WriteFile(index, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0600))
+	target, err := filepath.Abs("../../internal/web/dist/index.html")
+	require.NoError(t, err)
+	overlayData, err := json.Marshal(map[string]map[string]string{"Replace": {target: index}})
+	require.NoError(t, err)
+	overlay := filepath.Join(dir, "overlay.json")
+	require.NoError(t, os.WriteFile(overlay, overlayData, 0600))
+	bin := buildDocbankVersionWithOverlay(t, "", overlay)
 	root := t.TempDir()
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
 	t.Setenv("DOCBANK_HOME", root)
@@ -717,7 +735,7 @@ func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T)
 	require.NoError(t, err)
 	require.False(t, found)
 
-	updatedBin := buildDocbankVersion(t, "v9.9.9-test")
+	updatedBin := buildDocbankVersionWithOverlay(t, "v9.9.9-test", overlay)
 	updated := exec.CommandContext(t.Context(), updatedBin, "daemon", "start")
 	out, err = updated.CombinedOutput()
 	require.NoError(t, err, string(out))
