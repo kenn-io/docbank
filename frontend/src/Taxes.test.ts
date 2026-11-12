@@ -125,6 +125,32 @@ it("year field applies valid years and rejects others without a request", async 
   expect(year.getAttribute("aria-describedby")).toBeNull();
 });
 
+it("with a filer, All years keeps it and Clear filters removes both", async () => {
+  const fetch = serveTaxes((query) => ({ items: query.filer === ventures ? [notice] : [q1] }));
+  show();
+  const rail = screen.getByRole("navigation", { name: "Tax filters" });
+  await fireEvent.click(await within(rail).findByRole("button", { name: "Example Ventures Ltd." }));
+  await screen.findByRole("table", { name: "Tax records" });
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "All years" })).toBeNull();
+  const year = screen.getByLabelText("Tax year");
+  const applyYear = async () => {
+    await fireEvent.input(year, { target: { value: "2031" } });
+    await fireEvent.keyDown(year, { key: "Enter" });
+    await screen.findByRole("button", { name: "All years" });
+  };
+  await applyYear();
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "All years" }));
+  await waitFor(() => expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year"));
+  expect(recordQueries(fetch).at(-1)?.filer).toBe(ventures);
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy();
+  await applyYear();
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await waitFor(() => expect(recordQueries(fetch).at(-1)).toEqual({ limit: "50", offset: "0" }));
+  expect((year as HTMLInputElement).value).toBe("");
+});
+
 it("empty vault and no-match states", async () => {
   const fetch = serveTaxes(() => ({ items: [] }));
   show();
@@ -133,7 +159,9 @@ it("empty vault and no-match states", async () => {
   await fireEvent.input(year, { target: { value: "2032" } });
   await fireEvent.blur(year);
   expect(await screen.findByText("No records match these filters")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  // With only a year set there is one reset: All years.
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "All years" }));
   expect(await screen.findByText("No tax records yet")).toBeTruthy();
   expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year");
   expect((year as HTMLInputElement).value).toBe("");
