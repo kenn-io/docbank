@@ -165,6 +165,15 @@ func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id s
 	}
 	return *a, nil
 }
+
+// A successful mutation advances exactly one revision and has the requested retirement state.
+func validateTaxMutationResponse(a *api.TaxAccount, response *http.Response, id string, previous int64, retired bool) (api.TaxAccount, error) {
+	result, err := validateTaxAccountResponse(a, response, id)
+	if err == nil && (result.Revision-1 != previous || (result.RetiredAt != nil) != retired) {
+		return api.TaxAccount{}, taxMutationFailure(&responseDecodeError{err: errors.New("invalid tax account mutation response")})
+	}
+	return result, taxMutationFailure(err)
+}
 func (c *Connection) TaxAccounts(ctx context.Context, filer, country, taxkind string, includeRetired bool, limit, offset int) (api.TaxAccountPage, error) {
 	if limit < 1 || limit > 1000 || offset < 0 {
 		return api.TaxAccountPage{}, errors.New("invalid tax account page")
@@ -214,8 +223,7 @@ func (c *Connection) CreateTaxAccount(ctx context.Context, in api.CreateTaxAccou
 	if err != nil {
 		return api.TaxAccount{}, taxMutationFailure(err)
 	}
-	result, err := validateTaxAccountResponse(&receipt.Items[0], response, "")
-	return result, taxMutationFailure(err)
+	return validateTaxMutationResponse(&receipt.Items[0], response, "", 0, false)
 }
 func (c *Connection) UpdateTaxAccount(ctx context.Context, id string, revision int64, in api.PatchTaxAccountRequest) (api.TaxAccount, error) {
 	if !validUUIDv4(id) || revision < 1 {
@@ -230,8 +238,7 @@ func (c *Connection) UpdateTaxAccount(ctx context.Context, id string, revision i
 	if err != nil {
 		return api.TaxAccount{}, taxMutationFailure(err)
 	}
-	result, err := validateTaxAccountResponse(&receipt.Items[0], response, id)
-	return result, taxMutationFailure(err)
+	return validateTaxMutationResponse(&receipt.Items[0], response, id, revision, false)
 }
 func (c *Connection) RetireTaxAccount(ctx context.Context, id string, revision int64) (api.TaxAccount, error) {
 	if !validUUIDv4(id) || revision < 1 {
@@ -246,6 +253,5 @@ func (c *Connection) RetireTaxAccount(ctx context.Context, id string, revision i
 	if err != nil {
 		return api.TaxAccount{}, taxMutationFailure(err)
 	}
-	result, err := validateTaxAccountResponse(&receipt.Items[0], response, id)
-	return result, taxMutationFailure(err)
+	return validateTaxMutationResponse(&receipt.Items[0], response, id, revision, true)
 }

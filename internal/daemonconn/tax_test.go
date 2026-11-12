@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,4 +269,60 @@ func TestTaxReceiptBoundAndMetadata(t *testing.T) {
 	// Every byte of the largest legal text fields could take six JSON bytes.
 	// The remaining allowance must hold IDs, dates, field names and the envelope.
 	assert.Greater(t, maxTaxReceiptBytes, 1000*6*(3*8192+2*256+2+6+3)+1000*1000)
+}
+
+func TestTaxMutationReceiptTransitions(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const retired = `"retired_at":"2025-01-01T00:00:00Z"`
+	const retire = "retire"
+	for _, tc := range []struct {
+		name, method, body, etag string
+		revision                 int64
+		valid                    bool
+	}{
+		{"create", http.MethodPost, taxAccountFixture, `"1"`, 0, true},
+		{"create wrong revision", http.MethodPost, strings.Replace(taxAccountFixture, `"revision":1`, `"revision":2`, 1), `"2"`, 0, false},
+		{"create retired", http.MethodPost, strings.Replace(taxAccountFixture, `"retired_at":null`, retired, 1), `"1"`, 0, false},
+		{"edit", http.MethodPatch, strings.Replace(taxAccountFixture, `"revision":1`, `"revision":2`, 1), `"2"`, 1, true},
+		{"edit stale receipt", http.MethodPatch, taxAccountFixture, `"1"`, 1, false},
+		{"edit retired", http.MethodPatch, strings.Replace(strings.Replace(taxAccountFixture, `"revision":1`, `"revision":2`, 1), `"retired_at":null`, retired, 1), `"2"`, 1, false},
+		{"retire", retire, strings.Replace(strings.Replace(taxAccountFixture, `"revision":1`, `"revision":2`, 1), `"retired_at":null`, retired, 1), `"2"`, 1, true},
+		{"retire missing timestamp", retire, strings.Replace(taxAccountFixture, `"revision":1`, `"revision":2`, 1), `"2"`, 1, false},
+		{"retire stale receipt", retire, strings.Replace(taxAccountFixture, `"retired_at":null`, retired, 1), `"1"`, 1, false},
+		{"overflow", http.MethodPatch, taxAccountFixture, `"1"`, math.MaxInt64, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.method == retire {
+					assert.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, "/api/v1/tax/accounts/"+id+"/retire", r.URL.Path)
+				} else {
+					assert.Equal(t, tc.method, r.Method)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", tc.etag)
+				if tc.method == http.MethodPost {
+					w.WriteHeader(http.StatusCreated)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+			c := New(server.URL, "")
+			var err error
+			switch tc.method {
+			case http.MethodPost:
+				_, err = c.CreateTaxAccount(t.Context(), api.CreateTaxAccountRequest{})
+			case http.MethodPatch:
+				_, err = c.UpdateTaxAccount(t.Context(), id, tc.revision, api.PatchTaxAccountRequest{Note: new("")})
+			case retire:
+				_, err = c.RetireTaxAccount(t.Context(), id, tc.revision)
+			}
+			if tc.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.True(t, IsResponseDecodeError(err))
+			assert.Contains(t, err.Error(), "may have been applied")
+		})
+	}
 }
