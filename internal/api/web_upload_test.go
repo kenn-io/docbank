@@ -353,11 +353,100 @@ type photoSocketResponse struct {
 	SkipReasons map[int]string `json:"skip_reasons"`
 	Code        string         `json:"code"`
 	Detail      string         `json:"detail"`
-	Receipt     struct {
+	SavedImport struct {
+		ImportID string                          `json:"import_id"`
+		Skipped  []store.BrowserPhotoSkippedFile `json:"skipped"`
+		Groups   []struct {
+			Status string `json:"status"`
+			Files  []struct {
+				RelativePath string `json:"relative_path"`
+			} `json:"files"`
+		} `json:"groups"`
+	} `json:"saved_import"`
+	Receipt struct {
 		Status  string `json:"status"`
 		AssetID string `json:"asset_id"`
 		Reason  string `json:"reason"`
 	} `json:"photo_group_receipt"`
+}
+
+func TestBrowserPhotoImportRetainsPlanningSkips(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	files := photoGroupDeclaration([]string{"capture.xmp", "notes.txt"}, false)
+	id := planBrowserPhotos(t, conn, files)
+	require.NoError(t, conn.Close(websocket.StatusNormalClosure, ""))
+	conn = browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "inspect_photo_import", "request_id": "inspect", "import_id": id}))
+	inspection := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_inspection", inspection.Type)
+	assert.Equal(t, []store.BrowserPhotoSkippedFile{{Path: "notes.txt", Reason: "Unsupported type"}}, inspection.SavedImport.Skipped)
+}
+
+func TestBrowserPhotoImportReceiptAfterReconnect(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	ctx := t.Context()
+	conn := browserUploadSocket(t, ts)
+	files := photoGroupDeclaration([]string{"Trip/capture.xmp"}, false)
+	planID := previewBrowserPhotos(t, conn, files)
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "register_photo_import", "request_id": "register", "import_id": planID}))
+	registered := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_registered", registered.Type)
+	require.NotEmpty(t, registered.ImportID)
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "begin_photo_group", "request_id": "group", "import_id": registered.ImportID, "group": 0, "hashes": photoGroupHashes(t, files)}))
+	require.Equal(t, "ready", readPhotoResponse(t, conn).Type)
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, []byte("Trip/capture.xmp")))
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]string{"type": "end", "request_id": "group"}))
+	first := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_group_receipt", first.Type)
+	require.Equal(t, "added", first.Receipt.Status)
+	require.NoError(t, conn.Close(websocket.StatusNormalClosure, ""))
+
+	second := browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(ctx, second, map[string]any{"type": "inspect_photo_import", "request_id": "inspect", "import_id": registered.ImportID}))
+	inspection := readPhotoResponse(t, second)
+	require.Equal(t, "photo_import_inspection", inspection.Type)
+	require.Equal(t, registered.ImportID, inspection.SavedImport.ImportID)
+	require.Len(t, inspection.SavedImport.Groups, 1)
+	assert.Equal(t, "committed", inspection.SavedImport.Groups[0].Status)
+	require.Len(t, inspection.SavedImport.Groups[0].Files, 1)
+	assert.Equal(t, "Trip/capture.xmp", inspection.SavedImport.Groups[0].Files[0].RelativePath)
+	require.NoError(t, wsjson.Write(ctx, second, map[string]any{"type": "begin_photo_group", "request_id": "replay", "import_id": registered.ImportID, "group": 0, "hashes": photoGroupHashes(t, files)}))
+	replayed := readPhotoResponse(t, second)
+	require.Equal(t, "photo_group_receipt", replayed.Type)
+	assert.Equal(t, first.Receipt, replayed.Receipt)
+}
+
+func TestBrowserPhotoInspectionWhileUploading(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	ctx := t.Context()
+	writer := browserUploadSocket(t, ts)
+	observer := browserUploadSocket(t, ts)
+	files := photoGroupDeclaration([]string{"capture.xmp", "other.xmp"}, false)
+	id := planBrowserPhotos(t, writer, files)
+	require.NoError(t, wsjson.Write(ctx, writer, map[string]any{"type": "begin_photo_group", "request_id": "cancelled", "import_id": id, "group": 1, "hashes": photoGroupHashes(t, files[1:])}))
+	require.Equal(t, "ready", readPhotoResponse(t, writer).Type)
+	require.NoError(t, wsjson.Write(ctx, writer, map[string]string{"type": "cancel", "request_id": "cancelled"}))
+	require.Equal(t, 499, readPhotoResponse(t, writer).Status)
+	require.NoError(t, wsjson.Write(ctx, writer, map[string]any{"type": "begin_photo_group", "request_id": "group", "import_id": id, "group": 0, "hashes": photoGroupHashes(t, files[:1])}))
+	require.Equal(t, "ready", readPhotoResponse(t, writer).Type)
+	require.NoError(t, wsjson.Write(ctx, observer, map[string]any{"type": "inspect_photo_import", "request_id": "inspect", "import_id": id}))
+	pending := readPhotoResponse(t, observer)
+	require.Equal(t, "photo_import_inspection", pending.Type)
+	require.Len(t, pending.SavedImport.Groups, 2)
+	assert.Equal(t, "pending", pending.SavedImport.Groups[0].Status)
+	assert.Equal(t, "remaining", pending.SavedImport.Groups[1].Status)
+	require.NoError(t, writer.Write(ctx, websocket.MessageBinary, []byte("capture.xmp")))
+	require.NoError(t, wsjson.Write(ctx, writer, map[string]string{"type": "end", "request_id": "group"}))
+	require.Equal(t, "photo_group_receipt", readPhotoResponse(t, writer).Type)
+	require.NoError(t, wsjson.Write(ctx, observer, map[string]any{"type": "inspect_photo_import", "request_id": "after", "import_id": id}))
+	committed := readPhotoResponse(t, observer)
+	require.Equal(t, "photo_import_inspection", committed.Type)
+	require.Len(t, committed.SavedImport.Groups, 2)
+	assert.Equal(t, "committed", committed.SavedImport.Groups[0].Status)
 }
 
 func readPhotoResponse(t *testing.T, conn *websocket.Conn) photoSocketResponse {
@@ -484,6 +573,7 @@ func TestBrowserPhotoGroupIngestMemberLimit(t *testing.T) {
 		hashes[i], ok = members[index]["expected_hash"].(string)
 		require.True(t, ok)
 	}
+	plan.ImportID = registerBrowserPhotos(t, conn, plan.ImportID)
 	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "group", "import_id": plan.ImportID, "group": 0, "hashes": hashes}))
 	for _, index := range plan.Groups[0] {
 		require.Equal(t, "ready", readPhotoResponse(t, conn).Type)
@@ -550,7 +640,7 @@ func TestBrowserUploadControlMessageLimit(t *testing.T) {
 	})
 }
 
-func planBrowserPhotos(t *testing.T, conn *websocket.Conn, members []map[string]any) string {
+func previewBrowserPhotos(t *testing.T, conn *websocket.Conn, members []map[string]any) string {
 	t.Helper()
 	files := make([]map[string]any, len(members))
 	for i, member := range members {
@@ -561,6 +651,44 @@ func planBrowserPhotos(t *testing.T, conn *websocket.Conn, members []map[string]
 	require.Equal(t, "photo_import_plan", reply.Type)
 	require.NotEmpty(t, reply.ImportID)
 	return reply.ImportID
+}
+
+func registerBrowserPhotos(t *testing.T, conn *websocket.Conn, id string) string {
+	t.Helper()
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{
+		"type": "register_photo_import", "request_id": "register", "import_id": id,
+	}))
+	reply := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_registered", reply.Type, "%s: %s", reply.Code, reply.Detail)
+	return reply.ImportID
+}
+
+func TestBrowserPhotoImportRejectsInvalidControls(t *testing.T) {
+	t.Parallel()
+	t.Run("negative list offset", func(t *testing.T) {
+		ts, _ := newTestServer(t, nil)
+		conn := browserUploadSocket(t, ts)
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "list_photo_imports", "request_id": "list", "offset": -1}))
+		reply := readPhotoResponse(t, conn)
+		assert.Equal(t, http.StatusUnprocessableEntity, reply.Status)
+		assert.Equal(t, "validation", reply.Code)
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "list_photo_imports", "request_id": "valid", "offset": 0}))
+		assert.Equal(t, "photo_import_list", readPhotoResponse(t, conn).Type)
+	})
+	t.Run("empty plan registration", func(t *testing.T) {
+		ts, _ := newTestServer(t, nil)
+		conn := browserUploadSocket(t, ts)
+		id := previewBrowserPhotos(t, conn, []map[string]any{{"relative_path": "notes.txt", "expected_size": 1}})
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "register_photo_import", "request_id": "register", "import_id": id}))
+		reply := readPhotoResponse(t, conn)
+		assert.Equal(t, http.StatusUnprocessableEntity, reply.Status)
+		assert.Equal(t, "validation", reply.Code)
+	})
+}
+
+func planBrowserPhotos(t *testing.T, conn *websocket.Conn, members []map[string]any) string {
+	t.Helper()
+	return registerBrowserPhotos(t, conn, previewBrowserPhotos(t, conn, members))
 }
 
 func TestBrowserPhotoGroup(t *testing.T) {
@@ -643,6 +771,10 @@ func TestBrowserPhotoImportsScopeSourcesAndReuseRun(t *testing.T) {
 	members := []map[string]any{declaration("Card/IMG_0001.JPG", first), declaration("Card/IMG_0002.JPG", second)}
 	importID := planBrowserPhotos(t, conn, members)
 	a := uploadBrowserPhoto(t, conn, importID, 0, members[0], first)
+	require.NoError(t, conn.Close(websocket.StatusNormalClosure, ""))
+	conn = browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "inspect_photo_import", "request_id": "resume", "import_id": importID}))
+	require.Equal(t, "photo_import_inspection", readPhotoResponse(t, conn).Type)
 	b := uploadBrowserPhoto(t, conn, importID, 1, members[1], second)
 	require.Equal(t, "photo_group_receipt", a.Type)
 	require.Equal(t, "photo_group_receipt", b.Type)
@@ -688,6 +820,7 @@ func TestBrowserPhotoImportRecordsOriginalMtime(t *testing.T) {
 			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "destination": "/photos", "request_id": "plan", "files": []map[string]any{file}}))
 			plan := readPhotoResponse(t, conn)
 			require.Equal(t, "photo_import_plan", plan.Type)
+			plan.ImportID = registerBrowserPhotos(t, conn, plan.ImportID)
 			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "group", "import_id": plan.ImportID, "destination": "/photos", "group": 0,
 				"hashes": []string{hex.EncodeToString(hash[:])}}))
 			require.Equal(t, "ready", readPhotoResponse(t, conn).Type)
@@ -834,7 +967,8 @@ func TestBrowserPhotoDestinationIdentity(t *testing.T) {
 				}
 			} else {
 				assert.Equal(t, "not_found", reply.Code)
-				assert.Contains(t, reply.Detail, "trashed or removed")
+				assert.Contains(t, reply.Detail, "Restore the original folder from Trash")
+				assert.Contains(t, reply.Detail, "start a new import")
 			}
 			_, err = catalog.NodeByPath(t.Context(), "/photos")
 			require.ErrorIs(t, err, store.ErrNotFound)
@@ -923,6 +1057,7 @@ func TestBrowserPhotoFolderContinuationKeepsImportedSource(t *testing.T) {
 		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "destination": "/photos", "request_id": "plan", "source_id": source, "files": selected}))
 		plan := readPhotoResponse(t, conn)
 		require.Equal(t, "photo_import_plan", plan.Type)
+		plan.ImportID = registerBrowserPhotos(t, conn, plan.ImportID)
 		for i, file := range selected {
 			hash := sha256.Sum256(data[i])
 			member := map[string]any{"relative_path": file["relative_path"], "expected_hash": hex.EncodeToString(hash[:]), "expected_size": len(data[i])}
@@ -979,6 +1114,7 @@ func TestBrowserPhotoPlanAsksForHashesOnlyOfSizeMatches(t *testing.T) {
 	// A new shoot matches no earlier photo, so it plans in one round trip without any hash.
 	reply := plan(first, "new-shoot", file("Preview/preview.JPG", data[0], ""))
 	require.Equal(t, "photo_import_plan", reply.Type, "%s: %s", reply.Code, reply.Detail)
+	reply.ImportID = registerBrowserPhotos(t, conn, reply.ImportID)
 	received := uploadBrowserPhoto(t, conn, reply.ImportID, 0, map[string]any{"relative_path": "Preview/preview.JPG", "expected_hash": hash(data[0])}, data[0])
 	require.Equal(t, "added", received.Receipt.Status)
 
@@ -995,6 +1131,7 @@ func TestBrowserPhotoPlanAsksForHashesOnlyOfSizeMatches(t *testing.T) {
 	reply = plan(second, "card", selected...)
 	require.Equal(t, "photo_import_plan", reply.Type, "%s: %s", reply.Code, reply.Detail)
 	require.Equal(t, [][]int{{0}, {1}}, reply.Groups)
+	reply.ImportID = registerBrowserPhotos(t, conn, reply.ImportID)
 
 	// A declared hash must match exactly.
 	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "wrong", "import_id": reply.ImportID, "group": 0, "hashes": []string{hash(data[1])}}))
@@ -1053,6 +1190,7 @@ func TestBrowserPhotoPlanSkipsLeadingUnsupportedFilesWithoutHashes(t *testing.T)
 	require.Equal(t, "photo_import_plan", plan.Type, "%s: %s", plan.Code, plan.Detail)
 	require.Equal(t, []int{0, 1}, plan.Unsupported)
 	require.Equal(t, [][]int{{2}}, plan.Groups)
+	plan.ImportID = registerBrowserPhotos(t, conn, plan.ImportID)
 	receipt := uploadBrowserPhoto(t, conn, plan.ImportID, 0, files[2], selected[2].data)
 	require.Equal(t, "photo_group_receipt", receipt.Type)
 	require.Equal(t, "added", receipt.Receipt.Status)
@@ -1072,4 +1210,73 @@ func TestBrowserPhotoPlanRejectsZeroSource(t *testing.T) {
 	require.Equal(t, "error", reply.Type)
 	require.Equal(t, http.StatusUnprocessableEntity, reply.Status)
 	require.Equal(t, "validation", reply.Code)
+}
+
+func TestBrowserPhotoReplansWithSameSource(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	data := []byte("<x:xmpmeta/>")
+	hash := sha256.Sum256(data)
+	member := map[string]any{"relative_path": "capture.xmp", "expected_hash": hex.EncodeToString(hash[:]), "size": len(data)}
+	var registeredID string
+	for i := range 2 {
+		require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "source_id": "20000000-0000-4000-8000-000000000001", "files": []map[string]any{member}}))
+		plan := readPhotoResponse(t, conn)
+		require.Equal(t, "photo_import_plan", plan.Type)
+		id := registerBrowserPhotos(t, conn, plan.ImportID)
+		if i == 0 {
+			registeredID = id
+			receipt := uploadBrowserPhoto(t, conn, id, 0, member, data)
+			require.Equal(t, "photo_group_receipt", receipt.Type)
+		} else {
+			require.Equal(t, registeredID, id)
+			require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "begin_photo_group", "request_id": "replay", "import_id": id, "group": 0, "hashes": photoGroupHashes(t, []map[string]any{member})}))
+			receipt := readPhotoResponse(t, conn)
+			require.Equal(t, "photo_group_receipt", receipt.Type)
+			assert.Equal(t, "added", receipt.Receipt.Status)
+		}
+	}
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "inspect_photo_import", "request_id": "source", "source_id": "20000000-0000-4000-8000-000000000001"}))
+	inspected := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_inspection", inspected.Type)
+	assert.Equal(t, "committed", inspected.SavedImport.Groups[0].Status)
+	dest, err := catalog.NodeByPath(t.Context(), "/photos")
+	require.NoError(t, err)
+	children, err := catalog.Children(t.Context(), dest.ID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+}
+
+func TestBrowserPhotoRegistrationKeepsDistinctUnicodePaths(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "plan_photo_import", "request_id": "plan", "destination": "/photos", "files": []map[string]any{
+		{"relative_path": "é.mp4", "size": 1}, {"relative_path": "e\u0301.mp4", "size": 1},
+	}}))
+	plan := readPhotoResponse(t, conn)
+	require.Equal(t, "photo_import_plan", plan.Type)
+	require.Len(t, plan.Groups, 2)
+	id := registerBrowserPhotos(t, conn, plan.ImportID)
+	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]any{"type": "inspect_photo_import", "request_id": "inspect", "import_id": id}))
+	saved := readPhotoResponse(t, conn)
+	require.Len(t, saved.SavedImport.Groups, 2)
+	assert.ElementsMatch(t, []string{"é.mp4", "e\u0301.mp4"}, []string{
+		saved.SavedImport.Groups[0].Files[0].RelativePath, saved.SavedImport.Groups[1].Files[0].RelativePath,
+	})
+}
+
+func TestBrowserPhotoUploadDecomposedName(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	conn := browserUploadSocket(t, ts)
+	data := []byte("x")
+	member := map[string]any{"relative_path": "e\u0301.mp4", "expected_size": len(data), "expected_hash": testHash(string(data))}
+	id := planBrowserPhotos(t, conn, []map[string]any{member})
+	receipt := uploadBrowserPhoto(t, conn, id, 0, member, data)
+	require.Equal(t, "photo_group_receipt", receipt.Type, "%+v", receipt)
+	require.Equal(t, "added", receipt.Receipt.Status)
+	_, err := catalog.NodeByPath(t.Context(), "/photos/é.mp4")
+	require.NoError(t, err)
 }

@@ -439,6 +439,8 @@ GRANT SELECT ON ALL TABLES IN SCHEMA documents TO docbank_runtime;
 GRANT INSERT, DELETE, UPDATE(lifecycle) ON documents.blob_stores TO docbank_runtime;
 GRANT INSERT ON documents.storage_operation_stores TO docbank_runtime;
 GRANT INSERT, DELETE ON documents.storage_operation_cleanup TO docbank_runtime;
+GRANT INSERT, UPDATE(destination_id) ON documents.browser_photo_imports TO docbank_runtime;
+GRANT INSERT, UPDATE(hashes_json, receipt_json) ON documents.browser_photo_import_groups TO docbank_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON documents.nodes, documents.blobs, documents.content_versions
     TO docbank_runtime;
@@ -1330,6 +1332,14 @@ Separate source owners keep their own bytes. Ambiguous groups remain unpaired
 and return the same explanation on both backends. Operator pairing, hidden and
 excluded state survive later imports. Audited vaults continue to refuse grouped
 import through the existing mutation boundary.
+
+Browser imports register their declared groups before accepting bytes. Each
+group pins its hashes and commits its original result in the same transaction
+as its files and destination identity. A daemon-wide claim reports an active
+group as pending; inspection checks stored receipts before allowing a resume.
+The deployment retains these records across restarts and same-vault cutovers.
+Portable metadata and backup restores omit import handles and their receipts.
+A released-schema cutover whose source contains these catalogs must copy both tables together.
 
 A retained XMP sync receipt lets import recognize accepted outside bytes without
 replacing the newer published sidecar. SQLite keeps its indexed source-path

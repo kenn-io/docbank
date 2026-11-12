@@ -184,6 +184,7 @@ var storeErrCodes = []struct {
 	{store.ErrDocumentEventsCorrupt, http.StatusInternalServerError, "timeline_index_corrupt"},
 	{store.ErrProcessingSourceFenceStaleVersion, http.StatusConflict, "stale_version"},
 	{store.ErrInvalidPhotoQuery, http.StatusUnprocessableEntity, "invalid_photo_query"},
+	{store.ErrInvalidBrowserPhotoImportPage, http.StatusUnprocessableEntity, "validation"},
 	{store.ErrInvalidPhotoCursor, http.StatusUnprocessableEntity, "invalid_photo_cursor"},
 	{store.ErrInvalidDocumentQuery, http.StatusUnprocessableEntity, "invalid_document_query"},
 	{store.ErrInvalidDocumentCursor, http.StatusUnprocessableEntity, "invalid_document_cursor"},

@@ -1,4 +1,5 @@
 import * as actions from "./action-events.js";
+import * as upload from "./upload.js";
 import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
@@ -59,6 +60,1720 @@ beforeEach(() => {
   vi.stubGlobal("File", NodeFile);
 });
 
+it("waits for vault identity before loading saved imports and clears them when it changes", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", true);
+  await view.rerender({ vaultID: "first" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  expect(await screen.findByLabelText("Saved import")).toHaveProperty("value", "saved");
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("a.JPG");
+  await view.rerender({ vaultID: "second" });
+  await waitFor(() => expect(screen.queryByText("a.JPG")).toBeNull());
+  expect(screen.queryByLabelText("Saved import")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+});
+
+it("ignores a saved-import list from a previous vault", async () => {
+  const saved = [
+    {
+      import_id: "old",
+      source_id: "source",
+      label: "Photos",
+      destination: "/",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+    },
+  ];
+  let finish!: (value: typeof saved) => void;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+    inspectPhotoImport: vi.fn(),
+    listPhotoImports: vi
+      .fn()
+      .mockReturnValue(new Promise<typeof saved>((resolve) => (finish = resolve))),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "first",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  await view.rerender({ vaultID: "second" });
+  finish(saved);
+  await tick();
+  expect(screen.queryByLabelText("Saved import")).toBeNull();
+});
+
+it("ignores inspection results from a previous vault", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "old.JPG", size: 1 }] }],
+  };
+  let finish!: (value: typeof saved) => void;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockReturnValue(new Promise<typeof saved>((resolve) => (finish = resolve))),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "first",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  await screen.findByLabelText("Saved import");
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await view.rerender({ vaultID: "second" });
+  finish(saved);
+  await tick();
+  expect(screen.queryByText("old.JPG")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+});
+
+it("inspects a saved import and resumes only its remaining group", async () => {
+  savedImports.set("saved", {
+    sourceID: "saved-source",
+    revision: "saved-revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: "a".repeat(64),
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved-import",
+    source_id: "saved-source",
+    label: "Trip",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    skipped: [{ path: "notes.txt", reason: "Unsupported type" }],
+    groups: [
+      {
+        status: "committed" as const,
+        files: [
+          { relative_path: "done.ARW", size: 1 },
+          { relative_path: "done.DNG", size: 1 },
+        ],
+        hashes: [
+          "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa",
+        ],
+        receipt: { status: "ambiguous" as const, asset_id: "", reason: "multiple_raw" },
+      },
+      { status: "remaining" as const, files: [{ relative_path: "left.JPG", size: 1 }] },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "new-preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset-2" }),
+  };
+  const refresh = vi.fn();
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: refresh,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved-import" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("done.ARW, done.DNG");
+  expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
+  expect(screen.getByText("Duplicates: 0")).toBeTruthy();
+  expect(
+    screen.getByText("Keep this tab and Add photos open until the import finishes."),
+  ).toBeTruthy();
+  expect(refresh).toHaveBeenCalledOnce();
+  const replacement = {
+    ...channel,
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset-2" }),
+  };
+  await view.rerender({ channel: replacement });
+  expect(screen.getByText("Multiple RAW files share this name.")).toBeTruthy();
+  expect(screen.getByText("notes.txt")).toBeTruthy();
+  expect(screen.getByText("Unsupported type")).toBeTruthy();
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "left.JPG")] },
+  });
+  expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+    "saved-import",
+    1,
+    expect.any(Array),
+    expect.any(AbortSignal),
+    expect.any(Function),
+    [""],
+  );
+  expect(channel.registerPhotoImport).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull(),
+  );
+  expect(savedImports.has("saved")).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["z"], "new.JPG")] },
+  });
+  expect(await screen.findByRole("button", { name: "Add 1 group" })).toBeTruthy();
+  expect(screen.queryByText(/Import progress changed in another tab/)).toBeNull();
+});
+
+it("keeps completed groups when selecting remaining files in batches", async () => {
+  savedImports.set("batches", {
+    sourceID: "source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: "a".repeat(64),
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: ["a.JPG", "b.JPG"].map((name) => ({
+      status: "remaining" as const,
+      files: [{ relative_path: name, size: 1 }],
+    })),
+  };
+  const committed = {
+    ...saved,
+    groups: [
+      {
+        ...saved.groups[0],
+        status: "committed" as const,
+        receipt: { status: "added" as const, asset_id: "a" },
+      },
+      saved.groups[1],
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(committed),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "batches",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "a.JPG")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledTimes(1));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["y"], "b.JPG")] },
+  });
+  expect(screen.queryByText("File missing")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(savedImports.has("batches")).toBe(false));
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+});
+
+it("refreshes a group committed between inspection and resume", async () => {
+  const remaining = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Trip",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [
+          { relative_path: "left.ARW", size: 1 },
+          { relative_path: "left.DNG", size: 1 },
+        ],
+      },
+    ],
+  };
+  const committed = {
+    ...remaining,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [
+          { relative_path: "left.ARW", size: 1 },
+          { relative_path: "left.DNG", size: 1 },
+        ],
+        hashes: [
+          "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa",
+        ],
+        receipt: { status: "ambiguous" as const, asset_id: "", reason: "multiple_raw" },
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([remaining]),
+    inspectPhotoImport: vi.fn().mockResolvedValueOnce(remaining).mockResolvedValueOnce(committed),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const refresh = vi.fn();
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "late-commit",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: refresh,
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "left.ARW"), new File(["y"], "left.DNG")] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
+  await screen.findByText("Multiple RAW files share this name.");
+  expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
+  expect(screen.getByText("Duplicates: 0")).toBeTruthy();
+  expect(
+    screen.queryByText("Keep this tab and Add photos open until the import finishes."),
+  ).toBeNull();
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+});
+
+it("inspects a group claimed after inspection before offering another upload", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const committed = {
+    ...saved,
+    groups: [
+      {
+        ...saved.groups[0],
+        status: "committed" as const,
+        receipt: { status: "added" as const, asset_id: "asset" },
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(committed),
+    uploadPhotoGroup: vi
+      .fn()
+      .mockRejectedValue(
+        new APIError("This group is still finishing.", 409, "photo_group_pending"),
+      ),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending-race",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "a.JPG")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await screen.findByText("Still finishing");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Imported earlier");
+  expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+});
+
+it("identifies saved imports with the same destination and time by folder", async () => {
+  const saved = {
+    import_id: "one",
+    source_id: "source",
+    label: "browser: Trip one",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi
+      .fn()
+      .mockResolvedValue([saved, { ...saved, import_id: "two", label: "browser: Trip two" }]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "labels",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  expect(screen.getByRole("option", { name: /Trip one/ })).toBeDefined();
+  expect(screen.getByRole("option", { name: /Trip two/ })).toBeDefined();
+});
+
+it("loads saved imports one page at a time", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi
+      .fn()
+      .mockResolvedValueOnce(
+        Array.from({ length: 50 }, (_, index) => ({ ...saved, import_id: String(index) })),
+      )
+      .mockResolvedValueOnce([{ ...saved, import_id: "last" }]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pages",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+  await waitFor(() =>
+    expect(channel.listPhotoImports).toHaveBeenCalledWith(50, expect.any(AbortSignal)),
+  );
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+});
+
+it("keeps one inspect action for the selected pending import", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "pending" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved, { ...saved, import_id: "other" }]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Still finishing");
+  expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(1);
+  const options = screen.getAllByRole("option") as HTMLOptionElement[];
+  const selected = options.find((option) => option.value === "saved");
+  const other = options.find((option) => option.value === "other");
+  expect(selected).toBeDefined();
+  expect(other).toBeDefined();
+  expect(selected?.textContent).not.toContain("/photos");
+  expect(other?.textContent).toContain("/photos");
+  await fireEvent.change(screen.getByLabelText("Saved import"), { target: { value: "other" } });
+  expect(screen.getAllByRole("button", { name: "Inspect import" })).toHaveLength(2);
+});
+
+it("retains the first matching selected file while a saved group is pending", async () => {
+  const hash = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb";
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      { status: "pending" as const, files: [{ relative_path: "é.JPG", size: 1 }], hashes: [hash] },
+    ],
+    skipped: [{ path: "é.JPG", reason: "Duplicate path" }],
+  };
+  const remaining = { ...saved, groups: [{ ...saved.groups[0], status: "remaining" as const }] };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValueOnce(saved).mockResolvedValue(remaining),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending-files",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Still finishing");
+  const first = new File(["a"], "é.JPG");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [first, new File(["b"], "e\u0301.JPG")] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      0,
+      [first],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [hash],
+    ),
+  );
+});
+
+it.each(["pinned", "changed"])(
+  "keeps the declared filename when a preview is %s",
+  async (reason) => {
+    const file = new File(["a"], "a.JPG");
+    const saved = {
+      import_id: "saved",
+      source_id: "source",
+      label: "Photos",
+      destination: "/",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+      groups: [
+        {
+          status: "remaining" as const,
+          files: [{ relative_path: "a.JPG", size: 1 }],
+          ...(reason === "pinned"
+            ? { hashes: ["3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d"] }
+            : {}),
+        },
+      ],
+    };
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi.fn().mockResolvedValue({
+        import_id: "saved",
+        groups: [[0]],
+        unsupported: [],
+      }),
+      registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+      listPhotoImports: vi.fn().mockResolvedValue([saved]),
+      inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+      uploadPhotoGroup: vi.fn(),
+    };
+    render(PhotoImportDrawer, {
+      channel,
+      vaultID: "preview-pinned",
+      session: "session",
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+      target: { files: [file] },
+    });
+    await screen.findByRole("button", { name: "Add 1 group" });
+    await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+    await fireEvent.change(await screen.findByLabelText("Saved import"), {
+      target: { value: "saved" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+    if (reason === "changed") {
+      await screen.findByRole("button", { name: "Resume remaining" });
+      await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+        target: { files: [new File(["ab"], "a.JPG")] },
+      });
+    }
+    await screen.findByText(
+      reason === "pinned"
+        ? "Choose a.JPG again to resume."
+        : "Choose the original a.JPG to resume.",
+    );
+    expect(screen.getByText("a.JPG")).toBeTruthy();
+    expect(screen.getByText(reason === "pinned" ? "File missing" : "File changed")).toBeTruthy();
+  },
+);
+
+it("uses inspected hashes when selecting files after a rejected upload", async () => {
+  const hash = "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d";
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const pinned = { ...saved, groups: [{ ...saved.groups[0], hashes: [hash] }] };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValueOnce(saved)
+      .mockResolvedValue(pinned),
+    uploadPhotoGroup: vi
+      .fn()
+      .mockImplementationOnce(async (_id, _index, _files, _signal, _progress, hashes) => {
+        hashes[0] = "a".repeat(64);
+        throw new APIError("Content changed", 422, "validation");
+      })
+      .mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pinned-hashes",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["a"], "a.JPG")] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await screen.findByText("Content changed");
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() => expect(channel.inspectPhotoImport).toHaveBeenCalledTimes(3));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["b"], "a.JPG")] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenLastCalledWith(
+      "saved",
+      0,
+      expect.any(Array),
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [hash],
+    ),
+  );
+});
+
+it("refuses changed bytes and lists files outside the saved import", async () => {
+  const saved = {
+    import_id: "saved-import",
+    source_id: "source",
+    label: "Trip",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: "done.JPG", size: 1 }],
+        hashes: ["ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"],
+        receipt: { status: "added" as const, asset_id: "asset" },
+      },
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "left.JPG", size: 1, modified_time: 1000 }],
+        hashes: ["ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved-import" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("File missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["a"], "left.JPG", { lastModified: 1000 })] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: {
+      files: [
+        new File(["b"], "left.JPG", { lastModified: 1000 }),
+        new File(["b"], "done.JPG"),
+        new File(["x"], "extra.JPG"),
+      ],
+    },
+  });
+  await screen.findByText("File changed");
+  await screen.findByText("Outside this import");
+  await screen.findByText("Files changed since this group was imported.");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() => expect(channel.inspectPhotoImport).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await screen.findByText("File changed");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+});
+
+it.each([
+  { bytes: "y", modified: 1000, changed: true },
+  { bytes: "x", modified: 2000, changed: false },
+])("checks a planned hash on reselected files: $changed", async ({ bytes, modified, changed }) => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [
+          {
+            relative_path: "a.JPG",
+            size: 1,
+            modified_time: 1000,
+            expected_hash: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          },
+        ],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "planned-hash",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("File missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File([bytes], "a.JPG", { lastModified: modified })] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      changed,
+    ),
+  );
+  if (changed) await screen.findByText("File changed");
+  else {
+    await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+    await waitFor(() =>
+      expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+        "saved",
+        0,
+        expect.any(Array),
+        expect.any(AbortSignal),
+        expect.any(Function),
+        ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+      ),
+    );
+  }
+});
+
+it("checks attempted content but accepts matching metadata for untouched files", async () => {
+  const original = new File(["x"], "untouched.JPG", { lastModified: 1000 });
+  const changedAttempt = new File(["y"], "attempted.JPG", { lastModified: 1000 });
+  const changedUntouched = new File(["y"], "untouched.JPG", { lastModified: 1000 });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "attempted.JPG", size: 1, modified_time: 1000 }],
+        hashes: ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+      },
+      {
+        status: "remaining" as const,
+        files: [
+          {
+            relative_path: original.name,
+            size: original.size,
+            modified_time: original.lastModified,
+          },
+        ],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "lazy-hashes",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [changedAttempt, changedUntouched] },
+  });
+  await screen.findByText("File changed");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      1,
+      [changedUntouched],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      [""],
+    ),
+  );
+  expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce();
+});
+
+it("retains separately selected members of a remaining photo group", async () => {
+  const image = new File(["x"], "a.JPG", { lastModified: 1000 });
+  const sidecar = new File(["y"], "a.XMP", { lastModified: 1000 });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [
+          {
+            relative_path: "a.JPG",
+            size: 1,
+            modified_time: 1000,
+            expected_hash: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          },
+          { relative_path: "a.XMP", size: 1, modified_time: 1000 },
+        ],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "partial-group",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [image] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [sidecar] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["z"], "a.JPG", { lastModified: 1000 })] },
+  });
+  await screen.findByText("Files changed");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [sidecar] },
+  });
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [image] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      0,
+      [image, sidecar],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      expect.any(Array),
+    ),
+  );
+});
+
+it("cancels saved-file verification when the drawer closes", async () => {
+  let verificationSignal: AbortSignal | undefined;
+  vi.spyOn(upload, "hashFile").mockImplementation((_file, signal) => {
+    verificationSignal = signal;
+    return new Promise((_resolve, reject) =>
+      signal.addEventListener("abort", () => reject(new DOMException("Canceled", "AbortError"))),
+    );
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "a.JPG", size: 1 }],
+        hashes: ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "cancel-verification",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("File missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "a.JPG")] },
+  });
+  await waitFor(() => expect(verificationSignal).toBeDefined());
+  view.unmount();
+  expect(verificationSignal?.aborted).toBe(true);
+});
+
+it("refuses an unattempted file with a different modified time", async () => {
+  const saved = {
+    import_id: "saved-import",
+    source_id: "source",
+    label: "Trip",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: "left.JPG", size: 1, modified_time: 1000 }],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved-import" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("File missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["x"], "left.JPG", { lastModified: 2000 })] },
+  });
+  await screen.findByText("File changed");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+});
+
+it("replans the selection after registration disconnects before upload", async () => {
+  const initial: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockRejectedValue(new UploadChannelError("Disconnected")),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const replacement: PhotoImportTransport = {
+    ...initial,
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "new-preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel: initial,
+    vaultID: "absent-registration",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await screen.findByText("Disconnected");
+  expect(initial.uploadPhotoGroup).not.toHaveBeenCalled();
+  await view.rerender({ channel: replacement });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Add 1 group" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(replacement.planPhotoImport).toHaveBeenCalledOnce();
+  expect(replacement.inspectPhotoImport).not.toHaveBeenCalled();
+});
+
+it("inspects a checkpoint's saved receipt before sending groups", async () => {
+  const selected = [files()[0]];
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  savedImports.set("checkpoint-saved", {
+    sourceID: "source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: photoImportManifest(selected).digest,
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: selected[0].name, size: selected[0].size }],
+        hashes: ["a".repeat(64)],
+        receipt: { status: "added" as const, asset_id: "asset" },
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "checkpoint-saved",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByText("Imported earlier");
+  expect(channel.inspectPhotoImport).toHaveBeenCalledWith("source", expect.any(AbortSignal), true);
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+});
+
+it("holds selection while shortcut inspection is pending", async () => {
+  savedImports.set("pending-shortcut", {
+    sourceID: "old-source",
+    revision: "revision",
+    destination: "/",
+    manifestVersion: 2,
+    manifestHash: "a".repeat(64),
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "old-source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "old.xmp", size: 1 }] }],
+  };
+  let resolveInspection!: (value: typeof saved) => void;
+  const inspection = new Promise<typeof saved>((resolve) => (resolveInspection = resolve));
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "new", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("new"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn().mockReturnValue(inspection),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "pending-shortcut",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["a"], "old.xmp")] },
+  });
+  expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", true);
+  resolveInspection(saved);
+  await screen.findByText("old.xmp");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Start new import" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  const fresh = new File(["b"], "new.xmp");
+  await fireEvent.click(screen.getByRole("button", { name: "Choose files" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [fresh] },
+  });
+  await screen.findByText("new.xmp");
+  expect(screen.queryByText("old.xmp")).toBeNull();
+  expect(channel.planPhotoImport).toHaveBeenCalledWith(
+    [fresh],
+    "/",
+    expect.any(String),
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+});
+
+it("starts a new selection after resuming a saved import", async () => {
+  const original = files()[0];
+  const fresh = new File(["new"], "fresh.JPG");
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  savedImports.set("new-after-resume", {
+    sourceID: "old-source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: photoImportManifest([original]).digest,
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "old-source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    skipped: [{ path: "old-notes.txt", reason: "Unsupported type" }],
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: original.name, size: original.size }],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("new"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "new-after-resume",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [original] },
+  });
+  await screen.findByRole("button", { name: "Resume remaining" });
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [original, new File(["extra"], "old-extra.JPG")] },
+  });
+  await screen.findByText("old-notes.txt");
+  await screen.findByText("old-extra.JPG");
+  await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  expect(screen.queryByText("old-notes.txt")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Choose files" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [fresh] },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  expect(screen.queryByText("old-extra.JPG")).toBeNull();
+  expect(channel.inspectPhotoImport).toHaveBeenCalledOnce();
+  expect(channel.planPhotoImport).toHaveBeenCalledWith(
+    [fresh],
+    "/photos",
+    expect.not.stringMatching(/^old-source$/),
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+});
+
+it("uploads after registration without a redundant checkpoint write", async () => {
+  const module = await import("./photoImportStorage.js");
+  const createStorage = module.photoImportStorage;
+  let writes = 0;
+  vi.spyOn(module, "photoImportStorage").mockImplementation((id, session) => {
+    const storage = createStorage(id, session);
+    return {
+      ...storage,
+      replace: async (next, expected) => {
+        if (++writes > 1)
+          throw new APIError("Checkpoint write unavailable", 500, "checkpoint_storage");
+        return storage.replace(next, expected);
+      },
+    };
+  });
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "one-write",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(screen.queryByText(/Browser shortcuts are unavailable/)).toBeNull();
+});
+
+it.each([
+  { error: new APIError("Storage unavailable", 500, "checkpoint_storage"), continues: true },
+  { error: new APIError("Session expired", 401, "unauthorized"), continues: false },
+  { error: new APIError("Forbidden", 403, "checkpoint_storage"), continues: false },
+  { error: new APIError("Changed in another tab", 409, "checkpoint_changed"), continues: false },
+])(
+  "handles checkpoint read failure before upload: $error.message",
+  async ({ error, continues }) => {
+    const module = await import("./photoImportStorage.js");
+    const createStorage = module.photoImportStorage;
+    vi.spyOn(module, "photoImportStorage").mockImplementation((id, session) => {
+      const storage = createStorage(id, session);
+      return {
+        ...storage,
+        saved: async () => {
+          throw error;
+        },
+      };
+    });
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi
+        .fn()
+        .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+      registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+      listPhotoImports: vi.fn(),
+      inspectPhotoImport: vi.fn(),
+      uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+    };
+    const auth = vi.fn();
+    render(PhotoImportDrawer, {
+      channel,
+      vaultID: "marker-failure",
+      session: "session",
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: auth,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+      target: { files: [files()[0]] },
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+    if (continues) {
+      await screen.findByText(/Browser shortcuts are unavailable/);
+      await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+    } else {
+      await screen.findByText(error.message);
+      expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+    }
+    expect(auth).toHaveBeenCalledTimes(error.status === 401 ? 1 : 0);
+  },
+);
+
+it("keeps selected files when inspecting the current preview", async () => {
+  const selected = [files()[0]];
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: selected[0].name, size: selected[0].size }],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "inspect-preview",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      0,
+      selected,
+      expect.any(AbortSignal),
+      expect.any(Function),
+      expect.any(Array),
+    ),
+  );
+});
+
+it("resumes a preview closed before upload", async () => {
+  const selected = [files()[0]];
+  let source = "";
+  let registered = false;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(async (_files, _destination, id) => {
+      source = id;
+      return { import_id: "preview", groups: [[0]], unsupported: [] };
+    }),
+    registerPhotoImport: vi.fn(async () => {
+      expect(savedImports.has("reopen-preview")).toBe(false);
+      registered = true;
+      return "saved";
+    }),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn(async () => {
+      if (!registered) throw new APIError("Not found", 404, "not_found");
+      return {
+        import_id: "saved",
+        source_id: source,
+        label: "Photos",
+        destination: "/",
+        created_at: "2026-01-01T00:00:00Z",
+        group_count: 1,
+        groups: [
+          {
+            status: "remaining" as const,
+            files: [{ relative_path: selected[0].name, size: selected[0].size }],
+          },
+        ],
+      };
+    }),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  const props = {
+    channel,
+    vaultID: "reopen-preview",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  };
+  const view = render(PhotoImportDrawer, props);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  expect(channel.registerPhotoImport).toHaveBeenCalledOnce();
+  expect(savedImports.has("reopen-preview")).toBe(true);
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+  view.unmount();
+  render(PhotoImportDrawer, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+});
+
+it("keeps a missing import unconfirmed when its replacement fails", async () => {
+  const selected = [files()[0]];
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  const props = {
+    channel,
+    vaultID: "preview-resume",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  };
+  const view = render(PhotoImportDrawer, props);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  const originalSource = savedImports.get("preview-resume")?.sourceID;
+  view.unmount();
+  render(PhotoImportDrawer, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByText(
+    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
+  );
+  expect(screen.queryByRole("button", { name: "Resume import" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false);
+  expect(channel.planPhotoImport).toHaveBeenCalledOnce();
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+  vi.mocked(channel.planPhotoImport).mockRejectedValueOnce(new Error("Plan unavailable"));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Replace import" }));
+  await screen.findByText("Plan unavailable");
+  expect(savedImports.get("preview-resume")?.sourceID).toBe(originalSource);
+  expect(screen.queryByRole("button", { name: "Resume import" })).toBeNull();
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Replace import" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(savedImports.get("preview-resume")?.sourceID).not.toBe(originalSource);
+});
+
+it("allows retry after a rejected registration", async () => {
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi
+      .fn()
+      .mockRejectedValueOnce(new APIError("Storage unavailable", 500, "internal"))
+      .mockResolvedValue("preview"),
+    listPhotoImports: vi.fn().mockResolvedValue([]),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "rejected-registration",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await screen.findByText("Storage unavailable");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+});
+
 it.each(["conflict", "auth", "abort", "after item failure"])(
   "reports outer Add failures once with exclusions: %s",
   async (outcome) => {
@@ -82,6 +1797,11 @@ it.each(["conflict", "auth", "abort", "after item failure"])(
       };
     });
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi
         .fn()
         .mockResolvedValue({ import_id: "outer", groups: [[0], [1]], unsupported: [] }),
@@ -113,7 +1833,8 @@ it.each(["conflict", "auth", "abort", "after item failure"])(
       if (outcome === "conflict") await change();
       else
         vi.mocked(channel.uploadPhotoGroup).mockImplementationOnce(async () => {
-          await change();
+          const current = await storage.load();
+          await storage.replace({ ...current!, revision: "other-tab" }, current);
           throw new APIError("Upload failed", 500, "internal");
         });
     } else {
@@ -149,51 +1870,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("keeps restart resume after checkpoint bootstrap retries on a new profile", async () => {
-  const module = await import("./photoImportStorage.js");
-  const actual = await vi.importActual<typeof module>("./photoImportStorage.js");
-  vi.spyOn(module, "photoImportStorage").mockImplementation(actual.photoImportStorage);
-  let saved: import("./photoImportStorage.js").PhotoImportCheckpoint | undefined;
-  let headers = 0;
-  const fetch = vi.fn(async (url: string, options: RequestInit) => {
-    if (url.endsWith("/header")) {
-      headers++;
-      return Response.json({ ready: headers > 1 });
-    }
-    if (options.method === "PUT") {
-      saved = JSON.parse(options.body as string).next;
-      return new Response(null, { status: 204 });
-    }
-    return Response.json({ checkpoint: saved });
-  });
-  vi.stubGlobal("fetch", fetch);
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi
-      .fn()
-      .mockResolvedValue({ import_id: "fresh", groups: [[0]], unsupported: [] }),
-    uploadPhotoGroup: vi.fn(),
-  };
-  render(PhotoImportDrawer, {
-    channel,
-    vaultID: "fresh-profile",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
-  );
-  expect(screen.queryByText(/Resume is unavailable/)).toBeNull();
-  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: [files()[0]] },
-  });
-  await screen.findByRole("button", { name: "Add 1 group" });
-  expect(saved?.sourceID).toEqual(expect.any(String));
-  expect(screen.getByRole("button", { name: "Resume import" })).toHaveProperty("disabled", false);
-  expect(screen.queryByText(/Resume is unavailable/)).toBeNull();
-});
-
 it.each(["open", "closed", "competing"] as const)(
   "clears an empty plan without replacing newer progress when the drawer is %s",
   async (state) => {
@@ -223,6 +1899,11 @@ it.each(["open", "closed", "competing"] as const)(
     });
     let finishPlan!: (plan: Awaited<ReturnType<PhotoImportTransport["planPhotoImport"]>>) => void;
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi
         .fn<PhotoImportTransport["planPhotoImport"]>()
         .mockImplementationOnce(() => new Promise((resolve) => (finishPlan = resolve)))
@@ -284,6 +1965,11 @@ it.each([false, true])(
     const failure = vi.spyOn(actions, "reportFailure").mockImplementation(() => {});
     const selected = files();
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi.fn().mockResolvedValue({
         import_id: "import-1",
         groups: [[0, 1], [2]],
@@ -352,7 +2038,7 @@ it.each([false, true])(
       [""],
     );
     expect(screen.getByText("Added: 1")).toBeTruthy();
-    expect(screen.getByText("Already in vault: 1")).toBeTruthy();
+    expect(screen.getByText("Duplicates: 1")).toBeTruthy();
     expect(screen.getByText("Skipped: 1")).toBeTruthy();
     expect(screen.getByText("Unsupported type")).toBeTruthy();
     expect(screen.getByText("notes.txt")).toBeTruthy();
@@ -366,6 +2052,11 @@ it("starts a new shoot's first group after reading only that group's files", asy
   let readsAtUpload: number[] | undefined;
   let hashesAtUpload: string[] | undefined;
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi.fn().mockResolvedValue({
       import_id: "new-shoot",
       groups: [[0, 1], [2]],
@@ -407,6 +2098,11 @@ it("shows Hashing only while the files the server asked for are read", async () 
   let report!: (progress: TransferProgress) => void;
   let finish!: (plan: Awaited<ReturnType<PhotoImportTransport["planPhotoImport"]>>) => void;
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi.fn().mockImplementation(
       (_files, _destination, _source, _signal, onprogress) =>
         new Promise((resolve) => {
@@ -451,6 +2147,11 @@ it("shows Hashing only while the files the server asked for are read", async () 
 
 it("checks the declaration limits once per selection", async () => {
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "once", groups: [[0]], unsupported: [] }),
@@ -481,6 +2182,11 @@ it("stops after the current group when cancelled", async () => {
   let finish!: (receipt: PhotoGroupReceipt) => void;
   let signal!: AbortSignal;
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "import-1", groups: [[0, 1], [2]], unsupported: [3] }),
@@ -527,6 +2233,11 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
     files()[3],
   ];
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi.fn().mockResolvedValue({
       import_id: "import-1",
       groups: [
@@ -623,6 +2334,11 @@ it.each([
   },
 ])("stops the queue on $name", async ({ cause, submitted, disabledReason, completed }) => {
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "import-1", groups: [[0, 1], [2]], unsupported: [3] }),
@@ -684,6 +2400,11 @@ it.each([
       }));
     }
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi
         .fn()
         .mockResolvedValue({ import_id: "import-1", groups: [[0]], unsupported: [] }),
@@ -719,21 +2440,21 @@ it.each([
     await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
     await waitFor(() => expect(complete).toHaveBeenCalledOnce());
     expect(screen.getByText("Unconfirmed: 1")).toBeTruthy();
+    expect(Boolean(screen.queryByText("Browser shortcuts are unavailable."))).toBe(sessionOnly);
+    expect(savedImports.has("vault-test")).toBe(!sessionOnly);
     expect(screen.queryByText("Keep this tab open until the import finishes.")).toBeNull();
     expect(screen.getByText("The verified upload channel ended.")).toBeTruthy();
-    const guidance = screen.getByText(/Import outcome is unconfirmed\./).textContent;
-    if (sessionOnly) {
-      expect(guidance).toContain("Choose the same files or folder again.");
-      expect(guidance).toContain("Photos and videos already in the vault are skipped.");
-      expect(guidance).toContain(
-        "Other files, including standalone XMP sidecars, may be added again.",
-      );
-      expect(guidance).not.toMatch(/resume/i);
-    } else {
-      expect(guidance).toBe(
-        "Import outcome is unconfirmed. Reload the page, then choose Resume import and reselect the same files or folder.",
-      );
-    }
+    expect(screen.getByText("Unconfirmed", { exact: true })).toBeTruthy();
+    await view.rerender({ disabledReason: undefined });
+    expect(screen.getByRole("button", { name: "Inspect import" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Start new import" })).toHaveProperty(
+      "disabled",
+      false,
+    );
   },
 );
 
@@ -741,6 +2462,11 @@ it.each([false, true])(
   "replans after editing a destination (closed during plan: %s)",
   async (closed) => {
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi
         .fn()
         .mockRejectedValueOnce(new APIError("Invalid destination", 422, "invalid_name"))
@@ -825,6 +2551,11 @@ it.each([false, true])(
 it("cancels a group when the drawer closes before sending bytes", async () => {
   const complete = vi.fn();
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "import-1", groups: [[0]], unsupported: [] }),
@@ -855,6 +2586,7 @@ it("cancels a group when the drawer closes before sending bytes", async () => {
     target: { files: [files()[0]] },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
   view.unmount();
   await waitFor(() =>
     expect(vi.mocked(channel.uploadPhotoGroup).mock.calls[0][3].aborted).toBe(true),
@@ -864,6 +2596,11 @@ it("cancels a group when the drawer closes before sending bytes", async () => {
 
 it("shows a library refresh failure", async () => {
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "import-1", groups: [[0]], unsupported: [] }),
@@ -890,135 +2627,6 @@ it("shows a library refresh failure", async () => {
   expect((await screen.findByRole("alert")).textContent).toBe("Session expired");
   expect(authfailure).toHaveBeenCalledOnce();
 });
-
-it("resumes an interrupted folder with its original source on a fresh channel", async () => {
-  const selected = files();
-  for (const file of selected)
-    Object.defineProperty(file, "webkitRelativePath", { value: `Trip/${file.name}` });
-  const sources: string[] = [];
-  const channel = {
-    planPhotoImport: vi.fn(async (_files: File[], _destination: string, sourceID: string) => {
-      sources.push(sourceID);
-      return { import_id: `plan-${sources.length}`, groups: [[0], [1], [2]], unsupported: [3] };
-    }),
-    uploadPhotoGroup: vi.fn(
-      async (
-        _plan: string,
-        group: number,
-        _files: File[],
-        _signal: AbortSignal,
-        progress: Function,
-      ) => {
-        progress("uploading", { processed: 1, total: 1 });
-        if (group === 1 && sources.length === 1) throw new UploadChannelError("Disconnected");
-        return { status: "added" as const, asset_id: `asset-${group}` };
-      },
-    ),
-  };
-  const props = {
-    channel,
-    vaultID: "vault-resume",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  };
-  render(PhotoImportDrawer, props);
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
-      false,
-    ),
-  );
-  await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
-    target: { files: selected },
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Add 3 groups" }));
-  await screen.findByText("Unconfirmed: 1");
-  cleanup();
-  const freshChannel = {
-    ...channel,
-    planPhotoImport: vi.fn(channel.planPhotoImport),
-    uploadPhotoGroup: vi.fn(channel.uploadPhotoGroup),
-  };
-  render(PhotoImportDrawer, { ...props, channel: freshChannel });
-  const folderPicker = vi.spyOn(
-    screen.getByLabelText<HTMLInputElement>("Choose photo folder"),
-    "click",
-  );
-  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
-  expect(folderPicker).toHaveBeenCalledOnce();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
-      false,
-    ),
-  );
-  await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
-    target: { files: selected },
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Add 3 groups" }));
-  await screen.findByText("Added: 3");
-  expect(sources[0]).toBeTruthy();
-  expect(sources[1]).toBe(sources[0]);
-  cleanup();
-  render(PhotoImportDrawer, props);
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
-      false,
-    ),
-  );
-  await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
-    target: { files: selected },
-  });
-  await screen.findByRole("button", { name: "Add 3 groups" });
-  expect(sources[2]).not.toBe(sources[0]);
-});
-
-it.each(["content", "destination"])(
-  "refuses a resumed folder with changed %s and keeps the checkpoint",
-  async (change) => {
-    const { photoImportStorage } = await import("./photoImportStorage.js");
-    const { photoImportManifest } = await import("./photoImportStorage.js");
-    const selected = [files()[0]];
-    const checkpoint = {
-      sourceID: "source-a",
-      revision: "first",
-      destination: "/photos",
-      manifestVersion: 2,
-      manifestHash: photoImportManifest(selected).digest,
-      pickerKind: "folder" as const,
-    };
-    const storage = photoImportStorage("vault-mismatch", "session");
-    await storage.replace(checkpoint);
-    const channel: PhotoImportTransport = { planPhotoImport: vi.fn(), uploadPhotoGroup: vi.fn() };
-    render(PhotoImportDrawer, {
-      channel,
-      vaultID: "vault-mismatch",
-      session: "session",
-      onclose: vi.fn(),
-      oncomplete: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
-    await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
-    if (change === "destination")
-      await fireEvent.input(screen.getByLabelText("Destination"), { target: { value: "/other" } });
-    const changed =
-      change === "content"
-        ? new File(["bad!"], selected[0].name, { lastModified: selected[0].lastModified })
-        : selected[0];
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(
-        false,
-      ),
-    );
-    await fireEvent.change(screen.getByLabelText("Choose photo folder"), {
-      target: { files: [changed] },
-    });
-    await screen.findByText(/These files or destination differ/);
-    expect(channel.planPhotoImport).not.toHaveBeenCalled();
-    expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
-    expect(await storage.load()).toEqual(checkpoint);
-  },
-);
 
 it.each([
   {
@@ -1072,6 +2680,11 @@ it.each([
     ...(replaceError ? { replace: async () => Promise.reject(replaceError) } : {}),
   }));
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "checkpoint-case", groups: [[0]], unsupported: [] }),
@@ -1094,7 +2707,7 @@ it.each([
     expect(auth).toHaveBeenCalledTimes(loadError.status === 401 ? 1 : 0);
     return;
   }
-  if (loadError) await screen.findByText(/Resume is unavailable/);
+  if (loadError) await screen.findByText(/Browser shortcuts are unavailable/);
   else
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty(
@@ -1122,7 +2735,7 @@ it.each([
       expect.any(Function),
     ),
   );
-  await screen.findByText(/Resume is unavailable/);
+  await screen.findByText(/Browser shortcuts are unavailable/);
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(complete).toHaveBeenCalledOnce());
   expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
@@ -1158,6 +2771,11 @@ it("rejects too many files before reading them or replacing saved progress", asy
     replace,
   }));
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi.fn(),
     uploadPhotoGroup: vi.fn(),
   };
@@ -1193,6 +2811,11 @@ it("keeps the selection for retry when saving conflicts after planning", async (
     replace,
   }));
   const channel: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => {
+      throw new APIError("Not found", 404, "not_found");
+    }),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "retry", groups: [[0]], unsupported: [] }),
@@ -1235,49 +2858,6 @@ it("keeps the selection for retry when saving conflicts after planning", async (
   );
 });
 
-it("loads a checkpoint when the vault identity arrives and routes Resume to files", async () => {
-  const { photoImportStorage, photoImportManifest } = await import("./photoImportStorage.js");
-  const selected = [files()[0]];
-  const checkpoint = {
-    sourceID: "source-flat",
-    revision: "saved",
-    destination: "/photos",
-    manifestVersion: 2,
-    manifestHash: photoImportManifest(selected).digest,
-    pickerKind: "files" as const,
-  };
-  await photoImportStorage("vault-late", "session").replace(checkpoint);
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi.fn(),
-    uploadPhotoGroup: vi.fn(),
-  };
-  const view = render(PhotoImportDrawer, {
-    channel,
-    vaultID: "",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  expect(screen.getByRole("button", { name: "Choose files" }).hasAttribute("disabled")).toBe(true);
-  expect(screen.getByRole("status").textContent).toBe("Waiting for vault identity…");
-  await view.rerender({ vaultID: "vault-late" });
-  const filePicker = vi.spyOn(
-    screen.getByLabelText<HTMLInputElement>("Choose photo files"),
-    "click",
-  );
-  const folderPicker = vi.spyOn(
-    screen.getByLabelText<HTMLInputElement>("Choose photo folder"),
-    "click",
-  );
-  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
-  expect(screen.queryByRole("status")).toBeNull();
-  expect(filePicker).toHaveBeenCalledOnce();
-  expect(folderPicker).not.toHaveBeenCalled();
-  expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
-  expect(screen.queryByRole("alert")).toBeNull();
-});
-
 it.each([
   { reject: false, sessionChanged: false },
   { reject: true, sessionChanged: false },
@@ -1312,6 +2892,11 @@ it.each([
           : createStorage(id, "session").load,
     }));
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi
         .fn()
         .mockResolvedValue({ import_id: "new", groups: [[0]], unsupported: [] }),
@@ -1339,18 +2924,19 @@ it.each([
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Resume import" }));
-    expect(screen.getByLabelText<HTMLInputElement>("Destination").value).toBe("/photos");
     await fireEvent.change(screen.getByLabelText("Choose photo files"), {
       target: { files: selected },
     });
-    await screen.findByRole("button", { name: "Add 1 group" });
-    expect(channel.planPhotoImport).toHaveBeenCalledWith(
-      selected,
-      "/photos",
+    await screen.findByText(
+      "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
+    );
+    expect(channel.inspectPhotoImport).toHaveBeenCalledWith(
       "current-source",
       expect.any(AbortSignal),
-      expect.any(Function),
+      true,
     );
+    expect(channel.planPhotoImport).not.toHaveBeenCalled();
+    expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
   },
 );
 
@@ -1369,6 +2955,11 @@ it.each([false, true])(
     };
     if (prior) await storage.replace(saved);
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(async () => {
+        throw new APIError("Not found", 404, "not_found");
+      }),
       planPhotoImport: vi.fn().mockRejectedValue(new APIError("not a directory", 422, "not_dir")),
       uploadPhotoGroup: vi.fn(),
     };
@@ -1391,6 +2982,7 @@ it.each([false, true])(
       target: { files: [files()[0]] },
     });
     if (prior) await fireEvent.click(await screen.findByRole("button", { name: "Replace import" }));
+    else expect(screen.queryByRole("button", { name: "Replace import" })).toBeNull();
     await screen.findByText("not a directory");
     await view.unmount();
     render(PhotoImportDrawer, props);
@@ -1401,7 +2993,7 @@ it.each([false, true])(
       ),
     );
     expect(await storage.load()).toEqual(prior ? saved : undefined);
-    expect(screen.queryByRole("button", { name: "Resume import" }) !== null).toBe(prior);
+    expect(Boolean(screen.queryByRole("button", { name: "Resume import" }))).toBe(prior);
   },
 );
 
@@ -1420,6 +3012,9 @@ it.each(["cancel", "confirm", "stale"])(
     };
     await storage.replace(checkpoint);
     const channel: PhotoImportTransport = {
+      registerPhotoImport: vi.fn(async (id: string) => id),
+      listPhotoImports: vi.fn(async () => []),
+      inspectPhotoImport: vi.fn(),
       planPhotoImport: vi
         .fn()
         .mockResolvedValue({ import_id: "replacement", groups: [[0]], unsupported: [] }),
@@ -1474,10 +3069,16 @@ it.each(["cancel", "confirm", "stale"])(
 
 it("replans a selection interrupted during its first plan without sending it", async () => {
   const original: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi.fn().mockRejectedValue(new UploadChannelError("Disconnected")),
     uploadPhotoGroup: vi.fn(),
   };
   const replacement: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "second", groups: [[0]], unsupported: [] }),
@@ -1505,24 +3106,120 @@ it("replans a selection interrupted during its first plan without sending it", a
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
 });
 
-it("replans on a replacement channel and retains an unconfirmed group", async () => {
+it("inspects a registered preview after another tab imports a group", async () => {
+  const selected = [new File(["x"], "first.ARW"), new File(["y"], "second.ARW")];
+  const saved = {
+    import_id: "first",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: selected[0].name, size: selected[0].size }],
+        hashes: ["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"],
+        receipt: { status: "added" as const, asset_id: "asset" },
+      },
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: selected[1].name, size: selected[1].size }],
+      },
+    ],
+  };
   const original: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "first", groups: [[0], [1]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("first"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const replacement: PhotoImportTransport = {
+    ...original,
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi
+      .fn()
+      .mockRejectedValue(new APIError("Declaration changed", 500, "internal")),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "second" }),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel: original,
+    vaultID: "preview-reconnect",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 2 groups" });
+  await view.rerender({ channel: replacement });
+  await fireEvent.click(screen.getByRole("button", { name: "Add 2 groups" }));
+  await waitFor(() =>
+    expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+      "first",
+      1,
+      [selected[1]],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      expect.any(Array),
+    ),
+  );
+  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
+  expect(replacement.registerPhotoImport).not.toHaveBeenCalled();
+});
+
+it("inspects an unconfirmed group on a replacement channel", async () => {
+  const selected = [new File(["x"], "first.ARW"), new File(["y"], "second.ARW")];
+  const firstHash = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881";
+  const secondHash = "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa";
+  const original: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi.fn(async (files: File[]) => ({
       import_id: "first",
       groups: [[0], [1]],
       unsupported: [],
-      hashes: new Map([[files[1], "cached-hash"]]),
+      hashes: new Map([[files[1], secondHash]]),
     })),
-    uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress) => {
+    uploadPhotoGroup: vi.fn(async (_id, _group, _files, _signal, progress, hashes) => {
+      hashes[0] = firstHash;
       progress("uploading", { processed: 1, total: 1 });
       throw new UploadChannelError("Disconnected");
     }),
   };
   const replacement: PhotoImportTransport = {
-    planPhotoImport: vi
-      .fn()
-      .mockRejectedValueOnce(new Error("Planning failed"))
-      .mockResolvedValue({ import_id: "second", groups: [[0], [1]], unsupported: [] }),
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn().mockResolvedValue({
+      import_id: "first",
+      source_id: "source",
+      destination: "/",
+      groups: [
+        {
+          status: "committed",
+          files: [{ relative_path: selected[0].name, size: selected[0].size }],
+          hashes: [firstHash],
+          receipt: { status: "added", asset_id: "asset" },
+        },
+        {
+          status: "remaining",
+          files: [
+            { relative_path: selected[1].name, size: selected[1].size, expected_hash: secondHash },
+          ],
+        },
+      ],
+    }),
+    planPhotoImport: vi.fn(),
     uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "photo" }),
   };
   const view = render(PhotoImportDrawer, {
@@ -1537,30 +3234,31 @@ it("replans on a replacement channel and retains an unconfirmed group", async ()
     expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
   );
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: files().slice(0, 2) },
+    target: { files: selected },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Add 2 groups" }));
   await screen.findByText("Unconfirmed: 1");
   await view.rerender({ channel: replacement });
-  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
   await screen.findByText("Unconfirmed: 1");
+  expect(screen.getByRole("button", { name: "Add 1 group" })).toHaveProperty("disabled", false);
+  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
   expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
-  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
-  await screen.findByText("Planning failed");
-  expect(replacement.uploadPhotoGroup).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: "Add 1 group" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Imported earlier");
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
   expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
-    "second",
+    "first",
     1,
-    expect.anything(),
-    expect.anything(),
-    expect.anything(),
-    ["cached-hash"],
+    [selected[1]],
+    expect.any(AbortSignal),
+    expect.any(Function),
+    [secondHash],
   );
 });
 
 it("retains a selection when the channel changes during checkpoint save", async () => {
+  const selected = files()[0];
   const module = await import("./photoImportStorage.js");
   const actual = await vi.importActual<typeof module>("./photoImportStorage.js");
   vi.spyOn(module, "photoImportStorage").mockImplementation(actual.photoImportStorage);
@@ -1591,12 +3289,31 @@ it("retains a selection when the channel changes during checkpoint save", async 
     }),
   );
   const original: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "first", groups: [[0]], unsupported: [] }),
     uploadPhotoGroup: vi.fn(),
   };
   const replacement: PhotoImportTransport = {
+    registerPhotoImport: vi.fn(async (id: string) => id),
+    listPhotoImports: vi.fn(async () => []),
+    inspectPhotoImport: vi.fn(async () => ({
+      import_id: "first",
+      source_id: saved?.sourceID,
+      label: "Photos",
+      destination: "/",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+      groups: [
+        {
+          status: "remaining" as const,
+          files: [{ relative_path: selected.name, size: selected.size }],
+        },
+      ],
+    })),
     planPhotoImport: vi
       .fn()
       .mockResolvedValue({ import_id: "second", groups: [[0]], unsupported: [] }),
@@ -1614,7 +3331,7 @@ it("retains a selection when the channel changes during checkpoint save", async 
     expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
   );
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: [files()[0]] },
+    target: { files: [selected] },
   });
   await started;
   const sourceID = saved?.sourceID;
@@ -1622,13 +3339,16 @@ it("retains a selection when the channel changes during checkpoint save", async 
   releaseSave();
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
-  expect(replacement.planPhotoImport).toHaveBeenCalledWith(
-    expect.anything(),
-    "/",
-    sourceID,
-    expect.anything(),
-    expect.anything(),
-    expect.anything(),
+  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
+  expect(replacement.inspectPhotoImport).toHaveBeenCalledWith("first", expect.any(AbortSignal));
+  expect(vi.mocked(original.planPhotoImport).mock.calls[0][2]).toBe(sourceID);
+  expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+    "first",
+    0,
+    [selected],
+    expect.any(AbortSignal),
+    expect.any(Function),
+    expect.any(Array),
   );
   expect(screen.queryByText(/changed in another tab/)).toBeNull();
 });

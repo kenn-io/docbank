@@ -1078,6 +1078,7 @@ var metadataPristineStateTables = []string{
 	"media_source_versions", "media_occurrences", "media_input_artifacts", "media_operations",
 	"audit_baselines", "email_document_relations", "mailbox_chunks", "page_frames", "content_fts",
 	"export_plans",
+	"browser_photo_imports", "browser_photo_import_groups",
 }
 
 var pristineMetadataTables = pristineMetadataTableSum(metadataCodecs)

@@ -36,7 +36,7 @@ The daemon accepts up to 128 simultaneous photo event streams. When that limit i
 
 ## Add photos in the web app
 
-In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.
+In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. Keep the tab and **Add photos** open until it finishes. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.
 
 RAW, JPEG, and XMP files in the same folder with the same name form one photo. Videos stay separate. The drawer lists skipped files with their reasons, including unsupported types, invalid names or sizes, and duplicate relative paths. Each selection accepts up to 32,768 files, and its path-and-size declaration must fit the 8 MiB message limit.
 
@@ -44,21 +44,23 @@ The drawer reports additions, files already in the vault, ambiguous groups, and 
 
 Imported groups share one collection named `browser: Card` when you pick a folder named `Card`, or `browser: Choose files` for individual files. Reusing a filename with changed bytes creates a separate file node, including when a browser client reuses a saved source identity. The existing file keeps its content and current version. Existing pairing rules decide whether the new file joins the same photo or a separate photo; identical RAW, image, and video content still returns already in vault. A lone XMP stays an ordinary file and is added again when picked in a new selection.
 
-A lost receipt leaves the group unconfirmed. Reload the page, reopen **Add photos**, choose **Resume import**, and reselect the same files or folder. Docbank checks every file path, size, and modified time before uploading, then retains the original source identity so the folder's bursts stay together. Resume survives a local daemon restart in the browser profile that saved the import. A persistent cookie locates the selection digest saved privately in that vault; clearing cookies removes access to it. The daemon uses a random host beneath `.docbank.localhost` to scope that cookie. Its earlier host was already random for each daemon run.
+A lost receipt leaves the group unconfirmed. Choose **Inspect import** in the drawer. After reopening **Add photos**, **Resume import** uses the browser's shortcut to find its unfinished import when you reselect files. **Saved imports** lists registered imports independently of that shortcut: select one and choose **Inspect import**. If browser shortcut storage is unavailable, you can still import in the current session and use **Saved imports** to find registered imports later.
+
+The saved results show which groups were imported earlier and which remain. Reselect the files or folder, then choose **Resume remaining**. Docbank checks saved hashes when available, including for completed files in a reselected folder. An untouched file without a saved hash is checked by path, size, and modification time. Different bytes with the same metadata are accepted and become the group's content when it starts. Files reported as missing or changed cannot be resumed. Files outside the saved import need a separate import.
 
 **Choose folder** and **Choose files** start a new selection. When a directory contains a photo with the same bytes as an earlier browser import, its new siblings join that folder's burst groups and share stack decisions with those earlier photos, even if the matching file has a different name. Directories without a matching photo keep their own source. When a directory matches several earlier folders, its new photos keep the fresh selection identity automatically. Exact duplicates retain their earliest folder provenance. Each selected directory resolves independently.
 
-If an unfinished import is saved, Docbank asks before replacing it. Cancel keeps it available through Resume import. Saved imports from an unsupported format stay intact and require a compatible Docbank version to resume.
+Saved imports remain available after a daemon restart, including previews closed before upload and imports whose groups all completed. Abandoned previews remain in Saved imports. The original results record what happened during the import; later changes or deletion can change which files are currently available.
 
 Identical RAW, image, and video content returns as already in vault. Other files, including lone XMP sidecars, may be added again. Failed groups remain available through **Add N groups**.
 
-If cookies or checkpoint storage are unavailable, a notice lets you import for this session. Keep the tab open: this import cannot resume after closing it. Authentication failures, progress changed in another tab, and unsupported saved formats still block import and preserve the saved selection.
+Saved imports belong to this vault deployment. A logical restore or backup recovery does not transfer import handles. If an import handle is missing, its outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.
 
 The browser checks the 32,768-file and 8 MiB JSON declaration limits before asking to replace saved progress or reading photo content. Changing the destination checks the declaration again.
 
 Web imports run in the open tab. Control them in the drawer. **Stop after this group** finishes the current group before stopping the import.
 
-Keep the tab open until the import finishes. This also works when you sign in to hosted Docbank with an API key. For large camera cards already on the daemon's computer, use `docbank photos import`.
+Imports also work when you sign in to hosted Docbank with an API key. For large camera cards already on the daemon's computer, use `docbank photos import`.
 
 ## Record faces and people
 
