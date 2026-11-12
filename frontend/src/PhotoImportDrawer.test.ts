@@ -80,9 +80,15 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     groups: [
       {
         status: "committed" as const,
-        files: [{ relative_path: "done.JPG", size: 1 }],
-        hashes: ["a".repeat(64)],
-        receipt: { status: "ambiguous" as const, asset_id: "asset", reason: "multiple_raw" },
+        files: [
+          { relative_path: "done.ARW", size: 1 },
+          { relative_path: "done.DNG", size: 1 },
+        ],
+        hashes: [
+          "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa",
+        ],
+        receipt: { status: "ambiguous" as const, asset_id: "", reason: "multiple_raw" },
       },
       { status: "remaining" as const, files: [{ relative_path: "left.JPG", size: 1 }] },
     ],
@@ -110,7 +116,7 @@ it("inspects a saved import and resumes only its remaining group", async () => {
     target: { value: "saved-import" },
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
-  await screen.findByText("done.JPG");
+  await screen.findByText("done.ARW, done.DNG");
   expect(screen.getByText("In vault · Ambiguous")).toBeTruthy();
   expect(refresh).toHaveBeenCalledOnce();
   const replacement = {
@@ -235,16 +241,30 @@ it("refreshes a group committed between inspection and resume", async () => {
     destination: "/photos",
     created_at: "2026-01-01T00:00:00Z",
     group_count: 1,
-    groups: [{ status: "remaining" as const, files: [{ relative_path: "left.JPG", size: 1 }] }],
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [
+          { relative_path: "left.ARW", size: 1 },
+          { relative_path: "left.DNG", size: 1 },
+        ],
+      },
+    ],
   };
   const committed = {
     ...remaining,
     groups: [
       {
         status: "committed" as const,
-        files: [{ relative_path: "left.JPG", size: 1 }],
-        hashes: ["a".repeat(64)],
-        receipt: { status: "ambiguous" as const, asset_id: "asset", reason: "multiple_raw" },
+        files: [
+          { relative_path: "left.ARW", size: 1 },
+          { relative_path: "left.DNG", size: 1 },
+        ],
+        hashes: [
+          "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa",
+        ],
+        receipt: { status: "ambiguous" as const, asset_id: "", reason: "multiple_raw" },
       },
     ],
   };
@@ -270,7 +290,7 @@ it("refreshes a group committed between inspection and resume", async () => {
   });
   await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
   await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
-    target: { files: [new File(["x"], "left.JPG")] },
+    target: { files: [new File(["x"], "left.ARW"), new File(["y"], "left.DNG")] },
   });
   await fireEvent.click(await screen.findByRole("button", { name: "Resume remaining" }));
   await screen.findByText("Multiple RAW files share this name.");
