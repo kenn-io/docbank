@@ -97,8 +97,7 @@ identities. They do not require a hosted rendition provider.
 The daemon derives note structure from verified original bytes in the
 `derive:notes` background job. A live file qualifies when its MIME type is
 `text/markdown` or its name ends in `.md` or `.markdown`, ignoring suffix case.
-Readable notes contain at most 4 MiB. MIME-only notes qualify for reads; this
-does not grant permission to write their source files.
+Readable notes contain at most 4 MiB. MIME-only notes qualify for reads.
 
 The pure `document/notemarkdown` parser supplies frontmatter, headings and
 links with offsets into the original bytes. Its recipe identifies the parse
