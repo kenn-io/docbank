@@ -132,6 +132,12 @@ the start half of the restart. Bootstrap stderr is captured in a private
 transient file beside that external lock, included in a startup failure, and
 removed when the start attempt finishes.
 
+For a browser restart, the daemon launches a detached helper with hidden
+`--from-web` and optional `--open-web` flags. It passes its shutdown token in
+the helper's environment. Under the launch lock, the helper checks that token
+against the running daemon before stopping it, preserves its lifetime setting,
+and starts its replacement. The optional flag opens a fresh browser session.
+
 The listener closes before background tasks finish draining. During that
 interval, the process and runtime record remain live and the daemon still owns
 the vault lock, but ping cannot identify it.

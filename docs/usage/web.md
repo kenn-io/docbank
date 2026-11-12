@@ -1287,7 +1287,8 @@ Choose **Add → Upload folder** to upload a folder and its subfolders while pre
 
 The current web application does not compare versions,
 edit, revert, prune, move live nodes between folders, empty trash,
-enroll audit scopes, or run maintenance, backup creation, backup verification,
+enroll audit scopes, or run maintenance other than restarting an available daemon,
+backup creation, backup verification,
 general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 documents. Use an authenticated API client
 for larger or different bulk workflows.
