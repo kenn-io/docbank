@@ -9012,105 +9012,6 @@ func (c *Client) GetPeopleCoverage(ctx context.Context, reqEditors ...runtime.Re
 	return responseParser(ctx, resp)
 }
 
-// ListFaceCandidates Review suggested face groups
-func (c *Client) ListFaceCandidates(ctx context.Context, options *ListFaceCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListFaceCandidatesResponse, error) {
-	var err error
-
-	queryEncoding := map[string]runtime.QueryEncoding{
-		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
-		"offset": {Style: "form", Explode: &[]bool{false}[0]},
-	}
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/face-candidates",
-		Method:        "GET",
-		Options:       options,
-		QueryEncoding: queryEncoding,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*ListFaceCandidatesResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(ListFaceCandidatesResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "ListFaceCandidatesResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[ListFaceCandidatesErrorResponse](resp, "ListFaceCandidatesErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/face-candidates")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
-// DecideFaceCandidate Confirm or dismiss a suggested face group
-func (c *Client) DecideFaceCandidate(ctx context.Context, options *DecideFaceCandidateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideFaceCandidateResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/face-candidates/{candidate_id}/decision",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*DecideFaceCandidateResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(DecideFaceCandidateResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "DecideFaceCandidateResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[DecideFaceCandidateErrorResponse](resp, "DecideFaceCandidateErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/people/face-candidates/{candidate_id}/decision")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
 // RebuildDocumentPeople Start or replay person attribution rebuild
 func (c *Client) RebuildDocumentPeople(ctx context.Context, options *RebuildDocumentPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RebuildDocumentPeopleResponse, error) {
 	var err error
@@ -10147,7 +10048,6 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"face_id":   {Style: "form", Explode: &[]bool{false}[0]},
 		"person_id": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
@@ -12065,98 +11965,6 @@ func (c *Client) RevokeProcessingConsent(ctx context.Context, options *RevokePro
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/consents/revoke")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
-// PlanFaces Preview local face suggestions
-func (c *Client) PlanFaces(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PlanFacesResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/faces/plans",
-		Method:     "POST",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*PlanFacesResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(PlanFacesResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "PlanFacesResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[PlanFacesErrorResponse](resp, "PlanFacesErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/faces/plans")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
-// ApplyFaces Enable local face suggestions
-func (c *Client) ApplyFaces(ctx context.Context, options *ApplyFacesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyFacesResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/faces/setup",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*ApplyFacesResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(ApplyFacesResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "ApplyFacesResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[ApplyFacesErrorResponse](resp, "ApplyFacesErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/faces/setup")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -16372,6 +16180,57 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 	return responseParser(ctx, resp)
 }
 
+// GetVersionDates Read a version's date claims
+func (c *Client) GetVersionDates(ctx context.Context, options *GetVersionDatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVersionDatesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"disclosure": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/dates",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetVersionDatesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetVersionDatesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetVersionDatesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetVersionDatesErrorResponse](resp, "GetVersionDatesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/dates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PrepareOriginalDownload Issue a single-use original download URL valid for two minutes
 func (c *Client) PrepareOriginalDownload(ctx context.Context, options *PrepareOriginalDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareOriginalDownloadResponse, error) {
 	var err error
@@ -16607,6 +16466,57 @@ func (c *Client) GetEmailPart(ctx context.Context, options *GetEmailPartRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetVersionPeople Read a version's people
+func (c *Client) GetVersionPeople(ctx context.Context, options *GetVersionPeopleRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetVersionPeopleResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"disclosure": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/people",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetVersionPeopleResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetVersionPeopleResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetVersionPeopleResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetVersionPeopleErrorResponse](resp, "GetVersionPeopleErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/people")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -22618,79 +22528,6 @@ func (o *SplitPersonRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
-// ListFaceCandidatesRequestOptions is the options needed to make a request to ListFaceCandidates.
-type ListFaceCandidatesRequestOptions struct {
-	Query *ListFaceCandidatesQuery
-}
-
-// GetPathParams returns the path params as a map.
-func (o *ListFaceCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *ListFaceCandidatesRequestOptions) GetQuery() (map[string]any, error) {
-	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *ListFaceCandidatesRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *ListFaceCandidatesRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
-// DecideFaceCandidateRequestOptions is the options needed to make a request to DecideFaceCandidate.
-type DecideFaceCandidateRequestOptions struct {
-	PathParams *DecideFaceCandidatePath
-	Body       *DecideFaceCandidateBody
-	Header     *DecideFaceCandidateHeaders
-}
-
-// GetPathParams returns the path params as a map.
-func (o *DecideFaceCandidateRequestOptions) GetPathParams() (map[string]any, error) {
-	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetQuery returns the query params as a map.
-func (o *DecideFaceCandidateRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *DecideFaceCandidateRequestOptions) GetBody() any {
-	if o.Body == nil {
-		return nil
-	}
-	return o.Body
-}
-
-// GetHeader returns the headers as a map.
-func (o *DecideFaceCandidateRequestOptions) GetHeader() (map[string]string, error) {
-	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var headers map[string]string
-	err = json.Unmarshal(encoded, &headers)
-	return headers, err
-}
-
 // RebuildDocumentPeopleRequestOptions is the options needed to make a request to RebuildDocumentPeople.
 type RebuildDocumentPeopleRequestOptions struct {
 	Body *RebuildDocumentPeopleBody
@@ -24618,34 +24455,6 @@ func (o *RevokeProcessingConsentRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *RevokeProcessingConsentRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
-// ApplyFacesRequestOptions is the options needed to make a request to ApplyFaces.
-type ApplyFacesRequestOptions struct {
-	Body *ApplyFacesBody
-}
-
-// GetPathParams returns the path params as a map.
-func (o *ApplyFacesRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *ApplyFacesRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *ApplyFacesRequestOptions) GetBody() any {
-	if o.Body == nil {
-		return nil
-	}
-	return o.Body
-}
-
-// GetHeader returns the headers as a map.
-func (o *ApplyFacesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -27212,6 +27021,44 @@ func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, e
 	return headers, err
 }
 
+// GetVersionDatesRequestOptions is the options needed to make a request to GetVersionDates.
+type GetVersionDatesRequestOptions struct {
+	PathParams *GetVersionDatesPath
+	Query      *GetVersionDatesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetVersionDatesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetVersionDatesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetVersionDatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetVersionDatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // PrepareOriginalDownloadRequestOptions is the options needed to make a request to PrepareOriginalDownload.
 type PrepareOriginalDownloadRequestOptions struct {
 	PathParams *PrepareOriginalDownloadPath
@@ -27372,6 +27219,44 @@ func (o *GetEmailPartRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetEmailPartRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetVersionPeopleRequestOptions is the options needed to make a request to GetVersionPeople.
+type GetVersionPeopleRequestOptions struct {
+	PathParams *GetVersionPeoplePath
+	Query      *GetVersionPeopleQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetVersionPeopleRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetVersionPeopleRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetVersionPeopleRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetVersionPeopleRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -27671,12 +27556,26 @@ const (
 	ListSavedQueriesQueryKindQuery ListSavedQueriesQueryKind = "query"
 )
 
+type GetVersionDatesQueryDisclosure string
+
+const (
+	Full GetVersionDatesQueryDisclosure = "full"
+	Safe GetVersionDatesQueryDisclosure = "safe"
+)
+
 type GetEmailPartPathRole string
 
 const (
 	BodyUTF8       GetEmailPartPathRole = "body_utf8"
 	DecodedPayload GetEmailPartPathRole = "decoded_payload"
 	RawHeaders     GetEmailPartPathRole = "raw_headers"
+)
+
+type GetVersionPeopleQueryDisclosure string
+
+const (
+	GetVersionPeopleQueryDisclosureFull GetVersionPeopleQueryDisclosure = "full"
+	GetVersionPeopleQueryDisclosureSafe GetVersionPeopleQueryDisclosure = "safe"
 )
 
 type ShutdownDaemonHeaders struct {
@@ -27771,10 +27670,6 @@ type RetirePersonHeaders struct {
 
 type SplitPersonHeaders struct {
 	IfMatch string `json:"If-Match"`
-}
-
-type DecideFaceCandidateHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
 }
 
 type DeletePhotoAlbumHeaders struct {
@@ -28262,10 +28157,6 @@ type SplitPersonPath struct {
 	PersonID uuid.UUID `json:"person_id"`
 }
 
-type DecideFaceCandidatePath struct {
-	CandidateID uuid.UUID `json:"candidate_id"`
-}
-
 type GetPeopleRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
@@ -28513,6 +28404,10 @@ type GetContentVersionBytesPath struct {
 	VersionID string `json:"version_id"`
 }
 
+type GetVersionDatesPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+}
+
 type PrepareOriginalDownloadPath struct {
 	VersionID uuid.UUID `json:"version_id"`
 }
@@ -28535,6 +28430,10 @@ type GetEmailPartPath struct {
 	GenerationID string               `json:"generation_id"`
 	PartPath     string               `json:"part_path"`
 	Role         GetEmailPartPathRole `json:"role"`
+}
+
+type GetVersionPeoplePath struct {
+	VersionID uuid.UUID `json:"version_id"`
 }
 
 type ReadWorkspaceQueryPagePath struct {
@@ -28744,8 +28643,6 @@ type MergePersonBody = MergePersonRequest
 
 type SplitPersonBody = SplitPersonRequest
 
-type DecideFaceCandidateBody = FaceCandidateDecisionRequest
-
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
 
 type CreatePhotoAlbumBody = CreatePhotoAlbumRequest
@@ -28825,8 +28722,6 @@ type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
 type GrantProcessingConsentBody = ProcessingConsentRequest
 
 type RevokeProcessingConsentBody = ProcessingConsentRevocationRequest
-
-type ApplyFacesBody = FaceSetupApplyRequest
 
 type StartDocumentProcessingBody = StartProcessingRequest
 
@@ -29192,9 +29087,6 @@ type ListPeopleQuery struct {
 	// PhotoSummary Return only people with a visible photo, with Library photo counts and one readable card portrait. Include Hidden counts and allow a Hidden portrait while unlocked.
 	PhotoSummary *bool `json:"photo_summary,omitempty"`
 
-	// FaceID Rank people by similarity to this face
-	FaceID *uuid.UUID `json:"face_id,omitempty"`
-
 	// RecentFirst Rank name groups by their newest visible depicted evidence, then by name. Namesakes stay together.
 	RecentFirst *bool `json:"recent_first,omitempty"`
 }
@@ -29204,18 +29096,12 @@ type GetPersonQuery struct {
 	AssertionLimit  *int64     `json:"assertion_limit,omitempty"`
 }
 
-type ListFaceCandidatesQuery struct {
-	Limit  *int64 `json:"limit,omitempty"`
-	Offset *int64 `json:"offset,omitempty"`
-}
-
 type DetachPhotoFileQuery struct {
 	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
 }
 
 type ReadPhotoPreviewQuery struct {
 	PersonID *uuid.UUID `json:"person_id,omitempty"`
-	FaceID   *uuid.UUID `json:"face_id,omitempty"`
 }
 
 type GetPhotoCheckoutQuery struct {
@@ -29353,6 +29239,14 @@ type UploadFileQuery struct {
 
 	// Name Virtual filename; must equal the multipart filename
 	Name string `json:"name"`
+}
+
+type GetVersionDatesQuery struct {
+	Disclosure *GetVersionDatesQueryDisclosure `json:"disclosure,omitempty"`
+}
+
+type GetVersionPeopleQuery struct {
+	Disclosure *GetVersionPeopleQueryDisclosure `json:"disclosure,omitempty"`
 }
 
 type ChallengeDaemonResponse struct {
@@ -30228,14 +30122,6 @@ type GetPeopleCoverageResponse = api.PeopleCoverage
 
 type GetPeopleCoverageErrorResponse = Error
 
-type ListFaceCandidatesResponse = api.FaceCandidatePage
-
-type ListFaceCandidatesErrorResponse = Error
-
-type DecideFaceCandidateResponse = api.FaceCandidateDecisionResult
-
-type DecideFaceCandidateErrorResponse = Error
-
 type RebuildDocumentPeopleResponse = api.PeopleBuild
 
 type RebuildDocumentPeopleErrorResponse = Error
@@ -30485,14 +30371,6 @@ type GrantProcessingConsentErrorResponse = Error
 type RevokeProcessingConsentResponse = document.ProcessingConsentRevocationReceipt
 
 type RevokeProcessingConsentErrorResponse = Error
-
-type PlanFacesResponse = api.LocalTextPlan
-
-type PlanFacesErrorResponse = Error
-
-type ApplyFacesResponse = api.LocalTextPlan
-
-type ApplyFacesErrorResponse = Error
 
 type StartDocumentProcessingResponse = []byte
 
@@ -30978,6 +30856,10 @@ type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
 
+type GetVersionDatesResponse = api.VersionDates
+
+type GetVersionDatesErrorResponse = Error
+
 type PrepareOriginalDownloadResponse = api.OriginalDownloadTicket
 
 type PrepareOriginalDownloadErrorResponse = Error
@@ -30999,6 +30881,10 @@ type GetEmailMetadataGenerationErrorResponse = Error
 type GetEmailPartResponse = runtime.File
 
 type GetEmailPartErrorResponse = Error
+
+type GetVersionPeopleResponse = api.VersionPeople
+
+type GetVersionPeopleErrorResponse = Error
 
 type ListWatchedInboxesResponse = api.WatchedInboxList
 
@@ -31519,17 +31405,11 @@ type ExportJob = bundle.ExportJob
 
 type FaceBox = document.FaceBox
 
-type FaceCandidate = store.FaceCandidate
+type FactDiagnostic = api.FactDiagnostic
 
-type FaceCandidateDecisionRequest = api.FaceCandidateDecisionRequest
+type FactExternal = api.FactExternal
 
-type FaceCandidateDecisionResult = api.FaceCandidateDecisionResult
-
-type FaceCandidatePage = api.FaceCandidatePage
-
-type FaceSetupApplyRequest = api.FaceSetupApplyRequest
-
-type FaceSuggestionFace = store.FaceSuggestionFace
+type FactOpen = api.FactOpen
 
 type Filters = query.Filters
 
@@ -32737,9 +32617,23 @@ type VerifyProblem = api.VerifyProblem
 
 type VerifyReport = api.VerifyReport
 
+type VersionDateClaim = api.VersionDateClaim
+
+type VersionDatePrimary = api.VersionDatePrimary
+
+type VersionDates = api.VersionDates
+
+type VersionPeople = api.VersionPeople
+
+type VersionPersonAssertion = api.VersionPersonAssertion
+
+type VersionPersonEdge = api.VersionPersonEdge
+
 type VersionPruneReport = api.VersionPruneReport
 
 type VersionPruneRequest = api.VersionPruneRequest
+
+type VersionUnresolvedName = api.VersionUnresolvedName
 
 type VolumeLimits = bundle.VolumeLimits
 
@@ -32755,6 +32649,10 @@ type WebTabSession struct {
 	Token        string `json:"token"`
 	UploadSecret string `json:"upload_secret"`
 }
+
+type WhenPlacedBy = api.WhenPlacedBy
+
+type WhenV1 = api.WhenV1
 
 type WorkspaceFacetValue = api.WorkspaceFacetValue
 

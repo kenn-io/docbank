@@ -1,0 +1,6 @@
+{"state": "exact", "precision": "second",
+ "at": "2026-03-10T23:50:00Z", "end_at": "2026-03-11T00:20:00Z",
+ "local": "2026-03-10T23:50:00", "end_local": "2026-03-11T00:20:00",
+ "zone_state": "utc", "source_zone": "UTC", "source_offset_seconds": 0,
+ "placed_by": {"source": "sent", "rule": "msgvault-dating/v1", "fallback": false},
+ "day": "2026-03-10", "axis_minute": 1190}

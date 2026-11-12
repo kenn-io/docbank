@@ -1,0 +1,119 @@
+package api_test
+
+import (
+	"encoding/json/v2"
+	"fmt"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
+)
+
+func TestVersionFactsRoutesAndOpenLink(t *testing.T) {
+	for _, origin := range []string{"", "https://docs.example.test"} {
+		t.Run(origin, func(t *testing.T) {
+			ts, s := newTestServer(t, func(d *api.Deps) { d.Cfg.Web.PublicOrigin = origin })
+			node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
+			for _, kind := range []string{"dates", "people"} {
+				path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
+				res, body := get(t, ts, path, nil)
+				require.Equal(t, http.StatusOK, res.StatusCode, body)
+				var result map[string]any
+				require.NoError(t, json.Unmarshal([]byte(body), &result))
+				require.Equal(t, node.CurrentVersionID, result["content_version_id"])
+				if origin == "" {
+					require.NotContains(t, result, "open")
+				} else {
+					require.Equal(t, fmt.Sprintf("%s/#node=%d&version=%s", origin, node.ID, node.CurrentVersionID), result["open"].(map[string]any)["web"])
+				}
+				res, body = get(t, ts, "/api/v1/versions/00000000-0000-4000-8000-000000000000/"+kind, nil)
+				require.Equal(t, http.StatusNotFound, res.StatusCode, body)
+				require.Equal(t, "version_not_found", decodeProblem(t, body).Code)
+			}
+		})
+	}
+}
+
+func TestVersionFactsBrowserFullForbidden(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "sample.txt", "synthetic")
+	res, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, res.StatusCode, body)
+	var session struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &session))
+	for _, kind := range []string{"dates", "people"} {
+		path := fmt.Sprintf("/api/v1/versions/%s/%s", node.CurrentVersionID, kind)
+		headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session.Token}
+		res, body = get(t, ts, path, headers)
+		require.Equal(t, http.StatusOK, res.StatusCode, body)
+		res, body = get(t, ts, path+"?disclosure=full", headers)
+		require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+		require.Equal(t, "disclosure_forbidden", decodeProblem(t, body).Code)
+	}
+}
+
+func TestVersionPeopleSafeHidesBlindCopyAssertion(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node := createFileWithContent(t, ts, s, "mail.eml", "synthetic")
+	person, err := s.CreatePerson(t.Context(), "Blind Recipient", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(t.Context(), store.PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "blind_copy", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	path := fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID)
+	res, body := get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	require.NotContains(t, body, person.PersonID)
+	require.NotContains(t, body, "blind_copy")
+	res, body = get(t, ts, path+"?disclosure=full", nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	require.Contains(t, body, person.PersonID)
+	require.Contains(t, body, "blind_copy")
+}
+
+func TestVersionFactsPDFMetadata(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	node, err := s.CreateFile(t.Context(), s.RootID(), "report.pdf", testHash("pdf-facts"), 1, "application/pdf")
+	require.NoError(t, err)
+	dateField := func(key, source, raw, normalized string) document.SourceMetadataFieldV1 {
+		return document.SourceMetadataFieldV1{Key: key, Namespace: "pdf.info", SourceField: source, Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Normalized: normalized, Raw: raw, Precision: document.SourceMetadataPrecisionDate, Timezone: document.SourceMetadataTimezoneOmitted}}}
+	}
+	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{dateField("created", "CreationDate", "D:20260310", "2026-03-10"), dateField("modified", "ModDate", "D:20260311", "2026-03-11"), {Key: "creators", Namespace: "pdf.info", SourceField: "Author", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataStringList, Strings: []string{"J. PELLHAM"}}}}, Warnings: []document.SourceMetadataWarningV1{}}
+	raw, _, err := document.MarshalSourceMetadataV1(metadata)
+	require.NoError(t, err)
+	_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("extractor"), raw)
+	require.NoError(t, err)
+	targets, err := s.MissingDocumentEventTargetsAfter(t.Context(), store.DocumentEventsDeriverFingerprint, "", 100)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	evidence, err := s.LoadDocumentEventEvidence(t.Context(), targets[0])
+	require.NoError(t, err)
+	record, _, err := processing.DeriveDocumentEvents(evidence)
+	require.NoError(t, err)
+	eventJSON, _, err := document.MarshalDocumentEventsV1(record)
+	require.NoError(t, err)
+	_, err = s.PublishDocumentEvents(t.Context(), targets[0], store.DocumentEventsDeriverFingerprint, evidence.InputsSHA256, eventJSON)
+	require.NoError(t, err)
+	_, err = s.PrepareDocumentPeopleInputs(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	res, body := get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	var dates api.VersionDates
+	require.NoError(t, json.Unmarshal([]byte(body), &dates))
+	require.Equal(t, "published", dates.State)
+	require.Equal(t, "created_date", dates.Primary.Reason)
+	kinds := map[document.DateKind]bool{}
+	for _, claim := range dates.Claims {
+		kinds[claim.DateKind] = true
+	}
+	require.True(t, kinds["created"])
+	require.True(t, kinds["modified"])
+	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	require.Contains(t, body, "J. PELLHAM")
+}

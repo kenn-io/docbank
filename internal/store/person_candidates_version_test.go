@@ -6,8 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenCandidatesForVersionScopesOccurrences(t *testing.T) {
-	s := newTestStore(t)
+func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
+	s := newStore(t)
 	_, first := seedPeopleVersion(t, s)
 	_, second := seedPeopleVersion(t, s)
 	candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", "", []PersonCandidateOccurrence{
