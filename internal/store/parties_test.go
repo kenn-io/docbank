@@ -306,7 +306,7 @@ func checkPartyRevisionExhaustion(t *testing.T, postgres bool) {
 				require.NoError(t, err)
 				assert.Equal(t, int64(math.MaxInt64), got.Revision)
 			} else {
-				assert.Error(t, err)
+				require.Error(t, err)
 				got, getErr := s.GetParty(ctx, party.PartyID)
 				if assert.NoError(t, getErr) {
 					assert.Equal(t, before, got)
