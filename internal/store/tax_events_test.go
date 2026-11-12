@@ -226,13 +226,21 @@ func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.VoidTaxEvent(ctx, r.RecordID, m.Event.EventID, m.Record.Revision, "correction")
 	require.NoError(t, err)
-	var data bytes.Buffer
+	var data, backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &data))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(data.Bytes())))
-	var restored bytes.Buffer
-	require.NoError(t, target.ExportMetadata(ctx, &restored))
-	assert.Equal(t, data.String(), restored.String())
+	snap, err := s.BeginMetadataSnapshot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, snap.ExportBackup(ctx, &backup))
+	require.NoError(t, snap.Close())
+	for _, raw := range [][]byte{data.Bytes(), backup.Bytes()} {
+		target := newTestStore(t)
+		require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(raw)))
+		detail, err := target.GetTaxRecordDetail(ctx, r.RecordID)
+		require.NoError(t, err)
+		require.Len(t, detail.Events, 1)
+		assert.Equal(t, "payment", detail.Events[0].Kind)
+		assert.NotNil(t, detail.Events[0].VoidedAt)
+	}
 	for _, replacement := range []struct{ old, new string }{
 		{`"amount_minor":1234`, `"amount_minor":0`}, {`"amount_minor":1234,"currency":"USD"`, `"amount_minor":1234,"currency":""`}, {`"sets_state":""`, `"sets_state":"filed"`},
 	} {
