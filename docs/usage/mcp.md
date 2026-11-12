@@ -44,7 +44,7 @@ See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) and
 
 The snippet uses Docbank's absolute launch path, preserving package-manager
 symlinks, and the selected vault's canonical `DOCBANK_HOME`.
-All six `--allow-*` flags carry through to
+The `--allow-*` flags carry through to
 stdio arguments. Printing creates no vault, starts no daemon, and leaves
 client files untouched. Your client must support MCP `2026-07-28` and
 `server/discover`; configuration alone cannot add protocol support.

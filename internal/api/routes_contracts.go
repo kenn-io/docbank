@@ -194,6 +194,9 @@ func (p *PatchContractRequest) UnmarshalJSON(raw []byte) error {
 	}
 	*p = PatchContractRequest(f)
 	p.present = m
+	p.ClearStarts = string(m["starts_on"]) == "null"
+	p.ClearExpires = string(m["expires_on"]) == "null"
+	p.ClearSigned = string(m["signed_on"]) == "null"
 	return nil
 }
 func (p PatchContractRequest) MarshalJSON() ([]byte, error) {

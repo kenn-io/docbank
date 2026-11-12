@@ -50,7 +50,8 @@ func TestContractMCPCatalogOptIn(t *testing.T) {
 }
 
 func TestContractMCPPatchPreservesNull(t *testing.T) {
-	patch, err := decodeContractPatch([]byte(`{"starts_on":null,"expires_on":"2026-12-01","summary":""}`))
+	var patch api.PatchContractRequest
+	err := json.Unmarshal([]byte(`{"starts_on":null,"expires_on":"2026-12-01","summary":""}`), &patch)
 	require.NoError(t, err)
 	encoded, err := json.Marshal(patch)
 	require.NoError(t, err)
@@ -392,7 +393,7 @@ func TestContractMCPGetContractTooLargeWire(t *testing.T) {
 	assert.Equal(t, true, result["isError"])
 	detail := objectField(t, result, "structuredContent")
 	assert.Equal(t, "contract_result_too_large", detail["code"])
-	assert.Equal(t, "The contract result exceeds the MCP response limit; reduce the list limit or inspect this contract with the CLI or HTTP API.", detail["message"])
+	assert.Equal(t, "The contract result exceeds the MCP response limit; use the CLI or HTTP API to inspect it.", detail["message"])
 	assert.NotContains(t, string(wire), hash)
 	assert.NotContains(t, string(wire), `"documents"`)
 	assert.NotContains(t, string(wire), id)

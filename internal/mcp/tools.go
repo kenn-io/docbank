@@ -617,7 +617,7 @@ func domainErrorMessage(code string) string {
 	case "contract_outcome_unknown":
 		return "The contract write may have completed. Read the contract before retrying; for creation, list and inspect possible matches first. Do not retry blindly."
 	case "contract_result_too_large":
-		return "The contract result exceeds the MCP response limit; reduce the list limit or inspect this contract with the CLI or HTTP API."
+		return "The contract result exceeds the MCP response limit; use the CLI or HTTP API to inspect it."
 	case "invalid_contract", "party_not_own", "party_retired", "not_file":
 		return "Check the contract values and selected party or document identities."
 	case "download_selection_stale":

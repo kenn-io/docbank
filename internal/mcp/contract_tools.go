@@ -145,20 +145,6 @@ func getContract(ctx context.Context, lease *daemonLease, raw []byte) (contractD
 	out := contractDetail(c)
 	return out, contractResultFits(out)
 }
-func decodeContractPatch(raw jsontext.Value) (api.PatchContractRequest, error) {
-	var patch api.PatchContractRequest
-	if err := json.Unmarshal(raw, &patch); err != nil {
-		return patch, err
-	}
-	var fields map[string]jsontext.Value
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return patch, err
-	}
-	patch.ClearStarts = string(fields["starts_on"]) == "null"
-	patch.ClearExpires = string(fields["expires_on"]) == "null"
-	patch.ClearSigned = string(fields["signed_on"]) == "null"
-	return patch, nil
-}
 func contractWriteTool(name string) bool {
 	return name == "create_contract" || name == "update_contract" || name == "link_contract_document"
 }
@@ -169,11 +155,7 @@ func contractWriteToolHandler(lease *daemonLease, name string, validator *jsonsc
 		}
 		result, err := executeContractWriteTool(ctx, lease, name, validator, request.Params.Arguments)
 		if err != nil {
-			logOperationError(logger, name, err)
-			if domain, ok := domainToolError(err); ok {
-				return domain, nil
-			}
-			return nil, sanitizedRPCError(err)
+			return readToolFailure(logger, name, err)
 		}
 		return result, nil
 	}
@@ -198,7 +180,7 @@ func executeContractWriteTool(ctx context.Context, lease *daemonLease, name stri
 		}
 		if err = decodeReadArguments(raw, &in); err == nil {
 			var patch api.PatchContractRequest
-			patch, err = decodeContractPatch(in.Patch)
+			err = json.Unmarshal(in.Patch, &patch)
 			if err == nil {
 				c, err = daemonProcessingStart(ctx, lease, func(conn *daemonconn.Connection) (api.Contract, error) {
 					return conn.UpdateContract(ctx, in.ContractID, in.Revision, patch)
