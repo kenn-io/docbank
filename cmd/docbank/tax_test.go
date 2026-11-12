@@ -35,6 +35,16 @@ func TestTaxCLIAccountWorkflow(t *testing.T) {
 	out, err = runCLI(t, "tax", "account", "edit", account.AccountID, "--lead-days", "0", "--json")
 	require.NoError(t, err, out)
 	assert.NotContains(t, out, "synthetic12345")
+	out, err = runCLI(t, "tax", "account", "edit", account.AccountID, "--note", "private-synthetic-note", "--revision", "1", "--json")
+	require.Error(t, err)
+	assert.NotContains(t, out, "private-synthetic-note")
+	assert.NotContains(t, err.Error(), "private-synthetic-note")
+	out, err = runCLI(t, "tax", "account", "retire", account.AccountID, "--json")
+	require.NoError(t, err, out)
+	out, err = runCLI(t, "tax", "account", "list", "--include-retired", "--json")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, account.AccountID)
+	assert.NotContains(t, out, "synthetic12345")
 }
 
 func TestTaxCLIFlagErrorsArePrivate(t *testing.T) {
