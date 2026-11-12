@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
@@ -15,6 +16,34 @@ func TestContractDocumentRoutes(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	n := createFileWithContent(t, ts, s, "/contract.txt", "synthetic agreement")
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		for _, query := range []string{"%ZZ", "%ZZ&content_version_id=" + n.CurrentVersionID} {
+			t.Run(method+"/"+query, func(t *testing.T) {
+				resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Malformed query"})
+				require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+				var contract api.Contract
+				require.NoError(t, json.Unmarshal([]byte(body), &contract))
+				path := fmt.Sprintf("/api/v1/contracts/%s/documents/%d?role=signed", contract.ContractID, n.ID)
+				revision := 1
+				if method == http.MethodDelete {
+					resp, body = do(t, ts, http.MethodPut, path, map[string]string{"If-Match": `"1"`}, nil)
+					require.Equal(t, http.StatusOK, resp.StatusCode, body)
+					revision = 2
+				}
+				resp, body = do(t, ts, method, path+"&content_version_id="+query, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, revision)}, nil)
+				assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+				resp, body = get(t, ts, "/api/v1/contracts/"+contract.ContractID, nil)
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				require.NoError(t, json.Unmarshal([]byte(body), &contract))
+				assert.EqualValues(t, revision, contract.Revision)
+				if method == http.MethodDelete {
+					assert.Len(t, contract.Documents, 1)
+				} else {
+					assert.Empty(t, contract.Documents)
+				}
+			})
+		}
+	}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var c api.Contract

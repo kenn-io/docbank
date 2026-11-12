@@ -2,7 +2,10 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
+	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +13,69 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func checkContractDocumentNodeHighWater(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	ctx := t.Context()
+	s := open(t)
+	n, err := s.CreateFile(ctx, s.RootID(), "retained.txt", fakeHash("f1"), 2, "text/plain")
+	require.NoError(t, err)
+	c, err := s.CreateContract(ctx, ContractInput{Title: "Retained"})
+	require.NoError(t, err)
+	_, err = s.LinkContractDocument(ctx, c.ContractID, c.Revision, n.ID, "signed", "")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, n.ID, n.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	valid := newTestStore(t)
+	require.NoError(t, valid.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	got, err := valid.GetContract(ctx, c.ContractID, "2024-01-01")
+	require.NoError(t, err)
+	require.Len(t, got.Documents, 1)
+	assert.Equal(t, n.ID, got.Documents[0].NodeID)
+	assert.False(t, got.Documents[0].Available)
+
+	lines := strings.Split(exported.String(), "\n")
+	var header metadataHeader
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &header))
+	require.GreaterOrEqual(t, header.NodeSequence, n.ID)
+	changed := false
+	for i, line := range lines {
+		if strings.Contains(line, `"type":"contract_document"`) {
+			old := fmt.Sprintf(`"node_id":%d,`, n.ID)
+			require.Contains(t, line, old)
+			lines[i] = strings.Replace(line, old, fmt.Sprintf(`"node_id":%d,`, header.NodeSequence+1), 1)
+			changed = true
+		}
+	}
+	require.True(t, changed)
+	if s.postgresSchema != "" {
+		var validationErr error
+		rollback := errors.New("rollback corrupted fixture")
+		err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE contract_documents SET node_id=$1 WHERE contract_id=$2`, header.NodeSequence+1, c.ContractID); err != nil {
+				return err
+			}
+			validationErr = s.validateMetadataState(ctx, tx, header.NodeSequence)
+			return rollback
+		})
+		require.ErrorIs(t, err, rollback)
+		assert.Error(t, validationErr, "retained node ID must not exceed the allocation high-water mark")
+		got, err := s.GetContract(ctx, c.ContractID, "2024-01-01")
+		require.NoError(t, err)
+		require.Len(t, got.Documents, 1)
+		assert.Equal(t, n.ID, got.Documents[0].NodeID)
+		return
+	}
+	target := newTestStore(t)
+	err = target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
+	assert.Error(t, err, "retained node ID must not exceed the allocation high-water mark")
+	_, err = target.GetContract(ctx, c.ContractID, "2024-01-01")
+	assert.ErrorIs(t, err, ErrNotFound, "rejected import must leave no contract authority")
+}
 
 func checkContractDocumentLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
