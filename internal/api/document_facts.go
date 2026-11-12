@@ -155,7 +155,6 @@ type VersionUnresolvedName struct {
 }
 type VersionPeople struct {
 	ContentVersionID string                   `json:"content_version_id"`
-	NodeID           int64                    `json:"node_id"`
 	State            string                   `json:"state"`
 	Edges            []VersionPersonEdge      `json:"edges"`
 	Assertions       []VersionPersonAssertion `json:"assertions"`
