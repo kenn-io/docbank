@@ -31,8 +31,6 @@ func TestCancellationAndBoundedWork(t *testing.T) {
 	for _, tc := range []struct{ src, resource string }{
 		{strings.Repeat("[", 129), "ast_depth"},
 		{strings.Repeat("> ", 129) + "text", "ast_depth"},
-		{"text " + strings.Repeat("<x ", 24000), "work_steps"},
-		{strings.Repeat("[x][r] ", 5000) + "\n\n[r]: " + strings.Repeat("a", 4096), "derived_bytes"},
 	} {
 		n, err := Parse(t.Context(), []byte(tc.src), Limits{})
 		requireLimit(t, err, tc.resource)

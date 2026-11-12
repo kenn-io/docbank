@@ -245,9 +245,6 @@ func (s *linkScanner) destination(start, end int) (Span, int, bool, error) {
 				}
 				depth--
 			}
-			if c == '<' {
-				return Span{}, 0, false, nil
-			}
 		}
 		i++
 	}

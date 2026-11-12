@@ -24,8 +24,18 @@ func TestOrderedListInterruptionContainerBoundaries(t *testing.T) {
 	} {
 		n, err := Parse(t.Context(), []byte(src), Limits{})
 		require.NoError(t, err)
+		require.Empty(t, n.Links)
+	}
+	// Within the same parent, an ordered start other than 1 cannot interrupt.
+	for _, src := range []string{
+		"> [first\n> 2. last](next.md)\n",
+		"- [first\n  2. last](next.md)\n",
+	} {
+		n, err := Parse(t.Context(), []byte(src), Limits{})
+		require.NoError(t, err)
 		require.Equal(t, []string{"next.md"}, linkTargets(n.Links))
-		require.Equal(t, "[first\n2. last](next.md)", src[linkSpan(n.Links[0]).Start:linkSpan(n.Links[0]).End])
+		require.Equal(t, src[2:len(src)-1], n.Links[0].Raw)
+		require.Equal(t, n.Links[0].Raw, src[n.Links[0].Start:n.Links[0].End])
 	}
 	// Subsequent numbers in an existing ordered list start sibling items,
 	// so an unfinished label must not join across the item boundary.

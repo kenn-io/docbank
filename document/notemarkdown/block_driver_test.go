@@ -6,7 +6,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
 	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 type blockSourceSnapshot struct {
@@ -37,6 +39,15 @@ func snapshotBlocks(n ast.Node) blockSourceSnapshot {
 	return s
 }
 
+func newGoldmarkBlockParser(parsers []parser.BlockParser, transformer parser.ParagraphTransformer) parser.Parser {
+	priorities := make([]util.PrioritizedValue[parser.BlockParser], 0, len(parsers))
+	for i, bp := range parsers {
+		priorities = append(priorities, util.Prioritized(bp, (i+1)*100))
+	}
+	return parser.New(parser.WithDefaultParsers(false), parser.WithBlockParsers(priorities...),
+		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](transformer, 100)))
+}
+
 func TestBlockDriverMatchesGoldmarkBlockSources(t *testing.T) {
 	fixtures := []struct {
 		name string
@@ -49,6 +60,21 @@ func TestBlockDriverMatchesGoldmarkBlockSources(t *testing.T) {
 		{"indented and fenced code source-less nodes", "    indented\n\n```go\n\nbody\n```\n\n# heading\n"},
 		{"html block interruption", "paragraph\n<div>\nraw\n</div>\n\n> quote\n"},
 		{"ATX markers trimming and disabled attributes", "#\n### \n# ###\n# text   ### \t\n####### rejected\n#no space\n\n# {#literal}\n"},
+		{"ordered start exits quote", "> [first\n2. last](next.md)\n"},
+		{"ordered start stays in quote", "> [first\n> 2. last](next.md)\n"},
+		{"ordered start exits bullet", "- [first\n2. last](next.md)\n"},
+		{"ordered start stays in bullet", "- [first\n  2. last](next.md)\n"},
+		{"root tab residual code", "-\t  [hidden](bad.md)\n"},
+		{"nested tab residual paragraph", ">  -\t  [hidden](bad.md)\n"},
+		{"reference paragraph before HTML", "[r]: n.md\n<span>\n[x](ghost.md)\n"},
+		{"reference blank before HTML", "[r]: n.md\n\n<span>\n[x](ghost.md)\n"},
+		{"reference paragraph before code", "[r]: n.md\n  \t[x](ghost.md)\n"},
+		{"reference blank before code", "[r]: n.md\n\n  \t[x](ghost.md)\n"},
+		{"reference prefix before Setext", "[r]: n.md\n2. item\nSetext\n=====\n"},
+		{"lazy quote Setext parent", "> [r]: n.md\nHeading\n===\n"},
+		{"root Setext after quote", "> [r]: n.md\n\nHeading\n===\n"},
+		{"uppercase declaration block", "<!DOCTYPE html\n\n[x](hidden.md)\n>\n"},
+		{"lowercase declaration paragraph", "<!doctype html\n\n[x](shown.md)\n>\n"},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {

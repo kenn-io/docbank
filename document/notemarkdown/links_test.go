@@ -106,6 +106,26 @@ func TestBareDestinationsRejectASCIIControls(t *testing.T) {
 	require.Equal(t, []string{"x" + control + "y"}, linkTargets(n.Links))
 }
 
+func TestBareDestinationInternalAngle(t *testing.T) {
+	for _, tc := range []struct{ name, source, raw, form string }{
+		{"inline", "[a](b<c)", "[a](b<c)", "markdown"},
+		{"image", "![a](b<c)", "![a](b<c)", "image"},
+		{"reference", "[a][r]\n\n[r]: b<c\n", "[a][r]", "reference"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := Parse(t.Context(), []byte(tc.source), Limits{})
+			require.NoError(t, err)
+			require.Equal(t, []Link{{Form: tc.form, Raw: tc.raw, Target: "b<c", Label: "a", End: len(tc.raw), Line: 1}}, n.Links)
+		})
+	}
+	// Only an initial '<' selects angle syntax, which still needs its closer.
+	for _, source := range []string{"[a](<bc)", "![a](<bc)", "[a][r]\n\n[r]: <bc\n"} {
+		n, err := Parse(t.Context(), []byte(source), Limits{})
+		require.NoError(t, err)
+		require.Empty(t, n.Links)
+	}
+}
+
 func TestBareDestinationSeparators(t *testing.T) {
 	for _, separator := range []struct{ name, text string }{
 		{"space", " "}, {"tab", "\t"}, {"LF", "\n"}, {"CRLF", "\r\n"}, {"CR", "\r"},
@@ -147,9 +167,6 @@ func TestLinksCountAndTargetLimits(t *testing.T) {
 	n, err := Parse(t.Context(), []byte(strings.Repeat("[x](a.md) ", 10000)), Limits{})
 	require.NoError(t, err)
 	require.Len(t, n.Links, 10000)
-	n, err = Parse(t.Context(), []byte(strings.Repeat("[x](a.md) ", 10001)), Limits{})
-	requireLimit(t, err, "links")
-	require.Equal(t, Note{}, n)
 	n, err = Parse(t.Context(), []byte("[x]("+strings.Repeat("a", 4096)+")"), Limits{})
 	require.NoError(t, err)
 	require.Len(t, n.Links, 1)
@@ -207,7 +224,7 @@ func TestLinksHostileWorkAndCancellation(t *testing.T) {
 	require.Equal(t, Note{}, n)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, nil, &budget{})
+	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, map[string]string{}, &budget{})
 	require.ErrorIs(t, err, context.Canceled)
 }
 

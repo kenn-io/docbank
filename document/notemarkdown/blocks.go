@@ -8,7 +8,6 @@ import (
 	"github.com/yuin/goldmark/v2/ast"
 	"github.com/yuin/goldmark/v2/parser"
 	"github.com/yuin/goldmark/v2/text"
-	"github.com/yuin/goldmark/v2/util"
 )
 
 type sourceBlock struct {
@@ -152,15 +151,6 @@ func newBlockParserSet(ctx context.Context, b *budget, ends map[ast.Node]int) []
 		guarded = append(guarded, &blockGuard{BlockParser: bp, ctx: ctx, b: b, ends: ends, kind: blockParserKind(i)})
 	}
 	return guarded
-}
-
-func newGoldmarkBlockParser(parsers []parser.BlockParser, transformer parser.ParagraphTransformer) parser.Parser {
-	priorities := make([]util.PrioritizedValue[parser.BlockParser], 0, len(parsers))
-	for i, bp := range parsers {
-		priorities = append(priorities, util.Prioritized(bp, (i+1)*100))
-	}
-	return parser.New(parser.WithDefaultParsers(false), parser.WithBlockParsers(priorities...),
-		parser.WithParagraphTransformers(util.Prioritized[parser.ParagraphTransformer](transformer, 100)))
 }
 
 // scanBlocks builds one compact inline view from Goldmark's eligible blocks.

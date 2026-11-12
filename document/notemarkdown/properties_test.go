@@ -14,12 +14,23 @@ import (
 func TestPropertyParseDeterministicImmutableAndBounded(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		src := hegel.Draw(ht, hegel.Binary(0, 1024))
+		structured := hegel.Draw(ht, hegel.SampledFrom([]bool{false, true}))
+		if structured {
+			label := strings.Repeat(hegel.Draw(ht, hegel.SampledFrom([]string{"a", "é", "星"})), hegel.Draw(ht, hegel.Integers[int](1, 32)))
+			eol := hegel.Draw(ht, hegel.SampledFrom([]string{"\n", "\r\n", "\r"}))
+			src = []byte("# " + label + eol + eol + "[" + label + "](note.md)" + eol)
+		}
 		before := bytes.Clone(src)
 		a, ea := Parse(ht.Context(), src, Limits{})
 		b, eb := Parse(ht.Context(), src, Limits{})
 		require.Equal(ht, fmt.Sprint(ea), fmt.Sprint(eb))
 		require.Equal(ht, a, b)
 		require.Equal(ht, before, src)
+		if structured {
+			require.NoError(ht, ea)
+			require.Len(ht, a.Headings, 1)
+			require.Len(ht, a.Links, 1)
+		}
 		if ea != nil {
 			require.Equal(ht, Note{}, a)
 			return

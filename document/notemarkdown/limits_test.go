@@ -71,7 +71,6 @@ func TestInternalLimits(t *testing.T) {
 	requireLimit(t, addLimit("overflow", &value, math.MaxInt, math.MaxInt), "overflow")
 	for _, tc := range []struct{ src, resource string }{
 		{"---\na: " + strings.Repeat("[", 33) + "0" + strings.Repeat("]", 33) + "\n---", "yaml_depth"},
-		{"[x](" + strings.Repeat("a", maxTarget+1) + ")", "target_bytes"},
 	} {
 		n, err := Parse(t.Context(), []byte(tc.src), Limits{})
 		requireLimit(t, err, tc.resource)

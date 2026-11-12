@@ -92,7 +92,8 @@ func TestHTMLAndQuoteLinkBoundaries(t *testing.T) {
 		{"type6 closing tag", "</div> text\n[hidden](bad.md)\n\n[shown](good.md)\n"},
 		{"source is not type6", "paragraph\n<source>\n[shown](good.md)\n"},
 		{"search is type6", "paragraph\n<search>text\n[hidden](bad.md)\n\n[shown](good.md)\n"},
-		{"type4 ignores blank until terminator", "<!doctype html\n\n[hidden](bad.md)\n>\n[shown](good.md)\n"},
+		// Pin Goldmark v2.1.13 behavior: only uppercase initials open type 4.
+		{"type4 ignores blank until terminator", "<!DOCTYPE html\n\n[hidden](bad.md)\n>\n[shown](good.md)\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n, err := Parse(t.Context(), []byte(tc.source), Limits{})
@@ -100,4 +101,9 @@ func TestHTMLAndQuoteLinkBoundaries(t *testing.T) {
 			require.Equal(t, []string{"good.md"}, linkTargets(n.Links))
 		})
 	}
+	t.Run("lowercase declaration is not type4", func(t *testing.T) {
+		n, err := Parse(t.Context(), []byte("<!doctype html\n\n[hidden](bad.md)\n>\n[shown](good.md)\n"), Limits{})
+		require.NoError(t, err)
+		require.Equal(t, []string{"bad.md", "good.md"}, linkTargets(n.Links))
+	})
 }
