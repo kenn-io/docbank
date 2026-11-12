@@ -16149,7 +16149,7 @@ func (c *Client) AdvanceTaxRecord(ctx context.Context, options *AdvanceTaxRecord
 	return responseParser(ctx, resp)
 }
 
-// AddTaxEvent Add a tax record note
+// AddTaxEvent Add a tax record event
 func (c *Client) AddTaxEvent(ctx context.Context, options *AddTaxEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddTaxEventResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -33873,6 +33873,8 @@ type TaggedNodePage = api.TaggedNodePage
 type TaxAccount = api.TaxAccount
 
 type TaxAccountPage = api.TaxAccountPage
+
+type TaxBalance = api.TaxBalance
 
 type TaxEvent = api.TaxEvent
 

@@ -36,10 +36,26 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export type AddTaxEventRequestKind = typeof AddTaxEventRequestKind[keyof typeof AddTaxEventRequestKind];
+
+
+export const AddTaxEventRequestKind = {
+  note: 'note',
+  payment: 'payment',
+  refund: 'refund',
+} as const;
+
 export interface AddTaxEventRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  kind: string;
+  /**
+     * @maxLength 32
+     * @nullable
+     */
+  amount?: string | null;
+  /** @maxLength 3 */
+  currency?: string;
+  kind: AddTaxEventRequestKind;
   /** @maxLength 8192 */
   note?: string;
   /** @maxLength 10 */
@@ -9176,6 +9192,13 @@ export interface TaxAccountPage {
   offset: number;
 }
 
+export interface TaxBalance {
+  currency: string;
+  other_currency_events: number;
+  /** @nullable */
+  outstanding_minor: number | null;
+}
+
 export interface TaxEvent {
   /** @nullable */
   amount_minor: number | null;
@@ -9255,6 +9278,7 @@ export interface TaxRecordDetail {
   amount_minor: number | null;
   /** @nullable */
   authority_party_id: string | null;
+  balance: TaxBalance;
   country: string;
   created_at: string;
   currency: string;
@@ -22916,7 +22940,7 @@ export const getAddTaxEventUrl = (recordId: string,) => {
 }
 
 /**
- * @summary Add a tax record note
+ * @summary Add a tax record event
  */
 export const addTaxEvent = async (recordId: string,
     addTaxEventRequest: NonReadonly<AddTaxEventRequest>,

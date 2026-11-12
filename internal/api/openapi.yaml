@@ -10,7 +10,19 @@ components:
           format: uri
           readOnly: true
           type: string
+        amount:
+          maxLength: 32
+          type:
+            - string
+            - "null"
+        currency:
+          maxLength: 3
+          type: string
         kind:
+          enum:
+            - note
+            - payment
+            - refund
           type: string
         note:
           maxLength: 8192
@@ -21693,6 +21705,28 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TaxBalance:
+      additionalProperties: false
+      properties:
+        currency:
+          type: string
+        other_currency_events:
+          format: int64
+          type: integer
+        outstanding_minor:
+          format: int64
+          type:
+            - integer
+            - "null"
+      required:
+        - outstanding_minor
+        - currency
+        - other_currency_events
+      type: object
+      x-go-type: api.TaxBalance
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     TaxEvent:
       additionalProperties: false
       properties:
@@ -21923,6 +21957,8 @@ components:
           type:
             - string
             - "null"
+        balance:
+          $ref: "#/components/schemas/TaxBalance"
         country:
           type: string
         created_at:
@@ -22001,6 +22037,7 @@ components:
             - "null"
       required:
         - events
+        - balance
         - record_id
         - account_id
         - filer_party_id
@@ -34616,7 +34653,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Add a tax record note
+      summary: Add a tax record event
   /api/v1/tax/records/{record_id}/events/{event_id}/void:
     post:
       operationId: voidTaxEvent
