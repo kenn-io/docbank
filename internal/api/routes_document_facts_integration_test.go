@@ -127,7 +127,20 @@ func TestVersionFactsPDFMetadata(t *testing.T) {
 	require.True(t, kinds["modified"])
 	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/people", node.CurrentVersionID), nil)
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	require.Contains(t, body, "J. PELLHAM")
+	var people api.VersionPeople
+	require.NoError(t, json.Unmarshal([]byte(body), &people))
+	require.Len(t, people.Unresolved, 1)
+	require.Equal(t, "J. PELLHAM", people.Unresolved[0].RawLabel)
+	require.Equal(t, "author", people.Unresolved[0].Role)
+	_, err = s.StartDocumentEventRebuild(t.Context(), "00000000-0000-4000-8000-000000000001", store.DocumentEventRebuildRequestSHA256)
+	require.NoError(t, err)
+	res, body = get(t, ts, fmt.Sprintf("/api/v1/versions/%s/dates", node.CurrentVersionID), nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	dates = api.VersionDates{}
+	require.NoError(t, json.Unmarshal([]byte(body), &dates))
+	require.Equal(t, "pending", dates.State)
+	require.Empty(t, dates.Claims)
+	require.Nil(t, dates.Primary)
 }
 
 func TestVersionFactsBrowserHiddenAuthorization(t *testing.T) {

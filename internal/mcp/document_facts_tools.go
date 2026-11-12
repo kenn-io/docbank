@@ -4,6 +4,7 @@ import (
 	"context"
 	"uuid"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -12,6 +13,7 @@ import (
 type documentFactsInput struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
+	Offset           int    `json:"offset"`
 }
 
 func documentFactsSelection(raw []byte) (documentFactsInput, error) {
@@ -28,6 +30,8 @@ func documentFactsSelection(raw []byte) (documentFactsInput, error) {
 type documentDatesOutput struct {
 	privateCache
 	api.VersionDates
+	Offset     int  `json:"offset"`
+	NextOffset *int `json:"next_offset,omitzero"`
 }
 type documentPeopleOutput struct {
 	privateCache
@@ -61,7 +65,7 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 			if err != nil {
 				return nil, err
 			}
-			return documentDatesOutput{privateCache: newPrivateCache(), VersionDates: *result}, nil
+			return documentDatesPage(*result, in.Offset)
 		}
 		d := apiclient.GetVersionPeopleQueryDisclosure("safe")
 		result, err := c.API().GetVersionPeople(ctx, &apiclient.GetVersionPeopleRequestOptions{PathParams: &apiclient.GetVersionPeoplePath{VersionID: version}, Query: &apiclient.GetVersionPeopleQuery{Disclosure: &d}})
@@ -70,4 +74,48 @@ func getDocumentFacts(ctx context.Context, lease *daemonLease, raw []byte, kind 
 		}
 		return documentPeopleOutput{privateCache: newPrivateCache(), VersionPeople: *result}, nil
 	})
+}
+
+// documentDatesPage pages claims followed by diagnostics, retaining the primary
+// and version metadata on every page. Oversized individual items fail visibly.
+func documentDatesPage(dates api.VersionDates, offset int) (documentDatesOutput, error) {
+	const maxItems = document.MaxDocumentEvents + document.MaxDocumentEventsEncodedBytes/32
+	if offset < 0 || offset > maxItems {
+		return documentDatesOutput{}, invalidToolArgumentsError()
+	}
+	total := len(dates.Claims) + len(dates.Diagnostics)
+	start := min(offset, total)
+	output := documentDatesOutput{privateCache: newPrivateCache(), VersionDates: dates, Offset: start}
+	output.Claims = []api.VersionDateClaim{}
+	output.Diagnostics = []api.FactDiagnostic{}
+	const budget = maxToolResponseBytes - 8<<10
+	for i := start; i < min(total, start+100); i++ {
+		if i < len(dates.Claims) {
+			output.Claims = append(output.Claims, dates.Claims[i])
+		} else {
+			output.Diagnostics = append(output.Diagnostics, dates.Diagnostics[i-len(dates.Claims)])
+		}
+		if i+1 < total {
+			output.NextOffset = new(i + 1)
+		} else {
+			output.NextOffset = nil
+		}
+		size, err := toolEnvelopeBytes(output, nil)
+		if err != nil {
+			return documentDatesOutput{}, err
+		}
+		if size > budget {
+			if i == start {
+				return documentDatesOutput{}, errToolResultTooLarge
+			}
+			if i < len(dates.Claims) {
+				output.Claims = output.Claims[:len(output.Claims)-1]
+			} else {
+				output.Diagnostics = output.Diagnostics[:len(output.Diagnostics)-1]
+			}
+			output.NextOffset = new(i)
+			break
+		}
+	}
+	return output, nil
 }

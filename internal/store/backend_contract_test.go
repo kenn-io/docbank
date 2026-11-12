@@ -852,6 +852,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkDocumentPeopleFactsPublicationAndFailure(t, newPostgresQueryStore)
 		}},
+		{"DocumentPeopleFactsFiltersBlindCopyEdge", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyEdge(t, newPostgresQueryStore) }},
 		{"DocumentPeopleFactsFiltersBlindCopyAssertion", func(t *testing.T) { t.Helper(); checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
 			checkDocumentPeopleFactsFiltersBlindCopyAssertion(t, newPostgresQueryStore)
