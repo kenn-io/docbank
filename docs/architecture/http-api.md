@@ -1566,7 +1566,7 @@ The record's account and kind are immutable; copied account identity cannot be
 changed. Money input is decimal text; a currency change with an existing amount
 requires an explicit resend or clear. See [Tax records](../usage/tax-records.md).
 
-`POST /api/v1/tax/records/{record_id}/advance`, `POST /api/v1/tax/records/{record_id}/events`, and `POST /api/v1/tax/records/{record_id}/events/{event_id}/void` require quoted `If-Match` and return the parent `ETag` with a masked event receipt. Get-one returns events in append order. State derives from the latest surviving state event; void retains the event and its reason. Voiding an already voided event returns 409 `tax_event_voided`. Payment and evidence operations are not included.
+`POST /api/v1/tax/records/{record_id}/advance`, `POST /api/v1/tax/records/{record_id}/events`, and `POST /api/v1/tax/records/{record_id}/events/{event_id}/void` require quoted `If-Match` and return the parent `ETag` with a masked event receipt. Get-one returns events in append order. State derives from the latest surviving state event; void retains the event and its reason. Voiding an already voided event returns 409 `tax_event_voided`. Payments and refunds are recorded through the events endpoint; get-one returns the derived balance. Evidence operations are not included.
 
 ## People search
 
