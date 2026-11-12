@@ -1,6 +1,7 @@
 package notemarkdown
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func TestFrontmatterDecodedFields(t *testing.T) {
 	require.NotNil(t, n.Frontmatter)
 	fm := n.Frontmatter
 	require.Equal(t, 3, fm.Start)
-	require.Equal(t, strings.Index(string(src), "# Body"), fm.End)
+	require.Equal(t, bytes.Index(src, []byte("# Body")), fm.End)
 	require.Equal(t, fm.End, n.BodyStart)
 	require.Equal(t, "Sample", n.Title)
 	require.Equal(t, []string{"Alias", "Other"}, fm.Aliases)
@@ -54,10 +55,14 @@ func TestFrontmatterAliasesMergesAndJSON(t *testing.T) {
 }
 
 func TestFrontmatterDiagnosticsLeaveBodyReadable(t *testing.T) {
-	for _, header := range []string{"title: [bad", "a: &a [*a]", "a: .nan", "a: .inf", "a: {1: value}", "a: !custom value", "title: first\ntitle: second", "a: *missing"} {
+	for _, header := range []string{
+		"title: [bad", "a: &a [*a]", "a: .nan", "a: .inf", "a: {1: value}", "a: !custom value", "title: first\ntitle: second", "a: *missing",
+		"title: A\n--- # next\ntags: x", "title: A\n--- # next\ntags: [x", "title: A\n... # end\nb: x",
+	} {
 		t.Run(header, func(t *testing.T) {
 			n, err := Parse(t.Context(), []byte("---\n"+header+"\n---\n# Body\n[[Target]]\n"), Limits{MaxDiagnostics: 1})
 			require.NoError(t, err)
+			require.Equal(t, Span{0, len(header) + 9}, Span{n.Frontmatter.Start, n.Frontmatter.End})
 			require.Nil(t, n.Frontmatter.Raw)
 			require.Empty(t, n.Frontmatter.Fields)
 			require.Len(t, n.Diagnostics, 1)

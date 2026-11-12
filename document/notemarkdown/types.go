@@ -6,7 +6,7 @@ import "errors"
 const Recipe = "docbank-note-markdown/v2"
 
 var (
-	ErrLimit        = errors.New("Markdown note resource limit")
+	ErrLimit        = errors.New("markdown note resource limit")
 	ErrInvalidInput = errors.New("invalid Markdown note input")
 )
 

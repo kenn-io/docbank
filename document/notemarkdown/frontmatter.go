@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -63,7 +64,12 @@ func decodeFrontmatter(ctx context.Context, src []byte, fm *Frontmatter, b *budg
 	}
 	reader := yamlReader{ctx: ctx, b: b, src: src}
 	var doc yaml.Node
-	if err := yaml.NewDecoder(&reader).Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+	decoder := yaml.NewDecoder(&reader)
+	err := decoder.Decode(&doc)
+	if err == nil && !errors.Is(decoder.Decode(new(yaml.Node)), io.EOF) {
+		err = errYAML
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
 		if reader.err != nil {
 			return reader.err
 		}
@@ -292,7 +298,7 @@ func (d *yamlDecoder) admitKey(s string) error {
 	if err := d.b.step(d.ctx, len(s)); err != nil {
 		return err
 	}
-	if !utf8.ValidString(s) || bytes.IndexByte([]byte(s), 0) >= 0 {
+	if !utf8.ValidString(s) || strings.IndexByte(s, 0) >= 0 {
 		return errYAML
 	}
 	return d.b.reserveStrings(len(s))

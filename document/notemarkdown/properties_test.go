@@ -105,12 +105,12 @@ func TestPropertyOriginalOffsets(t *testing.T) {
 		require.Len(ht, n.Headings, count)
 		require.Len(ht, n.Links, count)
 		for i, h := range n.Headings {
-			require.Equal(ht, headings[i], Span{h.Start, h.LineEnd})
+			require.Equal(ht, Span{h.Start, h.LineEnd}, headings[i])
 			require.Equal(ht, title, h.Text)
 			require.True(ht, bytes.HasPrefix(src[h.Start:h.SectionEnd], src[h.Start:h.LineEnd]))
 		}
 		for i, l := range n.Links {
-			require.Equal(ht, links[i], Span{l.Start, l.End})
+			require.Equal(ht, Span{l.Start, l.End}, links[i])
 			require.Equal(ht, "n#x.md", l.Target)
 			require.Empty(ht, l.Fragment)
 		}

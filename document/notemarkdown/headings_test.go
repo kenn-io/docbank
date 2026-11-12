@@ -48,7 +48,7 @@ func TestHeadingContainersSetextAndSuppression(t *testing.T) {
 		n, err := Parse(t.Context(), []byte(src), Limits{})
 		require.NoError(t, err)
 		require.Len(t, n.Headings, 1)
-		require.Equal(t, "", n.Headings[0].Text)
+		require.Empty(t, n.Headings[0].Text)
 		require.Equal(t, src, src[n.Headings[0].Start:n.Headings[0].LineEnd])
 	}
 }

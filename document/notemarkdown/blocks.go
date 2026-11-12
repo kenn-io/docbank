@@ -32,6 +32,7 @@ func mustParse(err error) {
 
 type blockGuard struct {
 	parser.BlockParser
+
 	ctx  context.Context
 	b    *budget
 	ends map[ast.Node]int
@@ -136,7 +137,6 @@ func (g *referenceGuard) Transform(n *ast.Paragraph, r text.Reader, _ parser.Con
 			n.SetSource(segments[removed:])
 		}
 	}
-
 }
 
 func newBlockParserSet(ctx context.Context, b *budget, ends map[ast.Node]int) []parser.BlockParser {
