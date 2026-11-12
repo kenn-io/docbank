@@ -2,6 +2,12 @@ export function timestampComparable(value: string): string {
   return value.replace(/(?:\.(\d+))?Z$/, (_match, fraction = "") => `.${fraction.padEnd(9, "0")}Z`);
 }
 
+// displayLabel turns a lower_snake value such as "information_requested" into
+// display text ("Information requested").
+export function displayLabel(value: string): string {
+  return value.replaceAll("_", " ").replace(/^./, (char) => char.toUpperCase());
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;

@@ -6,7 +6,8 @@
   import "./toolForm.css";
   import type { TaxRecord } from "./generated/docbank.js";
   import { TaxesView } from "./taxes.svelte.js";
-  import { formatTaxAmount, taxStateLabel } from "./taxMoney.js";
+  import { displayLabel } from "./format.js";
+  import { formatTaxAmount } from "./taxMoney.js";
 
   interface Props {
     session: string;
@@ -78,7 +79,7 @@
         >
         <td>{row.tax_year ?? "—"}</td>
         <td>{row.due_date ?? "—"}</td>
-        <td>{taxStateLabel(row.state)}</td>
+        <td>{displayLabel(row.state)}</td>
         <td class="amount"
           ><span>{amount.text}</span><span class="sub">Direction: {amount.direction}</span
           >{#if amount.hint}<span class="sub hint">{amount.hint}</span>{/if}</td

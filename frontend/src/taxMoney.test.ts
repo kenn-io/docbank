@@ -1,5 +1,6 @@
 import { expect, it } from "vite-plus/test";
-import { formatTaxAmount, taxStateLabel } from "./taxMoney.js";
+import { displayLabel } from "./format.js";
+import { formatTaxAmount } from "./taxMoney.js";
 
 const hint = "Run docbank tax record show r1 to see the exact amount";
 const cases: [number | null, string, string, ReturnType<typeof formatTaxAmount>][] = [
@@ -22,5 +23,5 @@ it.each([
   ["information_requested", "Information requested"],
   ["not_required", "Not required"],
 ])("labels %s as %s", (state, label) => {
-  expect(taxStateLabel(state)).toBe(label);
+  expect(displayLabel(state)).toBe(label);
 });
