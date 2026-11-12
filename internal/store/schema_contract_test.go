@@ -165,21 +165,6 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 	}
 }
 
-func TestReviewRequiredColumnCanBeRecorded(t *testing.T) {
-	t.Parallel()
-	schema := strings.Replace(schemaSQL, "CREATE TABLE IF NOT EXISTS nodes (", "CREATE TABLE IF NOT EXISTS nodes (\n    required_label TEXT NOT NULL,", 1)
-	require.NotEqual(t, schemaSQL, schema)
-	for _, driver := range v090UpgradeDrivers() {
-		t.Run(driver.name, func(t *testing.T) {
-			db := schemaContractDB(t, driver.driver, schema)
-			digest := schemaCatalogDigest(t, db)
-			err := checkSchemaContract(nil, 49, digest)
-			require.ErrorContains(t, err, schemaContractFile(schemaContract{Version: 49, Digest: digest}, "<summary-slug>"))
-			require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}}, 49, digest))
-		})
-	}
-}
-
 func TestStorageSchemaContractRecords(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -216,22 +201,6 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	require.ErrorContains(t, err, "must be an empty regular file")
 }
 
-func TestStorageSchemaContractChanges(t *testing.T) {
-	t.Parallel()
-	digest := strings.Repeat("a", 64)
-	next := strings.Repeat("b", 64)
-	records := []schemaContract{{Version: 49, Digest: digest}, {Version: 50, Digest: next}}
-	require.ErrorContains(t, checkSchemaContract(nil, 49, digest), "000049-"+digest+"-<summary-slug>.schema")
-	require.NoError(t, checkSchemaContract(records[:1], 49, digest))
-	require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: digest}}, 49, digest))
-	err := checkSchemaContract(records[:1], 49, next)
-	require.ErrorContains(t, err, "000049-"+next+"-<summary-slug>.schema")
-	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
-	require.NoError(t, checkSchemaContract(records, 50, next))
-	err = checkSchemaContract([]schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: next}}, 49, digest)
-	require.ErrorContains(t, err, "set currentStorageSchemaVersion to 50")
-}
-
 func TestStorageSchemaContractReleased(t *testing.T) {
 	t.Parallel()
 	released, err := schemaContractReleased(nil, 48, []int{48})
@@ -254,6 +223,10 @@ func TestStorageSchemaTokenDigest(t *testing.T) {
 	formatted, err := schemaRowsDigest(row)
 	require.NoError(t, err)
 	require.Equal(t, digest, formatted)
+	quoted := [][4]string{{"table", "quoted table", "quoted table", `CREATE TABLE "quoted table" ("label" TEXT NOT NULL DEFAULT 'it''s ready', "count" INTEGER CHECK ("count" >= 0))`}}
+	quotedDigest, err := schemaRowsDigest(quoted)
+	require.NoError(t, err)
+	require.Equal(t, "547f847035713649e20ea8d69859c6116c057fb9ae08f9e93aa5c20fb291a284", quotedDigest)
 	for _, pair := range [][2]string{
 		{`CREATE TABLE t (a TEXT DEFAULT 'a b')`, `CREATE TABLE t (a TEXT DEFAULT 'ab')`},
 		{`CREATE TABLE t (a INTEGER CHECK(a+2))`, `CREATE TABLE t (a INTEGER CHECK(a-2))`},
@@ -271,9 +244,15 @@ func TestStorageSchemaTokenDigest(t *testing.T) {
 
 func TestStorageSchemaCatalogChanges(t *testing.T) {
 	t.Parallel()
+	schema := strings.Replace(schemaSQL, "CREATE TABLE IF NOT EXISTS nodes (", "CREATE TABLE IF NOT EXISTS nodes (\n    required_label TEXT NOT NULL,", 1)
+	require.NotEqual(t, schemaSQL, schema)
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db := schemaContractDB(t, driver.driver, schemaSQL)
+			requiredDB := schemaContractDB(t, driver.driver, schema)
+			requiredDigest := schemaCatalogDigest(t, requiredDB)
+			require.ErrorContains(t, checkSchemaContract(nil, 49, requiredDigest), "000049-"+requiredDigest+"-<summary-slug>.schema")
+			require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: requiredDigest}}, 49, requiredDigest))
 			probe := func(sql string) string {
 				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
 				require.NoError(t, err)
@@ -301,6 +280,7 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			records := []schemaContract{{Version: 49, Digest: first}, {Version: 49, Digest: second}}
 			require.NoError(t, checkSchemaContract(records[:1], 49, first))
 			require.NoError(t, checkSchemaContract(records[1:], 49, second))
+			require.ErrorContains(t, checkSchemaContract(records, 49, first), "set currentStorageSchemaVersion to 50")
 			require.ErrorContains(t, checkSchemaContract(records, 49, combined), "set currentStorageSchemaVersion to 50")
 			require.NoError(t, checkSchemaContract(append(records, schemaContract{Version: 50, Digest: combined}), 50, combined))
 		})
