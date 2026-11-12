@@ -23,7 +23,7 @@
 // retains its span in nonnil Frontmatter with nil Raw, and excludes only the
 // opener. Frontmatter is nil only when no opener exists. Diagnostics contain
 // fixed codes and raw spans;
-// admission enforces MaxDiagnostics, though currently at most one is emitted.
+// at most one is emitted, within every accepted MaxDiagnostics.
 // Raw is JSON-compatible: timestamps use RFC 3339; aliases and merges are bounded,
 // explicit keys win, and earlier merge maps win. Duplicate/non-string keys,
 // cycles, custom tags and non-finite numbers are invalid. Fields sort top-level

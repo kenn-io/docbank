@@ -77,13 +77,3 @@ func TestInternalLimits(t *testing.T) {
 		require.Equal(t, Note{}, n)
 	}
 }
-
-func TestDiagnosticAdmission(t *testing.T) {
-	b := &budget{limits: Limits{MaxDiagnostics: 1}}
-	d, err := b.diagnostic(t.Context(), "invalid_frontmatter", Span{0, 4})
-	require.NoError(t, err)
-	require.Equal(t, []Diagnostic{{Code: "invalid_frontmatter", Span: Span{0, 4}}}, d)
-	d, err = b.diagnostic(t.Context(), "unclosed_frontmatter", Span{4, 8})
-	requireLimit(t, err, "diagnostics")
-	require.Nil(t, d)
-}
