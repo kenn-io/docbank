@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/secretref"
 )
@@ -393,6 +394,9 @@ func providerEgressPolicy(runtime config.ProviderEgressConfig) providerhttp.Egre
 }
 
 func classifyOpenAIEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {
+	if timeout, ok := errors.AsType[*embedclient.TransportError](err); ok && timeout.Timeout() {
+		return processing.EmbeddingProviderCapacity, 0
+	}
 	if errors.Is(err, openaicompat.ErrMalformedResponse) {
 		return processing.EmbeddingProviderInvalidResponse, 0
 	}

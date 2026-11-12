@@ -144,6 +144,7 @@ type MCPHTTPConfig struct {
 	Enabled           *bool    `toml:"enabled"`
 	Port              int      `toml:"port"`
 	AllowedHosts      []string `toml:"allowed_hosts"`
+	PublicOrigin      string   `toml:"public_origin"`
 	CredentialBinding string   `toml:"credential_binding"`
 }
 
@@ -835,6 +836,11 @@ func (c Config) Validate() error {
 }
 
 func validateMCPConfig(c Config) error {
+	if c.MCP.HTTP.PublicOrigin != "" {
+		if _, err := CanonicalWebOrigin(c.MCP.HTTP.PublicOrigin); err != nil {
+			return fmt.Errorf("[mcp.http] public_origin: %w", err)
+		}
+	}
 	if c.MCP.HTTP.Port < 0 || c.MCP.HTTP.Port > 65535 {
 		return errors.New("[mcp.http] port must be from 0 through 65535")
 	}

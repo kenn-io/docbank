@@ -64,10 +64,14 @@ type toolDefinition struct {
 	destructive bool
 	// openWorld marks reads that reach a service outside the vault.
 	openWorld bool
+
+	// nonIdempotent marks reads that issue a fresh capability on each call.
+	nonIdempotent bool
 }
 
 var readToolDefinitions = []toolDefinition{
 	originalContentTool,
+	originalDownloadTool,
 	textCitationTool, checkAnswerTool, textOutlineTool, textSectionTool,
 	kataContextTool,
 	exportPlanTool, exportProblemsTool,
@@ -204,7 +208,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		openWorld := definition.write || definition.openWorld
 		annotation := &sdkmcp.ToolAnnotations{
 			Title: definition.title, ReadOnlyHint: !definition.write,
-			IdempotentHint: !definition.write || definition.idempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
+			IdempotentHint: (!definition.write || definition.idempotent) && !definition.nonIdempotent, DestructiveHint: &definition.destructive, OpenWorldHint: &openWorld,
 		}
 		tools = append(tools, &sdkmcp.Tool{
 			Name: definition.name, Title: definition.title, Description: definition.description,
@@ -539,6 +543,8 @@ func stableDomainError(err error) (string, int) {
 		return facts.Code, 0
 	case "not_found":
 		return "not_found", 0
+	case "download_selection_stale":
+		return facts.Code, 0
 	case "stale_version":
 		return "stale_version", 0
 	case "processing_plan_changed":
@@ -573,6 +579,8 @@ func domainErrorMessage(code string) string {
 		return message
 	}
 	switch code {
+	case "download_selection_stale":
+		return "Refresh the live document and list_document_versions, then select its vault, node, version, hash and size again."
 	case "kata_token_invalid":
 		return "Kata token was rejected; configure Kata with that token"
 	case "kata_idempotency_deleted":

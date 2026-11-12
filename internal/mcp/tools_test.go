@@ -128,7 +128,7 @@ func TestToolCatalogBudgetRejectsOversize(t *testing.T) {
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
-		"read_document_content",
+		"read_document_content", "get_original_download_url",
 		"resolve_text_citation", "check_answer", "get_text_outline", "read_text_section",
 		"get_kata_context",
 		"get_export_plan", "get_export_problems",
@@ -149,7 +149,7 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 		assert.Equal(t, wantNames[index], tool.Name)
 		require.NotNil(t, tool.Annotations)
 		assert.True(t, tool.Annotations.ReadOnlyHint)
-		assert.True(t, tool.Annotations.IdempotentHint)
+		assert.Equal(t, tool.Name != "get_original_download_url", tool.Annotations.IdempotentHint)
 		assert.Equal(t, new(false), tool.Annotations.DestructiveHint)
 		assert.Equal(t, new(tool.Name == "get_kata_context" || tool.Name == "search_documents" || tool.Name == "answer_question"), tool.Annotations.OpenWorldHint)
 		assertSchemaContract(t, tool.InputSchema)

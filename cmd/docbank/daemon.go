@@ -588,7 +588,7 @@ func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 		defer func() { _ = connection.Close() }()
 		mcpServer := docmcp.NewServerWithConnection(connection, docmcp.ServerOptions{Logger: logger})
 		options := docmcp.HTTPOptions{
-			BearerToken: mcpToken, AllowedHosts: cfg.MCP.HTTP.AllowedHosts, Logger: logger,
+			BearerToken: mcpToken, AllowedHosts: cfg.MCP.HTTP.AllowedHosts, PublicOrigin: cfg.MCP.HTTP.PublicOrigin, Logger: logger,
 		}
 		if cfg.MCPHTTPSharesAPIListener() {
 			handler, err := docmcp.PrepareHTTPHandler(context.WithoutCancel(ctx), mcpServer, cfg.Server.BindAddr, options)
@@ -826,7 +826,7 @@ func drainHTTPServer(server *http.Server) func(context.Context) error {
 // transport applies its own bearer, Host, and Origin checks.
 func withMCPRoute(api, mcp http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == mcpHTTPPath {
+		if r.URL.Path == mcpHTTPPath || r.URL.Path == docmcp.OriginalDownloadPath {
 			mcp.ServeHTTP(w, r)
 			return
 		}

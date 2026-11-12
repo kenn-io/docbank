@@ -134,7 +134,7 @@ func TestProcessingClientUsesTypedRoutesAndVerifiesRenditionStream(t *testing.T)
 	}))
 	t.Cleanup(server.Close)
 	c := daemonconn.New(server.URL, serverKey)
-	profiles, err := c.API().ListDocumentProcessingProfiles(t.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(t.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 
 	require.NoError(t, err)
 	require.Len(t, *profiles, 1)

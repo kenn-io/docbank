@@ -117,6 +117,17 @@ environment_variable = "DOCBANK_MCP_HTTP_TOKEN"
 		cfg.CredentialBindings["mcp-http"].EnvironmentVariable)
 }
 
+func TestLoadMCPHTTPPublicOrigin(t *testing.T) {
+	dir := privateTestConfigDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[web]\nenabled=false\n[mcp.http]\npublic_origin='https://archive.example'\n"), 0o600))
+	cfg, err := Load(dir)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Validate())
+	require.Equal(t, "https://archive.example", cfg.MCP.HTTP.PublicOrigin)
+	cfg.MCP.HTTP.PublicOrigin = "https://archive.example/path"
+	require.ErrorContains(t, cfg.Validate(), "public_origin")
+}
+
 func TestValidateMCPHTTPCredentialBindingIsNamedAndDefined(t *testing.T) {
 	tests := []struct {
 		name    string
