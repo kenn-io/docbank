@@ -22,7 +22,7 @@ func CalculateBalance(record RecordValues, events []EventFact) (Balance, error) 
 			result.OtherCurrencyEvents++
 			continue
 		}
-		if e.AmountMinor == nil || *e.AmountMinor <= 0 || sum > math.MaxInt64-*e.AmountMinor {
+		if sum > math.MaxInt64-*e.AmountMinor {
 			return Balance{}, invalid("amount", "invalid cash sum")
 		}
 		sum += *e.AmountMinor
