@@ -23,11 +23,19 @@ func newTaxCommand() *cobra.Command {
 		})
 		return usageError(errors.New(message))
 	})
-	root.Args = taxNoArgs
+	root.Args = taxGroupArgs
+	root.Annotations = map[string]string{helpOnlyAnnotation: helpOnlyMarker}
 	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	root.PersistentFlags().Bool("json", false, "print JSON")
 	root.AddCommand(newTaxAccountCommand())
 	return root
+}
+
+func taxGroupArgs(_ *cobra.Command, args []string) error {
+	if len(args) != 0 {
+		return usageError(errors.New("unknown command"))
+	}
+	return nil
 }
 
 func taxNoArgs(_ *cobra.Command, args []string) error {
@@ -39,7 +47,8 @@ func taxNoArgs(_ *cobra.Command, args []string) error {
 
 func newTaxAccountCommand() *cobra.Command {
 	account := &cobra.Command{Use: "account", Short: "Manage tax accounts", Long: "Create, inspect, edit, list, and retire tax accounts.\nEdits and retirement use the current revision unless one is supplied."}
-	account.Args = taxNoArgs
+	account.Args = taxGroupArgs
+	account.Annotations = map[string]string{helpOnlyAnnotation: helpOnlyMarker}
 	account.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	printAccount := func(cmd *cobra.Command, a api.TaxAccount) error {
 		if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
@@ -52,7 +61,10 @@ func newTaxAccountCommand() *cobra.Command {
 			return *p
 		}
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %q\tidentifier: %q\tcadence: %s\tperiod: %q\tdue: %q\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %q\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, value(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, value(a.EffectiveStart), value(a.EffectiveEnd), a.Note, value(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
-		return err
+		if err != nil {
+			return fmt.Errorf("write tax account: %w", err)
+		}
+		return nil
 	}
 	printMutation := func(cmd *cobra.Command, a api.TaxAccount) error {
 		if err := printAccount(cmd, a); err != nil {
@@ -94,7 +106,9 @@ func newTaxAccountCommand() *cobra.Command {
 		}
 		if page.Limit > 0 && len(page.Items) == page.Limit {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "limit reached: more accounts may exist; repeat this command with --offset %d to continue\n", page.Offset+len(page.Items))
-			return err
+			if err != nil {
+				return fmt.Errorf("write tax account page: %w", err)
+			}
 		}
 		return nil
 	}}

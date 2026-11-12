@@ -8,6 +8,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const cacheControlNoStore = "no-store"
+
 type taxAccountOutput struct {
 	ETag         string `header:"ETag"`
 	CacheControl string `header:"Cache-Control"`
@@ -88,7 +90,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, taxRouteError(err)
 		}
-		out := &taxAccountPageOutput{CacheControl: "no-store", Body: TaxAccountPage{Items: []TaxAccount{}, Limit: in.Limit, Offset: in.Offset}}
+		out := &taxAccountPageOutput{CacheControl: cacheControlNoStore, Body: TaxAccountPage{Items: []TaxAccount{}, Limit: in.Limit, Offset: in.Offset}}
 		for _, a := range rows {
 			out.Body.Items = append(out.Body.Items, fromStoreTaxAccount(a, false))
 		}
@@ -103,7 +105,7 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			return nil, taxRouteError(err)
 		}
 		out := taxAccountResult(a, in.Reveal)
-		out.CacheControl = "no-store"
+		out.CacheControl = cacheControlNoStore
 		return out, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createTaxAccount", Method: http.MethodPost, Path: "/api/v1/tax/accounts", Summary: "Create a tax account", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreateTaxAccountRequest }) (*taxAccountOutput, error) {

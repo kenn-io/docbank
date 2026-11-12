@@ -7,18 +7,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/taxrecord"
 )
 
 func TestTaxIdentifierDisclosure(t *testing.T) {
+	t.Parallel()
 	for input, want := range map[string]string{"": "", "a": "****", "abcd": "****", "abcde": "****bcde", "雪月花鳥風": "****月花鳥風"} {
 		assert.Equal(t, want, maskTaxIdentifier(input))
 	}
 }
 
 func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
+	t.Parallel()
 	date := "2025-01-01"
-	a := store.TaxAccount{AccountID: "22222222-2222-4222-8222-222222222222", Revision: 1, AccountValues: taxrecord.AccountValues{FilerPartyID: "11111111-1111-4111-8111-111111111111", Country: "ZZ", TaxKind: "Example", Cadence: "annual", Currency: "USD", Identifier: "private12345", EffectiveStart: &date, EffectiveEnd: &date, LeadDays: 14}}
+	a := store.TaxAccount{AccountID: "22222222-2222-4222-8222-222222222222", Revision: 1, FilerPartyID: "11111111-1111-4111-8111-111111111111", Country: "ZZ", TaxKind: "Example", Cadence: "annual", Currency: "USD", Identifier: "private12345", EffectiveStart: &date, EffectiveEnd: &date, LeadDays: 14}
 	var create CreateTaxAccountRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"$schema":"https://example.com/schema.json","country":"ZZ"}`), &create))
 	var patch PatchTaxAccountRequest

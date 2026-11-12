@@ -19,7 +19,7 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"subdivision", "b"}, {"tax_kind", "b"}, {"identifier", "b"}, {"cadence", "b"},
 	{"period_note", "b"}, {"due_note", "b"}, {"lead_days", "b"}, {"currency", "b"},
 	{"effective_start", "b"}, {"effective_end", "b"}, {"note", "b"}, {"filer", "q"},
-	{"taxkind", "q"}, {"include_retired", "q"}, {"limit", "q"}, {"offset", "q"},
+	{"taxkind", "q"}, {"include_retired", "q"}, {packageLimitParameter, "q"}, {"offset", "q"},
 	{"reveal", "q"}, {"account_id", "p"}, {"If-Match", "h"},
 }
 var taxDiagnosticReasons = []string{"invalid value", "invalid length or text", "control character", "invalid country", "invalid subdivision", "invalid currency", "invalid date", "precedes effective_start", "not canonical", "required", "unknown cadence", "out of range", "party not found", "party is retired", "party is not own", "party is not an organization"}
@@ -57,7 +57,7 @@ func taxSafeLocation(location string) bool {
 	if !ok {
 		return false
 	}
-	code := map[string]string{"body": "b", "query": "q", "path": "p", "header": "h"}[prefix]
+	code := map[string]string{"body": "b", openAPIQueryLocation: "q", openAPIPathLocation: "p", mailboxHeaderLocation: "h"}[prefix]
 	if code == "" {
 		return false
 	}
@@ -89,7 +89,7 @@ func taxRouteError(err error) error {
 	}
 	var wire *Error
 	if !errors.As(err, &wire) {
-		wire, _ = FromStoreError(err).(*Error)
+		wire, _ = errors.AsType[*Error](FromStoreError(err))
 	}
 	if wire == nil {
 		return NewError(http.StatusInternalServerError, "internal", "tax request failed")

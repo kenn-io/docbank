@@ -92,6 +92,9 @@ func TestTaxCLIFlagErrorsArePrivate(t *testing.T) {
 		err := cmd.Execute()
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "private-synthetic")
+		if len(args) < 3 {
+			assert.Contains(t, err.Error(), "unknown command")
+		}
 	}
 	missing := newTaxCommand()
 	missing.SilenceErrors, missing.SilenceUsage = true, true

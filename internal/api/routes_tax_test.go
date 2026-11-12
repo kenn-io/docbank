@@ -17,27 +17,30 @@ import (
 )
 
 func TestTaxValuesAbsentFromLogs(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	const sentinel = "private-synthetic-value"
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(sentinel) })
 	handler := logMiddleware(recoverMiddleware(next, logger), logger)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tax/accounts/"+sentinel+"?country="+sentinel, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tax/accounts/"+sentinel+"?country="+sentinel, nil)
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 	assert.NotContains(t, logs.String(), sentinel)
 	assert.Equal(t, "/api/v1/tax/{redacted}", requestLogPath("/api/v1/tax/"+sentinel))
 }
 
 func TestTaxLoggingPreservesOtherRoutes(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	handler := logMiddleware(recoverMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("ordinary panic") }), logger), logger)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/other", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/other", nil))
 	assert.Contains(t, logs.String(), "/api/v1/other")
 	assert.Contains(t, logs.String(), "ordinary panic")
 }
 
 func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
+	t.Parallel()
 	for _, field := range []*taxrecord.FieldError{
 		{Field: "private-synthetic-value", Reason: "invalid value"},
 		{Field: "cadence", Reason: "private-synthetic-value"},
@@ -52,6 +55,7 @@ func TestTaxFieldErrorRedactsUnknownDetails(t *testing.T) {
 }
 
 func TestTaxRevisionExhaustionError(t *testing.T) {
+	t.Parallel()
 	var problem *Error
 	require.ErrorAs(t, taxRouteError(store.ErrTaxRevisionExhausted), &problem)
 	assert.Equal(t, http.StatusConflict, problem.Status)
@@ -60,8 +64,9 @@ func TestTaxRevisionExhaustionError(t *testing.T) {
 }
 
 func TestTaxFormatterPreservesMediaValidation(t *testing.T) {
+	t.Parallel()
 	const secret = "private-synthetic-media-url"
-	ctx := humago.NewContext(&huma.Operation{Path: "/api/v1/media"}, httptest.NewRequest(http.MethodPost, "/api/v1/media", nil), httptest.NewRecorder())
+	ctx := humago.NewContext(&huma.Operation{Path: "/api/v1/media"}, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/media", nil), httptest.NewRecorder())
 	problem := huma.NewErrorWithContext(ctx, http.StatusUnprocessableEntity, "validation", &huma.ErrorDetail{Location: "body.canonical_url", Value: secret, Message: "invalid"})
 	var result *Error
 	require.ErrorAs(t, problem, &result)
@@ -76,10 +81,11 @@ func (w failingTaxResponse) Write([]byte) (int, error) {
 }
 
 func TestTaxOversizeWriteFailureOmitsPath(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	const sentinel = "private-synthetic-value"
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/tax/accounts/"+sentinel, nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/tax/accounts/"+sentinel, nil)
 	request.ContentLength = 10
 	ctx := humago.NewContext(&huma.Operation{Path: "/api/v1/tax/accounts/{account_id}", MaxBodyBytes: 1}, request, failingTaxResponse{httptest.NewRecorder()})
 	called := false

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
+	"errors"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
@@ -99,14 +99,14 @@ func taxAccountMembers(raw []byte, patch bool) (map[string]jsontext.Value, error
 	raw = bytes.TrimSpace(raw)
 	var members map[string]jsontext.Value
 	if len(raw) == 0 || raw[0] != '{' {
-		return nil, fmt.Errorf("expected object")
+		return nil, errors.New("expected object")
 	}
 	if err := json.Unmarshal(raw, &members); err != nil {
 		return nil, err
 	}
 	delete(members, "$schema")
 	if patch && len(members) == 0 {
-		return nil, fmt.Errorf("empty patch")
+		return nil, errors.New("empty patch")
 	}
 	for name, value := range members {
 		nullable := false
@@ -116,18 +116,18 @@ func taxAccountMembers(raw []byte, patch bool) (map[string]jsontext.Value, error
 		case "identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "note":
 		case "authority_party_id":
 			if patch {
-				return nil, fmt.Errorf("invalid field")
+				return nil, errors.New("invalid field")
 			}
 			nullable = true
 		case "filer_party_id", "country", "subdivision", "tax_kind":
 			if patch {
-				return nil, fmt.Errorf("invalid field")
+				return nil, errors.New("invalid field")
 			}
 		default:
-			return nil, fmt.Errorf("invalid field")
+			return nil, errors.New("invalid field")
 		}
 		if string(value) == "null" && !nullable {
-			return nil, fmt.Errorf("invalid field")
+			return nil, errors.New("invalid field")
 		}
 	}
 	return members, nil

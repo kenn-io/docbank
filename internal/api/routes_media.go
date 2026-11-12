@@ -559,7 +559,7 @@ func fromMediaConsentReceipt(value store.MediaConsentReceipt) MediaConsentReceip
 
 // noStoreMediaReceipt keeps a miss from being cached; a later read can see a commit.
 func noStoreMediaReceipt(ctx huma.Context, next func(huma.Context)) {
-	ctx.SetHeader("Cache-Control", "no-store")
+	ctx.SetHeader("Cache-Control", cacheControlNoStore)
 	next(ctx)
 }
 

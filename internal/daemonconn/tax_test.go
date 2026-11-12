@@ -24,11 +24,15 @@ func TestTaxClientRequestContracts(t *testing.T) {
 		assert.Equal(t, "/api/v1/tax/accounts/"+id, r.URL.Path)
 		assert.Equal(t, `"2"`, r.Header.Get("If-Match"))
 		var body map[string]any
-		require.NoError(t, json.UnmarshalRead(r.Body, &body))
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
 		assert.Contains(t, body, "effective_start")
 		assert.Nil(t, body["effective_start"])
-		assert.Equal(t, "", body["note"])
-		assert.Equal(t, float64(0), body["lead_days"])
+		assert.Contains(t, body, "note")
+		assert.Empty(t, body["note"])
+		assert.Contains(t, body, "lead_days")
+		assert.InDelta(t, 0, body["lead_days"], 0)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"3"`)
 		_, _ = w.Write([]byte(strings.Replace(taxAccountFixture, `"revision":1`, `"revision":3`, 1)))
@@ -185,14 +189,14 @@ func TestTaxClientIncompleteReceiptsAndUnknownOutcome(t *testing.T) {
 
 func TestTaxClientRetiredCause(t *testing.T) {
 	err := safeTaxError(apiProblemError(api.Error{Status: http.StatusConflict, Code: "tax_retired", Detail: "private-synthetic-value"}))
-	assert.ErrorIs(t, err, store.ErrTaxRetired)
+	require.ErrorIs(t, err, store.ErrTaxRetired)
 	assert.Contains(t, err.Error(), "tax_retired")
 	assert.NotContains(t, err.Error(), "private-synthetic-value")
 }
 
 func TestTaxClientTransportErrorClass(t *testing.T) {
 	err := taxMutationFailure(&transportError{err: errors.Join(context.DeadlineExceeded, errors.New("private-synthetic-value"))})
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.True(t, IsTransportError(err))
 	assert.Contains(t, err.Error(), "deadline exceeded")
 	assert.Contains(t, err.Error(), "may have been applied")

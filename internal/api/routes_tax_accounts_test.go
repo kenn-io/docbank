@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,9 +24,7 @@ func createTaxTestAccount(t *testing.T, ts *httptest.Server, overrides map[strin
 	var party api.Party
 	require.NoError(t, json.Unmarshal([]byte(body), &party))
 	input := map[string]any{"filer_party_id": party.PartyID, "country": "ZZ", "tax_kind": "Example", "cadence": "annual", "currency": "USD"}
-	for name, value := range overrides {
-		input[name] = value
-	}
+	maps.Copy(input, overrides)
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/accounts", nil, input)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var account api.TaxAccount
@@ -131,6 +130,7 @@ func TestTaxHTTPValidationRedaction(t *testing.T) {
 }
 
 func TestTaxHTTPRefusals(t *testing.T) {
+	t.Parallel()
 	gate := api.NewOperationGate()
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	party, account := createTaxTestAccount(t, ts, nil)
@@ -247,6 +247,7 @@ func TestTaxHTTPAuditRefusalPreservesAccount(t *testing.T) {
 }
 
 func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
+	t.Parallel()
 	logs, err := os.CreateTemp(t.TempDir(), "tax-log-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = logs.Close() })

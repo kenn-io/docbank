@@ -36,8 +36,7 @@ func (e *taxClientError) Error() string {
 				message += "; tax writes are unavailable in audited vaults"
 			}
 			if code == "invalid_tax" || code == "validation" {
-				var problem *problemError
-				if errors.As(e.cause, &problem) {
+				if problem, ok := errors.AsType[*problemError](e.cause); ok {
 					if detail := api.SafeTaxDiagnostic(problem.Error()); detail != "" {
 						message += "; " + detail
 					}
