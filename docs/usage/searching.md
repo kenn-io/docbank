@@ -610,3 +610,22 @@ contract.
 Next: organize documents beyond paths with
 [Organizing and tagging](organizing.md), or see every search flag in the
 [CLI reference](../cli-reference.md).
+
+## Find documents by their own date
+
+Use advanced search to find claims from a document rather than a file's
+modification time. For example, `date:2026-03-01..2026-03-31` searches the
+inclusive range. Add `date_kind:authored` to search authored claims instead
+of the primary claim, or `date_precision:day` to select date-only claims.
+The precision values are `exact`, `day`, and `coarse`; exact includes floating
+wall times, while coarse includes month and year claims. Constraints in one
+AND group apply to the same claim. OR branches and NOT operands each have
+separate scopes. Multiple date kinds in a group are alternatives.
+
+Exact instants are compared in the query's `timezone`; floating times and
+all-day dates use their written civil dates. Month and year claims match any
+range they overlap. A multi-day all-day calendar event matches each of its
+days. An omitted zone uses `[web] timeline_timezone`, which defaults to UTC.
+The result echoes the zone and whether it was defaulted. Saved searches retain
+the zone used when saved. Browser sessions see only claims whose event and
+actors are not sensitive.

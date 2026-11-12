@@ -644,6 +644,22 @@ CREATE TABLE IF NOT EXISTS document_event_primaries (
         REFERENCES document_events(generation_id, event_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS document_date_keys (
+    generation_id TEXT NOT NULL, event_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL, date_kind TEXT NOT NULL,
+    precision TEXT NOT NULL, floating INTEGER NOT NULL,
+    utc_key TEXT, axis_key TEXT NOT NULL,
+    civil_date TEXT NOT NULL, civil_end_date TEXT NOT NULL,
+    civil_month TEXT NOT NULL, civil_year TEXT NOT NULL,
+    sensitive INTEGER NOT NULL, primary_safe INTEGER NOT NULL, primary_full INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, event_id),
+    FOREIGN KEY (generation_id, event_id) REFERENCES document_events(generation_id, event_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS document_date_keys_utc ON document_date_keys(utc_key, generation_id);
+CREATE INDEX IF NOT EXISTS document_date_keys_civil ON document_date_keys(civil_date, generation_id);
+CREATE INDEX IF NOT EXISTS document_date_keys_month ON document_date_keys(civil_month, generation_id);
+CREATE INDEX IF NOT EXISTS document_date_keys_axis ON document_date_keys(axis_key, generation_id);
+
 CREATE TABLE IF NOT EXISTS document_event_builds (
     operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, deriver_fingerprint TEXT NOT NULL,
     state TEXT NOT NULL, target_epoch INTEGER NOT NULL,

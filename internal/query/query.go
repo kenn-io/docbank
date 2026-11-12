@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/kit/civiltime"
 )
 
 const (
@@ -41,12 +42,13 @@ var (
 
 // Query is a normalized QueryV1 value. Text is retained exactly as entered.
 type Query struct {
-	V       int     `json:"v"`
-	Text    string  `json:"text"`
-	Syntax  string  `json:"syntax"`
-	Mode    string  `json:"mode"`
-	Filters Filters `json:"filters"`
-	Sort    Sort    `json:"sort"`
+	Timezone *string `json:"timezone,omitzero"`
+	V        int     `json:"v"`
+	Text     string  `json:"text"`
+	Syntax   string  `json:"syntax"`
+	Mode     string  `json:"mode"`
+	Filters  Filters `json:"filters"`
+	Sort     Sort    `json:"sort"`
 }
 
 // Sort identifies the requested result ordering. Execution support is decided
@@ -59,23 +61,24 @@ type Sort struct {
 // Filters contains the complete set of typed QueryV1 facets. Slice fields are
 // set-valued after normalization.
 type Filters struct {
-	Unevaluated   bool    `json:"unevaluated,omitzero"`
-	FocusMin      *string `json:"focus_min,omitzero"`
-	FocusMax      *string `json:"focus_max,omitzero"`
-	BlurMin       *string `json:"blur_min,omitzero"`
-	BlurMax       *string `json:"blur_max,omitzero"`
-	BrightnessMin *string `json:"brightness_min,omitzero"`
-	BrightnessMax *string `json:"brightness_max,omitzero"`
-	FramingMin    *string `json:"framing_min,omitzero"`
-	FramingMax    *string `json:"framing_max,omitzero"`
-	AestheticsMin *string `json:"aesthetics_min,omitzero"`
-	AestheticsMax *string `json:"aesthetics_max,omitzero"`
-	ColorRedMin   *string `json:"color_red_min,omitzero"`
-	ColorRedMax   *string `json:"color_red_max,omitzero"`
-	ColorGreenMin *string `json:"color_green_min,omitzero"`
-	ColorGreenMax *string `json:"color_green_max,omitzero"`
-	ColorBlueMin  *string `json:"color_blue_min,omitzero"`
-	ColorBlueMax  *string `json:"color_blue_max,omitzero"`
+	DocumentDate  *DocumentDateFilter `json:"document_date,omitzero"`
+	Unevaluated   bool                `json:"unevaluated,omitzero"`
+	FocusMin      *string             `json:"focus_min,omitzero"`
+	FocusMax      *string             `json:"focus_max,omitzero"`
+	BlurMin       *string             `json:"blur_min,omitzero"`
+	BlurMax       *string             `json:"blur_max,omitzero"`
+	BrightnessMin *string             `json:"brightness_min,omitzero"`
+	BrightnessMax *string             `json:"brightness_max,omitzero"`
+	FramingMin    *string             `json:"framing_min,omitzero"`
+	FramingMax    *string             `json:"framing_max,omitzero"`
+	AestheticsMin *string             `json:"aesthetics_min,omitzero"`
+	AestheticsMax *string             `json:"aesthetics_max,omitzero"`
+	ColorRedMin   *string             `json:"color_red_min,omitzero"`
+	ColorRedMax   *string             `json:"color_red_max,omitzero"`
+	ColorGreenMin *string             `json:"color_green_min,omitzero"`
+	ColorGreenMax *string             `json:"color_green_max,omitzero"`
+	ColorBlueMin  *string             `json:"color_blue_min,omitzero"`
+	ColorBlueMax  *string             `json:"color_blue_max,omitzero"`
 
 	RatingMin     *int64     `json:"rating_min,omitzero"`
 	RatingMax     *int64     `json:"rating_max,omitzero"`
@@ -114,12 +117,13 @@ type Filters struct {
 }
 
 type queryInput struct {
-	V       *int          `json:"v"`
-	Text    *string       `json:"text"`
-	Syntax  *string       `json:"syntax"`
-	Mode    *string       `json:"mode"`
-	Filters *filtersInput `json:"filters"`
-	Sort    *sortInput    `json:"sort"`
+	Timezone *string       `json:"timezone"`
+	V        *int          `json:"v"`
+	Text     *string       `json:"text"`
+	Syntax   *string       `json:"syntax"`
+	Mode     *string       `json:"mode"`
+	Filters  *filtersInput `json:"filters"`
+	Sort     *sortInput    `json:"sort"`
 }
 
 type sortInput struct {
@@ -128,23 +132,24 @@ type sortInput struct {
 }
 
 type filtersInput struct {
-	Unevaluated   *bool   `json:"unevaluated"`
-	FocusMin      *string `json:"focus_min"`
-	FocusMax      *string `json:"focus_max"`
-	BlurMin       *string `json:"blur_min"`
-	BlurMax       *string `json:"blur_max"`
-	BrightnessMin *string `json:"brightness_min"`
-	BrightnessMax *string `json:"brightness_max"`
-	FramingMin    *string `json:"framing_min"`
-	FramingMax    *string `json:"framing_max"`
-	AestheticsMin *string `json:"aesthetics_min"`
-	AestheticsMax *string `json:"aesthetics_max"`
-	ColorRedMin   *string `json:"color_red_min"`
-	ColorRedMax   *string `json:"color_red_max"`
-	ColorGreenMin *string `json:"color_green_min"`
-	ColorGreenMax *string `json:"color_green_max"`
-	ColorBlueMin  *string `json:"color_blue_min"`
-	ColorBlueMax  *string `json:"color_blue_max"`
+	DocumentDate  *DocumentDateFilter `json:"document_date"`
+	Unevaluated   *bool               `json:"unevaluated"`
+	FocusMin      *string             `json:"focus_min"`
+	FocusMax      *string             `json:"focus_max"`
+	BlurMin       *string             `json:"blur_min"`
+	BlurMax       *string             `json:"blur_max"`
+	BrightnessMin *string             `json:"brightness_min"`
+	BrightnessMax *string             `json:"brightness_max"`
+	FramingMin    *string             `json:"framing_min"`
+	FramingMax    *string             `json:"framing_max"`
+	AestheticsMin *string             `json:"aesthetics_min"`
+	AestheticsMax *string             `json:"aesthetics_max"`
+	ColorRedMin   *string             `json:"color_red_min"`
+	ColorRedMax   *string             `json:"color_red_max"`
+	ColorGreenMin *string             `json:"color_green_min"`
+	ColorGreenMax *string             `json:"color_green_max"`
+	ColorBlueMin  *string             `json:"color_blue_min"`
+	ColorBlueMax  *string             `json:"color_blue_max"`
 
 	RatingMin     *int64     `json:"rating_min"`
 	RatingMax     *int64     `json:"rating_max"`
@@ -183,7 +188,7 @@ type filtersInput struct {
 }
 
 var optionalFilterFields = withQualityFields(map[string]struct{}{
-	"paths": {}, "exclude_paths": {}, "collection_ids": {}, "exclude_collection_ids": {},
+	"document_date": {}, "paths": {}, "exclude_paths": {}, "collection_ids": {}, "exclude_collection_ids": {},
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
@@ -199,7 +204,7 @@ func Parse(raw []byte) (Query, error) {
 	if err := json.Unmarshal(raw, &input, json.RejectUnknownMembers(true), json.MatchCaseInsensitiveNames(false)); err != nil {
 		return Query{}, fmt.Errorf("parse query: %w", err)
 	}
-	value := Query{V: 1, Syntax: "simple", Mode: "lexical", Sort: Sort{Field: "name", Direction: "asc"}}
+	value := Query{Timezone: input.Timezone, V: 1, Syntax: "simple", Mode: "lexical", Sort: Sort{Field: "name", Direction: "asc"}}
 	if input.V != nil {
 		value.V = *input.V
 	}
@@ -273,7 +278,7 @@ func Fingerprint(value Query) (string, error) {
 }
 
 func (input filtersInput) value() Filters {
-	value := Filters{}
+	value := Filters{DocumentDate: input.DocumentDate}
 	if input.Unevaluated != nil {
 		value.Unevaluated = *input.Unevaluated
 	}
@@ -410,9 +415,14 @@ func normalizeQuery(value Query) (Query, error) {
 	if !oneOf(value.Mode, "lexical", "semantic", "hybrid") {
 		return Query{}, errors.New("query mode is unknown")
 	}
-	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time") ||
+	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time", "document_date") ||
 		!oneOf(value.Sort.Direction, "asc", "desc") {
 		return Query{}, errors.New("query sort is invalid")
+	}
+	if value.Timezone != nil {
+		if _, err := civiltime.LoadZone(*value.Timezone); err != nil {
+			return Query{}, fmt.Errorf("invalid_timezone: %w", err)
+		}
 	}
 	filters, err := normalizeFilters(value.Filters)
 	if err != nil {
@@ -424,6 +434,10 @@ func normalizeQuery(value Query) (Query, error) {
 
 func normalizeFilters(value Filters) (Filters, error) {
 	var err error
+	value.DocumentDate, err = normalizeDocumentDate(value.DocumentDate)
+	if err != nil {
+		return Filters{}, err
+	}
 	value, err = normalizeQualityFilters(value)
 	if err != nil {
 		return Filters{}, err

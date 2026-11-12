@@ -19,7 +19,7 @@ var dateKinds = []DateKind{
 
 var eventPrecisions = []EventPrecision{"year", "month", "date", "hour", "minute", "second", "fraction"}
 
-var eventTimezoneKinds = []EventTimezoneKind{"utc", "offset", "named", "omitted", "invalid"}
+var eventTimezoneKinds = []EventTimezoneKind{"utc", "offset", "iana", "rfc5322", "named", "omitted", "invalid"}
 
 var eventRoles = []EventRole{
 	"author", "last_saved_by", "custodian", "sender", "recipient", "copied", "blind_copy",

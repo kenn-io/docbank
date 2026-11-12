@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -149,7 +150,7 @@ func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
 	}{
 		{"email named", "message/rfc822", "From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04 XYZ\r\n\r\nbody", "email.sent.raw", "Tue, 2 Jan 2024 03:04 XYZ", "2024-01-02T03:04", "XYZ", "sent", "minute", "named"},
 		{"email omitted", "message/rfc822", "From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04\r\n\r\nbody", "email.sent", "Tue, 2 Jan 2024 03:04", "2024-01-02T03:04", "", "sent", "minute", "omitted"},
-		{"calendar start", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.start.raw", "20240102T030405", "2024-01-02T03:04:05", "America/New_York", "started", "second", "named"},
+		{"calendar start", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.start.raw", "20240102T030405", "2024-01-02T03:04:05", "America/New_York", "started", "second", "iana"},
 		{"calendar end date", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTEND;VALUE=DATE;TZID=Example/Zone:20240103\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.end.raw", "20240103", "2024-01-03", "Example/Zone", "ended", "date", "named"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -165,7 +166,11 @@ func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
 			require.Equal(t, test.precision, event.Precision)
 			require.Equal(t, test.zone, event.TimezoneKind)
 			require.Equal(t, test.zoneText, event.ZoneText)
-			require.Empty(t, event.UTCKey)
+			if test.zone == "iana" {
+				require.Equal(t, "2024-01-02T08:04:05.000000000Z", event.UTCKey)
+			} else {
+				require.Empty(t, event.UTCKey)
+			}
 			require.Equal(t, "field/"+test.key, event.EvidenceLocator)
 		})
 	}
@@ -242,7 +247,7 @@ func TestAdaptersRecoverCanonicalLegacyRawEmailClaims(t *testing.T) {
 			name: "two digit year minute named zone",
 			raw:  "Tue, 2 Jan 24 03:04 PST", dateValue: "2024-01-02T03:04",
 			normalized: "2024-01-02T11:04:00Z",
-			precision:  "minute", zone: "named", zoneText: "PST",
+			precision:  "minute", zone: "rfc5322", zoneText: "PST",
 		},
 		{
 			name: "four digit year seconds named zone",
@@ -554,4 +559,17 @@ func requirePrimary(t *testing.T, primaries []document.DocumentEventPrimaryV1, d
 func testDigest(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
+}
+
+func TestCalendarZoneGapAndOverlap(t *testing.T) {
+	for _, tc := range []struct{ value, utc string }{
+		{"2026-03-08T02:30", "2026-03-08T07:00:00.000000000Z"},
+		{"2026-11-01T01:30", "2026-11-01T05:30:00.000000000Z"},
+	} {
+		field := timestampField("calendar.event.e000001.start", "calendar", "DTSTART;TZID=America/Toronto", false, tc.value, tc.value, "minute", "omitted")
+		event, err := metadataDateEvent(field)
+		require.NoError(t, err)
+		require.Equal(t, document.EventTimezoneKind("iana"), event.TimezoneKind)
+		require.Equal(t, tc.utc, event.UTCKey)
+	}
 }

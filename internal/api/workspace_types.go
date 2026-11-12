@@ -120,6 +120,8 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
 type WorkspaceQueryResponse struct {
+	Timezone          string `json:"timezone,omitempty"`
+	TimezoneDefaulted bool   `json:"timezone_defaulted"`
 	PhotoSearchStatus
 
 	Query               QueryPayload               `json:"query"`
@@ -179,6 +181,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
+		Timezone: page.Timezone, TimezoneDefaulted: page.TimezoneDefaulted,
 		PhotoSearchStatus: fromStorePhotoSearchStatus(page.PhotoRanking),
 		Query:             QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,

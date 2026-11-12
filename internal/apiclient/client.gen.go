@@ -27031,6 +27031,14 @@ const (
 	VerifiedEmpty                            RenditionTextReceiptState = "verified_empty"
 )
 
+type SavedQueryDateSchemaPrecisions string
+
+const (
+	Coarse SavedQueryDateSchemaPrecisions = "coarse"
+	Day    SavedQueryDateSchemaPrecisions = "day"
+	Exact  SavedQueryDateSchemaPrecisions = "exact"
+)
+
 type SavedQueryFiltersSchemaFlags string
 
 const (
@@ -27096,15 +27104,16 @@ const (
 type SavedQuerySortSchemaField string
 
 const (
-	AddedTime   SavedQuerySortSchemaField = "added_time"
-	CaptureTime SavedQuerySortSchemaField = "capture_time"
-	ImportTime  SavedQuerySortSchemaField = "import_time"
-	MediaType   SavedQuerySortSchemaField = "media_type"
-	ModifiedAt  SavedQuerySortSchemaField = "modified_at"
-	Name        SavedQuerySortSchemaField = "name"
-	Path        SavedQuerySortSchemaField = "path"
-	Relevance   SavedQuerySortSchemaField = "relevance"
-	Size        SavedQuerySortSchemaField = "size"
+	AddedTime    SavedQuerySortSchemaField = "added_time"
+	CaptureTime  SavedQuerySortSchemaField = "capture_time"
+	DocumentDate SavedQuerySortSchemaField = "document_date"
+	ImportTime   SavedQuerySortSchemaField = "import_time"
+	MediaType    SavedQuerySortSchemaField = "media_type"
+	ModifiedAt   SavedQuerySortSchemaField = "modified_at"
+	Name         SavedQuerySortSchemaField = "name"
+	Path         SavedQuerySortSchemaField = "path"
+	Relevance    SavedQuerySortSchemaField = "relevance"
+	Size         SavedQuerySortSchemaField = "size"
 )
 
 type SavedQueryV1SchemaMode string
@@ -30771,6 +30780,8 @@ type DerivativePurgePlanRequest = api.DerivativePurgePlanRequest
 
 type DerivativePurgeReceipt = api.DerivativePurgeReceipt
 
+type DocumentDateFilter = query.DocumentDateFilter
+
 type DocumentEventCoverage = api.DocumentEventCoverage
 
 type DocumentEvidenceReference = api.DocumentEvidenceReference
@@ -31887,6 +31898,13 @@ type SavedQuery = api.SavedQuery
 
 type SavedQueryCreateRequest = api.SavedQueryCreateRequest
 
+type SavedQueryDateSchema struct {
+	From       runtime.Date                     `json:"from"`
+	Kinds      []string                         `json:"kinds,omitempty"`
+	Precisions []SavedQueryDateSchemaPrecisions `json:"precisions,omitempty"`
+	To         runtime.Date                     `json:"to"`
+}
+
 type SavedQueryFiltersSchema struct {
 	AestheticsMax        *string                                `json:"aesthetics_max,omitempty"`
 	AestheticsMin        *string                                `json:"aesthetics_min,omitempty"`
@@ -31906,6 +31924,7 @@ type SavedQueryFiltersSchema struct {
 	ColorGreenMin        *string                                `json:"color_green_min,omitempty"`
 	ColorRedMax          *string                                `json:"color_red_max,omitempty"`
 	ColorRedMin          *string                                `json:"color_red_min,omitempty"`
+	DocumentDate         *SavedQueryDateSchema                  `json:"document_date,omitempty"`
 	ExcludeCollectionIds []uuid.UUID                            `json:"exclude_collection_ids,omitempty"`
 	ExcludePaths         []string                               `json:"exclude_paths,omitempty"`
 	ExcludeTagIds        []uuid.UUID                            `json:"exclude_tag_ids,omitempty"`
@@ -31964,13 +31983,14 @@ type SavedQuerySortSchema struct {
 
 type SavedQueryV1Schema struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string                   `json:"$schema,omitempty"`
-	Filters *SavedQueryFiltersSchema  `json:"filters,omitempty"`
-	Mode    *SavedQueryV1SchemaMode   `json:"mode,omitempty"`
-	Sort    *SavedQuerySortSchema     `json:"sort,omitempty"`
-	Syntax  *SavedQueryV1SchemaSyntax `json:"syntax,omitempty"`
-	Text    *string                   `json:"text,omitempty"`
-	V       *SavedQueryV1SchemaV      `json:"v,omitempty"`
+	Schema   *string                   `json:"$schema,omitempty"`
+	Filters  *SavedQueryFiltersSchema  `json:"filters,omitempty"`
+	Mode     *SavedQueryV1SchemaMode   `json:"mode,omitempty"`
+	Sort     *SavedQuerySortSchema     `json:"sort,omitempty"`
+	Syntax   *SavedQueryV1SchemaSyntax `json:"syntax,omitempty"`
+	Text     *string                   `json:"text,omitempty"`
+	Timezone *string                   `json:"timezone,omitempty"`
+	V        *SavedQueryV1SchemaV      `json:"v,omitempty"`
 }
 
 type SealExportSourceRequest struct {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
@@ -174,13 +175,26 @@ func validateDocumentEventsV1(value DocumentEventsV1) error {
 		for _, text := range stringsToCheck {
 			textBytes += len(text)
 		}
-		axis, err := EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, event.OffsetSeconds)
-		if err != nil || event.AxisKey != axis {
-			return fmt.Errorf("document event %d has invalid axis key", index)
-		}
-		utc, hasUTC, err := EventUTCKey(event.DateValue, event.Precision, event.TimezoneKind, event.OffsetSeconds)
-		if err != nil || (hasUTC && event.UTCKey != utc) || (!hasUTC && event.UTCKey != "") {
-			return fmt.Errorf("document event %d has invalid UTC key", index)
+		if event.TimezoneKind == "iana" {
+			// Retained gap resolutions are validated without consulting changing tzdata.
+			civil, err := eventCivil(event.DateValue, event.Precision)
+			at, parseErr := time.Parse("2006-01-02T15:04:05.000000000Z", event.UTCKey)
+			if event.Precision == "date" || event.Precision == "month" || event.Precision == "year" || err != nil || parseErr != nil || event.OffsetSeconds == nil || *event.OffsetSeconds < -86399 || *event.OffsetSeconds > 86399 || !strings.Contains(event.ZoneText, "/") || event.AxisKey != strings.TrimSuffix(event.UTCKey, "Z") || at.Format("2006-01-02T15:04:05.000000000Z") != event.UTCKey {
+				return fmt.Errorf("document event %d has invalid IANA key", index)
+			}
+			wall := at.Add(time.Duration(*event.OffsetSeconds) * time.Second)
+			if wall.Before(civil) || wall.Sub(civil) > 24*time.Hour {
+				return fmt.Errorf("document event %d has invalid IANA wall time", index)
+			}
+		} else {
+			axis, err := EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, event.OffsetSeconds)
+			if err != nil || event.AxisKey != axis {
+				return fmt.Errorf("document event %d has invalid axis key", index)
+			}
+			utc, hasUTC, err := EventUTCKey(event.DateValue, event.Precision, event.TimezoneKind, event.OffsetSeconds)
+			if err != nil || (hasUTC && event.UTCKey != utc) || (!hasUTC && event.UTCKey != "") {
+				return fmt.Errorf("document event %d has invalid UTC key", index)
+			}
 		}
 		wantFraction := 0
 		if event.Precision == "fraction" {

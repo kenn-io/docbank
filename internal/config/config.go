@@ -66,6 +66,7 @@ type ServerConfig struct {
 
 // WebConfig controls the built-in web UI.
 type WebConfig struct {
+	TimelineTimezone    string         `toml:"timeline_timezone"`
 	BasePath            string         `toml:"base_path"`
 	Enabled             bool           `toml:"enabled"` // default true
 	PublicOrigin        string         `toml:"public_origin"`
@@ -483,7 +484,7 @@ func Default() Config {
 			BindAddr:    "127.0.0.1",
 			IdleTimeout: Duration(30 * time.Minute),
 		},
-		Web:                WebConfig{Enabled: true, MapTiles: MapTilesConfig{MaxZoom: 19}},
+		Web:                WebConfig{Enabled: true, TimelineTimezone: "UTC", MapTiles: MapTilesConfig{MaxZoom: 19}},
 		Storage:            StorageConfig{PackMaxBytes: 256 << 20},
 		RenditionProfiles:  make(map[string]RenditionProfileConfig),
 		EmbeddingProfiles:  make(map[string]EmbeddingProfileConfig),
@@ -514,6 +515,9 @@ func parse(root string) (Config, error) {
 	}
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())
+	}
+	if md.IsDefined("web", "timeline_timezone") && c.Web.TimelineTimezone == "" {
+		return Config{}, fmt.Errorf("loading %s: [web] timeline_timezone cannot be empty", path)
 	}
 	if key, ok := unsupportedEmbedderKey(md); ok {
 		return Config{}, fmt.Errorf("loading %s: %q is not supported by the pinned embedding adapter", path, key)

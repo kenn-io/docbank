@@ -2268,6 +2268,22 @@ CREATE TABLE {{schema}}.document_event_primaries (
         REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE
 );
 
+CREATE TABLE {{schema}}.document_date_keys (
+    generation_id TEXT COLLATE "C" NOT NULL, event_id TEXT COLLATE "C" NOT NULL,
+    content_version_id TEXT COLLATE "C" NOT NULL, date_kind TEXT COLLATE "C" NOT NULL,
+    precision TEXT COLLATE "C" NOT NULL, floating BIGINT NOT NULL,
+    utc_key TEXT COLLATE "C", axis_key TEXT COLLATE "C" NOT NULL,
+    civil_date TEXT COLLATE "C" NOT NULL, civil_end_date TEXT COLLATE "C" NOT NULL,
+    civil_month TEXT COLLATE "C" NOT NULL, civil_year TEXT COLLATE "C" NOT NULL,
+    sensitive BIGINT NOT NULL, primary_safe BIGINT NOT NULL, primary_full BIGINT NOT NULL,
+    PRIMARY KEY (generation_id, event_id),
+    FOREIGN KEY (generation_id, event_id) REFERENCES {{schema}}.document_events(generation_id, event_id) ON DELETE CASCADE
+);
+CREATE INDEX document_date_keys_utc ON {{schema}}.document_date_keys(utc_key, generation_id);
+CREATE INDEX document_date_keys_civil ON {{schema}}.document_date_keys(civil_date, generation_id);
+CREATE INDEX document_date_keys_month ON {{schema}}.document_date_keys(civil_month, generation_id);
+CREATE INDEX document_date_keys_axis ON {{schema}}.document_date_keys(axis_key, generation_id);
+
 CREATE TABLE {{schema}}.document_event_dirty (
     content_version_id TEXT COLLATE "C" PRIMARY KEY REFERENCES {{schema}}.content_versions(version_id) ON DELETE CASCADE,
     revision BIGINT NOT NULL, reason TEXT COLLATE "C" NOT NULL

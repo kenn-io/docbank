@@ -16,3 +16,16 @@ func TestEmailDateNumericZeroZone(t *testing.T) {
 		}
 	}
 }
+
+func TestEmailDateNamedZones(t *testing.T) {
+	for _, tc := range []struct{ raw, kind, utc string }{
+		{"10 Mar 2026 12:30 EST", "rfc5322", "2026-03-10T17:30:00.000000000Z"},
+		{"10 Mar 2026 12:30 Z", "omitted", ""},
+		{"10 Mar 2026 12:30 CET", "named", ""},
+	} {
+		e, ok := rawEmailDateEvent(tc.raw)
+		if !ok || string(e.TimezoneKind) != tc.kind || e.UTCKey != tc.utc {
+			t.Errorf("%q: %+v, parsed %v", tc.raw, e, ok)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -25,6 +26,14 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if err != nil {
 			return nil, err
 		}
+		defaulted := value.Timezone == nil
+		if defaulted && query.UsesDocumentDate(value) {
+			zone := d.Cfg.Web.TimelineTimezone
+			if zone == "" {
+				zone = "UTC"
+			}
+			value.Timezone = &zone
+		}
 		coverage, err := workspaceQueryCoverage(d, in.Body.Photos, in.Body.Profile)
 		if err != nil {
 			return nil, err
@@ -33,7 +42,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Photos: in.Body.Photos, Query: value, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			Photos: in.Body.Photos, Query: value, TimezoneDefaulted: defaulted, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		})
 		if err != nil {
 			return nil, workspaceQueryError(err)
@@ -85,10 +94,21 @@ func parseWorkspaceQuery(raw QueryPayload) (query.Query, error) {
 	if err == nil {
 		return value, nil
 	}
+	if strings.Contains(err.Error(), "invalid_timezone") {
+		return query.Query{}, NewError(http.StatusBadRequest, "invalid_timezone", err.Error())
+	}
+	if strings.Contains(err.Error(), "invalid_date") {
+		return query.Query{}, NewError(http.StatusBadRequest, "invalid_date", err.Error())
+	}
 	return query.Query{}, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 }
 
 func workspaceQueryError(err error) error {
+	for _, code := range []string{"invalid_timezone", "invalid_date", "date_not_in_zone"} {
+		if strings.Contains(err.Error(), code) {
+			return NewError(http.StatusBadRequest, code, err.Error())
+		}
+	}
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
 	}

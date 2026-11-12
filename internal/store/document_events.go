@@ -282,7 +282,11 @@ func insertDocumentEventGeneration(
 		generation.Checksum, generation.EventCount, generation.CreatedAt); err != nil {
 		return fmt.Errorf("recording document event generation: %w", err)
 	}
-	for _, event := range record.Events {
+	keys, err := document.DateKeysFor(record.Events)
+	if err != nil {
+		return fmt.Errorf("deriving document date keys: %w", err)
+	}
+	for index, event := range record.Events {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO document_events(
 			generation_id,event_id,source_key,date_kind,source_kind_raw,date_value,raw_value,
 			precision,fraction_digits,timezone_kind,zone_text,offset_seconds,axis_key,utc_key,
@@ -296,6 +300,24 @@ func insertDocumentEventGeneration(
 			event.EvidenceKind, event.EvidenceID, event.EvidenceSHA256, []byte(event.EvidenceLocator),
 			documentEventBool(event.Sensitive)); err != nil {
 			return fmt.Errorf("recording document event %s: %w", event.EventID, err)
+		}
+		key := keys[index]
+		var safe, full bool
+		for _, primary := range record.Primaries {
+			if primary.ScopeClass == "vault" && primary.EventID == event.EventID {
+				safe = safe || primary.Disclosure == "safe"
+				full = full || primary.Disclosure == "full"
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO document_date_keys(
+			generation_id,event_id,content_version_id,date_kind,precision,floating,utc_key,axis_key,
+			civil_date,civil_end_date,civil_month,civil_year,sensitive,primary_safe,primary_full
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, generation.GenerationID,
+			event.EventID, generation.ContentVersionID, event.DateKind, event.Precision,
+			documentEventBool(key.Floating), nullableString(event.UTCKey), event.AxisKey,
+			key.CivilDate, key.CivilEndDate, key.CivilMonth, key.CivilYear,
+			documentEventBool(key.Sensitive), documentEventBool(safe), documentEventBool(full)); err != nil {
+			return fmt.Errorf("recording document date key: %w", err)
 		}
 		for _, actor := range event.Actors {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO document_event_actors(

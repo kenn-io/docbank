@@ -4090,6 +4090,29 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentDateFilter:
+      additionalProperties: false
+      properties:
+        from:
+          type: string
+        kinds:
+          items:
+            type: string
+          type: array
+        precisions:
+          items:
+            type: string
+          type: array
+        to:
+          type: string
+      required:
+        - from
+        - to
+      type: object
+      x-go-type: query.DocumentDateFilter
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/query
+        name: query
     DocumentEventCoverage:
       additionalProperties: false
       properties:
@@ -7288,6 +7311,8 @@ components:
           type:
             - string
             - "null"
+        document_date:
+          $ref: "#/components/schemas/DocumentDateFilter"
         exclude_collection_ids:
           items:
             type: string
@@ -17391,6 +17416,10 @@ components:
           type: string
         text:
           type: string
+        timezone:
+          type:
+            - string
+            - "null"
         v:
           format: int64
           type: integer
@@ -18922,6 +18951,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    SavedQueryDateSchema:
+      additionalProperties: false
+      properties:
+        from:
+          format: date
+          type: string
+        kinds:
+          items:
+            type: string
+          type: array
+        precisions:
+          items:
+            enum:
+              - exact
+              - day
+              - coarse
+            type: string
+          type: array
+        to:
+          format: date
+          type: string
+      required:
+        - from
+        - to
+      type: object
     SavedQueryFiltersSchema:
       additionalProperties: false
       properties:
@@ -19016,6 +19070,8 @@ components:
           type:
             - string
             - "null"
+        document_date:
+          $ref: "#/components/schemas/SavedQueryDateSchema"
         exclude_collection_ids:
           items:
             format: uuid
@@ -19464,6 +19520,7 @@ components:
             - capture_time
             - import_time
             - added_time
+            - document_date
           type: string
       type: object
     SavedQueryV1Schema:
@@ -19495,6 +19552,8 @@ components:
           type: string
         text:
           maxLength: 8192
+          type: string
+        timezone:
           type: string
         v:
           default: 1
@@ -22347,6 +22406,10 @@ components:
         snapshot_id:
           pattern: ^[0-9a-f]{32}$
           type: string
+        timezone:
+          type: string
+        timezone_defaulted:
+          type: boolean
         total:
           format: int64
           minimum: 0
@@ -22358,6 +22421,7 @@ components:
         truncated:
           type: boolean
       required:
+        - timezone_defaulted
         - query
         - dependencies
         - query_fingerprint

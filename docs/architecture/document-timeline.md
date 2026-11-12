@@ -186,3 +186,20 @@ operation ID after the prerequisite or failure is resolved.
 
 Backups preserve person and custody records. Restore rebuilds the links without
 copying old rebuild receipts. See [Backup and recovery](backup.md).
+
+## Date search projection
+
+`document_date_keys` is a derived projection written with each event
+generation. It stores the civil date, month and year alongside the existing
+axis and UTC keys. All-day starts use their sibling end to represent the
+inclusive span. A key is sensitive when its event or any actor is sensitive.
+The current head selects the generation used for search. Backup metadata does
+not include these keys; the timeline rebuild derives them from retained
+sources after restore or upgrade.
+
+Calendar IANA zones resolve overlaps to the earlier instant and gaps to the
+first instant after the gap. Email RFC 5322 zone names use their fixed offsets;
+unknown names and `-0000` remain floating. The stored instant is validated
+without resolving it again, so changing time-zone data does not invalidate a
+retained generation. The event derivation recipe advances when these rules
+change; `primary-rule/v1` remains unchanged.

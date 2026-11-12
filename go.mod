@@ -151,3 +151,5 @@ require (
 )
 
 tool gotest.tools/gotestsum
+
+replace go.kenn.io/kit => github.com/salmonumbrella/kit v0.30.2-0.20261112035435-955bca831718

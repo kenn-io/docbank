@@ -49,7 +49,9 @@ func EventUTCKey(
 		return "", false, errors.New("invalid timezone kind")
 	}
 	switch zone {
-	case "offset":
+	case "iana":
+		return "", false, errors.New("IANA UTC keys require the resolved instant")
+	case "offset", "rfc5322":
 		if offsetSeconds == nil || *offsetSeconds < -86399 || *offsetSeconds > 86399 {
 			return "", false, errors.New("invalid offset")
 		}
@@ -64,10 +66,10 @@ func EventUTCKey(
 	}
 
 	if precision == "year" || precision == "month" || precision == "date" ||
-		(zone != "utc" && zone != "offset") {
+		(zone != "utc" && zone != "offset" && zone != "rfc5322") {
 		return "", false, nil
 	}
-	if zone == "offset" {
+	if zone == "offset" || zone == "rfc5322" {
 		civil = civil.Add(-time.Duration(*offsetSeconds) * time.Second)
 	}
 	if civil.Year() < 1 || civil.Year() > 9999 {

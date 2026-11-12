@@ -36,6 +36,7 @@ func TestBackupExcludesTheProjectionButShipsBindings(t *testing.T) {
 		"document_event",
 		"document_event_actor",
 		"document_event_primary",
+		"document_date_key",
 		"document_event_build",
 		"document_event_dirty",
 		"document_event_attempt",

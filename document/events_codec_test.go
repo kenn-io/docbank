@@ -280,3 +280,19 @@ func TestActorKeyGoldenVector(t *testing.T) {
 	_, err = ActorKeyV1("handle", string([]byte{'x', '/', 0xff}))
 	require.Error(t, err)
 }
+
+func TestDocumentEventsCodecAcceptsRetainedIANAGap(t *testing.T) {
+	value := validDocumentEvents()
+	event := &value.Events[0]
+	event.DateValue, event.Precision = "2026-03-08T02:30", "minute"
+	event.TimezoneKind, event.ZoneText = "iana", "America/Toronto"
+	event.OffsetSeconds = new(-14400)
+	event.UTCKey = "2026-03-08T07:00:00.000000000Z"
+	event.AxisKey = "2026-03-08T07:00:00.000000000"
+	event.EventID = DocumentEventID(value.VaultUID, value.ContentVersionID, event.SourceKey, event.DateKind, event.DateValue, event.Precision, event.TimezoneKind, event.EvidenceSHA256)
+	value.Primaries[0].EventID = event.EventID
+	encoded, _, err := MarshalDocumentEventsV1(value)
+	require.NoError(t, err)
+	_, _, err = DecodeDocumentEventsV1(encoded)
+	require.NoError(t, err)
+}

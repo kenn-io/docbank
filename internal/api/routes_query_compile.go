@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/query"
@@ -61,10 +62,20 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryPreview }, error) {
 		value, err := query.Parse(in.Body)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			return nil, queryInputError(err)
+		}
+		if value.Timezone == nil && query.UsesDocumentDate(value) {
+			zone := d.Cfg.Web.TimelineTimezone
+			if zone == "" {
+				zone = "UTC"
+			}
+			value.Timezone = &zone
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
 				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
 				if positioned.End > positioned.Offset {
@@ -95,10 +106,20 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, in *struct{ Body QueryPayload }) (*struct{ Body QueryHighlightPreview }, error) {
 		value, err := query.Parse(in.Body)
 		if err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
+			return nil, queryInputError(err)
+		}
+		if value.Timezone == nil && query.UsesDocumentDate(value) {
+			zone := d.Cfg.Web.TimelineTimezone
+			if zone == "" {
+				zone = "UTC"
+			}
+			value.Timezone = &zone
 		}
 		compiled, err := d.Store.CompileQuery(ctx, value)
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if positioned, ok := errors.AsType[*query.ExpressionError](err); ok {
 				problem := NewError(http.StatusUnprocessableEntity, "invalid_query", positioned.Message)
 				if positioned.End > positioned.Offset {
@@ -124,4 +145,21 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 		}
 		return &struct{ Body QueryHighlightPreview }{Body: preview}, nil
 	})
+}
+
+// dateQueryError preserves the timeline contract's error codes at every query entry point.
+func dateQueryError(err error) error {
+	for _, code := range []string{"invalid_timezone", "invalid_date", "date_not_in_zone"} {
+		if strings.Contains(err.Error(), code) {
+			return NewError(http.StatusBadRequest, code, err.Error())
+		}
+	}
+	return nil
+}
+
+func queryInputError(err error) error {
+	if problem := dateQueryError(err); problem != nil {
+		return problem
+	}
+	return NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 }

@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/civiltime"
 )
 
 var (
@@ -56,7 +57,25 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 				event.ZoneText = strings.Trim(value, `"`)
 				event.OffsetSeconds = nil
 				event.UTCKey = ""
-				event.AxisKey, err = document.EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, nil)
+				designator := civiltime.ClassifyZone(event.ZoneText, civiltime.General)
+				if designator.State == civiltime.ZoneIANA && event.Precision != "date" && event.Precision != "month" && event.Precision != "year" {
+					wall := event.DateValue
+					if event.Precision == "hour" {
+						wall += ":00"
+					}
+					dt, parseErr := civiltime.ParseDateTime(wall)
+					if parseErr != nil {
+						return document.DocumentEventV1{}, parseErr
+					}
+					instant, _ := civiltime.ResolveLocal(dt, designator.Location)
+					_, offset := instant.Zone()
+					event.TimezoneKind = "iana"
+					event.OffsetSeconds = &offset
+					event.UTCKey = instant.UTC().Format("2006-01-02T15:04:05.000000000Z")
+					event.AxisKey = strings.TrimSuffix(event.UTCKey, "Z")
+				} else {
+					event.AxisKey, err = document.EventAxisKey(event.DateValue, event.Precision, event.TimezoneKind, nil)
+				}
 				break
 			}
 		}
@@ -160,26 +179,16 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 	zone := document.EventTimezoneKind("omitted")
 	var zoneText string
 	var offset *int
-	if strings.HasPrefix(zoneToken, "+") || strings.HasPrefix(zoneToken, "-") {
-		if zoneToken == "-0000" {
-			zoneText = zoneToken
-		} else if zoneToken == "+0000" {
-			zone = "utc"
-			zoneText = zoneToken
-		} else {
-			colon := zoneToken[:3] + ":" + zoneToken[3:]
-			seconds, offsetErr := offsetTokenSeconds(colon)
-			if offsetErr != nil {
-				return document.DocumentEventV1{}, false
-			}
-			zone = "offset"
-			zoneText = zoneToken
-			offset = &seconds
-		}
-	} else if zoneToken != "" {
-		zone = "named"
-		zoneText = zoneToken
+	designator := civiltime.ClassifyZone(zoneToken, civiltime.Email)
+	zone = document.EventTimezoneKind(designator.State)
+	zoneText = zoneToken
+	if designator.State == civiltime.ZoneOffset || designator.State == civiltime.ZoneRFC5322 {
+		offset = &designator.OffsetSeconds
 	}
+	if designator.State == civiltime.ZoneInvalid {
+		return document.DocumentEventV1{}, false
+	}
+
 	axis, err := document.EventAxisKey(base, precision, zone, offset)
 	if err != nil {
 		return document.DocumentEventV1{}, false

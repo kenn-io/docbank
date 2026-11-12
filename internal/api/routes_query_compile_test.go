@@ -170,3 +170,18 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 		queryHighlightsPath+"?unrecognized=1", headers, `{}`)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 }
+
+func TestQueryCompileTimelineErrors(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	for _, tc := range []struct{ input, code string }{
+		{`{"timezone":"Local"}`, "invalid_timezone"},
+		{`{"syntax":"advanced","text":"date:2026-02-30"}`, "invalid_date"},
+		{`{"syntax":"advanced","text":"date:2011-12-30","timezone":"Pacific/Apia"}`, "date_not_in_zone"},
+	} {
+		for _, path := range []string{queryParsePath, queryHighlightsPath} {
+			resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, tc.input)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+			require.Equal(t, tc.code, decodeProblem(t, body).Code)
+		}
+	}
+}
