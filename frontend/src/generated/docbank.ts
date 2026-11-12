@@ -1716,6 +1716,17 @@ export interface ContextRequest {
   offset: number;
 }
 
+export interface ContractDocument {
+  added_at: string;
+  available: boolean;
+  blob_sha256: string;
+  content_version_id: string;
+  current: boolean;
+  node_id: number;
+  role: string;
+  size: number;
+}
+
 export interface ContractParty {
   display_name: string;
   kind: string;
@@ -1733,6 +1744,7 @@ export interface Contract {
   contract_id: string;
   contract_type: string;
   created_at: string;
+  documents: ContractDocument[];
   effective_status: string;
   /** @nullable */
   expires_on: string | null;
@@ -9721,6 +9733,24 @@ export type UpdateContractHeaders = {
 'If-Match': string;
 };
 
+export type UnlinkContractDocumentParams = {
+role: string;
+content_version_id?: string;
+};
+
+export type UnlinkContractDocumentHeaders = {
+'If-Match': string;
+};
+
+export type LinkContractDocumentParams = {
+role: string;
+content_version_id?: string;
+};
+
+export type LinkContractDocumentHeaders = {
+'If-Match': string;
+};
+
 export type DetachContractPartyParams = {
 role: DetachContractPartyRole;
 };
@@ -10081,6 +10111,19 @@ offset?: number;
 
 export type PruneNodeContentVersionsHeaders = {
 'If-Match': string;
+};
+
+export type ListNodeContractsParams = {
+as_of?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
 };
 
 export type ListPackagesParams = {
@@ -12829,6 +12872,106 @@ return sessionJSON<Contract>(getUpdateContractUrl(contractId),
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(patchContractRequest)
+  }
+);}
+
+
+
+export const getUnlinkContractDocumentUrl = (contractId: string,
+    nodeId: number,
+    params: UnlinkContractDocumentParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/documents/${encodeURIComponent(String(nodeId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/documents/${encodeURIComponent(String(nodeId))}`
+}
+
+/**
+ * @summary Change a contract document
+ */
+export const unlinkContractDocument = async (contractId: string,
+    nodeId: number,
+    params: UnlinkContractDocumentParams,
+    headers: UnlinkContractDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getUnlinkContractDocumentUrl(contractId,nodeId,params),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getLinkContractDocumentUrl = (contractId: string,
+    nodeId: number,
+    params: LinkContractDocumentParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/documents/${encodeURIComponent(String(nodeId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/documents/${encodeURIComponent(String(nodeId))}`
+}
+
+/**
+ * @summary Change a contract document
+ */
+export const linkContractDocument = async (contractId: string,
+    nodeId: number,
+    params: LinkContractDocumentParams,
+    headers: LinkContractDocumentHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getLinkContractDocumentUrl(contractId,nodeId,params),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
   }
 );}
 
@@ -16055,6 +16198,39 @@ return sessionJSON<VersionPruneReport>(getPruneNodeContentVersionsUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(versionPruneRequest)
+  }
+);}
+
+
+
+export const getListNodeContractsUrl = (nodeId: number,
+    params?: ListNodeContractsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/nodes/${encodeURIComponent(String(nodeId))}/contracts?${stringifiedParams}` : `/api/v1/nodes/${encodeURIComponent(String(nodeId))}/contracts`
+}
+
+/**
+ * @summary List contracts linked to a node
+ */
+export const listNodeContracts = async (nodeId: number,
+    params?: ListNodeContractsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ContractPage> => {
+
+  return sessionJSON<ContractPage>(getListNodeContractsUrl(nodeId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
