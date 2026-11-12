@@ -2137,14 +2137,9 @@ it.each([
     textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
   ],
   [
-    "partial",
-    "Some PDFs in this vault have pages without a text layer.",
-    textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_partial: true }),
-  ],
-  [
     "unavailable",
-    "Some PDFs in this vault have pages without a text layer.",
-    textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_unavailable: 1 }),
+    "PDF text coverage is incomplete; some pages may not be searchable.",
+    textCoverage({ pdf_page_coverage_unavailable: 1 }),
   ],
   [
     "incomplete",
