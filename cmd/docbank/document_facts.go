@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"text/tabwriter"
 	"uuid"
@@ -12,7 +13,7 @@ import (
 
 func documentFactsCommand(kind string) *cobra.Command {
 	var asJSON, full bool
-	cmd := &cobra.Command{Use: kind + " <path-or-id>", Short: "Show a document's " + kind, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: kind + " <path-or-id>", Short: "Show a document's " + kind, Example: "  docbank document " + kind + " /notes.txt", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		selector, err := parseNodeSelector(args[0])
 		if err != nil {
 			return err
@@ -26,11 +27,11 @@ func documentFactsCommand(kind string) *cobra.Command {
 			return err
 		}
 		if node.CurrentVersionID == "" {
-			return fmt.Errorf("document has no current content version")
+			return errors.New("document has no current content version")
 		}
 		versionID, err := uuid.Parse(node.CurrentVersionID)
 		if err != nil {
-			return err
+			return fmt.Errorf("invalid content version ID: %w", err)
 		}
 		disclosure := "safe"
 		if full {
@@ -77,11 +78,11 @@ func documentFactsCommand(kind string) *cobra.Command {
 		}
 		return w.Flush()
 	}}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON")
-	cmd.Flags().BoolVar(&full, "full", false, "Include sensitive claims")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().BoolVar(&full, "full", false, "include sensitive claims")
 	return cmd
 }
 func init() {
-	registerGroupedCommand(documentCmd, documentFactsCommand("dates"), "dates")
-	registerGroupedCommand(documentCmd, documentFactsCommand("people"), "people")
+	documentCmd.AddCommand(documentFactsCommand("dates"))
+	documentCmd.AddCommand(documentFactsCommand("people"))
 }

@@ -10,6 +10,12 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+const (
+	factsStateNone    = "none"
+	factsStatePending = "pending"
+	factsStateFailed  = "failed"
+)
+
 // DocumentDateFacts is a version and its current derived events, read together.
 type DocumentDateFacts struct {
 	Version ContentVersion
@@ -45,14 +51,15 @@ func (s *Store) freshEventsInTx(ctx context.Context, tx *sql.Tx, versionID strin
 	if err != nil {
 		return "", DocumentEventView{}, err
 	}
+	// SQLite binds $n parameters in first-appearance order; keep it aligned with PostgreSQL.
 	var attempt, head, fresh, failed bool
 	err = tx.QueryRowContext(ctx, `SELECT a.content_version_id IS NOT NULL,h.content_version_id IS NOT NULL,
- COALESCE(`+documentEventFreshIndexedSQL("$2", "$3", "$4")+`,false),
- COALESCE(a.input_epoch=$2 AND a.input_revision=COALESCE(d.revision,0) AND a.state IN ('failed','unavailable'),false)
+ COALESCE(`+documentEventFreshIndexedSQL("$1", "$2", "$3")+`,false),
+ COALESCE(a.input_epoch=$1 AND a.input_revision=COALESCE(d.revision,0) AND a.state IN ('failed','unavailable'),false)
  FROM content_versions cv LEFT JOIN document_event_dirty d ON d.content_version_id=cv.version_id
  LEFT JOIN document_event_attempts a ON a.content_version_id=cv.version_id
  LEFT JOIN document_event_heads h ON h.content_version_id=cv.version_id
- LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id WHERE cv.version_id=$1`, versionID, state.InputEpoch, state.ContractVersion, state.DeriverFingerprint).Scan(&attempt, &head, &fresh, &failed)
+ LEFT JOIN document_event_generations g ON g.generation_id=h.generation_id WHERE cv.version_id=$4`, state.InputEpoch, state.ContractVersion, state.DeriverFingerprint, versionID).Scan(&attempt, &head, &fresh, &failed)
 	if err != nil {
 		return "", DocumentEventView{}, fmt.Errorf("reading date state: %w", err)
 	}
@@ -61,12 +68,12 @@ func (s *Store) freshEventsInTx(ctx context.Context, tx *sql.Tx, versionID strin
 		return "published", view, err
 	}
 	if failed {
-		return "failed", DocumentEventView{}, nil
+		return factsStateFailed, DocumentEventView{}, nil
 	}
 	if !attempt && !head {
-		return "none", DocumentEventView{}, nil
+		return factsStateNone, DocumentEventView{}, nil
 	}
-	return "pending", DocumentEventView{}, nil
+	return factsStatePending, DocumentEventView{}, nil
 }
 
 // DocumentPeopleFacts is an attribution snapshot with version-scoped evidence.
@@ -99,24 +106,24 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if err != nil {
 		return DocumentPeopleFacts{}, err
 	}
-	facts := DocumentPeopleFacts{Version: version, State: "none", Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
+	facts := DocumentPeopleFacts{Version: version, State: factsStateNone, Edges: []document.DocumentPersonEdgeV1{}, Assertions: []PersonDocumentAssertion{}, Candidates: []VersionCandidate{}, Persons: map[string]FactPerson{}}
 	edges, head, err := documentPeopleForVersionTx(ctx, tx, versionID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return DocumentPeopleFacts{}, err
 	}
 	if err != nil {
 		if head.ContentVersionID != "" {
-			facts.State = "pending"
+			facts.State = factsStatePending
 		}
 	} else {
 		switch {
 		case head.State == documentPeopleStateFailed || head.State == documentPeopleStateUnavailable:
-			facts.State = "failed"
+			facts.State = factsStateFailed
 		case head.State == documentPeopleStatePublished && head.GenerationID != "":
 			facts.State = "published"
 			facts.Edges = edges
 		default:
-			facts.State = "pending"
+			facts.State = factsStatePending
 		}
 	}
 	// Assertions are independent operator evidence.
@@ -127,7 +134,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	if safe {
 		facts.Assertions = slices.DeleteFunc(facts.Assertions, func(a PersonDocumentAssertion) bool { return a.Role == "blind_copy" })
 	}
-	if facts.State != "pending" && facts.State != "failed" {
+	if facts.State != factsStatePending && facts.State != factsStateFailed {
 		facts.Candidates, err = s.openCandidatesForVersion(ctx, tx, versionID)
 		if err != nil {
 			return DocumentPeopleFacts{}, err
