@@ -36,5 +36,4 @@ func TestTaxAccountPatchOmissionAndNull(t *testing.T) {
 	raw, err = json.Marshal(PatchTaxAccountRequest{ClearEffectiveStart: true})
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"effective_start":null`)
-
 }

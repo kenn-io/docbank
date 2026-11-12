@@ -91,7 +91,7 @@ func TestTaxMalformedPathMuxRedirectIsRedacted(t *testing.T) {
 			assert.NotContains(t, logs.String(), secret)
 			assert.Contains(t, logs.String(), "/api/v1/tax/{redacted}")
 			if strings.Contains(raw, "//tax/") {
-				assert.Equal(t, http.StatusMovedPermanently, recorder.Code)
+				assert.Equal(t, http.StatusTemporaryRedirect, recorder.Code)
 			} else {
 				assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 				assert.Contains(t, logs.String(), "panic in tax handler")
