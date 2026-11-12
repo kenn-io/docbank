@@ -25,6 +25,7 @@ import (
 
 func TestContractMCPCatalogOptIn(t *testing.T) {
 	assert.Len(t, toolCatalog(ServerOptions{AllowContractWrites: true}), 48)
+	assert.Len(t, toolCatalog(ServerOptions{AllowContractWrites: true, AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true, AllowExportWrites: true, AllowReportWrites: true, AllowKataWrites: true}), 73)
 	for _, tool := range toolCatalog(ServerOptions{AllowContractWrites: true}) {
 		if contractWriteTool(tool.Name) {
 			assert.False(t, tool.Annotations.ReadOnlyHint)
