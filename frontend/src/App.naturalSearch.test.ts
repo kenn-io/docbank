@@ -2135,15 +2135,10 @@ it.each([
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(notice)).toBeTruthy();
   expect((search as HTMLInputElement).value).toBe("unfinished draft");
-  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  if (kind === "failed") expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
+  else expect(within(drawer).getByText("docbank daemon restart")).toBeTruthy();
   if (kind === "accepted") {
-    await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-    await fireEvent.click(
-      within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-        name: "Restart",
-      }),
-    );
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenCalledOnce();
     const call = harness.fetchMock.mock.calls.find(
       ([input]) => String(input) === "/api/v1/processing/local/restart",
     );

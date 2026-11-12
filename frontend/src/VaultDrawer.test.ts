@@ -210,11 +210,7 @@ it("confirms a restart and disables both actions while it is pending", async () 
   let finish!: () => void;
   const props = openSearchTab({
     status: { ...off, restart_required: true, restart_available: true },
-    notice: "Restart requested.",
   });
-  expect(screen.getByRole("status").textContent).toBe("Restart requested.");
-  expect(screen.getByText("docbank web --no-browser")).toBeTruthy();
-  expect(screen.getByText(/public address/)).toBeTruthy();
   props.onrestart.mockImplementation(
     () =>
       new Promise<void>((resolve) => {
@@ -224,7 +220,8 @@ it("confirms a restart and disables both actions while it is pending", async () 
   await fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   let dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
   expect(within(dialog).getByText("docbank web --no-browser")).toBeTruthy();
-  expect(within(dialog).getByText(/public address/)).toBeTruthy();
+  expect(within(dialog).getByText("docbank daemon restart")).toBeTruthy();
+  expect(within(dialog).getByText(/public URL/)).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(props.onrestart).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("button", { name: "Restart" }));
@@ -238,4 +235,14 @@ it("confirms a restart and disables both actions while it is pending", async () 
     (within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   finish();
+});
+
+it("offers terminal recovery after an uncertain restart", () => {
+  openSearchTab({
+    status: { ...off, restart_required: true, restart_available: true },
+    notice: "Restart requested. Docbank may restart later.",
+  });
+  expect(screen.getByText("docbank web --no-browser")).toBeTruthy();
+  expect(screen.getByText("docbank daemon restart")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
 });

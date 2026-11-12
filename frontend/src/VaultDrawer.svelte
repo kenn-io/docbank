@@ -130,8 +130,10 @@
         <p class="error" role="alert">{searchByMeaning.error}</p>
       {/if}
       {#if searchByMeaning.notice}
-        <p role="status">{searchByMeaning.notice}</p>
-        {@render restartRecovery()}
+        <div class="restart-notice">
+          <p role="status">{searchByMeaning.notice}</p>
+          {@render restartRecovery()}
+        </div>
       {/if}
       {#if searchByMeaning.readError}
         <p class="error" role="alert">{searchByMeaning.readError}</p>
@@ -139,7 +141,9 @@
       {/if}
       {#if meaning?.restart_required}
         {#if meaning.restart_available}
-          <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
+          {#if !searchByMeaning.notice}
+            <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
+          {/if}
         {:else}
           <p>
             If you started Docbank in a terminal, press Ctrl+C and repeat the original command. If
@@ -175,8 +179,7 @@
   >
     <div class="restart-confirmation">
       <p>
-        Every open Docbank tab signs out. This may interrupt uploads, exports, and command-line
-        requests.
+        Open tabs sign out. Uploads, exports, and command-line requests may be interrupted.
       </p>
       {@render restartRecovery()}
     </div>
@@ -191,9 +194,9 @@
 
 {#snippet restartRecovery()}
   <p>
-    If a new tab doesn't open, run <code>docbank web --no-browser</code> in the vault's terminal
-    and open the printed URL. If the command reports an error, fix it and run the command again.
-    For a public address, reload it and sign in again.
+    If restart stalls, run <code>docbank daemon restart</code> in the vault's terminal. To reopen,
+    run <code>docbank web --no-browser</code> there and open the printed URL, or reload your public
+    URL and sign in. Fix any command error and retry.
   </p>
 {/snippet}
 
@@ -206,7 +209,8 @@
     padding: var(--space-5);
     font-size: var(--font-size-sm);
   }
-  .restart-confirmation {
+  .restart-confirmation,
+  .restart-notice {
     display: grid;
     gap: var(--space-4);
   }
@@ -227,5 +231,8 @@
   }
   .error {
     color: var(--accent-red);
+  }
+  .row + .error {
+    margin-top: calc(-1 * var(--space-2));
   }
 </style>
