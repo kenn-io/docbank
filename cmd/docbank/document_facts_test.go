@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,46 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
+
+type factsFailAtWriter struct {
+	at    int
+	calls int
+	err   error
+}
+
+func (w *factsFailAtWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.at {
+		return 0, w.err
+	}
+	return len(p), nil
+}
+
+func TestDocumentFactsTableWriteErrors(t *testing.T) {
+	want := errors.New("write failed")
+	t.Run("people state", func(t *testing.T) {
+		w := &factsFailAtWriter{at: 1, err: want}
+		require.ErrorIs(t, writeVersionPeopleTable(w, &api.VersionPeople{State: "none"}), want)
+	})
+	t.Run("dates state", func(t *testing.T) {
+		w := &factsFailAtWriter{at: 1, err: want}
+		require.ErrorIs(t, writeVersionDatesTable(w, &api.VersionDates{State: "none"}), want)
+	})
+	t.Run("dates diagnostic", func(t *testing.T) {
+		w := &factsFailAtWriter{at: 2, err: want}
+		result := &api.VersionDates{State: "failed", Diagnostics: []api.FactDiagnostic{{Detail: "synthetic failure"}}}
+		require.ErrorIs(t, writeVersionDatesTable(w, result), want)
+	})
+}
+
+func TestDocumentDatesTablePublishedClaim(t *testing.T) {
+	result := &api.VersionDates{State: "published", Claims: []api.VersionDateClaim{{
+		Primary: true, DateKind: "sent", DateValue: "2024-03-15", ZoneText: "America/Vancouver", Precision: "date", ClaimBasis: "source_asserted",
+	}}}
+	var output strings.Builder
+	require.NoError(t, writeVersionDatesTable(&output, result))
+	require.Equal(t, "State: published\n* sent  2024-03-15  America/Vancouver  date  From document\n", output.String())
+}
 
 func TestDocumentFactsCommandRegistration(t *testing.T) {
 	for _, path := range [][]string{{"people", "list"}, {"document", "people"}, {"document", "dates"}} {
