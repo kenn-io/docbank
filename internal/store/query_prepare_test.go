@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
 	"slices"
 	"testing"
 
@@ -106,5 +109,99 @@ func TestPreparedDocumentPopulationCancellation(t *testing.T) {
 	_, err := materializeDocumentPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want canceled", err)
+	}
+}
+
+// The connector supplies only cursor lifecycle behavior. SQL membership is
+// exercised by the real-store tests; these rows are exact synthetic identities.
+type preparationLifecycleConnector struct{ rows *preparationLifecycleRows }
+
+func (c preparationLifecycleConnector) Connect(context.Context) (driver.Conn, error) {
+	return preparationLifecycleConn{c.rows}, nil
+}
+func (c preparationLifecycleConnector) Driver() driver.Driver { return c }
+func (c preparationLifecycleConnector) Open(string) (driver.Conn, error) {
+	return preparationLifecycleConn{c.rows}, nil
+}
+
+type preparationLifecycleConn struct{ rows *preparationLifecycleRows }
+
+func (preparationLifecycleConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("unexpected prepare")
+}
+func (preparationLifecycleConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("unexpected transaction")
+}
+func (preparationLifecycleConn) Close() error { return nil }
+func (c preparationLifecycleConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	c.rows.queries++
+	return c.rows, nil
+}
+
+type preparationLifecycleRows struct {
+	queries, next, closed  int
+	cancel                 context.CancelFunc
+	iterationErr, closeErr error
+}
+
+func (*preparationLifecycleRows) Columns() []string { return []string{"node_id", "content_version_id"} }
+func (r *preparationLifecycleRows) Close() error    { r.closed++; return r.closeErr }
+func (r *preparationLifecycleRows) Next(values []driver.Value) error {
+	r.next++
+	if r.next == 1 {
+		values[0], values[1] = int64(42), "synthetic-version"
+		return nil
+	}
+	if r.cancel != nil {
+		r.cancel()
+	}
+	if r.iterationErr != nil {
+		return r.iterationErr
+	}
+	return io.EOF
+}
+
+func TestPreparedMembershipCursorLifecycle(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	boundary := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
+	final := compileFixtureQuery(t, s, `name:synthetic`, query.Filters{})
+	iterationErr := errors.New("synthetic iteration error")
+	closeErr := errors.New("synthetic close error")
+	for _, owner := range []string{"boundary", "final"} {
+		for _, failure := range []string{"cancel", "iteration", "close"} {
+			t.Run(owner+"/"+failure, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				r := &preparationLifecycleRows{}
+				want := error(context.Canceled)
+				switch failure {
+				case "cancel":
+					r.cancel = cancel
+				case "iteration":
+					r.iterationErr, want = iterationErr, iterationErr
+				case "close":
+					r.closeErr, want = closeErr, closeErr
+				}
+				db := sql.OpenDB(preparationLifecycleConnector{r})
+				t.Cleanup(func() { _ = db.Close() })
+				var got compiledQueryFragment
+				var err error
+				if owner == "boundary" {
+					got, err = prepareCompiledPredicate(ctx, db, boundary, "", nil, CoverageSelection{})
+				} else {
+					got, err = materializeDocumentPopulation(ctx, db, final, "", nil, CoverageSelection{})
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("got error %v, want %v", err, want)
+				}
+				if got.sql != "" || len(got.args) != 0 {
+					t.Fatalf("fabricated membership: %+v", got)
+				}
+				if r.queries != 1 || r.next != 2 || r.closed != 1 {
+					t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
+				}
+			})
+		}
 	}
 }

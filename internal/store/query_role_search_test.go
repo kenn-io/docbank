@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -568,6 +569,40 @@ func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
+	collection, err := s.BeginIngest(ctx, "cli", "Synthetic people collection")
+	require.NoError(t, err)
+	label := "People collection"
+	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
+	require.NoError(t, err)
+	addCollectionMembership(t, s, collection, version.NodeID, "/synthetic/many-people.txt", nil)
+	profile := catalogProcessingProfile(t, false)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(ctx, tx, profile)
+	}))
+	selection := CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
+	for _, tc := range []struct {
+		text    string
+		matched bool
+	}{
+		{`collection:"People collection" AND text_coverage:unprocessed`, true},
+		{`collection:"People collection" OR text_coverage:complete`, true},
+		{`NOT collection:"People collection"`, false},
+		{`collection:"People collection" AND text_coverage:complete`, false},
+		{`text_coverage:unprocessed OR collection:"People collection"`, true},
+		{`NOT text_coverage:complete AND collection:"People collection"`, true},
+		{`NOT text_coverage:unprocessed`, false},
+	} {
+		mixed := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[%s]}}`, tc.text, strings.Join(entries, ",")))
+		got, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: mixed, Coverage: selection})
+		require.NoError(t, err, tc.text)
+		if !tc.matched {
+			require.Empty(t, got.Rows, tc.text)
+			continue
+		}
+		require.Len(t, got.Rows, 1, tc.text)
+		require.Equal(t, version.NodeID, got.Rows[0].NodeID, tc.text)
+		require.Equal(t, []string{"speaker"}, got.Rows[0].MatchedRoles, tc.text)
+	}
 	// Keep all 64 people and all 11 roles while relation leaves are evaluated
 	// under each Boolean operator. The missing branch must not add chips.
 	for _, text := range []string{

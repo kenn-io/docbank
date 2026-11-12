@@ -179,6 +179,19 @@ func TestTermReportMatchesSelectedProcessingProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, false, true, false}, frame.Members[0].RawMatches)
 	require.Equal(t, selected.Fingerprint, frame.Texts[0].ProfileFingerprint)
+	version, err := s.ContentVersionByID(t.Context(), versions[0])
+	require.NoError(t, err)
+	request.AllDocuments = false
+	request.SelectedDocuments = &report.SelectedDocuments{Documents: []report.Identity{{
+		NodeID: version.NodeID, VersionID: version.ID, SHA256: version.BlobHash,
+	}}}
+	selectedFrame, err := s.MaterializeTermReportFrame(t.Context(), request,
+		report.CoverageSelection{Configuration: "configured", ProfileFingerprint: selected.Fingerprint}, budget, budget)
+	require.NoError(t, err)
+	require.Len(t, selectedFrame.Members, 1)
+	require.Equal(t, request.SelectedDocuments.Documents[0], selectedFrame.Members[0].Identity)
+	require.Equal(t, []bool{true, false, true, false}, selectedFrame.Members[0].RawMatches)
+	require.Equal(t, selected.Fingerprint, selectedFrame.Texts[0].ProfileFingerprint)
 }
 
 func TestTermReportSharedChildJoinsExactVersionFamily(t *testing.T) {
