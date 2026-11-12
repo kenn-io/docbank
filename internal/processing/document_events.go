@@ -87,8 +87,8 @@ func metadataDateKind(field document.SourceMetadataFieldV1) (document.DateKind, 
 			return "captured", true
 		}
 	}
-	if match := calendarComponentDate.FindStringSubmatch(field.Key); match != nil {
-		if match[1] == "start" {
+	if side := document.CalendarDateSide(field.Key); side != "" {
+		if side == "start" {
 			return "started", true
 		}
 		return "ended", true
@@ -147,7 +147,7 @@ func metadataAdapter(input DocumentEventInput) (
 			}
 			event.DateKind = kind
 			event.SourceKey = sourceKey
-			if calendarComponentDate.MatchString(field.Key) {
+			if document.CalendarDateSide(field.Key) != "" {
 				event.SourceKindRaw = field.SourceField
 			}
 			event.ClaimBasis = "source_asserted"

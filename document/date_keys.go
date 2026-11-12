@@ -2,6 +2,7 @@ package document
 
 import (
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -11,14 +12,33 @@ type DateKey struct {
 	Floating, Sensitive                            bool
 }
 
-var calendarDateSource = regexp.MustCompile(`^(.*?/)?(calendar\.event\.e[0-9]{6})\.(start|end)(?:\.raw)?(?:/[0-9]+)?$`)
+var calendarDateSource = regexp.MustCompile(`^calendar\.event\.e[0-9]{6}\.(start|end)(?:\.raw)?$`)
+
+// CalendarDateSide identifies the date side of a calendar metadata field.
+func CalendarDateSide(key string) string {
+	if m := calendarDateSource.FindStringSubmatch(key); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 func calendarSibling(source string) (string, string) {
-	m := calendarDateSource.FindStringSubmatch(source)
-	if m == nil {
+	key := source
+	prefix := ""
+	if strings.HasPrefix(key, "metadata/") {
+		parts := strings.Split(key, "/")
+		if len(parts) != 4 {
+			return "", ""
+		}
+		prefix = strings.Join(parts[:2], "/") + "/"
+		key = parts[2]
+	}
+	side := CalendarDateSide(key)
+	if side == "" {
 		return "", ""
 	}
-	return m[1] + m[2], m[3]
+	key = strings.TrimSuffix(key, ".raw")
+	return prefix + strings.TrimSuffix(key, "."+side), side
 }
 
 // DateKeysFor derives keys together so an all-day start can use its sibling end.
@@ -32,14 +52,10 @@ func DateKeysFor(events []DocumentEventV1) ([]DateKey, error) {
 		}
 	}
 	for i, event := range events {
-		civil, err := eventCivil(event.DateValue, event.Precision)
-		if err != nil {
+		if _, err := eventCivil(event.DateValue, event.Precision); err != nil {
 			return nil, err
 		}
-		key := DateKey{CivilYear: event.DateValue[:4], Sensitive: event.Sensitive}
-		for _, actor := range event.Actors {
-			key.Sensitive = key.Sensitive || actor.Sensitive
-		}
+		key := DateKey{CivilYear: event.DateValue[:4], Sensitive: eventHasSensitiveEvidence(event)}
 		if event.Precision != "year" {
 			key.CivilMonth = event.DateValue[:7]
 		}
@@ -58,7 +74,6 @@ func DateKeysFor(events []DocumentEventV1) ([]DateKey, error) {
 				key.CivilEndDate = parsed.AddDate(0, 0, -1).Format("2006-01-02")
 			}
 		}
-		_ = civil
 		keys[i] = key
 	}
 	return keys, nil

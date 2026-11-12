@@ -137,6 +137,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return err
 		})
 		if err != nil {
+			if problem := dateQueryError(err); problem != nil {
+				return nil, problem
+			}
 			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
 				return nil, workspaceQueryError(err)
 			}

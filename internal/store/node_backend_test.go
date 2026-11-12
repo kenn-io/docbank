@@ -150,7 +150,7 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT ON "+schema+".batch_tag_receipts TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(name,description,payload,fingerprint,revision,updated_at) ON "+schema+".saved_queries TO "+quotedRole)
 	require.NoError(t, err)
-	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".source_metadata_generations,"+schema+".document_event_generations,"+schema+".document_events,"+schema+".document_event_actors,"+schema+".document_event_primaries TO "+quotedRole+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".source_metadata_generations,"+schema+".document_event_generations,"+schema+".document_events,"+schema+".document_event_actors,"+schema+".document_event_primaries,"+schema+".document_date_keys TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(generation_id,published_at) ON "+schema+".source_metadata_heads TO "+quotedRole+
 		"; GRANT INSERT,DELETE ON "+schema+".photo_technical_metadata TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(projection_recipe) ON "+schema+".photo_technical_metadata_state TO "+quotedRole+

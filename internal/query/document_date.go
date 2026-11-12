@@ -9,6 +9,15 @@ import (
 	"go.kenn.io/kit/civiltime"
 )
 
+// DateError carries the stable API code for a date or timezone failure.
+type DateError struct {
+	Code string
+	Err  error
+}
+
+func (e *DateError) Error() string { return e.Code + ": " + e.Err.Error() }
+func (e *DateError) Unwrap() error { return e.Err }
+
 // DocumentDateFilter limits one visible event claim.
 type DocumentDateFilter struct {
 	From       string   `json:"from"`
@@ -24,13 +33,13 @@ func ParseDocumentDate(value string) (string, string, error) {
 		to = from
 	}
 	if _, err := civiltime.ParseDate(from); err != nil {
-		return "", "", fmt.Errorf("invalid_date: %w", err)
+		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
 	if _, err := civiltime.ParseDate(to); err != nil {
-		return "", "", fmt.Errorf("invalid_date: %w", err)
+		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
 	if from > to {
-		return "", "", fmt.Errorf("invalid_date: date range is reversed")
+		return "", "", &DateError{Code: "invalid_date", Err: fmt.Errorf("date range is reversed")}
 	}
 	return from, to, nil
 }

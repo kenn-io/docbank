@@ -29,3 +29,12 @@ func TestEmailDateNamedZones(t *testing.T) {
 		}
 	}
 }
+
+func TestEmailDateInvalidOffsetRemainsFloating(t *testing.T) {
+	for _, zone := range []string{"+1930", "+1260"} {
+		event, ok := rawEmailDateEvent("10 Mar 2026 12:30 " + zone)
+		if !ok || event.TimezoneKind != "invalid" || event.ZoneText != zone || event.OffsetSeconds != nil || event.UTCKey != "" {
+			t.Errorf("%s: %+v, parsed %v", zone, event, ok)
+		}
+	}
+}

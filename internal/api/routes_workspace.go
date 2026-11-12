@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -94,20 +93,15 @@ func parseWorkspaceQuery(raw QueryPayload) (query.Query, error) {
 	if err == nil {
 		return value, nil
 	}
-	if strings.Contains(err.Error(), "invalid_timezone") {
-		return query.Query{}, NewError(http.StatusBadRequest, "invalid_timezone", err.Error())
-	}
-	if strings.Contains(err.Error(), "invalid_date") {
-		return query.Query{}, NewError(http.StatusBadRequest, "invalid_date", err.Error())
+	if problem := dateQueryError(err); problem != nil {
+		return query.Query{}, problem
 	}
 	return query.Query{}, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 }
 
 func workspaceQueryError(err error) error {
-	for _, code := range []string{"invalid_timezone", "invalid_date", "date_not_in_zone"} {
-		if strings.Contains(err.Error(), code) {
-			return NewError(http.StatusBadRequest, code, err.Error())
-		}
+	if problem := dateQueryError(err); problem != nil {
+		return problem
 	}
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem

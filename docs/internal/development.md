@@ -555,7 +555,8 @@ GRANT INSERT, DELETE, UPDATE(suggested_person_id, state, decided_person_id, deci
 GRANT INSERT, DELETE ON documents.person_candidate_faces TO docbank_runtime;
 GRANT UPDATE(assertion_id) ON documents.photo_faces TO docbank_runtime;
 GRANT INSERT ON documents.source_metadata_generations, documents.document_event_generations,
-    documents.document_events, documents.document_event_actors, documents.document_event_primaries
+    documents.document_events, documents.document_event_actors, documents.document_event_primaries,
+    documents.document_date_keys
     TO docbank_runtime;
 GRANT INSERT, UPDATE(generation_id, published_at)
     ON documents.source_metadata_heads TO docbank_runtime;

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/query"
@@ -149,10 +148,12 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 
 // dateQueryError preserves the timeline contract's error codes at every query entry point.
 func dateQueryError(err error) error {
-	for _, code := range []string{"invalid_timezone", "invalid_date", "date_not_in_zone"} {
-		if strings.Contains(err.Error(), code) {
-			return NewError(http.StatusBadRequest, code, err.Error())
+	if date, ok := errors.AsType[*query.DateError](err); ok {
+		problem := NewError(http.StatusBadRequest, date.Code, err.Error())
+		if positioned, ok := errors.AsType[*query.ExpressionError](err); ok && positioned.End > positioned.Offset {
+			problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
 		}
+		return problem
 	}
 	return nil
 }

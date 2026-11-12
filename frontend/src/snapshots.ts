@@ -508,7 +508,7 @@ function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query)
   }
   if (
     expectedQuery !== undefined &&
-    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)
+    canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery.timezone === undefined && decodedQuery.timezone !== undefined ? { ...expectedQuery, timezone: decodedQuery.timezone } : expectedQuery)
   ) {
     malformed("query does not match the request");
   }
@@ -612,9 +612,11 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
       "snapshot_id",
       "created_at",
       "expires_at",
+      "timezone_defaulted",
     ],
     [
       "$schema",
+      "timezone",
       "previous_cursor",
       "next_cursor",
       "requested_mode",
@@ -627,6 +629,8 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   );
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0)
     malformed("receipt.$schema is invalid");
+  if (typeof raw.timezone_defaulted !== "boolean") malformed("timezone_defaulted must be a boolean");
+  const timezone = optionalString(raw.timezone, "timezone");
   const evidence = parseQueryEvidence(raw, expectedQuery);
   const decodedQuery = evidence.query;
   const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
@@ -669,6 +673,8 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     malformed("expiry exceeds the snapshot lifetime");
   return {
     ...evidence,
+    timezone_defaulted: raw.timezone_defaulted,
+    ...(timezone === undefined ? {} : { timezone }),
     ...photoSearchStatus(raw),
     query_fingerprint: queryFingerprint,
     member_hash: memberHash,
@@ -837,6 +843,8 @@ function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {
   return (
     canonicalQuery(left.query) === canonicalQuery(right.query) &&
     JSON.stringify(left.dependencies) === JSON.stringify(right.dependencies) &&
+    left.timezone === right.timezone &&
+    left.timezone_defaulted === right.timezone_defaulted &&
     left.query_fingerprint === right.query_fingerprint &&
     left.member_hash === right.member_hash &&
     left.snapshot_fingerprint === right.snapshot_fingerprint &&

@@ -423,6 +423,7 @@ func materializeSnapshotRows(
 	var photoRowBytes []int64
 	annotatePhotos := options.Photos && options.PhotoRanking != nil &&
 		(options.PhotoRanking.ActualMode == query.ModeLexical || options.PhotoRanking.ActualMode == "hybrid")
+	dateSortColumn := `''`
 	photoColumns := `'','',NULL`
 	if !options.Photos && compiled.Query.Sort.Field == "document_date" {
 		photoColumns = `'',COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND k.primary_safe=1 AND k.sensitive=0 LIMIT 1),''),NULL`
@@ -431,7 +432,7 @@ func materializeSnapshotRows(
 	if options.Photos {
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
 		if compiled.Query.Sort.Field == "document_date" {
-			photoColumns = `m.asset_id,COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND k.primary_safe=1 AND k.sensitive=0 LIMIT 1),''),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
+			dateSortColumn = `COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND k.primary_safe=1 AND k.sensitive=0 LIMIT 1),'')`
 		}
 		photoOrder = ` ORDER BY m.photo_position`
 	}
@@ -466,7 +467,7 @@ func materializeSnapshotRows(
 				FROM (SELECT t.id,t.name,t.revision FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
 					WHERE nt.node_id=n.id ORDER BY t.id)),'[]'),
 			COALESCE(rc.collection_ids,'[]'),COALESCE(rc.display_collection_id,''),l.label,
-			`+coverageColumns+`,`+photoColumns+`
+			`+coverageColumns+`,`+photoColumns+`,`+dateSortColumn+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
 		LEFT JOIN row_collections rc ON rc.node_id=n.id
@@ -489,11 +490,15 @@ func materializeSnapshotRows(
 		var row SnapshotRow
 		var tagsJSON, collectionsJSON []byte
 		var displayLabel sql.NullString
+		var dateSortKey string
 		if err := rows.Scan(&row.NodeID, &row.ContentVersionID, &row.BlobHash, &row.Size, &row.Revision,
 			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &tagsJSON, &collectionsJSON,
 			&row.DisplayCollectionID, &displayLabel, &row.CoverageState, &row.CoverageBuildID,
-			&row.CoverageAttachmentID, &row.AssetID, &row.SortKey, &row.Flag); err != nil {
+			&row.CoverageAttachmentID, &row.AssetID, &row.SortKey, &row.Flag, &dateSortKey); err != nil {
 			return fmt.Errorf("scanning query snapshot row: %w", err)
+		}
+		if options.Photos && compiled.Query.Sort.Field == "document_date" {
+			row.SortKey = dateSortKey
 		}
 		if int64(len(tagsJSON)) > options.MaxRowBytes || int64(len(collectionsJSON)) > options.MaxRowBytes {
 			return fmt.Errorf("%w: row %d membership projection exceeds %d bytes", ErrQuerySnapshotTooLarge, row.NodeID, options.MaxRowBytes)
@@ -573,7 +578,7 @@ func materializeSnapshotRows(
 		}
 	}
 	projection.Total = int64(len(projection.Rows))
-	if options.Photos {
+	if options.Photos && compiled.Query.Sort.Field != "document_date" {
 		slices.SortFunc(projection.Rows, func(a, b SnapshotRow) int { return strings.Compare(a.SortKey, b.SortKey) })
 	} else {
 		sortSnapshotRows(projection.Rows, compiled.Query.Sort)

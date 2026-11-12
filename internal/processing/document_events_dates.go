@@ -14,9 +14,8 @@ import (
 )
 
 var (
-	calendarComponentDate = regexp.MustCompile(`^calendar\.event\.e[0-9]{6}\.(start|end)(?:\.raw)?$`)
-	metadataOffset        = regexp.MustCompile(`^[+-](0[0-9]|1[0-4]):[0-5][0-9]$`)
-	emailDate             = regexp.MustCompile(`^(?:[A-Za-z]{3},\s*)?([0-9]{1,2})\s+([A-Za-z]{3})\s+([0-9]{2}|[0-9]{4})\s+([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(?:\s+([+-][0-9]{4}|[A-Za-z]{1,10}))?(?:\s+\([^\r\n]*\))?$`)
+	metadataOffset = regexp.MustCompile(`^[+-](0[0-9]|1[0-4]):[0-5][0-9]$`)
+	emailDate      = regexp.MustCompile(`^(?:[A-Za-z]{3},\s*)?([0-9]{1,2})\s+([A-Za-z]{3})\s+([0-9]{2}|[0-9]{4})\s+([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(?:\s+([+-][0-9]{4}|[A-Za-z]{1,10}))?(?:\s+\([^\r\n]*\))?$`)
 )
 
 func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentEventV1, error) {
@@ -184,9 +183,6 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 	zoneText = zoneToken
 	if designator.State == civiltime.ZoneOffset || designator.State == civiltime.ZoneRFC5322 {
 		offset = &designator.OffsetSeconds
-	}
-	if designator.State == civiltime.ZoneInvalid {
-		return document.DocumentEventV1{}, false
 	}
 
 	axis, err := document.EventAxisKey(base, precision, zone, offset)

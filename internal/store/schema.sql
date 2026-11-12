@@ -703,6 +703,11 @@ BEFORE UPDATE ON document_event_actors BEGIN
     SELECT RAISE(ABORT, 'document event actors are immutable');
 END;
 
+CREATE TRIGGER IF NOT EXISTS document_date_keys_immutable_update
+BEFORE UPDATE ON document_date_keys BEGIN
+    SELECT RAISE(ABORT, 'document date keys are immutable');
+END;
+
 CREATE TRIGGER IF NOT EXISTS document_event_primaries_immutable_update
 BEFORE UPDATE ON document_event_primaries BEGIN
     SELECT RAISE(ABORT, 'document event primaries are immutable');

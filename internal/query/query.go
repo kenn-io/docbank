@@ -421,7 +421,7 @@ func normalizeQuery(value Query) (Query, error) {
 	}
 	if value.Timezone != nil {
 		if _, err := civiltime.LoadZone(*value.Timezone); err != nil {
-			return Query{}, fmt.Errorf("invalid_timezone: %w", err)
+			return Query{}, &DateError{Code: "invalid_timezone", Err: err}
 		}
 	}
 	filters, err := normalizeFilters(value.Filters)

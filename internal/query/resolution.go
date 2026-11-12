@@ -84,7 +84,7 @@ func ResolveQuery(ctx context.Context, value Query, resolver Resolver) (Resolved
 	}
 	normalized, canonical, err := normalizeCanonical(value)
 	if err != nil {
-		return ResolvedQuery{}, expressionError(0, len(value.Text), err.Error())
+		return ResolvedQuery{}, &ExpressionError{Offset: 0, End: len(value.Text), Message: err.Error(), Cause: err}
 	}
 	state := resolutionState{
 		resolver:       resolver,
@@ -240,7 +240,7 @@ func (state *resolutionState) resolveLeaf(
 	delete(state.activeSaved, dependency.ID)
 	if err != nil {
 		if nestedExpressionErr, ok := errors.AsType[*ExpressionError](err); ok {
-			return nil, nil, nil, expressionError(syntax.Start, syntax.End, nestedExpressionErr.Message)
+			return nil, nil, nil, &ExpressionError{Offset: syntax.Start, End: syntax.End, Message: nestedExpressionErr.Message, Cause: nestedExpressionErr}
 		}
 		return nil, nil, nil, err
 	}

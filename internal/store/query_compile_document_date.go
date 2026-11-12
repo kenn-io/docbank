@@ -70,7 +70,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 				return compileExpressionError(node.Syntax.Start, node.Syntax.End, "date operand must be a single value")
 			}
 			if err := scope.add(node.Syntax.Field, node.Children[0].Syntax.Value); err != nil {
-				return compileExpressionError(node.Syntax.Start, node.Syntax.End, err.Error())
+				return &query.ExpressionError{Offset: node.Syntax.Start, End: node.Syntax.End, Message: err.Error(), Cause: err}
 			}
 			return nil
 		}
@@ -101,7 +101,7 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 	}
 	loc, err := civiltime.LoadZone(zone)
 	if err != nil {
-		return compiledQueryFragment{}, fmt.Errorf("invalid_timezone: %w", err)
+		return compiledQueryFragment{}, &query.DateError{Code: "invalid_timezone", Err: err}
 	}
 	predicates := []string{"k.generation_id=h.generation_id", "h.content_version_id=cv.version_id", "k.sensitive=0"}
 	var args []any
@@ -136,7 +136,7 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		to, _ := civiltime.ParseDate(r[1])
 		start, end, err := civiltime.RangeBounds(from, to, loc)
 		if err != nil {
-			return compiledQueryFragment{}, fmt.Errorf("date_not_in_zone: %w", err)
+			return compiledQueryFragment{}, &query.DateError{Code: "date_not_in_zone", Err: err}
 		}
 		format := "2006-01-02T15:04:05.000000000Z"
 		predicates = append(predicates, `((k.utc_key IS NOT NULL AND k.utc_key>=? AND k.utc_key<?) OR
