@@ -150,7 +150,7 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 	}{
 		{"no readable text", "candidate_empty", nil, false, 1, 0, 0},
 		{"missing evidence", "candidate_empty", nil, true, 1, 1, 0},
-		{"searchable with missing evidence", "candidate_serving", nil, true, 0, 0, 0},
+		{"searchable with missing evidence", "candidate_serving", nil, true, 0, 1, 0},
 		{"known scan", "candidate_empty", []int{2, 4}, false, 0, 0, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

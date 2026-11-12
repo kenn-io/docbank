@@ -140,7 +140,7 @@ func (s *Store) SearchTextCoverage(ctx context.Context, opts SearchOptions, pdfP
 				}
 				read[check.buildID] = pages
 			}
-			if unavailable[check.buildID] && !check.serving && !check.waiting {
+			if unavailable[check.buildID] && (check.serving || !check.waiting) {
 				out.PDFPageCoverageUnavailable += check.count
 			}
 			if len(pages) > 0 {
