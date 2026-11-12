@@ -80,7 +80,6 @@ export class TaxesView {
   setFilters(f: TaxFilters): Promise<void> {
     this.filters = { ...f };
     this.rows = [];
-    this.nextOffset = null;
     return this.page(0);
   }
   clear(): Promise<void> {

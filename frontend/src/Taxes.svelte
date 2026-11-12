@@ -161,12 +161,7 @@
           <p class="tool-muted"><Spinner size={14} /> Loading…</p>
         {:else if view.rows.length === 0}
           {#if view.error}{:else if filtered}
-            <EmptyState
-              title="No records match these filters"
-              description={view.filters.year === null
-                ? undefined
-                : `Nothing listed for tax year ${view.filters.year}.`}
-            >
+            <EmptyState title="No records match these filters">
               <Button size="sm" onclick={clearFilters}>Clear filters</Button>
             </EmptyState>
           {:else}
@@ -186,10 +181,7 @@
           {/each}
         {/if}
         {#if view && view.nextOffset !== null && view.rows.length}
-          <div class="tool-heading">
-            {#if !view.filters.filer}
-              <p class="tool-muted">Load more adds records to the filer groups above.</p>
-            {/if}
+          <div>
             <Button size="sm" disabled={view.more} onclick={() => void view?.loadMore()}
               >{view.more ? "Loading…" : "Load more"}</Button
             >
