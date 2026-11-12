@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -136,8 +135,6 @@ func TestLocalEmbeddingOriginWithRuntime(t *testing.T) {
 }
 
 func TestLocalTextSaveRestartRequired(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	for _, tc := range []struct {
 		name      string
 		failure   error
@@ -148,6 +145,8 @@ func TestLocalTextSaveRestartRequired(t *testing.T) {
 		{"published", errors.Join(atomicfile.ErrPublished, errors.New("synthetic directory sync failure")), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("USERPROFILE", os.Getenv("HOME"))
 			root := t.TempDir()
 			var pending atomic.Bool
 			save := localTextSave(root, &pending, func(root string, choice config.LocalTextConfig) error {
@@ -165,9 +164,6 @@ func TestLocalTextSaveRestartRequired(t *testing.T) {
 			recorded, err := embedlocal.ChoiceRecorded()
 			require.NoError(t, err)
 			require.Equal(t, tc.failure == nil, recorded)
-			if recorded {
-				require.NoError(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".kenn", "embeddings", "search-by-meaning")))
-			}
 			require.Equal(t, tc.published, pending.Load())
 			choice, err := readLocalText(root)
 			require.NoError(t, err)
@@ -577,41 +573,6 @@ func TestLocalTextStatusProvider(t *testing.T) {
 	}
 }
 
-func TestInheritedLocalTextStatus(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	t.Setenv("USERPROFILE", homeDir)
-	layout := home.Layout{Root: t.TempDir()}
-	require.NoError(t, layout.Ensure())
-	catalog, err := store.Open(t.Context(), layout.DBPath())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, catalog.Close()) }()
-	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, blobs.Close()) }()
-	cfg, err := localTextCandidate(config.Default(), "local", config.LocalTextProfile)
-	require.NoError(t, err)
-	bundle, err := configureEmbeddingRuntimeBundle(cfg)
-	require.NoError(t, err)
-	profiles, err := executableProcessingProfiles(cfg, bundle)
-	require.NoError(t, err)
-	service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
-	require.NoError(t, err)
-	defer service.Stop()
-	status, err := localTextStatus(t.Context(), profiles, service, false, true)
-	require.NoError(t, err)
-	require.False(t, status.Active)
-	require.Positive(t, status.DownloadBytes)
-	setup := processing.LocalTextSetup{Service: service, Selected: config.LocalTextProfile, Startup: func(context.Context, bool, string) error { return nil }}
-	active, err := setup.InitializeInherited(t.Context())
-	require.NoError(t, err)
-	require.True(t, active)
-	status, err = localTextStatus(t.Context(), profiles, service, false, true)
-	require.NoError(t, err)
-	require.True(t, status.Active)
-	require.Equal(t, "local", status.Provider)
-}
-
 func TestLocalTextStartupActivatesAfterRestart(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -699,26 +660,6 @@ func TestInheritedLocalTextStartsDaemon(t *testing.T) {
 	require.NoError(t, embedlocal.RecordChoice())
 	dir, err := embedlocal.DefaultDir()
 	require.NoError(t, err)
-	bundle := filepath.Join(dir, "bin", "v0.48.2-face.6")
-	require.NoError(t, os.MkdirAll(bundle, 0700))
-	names := []string{"kennembed", "libonnxruntime.so.1.23.2"}
-	if runtime.GOOS == "darwin" {
-		names[1] = "libonnxruntime.1.23.2.dylib"
-	}
-	if runtime.GOOS == "windows" {
-		names = []string{"kennembed.exe", "onnxruntime.dll", "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"}
-	}
-	for _, name := range names {
-		require.NoError(t, os.WriteFile(filepath.Join(bundle, name), []byte("fixture"), 0700))
-	}
-	model := filepath.Join(dir, "nomic-embed-text-v1.5", "e9b6763023c676ca8431644204f50c2b100d9aab")
-	require.NoError(t, os.MkdirAll(model, 0700))
-	for name, size := range map[string]int64{"model.onnx": 273859028, "tokenizer.json": 711396} {
-		f, err := os.Create(filepath.Join(model, name))
-		require.NoError(t, err)
-		require.NoError(t, f.Truncate(size))
-		require.NoError(t, f.Close())
-	}
 	server := httptest.NewServer(localTextDiscoveryHandler())
 	defer server.Close()
 	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})

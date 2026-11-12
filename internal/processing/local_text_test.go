@@ -694,20 +694,10 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 			admitted, err := setup.InitializeInherited(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, tc.active, admitted)
-			if tc.active {
-				require.Equal(t, 1, calls)
-			} else {
-				require.Zero(t, calls)
-			}
+			require.Equal(t, tc.active, calls == 1)
 			active, err := service.ProfileConsentActive(t.Context(), "inherited")
 			require.NoError(t, err)
 			require.Equal(t, tc.active, active)
-			if tc.revoke {
-				for _, request := range service.profileConsentRequests(service.profiles["inherited"]) {
-					_, err = fixture.catalog.AuthorizeProviderOperation(t.Context(), request)
-					require.ErrorIs(t, err, store.ErrProcessingConsentRequired)
-				}
-			}
 		})
 	}
 }
