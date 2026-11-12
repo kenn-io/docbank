@@ -261,6 +261,13 @@ func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([
 		{kind: ReferencePerson, values: value.Filters.PersonIDs},
 	}
 	var dependencies []Dependency
+	for _, person := range value.Filters.People {
+		ref, err := state.lookup(ctx, ReferencePerson, person.PersonID, true, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		dependencies = append(dependencies, ref.Dependency)
+	}
 	for _, facet := range facets {
 		for _, id := range facet.values {
 			// Structured filters have no span in the query text.
@@ -357,7 +364,7 @@ func referenceKindForField(field string) (ReferenceKind, bool) {
 		return ReferenceTag, true
 	case string(ReferenceCollection):
 		return ReferenceCollection, true
-	case string(ReferencePerson):
+	case string(ReferencePerson), "author", "from", "to", "cc", "bcc", "custodian", "participant", "organizer", "attendee", "between", "mentions":
 		return ReferencePerson, true
 	case string(ReferenceSaved):
 		return ReferenceSaved, true

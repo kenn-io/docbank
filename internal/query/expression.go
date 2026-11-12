@@ -144,6 +144,7 @@ const (
 	expressionTokenLeftParen
 	expressionTokenRightParen
 	expressionTokenColon
+	expressionTokenComma
 	expressionTokenAnd
 	expressionTokenOr
 	expressionTokenNot
@@ -160,8 +161,9 @@ type expressionToken struct {
 }
 
 type expressionLexer struct {
-	text string
-	pos  int
+	text           string
+	pos            int
+	commaSeparates bool
 }
 
 func (lexer *expressionLexer) next() (expressionToken, error) {
@@ -184,6 +186,12 @@ func (lexer *expressionLexer) next() (expressionToken, error) {
 	case ')':
 		lexer.pos++
 		return expressionToken{kind: expressionTokenRightParen, start: start, end: lexer.pos}, nil
+	case ',':
+		if lexer.commaSeparates {
+			lexer.pos++
+			return expressionToken{kind: expressionTokenComma, start: start, end: lexer.pos}, nil
+		}
+		return lexer.word()
 	case ':':
 		lexer.pos++
 		return expressionToken{kind: expressionTokenColon, start: start, end: lexer.pos}, nil
@@ -242,7 +250,7 @@ func (lexer *expressionLexer) word() (expressionToken, error) {
 	var value strings.Builder
 	for lexer.pos < len(lexer.text) {
 		r, size := utf8.DecodeRuneInString(lexer.text[lexer.pos:])
-		if unicode.IsSpace(r) || isExpressionDelimiter(r) {
+		if unicode.IsSpace(r) || isExpressionDelimiter(r) || (lexer.commaSeparates && r == ',') {
 			break
 		}
 		if r == '\\' {
@@ -516,6 +524,9 @@ func (parser *expressionParser) parseField(name expressionToken, depth int) (*Ex
 	if err := parser.advance(); err != nil {
 		return nil, err
 	}
+	if name.value == "between" {
+		return parser.parseBetween(name)
+	}
 	var child *Expression
 	var err error
 	switch parser.current.kind {
@@ -549,6 +560,57 @@ func (parser *expressionParser) parseField(name expressionToken, depth int) (*Ex
 	})
 }
 
+func (parser *expressionParser) parseBetween(name expressionToken) (*Expression, error) {
+	fail := func() (*Expression, error) {
+		return nil, expressionError(name.start, parser.current.end, "between: needs two different people")
+	}
+	if parser.current.kind != expressionTokenLeftParen {
+		return fail()
+	}
+	parser.lexer.commaSeparates = true
+	defer func() { parser.lexer.commaSeparates = false }()
+	if err := parser.advance(); err != nil {
+		return nil, err
+	}
+	var children []*Expression
+	for i := 0; i < 2; i++ {
+		tok := parser.current
+		if tok.kind != expressionTokenWord && tok.kind != expressionTokenPhrase {
+			return fail()
+		}
+		kind := ExpressionTerm
+		if tok.kind == expressionTokenPhrase {
+			kind = ExpressionPhrase
+		}
+		child, err := parser.node(&Expression{Kind: kind, Start: tok.start, End: tok.end, Value: tok.value, Prefix: tok.prefix})
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, child)
+		if err := parser.advance(); err != nil {
+			return nil, err
+		}
+		if i == 0 && parser.current.kind == expressionTokenComma {
+			if err := parser.advance(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if parser.current.kind != expressionTokenRightParen {
+		return fail()
+	}
+	end := parser.current.end
+	parser.lexer.commaSeparates = false
+	if err := parser.advance(); err != nil {
+		return nil, err
+	}
+	child, err := parser.node(&Expression{Kind: ExpressionAnd, Start: children[0].Start, End: children[1].End, Children: children})
+	if err != nil {
+		return nil, err
+	}
+	return parser.node(&Expression{Kind: ExpressionField, Start: name.start, End: end, Field: name.value, Children: []*Expression{child}})
+}
+
 func (parser *expressionParser) node(expr *Expression) (*Expression, error) {
 	if parser.nodes >= maxExpressionNodes {
 		return nil, expressionError(expr.Start, expr.End, "expression exceeds 512 AST nodes")
@@ -565,6 +627,7 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 var expressionFields = withPDFFields(withQualityFields(map[string]struct{}{
 	"xmp":  {},
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {}, "person": {},
+	"author": {}, "from": {}, "to": {}, "cc": {}, "bcc": {}, "custodian": {}, "participant": {}, "organizer": {}, "attendee": {}, "between": {}, "mentions": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"rating": {}, "rating_min": {}, "rating_max": {}, "flag": {}, "label": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},

@@ -407,6 +407,9 @@ func (c queryCompiler) compileScalarPredicate(field, value string, start, end in
 }
 
 func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
+	if len(filters.People) != 0 {
+		return compiledQueryFragment{}, compileExpressionError(start, end, "person role filters are not yet supported")
+	}
 	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {
 		return compiledQueryFragment{}, err
