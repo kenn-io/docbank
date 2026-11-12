@@ -52,12 +52,13 @@ type Store struct {
 
 const partiesStorageSchemaVersion = 49
 const taxStorageSchemaVersion = 50
+const taxEventStorageSchemaVersion = 51
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 50
+const currentStorageSchemaVersion = 51
 const auditEventSequenceStorageSchemaVersion = 46
 const photoSuggestionsStorageSchemaVersion = 43
 const photoFaceDetectionStorageSchemaVersion = 43
