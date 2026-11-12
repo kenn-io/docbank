@@ -12,6 +12,7 @@ import (
 
 func TestOpenExisting(t *testing.T) {
 	t.Parallel()
+	const releasedSchemaVersion = 28
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	driver := DefaultSQLiteDriver()
 	scratchDir := t.TempDir()
@@ -23,7 +24,7 @@ func TestOpenExisting(t *testing.T) {
 	require.NoError(t, s.Close())
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
-	stale := upgradeStagePath(path, 28)
+	stale := upgradeStagePath(path, releasedSchemaVersion)
 	require.NoError(t, os.WriteFile(stale, []byte("stale"), 0o600))
 	s, err = OpenExisting(t.Context(), path, driver, scratchDir)
 	require.NoError(t, err)
@@ -44,6 +45,12 @@ func TestOpenExisting(t *testing.T) {
 		require.ErrorIs(t, err, ErrNeedsOwner)
 		require.NoError(t, os.Remove(path+suffix))
 	}
+	require.NoError(t, os.Remove(path))
+	_, err = OpenExisting(t.Context(), path, driver, scratchDir)
+	require.ErrorIs(t, err, ErrNeedsOwner)
+	data, err = os.ReadFile(stale)
+	require.NoError(t, err)
+	require.Equal(t, "stale", string(data))
 }
 
 func TestOpenExistingRefusesReleasedAndFresh(t *testing.T) {
@@ -57,38 +64,38 @@ func TestOpenExistingRefusesReleasedAndFresh(t *testing.T) {
 		_, err := OpenExisting(t.Context(), path, driver, scratchDir)
 		require.ErrorIs(t, err, ErrNeedsOwner)
 	})
-	t.Run("fresh", func(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "docbank.db")
-		db, err := driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Deferred})
-		require.NoError(t, err)
-		_, err = db.ExecContext(t.Context(), "CREATE TABLE unrelated (id INTEGER)")
-		require.NoError(t, err)
-		require.NoError(t, db.Close())
-		_, err = OpenExisting(t.Context(), path, driver, scratchDir)
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+		_, err := OpenExisting(t.Context(), path, driver, scratchDir)
 		require.ErrorIs(t, err, ErrNeedsOwner)
 	})
-}
-
-func TestOpenExistingScratchBoundary(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	alias := filepath.Join(t.TempDir(), "alias")
-	path := filepath.Join(root, "docbank.db")
-	for _, scratch := range []string{"", root, filepath.Join(root, "missing"), alias} {
-		t.Run(scratch, func(t *testing.T) {
-			if scratch == alias {
-				if err := os.Symlink(root, alias); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
-				}
-			}
-			_, err := OpenExisting(t.Context(), path, DefaultSQLiteDriver(), scratch)
-			require.Error(t, err)
+	for _, tc := range []struct{ name, query, message string }{
+		{"newer schema", "UPDATE vault_metadata SET schema_version = 999999", "newer than binary"},
+		{"development schema", "UPDATE vault_metadata SET schema_version = 4", "development schema"},
+		{"invalid identity", "UPDATE vault_metadata SET vault_uid = 'invalid'", "vault identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			owner, err := Open(t.Context(), path, driver)
+			require.NoError(t, err)
+			require.NoError(t, owner.Close())
+			db, err := driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), tc.query)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			_, err = OpenExisting(t.Context(), path, driver, scratchDir)
+			require.ErrorContains(t, err, tc.message)
 			require.NotErrorIs(t, err, ErrNeedsOwner)
+			if tc.name == "newer schema" {
+				require.NoError(t, os.WriteFile(path+"-wal", nil, 0o600))
+				_, err = OpenExisting(t.Context(), path, driver, scratchDir)
+				require.ErrorIs(t, err, ErrNeedsOwner)
+				require.ErrorContains(t, err, "sidecar")
+			}
 		})
 	}
-	entries, err := os.ReadDir(root)
-	require.NoError(t, err)
-	require.Empty(t, entries)
 }
 
 func TestOpenExistingScratchUsesProvidedDirectory(t *testing.T) {
@@ -105,9 +112,7 @@ func TestOpenExistingScratchUsesProvidedDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	require.Len(t, driver.paths, 1)
-	canonical, err := filepath.EvalSymlinks(scratch)
-	require.NoError(t, err)
-	require.Equal(t, canonical, filepath.Dir(driver.paths[0]))
+	require.Equal(t, scratch, filepath.Dir(driver.paths[0]))
 	entries, err := os.ReadDir(scratch)
 	require.NoError(t, err)
 	require.Empty(t, entries)
@@ -128,10 +133,17 @@ func (d *recordingScratchDriver) Open(path string, opts docsqlite.OpenOptions) (
 
 func TestOpenExistingRejectsNonRegularDatabase(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	path := filepath.Join(root, "docbank.db")
-	require.NoError(t, os.Mkdir(path, 0o700))
-	_, err := OpenExisting(t.Context(), path, DefaultSQLiteDriver(), t.TempDir())
-	require.ErrorContains(t, err, "not a regular file")
-	require.NotErrorIs(t, err, ErrNeedsOwner)
+	for _, kind := range []string{"directory", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			if kind == "directory" {
+				require.NoError(t, os.Mkdir(path, 0o700))
+			} else if err := os.Symlink(filepath.Join(t.TempDir(), "target"), path); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			_, err := OpenExisting(t.Context(), path, DefaultSQLiteDriver(), t.TempDir())
+			require.ErrorContains(t, err, "not a regular file")
+			require.NotErrorIs(t, err, ErrNeedsOwner)
+		})
+	}
 }

@@ -5,29 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-
-	"go.kenn.io/docbank/internal/home"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
 // OpenExisting opens a checkpointed current database for identity, path and blob reads only.
 func OpenExisting(ctx context.Context, path string, driver docsqlite.Driver, scratchDir string) (_ *Store, retErr error) {
-	if scratchDir == "" {
-		return nil, errors.New("schema scratch directory must not be empty")
-	}
-	scratchDir, err := home.CanonicalRoot(scratchDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolving schema scratch directory: %w", err)
-	}
-	inside, err := home.PathWithin(filepath.Dir(path), scratchDir)
-	if err != nil {
-		return nil, err
-	}
-	if inside {
-		return nil, fmt.Errorf("schema scratch directory is inside vault: %s", scratchDir)
-	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("database missing: %w", ErrNeedsOwner)

@@ -69,7 +69,7 @@ func OpenContentReader(ctx context.Context, config ContentReaderConfig) (_ *Cont
 	if err != nil {
 		err = errors.Join(err, registry.Close())
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("missing primary ownership marker: %w: %w", ErrVaultNeedsOwner, err)
+			return nil, fmt.Errorf("missing primary storage: %w: %w", ErrVaultNeedsOwner, err)
 		}
 		return nil, err
 	}

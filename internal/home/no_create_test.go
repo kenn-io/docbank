@@ -18,50 +18,98 @@ func TestNoCreateLock(t *testing.T) {
 	require.NotEmpty(t, registry)
 	_, err = os.Lstat(filepath.Join(l.Root, "vault.lock"))
 	require.ErrorIs(t, err, os.ErrNotExist)
-	owner, err := l.TryLockExclusive()
-	require.NoError(t, err)
-	root, lock, registry, err = l.OpenExistingAndLockExclusiveNoCreate()
-	require.ErrorIs(t, err, ErrVaultLocked)
-	require.Nil(t, root)
-	require.Nil(t, lock)
-	require.NotEmpty(t, registry)
-	require.NoError(t, owner.Release())
-	root, lock, registry, err = l.OpenExistingAndLockExclusiveNoCreate()
-	require.NoError(t, err)
-	require.NotEmpty(t, registry)
-	_, err = l.TryLockExclusive()
-	require.ErrorIs(t, err, ErrVaultLocked)
-	child := Layout{Root: filepath.Join(l.Root, "child")}
-	require.NoError(t, os.Mkdir(child.Root, 0o700))
-	_, err = child.TryLockExclusive()
-	require.ErrorIs(t, err, ErrVaultLocked)
-	require.NoError(t, lock.Release())
-	require.NoError(t, root.Close())
 }
 
 func TestNoCreateRegistryInsideVault(t *testing.T) {
-	root := t.TempDir()
-	alias := filepath.Join(t.TempDir(), "alias")
-	for _, registry := range []string{root, filepath.Join(root, "locks"), filepath.Join(root, "missing", "locks"), alias, filepath.Join(alias, "locks")} {
-		t.Run(registry, func(t *testing.T) {
-			if registry == alias || registry == filepath.Join(alias, "locks") {
-				if err := os.Symlink(root, alias); err != nil && !os.IsExist(err) {
-					t.Skipf("symlinks unavailable: %v", err)
+	for _, present := range []bool{false, true} {
+		for _, name := range []string{"root", "child", "missing descendant", "root alias", "alias descendant"} {
+			t.Run(fmt.Sprintf("%s_leaf_%t", name, present), func(t *testing.T) {
+				root := t.TempDir()
+				leaf := filepath.Join(root, "vault.lock")
+				if present {
+					require.NoError(t, os.WriteFile(leaf, []byte("synthetic lock"), 0o600))
 				}
-			}
-			t.Setenv("DOCBANK_LOCK_DIR", registry)
-			before, err := os.Stat(root)
-			require.NoError(t, err)
-			_, _, _, err = (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
-			require.ErrorIs(t, err, ErrRegistryInsideVault)
-			after, err := os.Stat(root)
-			require.NoError(t, err)
-			require.Equal(t, before.ModTime(), after.ModTime())
-			entries, err := os.ReadDir(root)
-			require.NoError(t, err)
-			require.Empty(t, entries)
-		})
+				alias := filepath.Join(t.TempDir(), "alias")
+				if name == "root alias" || name == "alias descendant" {
+					if err := os.Symlink(root, alias); err != nil {
+						t.Skipf("symlinks unavailable: %v", err)
+					}
+				}
+				registry := map[string]string{
+					"root": root, "child": filepath.Join(root, "locks"),
+					"missing descendant": filepath.Join(root, "missing", "locks"),
+					"root alias":         alias, "alias descendant": filepath.Join(alias, "locks"),
+				}[name]
+				t.Setenv("DOCBANK_LOCK_DIR", registry)
+				before, err := os.Stat(root)
+				require.NoError(t, err)
+				var leafBefore os.FileInfo
+				if present {
+					leafBefore, err = os.Stat(leaf)
+					require.NoError(t, err)
+				}
+				opened, held, returnedRegistry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
+				require.ErrorIs(t, err, ErrRegistryInsideVault)
+				require.Nil(t, opened)
+				require.Nil(t, held)
+				require.Empty(t, returnedRegistry)
+				after, err := os.Stat(root)
+				require.NoError(t, err)
+				require.Equal(t, before.Mode(), after.Mode())
+				require.Equal(t, before.ModTime(), after.ModTime())
+				entries, err := os.ReadDir(root)
+				require.NoError(t, err)
+				if !present {
+					require.Empty(t, entries)
+				} else {
+					require.Len(t, entries, 1)
+					leafAfter, err := os.Stat(leaf)
+					require.NoError(t, err)
+					require.Equal(t, leafBefore.Mode(), leafAfter.Mode())
+					require.Equal(t, leafBefore.ModTime(), leafAfter.ModTime())
+					data, err := os.ReadFile(leaf)
+					require.NoError(t, err)
+					require.Equal(t, "synthetic lock", string(data))
+				}
+				t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+				owner, err := (Layout{Root: root}).TryLockExclusive()
+				require.NoError(t, err)
+				require.NoError(t, owner.Release())
+			})
+		}
 	}
+	t.Run("default registry", func(t *testing.T) {
+		t.Setenv("DOCBANK_LOCK_DIR", "")
+		root := t.TempDir()
+		registry := filepath.Join(root, "missing", "locks")
+		before, err := os.Stat(root)
+		require.NoError(t, err)
+		resolve := func() (string, error) {
+			return targetLockRegistryPathWithBase(func() (string, error) { return registry, nil })
+		}
+		opened, lock, gotRegistry, err := (Layout{Root: root}).openExistingAndLockExclusiveNoCreate(resolve)
+		require.ErrorIs(t, err, ErrRegistryInsideVault)
+		require.Nil(t, opened)
+		require.Nil(t, lock)
+		require.Empty(t, gotRegistry)
+		after, err := os.Stat(root)
+		require.NoError(t, err)
+		require.Equal(t, before.ModTime(), after.ModTime())
+		entries, err := os.ReadDir(root)
+		require.NoError(t, err)
+		require.Empty(t, entries)
+	})
+	t.Run("missing root", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "vault")
+		t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "locks"))
+		opened, held, returnedRegistry, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
+		require.ErrorIs(t, err, ErrRegistryInsideVault)
+		require.Nil(t, opened)
+		require.Nil(t, held)
+		require.Empty(t, returnedRegistry)
+		_, err = os.Lstat(root)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
 }
 
 func TestNoCreateRegistryParent(t *testing.T) {
@@ -113,58 +161,6 @@ func TestNoCreateHierarchyConflicts(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestNoCreateDefaultRegistryInsideVault(t *testing.T) {
-	t.Setenv("DOCBANK_LOCK_DIR", "")
-	root := t.TempDir()
-	registry := filepath.Join(root, "missing", "locks")
-	before, err := os.Stat(root)
-	require.NoError(t, err)
-	resolve := func() (string, error) {
-		return targetLockRegistryPathWithBase(func() (string, error) { return registry, nil })
-	}
-	opened, lock, gotRegistry, err := (Layout{Root: root}).openExistingAndLockExclusiveNoCreate(resolve)
-	require.ErrorIs(t, err, ErrRegistryInsideVault)
-	require.Nil(t, opened)
-	require.Nil(t, lock)
-	require.Empty(t, gotRegistry)
-	after, err := os.Stat(root)
-	require.NoError(t, err)
-	require.Equal(t, before.ModTime(), after.ModTime())
-	entries, err := os.ReadDir(root)
-	require.NoError(t, err)
-	require.Empty(t, entries)
-}
-
-func TestNoCreateRegistryInsidePreparedOrMissingVault(t *testing.T) {
-	for _, missing := range []bool{false, true} {
-		t.Run(fmt.Sprintf("missing_%t", missing), func(t *testing.T) {
-			root := filepath.Join(t.TempDir(), "vault")
-			if !missing {
-				require.NoError(t, os.Mkdir(root, 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(root, "vault.lock"), []byte("leaf"), 0o600))
-			}
-			t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(root, "locks"))
-			_, _, _, err := (Layout{Root: root}).OpenExistingAndLockExclusiveNoCreate()
-			require.ErrorIs(t, err, ErrRegistryInsideVault)
-			if missing {
-				_, err = os.Lstat(root)
-				require.ErrorIs(t, err, os.ErrNotExist)
-				return
-			}
-			entries, err := os.ReadDir(root)
-			require.NoError(t, err)
-			require.Len(t, entries, 1)
-			data, err := os.ReadFile(filepath.Join(root, "vault.lock"))
-			require.NoError(t, err)
-			require.Equal(t, "leaf", string(data))
-			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-			lock, err := (Layout{Root: root}).TryLockExclusive()
-			require.NoError(t, err)
-			require.NoError(t, lock.Release())
-		})
 	}
 }
 

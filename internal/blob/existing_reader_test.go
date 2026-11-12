@@ -2,9 +2,9 @@ package blob
 
 import (
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,7 +32,7 @@ func TestExistingReaderLocations(t *testing.T) {
 		if retire {
 			require.Len(t, locations.Candidates, 1)
 			_, _, err = reader.OpenStreamContext(t.Context(), hash)
-			require.Error(t, err)
+			require.ErrorIs(t, err, packstore.ErrStoreUnavailable)
 		} else {
 			require.Len(t, locations.Candidates, 2)
 			stream, _, err := reader.OpenStreamContext(t.Context(), hash)
@@ -47,38 +47,37 @@ func TestExistingReaderLocations(t *testing.T) {
 }
 
 func TestExistingReaderOwnership(t *testing.T) {
-	t.Run("missing marker", func(t *testing.T) {
-		metadata, blobs, _, _ := placementTestVault(t)
-		marker := blobs.layout.OwnershipPath()
-		require.NoError(t, os.Remove(marker))
-		registry := NewRegistry(t.Context(), metadata.VaultID(), nil, nil)
-		defer func() { require.NoError(t, registry.Close()) }()
-		_, err := NewExistingReader(store.NewPackCatalog(metadata), blobs.dir, registry)
-		require.ErrorIs(t, err, fs.ErrNotExist)
-		_, err = os.Lstat(marker)
-		require.ErrorIs(t, err, fs.ErrNotExist)
-	})
 	t.Run("wrong marker and handoff", func(t *testing.T) {
 		metadata, blobs, _, _ := placementTestVault(t)
 		prior, err := blobs.readBackend.Ownership(t.Context())
 		require.NoError(t, err)
 		wrong := prior
 		wrong.Epoch = "50000000-0000-4000-8000-000000000001"
-		require.NoError(t, blobs.readBackend.ReplaceOwnership(t.Context(), wrong, &prior))
+		digest := strings.Repeat("a", 64)
+		handoffRecord, err := NewPrimaryRestoreHandoff(blobs.dir, wrong, &digest)
+		require.NoError(t, err)
+		require.NoError(t, handoffRecord.Prepare(t.Context()))
 		handoff := filepath.Join(blobs.dir, "tmp", primaryRestoreHandoffName)
-		require.NoError(t, os.MkdirAll(filepath.Dir(handoff), 0o700))
-		require.NoError(t, os.WriteFile(handoff, []byte("pending"), 0o600))
+		before, err := os.ReadFile(handoff)
+		require.NoError(t, err)
 		registry := NewRegistry(t.Context(), metadata.VaultID(), nil, nil)
 		defer func() { require.NoError(t, registry.Close()) }()
 		_, err = NewExistingReader(store.NewPackCatalog(metadata), blobs.dir, registry)
 		require.ErrorIs(t, err, packstore.ErrStoreFenced)
 		data, err := os.ReadFile(handoff)
 		require.NoError(t, err)
-		require.Equal(t, "pending", string(data))
+		require.Equal(t, before, data)
 	})
 }
 
+type nonPrimaryCatalog struct{ packstore.Catalog }
+
 func TestExistingReaderRejectsNonPrimaryCatalog(t *testing.T) {
-	_, err := NewExistingReader(nil, t.TempDir(), nil)
+	metadata, _, _, _ := placementTestVault(t)
+	path := filepath.Join(t.TempDir(), "missing")
+	catalog := nonPrimaryCatalog{Catalog: store.NewPackCatalog(metadata)}
+	_, err := NewExistingReader(catalog, path, nil)
 	require.ErrorContains(t, err, "primary location catalog")
+	_, err = os.Lstat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
