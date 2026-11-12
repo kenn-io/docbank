@@ -16,13 +16,13 @@ func documentSnapshotPopulation(ctx context.Context, q metadataQuerier, compiled
 	if !compiled.predicate.personEdges {
 		return matchedPopulation(compiled, generation, nil)
 	}
-	return materializeDocumentPopulation(ctx, q, compiled, generation, nil, coverage)
+	return materializeDocumentPopulation(ctx, q, compiled, generation, coverage)
 }
 
 // materializeDocumentPopulation executes the selection once and hands
 // its exact identities to downstream projections on the same read snapshot.
-func materializeDocumentPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, profile *string, coverage CoverageSelection) (compiledQueryFragment, error) {
-	population, err := preparedPopulation(ctx, q, compiled, generation, profile, coverage)
+func materializeDocumentPopulation(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {
+	population, err := preparedPopulation(ctx, q, compiled, generation, nil, coverage)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}

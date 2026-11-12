@@ -159,9 +159,7 @@ func (r queryResolver) personMentionNames(ctx context.Context, id string) ([]str
 	}
 	visible, _ := ctx.Value(visiblePersonContextKey{}).(bool)
 	rows, err := q.QueryContext(ctx, `SELECT i.value_display FROM person_identities i WHERE i.person_id=? AND i.kind='name_alias'
-		AND (?=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
-			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
-			AND `+personVisibleActorSQL("dp", "?")+`)) ORDER BY i.value_normalized,i.identity_id`, id, boolInt(visible), boolInt(queryPeopleHideLocked(ctx)))
+		AND (?=0 OR i.origin='operator') ORDER BY i.value_normalized,i.identity_id`, id, boolInt(visible))
 	if err != nil {
 		return nil, err
 	}

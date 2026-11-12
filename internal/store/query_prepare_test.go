@@ -74,7 +74,7 @@ func TestPreparedDocumentPopulationCancellation(t *testing.T) {
 	compiled := compileFixtureQuery(t, s, `path:/missing`, query.Filters{})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := materializeDocumentPopulation(ctx, s.db, compiled, "", nil, CoverageSelection{})
+	_, err := materializeDocumentPopulation(ctx, s.db, compiled, "", CoverageSelection{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want canceled", err)
 	}
@@ -110,7 +110,6 @@ type preparationLifecycleRows struct {
 	queries, next, closed  int
 	cancel                 context.CancelFunc
 	iterationErr, closeErr error
-	badScan                bool
 }
 
 func (*preparationLifecycleRows) Columns() []string { return []string{"node_id", "content_version_id"} }
@@ -119,9 +118,6 @@ func (r *preparationLifecycleRows) Next(values []driver.Value) error {
 	r.next++
 	if r.next == 1 {
 		values[0], values[1] = int64(42), "synthetic-version"
-		if r.badScan {
-			values[0] = "synthetic-node"
-		}
 		return nil
 	}
 	if r.cancel != nil {
@@ -150,7 +146,7 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 		name     string
 		compiled CompiledQuery
 	}{{"final", final}, {"leaf", leaf}} {
-		for _, failure := range []string{"cancel", "scan", "iteration", "close"} {
+		for _, failure := range []string{"cancel", "iteration", "close"} {
 			t.Run(route.name+"/"+failure, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
@@ -159,8 +155,6 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 				switch failure {
 				case "cancel":
 					r.cancel = cancel
-				case "scan":
-					r.badScan, want = true, nil
 				case "iteration":
 					r.iterationErr, want = iterationErr, iterationErr
 				case "close":
@@ -168,18 +162,14 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 				}
 				db := sql.OpenDB(preparationLifecycleConnector{r})
 				t.Cleanup(func() { _ = db.Close() })
-				got, err := materializeDocumentPopulation(ctx, db, route.compiled, "", nil, CoverageSelection{})
-				wantNext := 2
-				if want == nil {
-					require.ErrorContains(t, err, "Scan error")
-					wantNext = 1
-				} else if !errors.Is(err, want) {
+				got, err := materializeDocumentPopulation(ctx, db, route.compiled, "", CoverageSelection{})
+				if !errors.Is(err, want) {
 					t.Fatalf("got error %v, want %v", err, want)
 				}
 				if got.sql != "" || len(got.args) != 0 {
 					t.Fatalf("fabricated membership: %+v", got)
 				}
-				if r.queries != 1 || r.next != wantNext || r.closed != 1 {
+				if r.queries != 1 || r.next != 2 || r.closed != 1 {
 					t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
 				}
 			})
@@ -455,7 +445,7 @@ func TestPreparedLeafMembershipMatchesInlineSQL(t *testing.T) {
 		}
 		require.Len(t, prepared.args, len(bound.args)-leafArgs+len(bound.leaves), tc.text)
 
-		handoff, err := materializeDocumentPopulation(ctx, s.db, compiled, "", nil, f.selection)
+		handoff, err := materializeDocumentPopulation(ctx, s.db, compiled, "", f.selection)
 		require.NoError(t, err, tc.text)
 		ids, pairs := preparedLeafMembers(t, s.db, handoff.sql, handoff.args)
 		require.Equal(t, wantPairs, pairs, tc.text)

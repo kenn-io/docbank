@@ -351,9 +351,6 @@ func materializePersonRoleFacet(ctx context.Context, q metadataQuerier, compiled
 				}
 			}
 		}
-		if len(roles[id]) == 0 {
-			continue
-		}
 		selected[id] = true
 		observation.labels[id] = name
 	}

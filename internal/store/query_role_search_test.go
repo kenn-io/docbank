@@ -896,7 +896,7 @@ func TestRoleSearchPreparedLeafGatesAndFacets(t *testing.T) {
 		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
 		require.NoError(t, err, tc.text)
 		recording := &populationRecordingQuerier{metadataQuerier: s.db}
-		rows := []SnapshotRow{{SnapshotMember: SnapshotMember{NodeID: tc.want}}}
+		rows := []SnapshotRow{{NodeID: tc.want}}
 		require.NoError(t, annotateMatchedRoles(ctx, recording, compiled, "", CoverageSelection{}, rows), tc.text)
 		require.Equal(t, []string{"author"}, rows[0].MatchedRoles, tc.text)
 		gates := 0
