@@ -252,6 +252,7 @@
           </thead>
           <tbody>
             {#each rows as contract (contract.contract_id)}
+              {@const status = contractStatusLabel(contract.effective_status)}
               <tr>
                 <th scope="row" class="title-cell">
                   <button
@@ -265,11 +266,8 @@
                 <td class="narrow-hidden">{contractTypeLabel(contract.contract_type)}</td>
                 <td class="wrap-cell">{counterpartyNames(contract)}</td>
                 <td
-                  ><Chip
-                    size="xs"
-                    class="status-chip"
-                    tone={statusTone(contract.effective_status)}
-                    >{contractStatusLabel(contract.effective_status)}</Chip
+                  ><Chip size="xs" tone={statusTone(contract.effective_status)}
+                    ><span class="status-label">{status}</span></Chip
                   ></td
                 >
                 <td class="narrow-hidden">{formatCivilDate(contract.starts_on)}</td>
@@ -350,12 +348,9 @@
       border-collapse: collapse;
     }
     /* A long status such as "Pending signature" breaks between its words
-       instead of setting the column's width; the kit label otherwise keeps
-       one line and would ellipsize. */
-    :global(.contracts .status-chip.kit-chip .kit-chip__label) {
+       instead of setting the column's width. */
+    .status-label {
       white-space: normal;
-      overflow: visible;
-      text-overflow: clip;
     }
   }
 </style>
