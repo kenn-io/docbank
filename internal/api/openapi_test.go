@@ -905,6 +905,16 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	assert.NotContains(t, patch.Properties, "country")
 	assert.NotContains(t, patch.Properties, "clear_effective_start")
 	assert.Equal(t, false, patch.AdditionalProperties)
+	for _, field := range []string{"cadence", "currency", "due_note", "identifier", "lead_days", "note", "period_note"} {
+		require.Contains(t, patch.Properties, field)
+		assert.False(t, patch.Properties[field].Nullable, field)
+		assert.NotContains(t, patch.Required, field)
+	}
+	for _, field := range []string{"effective_start", "effective_end"} {
+		require.Contains(t, patch.Properties, field)
+		assert.True(t, patch.Properties[field].Nullable, field)
+		assert.NotContains(t, patch.Required, field)
+	}
 	account := doc.Components.Schemas.Map()["TaxAccount"]
 	require.NotNil(t, account)
 	for _, field := range []string{"authority_party_id", "effective_start", "effective_end", "retired_at"} {
