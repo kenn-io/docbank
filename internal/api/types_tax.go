@@ -38,12 +38,6 @@ type TaxAccountPage struct {
 	Limit  int          `json:"limit"`
 	Offset int          `json:"offset"`
 }
-type TaxAccountListOptions struct {
-	FilerPartyID, Country, TaxKind string
-	IncludeRetired                 bool
-	Limit, Offset                  int
-}
-
 type CreateTaxAccountRequest struct {
 	FilerPartyID     string  `json:"filer_party_id"`
 	AuthorityPartyID *string `json:"authority_party_id,omitempty" nullable:"true"`

@@ -92,16 +92,16 @@ func validateTaxAccountResponse(a *api.TaxAccount, response *http.Response, id s
 	}
 	return *a, nil
 }
-func (c *Connection) TaxAccounts(ctx context.Context, o api.TaxAccountListOptions) (api.TaxAccountPage, error) {
-	if o.Limit < 1 || o.Limit > 1000 || o.Offset < 0 {
+func (c *Connection) TaxAccounts(ctx context.Context, filer, country, taxkind string, includeRetired bool, limit, offset int) (api.TaxAccountPage, error) {
+	if limit < 1 || limit > 1000 || offset < 0 {
 		return api.TaxAccountPage{}, errors.New("invalid tax account page")
 	}
-	limit, offset := int64(o.Limit), int64(o.Offset)
-	page, err := c.API().ListTaxAccounts(ctx, &apiclient.ListTaxAccountsRequestOptions{Query: &apiclient.ListTaxAccountsQuery{Filer: &o.FilerPartyID, Country: &o.Country, Taxkind: &o.TaxKind, IncludeRetired: &o.IncludeRetired, Limit: &limit, Offset: &offset}})
+	queryLimit, queryOffset := int64(limit), int64(offset)
+	page, err := c.API().ListTaxAccounts(ctx, &apiclient.ListTaxAccountsRequestOptions{Query: &apiclient.ListTaxAccountsQuery{Filer: &filer, Country: &country, Taxkind: &taxkind, IncludeRetired: &includeRetired, Limit: &queryLimit, Offset: &queryOffset}})
 	if err != nil {
 		return api.TaxAccountPage{}, safeTaxError(err)
 	}
-	if page == nil || page.Items == nil || page.Limit != o.Limit || page.Offset != o.Offset || len(page.Items) > o.Limit {
+	if page == nil || page.Items == nil || page.Limit != limit || page.Offset != offset || len(page.Items) > limit {
 		return api.TaxAccountPage{}, &responseDecodeError{err: errors.New("invalid tax account page")}
 	}
 	for _, a := range page.Items {

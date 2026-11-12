@@ -53,13 +53,15 @@ func newTaxAccountCommand() *cobra.Command {
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tfiler: %s\tauthority: %s\tcountry: %s\tsubdivision: %s\tkind: %q\tidentifier: %q\tcadence: %s\tperiod: %q\tdue: %q\tlead days: %d\tcurrency: %s\tstart: %s\tend: %s\tnote: %q\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", a.AccountID, a.FilerPartyID, value(a.AuthorityPartyID), a.Country, a.Subdivision, a.TaxKind, a.Identifier, a.Cadence, a.PeriodNote, a.DueNote, a.LeadDays, a.Currency, value(a.EffectiveStart), value(a.EffectiveEnd), a.Note, value(a.RetiredAt), a.Revision, a.CreatedAt, a.UpdatedAt)
 		return err
 	}
-	var filters api.TaxAccountListOptions
+	var filer, country, taxkind string
+	var includeRetired bool
+	var limit, offset int
 	list := &cobra.Command{Use: "list", Short: "List tax accounts", Example: "docbank tax account list --country ZZ", Args: taxNoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		page, err := c.TaxAccounts(cmd.Context(), filters)
+		page, err := c.TaxAccounts(cmd.Context(), filer, country, taxkind, includeRetired, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -77,12 +79,12 @@ func newTaxAccountCommand() *cobra.Command {
 		}
 		return nil
 	}}
-	list.Flags().StringVar(&filters.FilerPartyID, "filer", "", "filter by filer party ID")
-	list.Flags().StringVar(&filters.Country, "country", "", "filter by country")
-	list.Flags().StringVar(&filters.TaxKind, "taxkind", "", "filter by tax kind")
-	list.Flags().BoolVar(&filters.IncludeRetired, "include-retired", false, "include retired accounts")
-	list.Flags().IntVar(&filters.Limit, "limit", 100, "maximum number of accounts")
-	list.Flags().IntVar(&filters.Offset, "offset", 0, "number of accounts to skip")
+	list.Flags().StringVar(&filer, "filer", "", "filter by filer party ID")
+	list.Flags().StringVar(&country, "country", "", "filter by country")
+	list.Flags().StringVar(&taxkind, "taxkind", "", "filter by tax kind")
+	list.Flags().BoolVar(&includeRetired, "include-retired", false, "include retired accounts")
+	list.Flags().IntVar(&limit, "limit", 100, "maximum number of accounts")
+	list.Flags().IntVar(&offset, "offset", 0, "number of accounts to skip")
 	var reveal bool
 	show := &cobra.Command{Use: "show <account-id>", Short: "Inspect a tax account", Example: "docbank tax account show 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
