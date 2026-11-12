@@ -278,7 +278,7 @@ it("navigates frozen documents across pages and stops at the boundary or expiry"
   expect(highlightRequests).toBe(1);
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   // Highlight choices appear only beside readable text; VerifiedPreview covers that menu.
-  await screen.findByText("Text extraction isn't set up.");
+  await screen.findByRole("button", { name: "Process…" });
   expect(highlightSetReads).toBeGreaterThan(0);
 
   first.snapshot_id = "1123456789abcdef0123456789abcdef";

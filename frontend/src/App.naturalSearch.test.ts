@@ -2121,9 +2121,7 @@ it("scopes empty search coverage to the selected tag", async () => {
   );
   await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
   await submitSearch("missing");
-  await screen.findByText(
-    "Some PDFs with this tag have pages without a text layer.",
-  );
+  await screen.findByText("Some PDFs with this tag have pages without a text layer.");
   const liveRequest = fetchMock.mock.calls
     .map(([url]) => String(url))
     .find((url) => url.startsWith("/api/v1/search/text-coverage"));
