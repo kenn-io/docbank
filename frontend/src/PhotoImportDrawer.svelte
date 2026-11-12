@@ -600,7 +600,7 @@
       !registered &&
       (plannedDestination !== destination || plannedChannel !== runChannel)
     ) {
-      await plan(false, plannedDestination === destination && Boolean(sourceID));
+      await (plannedDestination === destination ? inspectCurrentImport() : plan(false));
     }
     if (
       destroyed ||

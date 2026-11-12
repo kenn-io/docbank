@@ -2522,6 +2522,83 @@ it("replans a selection interrupted during its first plan without sending it", a
   await waitFor(() => expect(replacement.uploadPhotoGroup).toHaveBeenCalledOnce());
 });
 
+it("inspects a registered preview after another tab imports a group", async () => {
+  const selected = files().slice(0, 2);
+  const saved = {
+    import_id: "first",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 2,
+    groups: [
+      {
+        status: "committed" as const,
+        files: [{ relative_path: selected[0].name, size: selected[0].size }],
+        receipt: { status: "added" as const, asset_id: "asset" },
+      },
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: selected[1].name, size: selected[1].size }],
+      },
+    ],
+  };
+  const original: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "first", groups: [[0], [1]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("first"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+  };
+  const replacement: PhotoImportTransport = {
+    ...original,
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({
+        import_id: "second",
+        groups: [[0], [1]],
+        unsupported: [],
+        hashes: new Map([[selected[0], "a".repeat(64)]]),
+      }),
+    registerPhotoImport: vi
+      .fn()
+      .mockRejectedValue(new APIError("Declaration changed", 500, "internal")),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "second" }),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel: original,
+    vaultID: "preview-reconnect",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await screen.findByRole("button", { name: "Add 2 groups" });
+  await view.rerender({ channel: replacement });
+  await fireEvent.click(screen.getByRole("button", { name: "Add 2 groups" }));
+  await waitFor(() =>
+    expect(replacement.uploadPhotoGroup).toHaveBeenCalledWith(
+      "first",
+      1,
+      [selected[1]],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      expect.any(Array),
+    ),
+  );
+  expect(replacement.planPhotoImport).not.toHaveBeenCalled();
+  expect(replacement.registerPhotoImport).not.toHaveBeenCalled();
+});
+
 it("inspects an unconfirmed group on a replacement channel", async () => {
   const original: PhotoImportTransport = {
     registerPhotoImport: vi.fn(async (id: string) => id),

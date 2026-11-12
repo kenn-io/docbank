@@ -159,6 +159,27 @@ func TestBrowserPhotoImportMissing(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestBrowserPhotoImportReregistersNewlyRequiredHashes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	directory, err := s.PrepareIngestDirectory(ctx, "/photos")
+	require.NoError(t, err)
+	plan := BrowserPhotoImport{SourceID: uuid.New(), Label: "Photos", Destination: "/photos", Directory: directory, Groups: []BrowserPhotoImportGroup{{Members: []BrowserPhotoGroupMember{{Path: "a.jpg", Role: PhotoRoleImage, SourcePath: "browser:source/a.jpg", Size: 4}}}}}
+	id, err := s.RegisterBrowserPhotoImport(ctx, plan)
+	require.NoError(t, err)
+	plan.Groups[0].Members[0].DeclaredHash = fakeHash("a1")
+	again, err := s.RegisterBrowserPhotoImport(ctx, plan)
+	require.NoError(t, err)
+	require.Equal(t, id, again)
+	plan.SourceID = uuid.New()
+	_, err = s.RegisterBrowserPhotoImport(ctx, plan)
+	require.NoError(t, err)
+	plan.Groups[0].Members[0].DeclaredHash = fakeHash("b2")
+	_, err = s.RegisterBrowserPhotoImport(ctx, plan)
+	require.Error(t, err)
+}
+
 func TestBrowserPhotoImportRejectsChangedOrFutureDeclaration(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
