@@ -706,6 +706,10 @@
           refreshNeeded = true;
         } catch (cause) {
           if (controller.signal.aborted && !transmissionStarted) break;
+          if (cause instanceof APIError && cause.code === "photo_group_pending") {
+            setState(item, "pending");
+            continue;
+          }
           const state =
             transmissionStarted && !(cause instanceof APIError) ? "unconfirmed" : "failed";
           setState(item, state);

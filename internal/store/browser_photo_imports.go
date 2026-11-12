@@ -3,12 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"path"
-	"strings"
 	"uuid"
 )
 
@@ -453,17 +451,6 @@ func (s *Store) PinBrowserPhotoGroupHashes(ctx context.Context, id uuid.UUID, or
 		}
 		if len(hashes) != len(members) {
 			return errors.New("browser photo group hashes do not match members")
-		}
-		for i, value := range hashes {
-			if len(value) != 64 || value != strings.ToLower(value) {
-				return errors.New("invalid browser photo group hash")
-			}
-			if _, err := hex.DecodeString(value); err != nil {
-				return errors.New("invalid browser photo group hash")
-			}
-			if members[i].DeclaredHash != "" && members[i].DeclaredHash != value {
-				return errors.New("browser photo group content changed")
-			}
 		}
 		encoded, err := json.Marshal(hashes)
 		if err != nil {
