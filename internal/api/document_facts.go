@@ -1,7 +1,6 @@
 package api
 
 import (
-	"slices"
 	"time"
 
 	"go.kenn.io/docbank/document"
@@ -29,10 +28,6 @@ type WhenPlacedBy struct {
 	ClaimBasis string            `json:"claim_basis"`
 }
 
-func safeDocumentEvent(event document.DocumentEventV1) bool {
-	return !event.Sensitive && !slices.ContainsFunc(event.Actors, func(actor document.DocumentEventActorV1) bool { return actor.Sensitive })
-}
-
 func whenFromClaim(event document.DocumentEventV1) WhenV1 {
 	w := WhenV1{Precision: event.Precision, PlacedBy: WhenPlacedBy{Source: event.DateKind, Rule: document.PrimaryRuleV1, Fallback: event.DateKind == "imported" || event.DateKind == "vault_recorded", EventID: event.EventID, ClaimBasis: event.ClaimBasis}}
 	switch event.Precision {
@@ -52,6 +47,8 @@ func whenFromClaim(event document.DocumentEventV1) WhenV1 {
 	}
 	w.ZoneState = string(event.TimezoneKind)
 	if event.UTCKey != "" {
+		// Stored events are decoded and validated before projection; UTCKey is
+		// recomputed by DecodeDocumentEventsV1 from its civil value.
 		w.State = "exact"
 		if at, err := time.Parse(time.RFC3339Nano, event.UTCKey); err == nil {
 			w.At = at.UTC().Format(time.RFC3339Nano)
@@ -164,10 +161,4 @@ type VersionPeople struct {
 	Assertions       []VersionPersonAssertion `json:"assertions"`
 	Unresolved       []VersionUnresolvedName  `json:"unresolved"`
 	Open             *FactOpen                `json:"open,omitempty"`
-}
-
-func filterSafePeople(f *VersionPeople) {
-	f.Edges = slices.DeleteFunc(f.Edges, func(e VersionPersonEdge) bool { return e.Role == "blind_copy" })
-	f.Assertions = slices.DeleteFunc(f.Assertions, func(a VersionPersonAssertion) bool { return a.Role == "blind_copy" })
-	f.Unresolved = slices.DeleteFunc(f.Unresolved, func(u VersionUnresolvedName) bool { return u.Role == "blind_copy" })
 }
