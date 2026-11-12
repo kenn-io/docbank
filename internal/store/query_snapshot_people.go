@@ -162,40 +162,52 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 	// IDs come from snapshot rows, not query text. Chunk their JSON literals so
 	// they consume no bind slots and add only bounded SQL to the predicate.
 	const memberBatch = 128
-	for batch := range slices.Chunk(ids, memberBatch) {
-		encoded, err := json.Marshal(batch)
-		if err != nil {
-			return err
-		}
-		population := compiledQueryFragment{sql: `SELECT root.id,n.id
+	for start := 0; start < len(ids); {
+		end := min(start+memberBatch, len(ids))
+		for {
+			encoded, err := json.Marshal(ids[start:end])
+			if err != nil {
+				return err
+			}
+			population := compiledQueryFragment{sql: `SELECT root.id,n.id
  FROM json_each('` + string(encoded) + `') ids JOIN nodes root ON root.id=ids.value
  JOIN content_versions rootcv ON rootcv.version_id=root.current_version_id
  JOIN content_versions cv ON cv.blob_hash=rootcv.blob_hash
  JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
  JOIN (` + members.sql + `) matched ON matched.node_id=n.id AND matched.content_version_id=cv.version_id
  WHERE n.id=root.id OR ` + fmt.Sprint(boolInt(compiled.Query.Filters.CollapseDuplicates)) + `=1`, args: members.args, relations: members.relations}
-		statement, args, err := bindQueryPopulation(population, coverage, generation)
-		if err != nil {
-			return err
-		}
-		found, err := q.QueryContext(ctx, statement, args...)
-		if err != nil {
-			return fmt.Errorf("loading matched role members: %w", err)
-		}
-		for found.Next() {
-			var root, member int64
-			if err := found.Scan(&root, &member); err != nil {
-				_ = found.Close()
+			statement, args, err := bindQueryPopulation(population, coverage, generation)
+			if err != nil {
 				return err
 			}
-			roots[member] = append(roots[member], rowIndex[root])
-		}
-		err = found.Err()
-		if closeErr := found.Close(); err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			return err
+			if len(statement) > maxCompiledQuerySQL || len(args) > maxCompiledQueryArgs {
+				if end-start > 1 && len(args) <= maxCompiledQueryArgs {
+					end = start + (end-start)/2
+					continue
+				}
+				return compileExpressionError(0, len(compiled.Query.Text), "role annotations exceed query bounds")
+			}
+			found, err := q.QueryContext(ctx, statement, args...)
+			if err != nil {
+				return fmt.Errorf("loading matched role members: %w", err)
+			}
+			for found.Next() {
+				var root, member int64
+				if err := found.Scan(&root, &member); err != nil {
+					_ = found.Close()
+					return err
+				}
+				roots[member] = append(roots[member], rowIndex[root])
+			}
+			err = found.Err()
+			if closeErr := found.Close(); err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				return err
+			}
+			start = end
+			break
 		}
 	}
 
@@ -218,34 +230,46 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 				return err
 			}
 			var selected []int64
-			for batch := range slices.Chunk(candidates, memberBatch) {
-				encoded, err := json.Marshal(batch)
-				if err != nil {
-					return err
-				}
-				selection := compiledQueryFragment{sql: `SELECT n.id FROM json_each('` + string(encoded) + `') ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE ` + predicate.sql, args: predicate.args, relations: predicate.relations}
-				statement, args, err := bindQueryPopulation(selection, coverage, generation)
-				if err != nil {
-					return err
-				}
-				found, err := q.QueryContext(ctx, statement, args...)
-				if err != nil {
-					return fmt.Errorf("annotating roles: %w", err)
-				}
-				for found.Next() {
-					var id int64
-					if err := found.Scan(&id); err != nil {
-						_ = found.Close()
+			for start := 0; start < len(candidates); {
+				end := min(start+memberBatch, len(candidates))
+				for {
+					encoded, err := json.Marshal(candidates[start:end])
+					if err != nil {
 						return err
 					}
-					selected = append(selected, id)
-				}
-				err = found.Err()
-				if closeErr := found.Close(); err == nil {
-					err = closeErr
-				}
-				if err != nil {
-					return err
+					selection := compiledQueryFragment{sql: `SELECT n.id FROM json_each('` + string(encoded) + `') ids JOIN nodes n ON n.id=ids.value JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE ` + predicate.sql, args: predicate.args, relations: predicate.relations}
+					statement, args, err := bindQueryPopulation(selection, coverage, generation)
+					if err != nil {
+						return err
+					}
+					if len(statement) > maxCompiledQuerySQL || len(args) > maxCompiledQueryArgs {
+						if end-start > 1 && len(args) <= maxCompiledQueryArgs {
+							end = start + (end-start)/2
+							continue
+						}
+						return compileExpressionError(0, len(compiled.Query.Text), "role annotations exceed query bounds")
+					}
+					found, err := q.QueryContext(ctx, statement, args...)
+					if err != nil {
+						return fmt.Errorf("annotating roles: %w", err)
+					}
+					for found.Next() {
+						var id int64
+						if err := found.Scan(&id); err != nil {
+							_ = found.Close()
+							return err
+						}
+						selected = append(selected, id)
+					}
+					err = found.Err()
+					if closeErr := found.Close(); err == nil {
+						err = closeErr
+					}
+					if err != nil {
+						return err
+					}
+					start = end
+					break
 				}
 			}
 			candidates = selected
