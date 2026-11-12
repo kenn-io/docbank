@@ -136,7 +136,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 // dateQueryError preserves the timeline contract's error codes at every query entry point.
 func dateQueryError(err error) error {
 	if date, ok := errors.AsType[*query.DateError](err); ok {
-		problem := NewError(http.StatusBadRequest, date.Code, err.Error())
+		problem := NewError(http.StatusBadRequest, date.Code, date.Err.Error())
 		if positioned, ok := errors.AsType[*query.ExpressionError](err); ok && positioned.End > positioned.Offset {
 			problem.Position = &ErrorPosition{Offset: positioned.Offset, End: positioned.End}
 		}

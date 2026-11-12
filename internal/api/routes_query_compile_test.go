@@ -231,6 +231,16 @@ func TestQueryCompileTimelineErrors(t *testing.T) {
 			}
 		}
 	}
+	for _, path := range []string{queryParsePath, queryHighlightsPath} {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, map[string]string{"X-Api-Key": testAPIKey}, `{"syntax":"advanced","text":"alpha AND date:2026-03-31..2026-03-01"}`)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, body)
+		problem := decodeProblem(t, body)
+		require.Equal(t, "invalid_date", problem.Code)
+		require.Equal(t, "date range is reversed", problem.Detail)
+		require.NotNil(t, problem.Position)
+		require.Equal(t, len("alpha AND "), problem.Position.Offset)
+		require.Equal(t, len("alpha AND date:2026-03-31..2026-03-01"), problem.Position.End)
+	}
 	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries", map[string]string{"X-Api-Key": testAPIKey}, `{"name":"Invalid date","kind":"query","payload":{"filters":{"document_date":{"from":"2026-02-30","to":"2026-03-01"}}}}`)
 	require.Equal(t, http.StatusBadRequest, response.StatusCode, body)
 	require.Equal(t, "invalid_date", decodeProblem(t, body).Code)
