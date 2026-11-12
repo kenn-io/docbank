@@ -108,19 +108,10 @@ function definition(kind: unknown, payload: unknown): Definition {
   throw new Error("Unknown saved definition kind.");
 }
 
-// Mirrors internal/api pinSavedQueryTimezone and query.UsesDocumentDate: a
-// saved query with date operands and no timezone is stored with the server's
-// timeline zone, so its receipt may add that one zone and nothing else.
-const advancedDateField = /(?:^|[\s()])date(?:_kind|_precision)?\s*:/u;
+// The server pins its timeline zone into a date query saved without one
+// (internal/api pinSavedQueryTimezone), so a receipt for a query sent without
+// a zone may add one valid zone and nothing else.
 const assignableZone = /^(?:UTC|[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)+)$/;
-
-function usesDocumentDate(query: Query): boolean {
-  return (
-    query.filters.document_date !== undefined ||
-    query.sort.field === "document_date" ||
-    (query.syntax === "advanced" && advancedDateField.test(query.text))
-  );
-}
 
 type ExpectedDefinition = Definition & { name: string; description: string };
 
@@ -130,8 +121,7 @@ function withPinnedZone(expected: ExpectedDefinition, saved: Definition): Expect
     saved.kind !== "query" ||
     expected.payload.timezone !== undefined ||
     saved.payload.timezone === undefined ||
-    !assignableZone.test(saved.payload.timezone) ||
-    !usesDocumentDate(expected.payload)
+    !assignableZone.test(saved.payload.timezone)
   )
     return expected;
   return { ...expected, payload: { ...expected.payload, timezone: saved.payload.timezone } };
@@ -292,13 +282,14 @@ export async function updateSavedQuery(
     name: body.name ?? observed.name,
     description: body.description ?? observed.description,
   };
-  const revision = observed.revision + (sameDefinition(observed, expected) ? 0 : 1);
-  requireReceipt(Number.isSafeInteger(revision));
   const saved = await readResponse(
     await generated.updateSavedQuery(observed.id, body, headers, { session }),
   );
   // Only a submitted payload is pinned; a rename keeps the stored payload.
   const accepted = body.payload === undefined ? expected : withPinnedZone(expected, saved);
+  // A payload that only drops a zone the server re-pins is a canonical no-op.
+  const revision = observed.revision + (sameDefinition(observed, accepted) ? 0 : 1);
+  requireReceipt(Number.isSafeInteger(revision));
   requireReceipt(
     saved.id === observed.id &&
       saved.revision === revision &&

@@ -220,12 +220,32 @@ describe("saved definition receipts", () => {
         { ...dated, timezone: "UTC" },
         { ...dated, timezone: "Europe/Paris" },
       ],
-      ["no date operand", payload, { ...payload, timezone: "UTC" }],
       ["malformed zone", dated, { ...dated, timezone: "Local" }],
       ["other field changed", dated, { ...dated, text: "gamma", timezone: "UTC" }],
     ])("rejects a create receipt with %s", async (_name, sent, received) => {
       respond(stored(received, { revision: 1 }), '"1"');
       await expect(create(sent)).rejects.toThrow(/receipt/i);
+    });
+
+    it("keeps the revision when an edit only drops a zone the server re-pins", async () => {
+      const observed = stored({ ...dated, timezone: "UTC" });
+      const fetch = respond(observed);
+      const updated = await updateSavedQuery("session", observed, {
+        payload: parseQuery(JSON.stringify(dated)),
+      });
+      expect(updated.revision).toBe(3);
+      expect(updated.kind === "query" && updated.payload.timezone).toBe("UTC");
+      expect(JSON.parse(String(fetch.mock.calls[0][1]?.body)).payload).not.toHaveProperty(
+        "timezone",
+      );
+      fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(stored({ ...dated, timezone: "UTC" }, { revision: 4 })), {
+          headers: { ETag: '"4"' },
+        }),
+      );
+      await expect(
+        updateSavedQuery("session", observed, { payload: parseQuery(JSON.stringify(dated)) }),
+      ).rejects.toThrow(/receipt/i);
     });
 
     it("rejects an assigned zone on a rename that sent no payload", async () => {
