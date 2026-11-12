@@ -1,14 +1,17 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,6 +131,86 @@ func TestContractMCPWorkflowAndWriteOptIn(t *testing.T) {
 	assert.Equal(t, "", detail["summary"])
 	stale := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": map[string]any{"contract_id": id, "revision": 1, "patch": map[string]any{"title": "Incorrect"}}})))
 	assert.Equal(t, "stale_revision", objectField(t, stale, "structuredContent")["code"])
+	// Pin a retained historical version after the file's head has changed.
+	oldVersion := node.CurrentVersionID
+	node, _, err = catalog.ReplaceContent(t.Context(), node.ID, node.Revision, strings.Repeat("b", 64), 7, "text/plain")
+	require.NoError(t, err)
+	historical := call("link_contract_document", map[string]any{"contract_id": id, "revision": 3, "node_id": node.ID, "content_version_id": oldVersion, "role": "amendment"})
+	assert.EqualValues(t, 4, historical["revision"])
+	detail = call("get_contract", map[string]any{"contract_id": id})
+	documents = detail["documents"].([]any)
+	require.Len(t, documents, 2)
+	for _, raw := range documents {
+		doc := raw.(map[string]any)
+		assert.Equal(t, oldVersion, doc["content_version_id"])
+		assert.Equal(t, false, doc["current"])
+		assert.Equal(t, true, doc["available"])
+	}
+	replay := call("link_contract_document", map[string]any{"contract_id": id, "revision": 4, "node_id": node.ID, "content_version_id": oldVersion, "role": "amendment"})
+	assert.EqualValues(t, 4, replay["revision"])
+	other, err := catalog.CreateFile(t.Context(), catalog.RootID(), "other.txt", strings.Repeat("c", 64), 1, "text/plain")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		nodeID, revision int64
+		version, code    string
+	}{
+		{other.ID, 4, oldVersion, "invalid_contract"},
+		{catalog.RootID(), 4, oldVersion, "not_file"},
+		{node.ID, 3, oldVersion, "stale_revision"},
+	} {
+		response := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "link_contract_document", "arguments": map[string]any{"contract_id": id, "revision": tc.revision, "node_id": tc.nodeID, "content_version_id": tc.version, "role": "attachment"}})))
+		assert.Equal(t, tc.code, objectField(t, response, "structuredContent")["code"])
+	}
+	other, _, err = catalog.Trash(t.Context(), other.ID, other.Revision)
+	require.NoError(t, err)
+	unavailable := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "link_contract_document", "arguments": map[string]any{"contract_id": id, "revision": 4, "node_id": other.ID, "content_version_id": other.CurrentVersionID, "role": "attachment"}})))
+	assert.Equal(t, "invalid_contract", objectField(t, unavailable, "structuredContent")["code"])
+	// A successful write can still fail the final MCP envelope limit.
+	implementation := testImplementation()
+	implementation.Name = strings.Repeat("x", maxToolResponseBytes)
+	largeServer := newServerWithOptionsAndDaemon(implementation, ServerOptions{AllowContractWrites: true}, lease)
+	large := decodeResult(t, exchangeRaw(t, largeServer, requestFor("tools/call", map[string]any{"name": "create_contract", "arguments": map[string]any{"title": "Envelope committed"}})))
+	assert.Equal(t, "contract_outcome_unknown", objectField(t, large, "structuredContent")["code"])
+	page, err := catalog.ListContracts(t.Context(), store.ContractListOptions{AsOf: "2026-11-12", Limit: 100})
+	require.NoError(t, err)
+	assert.Len(t, page, 2)
+	// Let the real API commit, then drop its response at the HTTP boundary.
+	var attempts atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		recorded := httptest.NewRecorder()
+		daemon.Handler().ServeHTTP(recorded, r)
+		if recorded.Code != http.StatusCreated {
+			t.Errorf("unexpected mutation status: %d", recorded.Code)
+		}
+		connection, _, hijackErr := http.NewResponseController(w).Hijack()
+		if hijackErr != nil {
+			t.Errorf("hijack: %v", hijackErr)
+			return
+		}
+		_ = connection.Close()
+	}))
+	t.Cleanup(proxy.Close)
+	proxyConn := daemonconn.New(proxy.URL, cfg.Server.APIKey)
+	t.Cleanup(func() { require.NoError(t, proxyConn.Close()) })
+	proxyLease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) { return proxyConn, nil }, func(*daemonconn.Connection) error { return nil })
+	proxyServer := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true}, proxyLease)
+	lost := decodeResult(t, exchangeRaw(t, proxyServer, requestFor("tools/call", map[string]any{"name": "create_contract", "arguments": map[string]any{"title": "Lost reply committed"}})))
+	assert.Equal(t, "contract_outcome_unknown", objectField(t, lost, "structuredContent")["code"])
+	assert.EqualValues(t, 1, attempts.Load())
+	page, err = catalog.ListContracts(t.Context(), store.ContractListOptions{AsOf: "2026-11-12", Limit: 100})
+	require.NoError(t, err)
+	assert.Len(t, page, 3)
+	plan, err := catalog.PreviewInitialAudit(t.Context(), catalog.RootID(), "synthetic", nil)
+	require.NoError(t, err)
+	_, err = catalog.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	audited := decodeResult(t, exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "update_contract", "arguments": map[string]any{"contract_id": id, "revision": 4, "patch": map[string]any{"title": "Forbidden"}}})))
+	assert.Equal(t, "audit_mutation_unsupported", objectField(t, audited, "structuredContent")["code"])
+	unchanged, err := catalog.GetContract(t.Context(), id, "2026-11-12")
+	require.NoError(t, err)
+	assert.Equal(t, "Agreement %_", unchanged.Title)
+	assert.EqualValues(t, 4, unchanged.Revision)
 	disabled := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, lease)
 	reply := exchangeRaw(t, disabled, requestFor("tools/call", map[string]any{"name": "create_contract", "arguments": map[string]any{"title": "Disabled"}}))
 	assert.NotZero(t, decodeWireError(t, reply).Code)
@@ -214,4 +297,58 @@ func TestContractMCPPatchDateRelay(t *testing.T) {
 	assert.Equal(t, "2026-12-01", body["expires_on"])
 	assert.Equal(t, "", body["summary"])
 	assert.NotContains(t, body, "signed_on")
+}
+
+func TestContractMCPDaemonErrorPrivacy(t *testing.T) {
+	const secret = "private-signer@example.test"
+	for _, code := range []string{"invalid_contract", "party_not_own", "party_retired", "not_file", "stale_revision", "unrecognized_contract_problem"} {
+		t.Run(code, func(t *testing.T) {
+			var attempts atomic.Int32
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = fmt.Fprintf(w, `{"status":409,"title":"Request failed","code":%q,"detail":%q}`, code, secret)
+			}))
+			t.Cleanup(daemon.Close)
+			var logs bytes.Buffer
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowContractWrites: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}, exportTestLease(t, daemon.URL))
+			wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "create_contract", "arguments": map[string]any{"title": "Synthetic"}}))
+			if code == "unrecognized_contract_problem" {
+				assert.NotZero(t, decodeWireError(t, wire).Code)
+			} else {
+				result := decodeResult(t, wire)
+				detail := objectField(t, result, "structuredContent")
+				assert.Equal(t, code, detail["code"])
+				want := "Check the contract values and selected party or document identities."
+				if code == "stale_revision" {
+					want = "The revision is stale; read the current state and retry with its revision."
+				}
+				assert.Equal(t, want, detail["message"])
+			}
+			assert.EqualValues(t, 1, attempts.Load())
+			assert.NotContains(t, string(wire), secret)
+			assert.NotContains(t, logs.String(), secret)
+			assert.Contains(t, logs.String(), "operation=create_contract")
+		})
+	}
+}
+
+func TestContractMCPDaemonProjectionPrivacy(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const secret = "private-signer@example.test"
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"1"`)
+		_, _ = fmt.Fprintf(w, `{"contract_id":%q,"title":"Synthetic","contract_type":"","status":"draft","effective_status":"draft","starts_on":null,"expires_on":null,"signed_on":null,"summary":"","purpose":"","consideration":"","termination":"","revision":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","parties":[],"documents":[],"signer_email":%q}`, id, secret)
+	}))
+	t.Cleanup(daemon.Close)
+	var logs bytes.Buffer
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{Logger: slog.New(slog.NewTextHandler(&logs, nil))}, exportTestLease(t, daemon.URL))
+	wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_contract", "arguments": map[string]any{"contract_id": id}}))
+	result := decodeResult(t, wire)
+	assert.NotEqual(t, true, result["isError"])
+	assert.Equal(t, id, objectField(t, result, "structuredContent")["contract_id"])
+	assert.NotContains(t, string(wire), secret)
+	assert.NotContains(t, logs.String(), secret)
 }
