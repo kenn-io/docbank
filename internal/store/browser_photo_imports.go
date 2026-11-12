@@ -148,7 +148,11 @@ func (s *Store) BrowserPhotoImportIDForSource(ctx context.Context, source uuid.U
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	return uuid.Parse(text)
+	id, err := uuid.Parse(text)
+	if err != nil {
+		return uuid.Nil(), fmt.Errorf("parse saved browser photo import ID: %w", err)
+	}
+	return id, nil
 }
 
 // InspectBrowserPhotoImport waits for admitted writers and reads saved facts.
@@ -402,7 +406,10 @@ func (s *Store) RegisterBrowserPhotoImport(ctx context.Context, plan BrowserPhot
 				return errors.New("browser photo import declaration changed")
 			}
 			id, err = uuid.Parse(existingID)
-			return err
+			if err != nil {
+				return fmt.Errorf("parse saved browser photo import ID: %w", err)
+			}
+			return nil
 		}
 		for index, group := range plan.Groups {
 			if len(group.Members) == 0 {
