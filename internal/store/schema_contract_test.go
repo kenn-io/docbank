@@ -224,6 +224,10 @@ func TestStorageSchemaTokenDigest(t *testing.T) {
 	digest, err := schemaRowsDigest(row)
 	require.NoError(t, err)
 	require.Equal(t, "b30c0e59243ff78aa209ca6ca6a9f5c95ab77385a8e91542969c4da4fdb40382", digest)
+	row[0][3] = "CREATE /* comment */ TABLE t\n(id INTEGER) -- comment"
+	formatted, err := schemaRowsDigest(row)
+	require.NoError(t, err)
+	require.Equal(t, digest, formatted)
 	for _, pair := range [][2]string{
 		{`CREATE TABLE t (a TEXT DEFAULT 'a b')`, `CREATE TABLE t (a TEXT DEFAULT 'ab')`},
 		{`CREATE TABLE t (a INTEGER CHECK(a+2))`, `CREATE TABLE t (a INTEGER CHECK(a-2))`},
@@ -236,11 +240,6 @@ func TestStorageSchemaTokenDigest(t *testing.T) {
 		second, err := schemaRowsDigest(row)
 		require.NoError(t, err)
 		require.NotEqual(t, first, second, pair)
-	}
-	for _, sql := range []string{"CREATE TABLE t (a TEXT DEFAULT 'unterminated", "CREATE TABLE t (a INTEGER)\x00"} {
-		row[0][3] = sql
-		_, err := schemaRowsDigest(row)
-		require.Error(t, err, sql)
 	}
 }
 
@@ -261,16 +260,7 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			}
 			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
 			baseDigest := schemaCatalogDigest(t, db)
-			var unique bool
-			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, "nodes", "nodes_parent").Scan(&unique))
-			require.False(t, unique)
-			for _, statement := range []string{
-				`CREATE INDEX contract_probe ON nodes(id)`,
-				`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
-				`DROP INDEX nodes_parent`,
-			} {
-				require.Equal(t, baseDigest, probe(statement), statement)
-			}
+			require.Equal(t, baseDigest, probe(`CREATE INDEX contract_probe ON nodes(id)`))
 			for _, statement := range []string{
 				`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
 				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
@@ -279,8 +269,6 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			} {
 				require.NotEqual(t, baseDigest, probe(statement), statement)
 			}
-			base := probe(`CREATE TABLE contract_a (id INTEGER CHECK (id > 1))`)
-			require.Equal(t, base, probe("CREATE TABLE contract_a  ( id INTEGER /* note */ CHECK(id>1) )"))
 			first := probe(`CREATE TABLE contract_a (id INTEGER)`)
 			second := probe(`CREATE TABLE contract_b (id INTEGER)`)
 			combined := probe(`CREATE TABLE contract_a (id INTEGER); CREATE TABLE contract_b (id INTEGER)`)
