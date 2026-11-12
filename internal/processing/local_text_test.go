@@ -656,6 +656,7 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 		{name: "undecided", active: true},
 		{name: "revoked before grant", revoke: true},
 		{name: "partial grant", partial: true},
+		{name: "expired"},
 		{name: "active", active: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -677,10 +678,16 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 				_, err = fixture.catalog.GrantConsent(t.Context(), store.ProcessingConsentGrantRequest{Principal: request.Principal, Scope: request.Scope, ProfileFingerprint: request.ProfileFingerprint, DisclosureFingerprint: request.DisclosureFingerprint, InputClasses: request.InputClasses, RetainedArtifactClasses: request.RetainedArtifactClasses})
 				require.NoError(t, err)
 			}
+			if tc.name == "expired" {
+				expiry := time.Now().Add(-time.Hour)
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], &expiry))
+			}
 			if tc.name == "active" {
 				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
 			}
-			require.NoError(t, setup.InitializeInherited(t.Context()))
+			admitted, err := setup.InitializeInherited(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, tc.active, admitted)
 			active, err := service.ProfileConsentActive(t.Context(), "inherited")
 			require.NoError(t, err)
 			require.Equal(t, tc.active, active)
