@@ -33,10 +33,10 @@ type PartyPage struct {
 type CreatePartyRequest struct {
 	Kind        string  `json:"kind"`
 	DisplayName string  `json:"display_name"`
-	LegalName   string  `json:"legal_name"`
+	LegalName   string  `json:"legal_name,omitzero"`
 	Country     *string `json:"country,omitempty" nullable:"true"`
 	PersonID    *string `json:"person_id,omitempty" nullable:"true"`
-	Own         bool    `json:"own"`
+	Own         bool    `json:"own,omitzero"`
 }
 type PatchPartyRequest struct {
 	Kind                          *string `json:"kind,omitempty"`
@@ -102,12 +102,22 @@ func partyResult(p store.Party) *partyOutput {
 func registerPartyRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listParties", Method: http.MethodGet, Path: "/api/v1/parties", Summary: "List parties"}, func(ctx context.Context, in *struct {
 		Kind           string `query:"kind"`
-		Own            *bool  `query:"own"`
+		Own            string `query:"own"`
 		IncludeRetired bool   `query:"include_retired"`
 		Limit          int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset         int    `query:"offset" minimum:"0" default:"0"`
 	}) (*partyPageOutput, error) {
-		records, err := d.Store.ListParties(ctx, store.PartyListOptions{Kind: in.Kind, Own: in.Own, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
+		var own *bool
+		switch in.Own {
+		case "":
+		case "true":
+			own = new(true)
+		case "false":
+			own = new(false)
+		default:
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_party", "own must be true or false")
+		}
+		records, err := d.Store.ListParties(ctx, store.PartyListOptions{Kind: in.Kind, Own: own, IncludeRetired: in.IncludeRetired, Limit: in.Limit, Offset: in.Offset})
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

@@ -74,9 +74,9 @@ func TestPartyValidatesInputsBeforeWriting(t *testing.T) {
 	assert.Empty(t, parties)
 }
 
-func TestPartyConcurrentNameAdmission(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkPartyConcurrentNameAdmission(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -148,11 +148,97 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 	got, err := target.GetParty(ctx, p.PartyID)
 	require.NoError(t, err)
 	assert.Equal(t, p, got)
-	malformed := strings.Replace(backup.String(), `"country":"CA"`, `"country":"ZZ"`, 1)
-	require.NotEqual(t, backup.String(), malformed)
-	empty := newTestStore(t)
-	require.Error(t, empty.ImportMetadata(ctx, strings.NewReader(malformed)))
-	items, err := empty.ListParties(ctx, PartyListOptions{Limit: 100})
+	lines := strings.Split(backup.String(), "\n")
+	partyLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, `"type":"party"`) {
+			partyLine = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, partyLine)
+	for _, tc := range []struct{ name, from, to string }{
+		{"country", `"country":"CA"`, `"country":"ZZ"`},
+		{"own", `"own":1`, `"own":2`},
+		{"folded", `"display_name_folded":"example"`, `"display_name_folded":"wrong"`},
+		{"missing person", `"person_id":null`, `"person_id":"11111111-1111-4111-8111-111111111111"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := append([]string(nil), lines...)
+			mutated[partyLine] = strings.Replace(mutated[partyLine], tc.from, tc.to, 1)
+			require.NotEqual(t, lines[partyLine], mutated[partyLine])
+			empty := newTestStore(t)
+			require.Error(t, empty.ImportMetadata(t.Context(), strings.NewReader(strings.Join(mutated, "\n"))))
+			items, err := empty.ListParties(t.Context(), PartyListOptions{Limit: 100})
+			require.NoError(t, err)
+			assert.Empty(t, items)
+		})
+	}
+
+}
+
+func TestPartyConcurrentNameAdmission(t *testing.T) {
+	t.Parallel()
+	checkPartyConcurrentNameAdmission(t, newTestStore)
+}
+
+func checkPartyFiltersAndReferences(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Synthetic Person", "operator")
 	require.NoError(t, err)
-	assert.Empty(t, items)
+	own := true
+	linked, err := s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Linked Person", PersonID: &person.PersonID, Own: true})
+	require.NoError(t, err)
+	other, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Other"})
+	require.NoError(t, err)
+	items, err := s.ListParties(ctx, PartyListOptions{Kind: "person", Own: &own, Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, linked.PartyID, items[0].PartyID)
+	items, err = s.ListParties(ctx, PartyListOptions{Limit: 1, Offset: 1})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, other.PartyID, items[0].PartyID)
+	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Missing", PersonID: new("11111111-1111-4111-8111-111111111111")})
+	require.ErrorIs(t, err, ErrInvalidParty)
+}
+func TestPartyFiltersAndReferences(t *testing.T) {
+	t.Parallel()
+	checkPartyFiltersAndReferences(t, newTestStore)
+}
+
+func TestPartyRetireAndEditRace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	input := PartyInput{Kind: "person", DisplayName: "Example"}
+	p, err := s.CreateParty(ctx, input)
+	require.NoError(t, err)
+	results := make(chan error, 2)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() { <-start; _, err := s.RetireParty(ctx, p.PartyID, p.Revision); results <- err })
+	wg.Go(func() {
+		<-start
+		input.LegalName = "Example Person"
+		_, err := s.UpdateParty(ctx, p.PartyID, p.Revision, input)
+		results <- err
+	})
+	close(start)
+	wg.Wait()
+	close(results)
+	success, stale := 0, 0
+	for err := range results {
+		if err == nil {
+			success++
+		} else if errors.Is(err, ErrStaleRevision) {
+			stale++
+		} else {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	assert.Equal(t, 1, success)
+	assert.Equal(t, 1, stale)
 }

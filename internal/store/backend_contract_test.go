@@ -2217,6 +2217,8 @@ var backendSuites = []backendSuite{
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "PostgreSQL metadata import, portable packages and physical backup/restore remain unqualified; metadata-export covers pinned logical export and recovery into fresh SQLite."},
 	{name: "organization", postgres: "native operations", scope: "Tags, parties, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"PartyLifecycle", func(t *testing.T) { checkPartyLifecycle(t, newTestStore) }, func(t *testing.T) { checkPartyLifecycle(t, newPostgresQueryStore) }},
+		{"PartyConcurrentNameAdmission", func(t *testing.T) { checkPartyConcurrentNameAdmission(t, newTestStore) }, func(t *testing.T) { checkPartyConcurrentNameAdmission(t, newPostgresQueryStore) }},
+		{"PartyFiltersAndReferences", func(t *testing.T) { checkPartyFiltersAndReferences(t, newTestStore) }, func(t *testing.T) { checkPartyFiltersAndReferences(t, newPostgresQueryStore) }},
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
 			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)
