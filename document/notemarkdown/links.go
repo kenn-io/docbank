@@ -215,7 +215,7 @@ func (s *linkScanner) destination(start, end int) (Span, int, bool, error) {
 			return Span{}, 0, false, err
 		}
 		c := s.src[i]
-		if c == '\\' && i+1 < end && asciiPunctuation(s.src[i+1]) {
+		if c == '\\' && i+1 < end && util.IsPunct(s.src[i+1]) {
 			i += 2
 			continue
 		}
@@ -412,7 +412,7 @@ func (s *linkScanner) decodeTarget(raw string, wiki bool) (string, error) {
 			}
 			j := i + 1
 			value := raw[i:j]
-			if raw[i] == '\\' && j < len(raw) && ((!wiki && asciiPunctuation(raw[j])) || wiki && strings.ContainsRune("\\]|", rune(raw[j]))) {
+			if raw[i] == '\\' && j < len(raw) && ((!wiki && util.IsPunct(raw[j])) || wiki && strings.ContainsRune("\\]|", rune(raw[j]))) {
 				value = raw[j : j+1]
 				j++
 			} else if !wiki && raw[i] == '&' {
@@ -494,7 +494,7 @@ func (s *linkScanner) inline(start, end int) error {
 			return err
 		}
 		c := s.src[i]
-		if c == '\\' && i+1 < end && asciiPunctuation(s.src[i+1]) {
+		if c == '\\' && i+1 < end && util.IsPunct(s.src[i+1]) {
 			i += 2
 			continue
 		}

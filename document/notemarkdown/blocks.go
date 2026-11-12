@@ -191,11 +191,8 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, refs map[st
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nil, err
 	}
-	var visit func(ast.Node, int) error
-	visit = func(n ast.Node, depth int) error {
-		if depth > maxDepth {
-			return &LimitError{Resource: "ast_depth"}
-		}
+	var visit func(ast.Node) error
+	visit = func(n ast.Node) error {
 		if err := b.step(ctx, 1); err != nil {
 			return err
 		}
@@ -211,14 +208,14 @@ func scanBlocks(ctx context.Context, original []byte, bodyStart int, refs map[st
 		}
 		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 			if _, ok := child.(ast.BlockNode); ok {
-				if err := visit(child, depth+1); err != nil {
+				if err := visit(child); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := visit(root, 0); err != nil {
+	if err := visit(root); err != nil {
 		return nil, nil, nil, err
 	}
 	sort.SliceStable(parts, func(i, j int) bool { return parts[i].pos < parts[j].pos })

@@ -111,9 +111,6 @@ func decodeFrontmatter(ctx context.Context, src []byte, fm *Frontmatter, b *budg
 			if !ok {
 				continue
 			}
-			if err := limitCount("frontmatter_value_bytes", len(text), b.limits.MaxValueBytes); err != nil {
-				return err
-			}
 			if err := b.reserveStrings(len(key) + len(text)); err != nil {
 				return err
 			}

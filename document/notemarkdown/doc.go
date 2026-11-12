@@ -50,14 +50,7 @@
 // Value/sequence limits apply to nested Raw values too, but not mapping keys.
 // Internal bounds also apply: YAML depth 32/8192 expanded nodes, AST depth
 // 128/262144 nodes, 4096-byte targets, 32 MiB derived strings and 64 Mi work
-// steps. The driver reserves the Document first and one node before each
-// candidate block Open; failed candidates refund, successful (including
-// abandoned Setext) nodes retain admission. A full node budget fails closed
-// before trying another candidate. Open/Continue scans use conservative
-// per-parser byte-pass bounds (ATX Open uses two passes with attributes disabled);
-// list closes charge their child visits, code closes charge every value segment
-// conservatively, and retries/depth are
-// metered. Context is checked directly at line and callback boundaries; no
+// steps. Context is checked directly at line and callback boundaries; no
 // checkpoint runs inside an opaque callback. One callback may scan a source
 // line or accumulated code segments during Close up to MaxBytes (4 MiB), and a
 // list Close may visit up to the AST node cap. The local driver mirrors

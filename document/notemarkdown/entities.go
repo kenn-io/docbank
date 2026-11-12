@@ -29,11 +29,6 @@ func decodeEntity(raw string) string {
 	if len(digits) == 0 || len(digits) > limit {
 		return raw
 	}
-	for _, c := range digits {
-		if (c < '0' || c > '9') && (base != 16 || (c < 'a' || c > 'f') && (c < 'A' || c > 'F')) {
-			return raw
-		}
-	}
 	value, err := strconv.ParseUint(digits, base, 32)
 	if err != nil {
 		return raw
