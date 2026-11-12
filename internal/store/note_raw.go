@@ -15,8 +15,9 @@ const maxNoteRawBytes = 24 << 20
 var ErrNoteRawLimit = errors.New("note frontmatter JSON exceeds 24 MiB")
 
 type noteRawWriter struct {
-	ctx context.Context
 	strings.Builder
+
+	ctx context.Context
 }
 
 func (w *noteRawWriter) Write(p []byte) (int, error) {
@@ -26,7 +27,9 @@ func (w *noteRawWriter) Write(p []byte) (int, error) {
 	if len(p) > maxNoteRawBytes-w.Len() {
 		return 0, ErrNoteRawLimit
 	}
-	return w.Builder.Write(p)
+	// strings.Builder.Write always returns a nil error.
+	n, _ := w.Builder.Write(p)
+	return n, nil
 }
 
 // encodeNoteRaw uses one standard JSON traversal. String admission also covers

@@ -129,7 +129,7 @@ func checkNoteLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT parsed_at,recipe FROM note_parses WHERE version_id=$1`, n.CurrentVersionID).Scan(&replayAt, &retainedRecipe))
 	require.Equal(t, at, replayAt)
 	require.Equal(t, notemarkdown.Recipe, retainedRecipe)
-	changes, cursor, err = s.VaultChanges(ctx, cursor, 500)
+	changes, _, err = s.VaultChanges(ctx, cursor, 500)
 	require.NoError(t, err)
 	require.Empty(t, changes)
 	publishNoteFixture(t, s, targets[0], src, "next-recipe")
@@ -141,7 +141,7 @@ func checkNoteLifecycle(t *testing.T, newStore func(*testing.T) *Store) {
 	require.NoError(t, err)
 	// A late publication for the prior version must not recreate its rows.
 	removed := pruneNoteFixtures(t, s)
-	require.EqualValues(t, 1, removed)
+	require.Equal(t, 1, removed)
 	_, cursor, err = s.VaultChanges(ctx, "", 500)
 	require.NoError(t, err)
 	publishNoteFixture(t, s, targets[0], src, notemarkdown.Recipe)
@@ -526,6 +526,7 @@ func checkNoteAuthoredValuesAndCollections(t *testing.T, newStore func(*testing.
 	publishNoteFixture(t, s, noteTargets(t, s, notemarkdown.Recipe)[0], identities, notemarkdown.Recipe)
 	rows, err := s.db.QueryContext(ctx, `SELECT target_path,target_key FROM note_links WHERE version_id=$1 ORDER BY ordinal`, n.CurrentVersionID)
 	require.NoError(t, err)
+	defer rows.Close()
 	var paths, keys []*string
 	for rows.Next() {
 		var targetPath, targetKey *string

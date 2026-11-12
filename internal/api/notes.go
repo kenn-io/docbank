@@ -28,6 +28,7 @@ type NoteSummary struct {
 
 type NoteByPath struct {
 	NoteSummary
+
 	Headings         int             `json:"headings"`
 	Frontmatter      noteFrontmatter `json:"frontmatter" nullable:"true"`
 	FrontmatterError string          `json:"frontmatter_error,omitempty" enum:"invalid_frontmatter,unclosed_frontmatter" doc:"Bounded parser diagnostic when frontmatter was discarded; the note body remains readable."`

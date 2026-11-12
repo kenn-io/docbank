@@ -16,9 +16,9 @@ import (
 // NoteCatalog is the existing store boundary used by the original-byte
 // projection worker. Deterministic bad content is retained as a terminal state.
 type NoteCatalog interface {
-	ScanNoteTargetsAfter(context.Context, string, string, int) (store.NotePage, error)
-	PruneNoteParse(context.Context, store.NoteTarget) error
-	PublishNoteParse(context.Context, store.NoteTarget, string, string, notemarkdown.Note) error
+	ScanNoteTargetsAfter(ctx context.Context, recipe, after string, limit int) (store.NotePage, error)
+	PruneNoteParse(ctx context.Context, target store.NoteTarget) error
+	PublishNoteParse(ctx context.Context, target store.NoteTarget, recipe, state string, note notemarkdown.Note) error
 }
 
 // NewNoteBackfill shares the daemon's bounded, cancellable derivation loop.

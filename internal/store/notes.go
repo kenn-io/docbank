@@ -139,6 +139,7 @@ func (s *Store) ScanNoteTargetsAfter(ctx context.Context, recipe, after string, 
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		var selected []NoteTarget
 		var recipes []*string
 		var ids []int64
@@ -146,7 +147,6 @@ func (s *Store) ScanNoteTargetsAfter(ctx context.Context, recipe, after string, 
 			var target NoteTarget
 			var cachedRecipe *string
 			if err := rows.Scan(&target.VersionID, &target.NodeID, &cachedRecipe); err != nil {
-				_ = rows.Close()
 				return err
 			}
 			selected = append(selected, target)
@@ -489,8 +489,8 @@ func noteLinkIdentity(notePath, form, target string) (*string, *string) {
 	}
 	if (form == "wikilink" || form == "embed") && !strings.Contains(target, "/") {
 		key := strings.ToLower(norm.NFC.String(target))
-		if strings.HasSuffix(key, ".markdown") {
-			key = strings.TrimSuffix(key, ".markdown")
+		if k, ok := strings.CutSuffix(key, ".markdown"); ok {
+			key = k
 		} else {
 			key = strings.TrimSuffix(key, ".md")
 		}
