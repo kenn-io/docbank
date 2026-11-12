@@ -70,10 +70,7 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		exists := func(v string) bool {
-			return slices.Contains(versions, v)
-		}
-		if link && versionID != "" && exists(versionID) {
+		if link && versionID != "" && slices.Contains(versions, versionID) {
 			out, err = getContractTx(ctx, tx, id, asOf)
 			return err
 		}
@@ -94,7 +91,7 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 			if versionID == "" {
 				versionID = n.CurrentVersionID
 			}
-			if exists(versionID) {
+			if slices.Contains(versions, versionID) {
 				out, err = getContractTx(ctx, tx, id, asOf)
 				return err
 			}
@@ -115,7 +112,7 @@ func (s *Store) changeContractDocument(ctx context.Context, id string, rev, node
 					return ErrAmbiguousContractDocument
 				}
 				versionID = versions[0]
-			} else if !exists(versionID) {
+			} else if !slices.Contains(versions, versionID) {
 				return ErrNotFound
 			}
 			_, err = tx.ExecContext(ctx, `DELETE FROM contract_documents WHERE contract_id=$1 AND node_id=$2 AND content_version_id=$3 AND role=$4`, id, nodeID, versionID, role)
