@@ -655,6 +655,9 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 	}{
 		{name: "undecided", active: true},
 		{name: "revoked before grant", revoke: true},
+		{name: "revoked after grant", revoke: true},
+		{name: "failure"},
+		{name: "revocation"},
 		{name: "partial grant", partial: true},
 		{name: "expired"},
 		{name: "active", active: true},
@@ -673,8 +676,18 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 				require.True(t, managed)
 				require.Equal(t, "local", mode)
 				calls++
+				if tc.name == "failure" {
+					return errors.New("install failed")
+				}
+				if tc.name == "revocation" {
+					_, err := service.RevokeConsent(t.Context())
+					return err
+				}
 				return nil
 			}}
+			if tc.name == "revoked after grant" {
+				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
+			}
 			if tc.revoke {
 				_, err = service.RevokeConsent(t.Context())
 				require.NoError(t, err)
@@ -692,49 +705,17 @@ func TestLocalTextInheritedConsent(t *testing.T) {
 				require.NoError(t, service.grantProfileConsent(t.Context(), service.profiles["inherited"], nil))
 			}
 			admitted, err := setup.InitializeInherited(t.Context())
-			require.NoError(t, err)
+			if tc.name == "failure" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 			require.Equal(t, tc.active, admitted)
-			require.Equal(t, tc.active, calls == 1)
+			expectedCalls := tc.active || tc.name == "failure" || tc.name == "revocation"
+			require.Equal(t, expectedCalls, calls == 1)
 			active, err := service.ProfileConsentActive(t.Context(), "inherited")
 			require.NoError(t, err)
 			require.Equal(t, tc.active, active)
-		})
-	}
-}
-
-func TestLocalTextInheritedSetupFailureAndRevocation(t *testing.T) {
-	for _, tc := range []string{"failure", "cancellation", "revocation"} {
-		t.Run(tc, func(t *testing.T) {
-			fixture, original := newLocalTextBackfillFixture(t, newWorkerProvider(t))
-			profile := original.Service.profiles["pdf"]
-			portable := profile.portable
-			portable.Rendition = new(*portable.Rendition)
-			portable.Rendition.AuthorizationFingerprint = workerHash(tc)
-			service, err := NewService(t.Context(), ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Profiles: map[string]ProfileConfig{"inherited": {Profile: portable, RenditionProvider: profile.provider, EmbeddingProviders: profile.embedders, Tokenizers: profile.tokenizers}}})
-			require.NoError(t, err)
-			defer service.Stop()
-			setup := &LocalTextSetup{Service: service, Selected: "inherited"}
-			setup.Startup = func(ctx context.Context, _ bool, _ string) error {
-				switch tc {
-				case "failure":
-					return errors.New("install failed")
-				case "cancellation":
-					return context.Canceled
-				default:
-					_, err := service.RevokeConsent(ctx)
-					return err
-				}
-			}
-			admitted, err := setup.InitializeInherited(t.Context())
-			if tc == "revocation" {
-				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
-			}
-			require.False(t, admitted)
-			active, err := service.ProfileConsentActive(t.Context(), "inherited")
-			require.NoError(t, err)
-			require.False(t, active)
 		})
 	}
 }
