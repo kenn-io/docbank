@@ -622,9 +622,9 @@ func taxBrowserReadAllowed(r *http.Request) bool {
 	var keys []string
 	switch r.URL.Path {
 	case "/api/v1/tax/records":
-		keys = []string{"limit", "offset", "filer", "year"}
+		keys = []string{packageLimitParameter, "offset", "filer", "year"}
 	case "/api/v1/parties":
-		keys = []string{"include_retired", "limit", "offset"}
+		keys = []string{"include_retired", packageLimitParameter, "offset"}
 	default:
 		return false
 	}
