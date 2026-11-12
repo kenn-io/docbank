@@ -525,11 +525,7 @@
       )
         return;
       if (!reconnect && !sessionOnly) {
-        try {
-          await currentStorage.replace(plan.groups.length ? next : undefined, expected);
-        } catch (cause) {
-          if (!useSessionOnly(cause)) throw cause;
-        }
+        await replaceCheckpoint(currentStorage, plan.groups.length ? next : undefined, expected);
       }
       if (active.signal.aborted || destroyed || destination !== target) return;
       if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
@@ -578,6 +574,18 @@
     sessionOnly = true;
     storageNotice = "Browser shortcuts are unavailable.";
     return true;
+  }
+
+  async function replaceCheckpoint(
+    target: ReturnType<typeof photoImportStorage>,
+    next: PhotoImportCheckpoint | undefined,
+    expected: PhotoImportCheckpoint | undefined,
+  ): Promise<void> {
+    try {
+      await target.replace(next, expected);
+    } catch (cause) {
+      if (!useSessionOnly(cause)) throw cause;
+    }
   }
 
   function showError(cause: unknown): void {
@@ -660,7 +668,7 @@
         (!savedImport || checkpoint.sourceID === savedImport.source_id)
       ) {
         const next = { ...checkpoint, protocolVersion: 3, revision: randomUUID() };
-        await storage.replace(next, checkpoint);
+        await replaceCheckpoint(storage, next, checkpoint);
         checkpoint = next;
       }
       for (const item of items) {

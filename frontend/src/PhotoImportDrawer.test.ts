@@ -683,6 +683,59 @@ it("keeps a missing saved import unconfirmed", async () => {
   expect(channel.planPhotoImport).not.toHaveBeenCalled();
 });
 
+it.each([
+  { error: new APIError("Storage unavailable", 500, "checkpoint_storage"), continues: true },
+  { error: new APIError("Session expired", 401, "unauthorized"), continues: false },
+  { error: new APIError("Forbidden", 403, "checkpoint_storage"), continues: false },
+  { error: new APIError("Changed in another tab", 409, "checkpoint_changed"), continues: false },
+])("handles marker save failure: $error.message", async ({ error, continues }) => {
+  const module = await import("./photoImportStorage.js");
+  const createStorage = module.photoImportStorage;
+  vi.spyOn(module, "photoImportStorage").mockImplementation((id, session) => {
+    const storage = createStorage(id, session);
+    return {
+      ...storage,
+      replace: async (next, expected) => {
+        if (next?.protocolVersion === 3) throw error;
+        return storage.replace(next, expected);
+      },
+    };
+  });
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  const auth = vi.fn();
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "marker-failure",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: auth,
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [files()[0]] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  if (continues) {
+    await screen.findByText(/Browser shortcuts are unavailable/);
+    await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  } else {
+    await screen.findByText(error.message);
+    expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+  }
+  expect(auth).toHaveBeenCalledTimes(error.status === 401 ? 1 : 0);
+});
+
 it("resumes a preview closed before registration", async () => {
   const selected = [files()[0]];
   let versionAtUpload: number | undefined;
