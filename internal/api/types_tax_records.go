@@ -100,9 +100,11 @@ type PatchTaxRecordRequest struct {
 	present          map[string]bool
 }
 
-var taxRecordPatchMembers = []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"}
+const taxAmountField = "amount"
+
+var taxRecordPatchMembers = []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", taxAmountField, "currency", "note"}
 var taxRecordCreateMembers = append([]string{"account_id", "kind"}, taxRecordPatchMembers...)
-var taxRecordNullable = []string{"authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", "amount"}
+var taxRecordNullable = []string{"authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", taxAmountField}
 
 func (p *CreateTaxRecordRequest) UnmarshalJSON(raw []byte) error {
 	members, err := taxMembers(raw, taxRecordCreateMembers, append([]string{"account_id"}, taxRecordNullable...)...)
@@ -170,7 +172,7 @@ func (p PatchTaxRecordRequest) MarshalJSON() ([]byte, error) {
 		members["lead_days"] = jsontext.Value("null")
 	}
 	if p.ClearAmount {
-		members["amount"] = jsontext.Value("null")
+		members[taxAmountField] = jsontext.Value("null")
 	}
 	return json.Marshal(members)
 }
@@ -179,10 +181,10 @@ func (p CreateTaxRecordRequest) input() store.TaxRecordInput {
 }
 func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
 	for field, description := range map[string]string{
-		"title":     "At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.",
-		"form_code": "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.",
-		"note":      "At most 8192 UTF-8 bytes.",
-		"amount":    "At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.",
+		"title":        "At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.",
+		"form_code":    "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.",
+		"note":         "At most 8192 UTF-8 bytes.",
+		taxAmountField: "At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.",
 	} {
 		if property := schema.Properties[field]; property != nil {
 			property.Description = description
@@ -200,7 +202,7 @@ func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
 	if kind := schema.Properties["tax_kind"]; kind != nil {
 		kind.Description = "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization."
 	}
-	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "title": 1200, "form_code": 256, "amount": 32, "note": 8192} {
+	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "title": 1200, "form_code": 256, taxAmountField: 32, "note": 8192} {
 		if property := schema.Properties[field]; property != nil {
 			property.MaxLength = new(length)
 		}
