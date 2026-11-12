@@ -33,6 +33,8 @@ func checkOpenCandidatesForVersionScopesOccurrences(t *testing.T, postgres bool)
 	person, err := s.CreatePerson(t.Context(), "Suggested", "operator")
 	require.NoError(t, err)
 	suggested := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", person.PersonID, []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "suggested"}}))
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "second-only"}}))
+	openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example", person.PersonID, []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "second-suggested"}}))
 	openCandidateForTest(t, s, candidateForTest(t, "name_alias:other", "Other", "", []PersonCandidateOccurrence{{ContentVersionID: second, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "other"}}))
 	third := openCandidateForTest(t, s, candidateForTest(t, "name_alias:third", "Third", "", []PersonCandidateOccurrence{{ContentVersionID: first, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "third"}}))
 	for i, id := range []string{candidate.CandidateID, suggested.CandidateID, third.CandidateID} {
