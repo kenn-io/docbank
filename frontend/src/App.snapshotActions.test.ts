@@ -542,7 +542,7 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
 });
 
-it.each([false, true])("refreshes during recovery: %s", async (refreshDuringRecovery) => {
+it("refreshes during recovery and again after closing", async () => {
   history.replaceState(
     null,
     "",
@@ -612,10 +612,11 @@ it.each([false, true])("refreshes during recovery: %s", async (refreshDuringReco
   expect(searches).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   expect(await screen.findByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
-  if (refreshDuringRecovery) await waitFor(() => expect(searches).toHaveLength(2));
+  await waitFor(() => expect(searches).toHaveLength(2));
+  expect(screen.getByRole("dialog", { name: "Tag selected documents" })).toBeTruthy();
   const readsBeforeClose = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  await waitFor(() => expect(searches).toHaveLength(refreshDuringRecovery ? 3 : 2));
+  await waitFor(() => expect(searches).toHaveLength(3));
   expect(catalogReads - readsBeforeClose).toBe(1);
   expect(searches[1]).toEqual(searches[0]);
   expect(
@@ -667,6 +668,7 @@ it.each([false, true])(
     }[] = [];
     let revision = 3;
     let assigned = false;
+    let allowRefresh = !failRerun;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/path?path=%2F") return json(root);
@@ -679,7 +681,7 @@ it.each([false, true])(
         return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
       if (url === "/api/v1/workspace/queries") {
         searches.push(JSON.parse(String(init?.body)));
-        if (searches.length === 2 && failRerun)
+        if (searches.length > 1 && !allowRefresh)
           return json({ detail: "Snapshot refresh failed" }, 503);
         return json(searches.length === 1 ? first : fresh);
       }
@@ -731,12 +733,12 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("option", { name: "Review (0)" }));
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Add “Review” to 1 document" }),
-    );
+    const retry = await screen.findByRole("button", { name: "Add “Review” to 1 document" });
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(retry);
     await waitFor(() => expect(writes).toHaveLength(2));
     await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
-    await waitFor(() => expect(searches).toHaveLength(2));
+    await waitFor(() => expect(searches).toHaveLength(4));
     expect(searches[1]).toEqual(searches[0]);
     expect(writes.slice(0, 2).map((write) => write.nodes)).toEqual([
       [{ node_id: 1, revision: 3 }],
@@ -744,7 +746,14 @@ it.each([false, true])(
     ]);
     expect(writes[0].operation_id).not.toBe(writes[1].operation_id);
     if (failRerun) await screen.findByText("Snapshot refresh failed");
-    else await screen.findByText(fresh.snapshot_id);
+    else {
+      await screen.findByText(fresh.snapshot_id);
+      await waitFor(() =>
+        expect(
+          (screen.getByRole("button", { name: "Tag all…" }) as HTMLButtonElement).disabled,
+        ).toBe(false),
+      );
+    }
     const checkbox = screen.getByRole("checkbox", {
       name: "Select /records/report-1.pdf",
     }) as HTMLInputElement;
@@ -759,6 +768,7 @@ it.each([false, true])(
     expect(writes[2].nodes).toEqual([{ node_id: 1, revision: failRerun ? 3 : 5 }]);
     if (failRerun) {
       await screen.findByText("Some documents changed. Close, refresh, and select them again.");
+      allowRefresh = true;
       await fireEvent.click(screen.getByRole("button", { name: "Close" }));
       await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
       await fireEvent.click(screen.getByRole("button", { name: "Search" }));

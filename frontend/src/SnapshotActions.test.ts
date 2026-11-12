@@ -34,6 +34,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
@@ -250,11 +251,17 @@ it.each([true, false])(
       if (id === 7 && unavailable) throw new TypeError("Network error");
       return Response.json({ id, name: `Document ${id}`, revision: 12 });
     });
-    render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+    const onchecked = vi.fn();
+    render(SnapshotActions, props({ scope: "selection", count: 2, targets, onchecked }));
     await chooseReview();
     if (!assign) await fireEvent.click(screen.getByRole("radio", { name: "Remove" }));
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+    const check = await screen.findByRole("button", { name: "Check tag results" });
+    vi.useFakeTimers();
+    await fireEvent.click(check);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onchecked).toHaveBeenCalledOnce();
+    vi.useRealTimers();
     const retry = await screen.findByRole("button", {
       name: assign ? "Add “Review” to 1 document" : "Remove “Review” from 1 document",
     });

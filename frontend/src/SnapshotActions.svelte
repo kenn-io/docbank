@@ -163,7 +163,7 @@
       tag = result.tag;
       results = result.rows;
       offset = 0;
-      setTimeout(() => alive && onchecked?.(), 300);
+      onchecked?.();
     } catch (cause) {
       if (!alive) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
