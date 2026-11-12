@@ -52,7 +52,7 @@ Saved imports remain available after a daemon restart, including imports whose g
 
 Identical RAW, image, and video content returns as already in vault. Other files, including lone XMP sidecars, may be added again. Failed groups remain available through **Add N groups**.
 
-Saved imports belong to this vault deployment. A logical restore or backup recovery does not transfer import handles. If an import handle is missing, its outcome is unconfirmed.
+Saved imports belong to this vault deployment. A logical restore or backup recovery does not transfer import handles. If an import handle is missing, its outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.
 
 The browser checks the 32,768-file and 8 MiB JSON declaration limits before asking to replace saved progress or reading photo content. Changing the destination checks the declaration again.
 

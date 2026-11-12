@@ -245,10 +245,10 @@
           showError(cause);
           return;
         }
-        if (checkpoint.protocolVersion === 3) {
-          error = "This import is no longer available for inspection. Its outcome is unconfirmed.";
-          return;
-        }
+        resuming = false;
+        error =
+          "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.";
+        return;
       }
     }
     try {

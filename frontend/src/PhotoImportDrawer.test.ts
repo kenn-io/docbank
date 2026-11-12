@@ -810,7 +810,7 @@ it("keeps a missing saved import unconfirmed", async () => {
     target: { files: selected },
   });
   await screen.findByText(
-    "This import is no longer available for inspection. Its outcome is unconfirmed.",
+    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
   );
   expect(channel.planPhotoImport).not.toHaveBeenCalled();
 });
@@ -868,7 +868,7 @@ it.each([
   expect(auth).toHaveBeenCalledTimes(error.status === 401 ? 1 : 0);
 });
 
-it("resumes a preview closed before registration", async () => {
+it("requires a new import when a closed preview cannot be distinguished from an uncertain upload", async () => {
   const selected = [files()[0]];
   let versionAtUpload: number | undefined;
   const channel: PhotoImportTransport = {
@@ -899,18 +899,29 @@ it("resumes a preview closed before registration", async () => {
     target: { files: selected },
   });
   await screen.findByRole("button", { name: "Add 1 group" });
+  const originalSource = savedImports.get("preview-resume")?.sourceID;
   view.unmount();
   render(PhotoImportDrawer, props);
   await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: selected },
   });
+  await screen.findByText(
+    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
+  );
+  expect(channel.planPhotoImport).toHaveBeenCalledOnce();
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: selected },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Replace import" }));
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(savedImports.get("preview-resume")?.sourceID).not.toBe(originalSource);
   expect(versionAtUpload).toBe(3);
 });
 
-it("resumes a checkpoint from before saved imports", async () => {
+it("keeps a missing legacy import unconfirmed", async () => {
   const { photoImportManifest } = await import("./photoImportStorage.js");
   const selected = [files()[0]];
   savedImports.set("legacy", {
@@ -942,15 +953,11 @@ it("resumes a checkpoint from before saved imports", async () => {
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
     target: { files: selected },
   });
-  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
-  expect(channel.planPhotoImport).toHaveBeenCalledWith(
-    selected,
-    "/photos",
-    "legacy-source",
-    expect.any(AbortSignal),
-    expect.any(Function),
+  await screen.findByText(
+    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
   );
-  await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
+  expect(channel.planPhotoImport).not.toHaveBeenCalled();
+  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
 it("allows retry after a rejected registration", async () => {
