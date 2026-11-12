@@ -67,12 +67,12 @@ func (f *answerFakeClient) ListDocumentProcessingProfiles(context.Context) ([]ap
 	}
 	return []api.ProcessingProfileSummary{{Name: "default", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: true}}, nil
 }
-func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence) (api.PDFPageGaps, error) {
+func (f *answerFakeClient) GetPDFPageCoverage(_ context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
 	f.coverageFence = fence
 	if f.coverageErr != nil {
-		return api.PDFPageGaps{}, f.coverageErr
+		return api.CoverageReport{}, f.coverageErr
 	}
-	return api.PDFPageGaps{PagesWithoutText: f.pageGaps, PageCoverage: f.pageCoverage}, nil
+	return api.CoverageReport{PagesWithoutText: f.pageGaps, PageCoverage: f.pageCoverage}, nil
 }
 
 func TestAnswerQuestionKeepsEvidenceWhenCoverageFails(t *testing.T) {

@@ -236,13 +236,6 @@ type PageTextGap struct {
 	Pages            []int  `json:"pages"`
 }
 
-type PDFPageGaps struct {
-	VaultUID                string        `json:"vault_uid" format:"uuid"`
-	PagesWithoutText        []PageTextGap `json:"pages_without_text,omitzero"`
-	PageCoverage            string        `json:"page_coverage,omitzero"`
-	PageCoverageUnavailable bool          `json:"page_coverage_unavailable,omitzero"`
-}
-
 type CoverageReport struct {
 	VaultUID                string          `json:"vault_uid" format:"uuid"`
 	ProfileFingerprint      string          `json:"profile_fingerprint" pattern:"^[0-9a-f]{64}$"`

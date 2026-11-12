@@ -12200,53 +12200,6 @@ func (c *Client) GetLocalTextStatus(ctx context.Context, reqEditors ...runtime.R
 	return responseParser(ctx, resp)
 }
 
-// GetPDFPageGaps Report bounded PDF page gaps for exact document versions
-func (c *Client) GetPDFPageGaps(ctx context.Context, options *GetPDFPageGapsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPDFPageGapsResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/processing/pdf-page-gaps",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPDFPageGapsResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(GetPDFPageGapsResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "GetPDFPageGapsResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[GetPDFPageGapsErrorResponse](resp, "GetPDFPageGapsErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/pdf-page-gaps")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -24385,34 +24338,6 @@ func (o *ApplyLocalTextRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
-// GetPDFPageGapsRequestOptions is the options needed to make a request to GetPDFPageGaps.
-type GetPDFPageGapsRequestOptions struct {
-	Body *GetPDFPageGapsBody
-}
-
-// GetPathParams returns the path params as a map.
-func (o *GetPDFPageGapsRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *GetPDFPageGapsRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *GetPDFPageGapsRequestOptions) GetBody() any {
-	if o.Body == nil {
-		return nil
-	}
-	return o.Body
-}
-
-// GetHeader returns the headers as a map.
-func (o *GetPDFPageGapsRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // PlanDocumentProcessingRequestOptions is the options needed to make a request to PlanDocumentProcessing.
 type PlanDocumentProcessingRequestOptions struct {
 	Body *PlanDocumentProcessingBody
@@ -28415,8 +28340,6 @@ type PlanLocalTextBody = LocalTextPlanRequest
 
 type ApplyLocalTextBody = LocalTextApplyRequest
 
-type GetPDFPageGapsBody = DocumentSourceFence
-
 type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
@@ -30068,10 +29991,6 @@ type GetLocalTextStatusResponse = api.LocalTextStatus
 
 type GetLocalTextStatusErrorResponse = Error
 
-type GetPDFPageGapsResponse = api.PDFPageGaps
-
-type GetPDFPageGapsErrorResponse = Error
-
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
 type PlanDocumentProcessingErrorResponse = Error
@@ -31319,8 +31238,6 @@ type OutputCounts = bundle.OutputCounts
 type OutputProblem = bundle.OutputProblem
 
 type OutputProblems = bundle.OutputProblems
-
-type PDFPageGaps = api.PDFPageGaps
 
 type PDFRedactionAtom = redaction.Atom
 

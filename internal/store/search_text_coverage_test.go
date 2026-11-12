@@ -173,7 +173,7 @@ func TestSearchTextCoverageCandidateEvidence(t *testing.T) {
 func TestPDFTextCandidatesFiltersExactVersions(t *testing.T) {
 	t.Parallel()
 	s, _, nodes, profile := collectionCoverageFixture(t, 3)
-	collectionCoveragePublish(t, s, nodes[0], profile, "complete")
+	collectionCoveragePublish(t, s, nodes[0], profile, "candidate_complete")
 	collectionCoveragePublish(t, s, nodes[1], profile, "candidate_serving")
 	collectionCoveragePublish(t, s, nodes[2], profile, "candidate_empty")
 	got, err := s.PDFTextCandidates(t.Context(), []string{nodes[0].CurrentVersionID, nodes[1].CurrentVersionID}, profile.Fingerprint)

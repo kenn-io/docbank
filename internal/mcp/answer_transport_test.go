@@ -177,8 +177,12 @@ func TestAnswerQuestionProcessingErrorTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: len(fence.ContentVersionIDs)})
-				case "/api/v1/processing/pdf-page-gaps":
-					writeDaemonJSON(t, w, api.PDFPageGaps{VaultUID: testVaultID})
+				case "/api/v1/coverage":
+					require.Equal(t, http.MethodGet, r.Method)
+					require.Equal(t, processing.PDFTextProfileName, r.URL.Query().Get("profile"))
+					require.Equal(t, testVaultID, r.URL.Query().Get("vault_uid"))
+					require.Equal(t, []string{testVersionID}, r.URL.Query()["content_version_id"])
+					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{{Name: "chosen", Fingerprint: strings.Repeat("a", 64), QueryEmbeddingBindings: []string{"query"}, RerankingAvailable: tc.name != "no reranking support"}}
 					if tc.local && tc.code == "processing_unavailable" {
@@ -292,8 +296,8 @@ func TestAnswerQuestionSearchSelectionTransport(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/processing/source-fences/resolve":
 					writeDaemonJSON(t, w, api.DocumentSourceFenceResolution{Fence: fence, FenceFingerprint: fingerprint, ObservedScopeCount: 1})
-				case "/api/v1/processing/pdf-page-gaps":
-					writeDaemonJSON(t, w, api.PDFPageGaps{VaultUID: testVaultID})
+				case "/api/v1/coverage":
+					writeDaemonJSON(t, w, api.CoverageReport{VaultUID: testVaultID})
 				case "/api/v1/processing/profiles":
 					writeDaemonJSON(t, w, profiles)
 				case "/api/v1/search":

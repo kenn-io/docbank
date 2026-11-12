@@ -31,23 +31,6 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	registerRedactionPreparationRoute(api, d)
 	registerTextNavigationRoutes(api, d)
 	registerEvidenceWindowRoute(api, d)
-	huma.Register(api, huma.Operation{
-		OperationID: "getPDFPageGaps", Method: http.MethodPost,
-		Path: "/api/v1/processing/pdf-page-gaps", Summary: "Report bounded PDF page gaps for exact document versions",
-	}, func(ctx context.Context, input *struct{ Body DocumentSourceFence }) (*struct{ Body PDFPageGaps }, error) {
-		if d.Processing == nil {
-			return nil, processingUnavailable()
-		}
-		pages, state, unavailable, err := d.Processing.PDFPageGaps(ctx, processing.SourceFence{VaultUID: input.Body.VaultUID, ContentVersionIDs: input.Body.ContentVersionIDs})
-		if err != nil {
-			return nil, fromProcessingError(err)
-		}
-		result := PDFPageGaps{VaultUID: input.Body.VaultUID, PageCoverage: state, PageCoverageUnavailable: unavailable}
-		for _, gap := range pages {
-			result.PagesWithoutText = append(result.PagesWithoutText, PageTextGap{ContentVersionID: gap.ContentVersionID, Pages: gap.Pages})
-		}
-		return &struct{ Body PDFPageGaps }{Body: result}, nil
-	})
 	type sourceFenceInput struct {
 		Body DocumentSourceFenceResolveRequest
 	}

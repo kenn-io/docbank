@@ -153,7 +153,6 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /kata/cite` | quote a verified document passage into a new or existing Kata issue | Implemented |
 | `POST /kata/context` | read saved Docbank evidence from a Kata issue with its current source status | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
-| `POST /processing/pdf-page-gaps` | inspect bounded PDF page gaps for an exact source fence | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
 | `POST /nodes` · `POST /path/mkdir` | create a directory beneath a stable parent ID or at one exact virtual coordinate | Implemented |

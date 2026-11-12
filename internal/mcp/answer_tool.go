@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"uuid"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/answer"
@@ -96,7 +97,7 @@ type answerOutput struct {
 
 type answerClient interface {
 	documentClient
-	GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.PDFPageGaps, error)
+	GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error)
 }
 
 type answerReadSession func(context.Context, func(context.Context, answerClient) error) error
@@ -105,13 +106,19 @@ func daemonAnswerSession(lease *daemonLease) answerReadSession {
 	return daemonClientSession(lease, func(c *daemonconn.Connection) answerClient { return daemonDocumentClient{c} })
 }
 
-func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.PDFPageGaps, error) {
-	report, err := c.API().GetPDFPageGaps(ctx, &apiclient.GetPDFPageGapsRequestOptions{Body: &fence})
+func (c daemonDocumentClient) GetPDFPageCoverage(ctx context.Context, fence api.DocumentSourceFence) (api.CoverageReport, error) {
+	vaultID, err := uuid.Parse(fence.VaultUID)
 	if err != nil {
-		return api.PDFPageGaps{}, err
+		return api.CoverageReport{}, err
+	}
+	report, err := c.API().GetDocumentProcessingCoverage(ctx, &apiclient.GetDocumentProcessingCoverageRequestOptions{Query: &apiclient.GetDocumentProcessingCoverageQuery{
+		Profile: processing.PDFTextProfileName, VaultUID: vaultID, ContentVersionID: fence.ContentVersionIDs,
+	}})
+	if err != nil {
+		return api.CoverageReport{}, err
 	}
 	if report.VaultUID != fence.VaultUID {
-		return api.PDFPageGaps{}, errors.New("processing coverage escaped its vault fence")
+		return api.CoverageReport{}, errors.New("processing coverage escaped its vault fence")
 	}
 	return *report, nil
 }
@@ -190,7 +197,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		failure      string
 		executed     bool
 		documents    []api.DocumentSummary
-		pageCoverage api.PDFPageGaps
+		pageCoverage api.CoverageReport
 	}
 	result, err := documentRead(ctx, session, func(ctx context.Context, c answerClient) (response, error) {
 		filters := input.Filters
@@ -234,7 +241,7 @@ func answerQuestion(ctx context.Context, session answerReadSession, raw []byte) 
 		if err != nil {
 			return response{}, err
 		}
-		var pageCoverage api.PDFPageGaps
+		var pageCoverage api.CoverageReport
 		if len(fence.Fence.ContentVersionIDs) > 0 {
 			pageCoverage, err = c.GetPDFPageCoverage(ctx, api.DocumentSourceFence{VaultUID: fence.Fence.VaultUID, ContentVersionIDs: fence.Fence.ContentVersionIDs})
 			if err != nil {
