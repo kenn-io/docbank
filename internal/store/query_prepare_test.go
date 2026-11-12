@@ -110,6 +110,7 @@ type preparationLifecycleRows struct {
 	queries, next, closed  int
 	cancel                 context.CancelFunc
 	iterationErr, closeErr error
+	badScan                bool
 }
 
 func (*preparationLifecycleRows) Columns() []string { return []string{"node_id", "content_version_id"} }
@@ -118,6 +119,9 @@ func (r *preparationLifecycleRows) Next(values []driver.Value) error {
 	r.next++
 	if r.next == 1 {
 		values[0], values[1] = int64(42), "synthetic-version"
+		if r.badScan {
+			values[0] = "synthetic-node"
+		}
 		return nil
 	}
 	if r.cancel != nil {
@@ -133,35 +137,53 @@ func TestPreparedMembershipCursorLifecycle(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	final := compileFixtureQuery(t, s, `name:synthetic`, query.Filters{})
+	_, err := s.CreatePerson(t.Context(), "Lifecycle Absent", "operator")
+	require.NoError(t, err)
+	// A person-edge leaf is read first; its failing cursor must stop before
+	// any final membership query or payload.
+	leaf := compileFixtureQuery(t, s, `NOT author:"Lifecycle Absent" AND path:/missing`, query.Filters{})
+	require.True(t, leaf.predicate.personEdges)
+	require.Len(t, leaf.predicate.leaves, 1)
 	iterationErr := errors.New("synthetic iteration error")
 	closeErr := errors.New("synthetic close error")
-	for _, failure := range []string{"cancel", "iteration", "close"} {
-		t.Run(failure, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			r := &preparationLifecycleRows{}
-			want := context.Canceled
-			switch failure {
-			case "cancel":
-				r.cancel = cancel
-			case "iteration":
-				r.iterationErr, want = iterationErr, iterationErr
-			case "close":
-				r.closeErr, want = closeErr, closeErr
-			}
-			db := sql.OpenDB(preparationLifecycleConnector{r})
-			t.Cleanup(func() { _ = db.Close() })
-			got, err := materializeDocumentPopulation(ctx, db, final, "", nil, CoverageSelection{})
-			if !errors.Is(err, want) {
-				t.Fatalf("got error %v, want %v", err, want)
-			}
-			if got.sql != "" || len(got.args) != 0 {
-				t.Fatalf("fabricated membership: %+v", got)
-			}
-			if r.queries != 1 || r.next != 2 || r.closed != 1 {
-				t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
-			}
-		})
+	for _, route := range []struct {
+		name     string
+		compiled CompiledQuery
+	}{{"final", final}, {"leaf", leaf}} {
+		for _, failure := range []string{"cancel", "scan", "iteration", "close"} {
+			t.Run(route.name+"/"+failure, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				r := &preparationLifecycleRows{}
+				want := context.Canceled
+				switch failure {
+				case "cancel":
+					r.cancel = cancel
+				case "scan":
+					r.badScan, want = true, nil
+				case "iteration":
+					r.iterationErr, want = iterationErr, iterationErr
+				case "close":
+					r.closeErr, want = closeErr, closeErr
+				}
+				db := sql.OpenDB(preparationLifecycleConnector{r})
+				t.Cleanup(func() { _ = db.Close() })
+				got, err := materializeDocumentPopulation(ctx, db, route.compiled, "", nil, CoverageSelection{})
+				wantNext := 2
+				if want == nil {
+					require.ErrorContains(t, err, "Scan error")
+					wantNext = 1
+				} else if !errors.Is(err, want) {
+					t.Fatalf("got error %v, want %v", err, want)
+				}
+				if got.sql != "" || len(got.args) != 0 {
+					t.Fatalf("fabricated membership: %+v", got)
+				}
+				if r.queries != 1 || r.next != wantNext || r.closed != 1 {
+					t.Fatalf("cursor counts: queries=%d next=%d close=%d", r.queries, r.next, r.closed)
+				}
+			})
+		}
 	}
 }
 
@@ -287,4 +309,167 @@ func TestDocumentFacetPopulationRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, recording.statements)
 	require.NotContains(t, recording.statements[len(recording.statements)-1], "FROM json_each(?)")
+}
+
+// preparedLeafFixture holds live, trashed and replaced files so leaf sets are
+// checked against exact current identities. "Leaf Absent" asserts nothing, so
+// NOT author:"Leaf Absent" adds person edges without restricting membership.
+type preparedLeafFixture struct {
+	store                           *Store
+	first, second, unique, replaced int64
+	collected                       int64
+	current                         map[int64]string
+	collection                      string
+	author                          string
+	selection                       CoverageSelection
+}
+
+func newPreparedLeafFixture(t *testing.T) preparedLeafFixture {
+	t.Helper()
+	s := newTestStore(t)
+	ctx := t.Context()
+	dir, err := s.Mkdir(ctx, s.RootID(), "dir")
+	require.NoError(t, err)
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", fakeHash("leaf-duplicate"), 10, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, dir.ID, "second.txt", first.BlobHash, first.Size, first.MimeType)
+	require.NoError(t, err)
+	unique, err := s.CreateFile(ctx, dir.ID, "unique.txt", fakeHash("leaf-unique"), 11, "text/plain")
+	require.NoError(t, err)
+	// Neither a trashed copy nor an old version makes unique a duplicate.
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trashed.txt", unique.BlobHash, unique.Size, unique.MimeType)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, UnconditionalRev)
+	require.NoError(t, err)
+	replaced, err := s.CreateFile(ctx, dir.ID, "replaced.txt", unique.BlobHash, unique.Size, unique.MimeType)
+	require.NoError(t, err)
+	_, version, err := s.ReplaceContent(ctx, replaced.ID, UnconditionalRev, fakeHash("leaf-replaced"), 12, "text/plain")
+	require.NoError(t, err)
+	collection := createCollectionRun(t, s, "collected.txt", "leaf-collection")
+	f := preparedLeafFixture{store: s, first: first.ID, second: second.ID, unique: unique.ID, replaced: replaced.ID,
+		collection: collection.ID(), current: map[int64]string{
+			first.ID: first.CurrentVersionID, second.ID: second.CurrentVersionID,
+			unique.ID: unique.CurrentVersionID, replaced.ID: version.ID,
+		}}
+	var collectedVersion string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT id,current_version_id FROM nodes WHERE name='collected.txt'`).Scan(&f.collected, &collectedVersion))
+	f.current[f.collected] = collectedVersion
+	author, err := s.CreatePerson(ctx, "Leaf Author", "operator")
+	require.NoError(t, err)
+	f.author = author.PersonID
+	_, err = s.CreatePerson(ctx, "Leaf Absent", "operator")
+	require.NoError(t, err)
+	for _, version := range []string{second.CurrentVersionID, unique.CurrentVersionID} {
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version, PersonID: author.PersonID, Role: "author", Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	profile := catalogProcessingProfile(t, false)
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return ensureProcessingProfileTx(ctx, tx, profile)
+	}))
+	f.selection = CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
+	return f
+}
+
+// preparedLeafMembers returns ordered node IDs and node/version pairs.
+func preparedLeafMembers(t *testing.T, q metadataQuerier, statement string, args []any) ([]int64, []string) {
+	t.Helper()
+	rows, err := q.QueryContext(t.Context(), `SELECT node_id,content_version_id FROM (`+statement+`) members ORDER BY node_id`, args...)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	var pairs []string
+	for rows.Next() {
+		var id int64
+		var version string
+		require.NoError(t, rows.Scan(&id, &version))
+		ids = append(ids, id)
+		pairs = append(pairs, fmt.Sprintf("%d/%s", id, version))
+	}
+	require.NoError(t, rows.Err())
+	return ids, pairs
+}
+
+// Each leaf is replaced by its own exact live/current set; the original SQL
+// of the same compiled query is the reference, and stated sets pin intent.
+func TestPreparedLeafMembershipMatchesInlineSQL(t *testing.T) {
+	t.Parallel()
+	f := newPreparedLeafFixture(t)
+	s, ctx := f.store, t.Context()
+	_, err := s.CreateSavedQuery(ctx, "Leaf collapse", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"has_duplicates:true","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Leaf nested", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"NOT author:\"Leaf Absent\" AND saved:\"Leaf collapse\" AND path:/dir"}`))
+	require.NoError(t, err)
+	absent := `NOT author:"Leaf Absent" AND `
+	all := []int64{f.first, f.second, f.unique, f.replaced, f.collected}
+	slices.Sort(all)
+	sorted := func(ids ...int64) []int64 { slices.Sort(ids); return ids }
+	duplicates := sorted(f.first, f.second)
+	for _, tc := range []struct {
+		text     string
+		collapse bool
+		want     []int64 // nil: one duplicate representative
+		count    int
+	}{
+		{text: absent + `(has_duplicates:true OR has_duplicates:false)`, want: all},
+		// Adjacent zero-argument leaves sit between parameterized person and path leaves.
+		{text: absent + `has_duplicates:true AND NOT has_duplicates:false AND path:/dir`, want: []int64{f.second}},
+		{text: `has_duplicates:false AND has_duplicates:false AND ` + absent + `NOT path:"/dir/unique.txt"`, want: sorted(f.replaced, f.collected)},
+		{text: absent + `(NOT path:/ OR has_duplicates:false)`, want: sorted(f.unique, f.replaced, f.collected)},
+		{text: `path:/ AND ` + absent + `has_duplicates:true`, want: duplicates},
+		{text: absent + `NOT (has_duplicates:true OR path:/dir)`, want: []int64{f.collected}},
+		{text: absent + `NOT (has_duplicates:true OR path:/)`, want: []int64{}},
+		{text: absent + `collection:` + f.collection + ` AND has_duplicates:false`, want: []int64{f.collected}},
+		{text: absent + `NOT collection:` + f.collection + ` AND NOT has_duplicates:true`, want: sorted(f.unique, f.replaced)},
+		{text: absent + `text_coverage:unprocessed AND has_duplicates:true`, count: -1},
+		{text: absent + `NOT text_coverage:complete AND path:/dir AND has_duplicates:false`, want: sorted(f.unique, f.replaced)},
+		{text: `author:"Leaf Author" AND has_duplicates:false`, want: []int64{f.unique}},
+		{text: absent + `saved:"Leaf collapse"`, count: 1},
+		{text: absent + `NOT saved:"Leaf collapse"`, count: 4},
+		{text: absent + `has_duplicates:true`, collapse: true, count: 1},
+		{text: `saved:"Leaf nested" OR (` + absent + `has_duplicates:false AND path:/dir)`, count: -1},
+	} {
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":%t}}`, tc.text, tc.collapse))
+		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
+		require.NoError(t, err, tc.text)
+		require.True(t, compiled.predicate.personEdges, tc.text)
+		require.NotEmpty(t, compiled.predicate.leaves, tc.text)
+		inline, err := matchedPopulation(compiled, "", nil)
+		require.NoError(t, err, tc.text)
+		statement, args, err := bindQueryPopulation(inline, f.selection, "")
+		require.NoError(t, err, tc.text)
+		_, wantPairs := preparedLeafMembers(t, s.db, statement, args)
+
+		bound, err := compiled.bind("", nil)
+		require.NoError(t, err, tc.text)
+		prepared, err := preparedPopulation(ctx, s.db, compiled, "", nil, f.selection)
+		require.NoError(t, err, tc.text)
+		require.Zero(t, prepared.relations, tc.text)
+		require.Empty(t, prepared.leaves, tc.text)
+		for _, cte := range []string{"query_ancestry", "collection_members", "current_content_members", "processing_coverage"} {
+			require.NotContains(t, prepared.sql, cte, tc.text)
+		}
+		leafArgs := 0
+		for _, leaf := range bound.leaves {
+			leafArgs += leaf.argEnd - leaf.argStart
+		}
+		require.Len(t, prepared.args, len(bound.args)-leafArgs+len(bound.leaves), tc.text)
+
+		handoff, err := materializeDocumentPopulation(ctx, s.db, compiled, "", nil, f.selection)
+		require.NoError(t, err, tc.text)
+		ids, pairs := preparedLeafMembers(t, s.db, handoff.sql, handoff.args)
+		require.Equal(t, wantPairs, pairs, tc.text)
+		for i, id := range ids {
+			require.Equal(t, fmt.Sprintf("%d/%s", id, f.current[id]), pairs[i], tc.text)
+		}
+		switch {
+		case tc.want != nil:
+			require.Equal(t, tc.want, append([]int64{}, ids...), tc.text)
+		case tc.count == 1:
+			require.Len(t, ids, 1, tc.text)
+			require.Contains(t, duplicates, ids[0], tc.text)
+		case tc.count > 0:
+			require.Len(t, ids, tc.count, tc.text)
+		}
+	}
 }

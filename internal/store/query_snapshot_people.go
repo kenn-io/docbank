@@ -223,6 +223,12 @@ func annotateMatchedRoles(ctx context.Context, q metadataQuerier, compiled Compi
 			if err != nil {
 				return err
 			}
+			// A whole branch gate repeats the person subqueries before its
+			// leaves, so prepare it exactly as the population was prepared.
+			predicate, err = prepareCompiledLeaves(ctx, q, predicate, generation, coverage)
+			if err != nil {
+				return fmt.Errorf("annotating roles: %w", err)
+			}
 			encoded, err := json.Marshal(candidates)
 			if err != nil {
 				return err

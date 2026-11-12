@@ -870,3 +870,85 @@ func TestRoleSearchMentionsSelectedRendition(t *testing.T) {
 		return nil
 	}))
 }
+
+// Whole-AND annotation gates and self-excluded facets repeat person subqueries
+// before relation leaves; each statement must use prepared leaf sets.
+func TestRoleSearchPreparedLeafGatesAndFacets(t *testing.T) {
+	t.Parallel()
+	f := newPreparedLeafFixture(t)
+	s, ctx := f.store, t.Context()
+	leafCTEs := []string{"query_ancestry", "collection_members", "current_content_members", "processing_coverage"}
+	for _, tc := range []struct {
+		text string
+		want int64
+	}{
+		{`author:"Leaf Author" AND has_duplicates:true AND path:/dir`, f.second},
+		{`(author:"Leaf Author" OR author:"Leaf Absent") AND NOT has_duplicates:true`, f.unique},
+		{`NOT (has_duplicates:true OR path:"/dir/second.txt") AND author:"Leaf Author"`, f.unique},
+	} {
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, tc.text))
+		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+		require.NoError(t, err, tc.text)
+		require.Len(t, result.Rows, 1, tc.text)
+		require.Equal(t, tc.want, result.Rows[0].NodeID, tc.text)
+		require.Equal(t, []string{"author"}, result.Rows[0].MatchedRoles, tc.text)
+
+		compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
+		require.NoError(t, err, tc.text)
+		recording := &populationRecordingQuerier{metadataQuerier: s.db}
+		rows := []SnapshotRow{{SnapshotMember: SnapshotMember{NodeID: tc.want}}}
+		require.NoError(t, annotateMatchedRoles(ctx, recording, compiled, "", CoverageSelection{}, rows), tc.text)
+		require.Equal(t, []string{"author"}, rows[0].MatchedRoles, tc.text)
+		gates := 0
+		for _, statement := range recording.statements {
+			if !strings.HasPrefix(statement, "SELECT n.id FROM json_each(?) ids") || !strings.Contains(statement, "person_document_assertions") {
+				continue
+			}
+			gates++
+			for _, cte := range leafCTEs {
+				require.NotContains(t, statement, cte, tc.text)
+			}
+		}
+		require.Positive(t, gates, tc.text)
+	}
+
+	// The People facet drops only the people filter and keeps the leaf.
+	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"NOT author:\"Leaf Absent\" AND has_duplicates:false","filters":{"people":[{"person_id":%q,"roles":["author"]}]}}`, f.author))
+	compiled, err := compileQuery(ctx, value, queryResolver{q: s.db})
+	require.NoError(t, err)
+	recording := &populationRecordingQuerier{metadataQuerier: s.db}
+	facet, err := materializePersonRoleFacet(ctx, recording, compiled, "", CoverageSelection{}, 1000)
+	require.NoError(t, err)
+	require.True(t, facet.Available)
+	var author *SnapshotFacetValue
+	for i := range facet.Values {
+		if facet.Values[i].Key == f.author {
+			author = &facet.Values[i]
+		}
+	}
+	require.NotNil(t, author)
+	require.Equal(t, int64(1), author.Count)
+	require.Equal(t, []string{"author"}, author.Roles)
+	facetSQL := recording.statements[len(recording.statements)-1]
+	require.True(t, strings.HasPrefix(facetSQL, "WITH matched_members AS ("))
+	require.Contains(t, facetSQL, "FROM json_each(?)")
+	for _, cte := range leafCTEs {
+		require.NotContains(t, facetSQL, cte)
+	}
+
+	// A generic facet recompiles without its own filter and still prepares leaves.
+	value = snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"author:\"Leaf Author\" AND NOT has_duplicates:true AND path:/dir","filters":{"collection_ids":[%q]}}`, f.collection))
+	compiled, err = compileQuery(ctx, value, queryResolver{q: s.db})
+	require.NoError(t, err)
+	recording = &populationRecordingQuerier{metadataQuerier: s.db}
+	facet, err = materializeSnapshotFacet(ctx, recording, compiled, "", CoverageSelection{}, "collections", nil, 1000)
+	require.NoError(t, err)
+	require.True(t, facet.Available)
+	prepared := false
+	for _, statement := range recording.statements {
+		if strings.HasPrefix(statement, "WITH matched_members AS (") {
+			prepared = strings.Contains(statement, "FROM json_each(?)") && !strings.Contains(statement, "current_content_members") && !strings.Contains(statement, "query_ancestry")
+		}
+	}
+	require.True(t, prepared)
+}

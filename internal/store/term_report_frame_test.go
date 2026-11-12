@@ -582,3 +582,28 @@ func TestTermReportInlinePopulationIntersectsCollectionScope(t *testing.T) {
 	require.Len(t, frame.Members, 1)
 	require.Equal(t, []bool{true}, frame.Members[0].RawMatches)
 }
+
+// A person term followed by relation leaves is evaluated with its own report
+// profile pointer after the leaves are prepared on the same read view.
+func TestTermReportPreparesPersonTermLeaves(t *testing.T) {
+	t.Parallel()
+	f := newPreparedLeafFixture(t)
+	request := termFrameRequest()
+	request.Terms[0].Syntax = "advanced"
+	request.Terms[0].Expression = `author:"Leaf Author" AND path:/dir AND NOT has_duplicates:true`
+	request.Terms[1].Syntax = "advanced"
+	request.Terms[1].Expression = `NOT author:"Leaf Absent" AND has_duplicates:true AND NOT path:/dir`
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	frame, err := f.store.MaterializeTermReportFrame(t.Context(), request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+	require.NoError(t, err)
+	got := make(map[int64][]bool, len(frame.Members))
+	for _, member := range frame.Members {
+		require.Equal(t, f.current[member.Identity.NodeID], member.Identity.VersionID)
+		got[member.Identity.NodeID] = member.RawMatches
+	}
+	require.Equal(t, map[int64][]bool{
+		f.first: {false, true}, f.second: {false, false}, f.unique: {true, false},
+		f.replaced: {false, false}, f.collected: {false, false},
+	}, got)
+}

@@ -46,6 +46,24 @@ type compiledQueryFragment struct {
 	args        []any
 	relations   compiledQueryRelations
 	personEdges bool
+	leaves      []compiledLeaf
+}
+
+// compiledLeaf records one complete CTE-bearing operand inside a fragment:
+// its SQL byte and argument intervals [start,end) and the shared relations it
+// reads. Occurrences are disjoint and stay in SQL order through wrap and join.
+type compiledLeaf struct {
+	sqlStart, sqlEnd int
+	argStart, argEnd int
+	relations        compiledQueryRelations
+}
+
+// atomicCompiledLeaf marks a whole operand fragment as one leaf occurrence.
+func atomicCompiledLeaf(fragment compiledQueryFragment) compiledQueryFragment {
+	fragment.leaves = []compiledLeaf{{
+		sqlEnd: len(fragment.sql), argEnd: len(fragment.args), relations: fragment.relations,
+	}}
+	return fragment
 }
 
 // CompiledQuery is one resolved QueryV1 value compiled into an internal,
@@ -533,11 +551,11 @@ func compileSizePredicate(field string, bound int64) compiledQueryFragment {
 func compileTextCoveragePredicate(value string, start, end int) (compiledQueryFragment, error) {
 	switch value {
 	case "complete", "partial", "failed", "unprocessed", "none", "unavailable":
-		return compiledQueryFragment{
+		return atomicCompiledLeaf(compiledQueryFragment{
 			sql: `EXISTS (SELECT 1 FROM processing_coverage pc
 				WHERE pc.node_id=n.id AND pc.version_id=cv.version_id AND pc.state=?)`,
 			args: []any{value}, relations: compiledRelationProcessingCoverage,
-		}, nil
+		}), nil
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "invalid text_coverage operand")
 	}
@@ -552,13 +570,13 @@ func compileHasDuplicatesPredicate(value string, start, end int) (compiledQueryF
 	default:
 		return compiledQueryFragment{}, compileExpressionError(start, end, "has_duplicates operand must be true or false")
 	}
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: negate + `EXISTS (SELECT 1 FROM current_content_members duplicate_member
 			WHERE duplicate_member.blob_hash=cv.blob_hash
 			  AND duplicate_member.size=cv.size
 			  AND duplicate_member.node_id<>n.id)`,
 		relations: compiledRelationCurrentContent,
-	}, nil
+	}), nil
 }
 
 func compileValuePredicates(
@@ -575,7 +593,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 	if path == "/" {
 		return trueCompiledFragment()
 	}
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: `EXISTS (
 			WITH RECURSIVE query_ancestry(id,parent_id,path) AS (
 				SELECT n.id,n.parent_id,n.name
@@ -591,7 +609,7 @@ func compilePathPredicate(path string) compiledQueryFragment {
 			  AND (path=? OR substr(path,1,length(?)+1)=? || '/')
 		)`,
 		args: []any{path, path, path},
-	}
+	})
 }
 
 func compileTagPredicate(id string) compiledQueryFragment {
@@ -602,11 +620,11 @@ func compileTagPredicate(id string) compiledQueryFragment {
 }
 
 func compileCollectionPredicate(id string) compiledQueryFragment {
-	return compiledQueryFragment{
+	return atomicCompiledLeaf(compiledQueryFragment{
 		sql: `EXISTS (WITH ` + CollectionMembershipCTE + `
 			SELECT 1 FROM collection_members cm WHERE cm.node_id=n.id AND cm.ingest_id=?)`,
 		args: []any{id},
-	}
+	})
 }
 
 func compileMIMEPredicate(value string) compiledQueryFragment {
@@ -721,7 +739,21 @@ func trueCompiledFragment() compiledQueryFragment {
 // wrapCompiledFragment preserves fragment metadata while wrapping its SQL.
 func wrapCompiledFragment(fragment compiledQueryFragment, prefix, suffix string) compiledQueryFragment {
 	fragment.sql = prefix + fragment.sql + suffix
+	fragment.leaves = appendShiftedLeaves(nil, fragment.leaves, len(prefix), 0)
 	return fragment
+}
+
+// appendShiftedLeaves copies leaf occurrences to their offsets in a composed
+// fragment; source descriptors are never modified.
+func appendShiftedLeaves(dst, leaves []compiledLeaf, sqlOffset, argOffset int) []compiledLeaf {
+	for _, leaf := range leaves {
+		leaf.sqlStart += sqlOffset
+		leaf.sqlEnd += sqlOffset
+		leaf.argStart += argOffset
+		leaf.argEnd += argOffset
+		dst = append(dst, leaf)
+	}
+	return dst
 }
 
 func joinCompiledFragments(parts []compiledQueryFragment, operator string) compiledQueryFragment {
@@ -733,6 +765,7 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 		if result.sql != "" {
 			result.sql += operator
 		}
+		result.leaves = appendShiftedLeaves(result.leaves, part.leaves, len(result.sql)+1, len(result.args))
 		result.sql += `(` + part.sql + `)`
 		result.args = append(result.args, part.args...)
 		result.relations |= part.relations
