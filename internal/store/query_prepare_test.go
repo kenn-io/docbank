@@ -348,9 +348,9 @@ func TestPreparedMembershipExactPairsAndEmptyNot(t *testing.T) {
 	ctx := t.Context()
 	first, err := s.CreateFile(ctx, s.RootID(), "pair-first.txt", fakeHash("ce01"), 10, "text/plain")
 	require.NoError(t, err)
-	second, err := s.CreateFile(ctx, s.RootID(), "pair-second.txt", fakeHash("ce02"), 10, "text/plain")
+	second, err := s.CreateFile(ctx, s.RootID(), "pair-second.txt", first.BlobHash, 10, "text/plain")
 	require.NoError(t, err)
-	compiled := compileFixtureQuery(t, s, `path:/pair-first.txt OR path:/pair-second.txt`, query.Filters{})
+	compiled := compileFixtureQuery(t, s, `has_duplicates:true`, query.Filters{})
 	predicate, err := prepareCompiledPredicate(ctx, s.db, compiled, "", nil, CoverageSelection{})
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -358,18 +358,18 @@ func TestPreparedMembershipExactPairsAndEmptyNot(t *testing.T) {
 		version string
 		want    bool
 	}{{first.ID, first.CurrentVersionID, true}, {second.ID, second.CurrentVersionID, true}, {first.ID, second.CurrentVersionID, false}, {second.ID, first.CurrentVersionID, false}} {
-		args := append(append([]any(nil), predicate.args...), tc.node, tc.version)
+		args := append(append([]any(nil), predicate.args...), tc.node, tc.version, tc.node, tc.version)
 		var got bool
-		err := s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id) n, (SELECT ? AS version_id) cv`, args...).Scan(&got)
+		err := s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id, 'file' AS kind, NULL AS trashed_at, ? AS current_version_id) n, (SELECT ? AS node_id, ? AS version_id) cv`, args...).Scan(&got)
 		require.NoError(t, err)
 		require.Equal(t, tc.want, got)
 	}
 	empty := compileFixtureQuery(t, s, `NOT path:/absent`, query.Filters{})
 	predicate, err = prepareCompiledPredicate(ctx, s.db, empty, "", nil, CoverageSelection{})
 	require.NoError(t, err)
-	args := append(append([]any(nil), predicate.args...), first.ID, first.CurrentVersionID)
+	args := append(append([]any(nil), predicate.args...), first.ID, first.CurrentVersionID, first.ID, first.CurrentVersionID)
 	var got bool
-	err = s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id) n, (SELECT ? AS version_id) cv`, args...).Scan(&got)
+	err = s.db.QueryRowContext(ctx, `SELECT `+predicate.sql+` FROM (SELECT ? AS id, 'file' AS kind, NULL AS trashed_at, ? AS current_version_id) n, (SELECT ? AS node_id, ? AS version_id) cv`, args...).Scan(&got)
 	require.NoError(t, err)
 	require.True(t, got)
 }
