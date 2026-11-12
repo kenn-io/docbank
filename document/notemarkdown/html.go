@@ -103,7 +103,7 @@ func (s *linkScanner) inlineHTML(start, end int) (int, error) {
 		}
 		break
 	}
-	if start+2 < end && s.src[start+1] == '!' && asciiLetter(s.src[start+2]) {
+	if start+2 < end && s.src[start+1] == '!' && s.src[start+2] >= 'A' && s.src[start+2] <= 'Z' {
 		for i := start + 3; i < end; i++ {
 			if err := s.b.step(s.ctx, 1); err != nil {
 				return 0, err

@@ -211,6 +211,32 @@ func TestLinksHostileWorkAndCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestInlineHTMLDeclarationInitial(t *testing.T) {
+	for _, tc := range []struct {
+		name, declaration string
+		hidesLink         bool
+	}{
+		{"lowercase", "lower", false},
+		{"uppercase", "UPPER", true},
+		{"uppercase initial", "Lower", true},
+		{"lowercase initial", "lOWER", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "text <!" + tc.declaration + " [x](note.md)> [tail](tail.md)"
+			n, err := Parse(t.Context(), []byte(src), Limits{})
+			require.NoError(t, err)
+			targets := []string{"tail.md"}
+			if !tc.hidesLink {
+				targets = []string{"note.md", "tail.md"}
+			}
+			require.Equal(t, targets, linkTargets(n.Links))
+			for _, link := range n.Links {
+				require.Equal(t, link.Raw, src[link.Start:link.End])
+			}
+		})
+	}
+}
+
 func TestLinksRawHTMLSyntax(t *testing.T) {
 	src := []byte("before <span title=\"> [bad](attribute.md)\">[good](good.md)</span>\n\n<script>\n[bad](script.md)\n</SCRIPT>\n[after](after.md)\n\n<span>[inline](inline.md)</span>\n")
 	n, err := Parse(t.Context(), src, Limits{})
