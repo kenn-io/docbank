@@ -29,7 +29,7 @@ func TestSourceMetadataQualificationsExecuteRegisteredFixtures(t *testing.T) {
 				return []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR")
 			}, assert: func(t *testing.T, metadata document.SourceMetadataV1) {
 				t.Helper()
-				_, found := sourceMetadataTimestamp(metadata, "calendar.start")
+				_, found := sourceMetadataTimestamp(metadata, "calendar.event.e000001.start")
 				assert.True(t, found)
 			}},
 		{catalogID: "docx", evidence: "TestExtractSourceMetadataFromSyntheticDOCX",

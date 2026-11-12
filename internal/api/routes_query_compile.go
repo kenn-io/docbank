@@ -78,7 +78,7 @@ func registerQueryCompileRoutes(api huma.API, d Deps) {
 			}
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not compile query")
 		}
-		canonical, fingerprint, err := query.CanonicalWithFingerprint(compiled.Query)
+		canonical, fingerprint, err := query.CanonicalWithFingerprint(value)
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "Could not encode query")
 		}

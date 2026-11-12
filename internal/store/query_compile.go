@@ -216,11 +216,11 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		}
 		return trueCompiledFragment(), nil
 	case query.ExpressionField:
-		if field == "" && slices.Contains([]string{"date", "date_kind", "date_precision"}, syntax.Field) {
-			return c.compileDateScope(expression, nil)
-		}
 		if c.pdfOnly && query.PDFFieldKind(syntax.Field) == "" {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "PDF filters require PDF fact fields")
+		}
+		if field == "" && slices.Contains([]string{"date", "date_kind", "date_precision"}, syntax.Field) {
+			return c.compileDateScope(expression, nil)
 		}
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")

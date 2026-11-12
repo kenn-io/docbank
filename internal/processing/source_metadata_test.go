@@ -43,7 +43,7 @@ func TestExtractSourceMetadataFromSyntheticFormats(t *testing.T) {
 		{name: "PDF locked", payload: locked, facts: map[string]document.SourceMetadataValueV1{"pdf.info.encrypted": {Kind: document.SourceMetadataBoolean, Boolean: new(true)}}, keys: []string{"pdf.info.encrypted"}},
 		{name: "OOXML core, app, and custom", payload: ooxml, keys: []string{"created", "office.core.word_count", "office.custom.matter_number", "page_count", "title"}},
 		{name: "RFC 5322 email", payload: []byte("From: Ada <ada@example.test>\r\nTo: Grace <grace@example.test>\r\nBcc: Private <private@example.test>\r\nSubject: Synthetic mail\r\nDate: Tue, 2 Jan 2024 03:04:05 -0700\r\n\r\nbody"), keys: []string{"email.bcc", "email.from", "email.sent", "email.subject", "email.to"}, sensitive: "email.bcc"},
-		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.end", "calendar.start", "title"}},
+		{name: "iCalendar", payload: []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Synthetic meeting\r\nDTSTART:20240102T030405\r\nDTEND:20240102T040405\r\nEND:VEVENT\r\nEND:VCALENDAR"), keys: []string{"calendar.event.e000001.end", "calendar.event.e000001.start", "title"}},
 		{name: "JPEG EXIF", payload: syntheticExifJPEG(), keys: []string{"creators", "description", "media.container.animated", "media.container.format", "media.container.frame_count", "media.container.height_px", "media.container.kind", "media.container.width_px"}},
 		{name: "ID3 media tags", payload: syntheticID3Tag(4,
 			syntheticID3Frame{id: "TIT2", encoding: 3, text: []byte("Synthetic song")},
@@ -679,10 +679,10 @@ func TestExtractCalendarRetainsUnsupportedNamedTimezone(t *testing.T) {
 	t.Parallel()
 	metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR"))
 	require.NoError(t, err)
-	raw, found := sourceMetadataString(metadata, "calendar.start.raw")
+	raw, found := sourceMetadataString(metadata, "calendar.event.e000001.start.raw")
 	require.True(t, found)
 	assert.Equal(t, "20240102T030405", raw)
-	_, found = sourceMetadataTimestamp(metadata, "calendar.start")
+	_, found = sourceMetadataTimestamp(metadata, "calendar.event.e000001.start")
 	assert.False(t, found)
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unsupported_timezone")
 }

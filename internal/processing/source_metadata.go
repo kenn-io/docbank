@@ -55,7 +55,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v22"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v23"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -1562,7 +1562,18 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 
 func (c *metadataCollector) extractCalendar(data []byte) {
 	lines := unfoldCalendar(string(data))
+	component := 0
+	inEvent := false
 	for _, line := range lines {
+		if strings.EqualFold(line, "BEGIN:VEVENT") {
+			component++
+			inEvent = true
+			continue
+		}
+		if strings.EqualFold(line, "END:VEVENT") {
+			inEvent = false
+			continue
+		}
 		name, value, found := strings.Cut(line, ":")
 		if !found {
 			continue
@@ -1583,18 +1594,26 @@ func (c *metadataCollector) extractCalendar(data []byte) {
 		case "DESCRIPTION":
 			c.string("description", "calendar", name, value, false)
 		case "DTSTART":
+			if !inEvent {
+				continue
+			}
+			key := fmt.Sprintf("calendar.event.e%06d.start", component)
 			if hasNamedTimezone {
-				c.string("calendar.start.raw", "calendar", name, value, false)
+				c.string(key+".raw", "calendar", name, value, false)
 				c.warn("unsupported_timezone", "calendar", name, "named calendar timezone prevented timestamp normalization")
 			} else {
-				c.timestamp("calendar.start", "calendar", name, value)
+				c.timestamp(key, "calendar", name, value)
 			}
 		case "DTEND":
+			if !inEvent {
+				continue
+			}
+			key := fmt.Sprintf("calendar.event.e%06d.end", component)
 			if hasNamedTimezone {
-				c.string("calendar.end.raw", "calendar", name, value, false)
+				c.string(key+".raw", "calendar", name, value, false)
 				c.warn("unsupported_timezone", "calendar", name, "named calendar timezone prevented timestamp normalization")
 			} else {
-				c.timestamp("calendar.end", "calendar", name, value)
+				c.timestamp(key, "calendar", name, value)
 			}
 		case "ORGANIZER":
 			c.strings("creators", "calendar", name, []string{value})

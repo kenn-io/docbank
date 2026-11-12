@@ -69,13 +69,9 @@ export async function previewQuery(
   } catch {
     malformed("query does not satisfy QueryV1");
   }
-  const comparable = {
-    ...query,
-    ...(query.timezone === undefined && decoded.timezone !== undefined ? { timezone: decoded.timezone } : {}),
-    timezone_defaulted: decoded.timezone_defaulted,
-  };
-  if (canonicalQuery(decoded) !== canonicalQuery(comparable)) malformed("query does not match the request");
-  if (receipt.query_fingerprint !== (await queryFingerprint(decoded))) malformed("fingerprint does not match the request");
+  const expected = await queryFingerprint(query);
+  if (canonicalQuery(decoded) !== canonical) malformed("query does not match the request");
+  if (receipt.query_fingerprint !== expected) malformed("fingerprint does not match the request");
   if (!Array.isArray(receipt.dependencies) || receipt.dependencies.length > 256) {
     malformed("dependencies must be an array of at most 256 identities");
   }

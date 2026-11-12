@@ -275,7 +275,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 		if options.SavedQuery == nil && request.Query.Timezone != nil {
 			compiled.TimezoneDefaulted = false
 		} else if compiled.Timezone == "" {
-			compiled.TimezoneDefaulted = value.Timezone == nil
+			compiled.TimezoneDefaulted = false
 		}
 		resultQuery := compiled.Query
 		resultQuery.Mode = value.Mode
@@ -439,13 +439,13 @@ func materializeSnapshotRows(
 		primaryPredicate = "k.primary_full=1"
 	}
 	if !options.Photos && compiled.Query.Sort.Field == "document_date" {
-		photoColumns = `'',COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + primaryPredicate + ` LIMIT 1),''),NULL`
+		photoColumns = `'',COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND ` + primaryPredicate + ` LIMIT 1),''),NULL`
 	}
 	photoOrder := ""
 	if options.Photos {
 		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
 		if compiled.Query.Sort.Field == "document_date" {
-			dateSortColumn = `COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + primaryPredicate + ` LIMIT 1),'')`
+			dateSortColumn = `COALESCE((SELECT k.axis_key FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND ` + primaryPredicate + ` LIMIT 1),'')`
 		}
 		photoOrder = ` ORDER BY m.photo_position`
 	}

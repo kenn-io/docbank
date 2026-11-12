@@ -68,7 +68,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 			}
 			return nil
 		}
-		if node.Syntax.Kind == query.ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, node.Syntax.Field) {
+		if !c.pdfOnly && node.Syntax.Kind == query.ExpressionField && slices.Contains([]string{"date", "date_kind", "date_precision"}, node.Syntax.Field) {
 			if len(node.Children) != 1 || (node.Children[0].Syntax.Kind != query.ExpressionTerm && node.Children[0].Syntax.Kind != query.ExpressionPhrase) || node.Children[0].Syntax.Prefix {
 				return compileExpressionError(node.Syntax.Start, node.Syntax.End, "date operand must be a single value")
 			}
@@ -106,7 +106,7 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 	if err != nil {
 		return compiledQueryFragment{}, &query.DateError{Code: "invalid_timezone", Err: err}
 	}
-	predicates := []string{"k.generation_id=h.generation_id", "h.content_version_id=cv.version_id"}
+	predicates := []string{"h.content_version_id=cv.version_id", currentDocumentDateHead}
 	if !c.fullDisclosure {
 		predicates = append(predicates, "k.sensitive=0")
 	}

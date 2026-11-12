@@ -150,8 +150,8 @@ func TestAdaptersDeriveRetainedRawDatesFromExtractor(t *testing.T) {
 	}{
 		{"email named", "message/rfc822", "From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04 XYZ\r\n\r\nbody", "email.sent.raw", "Tue, 2 Jan 2024 03:04 XYZ", "2024-01-02T03:04", "XYZ", "sent", "minute", "named"},
 		{"email omitted", "message/rfc822", "From: Ada <ada@example.test>\r\nDate: Tue, 2 Jan 2024 03:04\r\n\r\nbody", "email.sent", "Tue, 2 Jan 2024 03:04", "2024-01-02T03:04", "", "sent", "minute", "omitted"},
-		{"calendar start", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.start.raw", "20240102T030405", "2024-01-02T03:04:05", "America/New_York", "started", "second", "iana"},
-		{"calendar end date", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTEND;VALUE=DATE;TZID=Example/Zone:20240103\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.end.raw", "20240103", "2024-01-03", "Example/Zone", "ended", "date", "named"},
+		{"calendar start", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=America/New_York:20240102T030405\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.event.e000001.start.raw", "20240102T030405", "2024-01-02T03:04:05", "America/New_York", "started", "second", "iana"},
+		{"calendar end date", "text/calendar", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTEND;VALUE=DATE;TZID=Example/Zone:20240103\r\nEND:VEVENT\r\nEND:VCALENDAR", "calendar.event.e000001.end.raw", "20240103", "2024-01-03", "Example/Zone", "ended", "date", "named"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(test.payload))

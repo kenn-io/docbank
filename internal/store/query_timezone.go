@@ -58,6 +58,17 @@ func resolveDocumentDateZones(resolved *query.ResolvedQuery, defaultZone string)
 	return zone, defaulted
 }
 
+// currentDocumentDateHead restricts every date read to the successful attempt
+// that published this head. Failed attempts deliberately retain older heads.
+const currentDocumentDateHead = `EXISTS (SELECT 1 FROM document_event_attempts a
+ JOIN document_event_generations g ON g.generation_id=h.generation_id
+ JOIN document_event_state s ON s.singleton=1
+ LEFT JOIN document_event_dirty d ON d.content_version_id=h.content_version_id
+ WHERE a.content_version_id=h.content_version_id AND a.state='indexed'
+ AND a.input_epoch=s.input_epoch AND a.input_epoch=h.input_epoch
+ AND a.input_revision=COALESCE(d.revision,0) AND a.inputs_sha256=g.inputs_sha256
+ AND g.contract_version=s.contract_version AND g.deriver_fingerprint=s.deriver_fingerprint)`
+
 // ErrDocumentDatesPending prevents a rebuild from appearing to be a complete empty result.
 var ErrDocumentDatesPending = errors.New("document date indexing is pending")
 

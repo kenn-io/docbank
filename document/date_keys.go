@@ -45,8 +45,12 @@ func calendarSibling(source string) (string, string) {
 func DateKeysFor(events []DocumentEventV1) ([]DateKey, error) {
 	keys := make([]DateKey, len(events))
 	ends := make(map[string]string)
+	starts := make(map[string]string)
 	for _, event := range events {
 		component, side := calendarSibling(event.SourceKey)
+		if event.DateKind == "started" && event.Precision == "date" && side == "start" {
+			starts[component] = event.DateValue
+		}
 		if event.DateKind == "ended" && event.Precision == "date" && side == "end" {
 			ends[component] = event.DateValue
 		}
@@ -72,6 +76,18 @@ func DateKeysFor(events []DocumentEventV1) ([]DateKey, error) {
 					return nil, err
 				}
 				key.CivilEndDate = parsed.AddDate(0, 0, -1).Format("2006-01-02")
+			}
+		}
+		if event.DateKind == "ended" && event.Precision == "date" && side == "end" {
+			if start, ok := starts[component]; ok && event.DateValue > start {
+				parsed, err := time.Parse("2006-01-02", event.DateValue)
+				if err != nil {
+					return nil, err
+				}
+				key.CivilDate = parsed.AddDate(0, 0, -1).Format("2006-01-02")
+				key.CivilEndDate = key.CivilDate
+				key.CivilMonth = key.CivilDate[:7]
+				key.CivilYear = key.CivilDate[:4]
 			}
 		}
 		keys[i] = key
