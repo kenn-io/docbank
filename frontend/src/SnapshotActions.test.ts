@@ -480,35 +480,49 @@ it("identifies a selected document when its recovery read fails", async () => {
   expect(screen.getByText("readme.txt")).toBeTruthy();
 });
 
-it.each(["Tag was deleted", "Document was deleted"])(
-  "allows a new tag after a rejected change: %s",
-  async (detail) => {
-    const other = { ...catalog[0], id: "33333333-3333-4333-8333-333333333333", name: "Other" };
-    const writes: BatchTagRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      const request = JSON.parse(String(init?.body)) as BatchTagRequest;
-      writes.push(request);
-      if (writes.length === 1 || detail === "Document was deleted")
-        return Response.json({ detail }, { status: 404 });
-      return Response.json(await receiptFor(request));
-    });
-    render(
-      SnapshotActions,
-      props({ scope: "selection", count: 2, targets, catalog: [...catalog, other] }),
-    );
-    await chooseReview();
-    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText(detail);
-    await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
-      target: { value: "Other" },
-    });
-    await fireEvent.click(screen.getByRole("option", { name: "Other (12)" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    if (detail === "Document was deleted") await screen.findByText(detail);
-    else await screen.findByText(/Added “Other”/);
-    expect(writes[1].tag_id).toBe(other.id);
-  },
-);
+it("allows a new tag after the chosen tag was deleted", async () => {
+  const other = { ...catalog[0], id: "33333333-3333-4333-8333-333333333333", name: "Other" };
+  const writes: BatchTagRequest[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    if (init?.method !== "POST")
+      return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
+    const request = JSON.parse(String(init?.body)) as BatchTagRequest;
+    writes.push(request);
+    if (writes.length === 1)
+      return Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 });
+    return Response.json(await receiptFor(request));
+  });
+  render(
+    SnapshotActions,
+    props({ scope: "selection", count: 2, targets, catalog: [...catalog, other] }),
+  );
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Tag was deleted");
+  await fireEvent.input(screen.getByRole("combobox", { name: "Tag" }), {
+    target: { value: "Other" },
+  });
+  await fireEvent.click(screen.getByRole("option", { name: "Other (12)" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText(/Added “Other”/);
+  expect(writes[1].tag_id).toBe(other.id);
+});
+
+it("requires reselection when a selected document was deleted before applying", async () => {
+  const writes: BatchTagRequest[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    if (init?.method !== "POST") return Response.json(catalog[0]);
+    writes.push(JSON.parse(String(init.body)) as BatchTagRequest);
+    return Response.json({ code: "not_found", detail: "Document was deleted" }, { status: 404 });
+  });
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText(/select them again/i);
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+  expect((screen.getByRole("combobox", { name: "Tag" }) as HTMLInputElement).disabled).toBe(true);
+  expect(writes).toHaveLength(1);
+});
 
 it("refreshes the view when an uncertain change is closed without a check", async () => {
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Lost response"));
