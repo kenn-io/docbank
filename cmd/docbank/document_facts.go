@@ -124,6 +124,10 @@ func documentFactLabel(value string) string {
 		return "From document"
 	case "docbank_observed":
 		return "Recorded by Docbank"
+	case "package_column":
+		return "From package"
+	case "transfer_record":
+		return "From transfer"
 	case "identifier_match":
 		return "Matched by identity"
 	case "external_uid":

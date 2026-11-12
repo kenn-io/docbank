@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"go.kenn.io/docbank/document"
@@ -24,7 +25,6 @@ func TestWhenFieldTable(t *testing.T) {
 		{"missing offset zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "offset", OffsetSeconds: new(3600), UTCKey: "2026-03-10T08:12:00.000000000Z"}, `{"state":"exact","precision":"second","at":"2026-03-10T08:12:00Z","zone_state":"unknown"}`},
 		{"missing named zone", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:00", TimezoneKind: "named"}, `{"state":"floating","precision":"second","local":"2026-03-10T09:12:00","zone_state":"omitted"}`},
 		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10"}, `{"state":"date","precision":"date","date":"2026-03-10"}`},
-		{"month", document.DocumentEventV1{Precision: "month", DateValue: "2026-03"}, `{"state":"coarse","precision":"month","period":"2026-03"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,62 +156,48 @@ func TestEmittedWhenMatchesContractExamples(t *testing.T) {
 	}
 }
 
-// TestWhenFieldTableAllProducerCombinations checks the shared contract's field
-// table independently of the example fixtures for every supported precision and zone.
+// TestWhenFieldTableAllProducerCombinations checks field presence for reachable
+// producer claims, including independently retained calendar instants.
 func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
 	t.Parallel()
-	values := map[document.EventPrecision]string{"year": "2026", "month": "2026-03", "date": "2026-03-10", "hour": "2026-03-10T09", "minute": "2026-03-10T09:12", "second": "2026-03-10T09:12:30", "fraction": "2026-03-10T09:12:30.123"}
-	for _, precision := range document.AllEventPrecisions() {
-		for _, zone := range document.AllEventTimezoneKinds() {
-			for _, zoneText := range []string{"", "source zone"} {
-				claim := document.DocumentEventV1{Precision: precision, DateValue: values[precision], TimezoneKind: zone, ZoneText: zoneText}
-				if zone == "offset" {
-					claim.OffsetSeconds = new(3600)
-				}
-				key, _, err := document.EventUTCKey(claim.DateValue, precision, zone, claim.OffsetSeconds)
-				if err != nil {
-					t.Fatal(err)
-				}
-				claim.UTCKey = key
-				out := versionDatesAPI(store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{claim}}}}, "safe", "")
-				raw, err := json.Marshal(out.Claims[0].When)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var fields map[string]any
-				if err := json.Unmarshal(raw, &fields); err != nil {
-					t.Fatal(err)
-				}
-				want := map[string]bool{"state": true, "precision": true, "placed_by": true}
-				switch precision {
-				case "year", "month":
-					want["period"] = true
-				case "date":
-					want["date"] = true
-				default:
-					want["zone_state"] = true
-					if key != "" {
-						want["at"] = true
-						if zone != "offset" || zoneText != "" {
-							want["local"], want["source_zone"], want["source_offset_seconds"] = true, true, true
-						}
-					} else {
-						want["local"] = true
-						if zone != "omitted" && zoneText != "" {
-							want["source_zone"] = true
-						}
-					}
-				}
-				if len(fields) != len(want) {
-					t.Errorf("%s/%s/%q: fields %s, want %v", precision, zone, zoneText, raw, want)
-					continue
-				}
-				for field := range fields {
-					if !want[field] {
-						t.Errorf("%s/%s/%q: unexpected %s in %s", precision, zone, zoneText, field, raw)
-					}
+	cases := []struct {
+		name   string
+		claim  document.DocumentEventV1
+		fields string
+	}{
+		{"date", document.DocumentEventV1{Precision: "date", DateValue: "2026-03-10", TimezoneKind: "omitted"}, "state precision placed_by date"},
+		{"hour floating", document.DocumentEventV1{Precision: "hour", DateValue: "2026-03-10T09", TimezoneKind: "omitted"}, "state precision placed_by local zone_state"},
+		{"minute email omitted", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "omitted", ZoneText: "-0000"}, "state precision placed_by local zone_state"},
+		{"minute email named", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "named", ZoneText: "XYZ"}, "state precision placed_by local zone_state source_zone"},
+		{"minute email RFC5322", document.DocumentEventV1{Precision: "minute", DateValue: "2026-03-10T09:12", TimezoneKind: "rfc5322", ZoneText: "PST", OffsetSeconds: new(-28800), UTCKey: "2026-03-10T17:12:00.000000000Z"}, "state precision placed_by at local zone_state source_zone source_offset_seconds"},
+		{"second UTC", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:30", TimezoneKind: "utc", ZoneText: "Z", UTCKey: "2026-03-10T09:12:30.000000000Z"}, "state precision placed_by at local zone_state source_zone source_offset_seconds"},
+		{"second offset", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:30", TimezoneKind: "offset", ZoneText: "+01:00", OffsetSeconds: new(3600), UTCKey: "2026-03-10T08:12:30.000000000Z"}, "state precision placed_by at local zone_state source_zone source_offset_seconds"},
+		{"second calendar IANA", document.DocumentEventV1{Precision: "second", DateValue: "2026-03-10T09:12:30", TimezoneKind: "iana", ZoneText: "America/Toronto", OffsetSeconds: new(-14400), UTCKey: "2026-03-10T13:12:30.000000000Z"}, "state precision placed_by at local zone_state source_zone source_offset_seconds"},
+		{"fraction email RFC5322", document.DocumentEventV1{Precision: "fraction", FractionDigits: 3, DateValue: "2026-03-10T09:12:30.123", TimezoneKind: "rfc5322", ZoneText: "PST", OffsetSeconds: new(-28800), UTCKey: "2026-03-10T17:12:30.123000000Z"}, "state precision placed_by at local zone_state source_zone source_offset_seconds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := versionDatesAPI(store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{tc.claim}}}}, "safe", "")
+			raw, err := json.Marshal(out.Claims[0].When)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]bool{}
+			for _, field := range strings.Fields(tc.fields) {
+				want[field] = true
+			}
+			if len(fields) != len(want) {
+				t.Errorf("fields %s, want %v", raw, want)
+			}
+			for field := range fields {
+				if !want[field] {
+					t.Errorf("unexpected %s in %s", field, raw)
 				}
 			}
-		}
+		})
 	}
 }

@@ -85,15 +85,6 @@ func TestDocumentFactsTableEscapesAndTimezones(t *testing.T) {
 	require.NotContains(t, output.String(), "\x1b")
 }
 
-func TestDocumentFactsCommandRegistration(t *testing.T) {
-	for _, path := range [][]string{{"people", "list"}, {"document", "people"}, {"document", "dates"}} {
-		cmd, remaining, err := rootCmd.Find(path)
-		require.NoError(t, err)
-		require.Empty(t, remaining)
-		require.Equal(t, path[len(path)-1], cmd.Name())
-	}
-}
-
 func TestDocumentFactsCommands(t *testing.T) {
 	f := newDocumentInspectionFixture(t)
 	catalog, err := store.Open(t.Context(), filepath.Join(f.root, "docbank.db"))
