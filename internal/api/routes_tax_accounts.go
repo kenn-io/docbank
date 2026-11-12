@@ -129,6 +129,10 @@ func registerTaxAccountRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return err
 			}
+			// Omitted fields must come from the revision the caller named.
+			if a.Revision != revision {
+				return store.ErrStaleRevision
+			}
 			input := mergeTaxAccountPatch(a, in.Body)
 			a, err = d.Store.UpdateTaxAccount(ctx, in.AccountID, revision, input)
 			if err != nil {
