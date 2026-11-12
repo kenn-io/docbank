@@ -12,14 +12,13 @@ export function formatTaxAmount(
 ): { text: string; direction: string; hint?: string } {
   const label = taxStateLabel(direction);
   if (minor === null) return { text: "Unknown", direction: label };
-  if (Number.isSafeInteger(minor) && minor >= 0)
-    return { text: `${minor} ${currency}`, direction: label };
-  // response.json() has already rounded these, so no digits are honest.
-  if (Number.isInteger(minor) && minor > Number.MAX_SAFE_INTEGER)
+  // The server sends nonnegative int64 minor units. response.json() has
+  // already rounded those above 2^53 - 1, so no digits are honest for them.
+  if (minor > Number.MAX_SAFE_INTEGER)
     return {
       text: "Too large to show",
       direction: label,
       hint: "Use docbank tax record show to see the exact amount",
     };
-  return { text: "Invalid amount", direction: label };
+  return { text: `${minor} ${currency}`, direction: label };
 }

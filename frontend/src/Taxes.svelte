@@ -19,7 +19,7 @@
   let yearText = $state("");
   let yearError = $state("");
   const filtered = $derived(!!view && (view.filters.filer !== "" || view.filters.year !== null));
-  const filerName = (id: string) => view?.parties.get(id)?.display_name ?? "Unknown filer";
+  const filerName = (id: string) => view?.filerName(id) ?? "";
 
   onMount(() => {
     const taxes = new TaxesView(session, onauthfailure);
@@ -113,10 +113,13 @@
               class="nav-item"
               aria-current={view?.filters.filer === party.party_id ? "page" : undefined}
               onclick={() => selectFiler(party.party_id)}
-              >{party.display_name}{party.retired_at ? " · retired" : ""}</button
+              >{party.name}{party.retired ? " · retired" : ""}</button
             >
           {/each}
-          {#if view?.partyError}<p class="tool-error">{view.partyError}</p>{/if}
+          {#if view?.partyError}
+            <p class="tool-error" role="alert">{view.partyError}</p>
+            <Button size="sm" onclick={() => void view?.loadParties()}>Try again</Button>
+          {/if}
         </div>
         <div class="tool-field">
           <label class="tool-label" for="tax-year">Tax year</label>
@@ -126,12 +129,15 @@
             inputmode="numeric"
             bind:value={yearText}
             invalid={!!yearError}
+            ariaDescribedby={yearError ? "tax-year-error" : undefined}
             onblur={applyYear}
             onkeydown={(event) => {
               if (event.key === "Enter") applyYear();
             }}
           />
-          {#if yearError}<p class="tool-error">{yearError}</p>{/if}
+          {#if yearError}
+            <p id="tax-year-error" class="tool-error" role="alert">{yearError}</p>
+          {/if}
           {#if view && view.filters.year !== null}
             <Button size="sm" onclick={() => setYear(null)}>All years</Button>
           {/if}

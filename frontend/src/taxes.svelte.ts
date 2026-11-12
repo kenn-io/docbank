@@ -44,15 +44,21 @@ export class TaxesView {
   rows = $state.raw<TaxRecord[]>([]);
   groups = $derived(groupByFiler(this.rows));
   parties = $state.raw<Map<string, Party>>(new Map());
-  filers = $derived(
-    [...this.parties.values()]
-      .filter((party) => party.own)
-      .sort(
-        (a, b) =>
-          Number(a.retired_at !== null) - Number(b.retired_at !== null) ||
-          a.display_name.localeCompare(b.display_name),
-      ),
-  );
+  // The rail lists current own parties plus every filer that the loaded rows
+  // or the selection reference, so a filer that is no longer own (or whose
+  // name failed to load) stays selectable, including while its rows reload.
+  filers = $derived.by(() => {
+    const ids = new Set([...this.parties.values()].filter((p) => p.own).map((p) => p.party_id));
+    for (const row of this.rows) ids.add(row.filer_party_id);
+    if (this.filters.filer) ids.add(this.filters.filer);
+    return [...ids]
+      .map((id) => ({
+        party_id: id,
+        name: this.filerName(id),
+        retired: !!this.parties.get(id)?.retired_at,
+      }))
+      .sort((a, b) => Number(a.retired) - Number(b.retired) || a.name.localeCompare(b.name));
+  });
   loading = $state(false);
   more = $state(false);
   error = $state("");
@@ -85,8 +91,11 @@ export class TaxesView {
     return this.page(this.nextOffset);
   }
   retry(): Promise<void> {
-    if (this.partyError) void this.loadParties();
     return this.page(this.failedOffset);
+  }
+  // A filer whose party could not be read keeps a distinct label from its ID.
+  filerName(id: string): string {
+    return this.parties.get(id)?.display_name ?? `Filer ${id.slice(0, 8)}`;
   }
   dispose(): void {
     this.disposed = true;
@@ -132,7 +141,7 @@ export class TaxesView {
     }
   }
 
-  private async loadParties(): Promise<void> {
+  async loadParties(): Promise<void> {
     if (this.disposed) return;
     this.partyController?.abort();
     const request = (this.partyController = new AbortController());

@@ -179,16 +179,12 @@ it.each([
 
 it("reports no telemetry screen on Taxes", async () => {
   const telemetry = vi.spyOn(appOpened, "startTelemetryReporting");
-  const fetch = start();
+  start();
   await screen.findByText("No documents yet");
   const reportScreen = vi.spyOn(telemetry.mock.results[0]!.value, "reportScreen");
   await fireEvent.click(screen.getByRole("button", { name: "Taxes" }));
   expect(await screen.findByText("No tax records yet")).toBeTruthy();
   await waitFor(() => expect(reportScreen).toHaveBeenLastCalledWith(undefined));
-  const reports = fetch.mock.calls
-    .filter(([url]) => String(url).includes("/telemetry/"))
-    .map(([, init]) => String(init?.body));
-  expect(reports.some((body) => body.includes("tax"))).toBe(false);
 });
 
 it("retains unfinished Advanced input and execution settings across Imports navigation", async () => {

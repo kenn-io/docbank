@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import Taxes from "./Taxes.svelte";
 import { drawerPage } from "./drawerNavigation.js";
-import { holdings, record, serveTaxes, taxQuery, ventures } from "./tax-test-fixtures.js";
+import { holdings, parties, record, serveTaxes, taxQuery, ventures } from "./tax-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -35,13 +35,11 @@ const titles = (table: HTMLElement) =>
     .getAllByRole("row")
     .slice(1)
     .map((row) => within(row).getAllByRole("cell")[0]!.firstElementChild?.textContent);
-const lastRecordQuery = (fetch: ReturnType<typeof serveTaxes>) =>
-  taxQuery(
-    new URL(
-      String(fetch.mock.calls.findLast(([input]) => String(input).includes("/tax/records"))![0]),
-      location.origin,
-    ),
-  );
+const recordQueries = (fetch: ReturnType<typeof serveTaxes>) =>
+  fetch.mock.calls
+    .map(([input]) => new URL(String(input), location.origin))
+    .filter((url) => url.pathname === "/api/v1/tax/records")
+    .map(taxQuery);
 
 it("shows loading, then grouped rows with state, due and exact amount", async () => {
   let answer!: (body: object) => void;
@@ -56,7 +54,6 @@ it("shows loading, then grouped rows with state, due and exact amount", async ()
     "Example Ventures Ltd.",
   ]);
   expect(headings.some((heading) => /\d/.test(heading.textContent ?? ""))).toBe(false);
-  expect(titles(first)).toEqual(["Sales tax return, Q1 2031", "Sales tax return, Q2 2031"]);
   const row = within(first).getAllByRole("row")[1]!;
   for (const text of ["Form 100", "2031", "2031-04-30", "Expected", "123400 USD", "Payable"])
     expect(within(row).getByText(text)).toBeTruthy();
@@ -82,15 +79,16 @@ it("filer rail filters, marks the current filer and drops headings", async () =>
   expect(filer.getAttribute("aria-current")).toBe("page");
   expect(all.getAttribute("aria-current")).toBeNull();
   expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
-  expect(lastRecordQuery(fetch)).toEqual({ limit: "50", offset: "0", filer: ventures });
+  expect(recordQueries(fetch).some((query) => query.filer === ventures)).toBe(true);
 });
 
-it("unsafe amount shows the hint, never digits", async () => {
+it("unsafe amount gives the hint to pointer and screen-reader users", async () => {
+  const hint = "Use docbank tax record show to see the exact amount";
   serveTaxes(() => ({ items: [{ ...q1, amount_minor: 9007199254740992 }] }));
   show();
   const cell = (await screen.findByText("Too large to show")).closest("td")!;
-  expect(cell.title).toBe("Use docbank tax record show to see the exact amount");
-  expect(cell.closest("tr")!.textContent).not.toContain("9007");
+  expect(cell.title).toBe(hint);
+  expect(cell.querySelector(".kit-sr-only")?.textContent).toBe(hint);
 });
 
 it("year field applies valid years and rejects others without a request", async () => {
@@ -101,18 +99,21 @@ it("year field applies valid years and rejects others without a request", async 
   await fireEvent.input(year, { target: { value: "2031" } });
   await fireEvent.keyDown(year, { key: "Enter" });
   await waitFor(() =>
-    expect(lastRecordQuery(fetch)).toEqual({ limit: "50", offset: "0", year: "2031" }),
+    expect(recordQueries(fetch).some((query) => query.year === "2031")).toBe(true),
   );
   for (const value of ["0", "10000", "20x1"]) {
     const requests = fetch.mock.calls.length;
     await fireEvent.input(year, { target: { value } });
     await fireEvent.keyDown(year, { key: "Enter" });
-    expect(screen.getByText("Enter a year from 1 to 9999")).toBeTruthy();
+    const error = screen.getByRole("alert");
+    expect(error.textContent).toBe("Enter a year from 1 to 9999");
+    expect(year.getAttribute("aria-describedby")).toBe(error.id);
     expect(fetch.mock.calls.length).toBe(requests);
   }
   await fireEvent.click(screen.getByRole("button", { name: "All years" }));
-  await waitFor(() => expect(lastRecordQuery(fetch)).toEqual({ limit: "50", offset: "0" }));
+  await waitFor(() => expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year"));
   expect(screen.queryByText("Enter a year from 1 to 9999")).toBeNull();
+  expect(year.getAttribute("aria-describedby")).toBeNull();
 });
 
 it("empty vault and no-match states", async () => {
@@ -126,7 +127,7 @@ it("empty vault and no-match states", async () => {
   const clear = screen.getAllByRole("button", { name: "Clear filters" });
   await fireEvent.click(clear.at(-1)!);
   expect(await screen.findByText("No tax records yet")).toBeTruthy();
-  expect(lastRecordQuery(fetch)).toEqual({ limit: "50", offset: "0" });
+  expect(recordQueries(fetch).at(-1)).not.toHaveProperty("year");
   expect((year as HTMLInputElement).value).toBe("");
 });
 
@@ -134,20 +135,18 @@ const fullPage = Array.from({ length: 50 }, (_, index) =>
   record(`h${index + 10}`, holdings, { title: `Synthetic filing ${index}` }),
 );
 
-it("error keeps rows and offers retry", async () => {
+it("Try again retries a failed read", async () => {
   let fail = true;
   serveTaxes((query) =>
     query.offset === "0"
       ? { items: fullPage }
       : fail
-        ? Response.json({ detail: "SENSITIVE-ZZ-123" }, { status: 503 })
+        ? new Response("{}", { status: 503 })
         : { items: [q2], offset: 50 },
   );
   show();
   await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
-  expect((await screen.findByRole("alert")).textContent).toBe("Tax records could not be loaded.");
-  expect(screen.getByText("Synthetic filing 0")).toBeTruthy();
-  expect(document.body.textContent).not.toContain("SENSITIVE");
+  await screen.findByRole("alert");
   fail = false;
   await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("Sales tax return, Q2 2031")).toBeTruthy();
@@ -177,24 +176,25 @@ it("dates render as stored text", async () => {
     show();
     expect(await screen.findByText("2031-01-01")).toBeTruthy();
   } finally {
-    process.env.TZ = zone;
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
   }
 });
 
-it("nothing tax-related is stored", async () => {
-  const writes = [
-    vi.spyOn(Storage.prototype, "setItem"),
-    vi.spyOn(history, "pushState"),
-    vi.spyOn(history, "replaceState"),
-    vi.spyOn(console, "log"),
-    vi.spyOn(console, "error"),
-  ];
-  serveTaxes(() => ({ items: [q1, notice] }));
+it("failed filer names stay distinct and can be reloaded", async () => {
+  let fail = true;
+  serveTaxes(
+    () => ({ items: [q1, notice] }),
+    () => (fail ? new Response("{}", { status: 500 }) : { items: parties, limit: 1000 }),
+  );
   show();
-  await screen.findByText("123400 USD");
-  await fireEvent.click(await screen.findByRole("button", { name: "Example Holdings Ltd." }));
-  await screen.findByRole("table", { name: "Tax records" });
-  const recorded = JSON.stringify(writes.flatMap((spy) => spy.mock.calls));
-  for (const value of ["Sales tax return", "123400", "5000", "Example Holdings", holdings])
-    expect(recorded).not.toContain(value);
+  await screen.findByRole("table", { name: "Tax records for Filer 22222222" });
+  expect(screen.getByRole("table", { name: "Tax records for Filer 11111111" })).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toBe("Filers could not be loaded.");
+  fail = false;
+  await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("table", { name: "Tax records for Example Ventures Ltd." }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
 });

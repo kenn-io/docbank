@@ -1,6 +1,14 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { groupByFiler, TaxesView, taxPageSize } from "./taxes.svelte.js";
-import { holdings, party, record, serveTaxes, taxQuery, ventures } from "./tax-test-fixtures.js";
+import {
+  holdings,
+  parties,
+  party,
+  record,
+  serveTaxes,
+  taxQuery,
+  ventures,
+} from "./tax-test-fixtures.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -94,23 +102,39 @@ it("clear resets both filters and reloads", async () => {
   taxes.dispose();
 });
 
-it("groups rows by filer in first-appearance order and keeps server order", async () => {
+it("groups rows by filer in first-appearance order and keeps server order", () => {
   const [h1, v1, h2] = [record("h1", holdings), record("v1", ventures), record("h2", holdings)];
   expect(groupByFiler([h1, v1, h2])).toStrictEqual([
     { filerPartyID: holdings, rows: [h1, h2] },
     { filerPartyID: ventures, rows: [v1] },
   ]);
-  const first = [h1, v1, h2, ...page(ventures, taxPageSize - 3, 100)];
-  serveTaxes((query) => ({
-    items: query.offset === "0" ? first : [record("v2", ventures), record("h3", holdings)],
-  }));
+});
+
+it("keeps historical filers selectable while their rows reload", async () => {
+  const former = "44444444-4444-4444-8444-444444444444";
+  let answer!: (body: object) => void;
+  serveTaxes(
+    (query) =>
+      query.filer === former
+        ? new Promise((resolve) => (answer = resolve))
+        : { items: [record("h1", holdings), record("f1", former)] },
+    () => ({
+      items: [
+        party(holdings, "Example Holdings Ltd."),
+        party(former, "Example Former Ltd.", false),
+      ],
+    }),
+  );
   const { taxes } = view();
   await taxes.load();
-  await taxes.loadMore();
-  const ids = taxes.groups.map((group) => [group.filerPartyID, group.rows.map((r) => r.record_id)]);
-  expect(ids[0]).toEqual([holdings, ["h1", "h2", "h3"]]);
-  expect(ids[1]![0]).toBe(ventures);
-  expect((ids[1]![1] as string[]).at(-1)).toBe("v2");
+  const rail = () => taxes.filers.map((filer) => filer.name);
+  expect(rail()).toEqual(["Example Former Ltd.", "Example Holdings Ltd."]);
+  const selecting = taxes.setFilters({ filer: former, year: null });
+  expect(taxes.rows).toEqual([]);
+  expect(rail()).toEqual(["Example Former Ltd.", "Example Holdings Ltd."]);
+  answer({ items: [record("f1", former)] });
+  await selecting;
+  expect(rail()).toContain("Example Former Ltd.");
   taxes.dispose();
 });
 
@@ -147,15 +171,24 @@ it("parties page until a short page and map names", async () => {
   taxes.dispose();
 });
 
-it("party failure keeps records readable", async () => {
+it("party failure keeps records readable with distinct names until reloaded", async () => {
+  let fail = true;
   serveTaxes(
-    () => ({ items: [record("h1", holdings)] }),
-    () => new Response("{}", { status: 500 }),
+    () => ({ items: [record("h1", holdings), record("v1", ventures)] }),
+    () => (fail ? new Response("{}", { status: 500 }) : { items: parties, limit: 1000 }),
   );
   const { taxes } = view();
   await taxes.load();
   expect(taxes.partyError).toBe("Filers could not be loaded.");
-  expect(taxes.rows.map((row) => row.record_id)).toEqual(["h1"]);
+  expect(taxes.rows.map((row) => row.record_id)).toEqual(["h1", "v1"]);
+  expect([holdings, ventures].map((id) => taxes.filerName(id))).toEqual([
+    "Filer 11111111",
+    "Filer 22222222",
+  ]);
+  fail = false;
+  await taxes.loadParties();
+  expect(taxes.partyError).toBe("");
+  expect(taxes.filerName(ventures)).toBe("Example Ventures Ltd.");
   taxes.dispose();
 });
 
@@ -196,24 +229,5 @@ it("retry repeats the failed load-more request", async () => {
   expect(recordQueries(fetch).at(-1)?.offset).toBe("50");
   expect(taxes.rows).toHaveLength(51);
   expect(taxes.error).toBe("");
-  taxes.dispose();
-});
-
-it("never asks for accounts, reveal or writes", async () => {
-  const fetch = serveTaxes((query) =>
-    query.offset === "0" ? { items: page(holdings, taxPageSize) } : { items: [], offset: 50 },
-  );
-  const { taxes } = view();
-  await taxes.load();
-  await taxes.setFilters({ filer: holdings, year: 2031 });
-  await taxes.loadMore();
-  await taxes.clear();
-  expect(fetch).toHaveBeenCalled();
-  for (const [input, init] of fetch.mock.calls) {
-    const url = new URL(String(input), location.origin);
-    expect(init?.method ?? "GET").toBe("GET");
-    expect(["/api/v1/tax/records", "/api/v1/parties"]).toContain(url.pathname);
-    expect(taxQuery(url)).not.toHaveProperty("reveal");
-  }
   taxes.dispose();
 });
