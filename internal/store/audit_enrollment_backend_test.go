@@ -51,8 +51,12 @@ func checkAuditEnrollmentPhotosPostgres(t *testing.T) {
 	destination := newPostgresSchemaStore(t, setup, pgschema.Config{Schema: "documents", SchemaOwner: owner})
 	source, asset, raw := xmpSidecarPhoto(t, newTestStore(t))
 	// Both backends represent the same vault, including canonical record hashes.
+	person, err := source.CreatePerson(ctx, "Synthetic person", "operator")
+	require.NoError(t, err)
+	_, err = source.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "Synthetic party", PersonID: &person.PersonID})
+	require.NoError(t, err)
 	source.vaultID = destination.vaultID
-	_, err := source.writeDB.ExecContext(ctx, `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)
+	_, err = source.writeDB.ExecContext(ctx, `UPDATE vault_metadata SET vault_uid=$1`, source.vaultID)
 	require.NoError(t, err)
 	scope, err := source.Mkdir(ctx, source.RootID(), "Audited")
 	require.NoError(t, err)
@@ -225,6 +229,7 @@ var postgresEnrollmentCatalogs = []string{
 	"person_merges",
 	"person_splits",
 	"persons",
+	"parties",
 	"photo_assets",
 	"photo_checkouts",
 	"photo_hidden_credentials",

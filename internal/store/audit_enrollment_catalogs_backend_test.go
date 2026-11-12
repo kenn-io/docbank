@@ -12,6 +12,19 @@ import (
 
 func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
 	return map[string]func(*testing.T) *Store{
+		"parties": func(t *testing.T) *Store {
+			t.Helper()
+			s := newTestStore(t)
+			person, err := s.CreatePerson(t.Context(), "Example Person", "operator")
+			require.NoError(t, err)
+			_, err = s.CreateParty(t.Context(), PartyInput{Kind: "person", DisplayName: "Active Party", PersonID: &person.PersonID})
+			require.NoError(t, err)
+			retired, err := s.CreateParty(t.Context(), PartyInput{Kind: "organization", DisplayName: "Retired Party", PersonID: &person.PersonID})
+			require.NoError(t, err)
+			_, err = s.RetireParty(t.Context(), retired.PartyID, retired.Revision)
+			require.NoError(t, err)
+			return s
+		},
 		"processing": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)
