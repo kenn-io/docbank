@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
@@ -103,8 +104,8 @@ func TestRoleSearchBrowserPrivacyRouteMatrix(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(body), &run))
 			require.Equal(t, tc.want, run.Snapshot.Total)
 			for _, request := range []string{
-				`{"operation_id":"55555555-5555-4555-8555-555555555555","kind":"query","query":` + exportQuery + `}`,
-				fmt.Sprintf(`{"operation_id":"66666666-6666-4666-8666-666666666666","kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, saved.ID),
+				fmt.Sprintf(`{"operation_id":%q,"kind":"query","query":%s}`, uuid.New().String(), exportQuery),
+				fmt.Sprintf(`{"operation_id":%q,"kind":"saved_query","saved_query_id":%q,"saved_query_revision":1}`, uuid.New().String(), saved.ID),
 			} {
 				resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/exports/sources", tc.headers, request)
 				require.Equal(t, http.StatusOK, resp.StatusCode, body)
