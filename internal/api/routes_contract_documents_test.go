@@ -41,6 +41,8 @@ func TestContractDocumentRoutes(t *testing.T) {
 				} else {
 					assert.Empty(t, contract.Documents)
 				}
+				resp, body = do(t, ts, http.MethodDelete, "/api/v1/contracts/"+contract.ContractID, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, contract.Revision)}, nil)
+				require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 			})
 		}
 	}
