@@ -54,9 +54,9 @@ func TestHeadingContainersSetextAndSuppression(t *testing.T) {
 }
 
 func TestHeadingGlobalSlugCollisions(t *testing.T) {
-	n, err := Parse(t.Context(), []byte("# A\n# A\n# A-1\n# !!!\n# !!!\n# Cafe\u0301\n"), Limits{})
+	n, err := Parse(t.Context(), []byte("# A\n# A\n# A-1\n# !!!\n# !!!\n# Cafe\u0301\n# A\n# A-2\n# A\n# A-1\n"), Limits{})
 	require.NoError(t, err)
-	require.Equal(t, []string{"a", "a-1", "a-1-1", "section", "section-1", "café"}, anchors(n.Headings))
+	require.Equal(t, []string{"a", "a-1", "a-1-1", "section", "section-1", "café", "a-2", "a-2-1", "a-3", "a-1-2"}, anchors(n.Headings))
 }
 func anchors(headings []Heading) []string {
 	var out []string

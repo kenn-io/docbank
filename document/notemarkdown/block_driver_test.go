@@ -1,7 +1,6 @@
 package notemarkdown
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -49,10 +48,11 @@ func TestBlockDriverMatchesGoldmarkBlockSources(t *testing.T) {
 		{"reference removal before setext retry", "[ref]: target.md\n---\n\nkept paragraph\n"},
 		{"indented and fenced code source-less nodes", "    indented\n\n```go\n\nbody\n```\n\n# heading\n"},
 		{"html block interruption", "paragraph\n<div>\nraw\n</div>\n\n> quote\n"},
+		{"ATX markers trimming and disabled attributes", "#\n### \n# ###\n# text   ### \t\n####### rejected\n#no space\n\n# {#literal}\n"},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			src := []byte(fixture.src)
 			goldEnds := map[ast.Node]int{}
 			goldGuarded := newBlockParserSet(ctx, &budget{}, goldEnds)

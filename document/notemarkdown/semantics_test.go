@@ -128,23 +128,33 @@ func TestMappingKeysDoNotUseValueByteLimit(t *testing.T) {
 func TestSingleHeadingWithinDefaultByteEnvelope(t *testing.T) {
 	// Clone + compact view + raw text + conservative 3x NFC admission + Path
 	// require about 7x input, even though there is only one ordinary heading.
-	text := strings.Repeat("a", maxInput-len("# "))
-	src := []byte("# " + text)
-	n, err := Parse(t.Context(), src, Limits{})
-	require.NoError(t, err)
-	require.Equal(t, maxInput, len(src))
-	require.Equal(t, text, n.Title)
-	require.Equal(t, "h1", n.TitleSource)
-	require.Len(t, n.Headings, 1)
-	h := n.Headings[0]
-	require.Equal(t, text, h.Text)
-	require.Equal(t, text, h.Slug)
-	require.Equal(t, text, h.Path)
-	require.Equal(t, Span{0, maxInput}, Span{h.Start, h.LineEnd})
-	require.Equal(t, maxInput, h.SectionEnd)
-	require.Equal(t, 1, n.Lines)
-	require.Empty(t, n.Links)
-	require.Empty(t, n.Diagnostics)
+	for _, ending := range []struct{ name, text string }{
+		{"EOF", ""}, {"LF", "\n"}, {"CRLF", "\r\n"},
+	} {
+		t.Run(ending.name, func(t *testing.T) {
+			text := strings.Repeat("a", maxInput-len("# ")-len(ending.text))
+			src := []byte("# " + text + ending.text)
+			n, err := Parse(t.Context(), src, Limits{})
+			require.NoError(t, err)
+			require.Equal(t, maxInput, len(src))
+			require.Equal(t, text, n.Title)
+			require.Equal(t, "h1", n.TitleSource)
+			require.Len(t, n.Headings, 1)
+			h := n.Headings[0]
+			require.Equal(t, text, h.Text)
+			require.Equal(t, text, h.Slug)
+			require.Equal(t, text, h.Path)
+			require.Equal(t, Span{0, maxInput}, Span{h.Start, h.LineEnd})
+			require.Equal(t, maxInput, h.SectionEnd)
+			lines := 1
+			if ending.text != "" {
+				lines++
+			}
+			require.Equal(t, lines, n.Lines)
+			require.Empty(t, n.Links)
+			require.Empty(t, n.Diagnostics)
+		})
+	}
 }
 
 func TestMalformedClosedFrontmatterDoesNotBecomeMarkdown(t *testing.T) {

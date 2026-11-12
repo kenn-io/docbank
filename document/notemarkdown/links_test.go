@@ -88,19 +88,52 @@ func TestLinksSyntaxDecodeOnly(t *testing.T) {
 }
 
 func TestBareDestinationsRejectASCIIControls(t *testing.T) {
-	control := string([]byte{1})
-	for _, src := range []string{
-		"[a](x" + control + "y)",
-		"[a][r]\n\n[r]: x" + control + "y\n",
-	} {
-		n, err := Parse(t.Context(), []byte(src), Limits{})
-		require.NoError(t, err)
-		require.Empty(t, n.Links)
+	for _, c := range []byte{1, 0x0b, 0x0c, 0x1f, 0x7f} {
+		control := string([]byte{c})
+		for _, src := range []string{
+			"[a](x" + control + "y)",
+			"[a][r]\n\n[r]: x" + control + "y\n",
+		} {
+			n, err := Parse(t.Context(), []byte(src), Limits{})
+			require.NoError(t, err)
+			require.Empty(t, n.Links)
+		}
 	}
 	// The existing angle-destination contract remains unchanged.
+	control := string([]byte{1})
 	n, err := Parse(t.Context(), []byte("[a](<x"+control+"y>)"), Limits{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"x" + control + "y"}, linkTargets(n.Links))
+}
+
+func TestBareDestinationSeparators(t *testing.T) {
+	for _, separator := range []struct{ name, text string }{
+		{"space", " "}, {"tab", "\t"}, {"LF", "\n"}, {"CRLF", "\r\n"}, {"CR", "\r"},
+	} {
+		for _, form := range []struct{ name, source, raw, kind string }{
+			{"inline title", "[x](next.md#part" + separator.text + `"Title")`, "", "markdown"},
+			{"inline end", "[x](next.md#part" + separator.text + ")", "", "markdown"},
+			{"image title", "![x](next.md#part" + separator.text + `"Title")`, "", "image"},
+			{"reference title", "[x][r]\n\n[r]: next.md#part" + separator.text + "\"Title\"\n", "[x][r]", "reference"},
+		} {
+			t.Run(separator.name+"/"+form.name, func(t *testing.T) {
+				n, err := Parse(t.Context(), []byte(form.source), Limits{})
+				require.NoError(t, err)
+				require.Len(t, n.Links, 1)
+				link := n.Links[0]
+				require.Equal(t, "next.md", link.Target)
+				require.Equal(t, "part", link.Fragment)
+				require.Equal(t, "x", link.Label)
+				require.Equal(t, form.kind, link.Form)
+				raw := form.raw
+				if raw == "" {
+					raw = form.source
+				}
+				require.Equal(t, raw, link.Raw)
+				require.Equal(t, raw, form.source[link.Start:link.End])
+			})
+		}
+	}
 }
 
 func TestLinksRepeatedReferenceBudget(t *testing.T) {
@@ -176,6 +209,32 @@ func TestLinksHostileWorkAndCancellation(t *testing.T) {
 	cancel()
 	_, err = extractLinks(ctx, []byte("[x](next.md)"), []sourceBlock{{content: Span{0, 12}}}, nil, &budget{})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestInlineHTMLDeclarationInitial(t *testing.T) {
+	for _, tc := range []struct {
+		name, declaration string
+		hidesLink         bool
+	}{
+		{"lowercase", "lower", false},
+		{"uppercase", "UPPER", true},
+		{"uppercase initial", "Lower", true},
+		{"lowercase initial", "lOWER", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "text <!" + tc.declaration + " [x](note.md)> [tail](tail.md)"
+			n, err := Parse(t.Context(), []byte(src), Limits{})
+			require.NoError(t, err)
+			targets := []string{"tail.md"}
+			if !tc.hidesLink {
+				targets = []string{"note.md", "tail.md"}
+			}
+			require.Equal(t, targets, linkTargets(n.Links))
+			for _, link := range n.Links {
+				require.Equal(t, link.Raw, src[link.Start:link.End])
+			}
+		})
+	}
 }
 
 func TestLinksRawHTMLSyntax(t *testing.T) {

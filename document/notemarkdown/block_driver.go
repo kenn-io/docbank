@@ -26,7 +26,11 @@ const (
 
 // These conservative byte-pass bounds cover the pinned parser callbacks.
 // The driver charges each callback before entering its line-scanning code.
-var openWorkFactor = [...]int{4, 3, 4, 6, 3, 8, 8, 3, 16, 2}
+// ATX Open (v2.1.13 parser/atx_heading.go:57-120) has attributes disabled:
+// opening hashes, leading/trailing space, closing hashes and preceding space
+// scan disjoint ranges, with bounded boundary probes. Two line passes cover
+// these, including empty/rejected headings; reader advance is charged separately.
+var openWorkFactor = [...]int{4, 3, 4, 6, 3, 2, 8, 3, 16, 2}
 var continueWorkFactor = [...]int{1, 1, 8, 6, 4, 1, 8, 3, 4, 3}
 
 func contextCheckpoint(ctx context.Context) {
@@ -192,6 +196,7 @@ func (d *blockDriver) openBlocks(parent ast.Node, blankLine bool) blockOpenResul
 	if lastBlock.Node != nil {
 		continuable = ast.IsParagraph(lastBlock.Node)
 	}
+	var bps []parser.BlockParser
 retry:
 	contextCheckpoint(d.ctx)
 	line, seg := d.reader.PeekLine()
@@ -209,7 +214,7 @@ retry:
 	if line == nil || line[0] == '\n' {
 		goto continuable
 	}
-	bps := d.free
+	bps = d.free
 	if pos < len(line) {
 		if triggered := d.byTrigger[line[pos]]; triggered != nil {
 			bps = triggered

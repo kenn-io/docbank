@@ -35,12 +35,9 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 			base = "section"
 		}
 		anchor := base
-		// Admit map hashing before each lookup; candidates are already allocated.
-		if err := b.step(ctx, 2*len(base)); err != nil {
-			return nil, err
-		}
-		suffix := max(1, nextSuffix[base])
+		suffix := 0
 		for {
+			// Admit the used-map lookup and possible write before hashing.
 			if err := b.step(ctx, 2*len(anchor)); err != nil {
 				return nil, err
 			}
@@ -51,6 +48,14 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 			if err := b.step(ctx, 1); err != nil {
 				return nil, err
 			}
+			if suffix == 0 {
+				// Only collisions need a suffix cursor. Admit both its lookup
+				// and eventual write before either hashes the base.
+				if err := b.step(ctx, 2*len(base)); err != nil {
+					return nil, err
+				}
+				suffix = max(1, nextSuffix[base])
+			}
 			// Reserve each attempted candidate before materializing it.
 			if err := b.reserveStrings(len(base) + 1 + len(strconv.Itoa(suffix))); err != nil {
 				return nil, err
@@ -58,7 +63,9 @@ func extractHeadings(ctx context.Context, view, original []byte, blocks []source
 			anchor = base + "-" + strconv.Itoa(suffix)
 			suffix++
 		}
-		nextSuffix[base] = suffix
+		if suffix != 0 {
+			nextSuffix[base] = suffix
+		}
 		result = append(result, Heading{Ordinal: len(result), Level: block.level, Start: block.span.Start, LineEnd: block.span.End, SectionEnd: len(original), Line: sourceLineNumber(lineStarts, block.span.Start), SectionEndLine: len(lineStarts), Text: text, Slug: anchor})
 	}
 	var stack []int
