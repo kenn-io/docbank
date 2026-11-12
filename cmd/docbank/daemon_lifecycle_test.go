@@ -55,13 +55,18 @@ func buildDocbank(tb testing.TB) string {
 // buildDocbankVersion builds the binary, stamping internal/version.Version
 // when v is non-empty (an unstamped build reports "dev").
 func buildDocbankVersion(tb testing.TB, v string) string {
+	return buildDocbankWithWebOverlay(tb, v, false)
+}
+
+func buildDocbankWithWebOverlay(tb testing.TB, v string, webOverlay bool) string {
 	tb.Helper()
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
 	docbankBuildMu.Lock()
 	defer docbankBuildMu.Unlock()
-	build, ok := docbankBuilds[v]
+	key := fmt.Sprintf("%s:%t", v, webOverlay)
+	build, ok := docbankBuilds[key]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
 			if err := ensureDocbankBuildDir(); err != nil {
@@ -73,6 +78,25 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 			}
 			bin := filepath.Join(docbankBuildDir, name)
 			args := []string{"build", "-tags", "fts5"}
+			if webOverlay {
+				entry := filepath.Join(docbankBuildDir, "index.html")
+				if err := os.WriteFile(entry, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0o600); err != nil {
+					return "", err
+				}
+				webIndex, err := filepath.Abs(filepath.Join("..", "..", "internal", "web", "dist", "index.html"))
+				if err != nil {
+					return "", err
+				}
+				overlay, err := json.Marshal(map[string]any{"Replace": map[string]string{webIndex: entry}})
+				if err != nil {
+					return "", err
+				}
+				overlayPath := filepath.Join(docbankBuildDir, "overlay.json")
+				if err := os.WriteFile(overlayPath, overlay, 0o600); err != nil {
+					return "", err
+				}
+				args = append(args, "-overlay", overlayPath)
+			}
 			if v != "" {
 				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
 			}
@@ -84,7 +108,7 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 			}
 			return bin, nil
 		}()
-		docbankBuilds[v] = build
+		docbankBuilds[key] = build
 	}
 	require.NoError(tb, build.err)
 	return build.bin
@@ -623,60 +647,37 @@ func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 }
 
 func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: builds the binary")
-	}
-	// Supply a synthetic embedded entry point so backend-only builds can exercise
-	// the real web listener without building the frontend.
-	buildDir := t.TempDir()
-	entry := filepath.Join(buildDir, "index.html")
-	require.NoError(t, os.WriteFile(entry, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0o600))
-	webIndex, err := filepath.Abs(filepath.Join("..", "..", "internal", "web", "dist", "index.html"))
-	require.NoError(t, err)
-	overlay, err := json.Marshal(map[string]any{"Replace": map[string]string{webIndex: entry}})
-	require.NoError(t, err)
-	overlayPath := filepath.Join(buildDir, "overlay.json")
-	require.NoError(t, os.WriteFile(overlayPath, overlay, 0o600))
-	bin := filepath.Join(buildDir, "docbank")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5", "-overlay", overlayPath, "-o", bin, "go.kenn.io/docbank/cmd/docbank")
-	out, err := build.CombinedOutput()
-	require.NoError(t, err, string(out))
+	bin := buildDocbankWithWebOverlay(t, "", true)
 	root := t.TempDir()
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
 	env := append(os.Environ(), "DOCBANK_HOME="+root, "DOCBANK_TELEMETRY_ENABLED=0", "BROWSER=/bin/false")
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-	cmd := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
-	cmd.Env = env
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	launch, err := url.Parse(strings.TrimSpace(string(out)))
-	require.NoError(t, err)
+	launchWeb := func() *url.URL {
+		cmd := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		launch, err := url.Parse(strings.TrimSpace(string(out)))
+		require.NoError(t, err)
+		return launch
+	}
+	launch := launchWeb()
 	fragment, err := url.ParseQuery(launch.Fragment)
 	require.NoError(t, err)
 	token := fragment.Get("web_session")
 	require.NotEmpty(t, token)
-	second := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
-	second.Env = env
-	secondOut, err := second.CombinedOutput()
-	require.NoError(t, err, string(secondOut))
-	secondLaunch, err := url.Parse(strings.TrimSpace(string(secondOut)))
-	require.NoError(t, err)
-	secondFragment, err := url.ParseQuery(secondLaunch.Fragment)
-	require.NoError(t, err)
-	secondToken := secondFragment.Get("web_session")
-	require.NotEmpty(t, secondToken)
-	require.NotEqual(t, token, secondToken)
 	old := waitForDaemon(t, root)
 	require.False(t, daemonconn.Explicit(old))
 	watcher, err := fsnotify.NewWatcher()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = watcher.Close() })
 	require.NoError(t, watcher.Add(root))
-	transport := &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", launch.Port()))
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
@@ -684,54 +685,10 @@ func TestWebRestartKeepsAutomaticLifetime(t *testing.T) {
 	require.NoError(t, err)
 	request.Header.Set("Origin", launch.Scheme+"://"+launch.Host)
 	request.Header.Set(api.WebSessionHeader, token)
-	{
-		// The helper must fail before it stops the running daemon.
-		lockPath := filepath.Join(os.Getenv("DOCBANK_LOCK_DIR"), "daemon-launch.lock")
-		require.NoError(t, os.Remove(lockPath))
-		require.NoError(t, os.Mkdir(lockPath, 0o700))
-		logs := filepath.Join(root, "logs")
-		require.NoError(t, watcher.Add(logs))
-		response, err := client.Do(request.Clone(t.Context()))
-		require.NoError(t, err)
-		require.Equal(t, http.StatusAccepted, response.StatusCode)
-		require.NoError(t, response.Body.Close())
-		for {
-			select {
-			case <-t.Context().Done():
-				t.Fatal(t.Context().Err())
-			case err := <-watcher.Errors:
-				require.NoError(t, err)
-			case <-watcher.Events:
-				files, err := filepath.Glob(filepath.Join(logs, "docbank*.log"))
-				require.NoError(t, err)
-				for _, file := range files {
-					contents, err := os.ReadFile(file)
-					require.NoError(t, err)
-					if strings.Contains(string(contents), "web restart helper failed") {
-						require.NoError(t, os.Remove(lockPath))
-						goto retry
-					}
-				}
-			}
-		}
-	}
-retry:
-	lock, err := (home.Layout{Root: root}).TryLockLaunch()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = lock.Release() })
 	response, err := client.Do(request)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusAccepted, response.StatusCode)
 	require.NoError(t, response.Body.Close())
-	secondRequest := request.Clone(t.Context())
-	secondRequest.Header.Set(api.WebSessionHeader, secondToken)
-	response, err = client.Do(secondRequest)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusAccepted, response.StatusCode)
-	require.NoError(t, response.Body.Close())
-	current := waitForDaemon(t, root)
-	require.Equal(t, old.PID, current.PID)
-	require.NoError(t, lock.Release())
 	for {
 		select {
 		case <-t.Context().Done():
@@ -744,27 +701,14 @@ retry:
 			for _, rec := range records {
 				if rec.PID != old.PID {
 					require.False(t, daemonconn.Explicit(rec))
-					transport.CloseIdleConnections()
-					response, err := client.Do(request.Clone(t.Context()))
-					if response != nil {
-						require.NoError(t, response.Body.Close())
-					}
-					require.Error(t, err)
-					fresh := exec.CommandContext(t.Context(), bin, "web", "--no-browser")
-					fresh.Env = env
-					freshOut, err := fresh.CombinedOutput()
-					require.NoError(t, err, string(freshOut))
-					freshURL, err := url.Parse(strings.TrimSpace(string(freshOut)))
+					fresh := launchWeb()
+					identity, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fresh.Scheme+"://"+fresh.Host+"/api/v1/vault", nil)
 					require.NoError(t, err)
-					for _, oldToken := range []string{token, secondToken} {
-						identity, err := http.NewRequestWithContext(t.Context(), http.MethodGet, freshURL.Scheme+"://"+freshURL.Host+"/api/v1/vault", nil)
-						require.NoError(t, err)
-						identity.Header.Set(api.WebSessionHeader, oldToken)
-						resp, err := http.DefaultClient.Do(identity)
-						require.NoError(t, err)
-						require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-						require.NoError(t, resp.Body.Close())
-					}
+					identity.Header.Set(api.WebSessionHeader, token)
+					resp, err := client.Do(identity)
+					require.NoError(t, err)
+					require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+					require.NoError(t, resp.Body.Close())
 					return
 				}
 			}

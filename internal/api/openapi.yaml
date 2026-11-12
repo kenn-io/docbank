@@ -22628,8 +22628,6 @@ paths:
                 properties:
                   enabled:
                     type: boolean
-                  same_address_after_restart:
-                    type: boolean
                   session:
                     $ref: "#/components/schemas/WebTabSession"
                 required:
@@ -22660,8 +22658,6 @@ paths:
                 additionalProperties: false
                 properties:
                   enabled:
-                    type: boolean
-                  same_address_after_restart:
                     type: boolean
                   session:
                     $ref: "#/components/schemas/WebTabSession"

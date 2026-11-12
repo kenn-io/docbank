@@ -29,15 +29,14 @@ const (
 )
 
 type webLoginPolicy struct {
-	basePath                string
-	origin                  string
-	host                    string
-	hosts                   map[string]bool // nil unless public_origin enables the Host gate
-	cookie                  string
-	cookieHash              [sha256.Size]byte
-	keyHash                 [sha256.Size]byte
-	lifetime                time.Duration
-	sameAddressAfterRestart bool
+	basePath   string
+	origin     string
+	host       string
+	hosts      map[string]bool // nil unless public_origin enables the Host gate
+	cookie     string
+	cookieHash [sha256.Size]byte
+	keyHash    [sha256.Size]byte
+	lifetime   time.Duration
 }
 
 type webSignInRequest struct {
@@ -48,9 +47,8 @@ type webTabSession struct {
 	UploadSecret string `json:"upload_secret"`
 }
 type webSignInStatus struct {
-	Enabled                 bool           `json:"enabled"`
-	SameAddressAfterRestart bool           `json:"same_address_after_restart,omitempty"`
-	Session                 *webTabSession `json:"session,omitempty"`
+	Enabled bool           `json:"enabled"`
+	Session *webTabSession `json:"session,omitempty"`
 }
 
 // WebSignInRecord identifies a scoped login session without bearer credentials.
@@ -82,14 +80,13 @@ func newWebLoginPolicy(d Deps) *webLoginPolicy {
 	cookie := base64.RawURLEncoding.EncodeToString(random[:])
 	parsed, _ := url.Parse(origin)
 	policy := &webLoginPolicy{
-		basePath:                d.Cfg.Web.BasePath,
-		origin:                  origin,
-		host:                    parsed.Host,
-		cookie:                  cookie,
-		cookieHash:              sha256.Sum256([]byte(cookie)),
-		keyHash:                 sha256.Sum256([]byte(d.Cfg.Server.APIKey)),
-		lifetime:                d.Cfg.Web.WebSessionLifetime(),
-		sameAddressAfterRestart: d.Cfg.Web.PublicOrigin != "",
+		basePath:   d.Cfg.Web.BasePath,
+		origin:     origin,
+		host:       parsed.Host,
+		cookie:     cookie,
+		cookieHash: sha256.Sum256([]byte(cookie)),
+		keyHash:    sha256.Sum256([]byte(d.Cfg.Server.APIKey)),
+		lifetime:   d.Cfg.Web.WebSessionLifetime(),
 	}
 	if d.Cfg.Web.PublicOrigin == "" {
 		return policy
@@ -222,7 +219,7 @@ func registerWebSignIn(mux *http.ServeMux, sessions *webSessionRegistry) {
 		// Other allowed hosts serve the app for fragment sessions; key login is
 		// offered only at the sign-in origin.
 		enabled := policy != nil && webSameOrigin(req, policy, false)
-		writeJSON(w, http.StatusOK, webSignInStatus{Enabled: enabled, SameAddressAfterRestart: enabled && policy.sameAddressAfterRestart})
+		writeJSON(w, http.StatusOK, webSignInStatus{Enabled: enabled})
 	})
 	mux.HandleFunc("POST "+webLoginPath, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -264,7 +261,7 @@ func registerWebSignIn(mux *http.ServeMux, sessions *webSessionRegistry) {
 			Name: webCookieName(policy), Value: policy.cookie, Path: policy.basePath + "/", HttpOnly: true,
 			Secure: strings.HasPrefix(policy.origin, "https://"), SameSite: http.SameSiteStrictMode,
 		})
-		writeJSON(w, http.StatusOK, webSignInStatus{Enabled: true, Session: tab, SameAddressAfterRestart: policy.sameAddressAfterRestart})
+		writeJSON(w, http.StatusOK, webSignInStatus{Enabled: true, Session: tab})
 	})
 	mux.HandleFunc("GET "+webAuthSessionsPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

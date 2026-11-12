@@ -136,10 +136,7 @@
       {/if}
       {#if meaning?.restart_required}
         {#if meaning.restart_available}
-          <div class="restart-row">
-            <p>Restart Docbank to finish turning on search by meaning.</p>
-            <Button size="sm" onclick={() => (confirmRestart = true)}>Restart Docbank</Button>
-          </div>
+          <Button size="sm" onclick={() => (confirmRestart = true)}>Restart Docbank</Button>
         {:else}
           <p>
             If you started Docbank in a terminal, press Ctrl+C and repeat the original command. If
@@ -183,7 +180,7 @@
     {#snippet footer()}
       <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
       <Button tone="danger" surface="solid" disabled={restarting} onclick={restart}
-        >{restarting ? "Restarting…" : "Restart Docbank"}</Button
+        >{restarting ? "Restarting…" : "Restart"}</Button
       >
     {/snippet}
   </Modal>
@@ -200,12 +197,6 @@
   }
   .restart-confirmation {
     display: grid;
-    gap: var(--space-4);
-  }
-  .restart-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
     gap: var(--space-4);
   }
   .row {

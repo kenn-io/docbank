@@ -175,7 +175,6 @@ function installHarness(options: HarnessOptions) {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url === "/api/v1/vault") return json({ vault_uid: vaultID });
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
       return json({
@@ -2116,7 +2115,7 @@ it.each([
   await within(drawer).findByText("Restart required");
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(
     await within(drawer).findByText(new RegExp(notice.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))),
   ).toBeTruthy();
@@ -2125,7 +2124,7 @@ it.each([
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
   await fireEvent.click(
     within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-      name: "Restart Docbank",
+      name: "Restart",
     }),
   );
   await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
@@ -2147,7 +2146,7 @@ it("keeps the session when restart fails", async () => {
   await within(drawer).findByText("Restart required");
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart Docbank" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText(/Docbank couldn't start the restart/)).toBeTruthy();
   expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
 });
@@ -2163,104 +2162,7 @@ it("keeps the workspace and shows a rejected restart", async () => {
   const drawer = await openSearchByMeaningTab();
   await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart Docbank" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
   expect(await within(drawer).findByText("Restart denied")).toBeTruthy();
   expect(within(drawer).getByRole("button", { name: "Restart Docbank" })).toBeTruthy();
-});
-
-it("keeps the workspace when the upload connection and identity check fail", async () => {
-  let socket: EventTarget;
-  vi.stubGlobal(
-    "WebSocket",
-    class extends EventTarget {
-      constructor() {
-        super();
-        socket = this;
-      }
-      close() {}
-    },
-  );
-  const harness = searchWithMeaningOff({
-    status: () => ({ ...localSaved, restart_available: true }),
-    apply: async () => json(localPlan),
-  });
-  render(App);
-  const drawer = await openSearchByMeaningTab();
-  harness.fetchMock.mockClear();
-  harness.fetchMock.mockImplementationOnce(async () => {
-    throw new Error("offline");
-  });
-  socket!.dispatchEvent(new Event("error"));
-  await waitFor(() =>
-    expect(harness.fetchMock).toHaveBeenCalledWith("/api/v1/vault", expect.anything()),
-  );
-  expect(within(drawer).getByText("Restart required")).toBeTruthy();
-  expect(await screen.findByText(/Lost connection to Docbank/)).toBeTruthy();
-  expect(screen.getByText("docbank web --no-browser")).toBeTruthy();
-});
-
-it("shows the owner step when the daemon cannot restart itself", async () => {
-  let available = true;
-  searchWithMeaningOff({
-    status: () => ({ ...localSaved, restart_available: available }),
-    apply: async () => json(localPlan),
-    restart: async () => {
-      available = false;
-      return Response.json({ code: "restart_unavailable" }, { status: 409 });
-    },
-  });
-  render(App);
-  const drawer = await openSearchByMeaningTab();
-  await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart Docbank" }));
-  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
-  expect(await within(drawer).findByText(/If you started Docbank in a terminal/)).toBeTruthy();
-});
-
-it("checks again when the upload channel ends during a restart check", async () => {
-  let socket: EventTarget;
-  vi.stubGlobal(
-    "WebSocket",
-    class extends EventTarget {
-      constructor() {
-        super();
-        socket = this;
-      }
-      close() {}
-    },
-  );
-  const harness = searchWithMeaningOff({
-    status: () => ({ ...localSaved, restart_available: true }),
-    apply: async () => json(localPlan),
-    restart: async () => new Response(null, { status: 202 }),
-  });
-  render(App);
-  const drawer = await openSearchByMeaningTab();
-  const original = harness.fetchMock.getMockImplementation()!;
-  let release!: (response: Response) => void;
-  let checks = 0;
-  harness.fetchMock.mockImplementation(async (input, init) => {
-    if (String(input) === "/api/v1/vault") {
-      checks++;
-      if (checks === 1)
-        return new Promise<Response>((resolve) => {
-          release = resolve;
-        });
-      throw new Error("offline");
-    }
-    return original(input, init);
-  });
-  await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart Docbank" }));
-  await fireEvent.click(
-    within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-      name: "Restart Docbank",
-    }),
-  );
-  await waitFor(() => expect(checks).toBe(1));
-  await act(async () => {
-    socket!.dispatchEvent(new Event("error"));
-    await Promise.resolve();
-  });
-  await act(async () => release(json({ vault_uid: "synthetic-vault" })));
-  expect(await screen.findByText(/Lost connection to Docbank/)).toBeTruthy();
 });

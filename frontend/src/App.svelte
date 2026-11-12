@@ -384,11 +384,8 @@
     webSession ? new HiddenAccess(webSession, handleFailure) : undefined,
   );
   let keySignInEnabled = $state(false);
-  let signInNotice = $state("");
   let keySession = $state(false);
-  let recovery = $state<"" | "same" | "per-run">("");
   let restartAttempt: object | undefined;
-  let watchRestart: (() => void) | undefined;
   let apiKey = $state("");
   let signInPending = $state(false);
   let disposeBrowserSession: (() => void) | undefined;
@@ -1104,7 +1101,6 @@
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
-  let connectionRecovery = $state<"same" | "per-run" | "">("");
   let directory = $state<Node | null>(null);
   let rows = $state<Row[]>([]);
   let stack = $state<Snapshot[]>([]);
@@ -1587,21 +1583,14 @@
     };
   });
 
-  function activateBrowserSession(
-    session: BrowserSession,
-    keyLogin = false,
-    sameAddress = false,
-  ): void {
+  function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
     restartAttempt = undefined;
-    recovery = "";
-    signInNotice = "";
     disposeBrowserSession?.();
     webSession = session.token;
     hasProductions = false;
     keySession = keyLogin;
     error = "";
     uploadChannelError = "";
-    connectionRecovery = "";
     if (savedQueryDraft) queryBarOpen = true;
     void loadRoot();
     void loadTagCatalog();
@@ -1609,35 +1598,11 @@
     const reporter = startTelemetryReporting(session.token);
     telemetryReporting = reporter;
     sessionReporting = startSessionReporting(reporter);
-    const recoveryAbort = new AbortController();
-    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
-    let [checkingRecovery, restarting] = [0, false]; // requests since the check began
-    const checkRecovery = async (): Promise<void> => {
-      if (recoveryTimer !== undefined || recoveryAbort.signal.aborted || checkingRecovery++) return;
-      const retry = await checkDisconnectedSession(
-        session.token,
-        sameAddress,
-        recoveryAbort.signal,
-      );
-      const missed = checkingRecovery > 1;
-      checkingRecovery = 0;
-      if (missed) return void checkRecovery();
-      if ((retry || restarting) && sameAddress && !recoveryAbort.signal.aborted)
-        recoveryTimer = setTimeout(() => {
-          recoveryTimer = undefined;
-          void checkRecovery();
-        }, 1000);
-    };
-    watchRestart = () => {
-      restarting = true;
-      void checkRecovery();
-    };
     const channel = new VerifiedUploadChannel(session, undefined, () => {
       if (uploadChannel !== channel) return;
       uploadChannelError = keyLogin
         ? "The verified upload channel ended. Reload and sign in again before selecting more files."
-        : "The verified upload channel ended. Run `docbank web --no-browser` again before selecting more files.";
-      void checkRecovery();
+        : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
     });
     void channel.connect().then(
       () => {
@@ -1645,48 +1610,17 @@
         else channel.close();
       },
       (cause) => {
-        if (mounted && webSession === session.token) {
+        if (mounted && webSession === session.token)
           uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-          void checkRecovery();
-        }
       },
     );
     const reporting = sessionReporting;
     disposeBrowserSession = () => {
-      watchRestart = undefined;
-      recoveryAbort.abort();
-      clearTimeout(recoveryTimer);
       reporting.stop();
       reporter.stop();
       telemetryReporting = undefined;
       channel.close();
     };
-  }
-
-  async function checkDisconnectedSession(
-    session: string,
-    sameAddress: boolean,
-    signal: AbortSignal,
-  ): Promise<boolean> {
-    try {
-      await generated.vaultIdentity({
-        session,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(3000)]),
-      });
-      connectionRecovery = "";
-      return false;
-    } catch (cause) {
-      if (signal.aborted || !mounted || webSession !== session) return false;
-      if (!(cause instanceof APIError) || cause.status !== 401) {
-        connectionRecovery = sameAddress ? "same" : "per-run";
-        return true;
-      }
-      resetLocalSessionUI();
-      recovery = sameAddress ? "same" : "per-run";
-      keySignInEnabled = sameAddress;
-      signInNotice = "The connection to Docbank ended.";
-      return false;
-    }
   }
 
   async function submitSignIn(event: SubmitEvent): Promise<void> {
@@ -1700,8 +1634,7 @@
       const status = await signIn(credential);
       const session = tabSession(status);
       if (!session) throw new Error("The daemon did not issue a browser session.");
-      if (mounted)
-        activateBrowserSession(session, true, status.same_address_after_restart === true);
+      if (mounted) activateBrowserSession(session, true);
     } catch (cause) {
       if (mounted) error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -2132,7 +2065,6 @@
     restartAttempt = undefined;
     if (webSession === session) {
       localText.notice = notice;
-      watchRestart?.();
     }
   }
 
@@ -3991,16 +3923,7 @@
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
       <div class="unlock-copy">
-        {#if signInNotice}<p>{signInNotice}</p>{/if}
-        {#if recovery === "per-run"}
-          <p>
-            If Docbank doesn't open, run <code>docbank web --no-browser</code> in the terminal used for
-            this vault, then open the URL it prints.
-          </p>
-        {:else if keySignInEnabled}
-          {#if recovery === "same"}<p>
-              Reload this page and sign in again when Docbank is available.
-            </p>{/if}
+        {#if keySignInEnabled}
           <p>Sign in with the API key from your Docbank operator.</p>
           <form
             onsubmit={(event) => void submitSignIn(event)}
@@ -4224,19 +4147,6 @@
     {/if}
 
     <div class="app-main" style:--content-inset={photoMode ? "var(--space-5)" : undefined}>
-      {#if connectionRecovery}
-        <div class="banner error" role="alert">
-          <span>
-            Lost connection to Docbank. If it restarted,
-            {#if connectionRecovery === "same"}
-              reload this page and sign in again.
-            {:else}
-              ask the operator to restart it, or run <code>docbank web --no-browser</code> in the terminal
-              used for this vault if you manage it, then open the URL it prints.
-            {/if}
-          </span>
-        </div>
-      {/if}
       <TopBar class="app-top-bar">
         {#snippet left()}
           <span class="nav-toggle">

@@ -28816,15 +28816,13 @@ type ReportTelemetryEventResponse struct {
 }
 
 type GetWebSignInResponse struct {
-	Enabled                 bool           `json:"enabled"`
-	SameAddressAfterRestart *bool          `json:"same_address_after_restart,omitempty"`
-	Session                 *WebTabSession `json:"session,omitempty"`
+	Enabled bool           `json:"enabled"`
+	Session *WebTabSession `json:"session,omitempty"`
 }
 
 type LoginWebSignInResponse struct {
-	Enabled                 bool           `json:"enabled"`
-	SameAddressAfterRestart *bool          `json:"same_address_after_restart,omitempty"`
-	Session                 *WebTabSession `json:"session,omitempty"`
+	Enabled bool           `json:"enabled"`
+	Session *WebTabSession `json:"session,omitempty"`
 }
 
 type ListWebSignInsResponse struct {

@@ -11,7 +11,6 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   history.replaceState(null, "", "/");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -634,89 +633,3 @@ it("ignores a delayed tag rename success after signing in again", async () => {
   expect(screen.queryByText("renamed-tax")).toBeNull();
   expect(fixture.state.logins).toBe(2);
 });
-
-it.each([false, true])(
-  "keeps the workspace until recovery confirms session rejection (rejected: %s)",
-  async (rejectSession) => {
-    let socket: EventTarget;
-    let identityChecks = 0;
-    vi.stubGlobal(
-      "WebSocket",
-      class extends EventTarget {
-        constructor() {
-          super();
-          socket = this;
-        }
-        close() {}
-      },
-    );
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url === "/api/daemon/web-auth") return Response.json({ enabled: true });
-      if (url.endsWith("/login"))
-        return Response.json({
-          enabled: true,
-          same_address_after_restart: true,
-          session: { token: "tab-token", upload_secret: "proof" },
-        });
-      if (url.startsWith("/api/v1/path"))
-        return Response.json({ id: 1, kind: "dir", name: "", path: "/", revision: 1 });
-      if (url.includes("/children"))
-        return Response.json({
-          directory: { id: 1, kind: "dir", path: "/", revision: 1 },
-          items: [],
-          total: 0,
-        });
-      if (url === "/api/v1/processing/local/status")
-        return Response.json({
-          active: false,
-          provider: "",
-          download_bytes: 0,
-          restart_required: true,
-          restart_available: true,
-        });
-      if (url === "/api/v1/processing/local/restart") return new Response(null, { status: 202 });
-      if (url === "/api/v1/vault") {
-        identityChecks++;
-        if (rejectSession && identityChecks > 12)
-          return Response.json({ detail: "session rejected" }, { status: 401 });
-        throw new Error("offline");
-      }
-      return Response.json({ items: [], total: 0 });
-    });
-    render(App);
-    await fireEvent.input(await screen.findByLabelText("API key"), {
-      target: { value: "synthetic-master-key" },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "System" }));
-    const drawer = await screen.findByRole("dialog", { name: "System" });
-    await fireEvent.click(within(drawer).getByRole("tab", { name: "Search by meaning" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Restart Docbank" }));
-    const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-    await fireEvent.click(within(confirm).getByRole("button", { name: "Restart Docbank" }));
-    expect(await screen.findByText(/Restart requested/)).toBeTruthy();
-    expect(screen.getByRole("dialog", { name: "System" })).toBeTruthy();
-    vi.useFakeTimers();
-    await act(async () => {
-      socket!.dispatchEvent(new Event("error"));
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.getByText(/reload this page and sign in again/)).toBeTruthy();
-    expect(screen.getByRole("dialog", { name: "System" })).toBeTruthy();
-    await act(async () => vi.advanceTimersByTimeAsync(20000));
-    if (rejectSession) expect(screen.getByLabelText("API key")).toBeTruthy();
-    else {
-      expect(identityChecks).toBeGreaterThan(10);
-      expect(screen.getByRole("dialog", { name: "System" })).toBeTruthy();
-    }
-  },
-);

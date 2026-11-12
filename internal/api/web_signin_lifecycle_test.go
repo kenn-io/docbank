@@ -93,7 +93,7 @@ func TestWebSignInKeyExchangeScopeAndRestart(t *testing.T) {
 	t.Cleanup(s.Close)
 	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", token, cookie).Code, "restart discards browser authority")
 	bootstrap := signInCall(t, s, http.MethodGet, "/api/daemon/web-auth", "", "", cookie)
-	require.JSONEq(t, `{"enabled":true,"same_address_after_restart":true}`, bootstrap.Body.String(), "restart asks for a new key exchange")
+	require.JSONEq(t, `{"enabled":true}`, bootstrap.Body.String(), "restart asks for a new key exchange")
 	renewed, newCookie := loginBrowser(t, s)
 	require.NotEqual(t, cookie.Value, newCookie.Value)
 	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", renewed.Session.Token, newCookie).Code)
@@ -241,8 +241,8 @@ func TestWebSignInStatusIsDisabledAwayFromSignInOrigin(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		return w.Body.String()
 	}
-	require.JSONEq(t, `{"enabled":true,"same_address_after_restart":true}`, status("archive.example.test"))
-	require.JSONEq(t, `{"enabled":false,"same_address_after_restart":false}`, status("backend.example.test:7777"))
+	require.JSONEq(t, `{"enabled":true}`, status("archive.example.test"))
+	require.JSONEq(t, `{"enabled":false}`, status("backend.example.test:7777"))
 }
 
 func TestWebSignInMatchesBrowserCanonicalIPv6Origin(t *testing.T) {
@@ -272,7 +272,7 @@ func TestWebSignInMatchesDottedIPv4Origin(t *testing.T) {
 	status := httptest.NewRequestWithContext(t.Context(), http.MethodGet, origin+"/api/daemon/web-auth", nil)
 	w := httptest.NewRecorder()
 	catalog.Server.Handler().ServeHTTP(w, status)
-	require.JSONEq(t, `{"enabled":true,"same_address_after_restart":true}`, w.Body.String())
+	require.JSONEq(t, `{"enabled":true}`, w.Body.String())
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, origin+"/api/daemon/web-auth/login", strings.NewReader(`{"api_key":"`+testAPIKey+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", origin)

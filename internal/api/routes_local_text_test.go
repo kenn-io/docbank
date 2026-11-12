@@ -172,7 +172,6 @@ func TestRestartDaemonPerRunKeyLogin(t *testing.T) {
 	var status signInStatus
 	require.NoError(t, json.Unmarshal(login.Body.Bytes(), &status))
 	require.NotNil(t, status.Session)
-	require.Contains(t, login.Body.String(), `"same_address_after_restart":false`)
 	cookies := login.Result().Cookies()
 	require.Len(t, cookies, 1)
 	response := call(http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookies[0])

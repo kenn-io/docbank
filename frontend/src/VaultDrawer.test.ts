@@ -223,7 +223,7 @@ it("confirms a restart and disables both actions while it is pending", async () 
   expect(props.onrestart).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("button", { name: "Restart Docbank" }));
   dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Restart Docbank" }));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Restart" }));
   expect(props.onrestart).toHaveBeenCalledOnce();
   expect(
     (within(dialog).getByRole("button", { name: "Restarting…" }) as HTMLButtonElement).disabled,

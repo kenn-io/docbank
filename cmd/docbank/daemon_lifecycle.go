@@ -208,8 +208,8 @@ daemon was running.`,
 }
 
 func init() {
-	daemonRestartCmd.Flags().BoolVar(&restartFromWeb, "from-web", false, "")
-	daemonRestartCmd.Flags().BoolVar(&restartOpenWeb, "open-web", false, "")
+	daemonRestartCmd.Flags().BoolVar(&restartFromWeb, "from-web", false, "restart from a web session")
+	daemonRestartCmd.Flags().BoolVar(&restartOpenWeb, "open-web", false, "open the web app after restarting")
 	_ = daemonRestartCmd.Flags().MarkHidden("from-web")
 	_ = daemonRestartCmd.Flags().MarkHidden("open-web")
 	daemonStatusCmd.Flags().BoolVar(&daemonStatusJSON, "json", false, "print JSON to stdout")

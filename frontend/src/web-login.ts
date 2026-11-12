@@ -1,8 +1,10 @@
 import { sessionJSON } from "./api-transport.js";
 import type { BrowserSession } from "./browser-session.js";
-import type { GetWebSignIn200 } from "./generated/docbank.js";
 
-export type SignInStatus = GetWebSignIn200;
+export interface SignInStatus {
+  enabled: boolean;
+  session?: { token: string; upload_secret: string };
+}
 
 export function getSignInStatus(): Promise<SignInStatus> {
   return sessionJSON<SignInStatus>("/api/daemon/web-auth", {});

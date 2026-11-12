@@ -9251,7 +9251,6 @@ export type ReportTelemetryEvent202 = {
 
 export type GetWebSignIn200 = {
   enabled: boolean;
-  same_address_after_restart?: boolean;
   session?: WebTabSession;
 };
 
@@ -9261,7 +9260,6 @@ export type LoginWebSignInBody = {
 
 export type LoginWebSignIn200 = {
   enabled: boolean;
-  same_address_after_restart?: boolean;
   session?: WebTabSession;
 };
 
