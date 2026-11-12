@@ -200,7 +200,9 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
         testInfo,
         "person-query",
         async () => {
-          await expect(results.getByRole("cell", { name: "/vendor-notes.eml" })).toBeVisible();
+          await expect(
+            results.getByRole("cell", { name: "/vendor-notes.eml", exact: true }),
+          ).toBeVisible();
           await expect(people).toHaveCount(0);
         },
         [["results", results]],
@@ -234,7 +236,9 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       testInfo,
       "person-query",
       async () => {
-        await expect(results.getByRole("cell", { name: "/vendor-notes.eml" })).toBeVisible();
+        await expect(
+          results.getByRole("cell", { name: "/vendor-notes.eml", exact: true }),
+        ).toBeVisible();
         await expect(
           people.getByRole("button", { name: "Teodor Vask, Cc, Recipient, 2 documents" }),
         ).toBeVisible();
