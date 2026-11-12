@@ -114,13 +114,6 @@ func validateTaxRecordMetadata(m metadataTaxRecord) error {
 
 var taxMetadataTables = []metadataRecordCodec{taxAccountMetadata, taxRecordMetadata, taxEventMetadata}
 
-func taxMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version < taxEventStorageSchemaVersion {
-		return taxMetadataTables[:2]
-	}
-	return taxMetadataTables
-}
-
 func validateTaxMetadataTimes(created, updated string, retired *string) error {
 	if err := validateMetadataTime("tax created_at", created); err != nil {
 		return err
@@ -141,8 +134,8 @@ func validateTaxMetadataTimes(created, updated string, retired *string) error {
 	}
 	return nil
 }
-func validateTaxMetadataState(ctx context.Context, q metadataQuerier, version int) error {
-	for _, codec := range taxMetadataTablesForSchema(version) {
+func validateTaxMetadataState(ctx context.Context, q metadataQuerier) error {
+	for _, codec := range taxMetadataTables {
 		if err := codec.validateRows(ctx, q); err != nil {
 			return err
 		}
@@ -164,7 +157,7 @@ func validateTaxMetadataState(ctx context.Context, q metadataQuerier, version in
 	if invalid {
 		return errors.New("duplicate tax record period")
 	}
-	return validateTaxEventAuthority(ctx, q, version >= taxEventStorageSchemaVersion)
+	return validateTaxEventAuthority(ctx, q)
 }
 
 type metadataTaxEvent struct {
@@ -212,7 +205,7 @@ func validateTaxEventMetadata(m metadataTaxEvent) error {
 	return nil
 }
 
-func validateTaxEventAuthority(ctx context.Context, q metadataQuerier, hasEvents bool) error {
+func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 	// Read each catalog once; state follows append revision, not event time.
 	type authority struct {
 		state    string
@@ -242,35 +235,33 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier, hasEvents
 	if err != nil {
 		return err
 	}
-	if hasEvents {
-		rows, err := q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events ORDER BY record_id,record_revision`)
+	rows, err := q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events ORDER BY record_id,record_revision`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	var previousID string
+	var previousRevision int64
+	for rows.Next() {
+		event, err := scanTaxEvent(rows)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = rows.Close() }()
-		var previousID string
-		var previousRevision int64
-		for rows.Next() {
-			event, err := scanTaxEvent(rows)
-			if err != nil {
-				return err
-			}
-			p := parents[event.RecordID]
-			if p == nil || event.RecordRevision > p.revision {
-				return errors.New("invalid tax event parent or revision")
-			}
-			// Protect export if an open SQLite table was rebuilt without its unique constraint.
-			if event.RecordID == previousID && event.RecordRevision == previousRevision {
-				return errors.New("duplicate tax event revision")
-			}
-			previousID, previousRevision = event.RecordID, event.RecordRevision
-			if err = p.derived.Apply(taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}); err != nil {
-				return err
-			}
+		p := parents[event.RecordID]
+		if p == nil || event.RecordRevision > p.revision {
+			return errors.New("invalid tax event parent or revision")
 		}
-		if err = rows.Err(); err != nil {
+		// Protect export if an open SQLite table was rebuilt without its unique constraint.
+		if event.RecordID == previousID && event.RecordRevision == previousRevision {
+			return errors.New("duplicate tax event revision")
+		}
+		previousID, previousRevision = event.RecordID, event.RecordRevision
+		if err = p.derived.Apply(taxrecord.EventFact{EventValues: event.EventValues, RecordRevision: event.RecordRevision, Voided: event.VoidedAt != nil}); err != nil {
 			return err
 		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
 	}
 	for _, p := range parents {
 		if p.state != p.derived.State {
