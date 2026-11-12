@@ -181,7 +181,7 @@ func TestPartyMetadataRoundTripAndMalformedInput(t *testing.T) {
 		{"country", `"country":"CA"`, `"country":"ZZ"`},
 		{"created time", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`},
 		{"retired time", `"retired_at":"2098-01-01T00:00:00.000000000Z"`, `"retired_at":"invalid"`},
-		{"NUL", `"display_name":"Example"`, `"display_name":"Exam\u0000ple"`},
+		{"NUL", `"display_name":"Example","display_name_folded":"example"`, `"display_name":"Exam\u0000ple","display_name_folded":"exam\u0000ple"`},
 		{"control", `"legal_name":""`, `"legal_name":"Bad\u001bname"`},
 		{"own", `"own":1`, `"own":2`},
 		{"folded", `"display_name_folded":"example"`, `"display_name_folded":"wrong"`},
