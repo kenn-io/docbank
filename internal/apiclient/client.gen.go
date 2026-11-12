@@ -2717,6 +2717,351 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 	return responseParser(ctx, resp)
 }
 
+// ListContracts List contracts
+func (c *Client) ListContracts(ctx context.Context, options *ListContractsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContractsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"as_of":           {Style: "form", Explode: &[]bool{false}[0]},
+		"expiring_before": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"party_id":        {Style: "form", Explode: &[]bool{false}[0]},
+		"q":               {Style: "form", Explode: &[]bool{false}[0]},
+		"status":          {Style: "form", Explode: &[]bool{false}[0]},
+		"type":            {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListContractsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListContractsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListContractsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListContractsErrorResponse](resp, "ListContractsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContract Create a contract
+func (c *Client) CreateContract(ctx context.Context, options *CreateContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContractResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/contracts",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContractResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContractResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContractResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContractErrorResponse](resp, "CreateContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeleteContract Delete a contract
+func (c *Client) DeleteContract(ctx context.Context, options *DeleteContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DeleteContractErrorResponse](resp, "DeleteContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetContract Inspect a contract
+func (c *Client) GetContract(ctx context.Context, options *GetContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContractResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"as_of": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContractResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContractResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContractResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetContractErrorResponse](resp, "GetContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateContract Edit a contract
+func (c *Client) UpdateContract(ctx context.Context, options *UpdateContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateContractResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateContractResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateContractResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateContractResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateContractErrorResponse](resp, "UpdateContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DetachContractParty Change a contract party
+func (c *Client) DetachContractParty(ctx context.Context, options *DetachContractPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachContractPartyResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"role": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}/parties/{party_id}",
+		Method:        "DELETE",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DetachContractPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DetachContractPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DetachContractPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DetachContractPartyErrorResponse](resp, "DetachContractPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AttachContractParty Change a contract party
+func (c *Client) AttachContractParty(ctx context.Context, options *AttachContractPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AttachContractPartyResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"role": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}/parties/{party_id}",
+		Method:        "PUT",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AttachContractPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AttachContractPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AttachContractPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AttachContractPartyErrorResponse](resp, "AttachContractPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
 func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResponse, error) {
 	var err error
@@ -18307,6 +18652,273 @@ func (o *LookupContentReferencesRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// ListContractsRequestOptions is the options needed to make a request to ListContracts.
+type ListContractsRequestOptions struct {
+	Query *ListContractsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListContractsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListContractsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListContractsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListContractsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateContractRequestOptions is the options needed to make a request to CreateContract.
+type CreateContractRequestOptions struct {
+	Body *CreateContractBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContractRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContractRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContractRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContractRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DeleteContractRequestOptions is the options needed to make a request to DeleteContract.
+type DeleteContractRequestOptions struct {
+	PathParams *DeleteContractPath
+	Header     *DeleteContractHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeleteContractRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeleteContractRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeleteContractRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeleteContractRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetContractRequestOptions is the options needed to make a request to GetContract.
+type GetContractRequestOptions struct {
+	PathParams *GetContractPath
+	Query      *GetContractQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetContractRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetContractRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetContractRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetContractRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateContractRequestOptions is the options needed to make a request to UpdateContract.
+type UpdateContractRequestOptions struct {
+	PathParams *UpdateContractPath
+	Body       *UpdateContractBody
+	Header     *UpdateContractHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateContractRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateContractRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateContractRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateContractRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// DetachContractPartyRequestOptions is the options needed to make a request to DetachContractParty.
+type DetachContractPartyRequestOptions struct {
+	PathParams *DetachContractPartyPath
+	Query      *DetachContractPartyQuery
+	Header     *DetachContractPartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DetachContractPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DetachContractPartyRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DetachContractPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DetachContractPartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AttachContractPartyRequestOptions is the options needed to make a request to AttachContractParty.
+type AttachContractPartyRequestOptions struct {
+	PathParams *AttachContractPartyPath
+	Query      *AttachContractPartyQuery
+	Header     *AttachContractPartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AttachContractPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AttachContractPartyRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AttachContractPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *AttachContractPartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetDocumentProcessingCoverageRequestOptions is the options needed to make a request to GetDocumentProcessingCoverage.
 type GetDocumentProcessingCoverageRequestOptions struct {
 	Query *GetDocumentProcessingCoverageQuery
@@ -27630,6 +28242,22 @@ type SetCollectionLabelHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type DeleteContractHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type UpdateContractHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type DetachContractPartyHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+type AttachContractPartyHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type SetLaneControlHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
@@ -27877,6 +28505,28 @@ type ListCollectionMembersPath struct {
 
 type GetCollectionQualityPath struct {
 	ID string `json:"id"`
+}
+
+type DeleteContractPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type GetContractPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type UpdateContractPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type DetachContractPartyPath struct {
+	ContractID string `json:"contract_id"`
+	PartyID    string `json:"party_id"`
+}
+
+type AttachContractPartyPath struct {
+	ContractID string `json:"contract_id"`
+	PartyID    string `json:"party_id"`
 }
 
 type RemoveEmailDocumentPublicationPath struct {
@@ -28564,6 +29214,10 @@ type PlanBatesStampBody = BatesPlanRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type CreateContractBody = CreateContractRequest
+
+type UpdateContractBody = PatchContractRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
@@ -28971,6 +29625,29 @@ type LookupContentReferencesQuery struct {
 	Sha256 string `json:"sha256"`
 	Limit  *int64 `json:"limit,omitempty"`
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListContractsQuery struct {
+	Status         *string `json:"status,omitempty"`
+	Type           *string `json:"type,omitempty"`
+	PartyID        *string `json:"party_id,omitempty"`
+	ExpiringBefore *string `json:"expiring_before,omitempty"`
+	Q              *string `json:"q,omitempty"`
+	AsOf           *string `json:"as_of,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+	Offset         *int64  `json:"offset,omitempty"`
+}
+
+type GetContractQuery struct {
+	AsOf *string `json:"as_of,omitempty"`
+}
+
+type DetachContractPartyQuery struct {
+	Role string `json:"role"`
+}
+
+type AttachContractPartyQuery struct {
+	Role string `json:"role"`
 }
 
 type GetDocumentProcessingCoverageQuery struct {
@@ -29510,6 +30187,32 @@ type GetCollectionQualityErrorResponse = Error
 type LookupContentReferencesResponse = api.ContentReferencePage
 
 type LookupContentReferencesErrorResponse = Error
+
+type ListContractsResponse = api.ContractPage
+
+type ListContractsErrorResponse = Error
+
+type CreateContractResponse = api.Contract
+
+type CreateContractErrorResponse = Error
+
+type DeleteContractErrorResponse = Error
+
+type GetContractResponse = api.Contract
+
+type GetContractErrorResponse = Error
+
+type UpdateContractResponse = api.Contract
+
+type UpdateContractErrorResponse = Error
+
+type DetachContractPartyResponse = api.Contract
+
+type DetachContractPartyErrorResponse = Error
+
+type AttachContractPartyResponse = api.Contract
+
+type AttachContractPartyErrorResponse = Error
 
 type GetDocumentProcessingCoverageResponse = api.CoverageReport
 
@@ -31185,6 +31888,14 @@ type Context = kataevidence.Context
 
 type ContextRequest = kataevidence.ContextRequest
 
+type Contract = api.Contract
+
+type ContractPage = api.ContractPage
+
+type ContractParty = api.ContractParty
+
+type ContractPartyInput = api.ContractPartyInput
+
 type Counts = report.Counts
 
 type Coverage = report.Coverage
@@ -31198,6 +31909,8 @@ type CoverageIncluded = backupapp.CoverageIncluded
 type CoverageReport = api.CoverageReport
 
 type CoverageSourcesV1 = document.CoverageSourcesV1
+
+type CreateContractRequest = api.CreateContractRequest
 
 type CreateNodeRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -31830,6 +32543,8 @@ type PageSource = document.PageSource
 type Party = api.Party
 
 type PartyPage = api.PartyPage
+
+type PatchContractRequest = api.PatchContractRequest
 
 type PatchPartyRequest = api.PatchPartyRequest
 

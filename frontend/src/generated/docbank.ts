@@ -1716,6 +1716,54 @@ export interface ContextRequest {
   offset: number;
 }
 
+export interface ContractParty {
+  display_name: string;
+  kind: string;
+  own: boolean;
+  party_id: string;
+  /** @nullable */
+  retired_at: string | null;
+  role: string;
+}
+
+export interface Contract {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consideration: string;
+  contract_id: string;
+  contract_type: string;
+  created_at: string;
+  effective_status: string;
+  /** @nullable */
+  expires_on: string | null;
+  parties: ContractParty[];
+  purpose: string;
+  revision: number;
+  /** @nullable */
+  signed_on: string | null;
+  /** @nullable */
+  starts_on: string | null;
+  status: string;
+  summary: string;
+  termination: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface ContractPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  as_of: string;
+  items: Contract[];
+  limit: number;
+  offset: number;
+}
+
+export interface ContractPartyInput {
+  party_id: string;
+  role: string;
+}
+
 export interface Counts {
   hits: number;
   hits_plus_family: number;
@@ -1768,6 +1816,25 @@ export interface CoverageSourcesV1 {
   bound_providers: string[];
   catalog_rows: number;
   extractor_id: string;
+}
+
+export interface CreateContractRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consideration?: string;
+  contract_type?: string;
+  /** @nullable */
+  expires_on?: string | null;
+  parties?: ContractPartyInput[];
+  purpose?: string;
+  /** @nullable */
+  signed_on?: string | null;
+  /** @nullable */
+  starts_on?: string | null;
+  status?: string;
+  summary?: string;
+  termination?: string;
+  title: string;
 }
 
 export type CreateNodeRequestKind = typeof CreateNodeRequestKind[keyof typeof CreateNodeRequestKind];
@@ -5192,6 +5259,24 @@ export interface PartyPage {
   items: Party[];
   limit: number;
   offset: number;
+}
+
+export interface PatchContractRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consideration?: string;
+  contract_type?: string;
+  /** @nullable */
+  expires_on?: string | null;
+  purpose?: string;
+  /** @nullable */
+  signed_on?: string | null;
+  /** @nullable */
+  starts_on?: string | null;
+  status?: string;
+  summary?: string;
+  termination?: string;
+  title?: string;
 }
 
 export type PatchPartyRequestKind = typeof PatchPartyRequestKind[keyof typeof PatchPartyRequestKind];
@@ -9566,6 +9651,52 @@ limit?: number;
 offset?: number;
 };
 
+export type ListContractsParams = {
+status?: string;
+type?: string;
+party_id?: string;
+expiring_before?: string;
+q?: string;
+as_of?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type DeleteContractHeaders = {
+'If-Match'?: string;
+};
+
+export type GetContractParams = {
+as_of?: string;
+};
+
+export type UpdateContractHeaders = {
+'If-Match'?: string;
+};
+
+export type DetachContractPartyParams = {
+role: string;
+};
+
+export type DetachContractPartyHeaders = {
+'If-Match'?: string;
+};
+
+export type AttachContractPartyParams = {
+role: string;
+};
+
+export type AttachContractPartyHeaders = {
+'If-Match'?: string;
+};
+
 export type GetDocumentProcessingCoverageParams = {
 /**
  * @minLength 1
@@ -12460,6 +12591,287 @@ export const lookupContentReferences = async (params: LookupContentReferencesPar
     ...options,
     method: 'GET'
 
+
+  }
+);}
+
+
+
+export const getListContractsUrl = (params?: ListContractsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts?${stringifiedParams}` : `/api/v1/contracts`
+}
+
+/**
+ * @summary List contracts
+ */
+export const listContracts = async (params?: ListContractsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ContractPage> => {
+
+  return sessionJSON<ContractPage>(getListContractsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateContractUrl = () => {
+
+
+
+
+  return `/api/v1/contracts`
+}
+
+/**
+ * @summary Create a contract
+ */
+export const createContract = async (createContractRequest: NonReadonly<CreateContractRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getCreateContractUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createContractRequest)
+  }
+);}
+
+
+
+export const getDeleteContractUrl = (contractId: string,) => {
+
+
+
+
+  return `/api/v1/contracts/${encodeURIComponent(String(contractId))}`
+}
+
+/**
+ * @summary Delete a contract
+ */
+export const deleteContract = async (contractId: string,
+    headers?: DeleteContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getDeleteContractUrl(contractId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getGetContractUrl = (contractId: string,
+    params?: GetContractParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}`
+}
+
+/**
+ * @summary Inspect a contract
+ */
+export const getContract = async (contractId: string,
+    params?: GetContractParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+  return sessionJSON<Contract>(getGetContractUrl(contractId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdateContractUrl = (contractId: string,) => {
+
+
+
+
+  return `/api/v1/contracts/${encodeURIComponent(String(contractId))}`
+}
+
+/**
+ * @summary Edit a contract
+ */
+export const updateContract = async (contractId: string,
+    patchContractRequest: NonReadonly<PatchContractRequest>,
+    headers?: UpdateContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getUpdateContractUrl(contractId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchContractRequest)
+  }
+);}
+
+
+
+export const getDetachContractPartyUrl = (contractId: string,
+    partyId: string,
+    params: DetachContractPartyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Change a contract party
+ */
+export const detachContractParty = async (contractId: string,
+    partyId: string,
+    params: DetachContractPartyParams,
+    headers?: DetachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getDetachContractPartyUrl(contractId,partyId,params),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getAttachContractPartyUrl = (contractId: string,
+    partyId: string,
+    params: AttachContractPartyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Change a contract party
+ */
+export const attachContractParty = async (contractId: string,
+    partyId: string,
+    params: AttachContractPartyParams,
+    headers?: AttachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getAttachContractPartyUrl(contractId,partyId,params),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}

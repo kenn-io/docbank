@@ -43,7 +43,7 @@ func newContractListCommand() *cobra.Command {
 	var status, kind, party, expires, q, asOf string
 	var limit, offset int
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list", Short: "List contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd := &cobra.Command{Use: "list", Short: "List contracts", Example: "docbank contract list --json", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -63,21 +63,21 @@ func newContractListCommand() *cobra.Command {
 		return nil
 	}}
 	f := cmd.Flags()
-	f.StringVar(&status, "status", "", "Effective status")
-	f.StringVar(&kind, "type", "", "Contract type")
-	f.StringVar(&party, "party-id", "", "Party ID")
-	f.StringVar(&expires, "expiring-before", "", "Exclusive expiry date")
-	f.StringVar(&q, "q", "", "Literal title substring")
-	f.StringVar(&asOf, "as-of", "", "Civil date")
-	f.IntVar(&limit, "limit", 100, "Maximum results")
-	f.IntVar(&offset, "offset", 0, "Results to skip")
-	f.BoolVar(&jsonOutput, "json", false, "Print JSON")
+	f.StringVar(&status, "status", "", "effective status")
+	f.StringVar(&kind, "type", "", "contract type")
+	f.StringVar(&party, "party-id", "", "party ID")
+	f.StringVar(&expires, "expiring-before", "", "exclusive expiry date")
+	f.StringVar(&q, "q", "", "literal title substring")
+	f.StringVar(&asOf, "as-of", "", "civil date")
+	f.IntVar(&limit, "limit", 100, "maximum results")
+	f.IntVar(&offset, "offset", 0, "results to skip")
+	f.BoolVar(&jsonOutput, "json", false, "print JSON")
 	return cmd
 }
 func newContractShowCommand() *cobra.Command {
 	var jsonOutput bool
 	var asOf string
-	cmd := &cobra.Command{Use: "show <contract-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "show <contract-id>", Short: "Show a contract", Example: "docbank contract show 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -88,8 +88,8 @@ func newContractShowCommand() *cobra.Command {
 		}
 		return printContract(cmd, v, jsonOutput)
 	}}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
-	cmd.Flags().StringVar(&asOf, "as-of", "", "Civil date")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print JSON")
+	cmd.Flags().StringVar(&asOf, "as-of", "", "civil date")
 	return cmd
 }
 func newContractCreateCommand() *cobra.Command {
@@ -97,7 +97,7 @@ func newContractCreateCommand() *cobra.Command {
 	var starts, expires, signed string
 	var own, other []string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "create <title>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "create <title>", Short: "Create a contract", Example: "docbank contract create 'Service agreement'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		b.Title = args[0]
 		f := cmd.Flags()
 		if f.Changed("starts") {
@@ -132,18 +132,18 @@ func newContractCreateCommand() *cobra.Command {
 		return printContract(cmd, v, jsonOutput)
 	}}
 	f := cmd.Flags()
-	f.StringVar(&b.ContractType, "type", "", "Contract type")
-	f.StringVar(&b.Status, "status", "", "Stored status")
-	f.StringVar(&starts, "starts", "", "Start date")
-	f.StringVar(&expires, "expires", "", "Expiry date")
-	f.StringVar(&signed, "signed", "", "Signing date")
-	f.StringVar(&b.Summary, "summary", "", "Summary")
-	f.StringVar(&b.Purpose, "purpose", "", "Purpose")
-	f.StringVar(&b.Consideration, "consideration", "", "Consideration")
-	f.StringVar(&b.Termination, "termination", "", "Termination")
-	f.StringArrayVar(&own, "own", nil, "Own party ID or name")
-	f.StringArrayVar(&other, "counterparty", nil, "Counterparty ID or name")
-	f.BoolVar(&jsonOutput, "json", false, "Print JSON")
+	f.StringVar(&b.ContractType, "type", "", "contract type")
+	f.StringVar(&b.Status, "status", "", "stored status")
+	f.StringVar(&starts, "starts", "", "start date")
+	f.StringVar(&expires, "expires", "", "expiry date")
+	f.StringVar(&signed, "signed", "", "signing date")
+	f.StringVar(&b.Summary, "summary", "", "summary")
+	f.StringVar(&b.Purpose, "purpose", "", "purpose")
+	f.StringVar(&b.Consideration, "consideration", "", "consideration")
+	f.StringVar(&b.Termination, "termination", "", "termination")
+	f.StringArrayVar(&own, "own", nil, "own party ID or name")
+	f.StringArrayVar(&other, "counterparty", nil, "counterparty ID or name")
+	f.BoolVar(&jsonOutput, "json", false, "print JSON")
 	return cmd
 }
 func newContractEditCommand() *cobra.Command {
@@ -151,7 +151,7 @@ func newContractEditCommand() *cobra.Command {
 	var clearStarts, clearExpires, clearSigned, jsonOutput bool
 	var revision int64
 	var own, other, removeOwn, removeOther []string
-	cmd := &cobra.Command{Use: "edit <contract-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "edit <contract-id>", Short: "Edit a contract", Example: "docbank contract edit 00000000-0000-4000-8000-000000000001 --title 'Updated agreement'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		f := cmd.Flags()
 		if clearStarts && f.Changed("starts") || clearExpires && f.Changed("expires") || clearSigned && f.Changed("signed") {
 			return fmt.Errorf("cannot set and clear the same date")
@@ -230,31 +230,31 @@ func newContractEditCommand() *cobra.Command {
 		return printContract(cmd, v, jsonOutput)
 	}}
 	f := cmd.Flags()
-	f.StringVar(&title, "title", "", "Title")
-	f.StringVar(&kind, "type", "", "Type")
-	f.StringVar(&status, "status", "", "Stored status")
-	f.StringVar(&starts, "starts", "", "Start date")
-	f.StringVar(&expires, "expires", "", "Expiry date")
-	f.StringVar(&signed, "signed", "", "Signing date")
-	f.BoolVar(&clearStarts, "clear-starts", false, "Clear start date")
-	f.BoolVar(&clearExpires, "clear-expires", false, "Clear expiry date")
-	f.BoolVar(&clearSigned, "clear-signed", false, "Clear signing date")
-	f.StringVar(&summary, "summary", "", "Summary")
-	f.StringVar(&purpose, "purpose", "", "Purpose")
-	f.StringVar(&consideration, "consideration", "", "Consideration")
-	f.StringVar(&termination, "termination", "", "Termination")
-	f.StringArrayVar(&own, "own", nil, "Attach own party")
-	f.StringArrayVar(&other, "counterparty", nil, "Attach counterparty")
-	f.StringArrayVar(&removeOwn, "remove-own", nil, "Detach own party")
-	f.StringArrayVar(&removeOther, "remove-counterparty", nil, "Detach counterparty")
-	f.Int64Var(&revision, "revision", 0, "Expected revision")
-	f.BoolVar(&jsonOutput, "json", false, "Print JSON")
+	f.StringVar(&title, "title", "", "title")
+	f.StringVar(&kind, "type", "", "type")
+	f.StringVar(&status, "status", "", "stored status")
+	f.StringVar(&starts, "starts", "", "start date")
+	f.StringVar(&expires, "expires", "", "expiry date")
+	f.StringVar(&signed, "signed", "", "signing date")
+	f.BoolVar(&clearStarts, "clear-starts", false, "clear start date")
+	f.BoolVar(&clearExpires, "clear-expires", false, "clear expiry date")
+	f.BoolVar(&clearSigned, "clear-signed", false, "clear signing date")
+	f.StringVar(&summary, "summary", "", "summary")
+	f.StringVar(&purpose, "purpose", "", "purpose")
+	f.StringVar(&consideration, "consideration", "", "consideration")
+	f.StringVar(&termination, "termination", "", "termination")
+	f.StringArrayVar(&own, "own", nil, "attach own party")
+	f.StringArrayVar(&other, "counterparty", nil, "attach counterparty")
+	f.StringArrayVar(&removeOwn, "remove-own", nil, "detach own party")
+	f.StringArrayVar(&removeOther, "remove-counterparty", nil, "detach counterparty")
+	f.Int64Var(&revision, "revision", 0, "expected revision")
+	f.BoolVar(&jsonOutput, "json", false, "print JSON")
 	return cmd
 }
 func newContractDeleteCommand() *cobra.Command {
 	var revision int64
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "delete <contract-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "delete <contract-id>", Short: "Delete a contract", Example: "docbank contract delete 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("revision") && revision < 1 {
 			return fmt.Errorf("revision must be positive")
 		}
@@ -278,8 +278,8 @@ func newContractDeleteCommand() *cobra.Command {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Deleted", args[0])
 		return err
 	}}
-	cmd.Flags().Int64Var(&revision, "revision", 0, "Expected revision")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	cmd.Flags().Int64Var(&revision, "revision", 0, "expected revision")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print JSON")
 	return cmd
 }
 func init() {

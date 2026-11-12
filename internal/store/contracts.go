@@ -113,7 +113,7 @@ func contractLinks(ctx context.Context, tx *sql.Tx, items []Contract) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		var p ContractParty
@@ -151,7 +151,7 @@ func (s *Store) GetContract(ctx context.Context, id, asOf string) (Contract, err
 	if err != nil {
 		return Contract{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	c, err := getContractTx(ctx, tx, id, asOf)
 	if err != nil {
 		return Contract{}, err
@@ -268,7 +268,7 @@ func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Con
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `SELECT `+contractColumns+` FROM contracts WHERE ($1='' OR CASE WHEN status='active' AND expires_on IS NOT NULL AND expires_on<$2 THEN 'expired' ELSE status END=$3) AND ($4='' OR contract_type=$5) AND ($6='' OR EXISTS(SELECT 1 FROM contract_parties cp WHERE cp.contract_id=contracts.contract_id AND cp.party_id=$7)) AND ($8='' OR `+contains+`) AND ($10='' OR expires_on<$11) ORDER BY title,contract_id LIMIT $12 OFFSET $13`, o.Status, o.AsOf, o.Status, o.ContractType, o.ContractType, o.PartyID, o.PartyID, o.Q, o.Q, o.ExpiringBefore, o.ExpiringBefore, o.Limit, o.Offset)
 	if err != nil {
 		return nil, err
@@ -277,15 +277,18 @@ func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Con
 	for rows.Next() {
 		c, e := scanContract(rows, o.AsOf)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		items = append(items, c)
 	}
 	err = rows.Err()
-	rows.Close()
+	closeErr := rows.Close()
 	if err != nil {
 		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	if err = contractLinks(ctx, tx, items); err != nil {
 		return nil, err
