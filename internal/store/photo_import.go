@@ -568,7 +568,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("photo import destination was trashed or removed; "+
-						"choose the folder again: %w", err)
+						"Restore the original folder from Trash, or start a new import with the remaining files: %w", err)
 				}
 				return err
 			}
