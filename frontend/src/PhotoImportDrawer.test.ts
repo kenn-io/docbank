@@ -730,6 +730,97 @@ it.each([
   }
 });
 
+it("retains separately selected members of a remaining photo group", async () => {
+  const image = new File(["x"], "a.JPG", { lastModified: 1000 });
+  const sidecar = new File(["y"], "a.XMP", { lastModified: 1000 });
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [
+          {
+            relative_path: "a.JPG",
+            size: 1,
+            modified_time: 1000,
+            expected_hash: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          },
+          { relative_path: "a.XMP", size: 1, modified_time: 1000 },
+        ],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added", asset_id: "asset" }),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "partial-group",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Saved imports" }));
+  await fireEvent.change(await screen.findByLabelText("Saved import"), {
+    target: { value: "saved" },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [image] },
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [sidecar] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [new File(["z"], "a.JPG", { lastModified: 1000 })] },
+  });
+  await screen.findByText("Files changed");
+  expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty("disabled", true);
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [sidecar] },
+  });
+  await screen.findByText("Files missing");
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [image] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Resume remaining" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Resume remaining" }));
+  await waitFor(() =>
+    expect(channel.uploadPhotoGroup).toHaveBeenCalledWith(
+      "saved",
+      0,
+      [image, sidecar],
+      expect.any(AbortSignal),
+      expect.any(Function),
+      expect.any(Array),
+    ),
+  );
+});
+
 it("refuses an unattempted file with a different modified time", async () => {
   const saved = {
     import_id: "saved-import",
