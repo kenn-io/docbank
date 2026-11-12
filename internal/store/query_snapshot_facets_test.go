@@ -620,3 +620,27 @@ func TestPreparedSavedRolePredicatesAcrossRelations(t *testing.T) {
 		}
 	}
 }
+
+// Both facets must recompute the population after removing their own root
+// filter. The remaining expression selects one duplicate and one unique node.
+func TestPreparedFacetSelfExclusionBeyondRowLimit(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	for _, tc := range []struct {
+		filter, dimension string
+		counts            map[string]int64
+	}{
+		{`"text_coverage":["complete"]`, "text_coverage", map[string]int64{"complete": 1, "partial": 0, "failed": 0, "unprocessed": 1, "none": 0, "unavailable": 0}},
+		{`"has_duplicates":true`, "duplicates", map[string]int64{"duplicate": 1, "unique": 1}},
+	} {
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:a.PDF OR name:b","filters":{%s}}`, tc.filter))
+		projection, err := fixture.store.materializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Coverage: fixture.selection, Facets: []string{tc.dimension}}, snapshotMaterializeOptions{MaxRows: 1})
+		require.NoError(t, err, tc.dimension)
+		require.Len(t, projection.Rows, 1, tc.dimension)
+		require.Equal(t, fixture.nodes["a"].ID, projection.Rows[0].NodeID, tc.dimension)
+		facet := facetByDimension(t, projection, tc.dimension)
+		require.True(t, facet.Available, tc.dimension)
+		require.EqualValues(t, 2, *facet.Total, tc.dimension)
+		require.Equal(t, tc.counts, facetCounts(facet), tc.dimension)
+	}
+}

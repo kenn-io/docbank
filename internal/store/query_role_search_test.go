@@ -568,6 +568,20 @@ func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
+	// Keep all 64 people and all 11 roles while relation leaves are evaluated
+	// under each Boolean operator. The missing branch must not add chips.
+	for _, text := range []string{
+		`has_duplicates:false AND NOT path:/missing`,
+		`path:/missing OR name:many-people`,
+		`NOT (has_duplicates:true OR path:/missing)`,
+	} {
+		mixed := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"people":[%s]}}`, text, strings.Join(entries, ",")))
+		got, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: mixed})
+		require.NoError(t, err, text)
+		require.Len(t, got.Rows, 1, text)
+		require.Equal(t, version.NodeID, got.Rows[0].NodeID, text)
+		require.Equal(t, []string{"speaker"}, got.Rows[0].MatchedRoles, text)
+	}
 }
 
 // Exercise the compiler boundary with real role operands, including the
@@ -615,6 +629,57 @@ func TestRoleSearchNearCompilerBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles)
+}
+
+// A near-limit saved input must still execute when followed by relation leaves;
+// the next original input must be rejected before membership lowering.
+func TestRoleSearchNearCompilerBudgetWithRelations(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := WithVisiblePeopleOnly(t.Context())
+	version := seedDocumentPeopleEvent(t, s, "relation-budget.txt", "b71", nil)
+	person, err := s.CreatePerson(ctx, "Relation Budget Sender", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	block := strings.TrimSuffix(strings.Repeat(`from:"Relation Budget Sender" OR `, 100), " OR ")
+	_, err = s.CreateSavedQuery(ctx, "Relation budget block", "", SavedQueryKindQuery, []byte(fmt.Sprintf(`{"syntax":"advanced","text":%q}`, block)))
+	require.NoError(t, err)
+	collection, err := s.BeginIngest(ctx, "cli", "Synthetic budget collection")
+	require.NoError(t, err)
+	label := "Budget collection"
+	_, err = s.SetCollectionLabel(ctx, collection.ID(), 1, &label)
+	require.NoError(t, err)
+	for _, relation := range []string{`path:/missing`, `collection:"Budget collection"`, `text_coverage:complete`, `has_duplicates:true`} {
+		textFor := func(count int) string {
+			base := strings.TrimSuffix(strings.Repeat(`saved:"Relation budget block" OR `, count/100)+strings.Repeat(`from:"Relation Budget Sender" OR `, count%100), " OR ")
+			return "(" + base + ") AND (NOT " + relation + " OR name:relation-budget)"
+		}
+		low, high, best, size := 1, 1200, 0, 0
+		for low <= high {
+			count := (low + high) / 2
+			value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(count)))
+			compiled, err := s.CompileQuery(ctx, value)
+			if err != nil {
+				require.ErrorContains(t, err, "compiled query exceeds")
+				high = count - 1
+				continue
+			}
+			predicate, err := compiled.bind("", nil)
+			require.NoError(t, err)
+			best, size, low = count, len(predicate.sql), count+1
+		}
+		require.Greater(t, size, maxCompiledQuerySQL-8192, relation)
+		next := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(best+1)))
+		_, err = s.CompileQuery(ctx, next)
+		require.ErrorContains(t, err, "compiled query exceeds", relation)
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, textFor(best)))
+		result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Coverage: CoverageSelection{Configuration: "configured", ProfileFingerprint: testSHA256([]byte("budget-profile"))}})
+		require.NoError(t, err, relation)
+		require.Len(t, result.Rows, 1, relation)
+		require.Equal(t, version.NodeID, result.Rows[0].NodeID, relation)
+		require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles, relation)
+	}
 }
 
 func TestRoleSearchPeopleFacetMembershipBudget(t *testing.T) {
@@ -733,4 +798,35 @@ func TestRoleSearchSavedHiddenPersonScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Only root people entries are removed for the People facet. The expression
+// and person_ids still fence the population used to count visible evidence.
+func TestRoleSearchPeopleFacetRetainsExpressionAndPersonIDs(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	first := seedDocumentPeopleEvent(t, s, "keep-one.txt", "f101", nil)
+	second := seedDocumentPeopleEvent(t, s, "keep-two.txt", "f102", nil)
+	third := seedDocumentPeopleEvent(t, s, "outside.txt", "f103", nil)
+	anchor, err := s.CreatePerson(ctx, "Facet Anchor", "operator")
+	require.NoError(t, err)
+	selected, err := s.CreatePerson(ctx, "Facet Selected", "operator")
+	require.NoError(t, err)
+	other, err := s.CreatePerson(ctx, "Facet Other", "operator")
+	require.NoError(t, err)
+	for _, edge := range []struct{ version, person, role string }{
+		{first.ID, anchor.PersonID, "sender"}, {first.ID, other.PersonID, "recipient"},
+		{second.ID, selected.PersonID, "author"}, {third.ID, anchor.PersonID, "sender"},
+	} {
+		_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: edge.version, PersonID: edge.person, Role: edge.role, Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"name:keep AND NOT path:/missing","filters":{"person_ids":[%q],"people":[{"person_id":%q,"roles":["author"]}]}}`, anchor.PersonID, selected.PersonID))
+	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value, Facets: []string{"person_role"}})
+	require.NoError(t, err)
+	require.Empty(t, projection.Rows)
+	facet := facetByDimension(t, projection, "person_role")
+	require.EqualValues(t, 1, *facet.Total)
+	require.Equal(t, map[string]int64{anchor.PersonID: 1, other.PersonID: 1, selected.PersonID: 0}, facetCounts(facet))
 }
