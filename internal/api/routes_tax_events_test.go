@@ -164,3 +164,36 @@ func TestTaxEventValuesAbsentFromLogsAndErrors(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(content), secret)
 }
+
+func TestTaxEventRequestAdmission(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	_, account := createTaxTestAccount(t, ts, nil)
+	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
+	path := "/api/v1/tax/records/" + r.RecordID
+	const secret = "private-synthetic-sentinel"
+	for _, tc := range []struct {
+		path string
+		body map[string]any
+	}{
+		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "reference": nil}},
+		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "note": nil}},
+		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "currency": nil}},
+		{"/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01", "Reference": secret}},
+		{"/advance", map[string]any{"state": "filed", "occurred_on": "2026-01-01", "Note": secret}},
+		{"/advance", map[string]any{"state": "filed", "occurred_on": "2026-01-01", "reference": nil}},
+		{"/events/11111111-1111-4111-8111-111111111111/void", map[string]any{"Reason": secret}},
+		{"/events/11111111-1111-4111-8111-111111111111/void", map[string]any{"reason": nil}},
+	} {
+		resp, body := do(t, ts, http.MethodPost, path+tc.path, map[string]string{"If-Match": `"1"`}, tc.body)
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		assert.NotContains(t, body, secret)
+	}
+	resp, body := do(t, ts, http.MethodPost, path+"/events", map[string]string{"If-Match": `"1"`}, map[string]any{"kind": "note", "occurred_on": "2026-01-01", "amount": nil, "reference": "example"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var out api.TaxEventMutation
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	resp, body = do(t, ts, http.MethodPost, path+"/advance", map[string]string{"If-Match": `"2"`}, map[string]any{"state": "filed", "occurred_on": "2026-01-01", "amount": nil})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, path+"/events/"+out.Event.EventID+"/void", map[string]string{"If-Match": `"3"`}, map[string]any{"reason": "Correction"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+}

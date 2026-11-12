@@ -32,10 +32,10 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 }
 var taxDiagnosticPairs = map[string]string{
 	"invalid value": "filer", "required": "filer_party_id",
-	"invalid length or text": "country subdivision currency tax_kind identifier period_note due_note note title form_code",
-	"control character":      "tax_kind identifier period_note due_note note title form_code",
+	"invalid length or text": "country subdivision currency tax_kind identifier period_note due_note note title form_code reference reason",
+	"control character":      "tax_kind identifier period_note due_note note title form_code reference reason",
 	"invalid country":        "country", "invalid subdivision": "subdivision", "invalid currency": "currency",
-	"invalid date": "effective_start effective_end period_start period_end due_date", "precedes effective_start": "effective_end",
+	"invalid date": "effective_start effective_end period_start period_end due_date occurred_on", "precedes effective_start": "effective_end",
 	"precedes period_start": "period_end", "not canonical": "tax_kind", "unknown cadence": "cadence", "out of range": "lead_days tax_year",
 	"account identity mismatch": "filer_party_id authority_party_id country subdivision tax_kind",
 	"party not found":           "filer_party_id authority_party_id", "party is retired": "filer_party_id authority_party_id",
@@ -44,6 +44,7 @@ var taxDiagnosticPairs = map[string]string{
 	"amount required when currency changes": taxAmountField, "amount required": taxAmountField, "zero required": taxAmountField,
 	"unknown amount must be null": taxAmountField, "invalid length": taxAmountField, "invalid precision": taxAmountField,
 	"invalid decimal or overflow": taxAmountField, "overflow": taxAmountField,
+	"unsupported event": "kind", "requires amount": "currency", "unsupported amount": taxAmountField,
 }
 
 func taxSafeFieldReason(field, reason string) bool {

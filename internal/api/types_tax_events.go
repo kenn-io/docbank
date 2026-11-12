@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json/v2"
+
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -47,6 +49,29 @@ type AdvanceTaxRecordRequest struct {
 }
 type VoidTaxEventRequest struct {
 	Reason string `json:"reason"`
+}
+
+// Event requests share tax admission: exact names and no null for text.
+func (p *AddTaxEventRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "currency", "reference", "note", "amount"}, "amount"); err != nil {
+		return err
+	}
+	type fields AddTaxEventRequest
+	return json.Unmarshal(raw, (*fields)(p))
+}
+func (p *AdvanceTaxRecordRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := taxMembers(raw, []string{"state", "occurred_on", "currency", "reference", "note", "amount"}, "amount"); err != nil {
+		return err
+	}
+	type fields AdvanceTaxRecordRequest
+	return json.Unmarshal(raw, (*fields)(p))
+}
+func (p *VoidTaxEventRequest) UnmarshalJSON(raw []byte) error {
+	if _, err := taxMembers(raw, []string{"reason"}); err != nil {
+		return err
+	}
+	type fields VoidTaxEventRequest
+	return json.Unmarshal(raw, (*fields)(p))
 }
 
 func taxEventRequestSchema(schema *huma.Schema) *huma.Schema {
