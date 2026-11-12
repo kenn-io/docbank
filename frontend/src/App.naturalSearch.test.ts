@@ -2122,7 +2122,7 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
   await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
   await submitSearch("missing");
   await screen.findByText(
-    "With this tag: some PDFs have pages without a text layer. OCR can read scanned pages.",
+    "With this tag: some PDFs have pages without a text layer.",
   );
   const liveRequest = fetchMock.mock.calls
     .map(([url]) => String(url))
@@ -2137,7 +2137,7 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
   await screen.findByRole("region", { name: "Frozen query results" });
   expect(
     await screen.findByText(
-      "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
+      "Across the current vault: some PDFs have pages without a text layer.",
     ),
   ).toBeTruthy();
   const requests = fetchMock.mock.calls
@@ -2149,17 +2149,17 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
 it.each([
   [
     "singular",
-    "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
+    "Across the current vault: some PDFs have pages without a text layer.",
     textCoverage({ pdfs_without_text: 1, pages_without_text: 1 }),
   ],
   [
     "partial",
-    "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
+    "Across the current vault: some PDFs have pages without a text layer.",
     textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_partial: true }),
   ],
   [
     "unavailable",
-    "Across the current vault: some PDFs have pages without a text layer. OCR can read scanned pages.",
+    "Across the current vault: some PDFs have pages without a text layer.",
     textCoverage({ pdfs_without_text: 2, pages_without_text: 3, pdf_page_coverage_unavailable: 1 }),
   ],
   [
