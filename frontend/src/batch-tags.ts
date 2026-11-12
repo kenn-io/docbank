@@ -165,7 +165,7 @@ export type BatchTagOutcome =
   | { kind: "auth"; cause: unknown }
   // The daemon refused it, so nothing committed. `stale` means a document changed.
   | { kind: "rejected"; cause: unknown; stale: boolean }
-  // No answer arrived, so the change may have committed; retry the same request.
+  // No answer arrived, so the change may have committed.
   | { kind: "unknown"; cause: unknown };
 
 export async function runBatchTagChange(

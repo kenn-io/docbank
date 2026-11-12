@@ -542,7 +542,7 @@ it("disables tagging during reruns and ignores the old selection's late receipt"
   expect(screen.queryByText(/^Added “Review” to \d+ documents?\.$/)).toBeNull();
 });
 
-it("preserves the draft after dismissing an uncertain selection tag warning", async () => {
+it.each([false, true])("refreshes during recovery: %s", async (refreshDuringRecovery) => {
   history.replaceState(
     null,
     "",
@@ -561,14 +561,17 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
   };
   const json = (value: unknown) => new Response(JSON.stringify(value));
   const searches: Record<string, unknown>[] = [];
+  let catalogReads = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url.includes("/children?"))
       return json({ directory: root, items: [], total: 0, limit: 1000, offset: 0 });
     if (url === `/api/v1/tags/${tag.id}`) return json(tag);
-    if (url === "/api/v1/tags?limit=1000&offset=0")
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      catalogReads++;
       return json({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    }
     if (url === "/api/v1/queries/parse")
       return json({ query, query_fingerprint: first.query_fingerprint, dependencies: [] });
     if (url === "/api/v1/workspace/queries") {
@@ -609,8 +612,11 @@ it("preserves the draft after dismissing an uncertain selection tag warning", as
   expect(searches).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Check tag results" }));
   expect(await screen.findByRole("button", { name: "Add “Review” to 1 document" })).toBeTruthy();
+  if (refreshDuringRecovery) await waitFor(() => expect(searches).toHaveLength(2));
+  const readsBeforeClose = catalogReads;
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  await waitFor(() => expect(searches).toHaveLength(2));
+  await waitFor(() => expect(searches).toHaveLength(refreshDuringRecovery ? 3 : 2));
+  expect(catalogReads - readsBeforeClose).toBe(1);
   expect(searches[1]).toEqual(searches[0]);
   expect(
     screen.queryByText(

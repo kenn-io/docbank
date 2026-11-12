@@ -3358,7 +3358,6 @@
 
   function refreshAfterTagRecovery(): void {
     refreshCurrentView();
-    void loadTagCatalog(false, true);
     if (selectedID !== undefined) void loadSelectedTags(selectedID, selectedSource?.key);
   }
 

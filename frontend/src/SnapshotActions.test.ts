@@ -460,3 +460,49 @@ it.each([false, true])("preserves a deleted tag error (after check: %s)", async 
   expect(screen.queryByRole("button", { name: /Add “Review”/ })).toBeNull();
   expect(writes).toBe(afterCheck ? 2 : 1);
 });
+
+it("identifies a selected document when its recovery read fails", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") throw new TypeError("Lost response");
+    if (String(input).endsWith(`/tags/${catalog[0].id}`)) return Response.json(catalog[0]);
+    return Response.json({ detail: "Missing" }, { status: 404 });
+  });
+  render(
+    SnapshotActions,
+    props({
+      scope: "selection",
+      count: 1,
+      targets: [{ node_id: 7, revision: 3, name: "readme.txt" }],
+    }),
+  );
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Check tag results" }));
+  await fireEvent.click(await screen.findByText("Review documents"));
+  expect(screen.getByText("readme.txt")).toBeTruthy();
+});
+
+it("requires a fresh selection when a document disappears", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json(
+      { code: "not_found", detail: "Batch target is missing or trashed" },
+      { status: 404 },
+    ),
+  );
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Batch target is missing or trashed");
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+});
+
+it("preserves a deleted tag error on the first apply", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ code: "not_found", detail: "Tag was deleted" }, { status: 404 }),
+  );
+  render(SnapshotActions, props({ scope: "selection", count: 2, targets }));
+  await chooseReview();
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await screen.findByText("Tag was deleted");
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+});
