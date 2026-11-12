@@ -73,8 +73,7 @@
       )}
       <tr>
         <td class="title"
-          ><span>{row.title}</span>{#if row.form_code}<span class="sub"
-              >{row.form_code}</span
+          ><span>{row.title}</span>{#if row.form_code}<span class="sub">{row.form_code}</span
             >{/if}</td
         >
         <td>{row.tax_year ?? "—"}</td>
