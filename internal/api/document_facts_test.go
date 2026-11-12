@@ -66,8 +66,8 @@ func TestVersionDatesProjectionUsesSelectedDisclosure(t *testing.T) {
 
 func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	t.Parallel()
-	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
-	f.Persons["visible"] = store.FactPerson{Person: store.Person{DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
+	f := store.DocumentPeopleFacts{Version: store.ContentVersion{ID: "version", NodeID: 1}, State: "published", Persons: map[string]store.FactPerson{"visible": {Person: store.Person{PersonID: "visible", DisplayName: "Visible"}, Visible: true}, "hidden": {Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}}}, Edges: []document.DocumentPersonEdgeV1{{PersonID: "visible", Role: "author"}, {PersonID: "hidden", Role: "author"}, {PersonID: "visible", Role: "blind_copy", Sensitive: true}}, Assertions: []store.PersonDocumentAssertion{{PersonID: "hidden", Role: "author"}}, Candidates: []store.VersionCandidate{{CandidateID: "candidate", DisplayName: "Recipient", Occurrences: []store.PersonCandidateOccurrence{{Role: "blind_copy"}, {Role: "author"}}}}}
+	f.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Private Bcc", State: "provisional", Origin: "derived"}, Visible: true}
 	f.Edges[0].RawLabel = "Public Author"
 	// The store supplies already-filtered candidate occurrences for safe reads.
 	safeFacts := f
@@ -76,12 +76,12 @@ func TestVersionPeopleProjectionHidesBccAndUnsupportedPeople(t *testing.T) {
 	if len(safe.Edges) != 1 || safe.Edges[0].PersonID != "visible" || safe.Edges[0].DisplayName != "Public Author" || len(safe.Assertions) != 0 || len(safe.Unresolved) != 1 || safe.Unresolved[0].Role != "author" || safe.Unresolved[0].RawLabel != "Recipient" {
 		t.Fatalf("safe: %+v", safe)
 	}
-	safeFacts.Persons["visible"] = store.FactPerson{Person: store.Person{DisplayName: "Confirmed Name", State: "confirmed", Origin: "derived"}, Visible: true}
+	safeFacts.Persons["visible"] = store.FactPerson{Person: store.Person{PersonID: "visible", DisplayName: "Confirmed Name", State: "curated", Origin: "derived"}, Visible: true}
 	if got := versionPeopleAPI(safeFacts, true, "").Edges[0].DisplayName; got != "Confirmed Name" {
-		t.Fatalf("confirmed name = %q", got)
+		t.Fatalf("curated name = %q", got)
 	}
 	f.Candidates[0].OccurrenceLabels = map[store.PersonCandidateOccurrence]string{{Role: "blind_copy"}: "Blind", {Role: "author"}: "Recipient"}
-	f.Persons["hidden"] = store.FactPerson{Person: store.Person{DisplayName: "Hidden"}, Visible: true}
+	f.Persons["hidden"] = store.FactPerson{Person: store.Person{PersonID: "hidden", DisplayName: "Hidden"}, Visible: true}
 	full := versionPeopleAPI(f, false, "")
 	if len(full.Edges) != 3 || len(full.Assertions) != 1 || full.Assertions[0].DisplayName != "Hidden" || len(full.Unresolved) != 2 {
 		t.Fatalf("full: %+v", full)
@@ -132,5 +132,82 @@ func TestEmittedWhenMatchesContractExamples(t *testing.T) {
 				t.Errorf("got %s; want %v", emitted, want)
 			}
 		})
+	}
+}
+
+// TestWhenFieldTableAllProducerCombinations checks the shared contract's field
+// table independently of the example fixtures for every supported precision and zone.
+func TestWhenFieldTableAllProducerCombinations(t *testing.T) {
+	values := map[document.EventPrecision]string{"year": "2026", "month": "2026-03", "date": "2026-03-10", "hour": "2026-03-10T09", "minute": "2026-03-10T09:12", "second": "2026-03-10T09:12:30", "fraction": "2026-03-10T09:12:30.123"}
+	for _, precision := range document.AllEventPrecisions() {
+		for _, zone := range document.AllEventTimezoneKinds() {
+			for _, zoneText := range []string{"", "source zone"} {
+				claim := document.DocumentEventV1{Precision: precision, DateValue: values[precision], TimezoneKind: zone, ZoneText: zoneText}
+				if zone == "offset" {
+					claim.OffsetSeconds = new(3600)
+				}
+				key, _, err := document.EventUTCKey(claim.DateValue, precision, zone, claim.OffsetSeconds)
+				if err != nil {
+					t.Fatal(err)
+				}
+				claim.UTCKey = key
+				out := versionDatesAPI(store.DocumentDateFacts{State: "published", View: store.DocumentEventView{Events: document.DocumentEventsV1{Events: []document.DocumentEventV1{claim}}}}, "safe", "")
+				raw, err := json.Marshal(out.Claims[0].When)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(raw, &fields); err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]bool{"state": true, "precision": true, "placed_by": true}
+				switch precision {
+				case "year", "month":
+					want["period"] = true
+				case "date":
+					want["date"] = true
+				default:
+					want["zone_state"] = true
+					if key != "" {
+						want["at"] = true
+						if zone != "offset" || zoneText != "" {
+							want["local"], want["source_zone"], want["source_offset_seconds"] = true, true, true
+						}
+					} else {
+						want["local"] = true
+						if zone != "omitted" && zoneText != "" {
+							want["source_zone"] = true
+						}
+					}
+				}
+				if len(fields) != len(want) {
+					t.Errorf("%s/%s/%q: fields %s, want %v", precision, zone, zoneText, raw, want)
+					continue
+				}
+				for field := range fields {
+					if !want[field] {
+						t.Errorf("%s/%s/%q: unexpected %s in %s", precision, zone, zoneText, field, raw)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestVersionPeopleProjectionResolvesEdgeAliasAndRetainsAssertionOwner(t *testing.T) {
+	f := store.DocumentPeopleFacts{
+		Persons: map[string]store.FactPerson{
+			"old":     {Person: store.Person{PersonID: "survivor", DisplayName: "Survivor"}, Visible: true},
+			"retired": {Person: store.Person{PersonID: "retired", DisplayName: "Historical Name", State: "retired"}, Visible: true},
+		},
+		Edges:      []document.DocumentPersonEdgeV1{{PersonID: "old", Role: "author"}},
+		Assertions: []store.PersonDocumentAssertion{{PersonID: "retired", Role: "author"}},
+	}
+	got := versionPeopleAPI(f, true, "")
+	if len(got.Edges) != 1 || got.Edges[0].PersonID != "survivor" || got.Edges[0].DisplayName != "Survivor" {
+		t.Fatalf("edge = %+v", got.Edges)
+	}
+	if len(got.Assertions) != 1 || got.Assertions[0].PersonID != "retired" || got.Assertions[0].DisplayName != "Historical Name" {
+		t.Fatalf("assertions = %+v", got.Assertions)
 	}
 }

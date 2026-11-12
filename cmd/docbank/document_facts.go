@@ -73,6 +73,9 @@ func documentFactsCommand(kind string) *cobra.Command {
 		for _, edge := range result.Edges {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, edge.Basis)
 		}
+		for _, assertion := range result.Assertions {
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
+		}
 		for _, unresolved := range result.Unresolved {
 			_, _ = fmt.Fprintf(w, "%s\t%s\tunresolved\n", unresolved.Role, unresolved.RawLabel)
 		}

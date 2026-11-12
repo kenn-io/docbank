@@ -94,7 +94,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "list_package_preflight_diagnostics", title: "List package preflight diagnostics", description: "Page through bounded diagnostics for one retained package preflight.", schemas: listPackagePreflightDiagnosticsSchemas},
 	{name: "list_package_custodians", title: "List package custodians", description: "Page through active custodian claims for an exact package scope.", schemas: listPackageCustodiansSchemas},
 	{name: "find_people", title: "Find people", description: "Find bounded active canonical people by prefix of any word in the folded name.", schemas: findPeopleSchemas},
-	{name: "get_document_dates", title: "Get document dates", description: "Read safe date claims for one version or current node.", schemas: getDocumentDatesSchemas},
+	{name: "get_document_dates", title: "Get document dates", description: "Read safe date claims for one version or current node. Pass next_offset as offset to continue through claims and diagnostics.", schemas: getDocumentDatesSchemas},
 	{name: "get_document_people", title: "Get document people", description: "Read safe people claims for one version or current node.", schemas: getDocumentPeopleSchemas},
 	{name: "get_person", title: "Get person", description: "Read one canonical person and its split selectors.", schemas: getPersonSchemas},
 	{name: "list_packages", title: "List packages", description: "Page through received and produced load-file packages.", schemas: listPackagesSchemas},

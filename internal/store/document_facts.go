@@ -122,6 +122,11 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 		case head.State == documentPeopleStatePublished && head.GenerationID != "":
 			facts.State = "published"
 			facts.Edges = edges
+			if safe {
+				facts.Edges = slices.DeleteFunc(facts.Edges, func(e document.DocumentPersonEdgeV1) bool {
+					return e.Sensitive || e.Role == "blind_copy"
+				})
+			}
 		default:
 			facts.State = factsStatePending
 		}
@@ -171,9 +176,7 @@ func (s *Store) DocumentPeopleFacts(ctx context.Context, versionID string, safe 
 	}
 	ids := map[string]bool{}
 	for _, e := range facts.Edges {
-		if !safe || (!e.Sensitive && e.Role != "blind_copy") {
-			ids[e.PersonID] = true
-		}
+		ids[e.PersonID] = true
 	}
 	for _, a := range facts.Assertions {
 		ids[a.PersonID] = true
