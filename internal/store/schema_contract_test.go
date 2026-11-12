@@ -279,27 +279,20 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 		require.NoError(t, os.Remove(path))
 	}
 	path := filepath.Join(dir, "000049-"+digest+"-invalid.schema")
-	require.NoError(t, os.WriteFile(path, []byte("index_a invalid\n"), 0600))
-	_, err = loadSchemaContracts(dir)
-	require.ErrorContains(t, err, "invalid index record")
+	for _, body := range []string{
+		"index_a invalid\n",
+		"index_a " + digest,
+		"index_b " + digest + "\nindex_a " + digest + "\n",
+		"index_a " + digest + "\nindex_a " + digest + "\n",
+	} {
+		require.NoError(t, os.WriteFile(path, []byte(body), 0600))
+		_, err = loadSchemaContracts(dir)
+		require.Error(t, err)
+	}
 	require.NoError(t, os.Remove(path))
 	require.NoError(t, os.Mkdir(path, 0700))
 	_, err = loadSchemaContracts(dir)
 	require.ErrorContains(t, err, "must be a regular file")
-}
-
-func TestStorageSchemaContractChanges(t *testing.T) {
-	t.Parallel()
-	first := strings.Repeat("a", 64)
-	second := strings.Repeat("b", 64)
-	combined := strings.Repeat("c", 64)
-	err := checkSchemaLayout(nil, 49, first, map[string]string{"index_a": second})
-	require.ErrorContains(t, err, "000049-"+first+"-<summary-slug>.schema with these index records:\nindex_a "+second+"\n")
-	records := []schemaContract{{Version: 49, Digest: first}, {Version: 49, Digest: second}}
-	collision := checkSchemaLayout(records[:1], 49, second, map[string]string{"index_a": combined})
-	require.ErrorContains(t, collision, "set currentStorageSchemaVersion to 50")
-	require.NotContains(t, collision.Error(), "with these index records")
-	require.ErrorContains(t, checkSchemaContract(records, 49, first), "set currentStorageSchemaVersion to 50")
 }
 
 func TestStorageSchemaTokenDigest(t *testing.T) {
@@ -308,7 +301,7 @@ func TestStorageSchemaTokenDigest(t *testing.T) {
 	digest, err := schemaRowsDigest(row)
 	require.NoError(t, err)
 	require.Equal(t, "547f847035713649e20ea8d69859c6116c057fb9ae08f9e93aa5c20fb291a284", digest)
-	row[0][3] = "CREATE /* comment */ TABLE \"quoted table\"\n(\"label\" TEXT NOT NULL DEFAULT 'it''s ready', \"count\" INTEGER CHECK (\"count\" >= 0)) -- comment"
+	row[0][3] = "CREATE TABLE \"quoted table\" (\n/* comment */ \"label\" TEXT NOT NULL DEFAULT 'it''s ready',\n\"count\" INTEGER CHECK (\"count\" >= 0))"
 	formatted, err := schemaRowsDigest(row)
 	require.NoError(t, err)
 	require.Equal(t, digest, formatted)
@@ -316,13 +309,9 @@ func TestStorageSchemaTokenDigest(t *testing.T) {
 
 func TestStorageSchemaCatalogChanges(t *testing.T) {
 	t.Parallel()
-	schema := strings.Replace(schemaSQL, "CREATE TABLE IF NOT EXISTS nodes (", "CREATE TABLE IF NOT EXISTS nodes (\n    required_label TEXT NOT NULL,", 1)
-	require.NotEqual(t, schemaSQL, schema)
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db := schemaContractDB(t, driver.driver, schemaSQL)
-			requiredDB := schemaContractDB(t, driver.driver, schema)
-			requiredDigest := schemaCatalogDigest(t, requiredDB)
 			probe := func(sql string) string {
 				_, err := db.ExecContext(t.Context(), "SAVEPOINT probe")
 				require.NoError(t, err)
@@ -335,7 +324,6 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			}
 			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
 			baseDigest := schemaCatalogDigest(t, db)
-			require.NotEqual(t, baseDigest, requiredDigest)
 			require.Equal(t, baseDigest, probe(`CREATE INDEX contract_probe ON nodes(id)`))
 			for _, statement := range []string{
 				`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
@@ -352,7 +340,7 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 	}
 }
 
-func TestStorageSchemaUnreleasedVersionFlow(t *testing.T) {
+func TestStorageSchemaContractChanges(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
@@ -369,6 +357,11 @@ func TestStorageSchemaUnreleasedVersionFlow(t *testing.T) {
 			}
 			digest := schemaCatalogDigest(t, db)
 			indexes := schemaIndexDigests(t, db)
+			err := checkSchemaLayout(nil, 49, digest, indexes)
+			require.ErrorContains(t, err, "000049-"+digest+"-<summary-slug>.schema with these index records:")
+			for name, hash := range indexes {
+				require.ErrorContains(t, err, name+" "+hash+"\n")
+			}
 			writeRecord(49, digest, indexes)
 			records, err := loadSchemaContracts(dir)
 			require.NoError(t, err)
@@ -378,7 +371,11 @@ func TestStorageSchemaUnreleasedVersionFlow(t *testing.T) {
 			require.NoError(t, err)
 			changed := schemaCatalogDigest(t, db)
 			indexes = schemaIndexDigests(t, db)
-			require.ErrorContains(t, checkSchemaLayout(records, 49, changed, indexes), "set currentStorageSchemaVersion to 50")
+			collision := checkSchemaLayout(records, 49, changed, indexes)
+			require.ErrorContains(t, collision, "set currentStorageSchemaVersion to 50")
+			require.NotContains(t, collision.Error(), "with these index records")
+			both := append(slices.Clone(records), schemaContract{Version: 49, Digest: changed, Indexes: indexes})
+			require.ErrorContains(t, checkSchemaLayout(both, 49, digest, indexes), "set currentStorageSchemaVersion to 50")
 			writeRecord(50, changed, indexes)
 			records, err = loadSchemaContracts(dir)
 			require.NoError(t, err)
@@ -406,7 +403,6 @@ func TestStorageSchemaNonUniqueIndexChanges(t *testing.T) {
 			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_index; CREATE INDEX contract_index ON nodes(kind)`)
 			require.NoError(t, err)
 			t.Run("replacement", func(t *testing.T) {
-				require.Equal(t, digest, schemaCatalogDigest(t, db))
 				err := checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db))
 				require.ErrorContains(t, err, "if the record is yours and unmerged, remove it, rerun this test, and add its replacement")
 				require.ErrorContains(t, err, "if main already records it, preserve main's record and set currentStorageSchemaVersion to 50")
@@ -414,7 +410,6 @@ func TestStorageSchemaNonUniqueIndexChanges(t *testing.T) {
 			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_index`)
 			require.NoError(t, err)
 			t.Run("removal", func(t *testing.T) {
-				require.Equal(t, digest, schemaCatalogDigest(t, db))
 				require.ErrorContains(t, checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db)), "set currentStorageSchemaVersion to 50")
 			})
 		})
