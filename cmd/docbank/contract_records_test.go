@@ -209,6 +209,27 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, after, read())
 	}
+	// Independent subtests: a failure here must not hide the other case.
+	show := func(t *testing.T) string {
+		t.Helper()
+		out, err := runCLI(t, "contract", "show", contract.ContractID, "--json")
+		require.NoError(t, err, out)
+		return out
+	}
+	t.Run("empty party name", func(t *testing.T) {
+		before := show(t)
+		_, err := runCLI(t, "contract", "edit", contract.ContractID, "--title", "Should not apply", "--counterparty", "")
+		require.Error(t, err)
+		require.Equal(t, before, show(t))
+	})
+	t.Run("demoted own link", func(t *testing.T) {
+		out, err := runCLI(t, "party", "edit", owner.PartyID, "--own=false")
+		require.NoError(t, err, out)
+		before := show(t)
+		out, err = runCLI(t, "contract", "edit", contract.ContractID, "--own", "Synthetic Owner", "--json")
+		require.NoError(t, err, out)
+		require.Equal(t, before, show(t))
+	})
 	out, err = runCLI(t, "contract", "delete", contract.ContractID)
 	require.NoError(t, err, out)
 	_, err = runCLI(t, "contract", "show", contract.ContractID)
