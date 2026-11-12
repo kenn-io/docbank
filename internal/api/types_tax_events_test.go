@@ -11,6 +11,7 @@ import (
 )
 
 func TestTaxRecordDetailBalance(t *testing.T) {
+	t.Parallel()
 	d := store.TaxRecordDetail{Balance: taxrecord.Balance{OutstandingMinor: new(int64(113400)), Currency: "USD", OtherCurrencyEvents: 2}}
 	got := fromStoreTaxRecordDetail(d, false)
 	assert.Equal(t, new(int64(113400)), got.Balance.OutstandingMinor)
@@ -21,6 +22,7 @@ func TestTaxRecordDetailBalance(t *testing.T) {
 }
 
 func TestTaxCashRequestMembers(t *testing.T) {
+	t.Parallel()
 	var req AddTaxEventRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"kind":"payment","occurred_on":"2026-01-01","amount":"12.34","currency":"USD"}`), &req))
 	assert.Equal(t, new("12.34"), req.Amount)

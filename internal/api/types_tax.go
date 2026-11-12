@@ -11,6 +11,8 @@ import (
 	"go.kenn.io/docbank/internal/taxrecord"
 )
 
+const taxCurrencyField = "currency"
+
 const taxNoteField = "note"
 
 // TaxAccount is a tax registration. Identifiers are masked except on explicit reveal.
@@ -91,7 +93,7 @@ func taxAccountRequestSchema(schema *huma.Schema) *huma.Schema {
 	}
 	schema.Properties["lead_days"].Minimum = new(float64(0))
 	schema.Properties["lead_days"].Maximum = new(float64(366))
-	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "identifier": 256, "period_note": 8192, "due_note": 8192, taxNoteField: 8192} {
+	for field, length := range map[string]int{"country": 2, "subdivision": 6, taxCurrencyField: 3, "tax_kind": 256, "identifier": 256, "period_note": 8192, "due_note": 8192, taxNoteField: 8192} {
 		if property := schema.Properties[field]; property != nil {
 			property.MaxLength = new(length)
 			if field == "identifier" || field == "period_note" || field == "due_note" || field == taxNoteField {
@@ -107,7 +109,7 @@ func (CreateTaxAccountRequest) TransformSchema(_ huma.Registry, schema *huma.Sch
 }
 
 var (
-	taxPatchMembers  = []string{"identifier", "cadence", "period_note", "due_note", "lead_days", "currency", "effective_start", "effective_end", taxNoteField}
+	taxPatchMembers  = []string{"identifier", "cadence", "period_note", "due_note", "lead_days", taxCurrencyField, "effective_start", "effective_end", taxNoteField}
 	taxCreateMembers = append([]string{"filer_party_id", "authority_party_id", "country", "subdivision", "tax_kind"}, taxPatchMembers...)
 )
 

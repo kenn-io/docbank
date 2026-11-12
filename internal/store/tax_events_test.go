@@ -223,6 +223,7 @@ func checkTaxEventsAuthorityAndBalance(t *testing.T, open func(*testing.T) *Stor
 }
 
 func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	m, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("12.34"), Currency: "USD"})
@@ -258,6 +259,7 @@ func TestTaxCashMetadataRoundTripAndRollback(t *testing.T) {
 }
 
 func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
@@ -276,6 +278,7 @@ func TestTaxRecordMoneyEditChecksBalance(t *testing.T) {
 }
 
 func TestTaxCashAppendVoidAtomic(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("USD")}
@@ -302,6 +305,7 @@ func TestTaxCashAppendVoidAtomic(t *testing.T) {
 }
 
 func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}
@@ -326,6 +330,7 @@ func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
 }
 
 func TestTaxCashCancellationAndWriteFailure(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Amount: new("1.00"), Currency: "USD"}
@@ -350,6 +355,7 @@ func TestTaxCashCancellationAndWriteFailure(t *testing.T) {
 }
 
 func TestTaxRecordCurrencyEditChecksBalance(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	in := TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, Direction: "payable", Amount: new("1"), Currency: new("EUR")}
@@ -372,6 +378,7 @@ func TestTaxRecordCurrencyEditChecksBalance(t *testing.T) {
 }
 
 func TestTaxCashMetadataPerRecordBalance(t *testing.T) {
+	t.Parallel()
 	s, _, first := taxFixture(t)
 	ctx := t.Context()
 	input := TaxRecordInput{FilerPartyID: &first.FilerPartyID, Country: new("ZZ"), TaxKind: new("example"), Kind: "filing", Title: "Independent", Direction: "payable", Amount: new("1"), Currency: new("USD")}
@@ -391,6 +398,7 @@ func TestTaxCashMetadataPerRecordBalance(t *testing.T) {
 }
 
 func TestTaxRecordEditValidatesProposedBalance(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new(maxTaxCashAmount)}

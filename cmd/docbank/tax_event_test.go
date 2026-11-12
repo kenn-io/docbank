@@ -111,7 +111,9 @@ func TestTaxCLICashRefundVoidAndPrivacy(t *testing.T) {
 		if r.Method == http.MethodPost {
 			assert.Equal(t, fmt.Sprintf(`"%d"`, revision), r.Header.Get("If-Match"))
 			body, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
+			if !assert.NoError(t, err) {
+				return
+			}
 			var event string
 			switch revision {
 			case 1:

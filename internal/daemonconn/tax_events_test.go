@@ -131,6 +131,7 @@ func TestTaxCashDetailRejectsWrongBalance(t *testing.T) {
 }
 
 func TestTaxCashOverflowClientDiagnostic(t *testing.T) {
+	t.Parallel()
 	const id = "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")

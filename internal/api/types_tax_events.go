@@ -60,14 +60,14 @@ type VoidTaxEventRequest struct {
 
 // UnmarshalJSON enforces exact names and no null for event text fields.
 func (p *AddTaxEventRequest) UnmarshalJSON(raw []byte) error {
-	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "amount", "currency", "reference", taxNoteField}, "amount"); err != nil {
+	if _, err := taxMembers(raw, []string{"kind", "occurred_on", "amount", taxCurrencyField, "reference", taxNoteField}, "amount"); err != nil {
 		return err
 	}
 	type fields AddTaxEventRequest
 	return json.Unmarshal(raw, (*fields)(p))
 }
 func (p *AdvanceTaxRecordRequest) UnmarshalJSON(raw []byte) error {
-	if _, err := taxMembers(raw, []string{"state", "occurred_on", "currency", "reference", taxNoteField, "amount"}, "amount"); err != nil {
+	if _, err := taxMembers(raw, []string{"state", "occurred_on", taxCurrencyField, "reference", taxNoteField, "amount"}, "amount"); err != nil {
 		return err
 	}
 	type fields AdvanceTaxRecordRequest
@@ -82,7 +82,7 @@ func (p *VoidTaxEventRequest) UnmarshalJSON(raw []byte) error {
 }
 
 func taxEventRequestSchema(schema *huma.Schema) *huma.Schema {
-	for field, length := range map[string]int{"occurred_on": 10, "currency": 3, "reference": 256, taxNoteField: 8192, "amount": 32} {
+	for field, length := range map[string]int{"occurred_on": 10, taxCurrencyField: 3, "reference": 256, taxNoteField: 8192, "amount": 32} {
 		if property := schema.Properties[field]; property != nil {
 			property.MaxLength = new(length)
 		}
