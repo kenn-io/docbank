@@ -668,6 +668,12 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/nodes/{id}/tags/{tag_id}"].Delete,
 		doc.Paths["/api/v1/tags/{tag_id}"].Patch,
 		doc.Paths["/api/v1/tags/{tag_id}"].Delete,
+		doc.Paths["/api/v1/parties/{party_id}"].Patch,
+		doc.Paths["/api/v1/parties/{party_id}/retire"].Post,
+		doc.Paths["/api/v1/contracts/{contract_id}"].Patch,
+		doc.Paths["/api/v1/contracts/{contract_id}"].Delete,
+		doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"].Put,
+		doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"].Delete,
 	} {
 		require.NotNil(t, operation)
 		required := map[string]bool{}
@@ -853,4 +859,59 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	require.NotNil(t, edit)
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
 	require.NotContains(t, edit.Required, "content_version_id")
+}
+
+func TestPartyRequestSchemas(t *testing.T) {
+	t.Parallel()
+	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas.Map()
+	for _, name := range []string{"CreatePartyRequest", "PatchPartyRequest"} {
+		schema := schemas[name]
+		require.NotNil(t, schema)
+		assert.ElementsMatch(t, []any{"person", "organization"}, schema.Properties["kind"].Enum)
+		assert.Equal(t, 1, *schema.Properties["display_name"].MinLength)
+		assert.Equal(t, 200, *schema.Properties["display_name"].MaxLength)
+		assert.Equal(t, 300, *schema.Properties["legal_name"].MaxLength)
+		assert.Equal(t, "uuid", schema.Properties["person_id"].Format)
+	}
+	patch := schemas["PatchPartyRequest"]
+	var fields []string
+	for _, option := range patch.AnyOf {
+		fields = append(fields, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"kind", "display_name", "legal_name", "country", "person_id", "own"}, fields)
+}
+
+func TestContractRequestSchemas(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
+	for _, name := range []string{"CreateContractRequest", "PatchContractRequest"} {
+		schema := schemas[name]
+		require.NotNil(t, schema)
+		assert.Equal(t, 1, *schema.Properties["title"].MinLength)
+		assert.Equal(t, 300, *schema.Properties["title"].MaxLength)
+		assert.Equal(t, `^([a-z0-9_]{1,64})?$`, schema.Properties["contract_type"].Pattern)
+		assert.ElementsMatch(t, []any{"draft", "pending_signature", "active", "terminated", "cancelled"}, schema.Properties["status"].Enum)
+		for _, field := range []string{"starts_on", "expires_on", "signed_on"} {
+			assert.Equal(t, "date", schema.Properties[field].Format)
+		}
+		assert.Nil(t, schema.Properties["summary"].MaxLength)
+	}
+	var contractFields []string
+	for _, option := range schemas["PatchContractRequest"].AnyOf {
+		contractFields = append(contractFields, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"title", "contract_type", "status", "starts_on", "expires_on", "signed_on", "summary", "purpose", "consideration", "termination"}, contractFields)
+	assert.ElementsMatch(t, []any{"own", "counterparty"}, schemas["ContractPartyInput"].Properties["role"].Enum)
+	links := doc.Paths["/api/v1/contracts/{contract_id}/parties/{party_id}"]
+	for _, op := range []*huma.Operation{links.Put, links.Delete} {
+		found := false
+		for _, parameter := range op.Parameters {
+			if parameter.Name == "role" {
+				found = true
+				assert.ElementsMatch(t, []any{"own", "counterparty"}, parameter.Schema.Enum)
+			}
+		}
+		assert.True(t, found)
+	}
 }

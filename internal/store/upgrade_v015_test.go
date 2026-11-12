@@ -851,3 +851,182 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 		require.NoError(t, err)
 	}
 }
+
+func TestUpgradeReleasedV0170KeepsOperationalState(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0170SQL, 48)
+			run, err := legacy.BeginIngest(ctx, "watch", "fixture")
+			require.NoError(t, err)
+			_, err = legacy.IngestFileExact(ctx, run, legacy.RootID(), "fixture.txt", fakeHash("a1"), 4, "text/plain", "fixture.txt", "")
+			require.NoError(t, err)
+			_, err = db.ExecContext(ctx, `INSERT INTO watch_source_absences(watch_name,source_ref,absent_since) VALUES('fixture','fixture.txt','2026-10-05T12:00:00Z')`)
+			require.NoError(t, err)
+			versions := seedRenditionCatalogVersions(t, legacy)
+			request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
+			request.ExplicitStart = true
+			grantRenditionJobConsent(t, legacy, request)
+			_, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
+			require.NoError(t, err)
+			asset := albumAsset(t, legacy, "described.jpg")
+			node, err := legacy.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			derived := photoDescriptionJobRequest(t, legacy, node.CurrentVersionID, producerB, true)
+			grantRenditionJobConsent(t, legacy, derived)
+			job, derivedWaiter, err := legacy.EnqueueRenditionJob(ctx, derived)
+			require.NoError(t, err)
+			exhaustedAsset := albumAsset(t, legacy, "exhausted.jpg")
+			exhaustedNode, err := legacy.NodeByID(ctx, exhaustedAsset.Files[0].NodeID)
+			require.NoError(t, err)
+			exhaustedRequest := photoDescriptionJobRequest(t, legacy, exhaustedNode.CurrentVersionID, producerB, false)
+			grantRenditionJobConsent(t, legacy, exhaustedRequest)
+			at := time.Now().UTC().Add(time.Minute)
+			exhaustedJob, exhaustedWaiter, exhaustedClaim := startPhotoDescription(t, legacy, exhaustedRequest, at)
+			require.NoError(t, legacy.MarkRenditionJobFailed(ctx, exhaustedClaim, RenditionFailureTerminal, at.Add(time.Second)))
+			exhaustedJob, err = legacy.RenditionJobByID(ctx, exhaustedJob.ID)
+			require.NoError(t, err)
+			exhaustedWaiter, err = legacy.RenditionJobWaiterByID(ctx, exhaustedWaiter.ID)
+			require.NoError(t, err)
+			require.Equal(t, 1, exhaustedJob.ProviderAttempts)
+			require.Equal(t, "waiting", exhaustedWaiter.State)
+			resumeAsset := albumAsset(t, legacy, "resume.jpg")
+			resumeNode, err := legacy.NodeByID(ctx, resumeAsset.Files[0].NodeID)
+			require.NoError(t, err)
+			resumeRequest := photoDescriptionJobRequest(t, legacy, resumeNode.CurrentVersionID, producerB, false)
+			grantRenditionJobConsent(t, legacy, resumeRequest)
+			resumeJob, resumeWaiter, claim := startPhotoDescription(t, legacy, resumeRequest, at)
+			require.NoError(t, legacy.CheckpointRenditionProvider(ctx, claim, "fixture-handle", at.Add(time.Second)))
+			require.NoError(t, legacy.MarkRenditionJobRetry(ctx, claim, RenditionFailureTransient, at.Add(2*time.Second), at.Add(3*time.Second)))
+			resumeJob, err = legacy.RenditionJobByID(ctx, resumeJob.ID)
+			require.NoError(t, err)
+			resumeWaiter, err = legacy.RenditionJobWaiterByID(ctx, resumeWaiter.ID)
+			require.NoError(t, err)
+			answerAsset := albumAsset(t, legacy, "answer.jpg")
+			answerNode, err := legacy.NodeByID(ctx, answerAsset.Files[0].NodeID)
+			require.NoError(t, err)
+			answerRequest := photoDescriptionJobRequest(t, legacy, answerNode.CurrentVersionID, producerB, false)
+			grantRenditionJobConsent(t, legacy, answerRequest)
+			_, _, answerClaim := startPhotoDescription(t, legacy, answerRequest, at)
+			answer := &document.RenditionResult{Artifacts: []document.RenditionArtifact{{Role: document.EvidenceArtifactStructured, Payload: []byte(`{"caption":"Harbor lantern","tags":["sailboat"],"visible_text":"QUAYSIDE","rotation":90}`)}}}
+			_, err = legacy.PublishPhotoDescription(ctx, answerClaim, answer, at.Add(time.Second))
+			require.NoError(t, err)
+			proposals := photoSuggestionValues(t, legacy, answerAsset.ID)
+			require.Len(t, proposals, 2)
+			require.Equal(t, "Harbor lantern", proposals[0].Value.Caption)
+			require.Equal(t, []string{"sailboat"}, proposals[0].Value.Tags)
+			require.Equal(t, "QUAYSIDE", proposals[0].Value.VisibleText)
+			require.Equal(t, new(90), proposals[1].Rotation)
+			var detectionRequest RenditionJobRequest
+			var scannedVersions []string
+			for i, observations := range [][]document.FaceObservation{
+				{{Box: document.FaceBox{X: .1, Y: .1, Width: .2, Height: .2}}},
+				{},
+			} {
+				scanAsset := albumAsset(t, legacy, fmt.Sprintf("scan-%d.jpg", i))
+				scanNode, err := legacy.NodeByID(ctx, scanAsset.Files[0].NodeID)
+				require.NoError(t, err)
+				scannedVersions = append(scannedVersions, scanNode.CurrentVersionID)
+				detectionRequest = photoVisionJobRequest(t, legacy, scanNode.CurrentVersionID, producerB, false, document.FaceDetectionProviderID)
+				grantRenditionJobConsent(t, legacy, detectionRequest)
+				_, _, scanClaim := startPhotoDescription(t, legacy, detectionRequest, at)
+				_, err = legacy.PublishPhotoDescription(ctx, scanClaim, faceDetectionResult(t, observations...), at.Add(time.Second))
+				require.NoError(t, err)
+			}
+			control := albumAsset(t, legacy, "unscanned.jpg")
+			controlNode, err := legacy.NodeByID(ctx, control.Files[0].NodeID)
+			require.NoError(t, err)
+			_ = photoVisionJobRequest(t, legacy, controlNode.CurrentVersionID, producerB, false, document.FaceDetectionProviderID)
+			var sourceRows strings.Builder
+			for _, table := range []string{"photo_suggestions", "photo_face_scans", "photo_faces"} {
+				dumpReleasedTable(t, db, table, &sourceRows)
+			}
+			var scanCount, faceCount int
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_face_scans`).Scan(&scanCount))
+			require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces`).Scan(&faceCount))
+			require.Equal(t, 2, scanCount)
+			require.Equal(t, 1, faceCount)
+			for _, term := range []string{"lantern", "sailboat", "QUAYSIDE"} {
+				page := browsePhotoPage(t, legacy, fmt.Sprintf(`{"syntax":"simple","text":%q}`, term))
+				require.True(t, slices.ContainsFunc(page.Items, func(item PhotoBrowseRow) bool { return item.AssetID == answerAsset.ID }))
+			}
+			beforeTargets, err := legacy.PhotoDescriptionTargets(ctx, detectionRequest.Profile.Fingerprint, detectionRequest.Profile.RenditionRequestFingerprint, "", 100, false, true)
+			require.NoError(t, err)
+			for _, version := range scannedVersions {
+				require.False(t, slices.ContainsFunc(beforeTargets, func(v ContentVersion) bool { return v.ID == version }))
+			}
+			require.True(t, slices.ContainsFunc(beforeTargets, func(v ContentVersion) bool { return v.ID == controlNode.CurrentVersionID }))
+			require.NoError(t, db.Close())
+			upgraded, err := Open(ctx, path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, upgraded.Close()) }()
+			parties, err := upgraded.ListParties(ctx, PartyListOptions{Limit: 100})
+			require.NoError(t, err)
+			assert.Empty(t, parties)
+			party, err := upgraded.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Ltd"})
+			require.NoError(t, err)
+			assert.Equal(t, "Example Ltd", party.DisplayName)
+			var absence, explicit int
+			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_source_absences WHERE watch_name='fixture' AND source_ref='fixture.txt'`).Scan(&absence))
+			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, waiter.ID).Scan(&explicit))
+			assert.Equal(t, 1, absence)
+			assert.Equal(t, 1, explicit)
+			gotJob, err := upgraded.RenditionJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, job, gotJob)
+			gotWaiter, err := upgraded.RenditionJobWaiterByID(ctx, derivedWaiter.ID)
+			require.NoError(t, err)
+			assert.Equal(t, derivedWaiter, gotWaiter)
+			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, derivedWaiter.ID).Scan(&explicit))
+			assert.Equal(t, 1, explicit)
+			for _, pair := range []struct {
+				job    RenditionJob
+				waiter RenditionJobWaiter
+			}{{exhaustedJob, exhaustedWaiter}, {resumeJob, resumeWaiter}} {
+				gotJob, err := upgraded.RenditionJobByID(ctx, pair.job.ID)
+				require.NoError(t, err)
+				assert.Equal(t, pair.job, gotJob)
+				gotWaiter, err := upgraded.RenditionJobWaiterByID(ctx, pair.waiter.ID)
+				require.NoError(t, err)
+				assert.Equal(t, pair.waiter, gotWaiter)
+				require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, pair.waiter.ID).Scan(&explicit))
+				assert.Zero(t, explicit)
+			}
+			var handle string
+			var snapshot sql.NullString
+			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT provider_resume_handle,execution_snapshot_json FROM rendition_jobs WHERE job_id=?`, resumeJob.ID).Scan(&handle, &snapshot))
+			assert.Equal(t, "fixture-handle", handle)
+			assert.True(t, snapshot.Valid)
+			targets, err := upgraded.PhotoDescriptionTargets(ctx, exhaustedRequest.Profile.Fingerprint, exhaustedRequest.Profile.RenditionRequestFingerprint, "", 10, false, false)
+			require.NoError(t, err)
+			for _, target := range targets {
+				assert.NotEqual(t, exhaustedNode.CurrentVersionID, target.ID)
+			}
+			var restoredRows strings.Builder
+			for _, table := range []string{"photo_suggestions", "photo_face_scans", "photo_faces"} {
+				dumpReleasedTable(t, upgraded.db, table, &restoredRows)
+			}
+			assert.Equal(t, sourceRows.String(), restoredRows.String(), "provider answers and scan markers survive")
+			for _, term := range []string{"lantern", "sailboat", "QUAYSIDE"} {
+				page := browsePhotoPage(t, upgraded, fmt.Sprintf(`{"syntax":"simple","text":%q}`, term))
+				assert.True(t, slices.ContainsFunc(page.Items, func(item PhotoBrowseRow) bool { return item.AssetID == answerAsset.ID }), "search for %s", term)
+			}
+			for _, restoredOnly := range []bool{false, true} {
+				targets, err := upgraded.PhotoDescriptionTargets(ctx, answerRequest.Profile.Fingerprint, answerRequest.Profile.RenditionRequestFingerprint, "", 100, restoredOnly, false)
+				if assert.NoError(t, err) {
+					assert.False(t, slices.ContainsFunc(targets, func(v ContentVersion) bool { return v.ID == answerNode.CurrentVersionID }))
+				}
+			}
+			detectionTargets, err := upgraded.PhotoDescriptionTargets(ctx, detectionRequest.Profile.Fingerprint, detectionRequest.Profile.RenditionRequestFingerprint, "", 100, false, true)
+			if assert.NoError(t, err) {
+				for _, version := range scannedVersions {
+					assert.False(t, slices.ContainsFunc(detectionTargets, func(v ContentVersion) bool { return v.ID == version }), "completed scan must not reopen")
+				}
+				assert.True(t, slices.ContainsFunc(detectionTargets, func(v ContentVersion) bool { return v.ID == controlNode.CurrentVersionID }), "unscanned control remains eligible")
+			}
+			require.NoError(t, upgraded.ValidateMetadata(ctx))
+		})
+	}
+}

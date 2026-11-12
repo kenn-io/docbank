@@ -555,6 +555,16 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= partiesStorageSchemaVersion {
+		if err := partyMetadata.export(ctx, tx, write); err != nil {
+			return err
+		}
+	}
+	if layout.schemaVersion >= contractsStorageSchemaVersion {
+		if err := exportMetadataTables(ctx, tx, write, []metadataRecordCodec{contractMetadata, contractPartyMetadata}); err != nil {
+			return err
+		}
+	}
 	if layout.schemaVersion >= photoFacesStorageSchemaVersion {
 		var codec metadataRecordCodec = photoFaceMetadata
 		if layout.schemaVersion < photoFaceDetectionStorageSchemaVersion {
@@ -1659,6 +1669,16 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.hasPersons() {
 			if err := validatePersonMetadataState(ctx, tx, layout.schemaVersion); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= partiesStorageSchemaVersion {
+			if err := validatePartyMetadataState(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= contractsStorageSchemaVersion {
+			if err := validateContractMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}

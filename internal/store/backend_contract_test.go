@@ -2215,7 +2215,65 @@ var backendSuites = []backendSuite{
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
 	{name: "transfer-and-recovery", postgres: "unqualified", scope: "PostgreSQL metadata import, portable packages and physical backup/restore remain unqualified; metadata-export covers pinned logical export and recovery into fresh SQLite."},
-	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
+	{name: "organization", postgres: "native operations", scope: "Tags, parties, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
+		{"PartyRevisionExhaustion", func(t *testing.T) { t.Helper(); checkPartyRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkPartyRevisionExhaustion(t, true) }},
+		{"PartyPersonLifecycle", func(t *testing.T) {
+			t.Helper()
+			checkPartyPersonLifecycle(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPartyPersonLifecycle(t, newPostgresQueryStore)
+		}},
+		{"PartyLifecycle", func(t *testing.T) {
+			t.Helper()
+			checkPartyLifecycle(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPartyLifecycle(t, newPostgresQueryStore)
+		}},
+		{"PartyConcurrentNameAdmission", func(t *testing.T) {
+			t.Helper()
+			checkPartyConcurrentNameAdmission(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPartyConcurrentNameAdmission(t, newPostgresQueryStore)
+		}},
+		{"PartyFiltersAndReferences", func(t *testing.T) {
+			t.Helper()
+			checkPartyFiltersAndReferences(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPartyFiltersAndReferences(t, newPostgresQueryStore)
+		}},
+		{"ContractRevisionExhaustion", func(t *testing.T) { t.Helper(); checkContractRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkContractRevisionExhaustion(t, true) }},
+		{"ContractPartyHistory", func(t *testing.T) {
+			t.Helper()
+			checkContractPartyHistory(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractPartyHistory(t, newPostgresQueryStore)
+		}},
+		{"ContractFilters", func(t *testing.T) {
+			t.Helper()
+			checkContractFilters(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractFilters(t, newPostgresQueryStore)
+		}},
+		{"ContractLifecycle", func(t *testing.T) {
+			t.Helper()
+			checkContractLifecycle(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractLifecycle(t, newPostgresQueryStore)
+		}},
+		{"ContractConcurrentRevisionFence", func(t *testing.T) {
+			t.Helper()
+			checkContractConcurrentRevisionFence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractConcurrentRevisionFence(t, newPostgresQueryStore)
+		}},
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
 			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)

@@ -282,7 +282,7 @@ var metadataCodecs = indexMetadataCodecs(
 	packageMetadataTables, packageImportMetadataTables, batesMetadataTables, photoMetadataTables, photoHiddenMetadataTables, photoCheckoutMetadataTables,
 	personMetadataTables, processingMetadataTables, embeddingMetadataTables, auditMetadataTables,
 	[]metadataRecordCodec{
-		emailDocumentPublicationMetadata, exportAuthorityMetadata,
+		partyMetadata, contractMetadata, contractPartyMetadata, emailDocumentPublicationMetadata, exportAuthorityMetadata,
 		currentRenditionRootMetadata, derivativePurgeSuppressionMetadata, photoFaceMetadata, photoSuggestionMetadata,
 	},
 )

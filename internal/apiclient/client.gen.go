@@ -2717,6 +2717,351 @@ func (c *Client) LookupContentReferences(ctx context.Context, options *LookupCon
 	return responseParser(ctx, resp)
 }
 
+// ListContracts List contracts
+func (c *Client) ListContracts(ctx context.Context, options *ListContractsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListContractsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"as_of":           {Style: "form", Explode: &[]bool{false}[0]},
+		"expiring_before": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"party_id":        {Style: "form", Explode: &[]bool{false}[0]},
+		"q":               {Style: "form", Explode: &[]bool{false}[0]},
+		"status":          {Style: "form", Explode: &[]bool{false}[0]},
+		"type":            {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListContractsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListContractsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListContractsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListContractsErrorResponse](resp, "ListContractsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateContract Create a contract
+func (c *Client) CreateContract(ctx context.Context, options *CreateContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateContractResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/contracts",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreateContractResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreateContractResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreateContractResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreateContractErrorResponse](resp, "CreateContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeleteContract Delete a contract
+func (c *Client) DeleteContract(ctx context.Context, options *DeleteContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DeleteContractErrorResponse](resp, "DeleteContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetContract Inspect a contract
+func (c *Client) GetContract(ctx context.Context, options *GetContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetContractResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"as_of": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetContractResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetContractResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetContractResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetContractErrorResponse](resp, "GetContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateContract Edit a contract
+func (c *Client) UpdateContract(ctx context.Context, options *UpdateContractRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdateContractResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdateContractResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdateContractResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdateContractResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdateContractErrorResponse](resp, "UpdateContractErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DetachContractParty Change a contract party
+func (c *Client) DetachContractParty(ctx context.Context, options *DetachContractPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DetachContractPartyResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"role": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}/parties/{party_id}",
+		Method:        "DELETE",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DetachContractPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DetachContractPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DetachContractPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DetachContractPartyErrorResponse](resp, "DetachContractPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AttachContractParty Change a contract party
+func (c *Client) AttachContractParty(ctx context.Context, options *AttachContractPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AttachContractPartyResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"role": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/contracts/{contract_id}/parties/{party_id}",
+		Method:        "PUT",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AttachContractPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AttachContractPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AttachContractPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AttachContractPartyErrorResponse](resp, "AttachContractPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/contracts/{contract_id}/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetDocumentProcessingCoverage Report rendition and embedding coverage for exact document versions
 func (c *Client) GetDocumentProcessingCoverage(ctx context.Context, options *GetDocumentProcessingCoverageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDocumentProcessingCoverageResponse, error) {
 	var err error
@@ -8340,6 +8685,247 @@ func (c *Client) CancelPageRenderJob(ctx context.Context, options *CancelPageRen
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/pages/jobs/{id}/cancel")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListParties List parties
+func (c *Client) ListParties(ctx context.Context, options *ListPartiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPartiesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_retired": {Style: "form", Explode: &[]bool{false}[0]},
+		"kind":            {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"offset":          {Style: "form", Explode: &[]bool{false}[0]},
+		"own":             {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/parties",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPartiesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPartiesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPartiesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPartiesErrorResponse](resp, "ListPartiesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreateParty Create a party
+func (c *Client) CreateParty(ctx context.Context, options *CreatePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/parties",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePartyErrorResponse](resp, "CreatePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetParty Inspect a party
+func (c *Client) GetParty(ctx context.Context, options *GetPartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPartyErrorResponse](resp, "GetPartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdateParty Edit a party
+func (c *Client) UpdateParty(ctx context.Context, options *UpdatePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdatePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}",
+		Method:      "PATCH",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdatePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdatePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdatePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdatePartyErrorResponse](resp, "UpdatePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RetireParty Retire a party
+func (c *Client) RetireParty(ctx context.Context, options *RetirePartyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetirePartyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/parties/{party_id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetirePartyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetirePartyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetirePartyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetirePartyErrorResponse](resp, "RetirePartyErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/parties/{party_id}/retire")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -18066,6 +18652,273 @@ func (o *LookupContentReferencesRequestOptions) GetHeader() (map[string]string, 
 	return nil, nil
 }
 
+// ListContractsRequestOptions is the options needed to make a request to ListContracts.
+type ListContractsRequestOptions struct {
+	Query *ListContractsQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListContractsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListContractsRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListContractsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListContractsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreateContractRequestOptions is the options needed to make a request to CreateContract.
+type CreateContractRequestOptions struct {
+	Body *CreateContractBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreateContractRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreateContractRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreateContractRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreateContractRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DeleteContractRequestOptions is the options needed to make a request to DeleteContract.
+type DeleteContractRequestOptions struct {
+	PathParams *DeleteContractPath
+	Header     *DeleteContractHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeleteContractRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeleteContractRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeleteContractRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeleteContractRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetContractRequestOptions is the options needed to make a request to GetContract.
+type GetContractRequestOptions struct {
+	PathParams *GetContractPath
+	Query      *GetContractQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetContractRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetContractRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetContractRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetContractRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdateContractRequestOptions is the options needed to make a request to UpdateContract.
+type UpdateContractRequestOptions struct {
+	PathParams *UpdateContractPath
+	Body       *UpdateContractBody
+	Header     *UpdateContractHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdateContractRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdateContractRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdateContractRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdateContractRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// DetachContractPartyRequestOptions is the options needed to make a request to DetachContractParty.
+type DetachContractPartyRequestOptions struct {
+	PathParams *DetachContractPartyPath
+	Query      *DetachContractPartyQuery
+	Header     *DetachContractPartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DetachContractPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DetachContractPartyRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DetachContractPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DetachContractPartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AttachContractPartyRequestOptions is the options needed to make a request to AttachContractParty.
+type AttachContractPartyRequestOptions struct {
+	PathParams *AttachContractPartyPath
+	Query      *AttachContractPartyQuery
+	Header     *AttachContractPartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AttachContractPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AttachContractPartyRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AttachContractPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *AttachContractPartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetDocumentProcessingCoverageRequestOptions is the options needed to make a request to GetDocumentProcessingCoverage.
 type GetDocumentProcessingCoverageRequestOptions struct {
 	Query *GetDocumentProcessingCoverageQuery
@@ -21845,6 +22698,176 @@ func (o *CancelPageRenderJobRequestOptions) GetBody() any {
 // GetHeader returns the headers as a map.
 func (o *CancelPageRenderJobRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
+}
+
+// ListPartiesRequestOptions is the options needed to make a request to ListParties.
+type ListPartiesRequestOptions struct {
+	Query *ListPartiesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPartiesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPartiesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPartiesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPartiesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePartyRequestOptions is the options needed to make a request to CreateParty.
+type CreatePartyRequestOptions struct {
+	Body *CreatePartyBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePartyRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePartyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPartyRequestOptions is the options needed to make a request to GetParty.
+type GetPartyRequestOptions struct {
+	PathParams *GetPartyPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPartyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdatePartyRequestOptions is the options needed to make a request to UpdateParty.
+type UpdatePartyRequestOptions struct {
+	PathParams *UpdatePartyPath
+	Body       *UpdatePartyBody
+	Header     *UpdatePartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdatePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdatePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdatePartyRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdatePartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RetirePartyRequestOptions is the options needed to make a request to RetireParty.
+type RetirePartyRequestOptions struct {
+	PathParams *RetirePartyPath
+	Header     *RetirePartyHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetirePartyRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetirePartyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetirePartyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetirePartyRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // ResolvePathRequestOptions is the options needed to make a request to ResolvePath.
@@ -27145,6 +28168,20 @@ const (
 	Under1M RevokeWebSessionQueryDurationBucket = "under_1m"
 )
 
+type DetachContractPartyQueryRole string
+
+const (
+	Counterparty DetachContractPartyQueryRole = "counterparty"
+	Own          DetachContractPartyQueryRole = "own"
+)
+
+type AttachContractPartyQueryRole string
+
+const (
+	AttachContractPartyQueryRoleCounterparty AttachContractPartyQueryRole = "counterparty"
+	AttachContractPartyQueryRoleOwn          AttachContractPartyQueryRole = "own"
+)
+
 type ListDocumentsQuerySort string
 
 const (
@@ -27176,6 +28213,22 @@ const (
 	ListPackageLabelCandidatesQueryProvenanceReceived ListPackageLabelCandidatesQueryProvenance = "received"
 )
 
+type ListPartiesQueryKind string
+
+const (
+	ListPartiesQueryKindEmpty  ListPartiesQueryKind = ""
+	ListPartiesQueryKindPerson ListPartiesQueryKind = "person"
+	Organization               ListPartiesQueryKind = "organization"
+)
+
+type ListPartiesQueryOwn string
+
+const (
+	False                    ListPartiesQueryOwn = "false"
+	ListPartiesQueryOwnEmpty ListPartiesQueryOwn = ""
+	True                     ListPartiesQueryOwn = "true"
+)
+
 type ListSavedQueriesQueryKind string
 
 const (
@@ -27200,6 +28253,22 @@ type SetBackupScheduleHeaders struct {
 }
 
 type SetCollectionLabelHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DeleteContractHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdateContractHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DetachContractPartyHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type AttachContractPartyHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
@@ -27267,6 +28336,14 @@ type PruneNodeContentVersionsHeaders struct {
 type UploadPackageChunkHeaders struct {
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
+}
+
+type UpdatePartyHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RetirePartyHeaders struct {
+	IfMatch string `json:"If-Match"`
 }
 
 type RenamePersonHeaders struct {
@@ -27442,6 +28519,28 @@ type ListCollectionMembersPath struct {
 
 type GetCollectionQualityPath struct {
 	ID string `json:"id"`
+}
+
+type DeleteContractPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type GetContractPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type UpdateContractPath struct {
+	ContractID string `json:"contract_id"`
+}
+
+type DetachContractPartyPath struct {
+	ContractID string `json:"contract_id"`
+	PartyID    string `json:"party_id"`
+}
+
+type AttachContractPartyPath struct {
+	ContractID string `json:"contract_id"`
+	PartyID    string `json:"party_id"`
 }
 
 type RemoveEmailDocumentPublicationPath struct {
@@ -27740,6 +28839,18 @@ type GetPageRenderJobPath struct {
 
 type CancelPageRenderJobPath struct {
 	ID uuid.UUID `json:"id"`
+}
+
+type GetPartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
+type UpdatePartyPath struct {
+	PartyID string `json:"party_id"`
+}
+
+type RetirePartyPath struct {
+	PartyID string `json:"party_id"`
 }
 
 type UnassignTagPathPath struct {
@@ -28117,6 +29228,10 @@ type PlanBatesStampBody = BatesPlanRequest
 
 type SetCollectionLabelBody = SetCollectionLabelRequest
 
+type CreateContractBody = CreateContractRequest
+
+type UpdateContractBody = PatchContractRequest
+
 type RunDerivativePurgeBody = DerivativePurgeJobRequest
 
 type PlanDerivativePurgeBody = DerivativePurgePlanRequest
@@ -28229,6 +29344,10 @@ type CreatePageRenderJobBody = PageRenderRequest
 type GetPageRenderJobBody = PageSelectionRequest
 
 type CancelPageRenderJobBody = PageSelectionRequest
+
+type CreatePartyBody = CreatePartyRequest
+
+type UpdatePartyBody = PatchPartyRequest
 
 type MkdirPathBody = MkdirPathRequest
 
@@ -28522,6 +29641,29 @@ type LookupContentReferencesQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListContractsQuery struct {
+	Status         *string `json:"status,omitempty"`
+	Type           *string `json:"type,omitempty"`
+	PartyID        *string `json:"party_id,omitempty"`
+	ExpiringBefore *string `json:"expiring_before,omitempty"`
+	Q              *string `json:"q,omitempty"`
+	AsOf           *string `json:"as_of,omitempty"`
+	Limit          *int64  `json:"limit,omitempty"`
+	Offset         *int64  `json:"offset,omitempty"`
+}
+
+type GetContractQuery struct {
+	AsOf *string `json:"as_of,omitempty"`
+}
+
+type DetachContractPartyQuery struct {
+	Role DetachContractPartyQueryRole `json:"role"`
+}
+
+type AttachContractPartyQuery struct {
+	Role AttachContractPartyQueryRole `json:"role"`
+}
+
 type GetDocumentProcessingCoverageQuery struct {
 	Profile          string    `json:"profile"`
 	VaultUID         uuid.UUID `json:"vault_uid"`
@@ -28674,6 +29816,14 @@ type ReadPageImageQuery struct {
 	RecipeSha256 *string    `json:"recipe_sha256,omitempty"`
 	FrameSha256  *string    `json:"frame_sha256,omitempty"`
 	ImageSha256  *string    `json:"image_sha256,omitempty"`
+}
+
+type ListPartiesQuery struct {
+	Kind           *ListPartiesQueryKind `json:"kind,omitempty"`
+	Own            *ListPartiesQueryOwn  `json:"own,omitempty"`
+	IncludeRetired *bool                 `json:"include_retired,omitempty"`
+	Limit          *int64                `json:"limit,omitempty"`
+	Offset         *int64                `json:"offset,omitempty"`
 }
 
 type ResolvePathQuery struct {
@@ -29052,6 +30202,32 @@ type LookupContentReferencesResponse = api.ContentReferencePage
 
 type LookupContentReferencesErrorResponse = Error
 
+type ListContractsResponse = api.ContractPage
+
+type ListContractsErrorResponse = Error
+
+type CreateContractResponse = api.Contract
+
+type CreateContractErrorResponse = Error
+
+type DeleteContractErrorResponse = Error
+
+type GetContractResponse = api.Contract
+
+type GetContractErrorResponse = Error
+
+type UpdateContractResponse = api.Contract
+
+type UpdateContractErrorResponse = Error
+
+type DetachContractPartyResponse = api.Contract
+
+type DetachContractPartyErrorResponse = Error
+
+type AttachContractPartyResponse = api.Contract
+
+type AttachContractPartyErrorResponse = Error
+
 type GetDocumentProcessingCoverageResponse = api.CoverageReport
 
 type GetDocumentProcessingCoverageErrorResponse = Error
@@ -29157,6 +30333,7 @@ type GetExportJobEventsErrorResponse struct {
 	InaccessibleFaceConflict *bool                `json:"inaccessible_face_conflict,omitempty"`
 	More                     *bool                `json:"more,omitempty"`
 	ObservedScopeCount       *int64               `json:"observed_scope_count,omitempty"`
+	PartyID                  *string              `json:"party_id,omitempty"`
 	Position                 *ErrorPosition       `json:"position,omitempty"`
 	Redaction                *PDFRedactionProblem `json:"redaction,omitempty"`
 	Status                   int64                `json:"status"`
@@ -29652,6 +30829,26 @@ type GetPageRenderJobErrorResponse = Error
 type CancelPageRenderJobResponse = store.PageRenderJob
 
 type CancelPageRenderJobErrorResponse = Error
+
+type ListPartiesResponse = api.PartyPage
+
+type ListPartiesErrorResponse = Error
+
+type CreatePartyResponse = api.Party
+
+type CreatePartyErrorResponse = Error
+
+type GetPartyResponse = api.Party
+
+type GetPartyErrorResponse = Error
+
+type UpdatePartyResponse = api.Party
+
+type UpdatePartyErrorResponse = Error
+
+type RetirePartyResponse = api.Party
+
+type RetirePartyErrorResponse = Error
 
 type ResolvePathResponse = api.Node
 
@@ -30705,6 +31902,14 @@ type Context = kataevidence.Context
 
 type ContextRequest = kataevidence.ContextRequest
 
+type Contract = api.Contract
+
+type ContractPage = api.ContractPage
+
+type ContractParty = api.ContractParty
+
+type ContractPartyInput = api.ContractPartyInput
+
 type Counts = report.Counts
 
 type Coverage = report.Coverage
@@ -30719,6 +31924,8 @@ type CoverageReport = api.CoverageReport
 
 type CoverageSourcesV1 = document.CoverageSourcesV1
 
+type CreateContractRequest = api.CreateContractRequest
+
 type CreateNodeRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string               `json:"$schema,omitempty"`
@@ -30726,6 +31933,8 @@ type CreateNodeRequest struct {
 	Name     string                `json:"name"`
 	ParentID int64                 `json:"parent_id"`
 }
+
+type CreatePartyRequest = api.CreatePartyRequest
 
 type CreatePersonRequest = api.CreatePersonRequest
 
@@ -31344,6 +32553,14 @@ type PageRuntimeIdentity = document.PageRuntimeIdentity
 type PageSelectionRequest = api.PageSelectionRequest
 
 type PageSource = document.PageSource
+
+type Party = api.Party
+
+type PartyPage = api.PartyPage
+
+type PatchContractRequest = api.PatchContractRequest
+
+type PatchPartyRequest = api.PatchPartyRequest
 
 type Pending = kataevidence.Pending
 

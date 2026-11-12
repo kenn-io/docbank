@@ -650,6 +650,7 @@ export interface Error {
   inaccessible_face_conflict?: boolean;
   more?: boolean;
   observed_scope_count?: number;
+  party_id?: string;
   position?: ErrorPosition;
   redaction?: PDFRedactionProblem;
   status: number;
@@ -1715,6 +1716,62 @@ export interface ContextRequest {
   offset: number;
 }
 
+export interface ContractParty {
+  display_name: string;
+  kind: string;
+  own: boolean;
+  party_id: string;
+  /** @nullable */
+  retired_at: string | null;
+  role: string;
+}
+
+export interface Contract {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consideration: string;
+  contract_id: string;
+  contract_type: string;
+  created_at: string;
+  effective_status: string;
+  /** @nullable */
+  expires_on: string | null;
+  parties: ContractParty[];
+  purpose: string;
+  revision: number;
+  /** @nullable */
+  signed_on: string | null;
+  /** @nullable */
+  starts_on: string | null;
+  status: string;
+  summary: string;
+  termination: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface ContractPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  as_of: string;
+  items: Contract[];
+  limit: number;
+  offset: number;
+}
+
+export type ContractPartyInputRole = typeof ContractPartyInputRole[keyof typeof ContractPartyInputRole];
+
+
+export const ContractPartyInputRole = {
+  own: 'own',
+  counterparty: 'counterparty',
+} as const;
+
+export interface ContractPartyInput {
+  party_id: string;
+  role: ContractPartyInputRole;
+}
+
 export interface Counts {
   hits: number;
   hits_plus_family: number;
@@ -1769,6 +1826,41 @@ export interface CoverageSourcesV1 {
   extractor_id: string;
 }
 
+export type CreateContractRequestStatus = typeof CreateContractRequestStatus[keyof typeof CreateContractRequestStatus];
+
+
+export const CreateContractRequestStatus = {
+  draft: 'draft',
+  pending_signature: 'pending_signature',
+  active: 'active',
+  terminated: 'terminated',
+  cancelled: 'cancelled',
+} as const;
+
+export interface CreateContractRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consideration?: string;
+  /** @pattern ^([a-z0-9_]{1,64})?$ */
+  contract_type?: string;
+  /** @nullable */
+  expires_on?: string | null;
+  parties?: ContractPartyInput[];
+  purpose?: string;
+  /** @nullable */
+  signed_on?: string | null;
+  /** @nullable */
+  starts_on?: string | null;
+  status?: CreateContractRequestStatus;
+  summary?: string;
+  termination?: string;
+  /**
+     * @minLength 1
+     * @maxLength 300
+     */
+  title: string;
+}
+
 export type CreateNodeRequestKind = typeof CreateNodeRequestKind[keyof typeof CreateNodeRequestKind];
 
 
@@ -1784,6 +1876,32 @@ export interface CreateNodeRequest {
   /** @minLength 1 */
   name: string;
   parent_id: number;
+}
+
+export type CreatePartyRequestKind = typeof CreatePartyRequestKind[keyof typeof CreatePartyRequestKind];
+
+
+export const CreatePartyRequestKind = {
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export interface CreatePartyRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  country?: string | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  display_name: string;
+  kind: CreatePartyRequestKind;
+  /** @maxLength 300 */
+  legal_name?: string;
+  own?: boolean;
+  /** @nullable */
+  person_id?: string | null;
 }
 
 export interface CreatePersonRequest {
@@ -5139,6 +5257,93 @@ export interface PageSelectionRequest {
   readonly $schema?: string;
   selection: PageBinding;
 }
+
+export interface Party {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  country: string | null;
+  created_at: string;
+  display_name: string;
+  kind: string;
+  legal_name: string;
+  own: boolean;
+  party_id: string;
+  /** @nullable */
+  person_id: string | null;
+  /** @nullable */
+  retired_at: string | null;
+  revision: number;
+  updated_at: string;
+}
+
+export interface PartyPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: Party[];
+  limit: number;
+  offset: number;
+}
+
+export type PatchContractRequestStatus = typeof PatchContractRequestStatus[keyof typeof PatchContractRequestStatus];
+
+
+export const PatchContractRequestStatus = {
+  draft: 'draft',
+  pending_signature: 'pending_signature',
+  active: 'active',
+  terminated: 'terminated',
+  cancelled: 'cancelled',
+} as const;
+
+export type PatchContractRequest = (unknown & ({
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  consideration?: string;
+  /** @pattern ^([a-z0-9_]{1,64})?$ */
+  contract_type?: string;
+  /** @nullable */
+  expires_on?: string | null;
+  purpose?: string;
+  /** @nullable */
+  signed_on?: string | null;
+  /** @nullable */
+  starts_on?: string | null;
+  status?: PatchContractRequestStatus;
+  summary?: string;
+  termination?: string;
+  /**
+     * @minLength 1
+     * @maxLength 300
+     */
+  title?: string;
+}));
+
+export type PatchPartyRequestKind = typeof PatchPartyRequestKind[keyof typeof PatchPartyRequestKind];
+
+
+export const PatchPartyRequestKind = {
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export type PatchPartyRequest = (unknown & ({
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  country?: string | null;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  display_name?: string;
+  kind?: PatchPartyRequestKind;
+  /** @maxLength 300 */
+  legal_name?: string;
+  own?: boolean;
+  /** @nullable */
+  person_id?: string | null;
+}));
 
 export type PeopleBuildState = typeof PeopleBuildState[keyof typeof PeopleBuildState];
 
@@ -9486,6 +9691,68 @@ limit?: number;
 offset?: number;
 };
 
+export type ListContractsParams = {
+status?: string;
+type?: string;
+party_id?: string;
+expiring_before?: string;
+q?: string;
+as_of?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type DeleteContractHeaders = {
+'If-Match': string;
+};
+
+export type GetContractParams = {
+as_of?: string;
+};
+
+export type UpdateContractHeaders = {
+'If-Match': string;
+};
+
+export type DetachContractPartyParams = {
+role: DetachContractPartyRole;
+};
+
+export type DetachContractPartyRole = typeof DetachContractPartyRole[keyof typeof DetachContractPartyRole];
+
+
+export const DetachContractPartyRole = {
+  own: 'own',
+  counterparty: 'counterparty',
+} as const;
+
+export type DetachContractPartyHeaders = {
+'If-Match': string;
+};
+
+export type AttachContractPartyParams = {
+role: AttachContractPartyRole;
+};
+
+export type AttachContractPartyRole = typeof AttachContractPartyRole[keyof typeof AttachContractPartyRole];
+
+
+export const AttachContractPartyRole = {
+  own: 'own',
+  counterparty: 'counterparty',
+} as const;
+
+export type AttachContractPartyHeaders = {
+'If-Match': string;
+};
+
 export type GetDocumentProcessingCoverageParams = {
 /**
  * @minLength 1
@@ -9596,6 +9863,7 @@ export type GetExportJobEventsDefault = {
   inaccessible_face_conflict?: boolean;
   more?: boolean;
   observed_scope_count?: number;
+  party_id?: string;
   position?: ErrorPosition;
   redaction?: PDFRedactionProblem;
   status: number;
@@ -9965,6 +10233,47 @@ frame_sha256?: string;
  * @pattern ^[0-9a-f]{64}$
  */
 image_sha256?: string;
+};
+
+export type ListPartiesParams = {
+kind?: ListPartiesKind;
+own?: ListPartiesOwn;
+include_retired?: boolean;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListPartiesKind = typeof ListPartiesKind[keyof typeof ListPartiesKind];
+
+
+export const ListPartiesKind = {
+  '': '',
+  person: 'person',
+  organization: 'organization',
+} as const;
+
+export type ListPartiesOwn = typeof ListPartiesOwn[keyof typeof ListPartiesOwn];
+
+
+export const ListPartiesOwn = {
+  '': '',
+  true: 'true',
+  false: 'false',
+} as const;
+
+export type UpdatePartyHeaders = {
+'If-Match': string;
+};
+
+export type RetirePartyHeaders = {
+'If-Match': string;
 };
 
 export type ResolvePathParams = {
@@ -12338,6 +12647,287 @@ export const lookupContentReferences = async (params: LookupContentReferencesPar
     ...options,
     method: 'GET'
 
+
+  }
+);}
+
+
+
+export const getListContractsUrl = (params?: ListContractsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts?${stringifiedParams}` : `/api/v1/contracts`
+}
+
+/**
+ * @summary List contracts
+ */
+export const listContracts = async (params?: ListContractsParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ContractPage> => {
+
+  return sessionJSON<ContractPage>(getListContractsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreateContractUrl = () => {
+
+
+
+
+  return `/api/v1/contracts`
+}
+
+/**
+ * @summary Create a contract
+ */
+export const createContract = async (createContractRequest: NonReadonly<CreateContractRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getCreateContractUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createContractRequest)
+  }
+);}
+
+
+
+export const getDeleteContractUrl = (contractId: string,) => {
+
+
+
+
+  return `/api/v1/contracts/${encodeURIComponent(String(contractId))}`
+}
+
+/**
+ * @summary Delete a contract
+ */
+export const deleteContract = async (contractId: string,
+    headers: DeleteContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<void>(getDeleteContractUrl(contractId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getGetContractUrl = (contractId: string,
+    params?: GetContractParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}`
+}
+
+/**
+ * @summary Inspect a contract
+ */
+export const getContract = async (contractId: string,
+    params?: GetContractParams, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+  return sessionJSON<Contract>(getGetContractUrl(contractId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdateContractUrl = (contractId: string,) => {
+
+
+
+
+  return `/api/v1/contracts/${encodeURIComponent(String(contractId))}`
+}
+
+/**
+ * @summary Edit a contract
+ */
+export const updateContract = async (contractId: string,
+    patchContractRequest: NonReadonly<PatchContractRequest>,
+    headers: UpdateContractHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getUpdateContractUrl(contractId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchContractRequest)
+  }
+);}
+
+
+
+export const getDetachContractPartyUrl = (contractId: string,
+    partyId: string,
+    params: DetachContractPartyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Change a contract party
+ */
+export const detachContractParty = async (contractId: string,
+    partyId: string,
+    params: DetachContractPartyParams,
+    headers: DetachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getDetachContractPartyUrl(contractId,partyId,params),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getAttachContractPartyUrl = (contractId: string,
+    partyId: string,
+    params: AttachContractPartyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}?${stringifiedParams}` : `/api/v1/contracts/${encodeURIComponent(String(contractId))}/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Change a contract party
+ */
+export const attachContractParty = async (contractId: string,
+    partyId: string,
+    params: AttachContractPartyParams,
+    headers: AttachContractPartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Contract> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Contract>(getAttachContractPartyUrl(contractId,partyId,params),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -16387,6 +16977,178 @@ return sessionJSON<PageRenderJob>(getCancelPageRenderJobUrl(id),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(pageSelectionRequest)
+  }
+);}
+
+
+
+export const getListPartiesUrl = (params?: ListPartiesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/parties?${stringifiedParams}` : `/api/v1/parties`
+}
+
+/**
+ * @summary List parties
+ */
+export const listParties = async (params?: ListPartiesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PartyPage> => {
+
+  return sessionJSON<PartyPage>(getListPartiesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePartyUrl = () => {
+
+
+
+
+  return `/api/v1/parties`
+}
+
+/**
+ * @summary Create a party
+ */
+export const createParty = async (createPartyRequest: NonReadonly<CreatePartyRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Party>(getCreatePartyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPartyRequest)
+  }
+);}
+
+
+
+export const getGetPartyUrl = (partyId: string,) => {
+
+
+
+
+  return `/api/v1/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Inspect a party
+ */
+export const getParty = async (partyId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+  return sessionJSON<Party>(getGetPartyUrl(partyId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdatePartyUrl = (partyId: string,) => {
+
+
+
+
+  return `/api/v1/parties/${encodeURIComponent(String(partyId))}`
+}
+
+/**
+ * @summary Edit a party
+ */
+export const updateParty = async (partyId: string,
+    patchPartyRequest: NonReadonly<PatchPartyRequest>,
+    headers: UpdatePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Party>(getUpdatePartyUrl(partyId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchPartyRequest)
+  }
+);}
+
+
+
+export const getRetirePartyUrl = (partyId: string,) => {
+
+
+
+
+  return `/api/v1/parties/${encodeURIComponent(String(partyId))}/retire`
+}
+
+/**
+ * @summary Retire a party
+ */
+export const retireParty = async (partyId: string,
+    headers: RetirePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<Party>(getRetirePartyUrl(partyId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
   }
 );}
 
