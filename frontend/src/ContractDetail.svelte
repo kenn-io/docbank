@@ -245,8 +245,8 @@
                 {documentRoleLabel(link.role)}
                 {#if !link.available}
                   <Chip size="xs" tone="warning">Unavailable</Chip>
-                  <span class="tool-muted"
-                    >sha256 {link.blob_sha256.slice(0, 12)} · {formatBytes(link.size)}</span
+                  <span class="tool-muted evidence"
+                    >sha256 {link.blob_sha256} · {formatBytes(link.size)}</span
                   >
                 {:else if !link.current}
                   <Chip size="xs" tone="info">Older version</Chip>
@@ -297,6 +297,12 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
+  }
+  /* The whole recorded hash stays visible, breaking anywhere on a phone. */
+  .evidence {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
   .terms {
     display: grid;
