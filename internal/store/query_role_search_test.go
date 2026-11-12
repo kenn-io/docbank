@@ -543,3 +543,40 @@ func TestRoleSearchHighCardinalityAnnotation(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"speaker"}, result.Rows[0].MatchedRoles)
 }
+
+// Exercise the compiler boundary with real role operands, including the
+// population wrapper that is added after the predicate has been bound.
+func TestRoleSearchNearCompilerBudget(t *testing.T) {
+	s := newTestStore(t)
+	ctx := WithVisiblePeopleOnly(t.Context())
+	version := seedDocumentPeopleEvent(t, s, "budget.txt", "b7", nil)
+	person, err := s.CreatePerson(ctx, "Budget Sender", "operator")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID, Role: "sender", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+
+	var bestText string
+	var bestSize int
+	low, high := 1, 255
+	for low <= high {
+		count := (low + high) / 2
+		text := strings.TrimSuffix(strings.Repeat(`from:"Budget Sender" OR `, count), " OR ")
+		value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
+		compiled, err := s.CompileQuery(ctx, value)
+		if err != nil {
+			require.ErrorContains(t, err, "compiled query exceeds")
+			high = count - 1
+			continue
+		}
+		predicate, err := compiled.bind("", nil)
+		require.NoError(t, err)
+		bestText, bestSize = text, len(predicate.sql)
+		low = count + 1
+	}
+	require.Greater(t, bestSize, maxCompiledQuerySQL-8192)
+	value := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, bestText))
+	result, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, []string{"sender"}, result.Rows[0].MatchedRoles)
+}
