@@ -67,7 +67,7 @@ func checkContractDocumentNodeHighWater(t *testing.T, open func(*testing.T) *Sto
 			return rollback
 		})
 		require.ErrorIs(t, err, rollback)
-		assert.Error(t, validationErr, "retained node ID must not exceed the allocation high-water mark")
+		require.Error(t, validationErr, "retained node ID must not exceed the allocation high-water mark")
 		got, err := s.GetContract(ctx, c.ContractID, "2024-01-01")
 		require.NoError(t, err)
 		require.Len(t, got.Documents, 1)
@@ -76,7 +76,7 @@ func checkContractDocumentNodeHighWater(t *testing.T, open func(*testing.T) *Sto
 	}
 	target := newTestStore(t)
 	err = target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
-	assert.Error(t, err, "retained node ID must not exceed the allocation high-water mark")
+	require.Error(t, err, "retained node ID must not exceed the allocation high-water mark")
 	_, err = target.GetContract(ctx, c.ContractID, "2024-01-01")
 	assert.ErrorIs(t, err, ErrNotFound, "rejected import must leave no contract authority")
 }
