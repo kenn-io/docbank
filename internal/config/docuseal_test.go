@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.kenn.io/kit/safefileio"
 )
 
 func TestDocuSealResolveRequiresSafeConfiguration(t *testing.T) {
@@ -82,9 +84,7 @@ func TestDocuSealConfigTOMLAndKeyRotation(t *testing.T) {
 
 func TestDocuSealInvalidCredentials(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "key"), []byte("synthetic-file-token"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeDocuSealTestKey(t, filepath.Join(root, "key"), "synthetic-file-token")
 	valid := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyFile: "key", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
 	if _, err := valid.Resolve(t.Context(), root); err != nil {
 		t.Fatal(err)
@@ -100,9 +100,7 @@ func TestDocuSealInvalidCredentials(t *testing.T) {
 			root := t.TempDir()
 			cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
 			if tc.file {
-				if err := os.WriteFile(filepath.Join(root, "key"), []byte(tc.value), 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeDocuSealTestKey(t, filepath.Join(root, "key"), tc.value)
 				cfg.APIKeyFile = "key"
 			} else {
 				t.Setenv("DOCUSEAL_TEST_KEY", tc.value)
@@ -166,5 +164,20 @@ func TestDocuSealMalformedFieldsReportSafeCategories(t *testing.T) {
 				t.Fatalf("got %v, want %s", err, want)
 			}
 		})
+	}
+}
+
+func writeDocuSealTestKey(t *testing.T, path, value string) {
+	t.Helper()
+	file, err := safefileio.CreatePrivateFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(value); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

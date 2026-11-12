@@ -16,17 +16,17 @@ func TestContractSignDaemonWalk(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if !configured {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"status":503,"title":"Unconfigured","detail":"Enable DocuSeal","code":"docuseal_unconfigured"}`)
+			_, _ = fmt.Fprint(w, `{"status":503,"title":"Unconfigured","detail":"Enable DocuSeal","code":"docuseal_unconfigured"}`)
 			return
 		}
 		switch r.URL.Path {
 		case "/api/v1/integrations/docuseal/status":
-			fmt.Fprint(w, `{"endpoint":"https://example.test"}`)
+			_, _ = fmt.Fprint(w, `{"endpoint":"https://example.test"}`)
 		case "/api/v1/integrations/docuseal/templates":
 			if r.URL.Query().Get("after") != "42" {
 				t.Errorf("cursor: %s", r.URL.RawQuery)
 			}
-			fmt.Fprint(w, templateBody)
+			_, _ = fmt.Fprint(w, templateBody)
 		default:
 			http.NotFound(w, r)
 		}

@@ -333,6 +333,7 @@ func TestProviderErrorStatusDoesNotReadOrRetryBody(t *testing.T) {
 
 type trackedDocuSealBody struct {
 	io.Reader
+
 	closed *bool
 }
 
