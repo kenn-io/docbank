@@ -307,6 +307,19 @@
     plannedDestination = destination;
     plannedChannel = activeChannel;
     if (saved.groups?.some((group) => group.status === "committed")) await oncomplete();
+    if (
+      saved.groups?.length &&
+      saved.groups.every((group) => group.status === "committed") &&
+      checkpoint?.sourceID === saved.source_id &&
+      !sessionOnly
+    ) {
+      try {
+        await storage.replace(undefined, checkpoint);
+        checkpoint = undefined;
+      } catch (cause) {
+        if (!useSessionOnly(cause)) throw cause;
+      }
+    }
   }
 
   async function inspectSavedImport(): Promise<void> {
@@ -427,7 +440,6 @@
         );
       const next = {
         sourceID: reconnect ? sourceID : resuming ? checkpoint!.sourceID : randomUUID(),
-        protocolVersion: 3,
         revision: randomUUID(),
         destination: target,
         manifestVersion: 2,
@@ -585,6 +597,16 @@
         }
         registered = true;
         registrationUncertain = false;
+      }
+      if (
+        !sessionOnly &&
+        checkpoint &&
+        checkpoint.protocolVersion !== 3 &&
+        (!savedImport || checkpoint.sourceID === savedImport.source_id)
+      ) {
+        const next = { ...checkpoint, protocolVersion: 3, revision: randomUUID() };
+        await storage.replace(next, checkpoint);
+        checkpoint = next;
       }
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
@@ -825,7 +847,7 @@
           </li>{/each}
       </ul>
       <div class="controls">
-        {#if (registered && counts.unconfirmed > 0) || registrationUncertain}
+        {#if (registered && (counts.unconfirmed > 0 || counts.pending > 0)) || registrationUncertain}
           <Button
             disabled={running || planning || !!disabledReason}
             onclick={() => void inspectCurrentImport()}>Inspect import</Button
