@@ -2244,6 +2244,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkTaxRecordLifecycle(t, newPostgresQueryStore)
 		}},
+		{"PartyRevisionExhaustion", func(t *testing.T) { t.Helper(); checkPartyRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkPartyRevisionExhaustion(t, true) }},
 		{"PartyPersonLifecycle", func(t *testing.T) {
 			t.Helper()
 			checkPartyPersonLifecycle(t, newTestStore)
