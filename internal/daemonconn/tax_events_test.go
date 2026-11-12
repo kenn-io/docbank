@@ -108,3 +108,24 @@ func TestTaxEventVoidedTypedError(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrTaxEventVoided)
 	assert.NotContains(t, err.Error(), "private-synthetic")
 }
+
+func TestTaxCashDetailRejectsWrongBalance(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	record := strings.Replace(strings.Replace(strings.Replace(strings.Replace(eventRecordFixture, `"revision":1`, `"revision":2`, 1), `"direction":"unknown"`, `"direction":"payable"`, 1), `"amount_minor":null`, `"amount_minor":123400`, 1), `"currency":""`, `"currency":"USD"`, 1)
+	event := strings.Replace(strings.Replace(strings.Replace(eventFixture, `"kind":"note"`, `"kind":"payment"`, 1), `"amount_minor":null`, `"amount_minor":10000`, 1), `"currency":""`, `"currency":"USD"`, 1)
+	for _, amount := range []string{"113400", "123400"} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("ETag", `"2"`)
+			_, _ = w.Write([]byte(strings.TrimSuffix(record, "}") + `,"events":[` + event + `],"balance":{"outstanding_minor":` + amount + `,"currency":"USD","other_currency_events":0}}`))
+		}))
+		detail, err := New(server.URL, "").TaxRecord(t.Context(), id, false)
+		if amount == "113400" {
+			require.NoError(t, err)
+			assert.Equal(t, new(int64(113400)), detail.Balance.OutstandingMinor)
+		} else {
+			require.True(t, IsResponseDecodeError(err))
+		}
+		server.Close()
+	}
+}

@@ -288,3 +288,27 @@ func TestTaxCashAppendVoidAtomic(t *testing.T) {
 	assert.Equal(t, first.Record.Revision+1, voided.Record.Revision)
 	assert.Equal(t, new(int64(100)), d.Balance.OutstandingMinor)
 }
+
+func TestTaxCashMetadataRejectsOverflow(t *testing.T) {
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	cash := TaxEventInput{Kind: "payment", OccurredOn: "2026-01-01", Currency: "USD", Amount: new("92233720368547758.07")}
+	a, err := s.AddTaxEvent(ctx, r.RecordID, r.Revision, cash)
+	require.NoError(t, err)
+	cash.Amount = new("0.01")
+	_, err = s.AddTaxEvent(ctx, r.RecordID, a.Record.Revision, cash)
+	require.NoError(t, err)
+	var valid bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &valid))
+	invalid := strings.Replace(valid.String(), `"direction":"unknown","amount_minor":null`, `"direction":"payable","amount_minor":100`, 1)
+	require.NotEqual(t, valid.String(), invalid)
+	dest := newTestStore(t)
+	require.ErrorIs(t, dest.ImportMetadata(ctx, strings.NewReader(invalid)), taxrecord.ErrInvalid)
+	_, err = dest.GetTaxRecord(ctx, r.RecordID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.db.ExecContext(ctx, `UPDATE tax_records SET direction='payable',amount_minor=100 WHERE record_id=$1`, r.RecordID)
+	require.NoError(t, err)
+	var output bytes.Buffer
+	require.ErrorIs(t, s.ExportMetadata(ctx, &output), taxrecord.ErrInvalid)
+	assert.Empty(t, output.String())
+}
