@@ -511,61 +511,75 @@ it("retains the first matching selected file while a saved group is pending", as
   );
 });
 
-it("keeps the declared filename when inspection finds another tab's hashes", async () => {
-  const file = new File(["a"], "a.JPG");
-  const saved = {
-    import_id: "saved",
-    source_id: "source",
-    label: "Photos",
-    destination: "/",
-    created_at: "2026-01-01T00:00:00Z",
-    group_count: 1,
-    groups: [
-      {
-        status: "remaining" as const,
-        files: [{ relative_path: "a.JPG", size: 1 }],
-        hashes: ["b".repeat(64)],
-      },
-    ],
-  };
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi
-      .fn()
-      .mockResolvedValue({
+it.each(["pinned", "changed"])(
+  "keeps the declared filename when a preview is %s",
+  async (reason) => {
+    const file = new File(["a"], "a.JPG");
+    const saved = {
+      import_id: "saved",
+      source_id: "source",
+      label: "Photos",
+      destination: "/",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+      groups: [
+        {
+          status: "remaining" as const,
+          files: [{ relative_path: "a.JPG", size: 1 }],
+          ...(reason === "pinned" ? { hashes: ["b".repeat(64)] } : {}),
+        },
+      ],
+    };
+    const channel: PhotoImportTransport = {
+      planPhotoImport: vi.fn().mockResolvedValue({
         import_id: "saved",
         groups: [[0]],
         unsupported: [],
         hashes: new Map([[file, "a".repeat(64)]]),
       }),
-    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
-    listPhotoImports: vi.fn().mockResolvedValue([saved]),
-    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
-    uploadPhotoGroup: vi.fn(),
-  };
-  render(PhotoImportDrawer, {
-    channel,
-    vaultID: "preview-pinned",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
-  );
-  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: [file] },
-  });
-  await screen.findByRole("button", { name: "Add 1 group" });
-  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
-  await fireEvent.change(await screen.findByLabelText("Saved import"), {
-    target: { value: "saved" },
-  });
-  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
-  await screen.findByText("Choose a.JPG again to resume.");
-  expect(screen.getByText("a.JPG")).toBeTruthy();
-  expect(screen.getByText("File missing")).toBeTruthy();
-});
+      registerPhotoImport: vi.fn().mockResolvedValue("saved"),
+      listPhotoImports: vi.fn().mockResolvedValue([saved]),
+      inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+      uploadPhotoGroup: vi.fn(),
+    };
+    render(PhotoImportDrawer, {
+      channel,
+      vaultID: "preview-pinned",
+      session: "session",
+      onclose: vi.fn(),
+      oncomplete: vi.fn(),
+      onauthfailure: vi.fn(),
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+      target: { files: [file] },
+    });
+    await screen.findByRole("button", { name: "Add 1 group" });
+    await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+    await fireEvent.change(await screen.findByLabelText("Saved import"), {
+      target: { value: "saved" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+    if (reason === "changed") {
+      await screen.findByRole("button", { name: "Resume remaining" });
+      await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+        target: { files: [new File(["ab"], "a.JPG")] },
+      });
+    }
+    await screen.findByText(
+      reason === "pinned"
+        ? "Choose a.JPG again to resume."
+        : "Choose the original a.JPG to resume.",
+    );
+    expect(screen.getByText("a.JPG")).toBeTruthy();
+    expect(screen.getByText(reason === "pinned" ? "File missing" : "File changed")).toBeTruthy();
+  },
+);
 
 it("uses inspected hashes when selecting files after a rejected upload", async () => {
   const hash = "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d";

@@ -306,6 +306,7 @@
     if (preserve) {
       for (const [index, group] of (saved.groups ?? []).entries()) {
         const item = items[index];
+        item.names = group.files.map((file) => file.relative_path);
         reconcileSavedHashes(item, group);
         if (group.status === "committed") {
           setState(item, group.receipt!.status);
@@ -452,7 +453,7 @@
   function reconcileSavedHashes(item: Item, group: SavedPhotoGroup): void {
     if (!group.hashes) return;
     if (item.hashes.some((hash, index) => hash !== group.hashes![index])) item.files = [];
-    [item.hashes, item.names] = [[...group.hashes], group.files.map((file) => file.relative_path)];
+    item.hashes = [...group.hashes];
   }
 
   async function plan(validated = false, reconnect = false): Promise<void> {
