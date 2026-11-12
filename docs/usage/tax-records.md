@@ -11,8 +11,9 @@ a jurisdiction, and an owner-chosen tax kind. Manage accounts and initial record
 through the CLI or HTTP API. Tax kinds accept up to 256 UTF-8 bytes before
 trimming and NFC normalization, and up to 64 Unicode characters afterward.
 Identifiers are limited to 256 UTF-8 bytes; each account note is limited to
-8,192 UTF-8 bytes. Tax operations are not yet exposed through MCP or the web
-application.
+8,192 UTF-8 bytes. Tax operations are not yet exposed through MCP. The web
+application can read records; see
+[Read records in the web app](#read-records-in-the-web-app).
 
 ## Manage an account
 
@@ -113,6 +114,25 @@ payments, document evidence, deadlines, and verification operations are not
 available through these store operations. Mutations are refused when the vault
 has audited authority. Revisions reject stale updates. Retired accounts and records are read-only
 and cannot be unretired; create a new row when needed.
+
+## Read records in the web app
+
+Choose **Taxes** in the sidebar of `docbank web` to open the page at `/taxes`.
+The page only reads; add or change records with the CLI.
+
+- **Filer** lists **All filers** and your own parties; retired filers are marked
+  "· retired". With all filers, records appear under one heading per filer, in
+  the stable record order. Choosing a filer shows only its records.
+- **Tax year** accepts a year from 1 to 9999; press Enter or leave the field to
+  apply it. **All years** and **Clear filters** remove filters.
+- Each row shows the title and form code, tax year, due date, state, and the
+  amount. **Load more** fetches the next 50 records.
+
+The amount column shows exact minor units with the currency code and the
+direction, such as `123400 USD` and **Payable**, without converting or rounding.
+An amount above 9,007,199,254,740,991 minor units shows **Too large to show**;
+run `docbank tax record show RECORD_ID` to see it exactly. The page never shows
+account identifiers or event references, and records no usage screen while open.
 
 Metadata backups preserve accounts and records, including retired entries and
 historical party references. Restore validates their fields and relationships

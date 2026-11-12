@@ -100,6 +100,10 @@ kind must match the existing record.
 A successful update advances the revision even when supplied values are
 unchanged. Tax writes use the logical audit gate.
 
+The web Taxes page reads only the record and party lists. It groups loaded rows
+by their filer without counting them, shows amounts as exact minor-unit
+integers, derives no summaries, and reports no telemetry screen.
+
 ## How a write becomes authoritative
 
 Every content-write surface follows one ordering rule: prove and publish bytes
