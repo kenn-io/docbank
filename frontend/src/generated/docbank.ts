@@ -19223,30 +19223,6 @@ return sessionJSON<LocalTextPlan>(getPlanLocalTextUrl(),
 
 
 
-export const getRestartDaemonUrl = () => {
-
-
-
-
-  return `/api/v1/processing/local/restart`
-}
-
-/**
- * @summary Restart Docbank
- */
-export const restartDaemon = async ( options?: Parameters<typeof sessionEmpty>[1]): Promise<void> => {
-
-  return sessionEmpty<void>(getRestartDaemonUrl(),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-
-
 export const getApplyLocalTextUrl = () => {
 
 

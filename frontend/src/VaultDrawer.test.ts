@@ -4,6 +4,7 @@ import VaultDrawer, { type SearchByMeaningSetup } from "./VaultDrawer.svelte";
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -114,7 +115,6 @@ function searchProps(searchByMeaning: Partial<SearchByMeaningSetup> = {}) {
     searchByMeaning: { readError: "", pending: false, error: "", ...searchByMeaning },
     onreadsearchbymeaning: vi.fn(() => vi.fn()),
     onturnonsearchbymeaning: vi.fn(),
-    onrestart: vi.fn(async () => {}),
   };
 }
 
@@ -161,9 +161,7 @@ it.each<[string, Partial<SearchByMeaningSetup>, string, boolean]>([
     expect(props.onturnonsearchbymeaning).toHaveBeenCalledOnce();
   } else expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(screen.queryByRole("alert")?.textContent ?? "").toBe(setup.error ?? "");
-  expect(screen.queryByRole("button", { name: "Restart" }) !== null).toBe(
-    !!setup.status?.restart_required,
-  );
+  expect(screen.queryByText(/daemon restart/) !== null).toBe(!!setup.status?.restart_required);
   expect(screen.queryByRole("button", { name: "Use built-in instead" })).toBeNull();
   expect(screen.queryByText("Switching keeps your index")).toBeNull();
 });
@@ -191,8 +189,16 @@ it("keeps the restart step beside a failed status read", () => {
     readError: "Daemon busy",
   });
   expect(screen.getByRole("alert").textContent).toBe("Daemon busy");
-  expect(screen.getByRole("button", { name: "Restart" })).toBeTruthy();
+  expect(screen.getByText(/daemon restart/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+});
+
+it("copies the restart command", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  openSearchTab({ status: { ...off, download_bytes: 0, restart_required: true } });
+  await fireEvent.click(screen.getByRole("button", { name: "Copy restart command" }));
+  expect(writeText).toHaveBeenCalledWith("docbank daemon restart");
 });
 
 it("reads status on entering the tab and stops when leaving it", async () => {
@@ -203,32 +209,4 @@ it("reads status on entering the tab and stops when leaving it", async () => {
   expect(stop).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("tab", { name: "Running now" }));
   expect(stop).toHaveBeenCalledOnce();
-});
-
-it("confirms a restart and disables both actions while it is pending", async () => {
-  let finish!: () => void;
-  const props = openSearchTab({
-    status: { ...off, download_bytes: 0, restart_required: true },
-  });
-  props.onrestart.mockImplementation(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  let dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(props.onrestart).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  dialog = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Restart" }));
-  expect(props.onrestart).toHaveBeenCalledOnce();
-  expect(
-    (within(dialog).getByRole("button", { name: "Restarting…" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  expect(
-    (within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  finish();
 });

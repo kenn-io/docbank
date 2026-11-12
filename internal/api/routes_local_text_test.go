@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -83,20 +82,4 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 	request.PlanFingerprint = testHash("stale")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/setup", nil, request)
 	require.Equal(t, http.StatusConflict, response.StatusCode, body)
-}
-
-func TestRestartDaemonBrowserSession(t *testing.T) {
-	t.Parallel()
-	var calls atomic.Int32
-	ts, _ := newTestServer(t, func(deps *api.Deps) {
-		deps.RestartDaemon = func() { calls.Add(1) }
-	})
-	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "Origin": strings.TrimSuffix(testWebURL, "/")}
-	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
-	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
-	require.Empty(t, body)
-	require.Equal(t, int32(1), calls.Load())
-	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", nil, nil)
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	require.Equal(t, int32(1), calls.Load())
 }

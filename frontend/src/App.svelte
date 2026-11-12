@@ -2020,36 +2020,6 @@
     readLocalTextStatus();
   }
 
-  // The restarted daemon starts without browser sessions. Requests sent after
-  // the restart answers reach only the new run, so the first sign-in status
-  // reply means it is ready and the reloaded page starts fresh.
-  async function restartDocbank(): Promise<void> {
-    const session = webSession;
-    localText.error = "";
-    try {
-      await generated.restartDaemon({ session });
-    } catch (cause) {
-      if (!mounted || webSession !== session) return;
-      if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
-      localText.error =
-        cause instanceof APIError && cause.code === "web_browser"
-          ? "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues."
-          : `Docbank couldn't restart: ${cause instanceof Error ? cause.message : String(cause)}`;
-      return;
-    }
-    for (let attempt = 0; attempt < 120; attempt++) {
-      try {
-        await getSignInStatus();
-        location.reload();
-        return;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-    if (mounted && webSession === session)
-      localText.error = "Docbank stopped during the restart. Run `docbank daemon start`.";
-  }
-
   async function loadRoot(): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
@@ -5415,7 +5385,6 @@
           onauthfailure={handleFailure}
           onreadsearchbymeaning={readLocalTextStatus}
           onturnonsearchbymeaning={turnOnLocalText}
-          onrestart={restartDocbank}
         />
       {/if}
       {#if panel.kind === "savedQueries"}

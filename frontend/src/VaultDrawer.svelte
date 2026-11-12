@@ -13,7 +13,7 @@
   import { setContext, untrack } from "svelte";
   import {
     Button,
-    Modal,
+    CopyButton,
     SearchByMeaningRow,
     Spinner,
     type SearchByMeaningState,
@@ -34,7 +34,6 @@
     onauthfailure,
     onreadsearchbymeaning,
     onturnonsearchbymeaning,
-    onrestart,
   }: {
     session: string;
     initialTab?: string;
@@ -43,16 +42,7 @@
     onauthfailure: (cause: unknown) => void;
     onreadsearchbymeaning: () => () => void;
     onturnonsearchbymeaning: () => void;
-    onrestart: () => Promise<void>;
   } = $props();
-  let confirmRestart = $state(false);
-  let restarting = $state(false);
-  async function restart(): Promise<void> {
-    restarting = true;
-    await onrestart();
-    restarting = false;
-    confirmRestart = false;
-  }
   let tab = $state(untrack(() => initialTab));
   let switched = false;
   const options = [
@@ -133,7 +123,10 @@
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
       {/if}
       {#if meaning?.restart_required}
-        <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
+        <div class="restart">
+          <p>Run <code>docbank daemon restart</code> to finish.</p>
+          <CopyButton text="docbank daemon restart" ariaLabel="Copy restart command" />
+        </div>
       {/if}
     </section>
   </DrawerShell>
@@ -151,26 +144,6 @@
       </p>
     </section>
   </DrawerShell>
-{/if}
-
-{#if confirmRestart}
-  <Modal
-    title="Restart Docbank?"
-    onclose={() => {
-      if (!restarting) confirmRestart = false;
-    }}
-  >
-    <p>
-      Uploads, exports, and command-line requests in progress stop, hidden photos lock, and open
-      tabs need to sign in again.
-    </p>
-    {#snippet footer()}
-      <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
-      <Button tone="danger" surface="solid" disabled={restarting} onclick={restart}
-        >{restarting ? "Restarting…" : "Restart"}</Button
-      >
-    {/snippet}
-  </Modal>
 {/if}
 
 <style>
@@ -197,10 +170,12 @@
     gap: var(--space-3);
     color: var(--text-secondary);
   }
+  .restart {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
   .error {
     color: var(--accent-red);
-  }
-  .row + .error {
-    margin-top: calc(-1 * var(--space-2));
   }
 </style>

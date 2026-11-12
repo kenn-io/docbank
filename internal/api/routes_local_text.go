@@ -59,18 +59,6 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			}
 			return &statusOutput{Body: status}, nil
 		})
-	huma.Register(api, huma.Operation{OperationID: "restartDaemon", Method: http.MethodPost,
-		Path: "/api/v1/processing/local/restart", Summary: "Restart Docbank", DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, _ *struct{}) (*struct{}, error) {
-			if !browserSessionRequest(ctx) {
-				return nil, NewError(http.StatusForbidden, "forbidden", "A browser session is required")
-			}
-			if d.RestartDaemon == nil {
-				return nil, NewError(http.StatusNotImplemented, "not_implemented", "This server cannot restart itself")
-			}
-			d.RestartDaemon()
-			return &struct{}{}, nil
-		})
 	type planInput struct{ Body LocalTextPlanRequest }
 	type output struct{ Body LocalTextPlan }
 	huma.Register(api, huma.Operation{OperationID: "planLocalText", Method: http.MethodPost,

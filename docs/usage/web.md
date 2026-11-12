@@ -851,7 +851,7 @@ pinning are not browser workflows.
 
 ## Browse tags and search text
 
-Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then choose **Restart**. The page reloads once Docbank is back. Uploads, exports, and command-line requests in progress stop, hidden photos lock, and open tabs need to sign in again. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
+Open **System → Search by meaning** to enable text search by meaning. Review the download size, choose **Turn on** to approve setup, then run `docbank daemon restart` when prompted and reopen the web app. Indexing starts after the restart and covers existing documents and new imports. The search-results hint opens this tab when search by meaning is off.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The results heading shows the
@@ -1240,9 +1240,8 @@ caller-declared hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than
 the revision-checked tag workflows above, audit enrollment, backup creation,
-restore, maintenance other than restarting the daemon,
-configuration changes, or access to general API endpoints. A browser session never
-receives the master API key. See the
+restore, maintenance, configuration changes, or access to general API
+endpoints. A browser session never receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
 
 The lock button revokes the session in daemon memory and clears the page.
@@ -1283,8 +1282,7 @@ Choose **Add → Upload folder** to upload a folder and its subfolders while pre
 
 The current web application does not compare versions,
 edit, revert, prune, move live nodes between folders, empty trash,
-enroll audit scopes, or run maintenance other than restarting the daemon,
-backup creation, backup verification,
+enroll audit scopes, or run maintenance, backup creation, backup verification,
 general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 documents. Use an authenticated API client
 for larger or different bulk workflows.

@@ -139,33 +139,32 @@ type serveReady struct {
 }
 
 // serveDaemon runs the daemon until ctx ends or a shutdown request arrives.
-// A browser restart ends the current run and serves a fresh one in this
-// process; only the vault lock, runtime record, listeners, and API key carry
-// over, so browser sessions end and each tab signs in again. A non-nil ready runs at the start of each run's serving, once
-// the runtime record, listeners, and supervised jobs are in place.
-func serveDaemon(ctx context.Context, ready func(serveReady)) error {
-	// Signals between runs still end the process cleanly.
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-	// Its cleanup runs after the last run's supervised jobs and storage.
-	p := &daemonProcess{}
-	defer p.close()
-	for {
-		if err := p.serve(ctx, ready); err != nil || !p.restartRequested() || ctx.Err() != nil {
-			return err
-		}
-	}
-}
-
-// serve runs one daemon run against the process-owned vault and listeners.
-func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retErr error) {
+// A non-nil ready runs once the runtime record, listeners, and supervised jobs
+// are in place, just before the HTTP servers start.
+func serveDaemon(ctx context.Context, ready func(serveReady)) (retErr error) {
 	layout, err := home.Resolve()
 	if err != nil {
 		return err
 	}
-	if err := p.acquire(layout); err != nil {
+	root, lock, err := layout.OpenAndLockExclusive()
+	if err != nil {
 		return err
 	}
+	// This is deliberately the first cleanup registered after acquiring the
+	// vault. LIFO execution removes the runtime record only after supervised
+	// jobs, storage, the lock, and the held root have all finished cleanup.
+	var recPath string
+	defer func() {
+		if recPath != "" {
+			_ = os.Remove(recPath)
+		}
+	}()
+	defer func() { _ = root.Close() }()
+	defer func() { _ = lock.Release() }()
+	if err := docweb.RemoveBootstrap(layout.Root); err != nil {
+		return err
+	}
+	defer removeWebBootstrap(layout.Root)
 
 	if err := backupapp.RecoverInterruptedPrimaryHandoff(
 		ctx, layout.Root, store.DefaultSQLiteDriver(),
@@ -521,21 +520,53 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 		return fmt.Errorf("resuming durable storage operations: %w", err)
 	}
 
-	if err := p.listen(ctx, cfg); err != nil {
+	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
+		Network: kitdaemon.NetworkTCP,
+		Address: net.JoinHostPort(cfg.Server.BindAddr, strconv.Itoa(cfg.Server.APIPort)),
+	})
+	if err != nil {
+		return fmt.Errorf("binding API listener: %w", err)
+	}
+	defer func() { _ = listener.Close() }()
+	localListener, addr, err := listenLocalDiscovery(ctx, listener)
+	if err != nil {
+		return fmt.Errorf("binding local API listener: %w", err)
+	}
+	if localListener != nil {
+		defer func() { _ = localListener.Close() }()
+	}
+
+	webListener, webURL, err := listenWebOrigin(
+		ctx, cfg.Web.Enabled && docweb.Available(),
+	)
+	if err != nil {
 		return err
 	}
-	listener, localListener, webListener := p.api.view(), p.local.view(), p.web.view()
-	addr, webURL := p.addr, p.webURL
+	if webListener != nil {
+		defer func() { _ = webListener.Close() }()
+	}
 	if cfg.Web.PublicOrigin != "" && webURL == "" {
 		logger.Warn("[web] public_origin ignored: this build has no web application assets; "+
 			"browser sign-in and the Host allowlist are disabled", "public_origin", cfg.Web.PublicOrigin)
 	}
 
-	// The daemon always requires an API key, fixed for the process.
-	if err := p.credentials(cfg.Server.APIKey); err != nil {
-		return err
+	shutdownToken, err := randomHex32()
+	if err != nil {
+		return fmt.Errorf("generating shutdown token: %w", err)
 	}
-	shutdownToken, apiKey, webLoginEnabled := p.shutdownToken, p.apiKey, p.webLoginEnabled
+
+	// The daemon always requires an API key. A configured key is used as-is;
+	// otherwise a fresh per-run key is generated and published only to
+	// same-user clients via the runtime record inside owner-private DOCBANK_HOME
+	// — never over the network, never logged.
+	webLoginEnabled := cfg.Server.APIKey != ""
+	apiKey := cfg.Server.APIKey
+	if apiKey == "" {
+		apiKey, err = randomHex32()
+		if err != nil {
+			return fmt.Errorf("generating ephemeral API key: %w", err)
+		}
+	}
 	cfg.Server.APIKey = apiKey
 
 	// Hosted MCP is served at /mcp on the API listener, or on its own loopback
@@ -584,23 +615,22 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 	if background && !persistent && cfg.Server.IdleTimeout.Std() > 0 && len(cfg.Watches) == 0 && cfg.Storage.PackInterval.Std() == 0 && drainMCP == nil {
 		idleTimeout = cfg.Server.IdleTimeout.Std()
 	}
-	if p.recPath == "" {
-		webAddress := ""
-		if webListener != nil {
-			webAddress = webListener.Addr().String()
-		}
-		record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
-		if background {
-			record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
-		}
-		record.Metadata[daemonconn.MetaExplicitStart] = strconv.FormatBool(persistent)
-		if localListener != nil {
-			record.Metadata["network_address"] = listener.Addr().String()
-		}
-		p.recPath, err = daemonconn.RuntimeStore(layout.Root).Write(record)
-		if err != nil {
-			return fmt.Errorf("writing daemon runtime record: %w", err)
-		}
+	rtStore := daemonconn.RuntimeStore(layout.Root)
+	webAddress := ""
+	if webListener != nil {
+		webAddress = webListener.Addr().String()
+	}
+	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
+	if background {
+		record.Metadata[daemonconn.MetaIdleTimeout] = idleTimeout.String()
+	}
+	record.Metadata[daemonconn.MetaExplicitStart] = strconv.FormatBool(persistent)
+	if localListener != nil {
+		record.Metadata["network_address"] = listener.Addr().String()
+	}
+	recPath, err = rtStore.Write(record)
+	if err != nil {
+		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
 	for _, watchConfig := range cfg.Watches {
 		watcher, err := ingest.NewWatcher(
@@ -693,34 +723,15 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 			logger.Warn("telemetry heartbeat not started", "error", err)
 		}
 	}
-	// Shutdown is terminal: a restart handler finishing later cannot undo it.
-	shutdown := func() {
-		p.shutdown.Store(true)
-		stop()
-	}
-	// A browser restart stops this run taking new connections before its
-	// response, so every request the tab sends afterward reaches the next run.
-	var servers []servingHTTP
-	restart := func() {
-		logger.Info("docbank daemon restarting")
-		p.restart.Store(true)
-		stop()
-		for _, running := range servers {
-			if !running.drainedFirst {
-				running.server.SetKeepAlivesEnabled(false)
-				_ = running.listener.Close()
-			}
-		}
-	}
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		RequestEmailPDF:           requestEmailPDF,
 		EmailPDFUnavailableReason: emailPDFUnavailableReason,
-		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: shutdown, Tracker: tracker,
+		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		BackupScheduleWake: backupScheduleWake,
 		Jobs:               jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
 		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
-		Processing: processingService, LocalText: localText, RestartDaemon: restart,
+		Processing: processingService, LocalText: localText,
 		LocalTextStatus: func(ctx context.Context) (api.LocalTextStatus, error) {
 			return localTextStatus(ctx, processingProfiles, processingService, restartPending.Load())
 		}, EnsureEmail: processing.EnsureEmailTarget,
@@ -742,7 +753,7 @@ func (p *daemonProcess) serve(ctx context.Context, ready func(serveReady)) (retE
 	if mcpHandler != nil {
 		mainHandler = withMCPRoute(mainHandler, mcpHandler)
 	}
-	servers = []servingHTTP{{name: "API", server: newHTTPServer(mainHandler), listener: listener}}
+	servers := []servingHTTP{{name: "API", server: newHTTPServer(mainHandler), listener: listener}}
 	if localListener != nil {
 		servers = append(servers,
 			servingHTTP{name: "local API", server: newHTTPServer(srv.Handler()), listener: localListener})
@@ -848,8 +859,7 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 	var serveErr error
 	select {
 	case result := <-errCh:
-		// A restart closes listeners only after it has closed stopCh.
-		if !errors.Is(result.err, http.ErrServerClosed) && (!errors.Is(result.err, net.ErrClosed) || !stopped(stopCh)) {
+		if !errors.Is(result.err, http.ErrServerClosed) {
 			serveErr = fmt.Errorf("daemon %s server: %w", result.name, result.err)
 		}
 	case <-ctx.Done():
@@ -889,15 +899,6 @@ func serveDaemonHTTP(ctx context.Context, stopCh <-chan struct{}, servers []serv
 		return errors.Join(serveErr, shutdownErr)
 	}
 	return serveErr
-}
-
-func stopped(stopCh <-chan struct{}) bool {
-	select {
-	case <-stopCh:
-		return true
-	default:
-		return false
-	}
 }
 
 // listenLocalDiscovery ensures CLI and MCP requests use a loopback peer so
@@ -1357,41 +1358,6 @@ func validateConfiguredWatchStores(
 	}
 	return nil
 }
-
-// listen binds the API, local discovery, and web listeners on the first run.
-// Later runs serve the same sockets, so addresses and origins stay stable.
-func (p *daemonProcess) listen(ctx context.Context, cfg config.Config) error {
-	if p.api != nil {
-		return nil
-	}
-	listener, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
-		Network: kitdaemon.NetworkTCP,
-		Address: net.JoinHostPort(cfg.Server.BindAddr, strconv.Itoa(cfg.Server.APIPort)),
-	})
-	if err != nil {
-		return fmt.Errorf("binding API listener: %w", err)
-	}
-	p.api = shareListener(listener)
-	localListener, addr, err := listenLocalDiscovery(ctx, listener)
-	if err != nil {
-		return fmt.Errorf("binding local API listener: %w", err)
-	}
-	p.addr = addr
-	if localListener != nil {
-		p.local = shareListener(localListener)
-	}
-	webListener, webURL, err := listenWebOrigin(ctx, cfg.Web.Enabled && webAssetsAvailable())
-	if err != nil {
-		return err
-	}
-	if webListener != nil {
-		p.web, p.webURL = shareListener(webListener), webURL
-	}
-	return nil
-}
-
-// webAssetsAvailable lets tests serve the web origin without a frontend build.
-var webAssetsAvailable = docweb.Available
 
 func listenWebOrigin(ctx context.Context, enabled bool) (net.Listener, string, error) {
 	if !enabled {

@@ -30353,19 +30353,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Preview vault-wide text indexing
-  /api/v1/processing/local/restart:
-    post:
-      operationId: restartDaemon
-      responses:
-        "202":
-          description: Accepted
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Restart Docbank
   /api/v1/processing/local/setup:
     post:
       operationId: applyLocalText

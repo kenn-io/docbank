@@ -12108,45 +12108,6 @@ func (c *Client) PlanLocalText(ctx context.Context, options *PlanLocalTextReques
 	return responseParser(ctx, resp)
 }
 
-// RestartDaemon Restart Docbank
-func (c *Client) RestartDaemon(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/restart",
-		Method:     "POST",
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
-		switch resp.StatusCode {
-
-		case 202:
-
-			target := new(struct{})
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[RestartDaemonErrorResponse](resp, "RestartDaemonErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/restart")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 202)
-	}
-	return responseParser(ctx, resp)
-}
-
 // ApplyLocalText Approve vault-wide and ongoing text indexing
 func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyLocalTextResponse, error) {
 	var err error
@@ -29927,8 +29888,6 @@ type GetDocumentProcessingJobErrorResponse = Error
 type PlanLocalTextResponse = api.LocalTextPlan
 
 type PlanLocalTextErrorResponse = Error
-
-type RestartDaemonErrorResponse = Error
 
 type ApplyLocalTextResponse = api.LocalTextPlan
 

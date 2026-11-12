@@ -111,11 +111,7 @@ interface HarnessOptions {
   nodeFailure?: { id: number; status: number };
   tagSearch?: unknown;
   snapshotRows?: SnapshotRow[];
-  localText?: {
-    status: () => unknown;
-    apply: () => Promise<Response>;
-    restart?: () => Promise<Response>;
-  };
+  localText?: { status: () => unknown; apply: () => Promise<Response> };
 }
 
 function installHarness(options: HarnessOptions) {
@@ -291,10 +287,6 @@ function installHarness(options: HarnessOptions) {
       const status = options.localText.status();
       return status instanceof Response ? status : json(status);
     }
-    if (options.localText?.restart && url === "/api/v1/processing/local/restart")
-      return options.localText.restart();
-    if (options.localText?.restart && url === "/api/daemon/web-auth")
-      return json({ enabled: false });
     if (options.localText && url === "/api/v1/processing/local/plans") return json(localPlan);
     if (options.localText && url === "/api/v1/processing/local/setup") {
       localSetups.push(JSON.parse(String(init?.body)));
@@ -1216,6 +1208,9 @@ it("keeps setup running across drawer visits and drops the off hint once saved",
   await submitSearch("notes again");
   drawer = await openSearchByMeaningTab();
   expect(await within(drawer).findByText("Restart required")).toBeTruthy();
+  expect(within(drawer).getByText(/to finish\./).textContent).toBe(
+    "Run docbank daemon restart to finish.",
+  );
   expect(within(drawer).queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(harness.localSetups).toHaveLength(1);
   await closeSystem();
@@ -1291,30 +1286,18 @@ it("keeps the restart step after setup when the first re-read fails", async () =
   expect(within(drawer).getByText("Restart required")).toBeTruthy();
 });
 
-it.each(["reading status", "turning on", "restarting"])(
+it.each(["reading status", "turning on"])(
   "hands a rejected session to sign-in while %s",
   async (step) => {
     searchWithMeaningOff({
-      status: () => {
-        if (step === "restarting") return localSaved;
-        return step === "reading status" ? new Response("{}", { status: 401 }) : localOff;
-      },
+      status: () => (step === "reading status" ? new Response("{}", { status: 401 }) : localOff),
       apply: () => Promise.resolve(new Response("{}", { status: 401 })),
-      restart: () => Promise.resolve(new Response("{}", { status: 401 })),
     });
     render(App);
     await submitSearch("notes");
     const drawer = await openSearchByMeaning();
     if (step === "turning on")
       await fireEvent.click(await within(drawer).findByRole("button", { name: "Turn on" }));
-    if (step === "restarting") {
-      await fireEvent.click(await within(drawer).findByRole("button", { name: "Restart" }));
-      await fireEvent.click(
-        within(screen.getByRole("dialog", { name: "Restart Docbank?" })).getByRole("button", {
-          name: "Restart",
-        }),
-      );
-    }
     expect(await screen.findByText(/browser session expired or was rejected/)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "System" })).toBeNull();
   },
@@ -2103,66 +2086,3 @@ it.each(["names", "meaning", "frozen"])(
     }
   },
 );
-
-it("reloads the page once the restarted daemon answers", async () => {
-  let restarted = false;
-  const harness = searchWithMeaningOff({
-    status: () => localSaved,
-    apply: async () => json(localPlan),
-    restart: async () => {
-      restarted = true;
-      return new Response(null, { status: 202 });
-    },
-  });
-  render(App);
-  const drawer = await openSearchByMeaningTab();
-  await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  const reload = vi.fn();
-  vi.stubGlobal("location", { reload });
-  try {
-    await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
-  } finally {
-    vi.unstubAllGlobals();
-  }
-  expect(restarted).toBe(true);
-  const urls = harness.fetchMock.mock.calls.map(([input]) => String(input));
-  expect(urls.lastIndexOf("/api/daemon/web-auth")).toBeGreaterThan(
-    urls.indexOf("/api/v1/processing/local/restart"),
-  );
-  const call = harness.fetchMock.mock.calls.find(
-    ([input]) => String(input) === "/api/v1/processing/local/restart",
-  );
-  expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
-});
-
-it.each([
-  [
-    "web_browser",
-    async () =>
-      new Response(
-        JSON.stringify({ code: "web_browser", detail: "browser cookie, Host or Origin rejected" }),
-        { status: 403, headers: { "Content-Type": "application/json" } },
-      ),
-    "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues.",
-  ],
-  [
-    "lost",
-    async () => {
-      throw new Error("connection lost");
-    },
-    "Docbank couldn't restart: connection lost",
-  ],
-])("explains a failed restart for %s", async (_kind, restart, message) => {
-  searchWithMeaningOff({ status: () => localSaved, apply: async () => json(localPlan), restart });
-  render(App);
-  const drawer = await openSearchByMeaningTab();
-  await within(drawer).findByText("Restart required");
-  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
-  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
-  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
-  expect((await within(drawer).findByRole("alert")).textContent).toBe(message);
-  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
-});
