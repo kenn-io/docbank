@@ -221,7 +221,11 @@ func (l *taxTestLog) String() string { l.mu.Lock(); defer l.mu.Unlock(); return 
 
 func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
 	var logs taxTestLog
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Logger = slog.New(slog.NewTextHandler(&logs, nil)) })
+	capture := &recordingTelemetryCapture{Handler: http.NotFoundHandler()}
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+		d.TelemetryCapture = capture
+	})
 	const sentinel = "private-synthetic-value"
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/parties", nil, map[string]any{"kind": "organization", "display_name": "Example Holdings Ltd.", "own": true})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
@@ -236,6 +240,10 @@ func TestTaxHTTPRequestLogsOmitValues(t *testing.T) {
 	_, _ = do(t, ts, http.MethodPatch, "/api/v1/tax/accounts/"+sentinel, map[string]string{"If-Match": sentinel}, map[string]any{"note": sentinel})
 	assert.NotContains(t, logs.String(), sentinel)
 	assert.NotContains(t, logs.String(), "Example Holdings Ltd.")
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	assert.Empty(t, capture.events)
+	assert.Empty(t, capture.properties)
 }
 
 func TestTaxAccountMaintenanceRefusal(t *testing.T) {

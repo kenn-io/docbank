@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -39,4 +40,17 @@ func TestTaxFormatterPreservesMediaValidation(t *testing.T) {
 	require.ErrorAs(t, problem, &result)
 	assert.Equal(t, []string{"invalid media reference body"}, result.Errors)
 	assert.NotContains(t, result.Error(), secret)
+}
+
+func TestTaxMutationCanceledAtGate(t *testing.T) {
+	gate := NewOperationGate()
+	require.NoError(t, gate.mu.Acquire(t.Context(), operationGateExclusiveWeight))
+	defer gate.mu.Release(operationGateExclusiveWeight)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	called := false
+	err := gate.mutate(ctx, func() error { called = true; return nil })
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, called)
+	assert.NotContains(t, taxRouteError(err).Error(), "context canceled")
 }
