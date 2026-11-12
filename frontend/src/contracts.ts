@@ -43,7 +43,10 @@ export const expiryOptions: { value: string; label: string }[] = [
 function civil(date: string): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!match) throw new Error(`Invalid date ${date}.`);
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  // Date.UTC maps years 0-99 to 1900-1999; setUTCFullYear keeps the year.
+  const value = new Date(0);
+  value.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return value;
 }
 
 // addCivilDays adds whole calendar days in UTC so local midnight and daylight

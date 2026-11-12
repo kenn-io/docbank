@@ -85,8 +85,11 @@
       });
       if (request !== generation) return false;
       if (!asOf) asOf = page.as_of;
+      // Offsets count server rows; a live list can repeat a row that moved
+      // across a page boundary, so it is shown once.
       nextOffset += page.items.length;
-      items = [...items, ...page.items];
+      const known = new Set(items.map((item) => item.contract_id));
+      items = [...items, ...page.items.filter((item) => !known.has(item.contract_id))];
       seenTypes = [...new Set([...seenTypes, ...page.items.map((item) => item.contract_type)])];
       exhausted = page.items.length < contractPageSize;
       if (exhausted || rows.length > shown) return true;
@@ -169,6 +172,12 @@
 
   <div class="tool-body contracts-body">
     {#if selectedID}
+      {#if error}
+        <div class="tool-heading">
+          <p class="tool-error" role="alert">{error}</p>
+          <Button size="sm" onclick={() => void reload(true)}>Try again</Button>
+        </div>
+      {/if}
       {#key `${selectedID}:${detailRevision}`}
         <ContractDetail
           {session}
