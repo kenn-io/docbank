@@ -61,7 +61,6 @@ docbank tax record retire RECORD_ID
 
 When setting `--amount`, the direction must be `payable`, `refundable`, or `nil`. On create, set `--direction` explicitly; on edit, the existing direction may already be suitable.
 
-
 `list` combines filters with AND and supports `--include-retired`, `--limit`
 and `--offset` as for accounts. A full text page prints a continuation offset.
 Retired records remain available with `show` and cannot be edited. Account-bound
@@ -70,7 +69,8 @@ their account and kind cannot be changed. One-off records permit identity edits.
 Omitted edit fields retain their values; `--clear-authority`, `--clear-tax-year`,
 `--clear-period-start`, `--clear-period-end`, `--clear-due-date`,
 `--clear-lead-days`, and `--clear-amount` explicitly clear nullable values.
-A period edit does not recalculate an existing tax year.
+On create, an omitted or null `tax_year` defaults to the year of `period_end`
+when provided. A period edit does not recalculate an existing tax year.
 
 Amounts use exact decimal text in the selected currency, never floating point.
 Record kinds are `filing`, `payment`, `penalty`, `notice`, `other`, `audit`,

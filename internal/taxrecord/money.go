@@ -67,7 +67,7 @@ func FormatMoney(minor int64, code string) (string, error) {
 
 func moneyScale(code string) (int, error) {
 	unit, err := currency.ParseISO(code)
-	if err != nil || len(code) != 3 || code != strings.ToUpper(code) {
+	if err != nil || code != strings.ToUpper(code) {
 		return 0, invalid("currency", "invalid currency")
 	}
 	scale, _ := currency.Standard.Rounding(unit)

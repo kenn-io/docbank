@@ -196,6 +196,7 @@ func (p CreateTaxRecordRequest) input() store.TaxRecordInput {
 func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
 	for field, values := range map[string][]string{"kind": taxrecord.RecordKinds(), "direction": taxrecord.RecordDirections()} {
 		if property := schema.Properties[field]; property != nil {
+			property.Enum = nil
 			for _, value := range values {
 				property.Enum = append(property.Enum, value)
 			}
@@ -221,7 +222,7 @@ func (CreateTaxRecordRequest) TransformSchema(_ huma.Registry, schema *huma.Sche
 }
 func (PatchTaxRecordRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	taxRecordRequestSchema(schema)
-	for _, field := range []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", "amount", "currency", "note"} {
+	for _, field := range taxRecordPatchMembers {
 		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
 	}
 	return schema

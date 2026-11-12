@@ -16,6 +16,7 @@ func createTaxTestRecord(t *testing.T, ts *httptest.Server, input map[string]any
 	t.Helper()
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/tax/records", nil, input)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	var r api.TaxRecord
 	require.NoError(t, json.Unmarshal([]byte(body), &r))
 	return r
@@ -39,6 +40,7 @@ func TestTaxRecordFiltersAndReferences(t *testing.T) {
 	initial, initialBody := get(t, ts, "/api/v1/tax/records/"+r.RecordID, nil)
 	require.Equal(t, http.StatusOK, initial.StatusCode, initialBody)
 	assert.Equal(t, `"1"`, initial.Header.Get("ETag"))
+	assert.Equal(t, "no-store", initial.Header.Get("Cache-Control"))
 	for _, q := range []string{"country=zz", "kind=filing", "year=2026", "state=expected", "taxkind=example", "filer=" + filer.PartyID} {
 		resp, body := get(t, ts, "/api/v1/tax/records?"+q, nil)
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -58,6 +60,7 @@ func TestTaxRecordFiltersAndReferences(t *testing.T) {
 	}
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/tax/records/"+r.RecordID+"/retire", map[string]string{"If-Match": `"1"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	retired := readTaxTestRecord(t, ts, r.RecordID)
 	resp, body = do(t, ts, http.MethodPatch, "/api/v1/tax/records/"+r.RecordID, map[string]string{"If-Match": `"2"`}, map[string]any{"currency": "JPY"})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
@@ -125,6 +128,7 @@ func TestTaxRecordAuthorityAndPatchPresence(t *testing.T) {
 	path := "/api/v1/tax/records/" + one.RecordID
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"period_end": "2027-12-31"})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 	var changed api.TaxRecord
 	require.NoError(t, json.Unmarshal([]byte(body), &changed))
 	assert.Equal(t, one.Title, changed.Title)

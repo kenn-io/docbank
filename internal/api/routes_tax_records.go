@@ -23,7 +23,7 @@ func fromStoreTaxRecord(r store.TaxRecord) TaxRecord {
 	return TaxRecord{RecordID: r.RecordID, AccountID: r.AccountID, FilerPartyID: r.FilerPartyID, AuthorityPartyID: r.AuthorityPartyID, Kind: r.Kind, Title: r.Title, Country: r.Country, Subdivision: r.Subdivision, TaxKind: r.TaxKind, FormCode: r.FormCode, TaxYear: r.TaxYear, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, DueDate: r.DueDate, LeadDays: r.LeadDays, State: r.State, Direction: r.Direction, AmountMinor: r.AmountMinor, Currency: r.Currency, Verification: r.Verification, VerifiedOn: r.VerifiedOn, VerifiedRevision: r.VerifiedRevision, VerificationNote: r.VerificationNote, Note: r.Note, Revision: r.Revision, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, RetiredAt: r.RetiredAt}
 }
 func taxRecordResult(r store.TaxRecord) *taxRecordOutput {
-	return &taxRecordOutput{ETag: revisionETag(r.Revision), Body: fromStoreTaxRecord(r)}
+	return &taxRecordOutput{ETag: revisionETag(r.Revision), CacheControl: cacheControlNoStore, Body: fromStoreTaxRecord(r)}
 }
 func mergeTaxRecordPatch(r store.TaxRecord, p PatchTaxRecordRequest) (store.TaxRecordInput, error) {
 	in := store.TaxRecordInput{AccountID: r.AccountID, Kind: r.Kind, Title: r.Title, FormCode: r.FormCode, TaxYear: r.TaxYear, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, DueDate: r.DueDate, LeadDays: r.LeadDays, Direction: r.Direction, Note: r.Note, AuthorityPartyID: r.AuthorityPartyID}
@@ -127,9 +127,7 @@ func registerTaxRecordRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, taxRouteError(d.Logger, err)
 		}
-		out := taxRecordResult(r)
-		out.CacheControl = cacheControlNoStore
-		return out, nil
+		return taxRecordResult(r), nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createTaxRecord", Method: http.MethodPost, Path: "/api/v1/tax/records", Summary: "Create a tax record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreateTaxRecordRequest }) (*taxRecordOutput, error) {
 		var out *taxRecordOutput
