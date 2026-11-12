@@ -134,7 +134,7 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 					return
 				}
 				uploaded = decodeRequestDocument(t, body, mediaTypePDF)
-				pages, countErr := media.CountPDFPages(uploaded)
+				pages, countErr := media.CountPDFPages(request.Context(), uploaded)
 				if countErr != nil {
 					handlerErr = countErr
 					http.Error(w, "synthetic test failure", http.StatusInternalServerError)
@@ -149,7 +149,7 @@ func TestRenderLaneLibreOfficeRoute(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, handlerErr)
 			require.NotNil(t, result.ConversionReceipt)
-			pages, err := media.CountPDFPages(uploaded)
+			pages, err := media.CountPDFPages(t.Context(), uploaded)
 			require.NoError(t, err)
 			assert.Equal(t, int(pages), result.ConversionReceipt.Pages)
 			assert.Equal(t, result.ConversionReceipt.PDFSHA256, digestBytes(uploaded))
@@ -343,7 +343,7 @@ func TestDOCXLibreOfficeRoute(t *testing.T) {
 					return
 				}
 				uploaded = decodeRequestDocument(t, body, mediaTypePDF)
-				pages, countErr := media.CountPDFPages(uploaded)
+				pages, countErr := media.CountPDFPages(request.Context(), uploaded)
 				if countErr != nil {
 					handlerErr = countErr
 					http.Error(w, "synthetic test failure", http.StatusInternalServerError)
@@ -358,7 +358,7 @@ func TestDOCXLibreOfficeRoute(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, handlerErr)
 			require.NotNil(t, result.ConversionReceipt)
-			pages, err := media.CountPDFPages(uploaded)
+			pages, err := media.CountPDFPages(t.Context(), uploaded)
 			require.NoError(t, err)
 			assert.Equal(t, int(pages), result.ConversionReceipt.Pages)
 			assert.Equal(t, result.ConversionReceipt.PDFSHA256, digestBytes(uploaded))

@@ -49,7 +49,7 @@ func TestInspectionFontDomains(t *testing.T) {
 					"<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>",
 				"<< /Length 7 >>\nstream\n600 0 d0\nendstream",
 			})
-			result, err := InspectInput(bytes.NewReader(data), testSource(data).VersionID, "application/pdf")
+			result, err := InspectInput(t.Context(), bytes.NewReader(data), testSource(data).VersionID, "application/pdf")
 			require.NoError(t, err)
 			require.Equal(t, testSource(data), result.Source)
 			require.Equal(t, []PageFontDomain{{Page: 1, SimpleFontsOnly: new(tc.want)}}, result.FontDomains)
@@ -59,7 +59,7 @@ func TestInspectionFontDomains(t *testing.T) {
 
 func TestInspectionRejectsUnboundFontDomains(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [0 0 612 792]"}, "")
-	result, err := InspectInput(bytes.NewReader(data), testSource(data).VersionID, "application/pdf")
+	result, err := InspectInput(t.Context(), bytes.NewReader(data), testSource(data).VersionID, "application/pdf")
 	require.NoError(t, err)
 	for _, mutate := range []func(*Inspection){
 		func(v *Inspection) { v.Source.SHA256 = fmt.Sprintf("%064d", 1) },

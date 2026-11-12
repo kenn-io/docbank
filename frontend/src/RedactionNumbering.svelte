@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { Button, Checkbox, Modal, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Checkbox,
+    Disclosure,
+    Modal,
+    SelectDropdown,
+    Spinner,
+    TextInput,
+  } from "@kenn-io/kit-ui";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import IconAction from "./IconAction.svelte";
   import { APIError } from "./api-transport.js";
@@ -309,34 +317,35 @@
         {/if}
       {/if}
       {#if listing && !loading}<Button onclick={() => void open()}>Retry namespaces</Button>{/if}
-      <details>
-        <summary>New namespace</summary>
-        <label for="numbering-prefix">Prefix</label><TextInput
-          id="numbering-prefix"
-          ariaLabel="Numbering prefix"
-          bind:value={prefix}
-          disabled={loading}
-          block
-        />
-        <label for="numbering-suffix">Suffix</label><TextInput
-          id="numbering-suffix"
-          ariaLabel="Numbering suffix"
-          bind:value={suffix}
-          disabled={loading}
-          block
-        />
-        <SelectDropdown
-          title="Numbering digits"
-          value={padding}
-          options={Array.from({ length: 10 }, (_, i) => ({
-            value: String(i + 1),
-            label: `${i + 1} digits`,
-          }))}
-          disabled={loading}
-          onchange={(v) => (padding = v)}
-        />
-        <Button disabled={loading} onclick={() => void create()}>Create namespace</Button>
-      </details>
+      <Disclosure variant="plain" title="New namespace">
+        <div class="namespace-fields">
+          <label for="numbering-prefix">Prefix</label><TextInput
+            id="numbering-prefix"
+            ariaLabel="Numbering prefix"
+            bind:value={prefix}
+            disabled={loading}
+            block
+          />
+          <label for="numbering-suffix">Suffix</label><TextInput
+            id="numbering-suffix"
+            ariaLabel="Numbering suffix"
+            bind:value={suffix}
+            disabled={loading}
+            block
+          />
+          <SelectDropdown
+            title="Numbering digits"
+            value={padding}
+            options={Array.from({ length: 10 }, (_, i) => ({
+              value: String(i + 1),
+              label: `${i + 1} digits`,
+            }))}
+            disabled={loading}
+            onchange={(v) => (padding = v)}
+          />
+          <Button disabled={loading} onclick={() => void create()}>Create namespace</Button>
+        </div>
+      </Disclosure>
       <Checkbox bind:checked={consent} label="Keep the unredacted original indefinitely" />
       <p class="muted">Reserved numbers can't be released, even if publication fails.</p>
       <Button
@@ -392,7 +401,7 @@
   .error {
     color: var(--status-error-text);
   }
-  details {
+  .namespace-fields {
     display: grid;
     gap: var(--space-2);
   }

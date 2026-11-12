@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/secretref"
 )
@@ -125,7 +126,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config) (embeddingRuntimeBundle,
 			classify = classifyBridgeEmbeddingError
 		case openAIEmbeddingAdapter:
 			if config.ManagedEmbedding(configured) {
-				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.TextModel) })
+				profile, profileErr := config.ManagedEmbeddingProfile(configured, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.TextModel, nil) })
 				if profileErr != nil {
 					return bundle, profileErr
 				}
@@ -391,6 +392,9 @@ func providerEgressPolicy(runtime config.ProviderEgressConfig) providerhttp.Egre
 }
 
 func classifyOpenAIEmbeddingError(err error) (processing.EmbeddingProviderFailure, time.Duration) {
+	if timeout, ok := errors.AsType[*embedclient.TransportError](err); ok && timeout.Timeout() {
+		return processing.EmbeddingProviderCapacity, 0
+	}
 	if errors.Is(err, openaicompat.ErrMalformedResponse) {
 		return processing.EmbeddingProviderInvalidResponse, 0
 	}
@@ -427,26 +431,37 @@ func classifyVoyageEmbeddingError(err error) (processing.EmbeddingProviderFailur
 	return processing.EmbeddingProviderPermanent, 0
 }
 
-func localEmbeddingOrigin(ctx context.Context, model string) (string, error) {
+func localEmbeddingOrigin(ctx context.Context, model string, confirm func(context.Context, int64) (bool, error)) (string, error) {
+	return localEmbeddingOriginWithRuntime(ctx, model, confirm, embedlocal.Endpoint, embedlocal.Install)
+}
+
+func localEmbeddingOriginWithRuntime(ctx context.Context, model string, confirm func(context.Context, int64) (bool, error),
+	endpoint func(context.Context, embedlocal.Options) (string, error),
+	install func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error),
+) (string, error) {
 	opts := embedlocal.Options{SkipOllama: true, Model: model}
-	origin, err := embedlocal.Endpoint(ctx, opts)
+	origin, err := endpoint(ctx, opts)
 	if err == nil {
 		return strings.TrimSuffix(origin, "/v1"), nil
 	}
-	if !errors.Is(err, embedlocal.ErrNotFound) {
+	var restart *embedlocal.RestartRequiredError
+	if !errors.Is(err, embedlocal.ErrNotFound) && !errors.As(err, &restart) {
 		return "", fmt.Errorf("discover local embeddings: %w", err)
 	}
 	dir, err := embedlocal.DefaultDir()
 	if err != nil {
 		return "", fmt.Errorf("find local embeddings directory: %w", err)
 	}
-	// No Confirm: Kit may reuse installed files, but cannot download here.
-	installation, err := embedlocal.Install(ctx, embedlocal.InstallOptions{DataDir: dir, Model: model})
+	// A nil Confirm allows installed-file reuse without approving a download.
+	installation, err := install(ctx, embedlocal.InstallOptions{DataDir: dir, Model: model, Confirm: confirm})
 	if err != nil {
 		return "", fmt.Errorf("reuse local embeddings installation: %w", err)
 	}
+	if restart != nil {
+		return "", restart
+	}
 	opts.DataDir, opts.Executable = installation.DataDir, installation.Executable
-	origin, err = embedlocal.Endpoint(ctx, opts)
+	origin, err = endpoint(ctx, opts)
 	if err != nil {
 		return "", fmt.Errorf("start local embeddings: %w", err)
 	}

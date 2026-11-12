@@ -3952,6 +3952,25 @@ export interface LocalTextPlanRequest {
   server: LocalTextPlanRequestServer;
 }
 
+export type LocalTextStatusProvider = typeof LocalTextStatusProvider[keyof typeof LocalTextStatusProvider];
+
+
+export const LocalTextStatusProvider = {
+  '': '',
+  local: 'local',
+  ollama: 'ollama',
+  configured: 'configured',
+} as const;
+
+export interface LocalTextStatus {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  download_bytes: number;
+  provider: LocalTextStatusProvider;
+  restart_required: boolean;
+}
+
 export interface LookupPhotoFlagsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4644,6 +4663,26 @@ export interface NumberedReservationRequest {
   review_sha256: string;
   /** @minimum 1 */
   start_at: number;
+}
+
+export interface OriginalDownloadSelection {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  blob_hash: string;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 0 */
+  size: number;
+  vault_id: string;
+}
+
+export interface OriginalDownloadTicket {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expires_in_seconds: number;
+  name: string;
+  url: string;
 }
 
 export interface OutputCounts {
@@ -7937,6 +7976,8 @@ export interface RenditionTextRequest {
   readonly $schema?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
+  /** Resolve the exact observed active rendition independently of the current default profile */
+  exact_rendition?: boolean;
   /** @minimum 1 */
   node_id: number;
   observed?: RenditionTextObserved;
@@ -10160,6 +10201,13 @@ hidden?: boolean;
 
 export type SetPhotoSettingsHeaders = {
 'If-Match': string;
+};
+
+export type ListDocumentProcessingProfilesParams = {
+/**
+ * Include configured profiles without an executable runtime
+ */
+include_configured?: boolean;
 };
 
 export type ListPushSourcesParams = {
@@ -19466,6 +19514,30 @@ return sessionJSON<LocalTextPlan>(getApplyLocalTextUrl(),
 
 
 
+export const getGetLocalTextStatusUrl = () => {
+
+
+
+
+  return `/api/v1/processing/local/status`
+}
+
+/**
+ * @summary Read search by meaning setup status
+ */
+export const getLocalTextStatus = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<LocalTextStatus> => {
+
+  return sessionJSON<LocalTextStatus>(getGetLocalTextStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getPlanDocumentProcessingUrl = () => {
 
 
@@ -19504,20 +19576,27 @@ return sessionJSON<ProcessingPlan>(getPlanDocumentProcessingUrl(),
 
 
 
-export const getListDocumentProcessingProfilesUrl = () => {
+export const getListDocumentProcessingProfilesUrl = (params?: ListDocumentProcessingProfilesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/processing/profiles`
+  return stringifiedParams.length > 0 ? `/api/v1/processing/profiles?${stringifiedParams}` : `/api/v1/processing/profiles`
 }
 
 /**
- * @summary List locally executable document-processing profiles
+ * @summary List document-processing profiles
  */
-export const listDocumentProcessingProfiles = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
+export const listDocumentProcessingProfiles = async (params?: ListDocumentProcessingProfilesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ProcessingProfileSummary[]> => {
 
-  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(),
+  return sessionJSON<ProcessingProfileSummary[]>(getListDocumentProcessingProfilesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -22233,6 +22312,45 @@ return sessionResponse<Blob>(getGetContentVersionBytesUrl(versionId),
     method: 'GET',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
+  }
+);}
+
+
+
+export const getPrepareOriginalDownloadUrl = (versionId: string,) => {
+
+
+
+
+  return `/api/v1/versions/${encodeURIComponent(String(versionId))}/download-ticket`
+}
+
+/**
+ * @summary Issue a single-use original download URL valid for two minutes
+ */
+export const prepareOriginalDownload = async (versionId: string,
+    originalDownloadSelection: NonReadonly<OriginalDownloadSelection>, options?: Parameters<typeof sessionJSON>[1]): Promise<OriginalDownloadTicket> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<OriginalDownloadTicket>(getPrepareOriginalDownloadUrl(versionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(originalDownloadSelection)
   }
 );}
 

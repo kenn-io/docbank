@@ -793,7 +793,7 @@ func ExtractSourceMetadata(ctx context.Context, spoolParent string, data []byte)
 			return document.SourceMetadataV1{}, err
 		}
 	case bytes.HasPrefix(data, []byte("%PDF-")):
-		collector.extractPDF(data)
+		collector.extractPDF(ctx, data)
 	case bytes.HasPrefix(data, []byte("PK\x03\x04")):
 		collector.extractOOXML(data)
 	case bytes.HasPrefix(data, []byte("BEGIN:VCALENDAR")):
@@ -1070,8 +1070,8 @@ func sourceWarning(code, namespace, source, detail string) document.SourceMetada
 	return document.SourceMetadataWarningV1{Code: code, Namespace: namespace, SourceField: source, Detail: detail}
 }
 
-func (c *metadataCollector) extractPDF(data []byte) {
-	metadata, err := documentmedia.ReadPDFMetadata(data)
+func (c *metadataCollector) extractPDF(ctx context.Context, data []byte) {
+	metadata, err := documentmedia.ReadPDFMetadata(ctx, data)
 	if err != nil {
 		c.warn("unparseable_pdf_pages", "pdf.info", "Pages", "PDF page tree could not be verified")
 		return

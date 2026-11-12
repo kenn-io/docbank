@@ -148,58 +148,6 @@ func TestAuxiliaryChecksumMetadataRoundTripsAndRejectsMalformedMD5(t *testing.T)
 	}
 }
 
-func TestBackupExcludesUncommittedProviderStaging(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	staged := fakeHash("92")
-	require.NoError(t, s.RecordRenditionBlob(t.Context(), staged, 9,
-		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: true}))
-	var stagedCount int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_blob_staging
-		WHERE blob_hash=?`, staged).Scan(&stagedCount))
-	require.Equal(t, 1, stagedCount)
-
-	var exported bytes.Buffer
-	snapshot, err := s.BeginMetadataSnapshot(t.Context())
-	require.NoError(t, err)
-	var authorized int
-	require.NoError(t, snapshot.QueryRowContext(t.Context(), BackupBlobAuthorityCTE()+
-		`SELECT COUNT(*) FROM backup_authorized_blobs WHERE hash=?`, staged).Scan(&authorized))
-	require.Zero(t, authorized)
-	require.NoError(t, snapshot.ExportBackup(t.Context(), &exported))
-	require.NoError(t, snapshot.Close())
-	assert.NotContains(t, exported.String(), staged,
-		"uncommitted provider staging is not logical backup authority")
-}
-
-func TestBackupLiveReferenceOverridesProviderStagingHashCollision(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	shared := fakeHash("93")
-	node, err := s.CreateFile(t.Context(), s.RootID(), "durable.txt", shared, 9, "text/plain")
-	require.NoError(t, err)
-	require.NotEmpty(t, node.CurrentVersionID)
-	require.NoError(t, s.RecordRenditionBlob(t.Context(), shared, 9,
-		BlobPhysical{Encoding: "raw", StoredBytes: 9, PackEligible: true, Created: false}))
-	var staged int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM rendition_blob_staging
-		WHERE blob_hash=?`, shared).Scan(&staged))
-	require.Zero(t, staged, "deduplicated ordinary bytes are not provider staging")
-	snapshot, err := s.BeginMetadataSnapshot(t.Context())
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, snapshot.ExportBackup(t.Context(), &exported))
-	require.NoError(t, snapshot.Close())
-	assert.Contains(t, exported.String(), shared,
-		"provider deduplication must not erase a live content blob")
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(
-		t.Context(), bytes.NewReader(exported.Bytes())))
-	has, err := restored.HasBlob(t.Context(), shared)
-	require.NoError(t, err)
-	assert.True(t, has, "live content hash-collision authority must survive restore")
-}
-
 func TestBackupExcludesCrashPendingDerivativeErasureAcrossMetadataRoundTrip(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

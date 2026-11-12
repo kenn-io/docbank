@@ -1805,7 +1805,7 @@ ALTER TABLE {{schema}}.collection_snapshots ADD FOREIGN KEY (vault_uid) REFERENC
 
 ALTER TABLE {{schema}}.collection_snapshots ADD FOREIGN KEY (predecessor_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id);
 
-ALTER TABLE {{schema}}.collection_snapshot_members ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id) ON DELETE CASCADE;
+ALTER TABLE {{schema}}.collection_snapshot_members ADD FOREIGN KEY (snapshot_id) REFERENCES {{schema}}.collection_snapshots(snapshot_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE {{schema}}.collection_snapshot_members ADD FOREIGN KEY (content_version_id) REFERENCES {{schema}}.content_versions(version_id);
 
@@ -2468,6 +2468,8 @@ CREATE INDEX document_people_person ON {{schema}}.document_people(person_id, con
 CREATE INDEX person_candidate_state
     ON {{schema}}.person_match_candidates(state, created_at, candidate_id);
 
+CREATE INDEX persons_name_folded ON {{schema}}.persons(display_name_folded, person_id);
+
 CREATE INDEX person_document_assertions_person ON {{schema}}.person_document_assertions(person_id, role, action, recorded_at);
 
 CREATE INDEX person_external_alias_target
@@ -2481,3 +2483,24 @@ CREATE INDEX person_identities_value
     ON {{schema}}.person_identities(value_normalized, kind, scope_kind, scope_value, person_id);
 
 CREATE INDEX photo_faces_assertion ON {{schema}}.photo_faces(assertion_id,content_version_id);
+
+-- Sealed delivery, retained representations and Bates artifact discovery.
+CREATE INDEX bates_allocations_namespace ON {{schema}}.bates_allocations(namespace_id,start_sequence);
+CREATE INDEX bates_artifact_pages_label ON {{schema}}.bates_artifact_pages(label);
+CREATE INDEX bates_artifacts_history ON {{schema}}.bates_artifacts(created_at,artifact_id);
+CREATE INDEX collection_snapshot_representations_version ON {{schema}}.collection_snapshot_representations(content_version_id);
+CREATE INDEX package_preflights_expiry ON {{schema}}.package_preflights(expires_at);
+CREATE INDEX packages_history ON {{schema}}.packages(predecessor_package_id,created_at,package_id);
+
+CREATE INDEX package_import_jobs_pending ON {{schema}}.package_import_jobs(state,id);
+CREATE INDEX package_labels_lookup ON {{schema}}.package_labels(label,provenance,package_id);
+
+CREATE INDEX export_jobs_pending ON {{schema}}.export_jobs(state,id);
+
+CREATE TABLE {{schema}}.storage_operation_stores (
+    operation_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.storage_operations(operation_id) ON DELETE CASCADE,
+    store_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.blob_stores(store_id) ON DELETE CASCADE,
+    role TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (operation_id,store_id)
+);
+CREATE INDEX storage_operation_stores_store ON {{schema}}.storage_operation_stores(store_id,operation_id);

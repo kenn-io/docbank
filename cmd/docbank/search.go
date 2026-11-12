@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -241,7 +242,8 @@ See docs/usage/search.md.`,
 			}
 			scoped := opts.SourcePresent || opts.PDFFilter != "" || opts.TagID != "" ||
 				opts.MIMEType != "" || opts.UnderNodeID != 0 || opts.ModifiedSince != "" || opts.ModifiedBefore != ""
-			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, opts.Fuzzy)
+			fuzzyRan := opts.Fuzzy && (rep.Fuzzy == nil || rep.Fuzzy.Status != store.FuzzyStatusNotRun)
+			hints = emptySearchHints(query, coverage, automatic.report == nil, scoped, fuzzyRan)
 		}
 		defer func() {
 			if retErr == nil && !searchJSON {
@@ -345,7 +347,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if !slices.Contains(options.ContentVersionIDs, version) {
 		return usageError(errors.New("the selected version must occur in --source-version"))
 	}
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 	if err != nil {
 		return err
 	}
@@ -375,16 +377,20 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
+	planCommand := fmt.Sprintf("docbank processing plan id:%d --profile %s", report.Source.NodeID, options.Profile)
 	if options.Agent {
-		return writeSimilarSearchAgent(cmd, report)
+		return writeSimilarSearchAgent(cmd, report, planCommand)
 	}
-	return writeSimilarSearchReport(cmd, report)
+	return writeSimilarSearchReport(cmd, report, planCommand)
 }
 
-func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport) error {
+func writeSimilarSearchReport(cmd *cobra.Command, report api.DocumentSimilarReport, planCommand string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "similar to: id:%d (version %s)\nbinding: %s\n", report.Source.NodeID, report.Source.ContentVersionID, report.BindingID)
 	if report.State == "unavailable" {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "unavailable: no current embedding for binding %q on version %s\n", report.BindingID, report.Source.ContentVersionID)
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "next:", planCommand); err != nil {
+			return fmt.Errorf("writing processing plan command: %w", err)
+		}
 		return nil
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "coverage: %s (%d/%d source documents complete)\n", report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
@@ -416,7 +422,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 
-	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context())
+	profiles, err := c.API().ListDocumentProcessingProfiles(cmd.Context(), &apiclient.ListDocumentProcessingProfilesRequestOptions{})
 
 	if err != nil {
 		return err

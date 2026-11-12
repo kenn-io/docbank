@@ -12347,6 +12347,51 @@ func (c *Client) ApplyLocalText(ctx context.Context, options *ApplyLocalTextRequ
 	return responseParser(ctx, resp)
 }
 
+// GetLocalTextStatus Read search by meaning setup status
+func (c *Client) GetLocalTextStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalTextStatusResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/status",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetLocalTextStatusResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetLocalTextStatusResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetLocalTextStatusResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetLocalTextStatusErrorResponse](resp, "GetLocalTextStatusErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/processing/local/status")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PlanDocumentProcessing Preview provider disclosure for one document version
 func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocumentProcessingRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PlanDocumentProcessingResponse, error) {
 	var err error
@@ -12394,12 +12439,18 @@ func (c *Client) PlanDocumentProcessing(ctx context.Context, options *PlanDocume
 	return responseParser(ctx, resp)
 }
 
-// ListDocumentProcessingProfiles List locally executable document-processing profiles
-func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error) {
+// ListDocumentProcessingProfiles List document-processing profiles
+func (c *Client) ListDocumentProcessingProfiles(ctx context.Context, options *ListDocumentProcessingProfilesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListDocumentProcessingProfilesResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_configured": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
-		Method:     "GET",
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/processing/profiles",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -16184,6 +16235,53 @@ func (c *Client) GetContentVersionBytes(ctx context.Context, options *GetContent
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200, 206)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PrepareOriginalDownload Issue a single-use original download URL valid for two minutes
+func (c *Client) PrepareOriginalDownload(ctx context.Context, options *PrepareOriginalDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareOriginalDownloadResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/versions/{version_id}/download-ticket",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PrepareOriginalDownloadResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PrepareOriginalDownloadResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PrepareOriginalDownloadResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PrepareOriginalDownloadErrorResponse](resp, "PrepareOriginalDownloadErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/versions/{version_id}/download-ticket")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -24561,6 +24659,37 @@ func (o *PlanDocumentProcessingRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// ListDocumentProcessingProfilesRequestOptions is the options needed to make a request to ListDocumentProcessingProfiles.
+type ListDocumentProcessingProfilesRequestOptions struct {
+	Query *ListDocumentProcessingProfilesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListDocumentProcessingProfilesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolveDocumentSourceFenceRequestOptions is the options needed to make a request to ResolveDocumentSourceFence.
 type ResolveDocumentSourceFenceRequestOptions struct {
 	Body *ResolveDocumentSourceFenceBody
@@ -26894,6 +27023,41 @@ func (o *GetContentVersionBytesRequestOptions) GetHeader() (map[string]string, e
 	return headers, err
 }
 
+// PrepareOriginalDownloadRequestOptions is the options needed to make a request to PrepareOriginalDownload.
+type PrepareOriginalDownloadRequestOptions struct {
+	PathParams *PrepareOriginalDownloadPath
+	Body       *PrepareOriginalDownloadBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PrepareOriginalDownloadRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PrepareOriginalDownloadRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetEmailMetadataRequestOptions is the options needed to make a request to GetEmailMetadata.
 type GetEmailMetadataRequestOptions struct {
 	PathParams *GetEmailMetadataPath
@@ -28154,6 +28318,10 @@ type GetContentVersionBytesPath struct {
 	VersionID string `json:"version_id"`
 }
 
+type PrepareOriginalDownloadPath struct {
+	VersionID uuid.UUID `json:"version_id"`
+}
+
 type GetEmailMetadataPath struct {
 	VersionID uuid.UUID `json:"version_id"`
 }
@@ -28565,6 +28733,8 @@ type UploadFileBody struct {
 	File runtime.File `json:"file"`
 }
 
+type PrepareOriginalDownloadBody = OriginalDownloadSelection
+
 type EnsureEmailMetadataBody = map[string]any
 
 type CreateWorkspaceQueryBody = WorkspaceQueryCreateRequest
@@ -28860,6 +29030,11 @@ type UndoPhotoFaceDecisionQuery struct {
 
 type ListPersonFacePreviewsQuery struct {
 	Hidden *bool `json:"hidden,omitempty"`
+}
+
+type ListDocumentProcessingProfilesQuery struct {
+	// IncludeConfigured Include configured profiles without an executable runtime
+	IncludeConfigured *bool `json:"include_configured,omitempty"`
 }
 
 type ListPushSourcesQuery struct {
@@ -30136,6 +30311,10 @@ type ApplyLocalTextResponse = api.LocalTextPlan
 
 type ApplyLocalTextErrorResponse = Error
 
+type GetLocalTextStatusResponse = api.LocalTextStatus
+
+type GetLocalTextStatusErrorResponse = Error
+
 type PlanDocumentProcessingResponse = api.ProcessingPlan
 
 type PlanDocumentProcessingErrorResponse = Error
@@ -30589,6 +30768,10 @@ type GetContentVersionBytesResponse = runtime.File
 type GetContentVersionBytesResponse206 = runtime.File
 
 type GetContentVersionBytesErrorResponse = Error
+
+type PrepareOriginalDownloadResponse = api.OriginalDownloadTicket
+
+type PrepareOriginalDownloadErrorResponse = Error
 
 type GetEmailMetadataResponse = api.EmailMetadata
 
@@ -31241,6 +31424,8 @@ type LocalTextPlan = api.LocalTextPlan
 
 type LocalTextPlanRequest = api.LocalTextPlanRequest
 
+type LocalTextStatus = api.LocalTextStatus
+
 type Locator = report.Locator
 
 type LookupPhotoFlagsRequest = api.LookupPhotoFlagsRequest
@@ -31379,6 +31564,10 @@ type NumberedRecipe = processing.NumberedRecipe
 type NumberedReservation = processing.NumberedReservation
 
 type NumberedReservationRequest = processing.NumberedReservationRequest
+
+type OriginalDownloadSelection = api.OriginalDownloadSelection
+
+type OriginalDownloadTicket = api.OriginalDownloadTicket
 
 type OutputCounts = bundle.OutputCounts
 
@@ -31980,14 +32169,17 @@ type RenditionTextReceipt struct {
 
 type RenditionTextRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string                `json:"$schema,omitempty"`
-	BlobHash  string                 `json:"blob_hash"`
-	NodeID    int64                  `json:"node_id"`
-	Observed  *RenditionTextObserved `json:"observed,omitempty"`
-	Profile   *string                `json:"profile,omitempty"`
-	Revision  int64                  `json:"revision"`
-	Size      int64                  `json:"size"`
-	VersionID uuid.UUID              `json:"version_id"`
+	Schema   *string `json:"$schema,omitempty"`
+	BlobHash string  `json:"blob_hash"`
+
+	// ExactRendition Resolve the exact observed active rendition independently of the current default profile
+	ExactRendition *bool                  `json:"exact_rendition,omitempty"`
+	NodeID         int64                  `json:"node_id"`
+	Observed       *RenditionTextObserved `json:"observed,omitempty"`
+	Profile        *string                `json:"profile,omitempty"`
+	Revision       int64                  `json:"revision"`
+	Size           int64                  `json:"size"`
+	VersionID      uuid.UUID              `json:"version_id"`
 }
 
 type RenditionTextSource struct {

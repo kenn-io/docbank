@@ -42,6 +42,11 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		require.NoError(t, err)
 	})
 	schema := pgx.Identifier{cfg.Schema}.Sanitize()
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(lifecycle) ON "+schema+".blob_stores TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".storage_operation_stores TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".storage_operation_cleanup TO "+quotedRole)
+	require.NoError(t, err)
+
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".photo_hidden_credentials TO "+quotedRole+
 		"; GRANT INSERT,DELETE,UPDATE(state,cursor,total_objects,completed_objects,copied_objects,copied_bytes,cancel_requested,error,receipt_json,updated_at,finished_at,retention_until) ON "+schema+".storage_operations TO "+quotedRole)
 	require.NoError(t, err)
@@ -55,6 +60,23 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT UPDATE(entry_count,chain_head) ON "+schema+".audit_scopes TO "+quotedRole+
 		"; GRANT SELECT,UPDATE(high_water) ON "+schema+".node_allocation TO "+quotedRole+
 		"; GRANT SELECT,INSERT,DELETE ON "+schema+".vault_changes TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(canonical_json,state,expires_at) ON "+schema+".export_sources TO "+quotedRole+
+		"; GRANT INSERT ON "+schema+".export_chunks,"+schema+".export_members,"+schema+".export_documents,"+schema+".export_role_roots TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(canonical_json,expires_at) ON "+schema+".export_plans TO "+quotedRole+
+		"; GRANT INSERT,DELETE,UPDATE(canonical_json,state,expires_at,epoch,token,archive_name) ON "+schema+".export_jobs TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".collection_snapshots,"+schema+".collection_snapshot_members,"+schema+".collection_snapshot_representations,"+schema+".packages,"+schema+".package_volumes,"+schema+".bates_namespaces,"+schema+".bates_namespace_cursors,"+schema+".bates_allocations,"+schema+".bates_page_labels,"+schema+".bates_artifacts,"+schema+".bates_artifact_pages TO "+quotedRole+
+		"; GRANT UPDATE(next_sequence) ON "+schema+".bates_namespace_cursors TO "+quotedRole+
+		"; GRANT UPDATE(state,committed_at) ON "+schema+".bates_allocations TO "+quotedRole+
+		"; GRANT INSERT,DELETE ON "+schema+".package_preflights TO "+quotedRole)
+	require.NoError(t, err)
+
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".package_records,"+schema+".package_labels,"+schema+".package_import_receipts,"+schema+".package_import_jobs TO "+quotedRole+
+		"; GRANT UPDATE(state,snapshot_id,completed_at) ON "+schema+".packages TO "+quotedRole+
+		"; GRANT UPDATE(state,epoch,token,claim_owner,lease_expires_at,updated_at) ON "+schema+".package_import_jobs TO "+quotedRole)
 	require.NoError(t, err)
 
 	_, err = setup.ExecContext(ctx, "GRANT INSERT,DELETE,UPDATE(display_name,display_name_folded,state,revision,updated_at,key_face_id) ON "+schema+".persons TO "+quotedRole+
@@ -136,6 +158,11 @@ func newPostgresSchemaStore(t *testing.T, setup *sql.DB, cfg pgschema.Config) *S
 		"; GRANT INSERT,UPDATE(generation_id,input_epoch,published_at) ON "+schema+".document_event_heads TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(input_epoch,input_revision,inputs_sha256,state,diagnostic_json,attempted_at) ON "+schema+".document_event_attempts TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(state,scanned,published,failed,unavailable,updated_at,finished_at) ON "+schema+".document_event_builds TO "+quotedRole)
+	require.NoError(t, err)
+	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".document_people_generations,"+schema+".document_people TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(event_generation_id,inputs_sha256,generation_id,unresolved_actors,suppressed_actors,candidate_overflow,resolver_fingerprint,binding_epoch,node_revision,edge_count,state,failure_reason,published_at) ON "+schema+".document_people_heads TO "+quotedRole+
+		"; GRANT UPDATE(resolver_fingerprint) ON "+schema+".document_people_state TO "+quotedRole+
+		"; GRANT INSERT,UPDATE(state,scanned,published,failed,updated_at,finished_at) ON "+schema+".document_people_builds TO "+quotedRole)
 	require.NoError(t, err)
 	_, err = setup.ExecContext(ctx, "GRANT INSERT ON "+schema+".rendition_blob_staging,"+schema+".processing_consent_grants,"+schema+".processing_consent_revocations,"+schema+".processing_profiles,"+schema+".rendition_builds,"+schema+".rendition_artifacts,"+schema+".rendition_units,"+schema+".rendition_lexical_segments,"+schema+".rendition_attachments,"+schema+".rendition_jobs,"+schema+".rendition_job_waiters,"+schema+".rendition_lexical_heads,"+schema+".rendition_lexical_superseded TO "+quotedRole+
 		"; GRANT INSERT,UPDATE(attachment_id,published_at) ON "+schema+".rendition_heads TO "+quotedRole+

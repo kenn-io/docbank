@@ -50,14 +50,10 @@ func newProcessingLocalCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := daemonconn.Stop(cmd.Context(), layout.Root); err != nil {
-				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
-			}
-			reconnected, err := daemonconn.Ensure(cmd.Context())
+			_, _, err = daemonconn.Restart(cmd.Context(), layout.Root, false)
 			if err != nil {
 				return fmt.Errorf("text indexing choice saved; run docbank daemon start to activate it: %w", err)
 			}
-			defer func() { _ = reconnected.Close() }()
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Text indexing enabled for this vault and new imports.")
 			if err != nil {
 				return fmt.Errorf("write text indexing result: %w", err)
@@ -103,27 +99,12 @@ func installLocalTextWithRuntime(cmd *cobra.Command, managed bool, model string,
 	if !managed {
 		return nil
 	}
-	_, err := endpoint(cmd.Context(), embedlocal.Options{SkipOllama: true, Model: model})
-	if err == nil {
-		return nil
-	}
-	var restart *embedlocal.RestartRequiredError
-	if !errors.Is(err, embedlocal.ErrNotFound) && !errors.As(err, &restart) {
-		return fmt.Errorf("discover embeddings server: %w", err)
-	}
-	dir, err := embedlocal.DefaultDir()
-	if err != nil {
-		return fmt.Errorf("find embeddings directory: %w", err)
-	}
-	report := func(_ context.Context, bytes int64) (bool, error) {
+	confirm := func(_ context.Context, bytes int64) (bool, error) {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Downloading local embeddings: %d bytes\n", bytes); err != nil {
 			return false, fmt.Errorf("write download size: %w", err)
 		}
 		return true, nil
 	}
-	_, err = install(cmd.Context(), embedlocal.InstallOptions{DataDir: dir, Model: model, Confirm: report})
-	if err == nil && restart != nil {
-		return restart
-	}
+	_, err := localEmbeddingOriginWithRuntime(cmd.Context(), model, confirm, endpoint, install)
 	return err
 }

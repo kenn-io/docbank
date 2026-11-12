@@ -26,12 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/atomicfile"
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/embedlocal"
 )
@@ -47,20 +49,21 @@ func localTextDiscoveryHandler(model string) http.Handler {
 }
 
 func TestLocalTextInstallWithoutPrompt(t *testing.T) {
-	t.Parallel()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	for _, tc := range []struct {
-		name           string
-		ready          bool
-		missingBytes   int64
-		installed      bool
-		output         string
-		model          string
-		discoveryError error
+		name         string
+		ready        bool
+		missingBytes int64
+		installed    bool
+		output       string
+		model        string
 	}{
-		{"ready", true, 0, false, "", embedlocal.TextModel, nil},
-		{"installed_offline", false, 0, true, "", embedlocal.TextModel, nil},
-		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", embedlocal.TextModel, nil},
-		{"faces_old_text_server", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel, &embedlocal.RestartRequiredError{PID: 12345}},
+		{"ready", true, 0, false, "", embedlocal.TextModel},
+		{"installed_offline", false, 0, true, "", embedlocal.TextModel},
+		{"missing", false, 295000000, true, "Downloading local embeddings: 295000000 bytes\n", embedlocal.TextModel},
+		{"faces", false, 4096, true, "Downloading local embeddings: 4096 bytes\n", embedlocal.FaceModel},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
@@ -73,10 +76,7 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 			err := installLocalTextWithRuntime(cmd, true, tc.model, func(_ context.Context, opts embedlocal.Options) (string, error) {
 				require.True(t, opts.SkipOllama)
 				require.Equal(t, tc.model, opts.Model)
-				if tc.discoveryError != nil {
-					return "", tc.discoveryError
-				}
-				if tc.ready {
+				if tc.ready || installed {
 					return "http://127.0.0.1:11434/v1", nil
 				}
 				return "", embedlocal.ErrNotFound
@@ -90,13 +90,105 @@ func TestLocalTextInstallWithoutPrompt(t *testing.T) {
 				}
 				return embedlocal.Installation{Executable: "synthetic-kennembed", DataDir: t.TempDir()}, nil
 			})
-			if tc.discoveryError != nil {
-				require.ErrorIs(t, err, tc.discoveryError)
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err)
 			require.Equal(t, tc.installed, installed)
 			require.Equal(t, tc.output, output.String())
+		})
+	}
+}
+
+func TestLocalEmbeddingOriginWithRuntime(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	for _, tc := range []struct{ name, failure string }{
+		{"installed", ""},
+		{"discovery_failure", "discover local embeddings"},
+		{"install_failure", "reuse local embeddings installation"},
+		{"startup_failure", "start local embeddings"},
+		{"restart_required", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installed := false
+			dataDir := t.TempDir()
+			restart := &embedlocal.RestartRequiredError{PID: 12345}
+			model := embedlocal.TextModel
+			if tc.name == "restart_required" {
+				model = embedlocal.FaceModel
+			}
+			origin, err := localEmbeddingOriginWithRuntime(t.Context(), model, nil, func(_ context.Context, opts embedlocal.Options) (string, error) {
+				require.True(t, opts.SkipOllama)
+				require.Equal(t, model, opts.Model)
+				if tc.name == "restart_required" {
+					require.False(t, installed, "restart must not start the old server")
+					return "", restart
+				}
+				if tc.name == "discovery_failure" || (installed && tc.name == "startup_failure") {
+					return "", errors.New("synthetic runtime failure")
+				}
+				if !installed {
+					return "", embedlocal.ErrNotFound
+				}
+				require.Equal(t, "synthetic-kennembed", opts.Executable)
+				require.Equal(t, dataDir, opts.DataDir)
+				return "http://127.0.0.1:12345/v1", nil
+			}, func(_ context.Context, opts embedlocal.InstallOptions) (embedlocal.Installation, error) {
+				require.Equal(t, model, opts.Model)
+				installed = true
+				if tc.name == "install_failure" {
+					return embedlocal.Installation{}, errors.New("synthetic install failure")
+				}
+				return embedlocal.Installation{Executable: "synthetic-kennembed", DataDir: dataDir}, nil
+			})
+			if tc.name == "restart_required" {
+				require.ErrorIs(t, err, restart)
+				require.True(t, installed)
+				require.Empty(t, origin)
+				return
+			}
+			if tc.failure != "" {
+				require.ErrorContains(t, err, tc.failure)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "http://127.0.0.1:12345", origin)
+		})
+	}
+}
+
+func TestLocalTextSaveRestartRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		failure   error
+		published bool
+	}{
+		{"success", nil, true},
+		{"failed", errors.New("synthetic unpublished write failure"), false},
+		{"published", errors.Join(atomicfile.ErrPublished, errors.New("synthetic directory sync failure")), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			var pending atomic.Bool
+			save := localTextSave(root, &pending, func(root string, choice config.LocalTextConfig) error {
+				if tc.published {
+					require.NoError(t, saveLocalText(root, choice))
+				}
+				return tc.failure
+			})
+			err := save(config.LocalTextProfile, "local")
+			if tc.failure == nil {
+				require.NoError(t, err)
+			} else {
+				require.Same(t, tc.failure, err)
+			}
+			require.Equal(t, tc.published, pending.Load())
+			choice, err := readLocalText(root)
+			require.NoError(t, err)
+			if tc.published {
+				require.Equal(t, config.LocalTextConfig{Version: 1, Profile: config.LocalTextProfile, Server: "local"}, choice)
+			} else {
+				require.Empty(t, choice.Profile)
+			}
 		})
 	}
 }
@@ -119,30 +211,45 @@ func TestLocalTextSelectionFormat(t *testing.T) {
 }
 
 func TestLocalTextStaleSelectionLeavesDaemonAvailable(t *testing.T) {
-	t.Run("malformed", func(t *testing.T) {
-		root := t.TempDir()
-		t.Setenv("DOCBANK_HOME", root)
-		t.Setenv("DO_NOT_TRACK", "1")
-		data := []byte(`{"version":1`)
-		require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
-		stop := startServe(t)
-		defer stop()
-		record := waitForDaemon(t, root)
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+record.Address+"/api/v1/jobs", nil)
-		require.NoError(t, err)
-		req.Header.Set("X-Api-Key", record.Metadata["api_key"])
-		response, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, response.Body.Close()) }()
-		var jobs bytes.Buffer
-		_, err = jobs.ReadFrom(response.Body)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, response.StatusCode, jobs.String())
-		require.NotContains(t, jobs.String(), "embed:local-text")
-		saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
-		require.NoError(t, err)
-		require.Equal(t, data, saved)
-	})
+	for _, tc := range []struct{ name, data string }{
+		{"malformed", `{"version":1`},
+		{"missing_profile", `{"version":1,"profile":"missing-profile","server":"auto"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DOCBANK_HOME", root)
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("USERPROFILE", homeDir)
+			t.Setenv("DO_NOT_TRACK", "1")
+			data := []byte(tc.data)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "local-text.json"), data, 0600))
+			stop := startServe(t)
+			defer stop()
+			record := waitForDaemon(t, root)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+record.Address+"/api/v1/jobs", nil)
+			require.NoError(t, err)
+			req.Header.Set("X-Api-Key", record.Metadata["api_key"])
+			response, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, response.Body.Close()) }()
+			var jobs bytes.Buffer
+			_, err = jobs.ReadFrom(response.Body)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, response.StatusCode, jobs.String())
+			require.NotContains(t, jobs.String(), "embed:local-text")
+			saved, err := os.ReadFile(filepath.Join(root, "local-text.json"))
+			require.NoError(t, err)
+			require.Equal(t, data, saved)
+			connection, err := daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, connection.Close()) }()
+			status, err := connection.API().GetLocalTextStatus(t.Context())
+			require.NoError(t, err)
+			require.False(t, status.Active)
+			require.False(t, status.RestartRequired)
+		})
+	}
 }
 
 func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
@@ -152,7 +259,9 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 		lateImport bool
 	}{{"completed", false}, {"new_import", true}} {
 		t.Run(result.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("USERPROFILE", homeDir)
 			t.Setenv("DO_NOT_TRACK", "1")
 			t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
 			root := t.TempDir()
@@ -301,7 +410,9 @@ func TestLocalTextBackfillHoldsDaemonUntilDrained(t *testing.T) {
 }
 
 func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	var attackerText, ownerText []string
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/show" {
@@ -369,45 +480,48 @@ func TestLocalTextAutoSendsOnlyToOwnerEndpoint(t *testing.T) {
 	require.Equal(t, []string{"search_document: private passage", "search_query: private question"}, ownerText)
 }
 
-func TestLocalProcessingEnablesWithoutInput(t *testing.T) {
+func runLocalProcessingNoninteractive(t *testing.T, model string, args ...string) (string, kitdaemon.RuntimeRecord, string) {
+	t.Helper()
 	bin := buildDocbank(t)
-	for _, tc := range []struct {
-		name, model string
-		args        []string
-		output      string
-	}{
-		{"text", embedlocal.TextModel, []string{"processing", "local", "--server", "local"}, "Text indexing enabled for this vault and new imports."},
-		{"faces", embedlocal.FaceModel, []string{"processing", "faces"}, "Face suggestions enabled."},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			t.Setenv("DO_NOT_TRACK", "1")
-			root := t.TempDir()
-			t.Setenv("DOCBANK_HOME", root)
-			server := httptest.NewServer(localTextDiscoveryHandler(tc.model))
-			defer server.Close()
-			dir, err := embedlocal.DefaultDir()
-			require.NoError(t, err)
-			endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
-			require.NoError(t, err)
-			_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
-			require.NoError(t, err)
-			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-			defer cancel()
-			defer func() { _, _ = daemonconn.Stop(context.Background(), root) }()
-			command := exec.CommandContext(ctx, bin, tc.args...)
-			// No stdin: the command must finish without asking a question.
-			command.Stdin = nil
-			data, err := command.CombinedOutput()
-			require.NoError(t, err, string(data))
-			require.Contains(t, string(data), tc.output)
-			if tc.model == embedlocal.TextModel {
-				choice, err := readLocalText(root)
-				require.NoError(t, err)
-				require.Equal(t, config.LocalTextProfile, choice.Profile)
-			}
-		})
-	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DO_NOT_TRACK", "1")
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	server := httptest.NewServer(localTextDiscoveryHandler(model))
+	t.Cleanup(server.Close)
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	t.Cleanup(cancel)
+	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), root) })
+	data, err := exec.CommandContext(ctx, bin, "daemon", "start").CombinedOutput()
+	require.NoError(t, err, string(data))
+	before := waitForDaemon(t, root)
+	command := exec.CommandContext(ctx, bin, args...)
+	command.Stdin = nil
+	data, err = command.CombinedOutput()
+	require.NoError(t, err, string(data))
+	return root, before, string(data)
+}
+
+func TestLocalProcessingEnablesNoninteractivelyAndRestartsExplicitDaemon(t *testing.T) {
+	root, before, output := runLocalProcessingNoninteractive(t, embedlocal.TextModel, "processing", "local", "--server", "local")
+	require.Contains(t, output, "Text indexing enabled for this vault and new imports.")
+	choice, err := readLocalText(root)
+	require.NoError(t, err)
+	require.Equal(t, config.LocalTextProfile, choice.Profile)
+	after := waitForDaemon(t, root)
+	require.NotEqual(t, before.PID, after.PID)
+	require.True(t, daemonconn.Explicit(after))
+}
+
+func TestFacesEnableNoninteractively(t *testing.T) {
+	_, _, output := runLocalProcessingNoninteractive(t, embedlocal.FaceModel, "processing", "faces")
+	require.Contains(t, output, "Face suggestions enabled.")
 }
 
 func TestLocalTextCandidateRejections(t *testing.T) {
@@ -419,6 +533,107 @@ func TestLocalTextCandidateRejections(t *testing.T) {
 	_, err = localTextCandidate(cfg, "local", "archive")
 	require.ErrorIs(t, err, processing.ErrProfileNotConfigured)
 }
+
+func TestLocalTextStatusProvider(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	for _, tc := range []struct {
+		name, endpoint, provider string
+		pending                  bool
+		moveFirst                bool
+	}{
+		{"off", "", "", false, false},
+		{"restart_pending", "", "", true, false},
+		{"ollama", "http://127.0.0.1:11434", "ollama", false, false},
+		{"configured", "http://127.0.0.1:12345", "configured", false, false},
+		{"shared_binding_after_move", "http://127.0.0.1:11434", "local", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layout := home.Layout{Root: t.TempDir()}
+			require.NoError(t, layout.Ensure())
+			catalog, err := store.Open(t.Context(), layout.DBPath())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, blobs.Close()) }()
+			cfg := config.Default()
+			if tc.endpoint != "" {
+				cfg = localTextSourceConfig(t, tc.endpoint, "synthetic-revision", "prefix-free", "DOCBANK_TEST_STATUS_KEY")
+			}
+			if tc.moveFirst {
+				cfg.ProcessingProfiles["later"] = cfg.ProcessingProfiles["archive"]
+			}
+			bundle, err := configureEmbeddingRuntimeBundle(cfg)
+			require.NoError(t, err)
+			profiles, err := executableProcessingProfiles(cfg, bundle)
+			require.NoError(t, err)
+			if tc.moveFirst {
+				candidate, err := localTextCandidate(cfg, "local", "archive")
+				require.NoError(t, err)
+				selectedBundle, err := configureEmbeddingRuntimeBundle(candidate)
+				require.NoError(t, err)
+				selectedProfiles, err := executableProcessingProfiles(candidate, selectedBundle)
+				require.NoError(t, err)
+				_, err = projectLocalTextProfile(cfg, profiles, candidate, "archive", selectedProfiles["archive"])
+				require.NoError(t, err)
+			}
+			service, err := processing.NewService(t.Context(), processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Profiles: profiles, Gate: api.NewOperationGate(), Principal: "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir()})
+			require.NoError(t, err)
+			defer service.Stop()
+			var restartPending atomic.Bool
+			restartPending.Store(tc.pending)
+
+			status, err := localTextStatus(t.Context(), profiles, service, restartPending.Load())
+			require.NoError(t, err)
+			require.Equal(t, tc.provider, status.Provider)
+			require.Equal(t, tc.pending, status.RestartRequired)
+			require.Equal(t, tc.provider != "", status.Active)
+			if tc.provider == "" {
+				require.Positive(t, status.DownloadBytes)
+			}
+		})
+	}
+}
+
+func TestLocalTextStartupActivatesAfterRestart(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	root := t.TempDir()
+	t.Setenv("DOCBANK_HOME", root)
+	t.Setenv("DO_NOT_TRACK", "1")
+	server := httptest.NewServer(localTextDiscoveryHandler(embedlocal.TextModel))
+	defer server.Close()
+	dir, err := embedlocal.DefaultDir()
+	require.NoError(t, err)
+	endpoint, err := kitdaemon.ParseEndpoint(server.URL, kitdaemon.ParseEndpointOptions{TCPPolicy: kitdaemon.RequireLoopback})
+	require.NoError(t, err)
+	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
+	require.NoError(t, err)
+	stop, _ := startServeReady(t)
+	defer stop()
+	connection, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, connection.Close()) }()
+	plan, err := connection.API().PlanLocalText(t.Context(), &apiclient.PlanLocalTextRequestOptions{Body: &api.LocalTextPlanRequest{Server: "auto"}})
+	require.NoError(t, err)
+	_, err = connection.API().ApplyLocalText(t.Context(), &apiclient.ApplyLocalTextRequestOptions{Body: &api.LocalTextApplyRequest{Server: "auto", PlanFingerprint: plan.Fingerprint, Consent: true}})
+	require.NoError(t, err)
+	require.NoError(t, connection.Close())
+	stop()
+	waitForDaemonStop(t, root)
+	stop, _ = startServeReady(t)
+	defer stop()
+	connection, err = daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	status, err := connection.API().GetLocalTextStatus(t.Context())
+	require.NoError(t, err)
+	require.True(t, status.Active)
+	require.Equal(t, "local", status.Provider)
+}
+
 func TestLocalPlanPrintsScope(t *testing.T) {
 	t.Parallel()
 	var output bytes.Buffer
@@ -445,7 +660,7 @@ func TestFaceStartupReusesSelectedModel(t *testing.T) {
 	require.NoError(t, err)
 	_, err = (kitdaemon.RuntimeStore{Dir: dir, Prefix: embedlocal.Service}).Write(kitdaemon.NewRuntimeRecord(embedlocal.Service, embedlocal.Version, endpoint))
 	require.NoError(t, err)
-	origin, err := localEmbeddingOrigin(t.Context(), embedlocal.FaceModel)
+	origin, err := localEmbeddingOrigin(t.Context(), embedlocal.FaceModel, nil)
 	require.NoError(t, err)
 	require.Equal(t, server.URL, origin)
 }

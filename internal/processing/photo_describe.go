@@ -111,7 +111,7 @@ func photoDescriptionInput(ctx context.Context, catalog *store.Store, blobs *blo
 	if int64(len(stripped)) > policy.MaxSourceBytes {
 		return nil, media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
 	}
-	capability, err := media.InspectCapability(bytes.NewReader(stripped), policy)
+	capability, err := media.InspectCapability(ctx, bytes.NewReader(stripped), policy)
 	return stripped, capability, err
 }
 

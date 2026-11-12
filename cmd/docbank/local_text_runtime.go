@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/kit/atomicfile"
@@ -41,6 +44,16 @@ func saveLocalText(root string, choice config.LocalTextConfig) error {
 		return err
 	}
 	return atomicfile.WriteFile(filepath.Join(root, "local-text.json"), data)
+}
+
+func localTextSave(root string, restartPending *atomic.Bool, save func(string, config.LocalTextConfig) error) func(string, string) error {
+	return func(name, mode string) error {
+		err := save(root, config.LocalTextConfig{Profile: name, Server: mode})
+		if err == nil || errors.Is(err, atomicfile.ErrPublished) {
+			restartPending.Store(true)
+		}
+		return err
+	}
 }
 
 // localTextCandidate moves one compatible recipe, or supplies the plaintext fallback.
@@ -100,11 +113,8 @@ func localTextStartup(ctx context.Context, managed bool, _ string) error {
 	if !managed {
 		return nil
 	}
-	_, err := localEmbeddingOrigin(ctx, embedlocal.TextModel)
-	if err != nil {
-		return fmt.Errorf("embeddings server is not ready; run docbank processing local to install and start it: %w", err)
-	}
-	return nil
+	_, err := localEmbeddingOrigin(ctx, embedlocal.TextModel, func(context.Context, int64) (bool, error) { return true, nil })
+	return err
 }
 
 func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.ProfileConfig, candidate config.Config, name string, selected processing.ProfileConfig) (config.Config, error) {
@@ -130,4 +140,29 @@ func projectLocalTextProfile(cfg config.Config, profiles map[string]processing.P
 	cfg.ProcessingProfiles = maps.Clone(cfg.ProcessingProfiles)
 	cfg.ProcessingProfiles[name] = candidate.ProcessingProfiles[name]
 	return cfg, nil
+}
+
+func localTextStatus(ctx context.Context, profiles map[string]processing.ProfileConfig, service *processing.Service, restartPending bool) (api.LocalTextStatus, error) {
+	status := api.LocalTextStatus{RestartRequired: restartPending}
+	for _, profile := range service.Profiles() {
+		if len(profile.QueryEmbeddingBindings) == 0 {
+			continue
+		}
+		binding := profiles[profile.Name].EmbeddingDisclosures[profile.QueryEmbeddingBindings[0]]
+		status.Active, status.Provider = true, "configured"
+		if endpoint, err := url.Parse(binding.Endpoint); err == nil {
+			if endpoint.Scheme == "managed" {
+				status.Provider = "local"
+			} else if endpoint.Port() == "11434" {
+				status.Provider = "ollama"
+			}
+		}
+		return status, nil
+	}
+	files, err := embedlocal.Inspect(ctx, embedlocal.Options{SkipOllama: true})
+	if err != nil {
+		return status, fmt.Errorf("inspect local embeddings: %w", err)
+	}
+	status.DownloadBytes = files.DownloadBytes
+	return status, nil
 }

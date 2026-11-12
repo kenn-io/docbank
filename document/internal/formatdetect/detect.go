@@ -27,8 +27,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-	"golang.org/x/text/secure/precis"
-	"golang.org/x/text/unicode/norm"
+	"github.com/xdg-go/stringprep"
 )
 
 const (
@@ -448,8 +447,8 @@ type PDFInfoMetadata struct {
 // InspectPDF validates the authoritative PDF object graph and measures every
 // supported stream under the supplied limits. Text-only inspection admits
 // opaque image streams without decoding pixels; other inspection rejects them.
-func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
-	context, err := validatePDFObjectGraph(data, limits, false)
+func InspectPDF(ctx context.Context, data []byte, limits PDFLimits) (PDFMeasurements, error) {
+	context, err := validatePDFObjectGraph(ctx, data, limits, false)
 	if err != nil {
 		return PDFMeasurements{}, err
 	}
@@ -495,19 +494,19 @@ func InspectPDF(data []byte, limits PDFLimits) (PDFMeasurements, error) {
 // CountPDFPages returns the authoritative page-tree count without decoding
 // unrelated content streams. Parsing remains bounded by the source size.
 // It rejects encrypted PDFs. Provider and generated-output callers rely on this refusal.
-func CountPDFPages(data []byte) (int64, error) {
-	return countPDFPages(data, false)
+func CountPDFPages(ctx context.Context, data []byte) (int64, error) {
+	return countPDFPages(ctx, data, false)
 }
 
 // CountPDFPagesWithEmptyPassword also counts encrypted PDFs that open with an
 // empty user password. It uses the same parsing limits as CountPDFPages.
-func CountPDFPagesWithEmptyPassword(data []byte) (int64, error) {
-	return countPDFPages(data, true)
+func CountPDFPagesWithEmptyPassword(ctx context.Context, data []byte) (int64, error) {
+	return countPDFPages(ctx, data, true)
 }
 
-func countPDFPages(data []byte, allowEmptyPassword bool) (int64, error) {
+func countPDFPages(ctx context.Context, data []byte, allowEmptyPassword bool) (int64, error) {
 	sourceBytes := int64(len(data))
-	context, err := validatePDFObjectGraph(data, PDFLimits{
+	context, err := validatePDFObjectGraph(ctx, data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -523,9 +522,9 @@ func countPDFPages(data []byte, allowEmptyPassword bool) (int64, error) {
 
 // ReadPDFMetadata resolves the document information dictionary and catalog XMP
 // stream instead of scanning unrelated object or page-stream bytes.
-func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
+func ReadPDFMetadata(ctx context.Context, data []byte) (PDFMetadata, error) {
 	sourceBytes := int64(len(data))
-	context, err := readPDFMetadataObjectGraph(data, PDFLimits{
+	context, err := readPDFMetadataObjectGraph(ctx, data, PDFLimits{
 		MaxExpandedBytes: sourceBytes,
 		MaxEntryBytes:    sourceBytes,
 		MaxEntries:       sourceBytes,
@@ -589,9 +588,9 @@ func ReadPDFMetadata(data []byte) (PDFMetadata, error) {
 	return metadata, nil
 }
 
-func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, error) {
+func readPDFMetadataObjectGraph(ctx context.Context, data []byte, limits PDFLimits) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	context, err := api.ReadContext(bytes.NewReader(data), configuration)
+	context, err := api.ReadContext(ctx, bytes.NewReader(data), configuration)
 	if err != nil {
 		return nil, fmt.Errorf("read PDF object graph: %w", err)
 	}
@@ -604,7 +603,7 @@ func readPDFMetadataObjectGraph(data []byte, limits PDFLimits) (*model.Context, 
 	if hasMetadata {
 		context.RootDict.Delete("Metadata")
 	}
-	err = api.ValidateContext(context)
+	err = api.ValidateContext(ctx, context)
 	context.Info = info
 	if hasMetadata {
 		context.RootDict.Insert("Metadata", metadata)
@@ -635,9 +634,9 @@ func pdfConfiguration(sourceBytes int, limits PDFLimits) *model.Configuration {
 	}
 }
 
-func validatePDFObjectGraph(data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
+func validatePDFObjectGraph(ctx context.Context, data []byte, limits PDFLimits, allowEmptyPassword bool) (*model.Context, error) {
 	configuration := pdfConfiguration(len(data), limits)
-	context, err := api.ReadAndValidate(bytes.NewReader(data), configuration)
+	context, err := api.ReadAndValidate(ctx, bytes.NewReader(data), configuration)
 	if err != nil {
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
 			return nil, ErrPDFEncrypted
@@ -2000,18 +1999,20 @@ func readPrefix(reader io.ReaderAt, size, limit int64) ([]byte, error) {
 }
 
 // UnlockPDF decrypts a bounded copy and returns the password that opened it.
-func UnlockPDF(data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
+func UnlockPDF(ctx context.Context, data []byte, passwords []string, maxBytes int64) ([]byte, string, error) {
 	for _, password := range pdfPasswordCandidates(passwords) {
-		output, err := DecryptPDF(data, password, maxBytes)
+		output, err := DecryptPDF(ctx, data, password, maxBytes)
 		if err == nil {
 			return output, password, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
 		}
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
 			continue
 		}
-		// pdfcpu v0.15.0 rejects some AES-256 password characters during preparation.
-		_, preparationErr := precis.NewIdentifier(precis.BidiRule, precis.Norm(norm.NFKC)).String(password)
-		if preparationErr != nil && errors.Is(err, preparationErr) {
+		// A rejected candidate must not prevent trying the remaining passwords.
+		if _, invalid := errors.AsType[stringprep.Error](err); invalid || !utf8.ValidString(password) {
 			continue
 		}
 		return nil, "", fmt.Errorf("decrypt PDF: %w", err)
@@ -2050,12 +2051,12 @@ var pdfDocBytes = sync.OnceValue(func() map[rune]byte {
 })
 
 // DecryptPDF decrypts once with the password selected by local inspection.
-func DecryptPDF(data []byte, password string, maxBytes int64) ([]byte, error) {
+func DecryptPDF(ctx context.Context, data []byte, password string, maxBytes int64) ([]byte, error) {
 	configuration := pdfConfiguration(len(data), PDFLimits{MaxExpandedBytes: maxBytes, MaxEntryBytes: maxBytes})
 	configuration.UserPW, configuration.OwnerPW = password, password
 	configuration.Eol = types.EolLF
 	output := pdfOutput{limit: maxBytes}
-	err := api.Decrypt(bytes.NewReader(data), &output, configuration)
+	err := api.Decrypt(ctx, bytes.NewReader(data), &output, configuration)
 	if errors.Is(err, filter.ErrDecodeLimitExceeded) {
 		err = ErrPDFExpandedBytes
 	}

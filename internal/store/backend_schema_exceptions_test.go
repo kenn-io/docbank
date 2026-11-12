@@ -6,7 +6,6 @@ var sqliteOnlyBackendTables = map[string]string{
 	"vector_membership_epochs":          "vector index lifecycle is unqualified",
 	"photo_timeline_pending":            "SQLite trigger intermediate; PostgreSQL recomputes directly in document_maintenance.go",
 	"photo_xmp_unsettled_pending":       "SQLite trigger intermediate; PostgreSQL queues directly in document_maintenance.go",
-	"storage_operation_stores":          "multi-store operations are unqualified",
 	"vector_index_build_jobs":           "vector index lifecycle is unqualified",
 	"vector_index_reader_leases":        "vector index lifecycle is unqualified",
 	"vector_index_unavailable_coverage": "vector index lifecycle is unqualified",
@@ -16,26 +15,16 @@ var sqliteOnlyBackendTables = map[string]string{
 // used by native operations are not exempt from the shared structural checks.
 // Index expressions and predicates still need operation-specific plan checks.
 var deferredBackendIndexes = map[string]string{
-	"bates_allocations_namespace":                 "bates_allocations",
-	"bates_artifact_pages_label":                  "bates_artifact_pages",
-	"bates_artifacts_history":                     "bates_artifacts",
-	"collection_snapshot_representations_version": "collection_snapshot_representations",
-	"content_versions_photo_media_type":           "content_versions",
-	"export_jobs_pending":                         "export_jobs",
-	"mailbox_containers_owner":                    "mailbox_containers",
-	"mailbox_transfer_receipts_source":            "mailbox_transfer_receipts",
-	"mailbox_transfer_versions":                   "mailbox_transfer_receipts",
-	"nodes_photo_import":                          "nodes",
-	"nodes_photo_name":                            "nodes",
-	"package_import_jobs_pending":                 "package_import_jobs",
-	"package_labels_lookup":                       "package_labels",
-	"package_preflights_expiry":                   "package_preflights",
-	"packages_history":                            "packages",
-	"persons_name_folded":                         "persons",
-	"rendition_attachments_build":                 "rendition_attachments",
-	"term_report_history_recent":                  "term_report_history",
+	"content_versions_photo_media_type": "content_versions",
+	"mailbox_containers_owner":          "mailbox_containers",
+	"mailbox_transfer_receipts_source":  "mailbox_transfer_receipts",
+	"mailbox_transfer_versions":         "mailbox_transfer_receipts",
+	"nodes_photo_import":                "nodes",
+	"nodes_photo_name":                  "nodes",
+	"rendition_attachments_build":       "rendition_attachments",
+	"term_report_history_recent":        "term_report_history",
 	// This is a write invariant, not a deferred access optimization. The
-	// multi-store port must enforce active evacuation uniqueness in Go; copying
+	// shared writer admission enforces active evacuation uniqueness in Go; copying
 	// SQLite's closed state list into the new schema is forbidden.
 	"one_active_evacuation_per_store": "storage_operations",
 }

@@ -822,13 +822,34 @@ func requireJob(t *testing.T, list api.JobList, name string) api.Job {
 // when nothing configured keeps the daemon alive.
 const idleTimeoutJob = "daemon.idle-timeout"
 
-func TestBackgroundDaemonWatchesForIdleShutdown(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("DOCBANK_HOME", home)
-	t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
-	startTestDaemon(t, home)
-	assert.Equal(t, "running", requireJob(t, daemonJobs(t), idleTimeoutJob).Status,
-		"a background daemon with nothing to keep it alive exits after idle_timeout")
+func TestIdleWatchArmedOnlyForAutomaticBackgroundDaemons(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		background bool
+		persistent bool
+	}{
+		{name: "automatic", background: true},
+		{name: "explicit", background: true, persistent: true},
+		{name: "foreground"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("DOCBANK_HOME", home)
+			if tc.background {
+				t.Setenv(daemonconn.EnvBackgroundDaemon, "1")
+			} else {
+				t.Setenv(daemonconn.EnvBackgroundDaemon, "")
+			}
+			t.Setenv(daemonconn.EnvPersistentDaemon, strconv.FormatBool(tc.persistent))
+			startTestDaemon(t, home)
+			jobs := daemonJobs(t)
+			_, watched := jobNamed(jobs, idleTimeoutJob)
+			assert.Equal(t, tc.background && !tc.persistent, watched, "only automatic background daemons have an idle timeout")
+			if tc.background && !tc.persistent {
+				assert.Equal(t, "running", requireJob(t, jobs, idleTimeoutJob).Status)
+			}
+		})
+	}
 }
 
 func TestConfiguredBackupsCaptureAndKeepDaemonAlive(t *testing.T) {

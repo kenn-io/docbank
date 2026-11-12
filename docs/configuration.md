@@ -137,7 +137,7 @@ api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
 api_key = ""          # empty = ephemeral per-run key (loopback only)
 allowed_hosts = []   # additional Host names, optionally with a port
-idle_timeout = "30m"  # background daemons only; "0" = never
+idle_timeout = "30m"  # automatically started daemons only; "0" = never
 
 [web]
 enabled = true
@@ -152,6 +152,7 @@ session_lifetime = "24h"       # key-login lifetime, 1m..2160h; 0 = 24h
 port = 0                # 0 = serve /mcp on the API port; otherwise a loopback port
 credential_binding = "" # empty = HTTP MCP cannot start without an env binding
 allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
+public_origin = ""      # e.g. https://archive.example.test behind an HTTPS proxy
 
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
@@ -173,7 +174,8 @@ minimum_age = "168h" # optional; 7 days since source modification
 scan_interval = "5s"
 capture_on_change = false # opt in to prompt reads for working files
 exclude = [".DS_Store", "cache/"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
+default_excludes = true # skip known partial files and sync conflicts
+exclude_patterns = ["*.swp"]
 ```
 
 - **`bind_addr`** — the interface the API listens on. Defaults to loopback.
@@ -198,10 +200,12 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   a key at startup and publish it to same-user clients in the runtime record.
   Set a fixed key when a client cannot read that record, such as a client
   using an SSH tunnel from another machine.
-- **`idle_timeout`**: how long a background daemon waits without
+- **`idle_timeout`**: how long an automatically started daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
-  Foreground `docbank daemon run` ignores this and never idles out. A daemon
-  hosting MCP HTTP also never idles out.
+  A fresh `daemon start`, `daemon restart`, or foreground `daemon run` ignores
+  this and never idles out. `daemon start` reuses a compatible automatic daemon
+  with its existing idle policy; use `daemon restart` to keep it running.
+  A daemon hosting MCP HTTP also never idles out.
 - **`[web] enabled`**: serves the embedded web application.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
@@ -228,6 +232,11 @@ exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
   See [MCP HTTP credential](#mcp-http-credential).
 - **`[mcp.http] allowed_hosts`**: additional accepted MCP HTTP authorities.
   See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
+- **`[mcp.http] public_origin`**: the client-facing HTTP or HTTPS origin for
+  MCP behind a proxy. The proxy must preserve the Host header. The origin's
+  authority is accepted without adding it to `allowed_hosts`; use that list for
+  any additional client authorities. If the proxy rewrites Host, the returned
+  URL uses the validated backend origin instead.
 - **`[backup] repo`**: default snapshot repository used when a backup
   command or API request omits `repo`. `~/...` expands against the daemon
   user's home. A relative path is resolved beneath `$DOCBANK_HOME`.
@@ -330,6 +339,16 @@ Matching is case-sensitive; `*` and `?` do not cross `/`, and `**` is not
 recursive. A match in either list skips the entry. Matching directories are
 pruned during both startup checks and scanning.
 
+`default_excludes` defaults to `true`. Every watch skips Syncthing partial
+files (`.syncthing.*.tmp` and `~syncthing~*.tmp`), Syncthing conflict copies
+(`*.sync-conflict-*`), and incomplete Chrome downloads (`*.crdownload`). These
+patterns add to configured rules and use the existing exclusion matcher and
+directory pruning, like `exclude_patterns`.
+Conflict copies (`*.sync-conflict-*`) are finished files that are not archived
+unless `default_excludes = false`. Set that option to use only configured
+exclusions when these names are intentional. Exclusions do not remove documents
+already archived.
+
 For a Syncthing inbox, for example:
 
 ```toml
@@ -338,7 +357,6 @@ name = "synced-notes"
 source = "~/synced-notes"
 destination = "/notes"
 exclude = [".stversions", ".git"]
-exclude_patterns = [".syncthing.*.tmp", "*.sync-conflict-*"]
 ```
 
 First run `docbank tag create receipts` and `docbank tag create 2026`. Add `tags = ["receipts", "2026"]` to assign existing tags when a document first arrives. Docbank commits the document and its tags together. A missing tag holds new imports while edits to existing documents keep recording and preserve manual tag changes. Watch status shows the tag error separately from the runner's error. Create the tag to resume imports on the next scan. Renaming a configured tag requires updating the watch configuration.
@@ -462,7 +480,8 @@ destination, tags, capture mode (`settled` or `prompt`), settle window,
 minimum source age, scan interval, and exclusion policy. JSON reports
 `capture_on_change` as a boolean. `docbank watch list` shows a waiting watcher
 as `idle` and an ingesting watcher as `running`. `EXCLUDES` counts both literal
-and glob rules. Use `--json` when an agent needs the separate `exclude` and
+and glob rules, including the default patterns unless `default_excludes = false`.
+Use `--json` when an agent needs the separate `exclude` and
 `exclude_patterns` lists. `docbank jobs` and `GET /api/v1/jobs` remain the
 all-task view. A permanent source, destination, or read failure leaves the named
 job in the failed state and records the reason.
@@ -1125,6 +1144,8 @@ Setup moves an indexed compatible Nomic profile to Kit's shared per-user server 
 
 The managed provider uses anonymous loopback requests. Consent identifies the shared service and selection mode, so a new port after restart keeps the grant. Revocation stops indexing and query provider calls. Server startup failure leaves the saved selection unchanged. See [document processing](usage/document-processing.md#set-up-local-text-search).
 
+The built-in local-text profile sends up to 8 inputs per request, waits up to 5 minutes per request, and sends one request at a time. When setup moves an existing compatible profile, its configured batch size and timeout remain in effect. Configured remote endpoints keep their own settings.
+
 #### Runtime settings
 
 An optional `[embedding_profiles.<name>.runtime]` section makes a binding
@@ -1403,6 +1424,7 @@ forwarding headers do not change that peer check.
 | `DOCBANK_MCP_HTTP_TOKEN` | Select an environment-backed MCP HTTP binding. Overrides the TOML binding; resolved only when MCP HTTP is enabled. |
 | `DOCBANK_MCP_HTTP_TOKEN_FILE` | Supply that MCP bearer through a mounted regular file. |
 | `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` | Comma-separated replacement for `[mcp.http] allowed_hosts`. |
+| `DOCBANK_MCP_HTTP_PUBLIC_ORIGIN` | Override `[mcp.http] public_origin`. |
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
 | `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |

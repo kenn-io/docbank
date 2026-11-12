@@ -7,7 +7,7 @@ description: Ranked, prefix-matching search over document names and verified tex
 # Searching
 
 Find live files and folders by name, current text, tags, or modification time.
-Query words are joined, so `search tax 2026` and `search "tax 2026"` agree.
+Quote a phrase inside the query to require adjacent words, as in `search '"tax 2026"'`.
 Without processing options, search automatically uses hybrid retrieval when a
 query-capable embedding profile is available; otherwise it uses ordinary lexical
 search. A failed hybrid attempt falls back with an explicit degradation reason.
@@ -86,12 +86,10 @@ missing measurements.
 
 ## How do words match in lexical search?
 
-Each whitespace-separated term matches the start of a word. For example,
-`insur` finds `insurance-renewal.pdf`. Every term must match.
+Each prepared word matches the start of a word, and its regular forms also match. For example, `insur` finds `insurance-renewal.pdf`, and `invoices` finds `invoice`. Common words are dropped when content words remain. Every remaining word and quoted phrase must match in the same name or text segment. Quoted phrases require adjacent words in order.
 
-Docbank searches query text literally. It escapes `AND`, `OR`, quotes, and
-parentheses before passing the query to SQLite's FTS5 search index. You do not
-need to escape them yourself.
+Docbank does not interpret unquoted `AND`, `OR`, `NOT`, or parentheses as
+Boolean operators. Balanced quotes delimit phrases.
 
 Name matches appear before content-only matches. Within each group, Docbank
 uses BM25, a text-relevance score, then name and ID to break ties consistently.
@@ -502,7 +500,7 @@ prefix matching, parentheses, and uppercase `AND`, `OR`, and `NOT`. Whitespace
 between operands means `AND`. Precedence is `NOT`, then `NEAR`, then `AND`,
 then `OR`. A backslash escapes the next character: `note\:draft` is literal
 text, and `\AND` is not an operator. Simple syntax treats these operators as
-literal prefix terms, as the CLI does.
+literal prefix terms.
 
 `alpha NEAR/5 beta` requires the two terms or phrases to occur within five
 tokens in the same indexed source. Bare `NEAR` uses ten. Distances range from
@@ -581,12 +579,13 @@ work and running while it processes an item.
 
 ## Which text is not searched?
 
-The daemon does not automatically extract PDF text layers, office-document
-text, unpublished email attachments, or text from images through optical
-character recognition (OCR). You can still find these files by name and read
-their stored bytes. The
-[document processing libraries](../document-understanding.md) provide additional
-processing options for applications. Adding a file does not start them.
+The daemon indexes PDF text layers locally when files are added and after
+restart for existing files. The built-in `docbank-pdf-text` profile accepts PDFs
+up to 500 MiB and 5,000 pages. With no configured profile, the Text tab selects
+the built-in profile and shows its retained page text. A configured profile
+keeps its own text and processing state.
+
+Office-document text, unpublished email attachments, and text from images through optical character recognition (OCR) need explicit processing. You can still find these files by name and read their stored bytes. See [document processing](document-processing.md).
 
 Ordinary search in the CLI, HTTP API, web app, and TUI matches words in
 names and indexed text. Processing search uses the separate workflow below.
@@ -596,9 +595,9 @@ Saving search choices in QueryV1 does not execute either workflow.
 
 An empty CLI text search keeps its usual output and prints hints on stderr:
 how many files in the search scope need a processing profile, how many text
-files are still being indexed, and, for a multi-word lexical search, that one
-name or text segment must contain every word. `--json` carries them in a
-`hints` array of `code` and `message`.
+files are still being indexed, and, when a lexical search has more than one
+prepared term, that one name or text segment must contain every term. `--json`
+carries them in a `hints` array of `code` and `message`.
 
 ## Processing search
 

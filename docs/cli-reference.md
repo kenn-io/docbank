@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-02
+last_edited: 2026-11-04
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -13,6 +13,32 @@ Run `docbank --help` for commands grouped by outcome, a numbered agent workflow,
 selectors, output modes, environment settings, and exit codes. Follow with `docbank <command> --help`
 for its workflow and flags. Runnable commands include examples; prerequisite
 examples show where version, job, and snapshot IDs come from.
+
+## Find a command by task
+
+```text
+docbank cli search "import a folder of PDFs"
+docbank cli search pack loose blobs --json --limit 3
+```
+
+Describe a task to get up to five matching commands, then run the suggested
+`--help` command for flags and examples. Quoting the task is optional.
+`--limit` accepts 1–20; its default is 5. Discovery reads the current command
+tree without loading configuration, opening a vault, contacting the network,
+or starting a daemon.
+
+Text output gives a command and summary per line, followed by a help hint.
+`--json` prints one object with `query` and `results`. Each result contains
+`command`, `summary`, and `usage`; no matches produces `"results": []` and
+exit 0. Blank queries and invalid limits fail with exit 2. Errors go to stderr,
+using the existing JSON error envelope when `--json` has been parsed.
+
+Results omit hidden and deprecated commands, help-only groups, completion,
+discovery itself, `tui`, the `web` launcher, the `mcp` server, and
+`daemon run`. Finite children such as `web sessions revoke` and `mcp config`
+remain searchable. Results describe available commands; check their help for
+prerequisites before executing them. To search stored documents, use
+`docbank search <query>`.
 
 ## Command groups and older spellings
 
@@ -1076,7 +1102,7 @@ stderr and prints ordinary lexical results. See
 [Automatic and processing search](usage/search.md).
 
 Ordinary lexical search uses SQLite FTS5, its full-text search engine, over
-live node names and verified extracted text. Each whitespace-separated term matches as a prefix.
+live node names and verified extracted text. Prepared words match as prefixes, including regular forms; quoted phrases match adjacent words.
 Docbank escapes FTS operator syntax instead of interpreting it. Name matches
 use BM25 relevance ranking and appear before separately ranked content-only
 matches.
@@ -1131,8 +1157,9 @@ For ordinary lexical search, the typed report contains `hits`, the applied
 `"hits": []`.
 
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
-after a complete verified read. It does not automatically run PDF, Office,
-or OCR extraction. Ordinary search uses words in names and indexed text.
+after a complete verified read. It also indexes PDF text locally in the
+background. Office extraction and OCR require configured profiles. Ordinary
+search uses words in names and indexed text.
 Explicit processing search uses the form below. Saved queries and highlight sets
 use a separate
 [HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no CLI
@@ -1164,6 +1191,7 @@ adds `degraded_error`. Fuzzy lexical search adds `fuzzy` status and
 `fuzzy_reasons`. Processing headers include coverage and complete/scoped
 document counts. With `--explain`, the header adds trace stage/count pairs.
 With `--rerank`, it adds outcome, candidate count, and any failure cause.
+When similar search lacks a source embedding, the header adds `next=` with the planning command.
 
 Each hit is one line with selector, match, and path. Processing hits add the
 daemon score, a lexical/semantic/hybrid match kind, and a short excerpt.
@@ -1220,13 +1248,16 @@ Use `docbank search --similar-to id:42 --profile private_text` with repeated
 `--source-version <uuid>` values to find files like one selected current
 version. Include that version in the source fence. `--version <uuid>` pins the
 selection; omission uses the node's current version. The fence accepts 1 to
-4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json` are supported.
+4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json`
+are supported.
 The default limit is 20 content groups.
 
 Similarity uses stored embeddings locally. It excludes the source node, groups
 identical content, and reports how many other eligible copies each group has.
-Missing source embeddings return `unavailable`. Query text, `--mode`,
-`--explain`, `--rerank`, and lexical filters cannot accompany `--similar-to`.
+When the source embedding is missing, human and agent output show a
+`docbank processing plan` command. JSON reports `state: unavailable` and the
+missing coverage. Query text, `--mode`, `--explain`, `--rerank`, and lexical
+filters cannot accompany `--similar-to`.
 
 ## docbank export
 
@@ -1374,7 +1405,7 @@ for the selection format, limits and recipient import commands.
 
 ```
 docbank rendition get <attachment-sha256> [--max-bytes <n>]
-docbank rendition window <path-or-id> --version <version-uuid> --profile <name>
+docbank rendition window <path-or-id> [--version <version-uuid>] [--profile <name>]
   [--attachment <attachment-id>] [--offset <n>] [--max-chars <n>] [--json]
 ```
 
@@ -1384,8 +1415,10 @@ verifying the complete stream. The attachment ID must be lowercase SHA-256.
 oversized, incomplete, or invalid renditions return a nonzero exit code.
 The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
 
-`window` reads bounded Markdown from the named executable profile's active
-rendition. It requires an explicit current version and prints a pinned
+`window` reads bounded Markdown from the current version. It selects the one
+active rendition with readable text, or asks you to choose when several have
+text. `--version`, `--profile`, and `--attachment` pin the selection. A
+rendition whose profile is no longer configured is identified by fingerprint. It prints a pinned
 continuation command. It does not verify the complete artifact. See
 [Read and continue a text window](usage/document-processing.md#read-and-continue-a-text-window)
 for offsets, limits, JSON fields, and discovery costs.
@@ -1779,13 +1812,17 @@ docbank daemon stop
 | Command | Behavior |
 |---------|----------|
 | `daemon run` | Run in the foreground until signaled or stopped; log to stderr |
-| `daemon start` | Start detached in the background; write JSON logs to `$DOCBANK_HOME/logs/` |
+| `daemon start` | Reuse a compatible daemon unchanged, or start detached until stopped; write JSON logs to `$DOCBANK_HOME/logs/` |
 | `daemon status` | Report pid, address, version, and uptime without starting a daemon |
 | `daemon restart` | Stop a running daemon, then start it; also works when none is running |
 | `daemon stop` | Stop gracefully, or print `no daemon running`; never start a daemon |
 
 `status --json` emits `{"running": bool, "pid", "address", "version",
-"started_at"}`. Restart prints `restarted: ...` or
+"started_at"}`. Running daemons also report `explicit_start` as a boolean
+when launch intent is recorded, and `idle_timeout` as the effective duration
+string when recorded. Older records omit unavailable fields. Foreground
+daemons report `explicit_start: false` without `idle_timeout`.
+Restart prints `restarted: ...` or
 `started (was not running): ...` according to the prior state.
 
 Data commands start a daemon automatically when needed. Use `daemon start`
@@ -1836,7 +1873,7 @@ cannot be read, `jobs` still lists every task and prints a warning to stderr;
 To recover malformed settings, repair or remove `lane-controls.json` in the
 vault directory. Removing it restores unpaused lanes with concurrency 1.
 Cancellation remains available while settings are unreadable.
-Every daemon registers `extract:plain-text`, `extract:source-metadata`,
+Every daemon registers `text:pdf` for automatic local PDF text, `extract:plain-text`, `extract:source-metadata`,
 `extract:photo-sidecars`, `derive:photo-quality`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
 rendition provider is bound, `telemetry:heartbeat` appears while anonymous

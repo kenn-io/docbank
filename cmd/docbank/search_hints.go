@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 type searchHint struct {
@@ -47,12 +48,13 @@ func emptySearchHints(query string, coverage api.SearchTextCoverage, lexical, sc
 		}
 		hints = append(hints, searchHint{Code: "indexing_pending", Message: fmt.Sprintf("%d %s %s still being indexed; search again later", coverage.Pending, noun, verb)})
 	}
-	if lexical && !fuzzy && len(strings.Fields(query)) > 1 {
+	terms := store.SearchRequiredTerms(query)
+	if lexical && !fuzzy && len(terms) > 1 {
 		scope := ""
 		if scoped {
 			scope = " in this search scope"
 		}
-		hints = append(hints, searchHint{Code: "every_word_required", Message: fmt.Sprintf("no name or text segment%s matches all words; try fewer words if some match", scope)})
+		hints = append(hints, searchHint{Code: "every_word_required", Message: fmt.Sprintf("no name or text segment%s matches all required terms (%s); try fewer terms if some match", scope, strings.Join(terms, ", "))})
 	}
 	return hints
 }

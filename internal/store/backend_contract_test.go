@@ -22,7 +22,666 @@ type backendSuite struct {
 }
 
 var backendSuites = []backendSuite{
-	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; query-driven discovery and resolver production remain separate.", scenarios: []backendScenario{
+	{name: "multi-store", postgres: "native operations", scope: "Secondary registry, inventory, placement, evacuation, storage jobs, cleanup and native repair/salvage; excludes deployment adapters, filesystem workers and metadata recovery.", scenarios: []backendScenario{
+		{"StorageRepairRollback", nil, checkStorageRepairRollbackPostgres},
+		{"MultiStorePhysicalRoundTrip", nil, checkMultiStorePhysicalRoundTripPostgres},
+		{"MultiStoreReadSnapshots", nil, checkMultiStoreReadSnapshotsPostgres},
+		{"PlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure", func(t *testing.T) {
+			t.Helper()
+			checkPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementPlanUsesRetainedSubtreeAndCompleteReferenceClosure(t, newPostgresQueryStore)
+		}},
+		{"PlacementCommitCannotExpandRetirementBeyondPreview", func(t *testing.T) {
+			t.Helper()
+			checkPlacementCommitCannotExpandRetirementBeyondPreview(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementCommitCannotExpandRetirementBeyondPreview(t, newPostgresQueryStore)
+		}},
+		{"PlacementCommitRejectsPlannedDestinationDrift", func(t *testing.T) { t.Helper(); checkPlacementCommitRejectsPlannedDestinationDrift(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPlacementCommitRejectsPlannedDestinationDrift(t, newPostgresQueryStore)
+		}},
+		{"PlacementPlanPinsAuditedContentToPrimaryByDefault", func(t *testing.T) {
+			t.Helper()
+			checkPlacementPlanPinsAuditedContentToPrimaryByDefault(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementPlanPinsAuditedContentToPrimaryByDefault(t, newPostgresQueryStore)
+		}},
+		{"PlacementPlanRejectsContentMissingFromBothRequestedStores", func(t *testing.T) {
+			t.Helper()
+			checkPlacementPlanRejectsContentMissingFromBothRequestedStores(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementPlanRejectsContentMissingFromBothRequestedStores(t, newPostgresQueryStore)
+		}},
+		{"EvacuationPlansOnlyAuthorityHeldBySource", func(t *testing.T) { t.Helper(); checkEvacuationPlansOnlyAuthorityHeldBySource(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkEvacuationPlansOnlyAuthorityHeldBySource(t, newPostgresQueryStore)
+		}},
+		{"EvacuationPlansRetainedBlobsWithoutVersionReferences", func(t *testing.T) {
+			t.Helper()
+			checkEvacuationPlansRetainedBlobsWithoutVersionReferences(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEvacuationPlansRetainedBlobsWithoutVersionReferences(t, newPostgresQueryStore)
+		}},
+		{"S3PackedPlacementReportsContainerScratchAndEgress", func(t *testing.T) {
+			t.Helper()
+			checkS3PackedPlacementReportsContainerScratchAndEgress(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkS3PackedPlacementReportsContainerScratchAndEgress(t, newPostgresQueryStore)
+		}},
+		{"PlacementExistingLocalDestinationReportsVerificationRead", func(t *testing.T) {
+			t.Helper()
+			checkPlacementExistingLocalDestinationReportsVerificationRead(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementExistingLocalDestinationReportsVerificationRead(t, newPostgresQueryStore)
+		}},
+		{"PlacementExistingS3PackReportsVerificationEgressAndScratch", func(t *testing.T) {
+			t.Helper()
+			checkPlacementExistingS3PackReportsVerificationEgressAndScratch(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementExistingS3PackReportsVerificationEgressAndScratch(t, newPostgresQueryStore)
+		}},
+		{"PlacementExistingS3LooseReportsPhysicalVerificationEgress", func(t *testing.T) {
+			t.Helper()
+			checkPlacementExistingS3LooseReportsPhysicalVerificationEgress(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPlacementExistingS3LooseReportsPhysicalVerificationEgress(t, newPostgresQueryStore)
+		}},
+		{"SecondaryBlobStoreLifecycle", func(t *testing.T) { t.Helper(); checkSecondaryBlobStoreLifecycle(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSecondaryBlobStoreLifecycle(t, newPostgresQueryStore) }},
+		{"BlobStoreRemovalRejectsActiveDestinationOperation", func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreRemovalRejectsActiveDestinationOperation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreRemovalRejectsActiveDestinationOperation(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreRemovalRequiresEmptyDetachedSecondary", func(t *testing.T) { t.Helper(); checkBlobStoreRemovalRequiresEmptyDetachedSecondary(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreRemovalRequiresEmptyDetachedSecondary(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreDetachRequiresCompletedPhysicalCleanup", func(t *testing.T) { t.Helper(); checkBlobStoreDetachRequiresCompletedPhysicalCleanup(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreDetachRequiresCompletedPhysicalCleanup(t, newPostgresQueryStore)
+		}},
+		{"EvacuationCleanupIncludesPackAfterMappingsAreRevoked", func(t *testing.T) {
+			t.Helper()
+			checkEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments", func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet", func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreRegistrationRejectsConflicts", func(t *testing.T) { t.Helper(); checkBlobStoreRegistrationRejectsConflicts(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBlobStoreRegistrationRejectsConflicts(t, newPostgresQueryStore) }},
+		{"BlobStoreEvacuationRequiresVerifiedDestinationCoverage", func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreEvacuationRequiresVerifiedDestinationCoverage(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreEvacuationBeginRejectsActiveDestinationOperation", func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreEvacuationBeginRejectsActiveDestinationOperation(t, newPostgresQueryStore)
+		}},
+		{"BlobStoreEvacuationFinalizationRejectsActiveSourceOperation", func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBlobStoreEvacuationFinalizationRejectsActiveSourceOperation(t, newPostgresQueryStore)
+		}},
+		{"EmptyBlobStoreEvacuationFinalizationRejectsCancellation", func(t *testing.T) {
+			t.Helper()
+			checkEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkEmptyBlobStoreEvacuationFinalizationRejectsCancellation(t, newPostgresQueryStore)
+		}},
+		{"DetachedBlobStoreEvacuationFinalizationRejectsCancellation", func(t *testing.T) {
+			t.Helper()
+			checkDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDetachedBlobStoreEvacuationFinalizationRejectsCancellation(t, newPostgresQueryStore)
+		}},
+		{"StorageOperationPersistsProgressAndCancellation", func(t *testing.T) { t.Helper(); checkStorageOperationPersistsProgressAndCancellation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationPersistsProgressAndCancellation(t, newPostgresQueryStore)
+		}},
+		{"StorageOperationRejectsConcurrentEvacuationsForOneStore", func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationRejectsConcurrentEvacuationsForOneStore(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationRejectsConcurrentEvacuationsForOneStore(t, newPostgresQueryStore)
+		}},
+		{"StorageOperationRetryPreservesEvacuationFinalization", func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationRetryPreservesEvacuationFinalization(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationRetryPreservesEvacuationFinalization(t, newPostgresQueryStore)
+		}},
+		{"StorageOperationRejectsCancellationAfterTerminalState", func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationRejectsCancellationAfterTerminalState(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationRejectsCancellationAfterTerminalState(t, newPostgresQueryStore)
+		}},
+		{"StorageOperationCleanupPersistsUntilCompleted", func(t *testing.T) { t.Helper(); checkStorageOperationCleanupPersistsUntilCompleted(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkStorageOperationCleanupPersistsUntilCompleted(t, newPostgresQueryStore)
+		}},
+		{"PruneExpiredStorageOperationsPreservesPendingCleanup", func(t *testing.T) {
+			t.Helper()
+			checkPruneExpiredStorageOperationsPreservesPendingCleanup(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPruneExpiredStorageOperationsPreservesPendingCleanup(t, newPostgresQueryStore)
+		}},
+		{"StorageRecoveryRejectsDestinationAuthorityChangedDuringPublication", func(t *testing.T) {
+			t.Helper()
+			checkStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkStorageRecoveryRejectsDestinationAuthorityChangedDuringPublication(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "metadata-export", postgres: "native operations", scope: "Pinned logical metadata and backup-scoped export, audit verification and recovery into fresh SQLite; excludes PostgreSQL import, physical recovery and public opening.", scenarios: []backendScenario{
+		{"MetadataExportRecovery", func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataExportRecovery(t, newPostgresQueryStore) }},
+		{"MetadataBackupAuthority", func(t *testing.T) { t.Helper(); checkMetadataBackupAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataBackupAuthority(t, newPostgresQueryStore) }},
+		{"MetadataExportFailures", func(t *testing.T) { t.Helper(); checkMetadataExportFailures(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataExportFailures(t, newPostgresQueryStore) }},
+		{"MetadataSnapshotPinned", nil, checkMetadataSnapshotPinnedPostgres},
+		{"MetadataRetainedCatalogs", nil, checkMetadataRetainedCatalogsPostgres},
+		{"MetadataProcessingJobs", func(t *testing.T) { t.Helper(); checkMetadataProcessingJobs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkMetadataProcessingJobs(t, newPostgresQueryStore) }},
+	}},
+	{name: "received-packages", postgres: "native operations", scope: "Received-package admission, leased staging, immutable records and labels, completion, cancellation and retained browsing; excludes filesystem workers and portable recovery.", scenarios: []backendScenario{
+		{"ReceivedPackageStagingAndRetention", func(t *testing.T) { t.Helper(); checkReceivedPackageStagingAndRetention(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkReceivedPackageStagingAndRetention(t, newPostgresQueryStore) }},
+		{"ReceivedPackageAdmissionRollback", nil, checkReceivedPackageAdmissionRollbackPostgres},
+		{"ReceivedPackagePublicationRollback", nil, checkReceivedPackagePublicationRollbackPostgres},
+		{"ReceivedPackageReadSnapshots", nil, checkReceivedPackageReadSnapshotsPostgres},
+
+		{"CommitPackageRecordWithLeaseReplaysExactPayload", func(t *testing.T) { t.Helper(); checkCommitPackageRecordWithLeaseReplaysExactPayload(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkCommitPackageRecordWithLeaseReplaysExactPayload(t, newPostgresQueryStore)
+		}},
+		{"PackageImportJobAdmissionReplaysExactOperation", func(t *testing.T) { t.Helper(); checkPackageImportJobAdmissionReplaysExactOperation(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobAdmissionReplaysExactOperation(t, newPostgresQueryStore)
+		}},
+		{"PackageImportJobAdmissionRejectsSecondOperationForPackage", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobAdmissionRejectsSecondOperationForPackage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobAdmissionRejectsSecondOperationForPackage(t, newPostgresQueryStore)
+		}},
+		{"AdmitPackageImportPublishesIngestPackageAndJobAtomically", func(t *testing.T) {
+			t.Helper()
+			checkAdmitPackageImportPublishesIngestPackageAndJobAtomically(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkAdmitPackageImportPublishesIngestPackageAndJobAtomically(t, newPostgresQueryStore)
+		}},
+		{"PackageImportJobCancelFencesStaleFinalization", func(t *testing.T) { t.Helper(); checkPackageImportJobCancelFencesStaleFinalization(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportJobCancelFencesStaleFinalization(t, newPostgresQueryStore)
+		}},
+		{"PackageImportLeaseReclaimInvalidatesEarlierToken", func(t *testing.T) { t.Helper(); checkPackageImportLeaseReclaimInvalidatesEarlierToken(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportLeaseReclaimInvalidatesEarlierToken(t, newPostgresQueryStore)
+		}},
+		{"PackageImportGapReceiptIsFencedAndIdempotent", func(t *testing.T) { t.Helper(); checkPackageImportGapReceiptIsFencedAndIdempotent(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportGapReceiptIsFencedAndIdempotent(t, newPostgresQueryStore)
+		}},
+		{"PackageImportProgressIncludesGapsOnCommittedRecords", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressIncludesGapsOnCommittedRecords(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressIncludesGapsOnCommittedRecords(t, newPostgresQueryStore)
+		}},
+		{"PackageImportProgressNamesRejectedRecordWithEmptyGapArray", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportProgressNamesRejectedRecordWithEmptyGapArray(t, newPostgresQueryStore)
+		}},
+		{"PackageImportLeaseMayBeReleasedForImmediateRetry", func(t *testing.T) { t.Helper(); checkPackageImportLeaseMayBeReleasedForImmediateRetry(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportLeaseMayBeReleasedForImmediateRetry(t, newPostgresQueryStore)
+		}},
+		{"StalePackageWorkerCannotCommitARecordAfterCancel", func(t *testing.T) { t.Helper(); checkStalePackageWorkerCannotCommitARecordAfterCancel(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkStalePackageWorkerCannotCommitARecordAfterCancel(t, newPostgresQueryStore)
+		}},
+		{"PackageImportFinishRejectsUnrelatedSnapshot", func(t *testing.T) { t.Helper(); checkPackageImportFinishRejectsUnrelatedSnapshot(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportFinishRejectsUnrelatedSnapshot(t, newPostgresQueryStore)
+		}},
+		{"PackageImportFinishPublishesOnlyMatchingReceiptSnapshot", func(t *testing.T) {
+			t.Helper()
+			checkPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportFinishPublishesOnlyMatchingReceiptSnapshot(t, newPostgresQueryStore)
+		}},
+		{"RevokePackageImportOwnerCancelsQueuedWork", func(t *testing.T) { t.Helper(); checkRevokePackageImportOwnerCancelsQueuedWork(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkRevokePackageImportOwnerCancelsQueuedWork(t, newPostgresQueryStore)
+		}},
+		{"PackageImportDiscardRepairsOrRetainsPhotoAssets", func(t *testing.T) { t.Helper(); checkPackageImportDiscardRepairsOrRetainsPhotoAssets(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageImportDiscardRepairsOrRetainsPhotoAssets(t, newPostgresQueryStore)
+		}},
+		{"ReceivedLabelLookupRequiresScopeWhenSenderReusesIt", func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupRequiresScopeWhenSenderReusesIt(t, newPostgresQueryStore)
+		}},
+		{"ReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence", func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkReceivedLabelLookupTreatsDocumentAndPageEndpointsAsOneOccurrence(t, newPostgresQueryStore)
+		}},
+		{"PackageRecordRejectsVersionOutsideItsIngest", func(t *testing.T) { t.Helper(); checkPackageRecordRejectsVersionOutsideItsIngest(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageRecordRejectsVersionOutsideItsIngest(t, newPostgresQueryStore)
+		}},
+		{"PackageTimelineInputsPreserveRawDateAndDeclaredZone", func(t *testing.T) {
+			t.Helper()
+			checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageTimelineInputsPreserveRawDateAndDeclaredZone(t, newPostgresQueryStore)
+		}},
+		{"PackageLabelCandidatesPageAmbiguousSenderLabels", func(t *testing.T) { t.Helper(); checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackageLabelCandidatesPageAmbiguousSenderLabels(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "exports", postgres: "native operations", scope: "Explicit/node/chunk sources, pinned output plans, previews, export-job lifecycle and retained-output inspection; excludes query/mailbox source selection, filesystem execution and recovery.", scenarios: []backendScenario{
+		{"ExportWorkerFailureAndCapacity", func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportWorkerFailureAndCapacity(t, newPostgresQueryStore) }},
+		{"ExportDiscoverySnapshots", nil, checkExportDiscoverySnapshotsPostgres},
+
+		{"ExportEmailInspection", func(t *testing.T) { t.Helper(); checkExportEmailInspection(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportEmailInspection(t, newPostgresQueryStore) }},
+		{"ExportFinishRollback", nil, checkExportFinishRollbackPostgres},
+		{"ExplicitPhotoExport", nil, checkExplicitPhotoExportPostgres},
+
+		{"ExportJobPublicationAndRelease", func(t *testing.T) { t.Helper(); checkExportJobPublicationAndRelease(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportJobPublicationAndRelease(t, newPostgresQueryStore) }},
+		{"ExportRestartRevocationAndCleanup", func(t *testing.T) { t.Helper(); checkExportRestartRevocationAndCleanup(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportRestartRevocationAndCleanup(t, newPostgresQueryStore) }},
+		{"ExportFailedResolutionKeepsReservation", func(t *testing.T) { t.Helper(); checkExportFailedResolutionKeepsReservation(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportFailedResolutionKeepsReservation(t, newPostgresQueryStore) }},
+		{"ExportPlanRollback", nil, checkExportPlanRollbackPostgres},
+		{"ExportReadSnapshots", nil, checkExportReadSnapshotsPostgres},
+		{"ExportChunksSealExactVersionsAndRejectChangedRetries", func(t *testing.T) {
+			t.Helper()
+			checkExportChunksSealExactVersionsAndRejectChangedRetries(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportChunksSealExactVersionsAndRejectChangedRetries(t, newPostgresQueryStore)
+		}},
+		{"ExportPlanFailureRollsBackAdmissionAndAllowsRetry", func(t *testing.T) {
+			t.Helper()
+			checkExportPlanFailureRollsBackAdmissionAndAllowsRetry(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportPlanFailureRollsBackAdmissionAndAllowsRetry(t, newPostgresQueryStore)
+		}},
+		{"ExportPlanOptionalPagesRespectMetadataBounds", func(t *testing.T) { t.Helper(); checkExportPlanOptionalPagesRespectMetadataBounds(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkExportPlanOptionalPagesRespectMetadataBounds(t, newPostgresQueryStore)
+		}},
+		{"ExportPlanPinsRolesAndCannotInventMissingText", func(t *testing.T) { t.Helper(); checkExportPlanPinsRolesAndCannotInventMissingText(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkExportPlanPinsRolesAndCannotInventMissingText(t, newPostgresQueryStore)
+		}},
+		{"ExportPreviewUsesFrozenReceiptsAndOwner", func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkExportPreviewUsesFrozenReceiptsAndOwner(t, newPostgresQueryStore) }},
+		{"ExportPublicationReleasedOnlyAfterRetentionCleanup", func(t *testing.T) {
+			t.Helper()
+			checkExportPublicationReleasedOnlyAfterRetentionCleanup(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportPublicationReleasedOnlyAfterRetentionCleanup(t, newPostgresQueryStore)
+		}},
+		{"ExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune", func(t *testing.T) {
+			t.Helper()
+			checkExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportSourceRetryFreezesHistoricalMembershipAndProtectsPrune(t, newPostgresQueryStore)
+		}},
+		{"ExportUpload1001MembersRequiresEveryChunkAndExactDigest", func(t *testing.T) {
+			t.Helper()
+			checkExportUpload1001MembersRequiresEveryChunkAndExactDigest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkExportUpload1001MembersRequiresEveryChunkAndExactDigest(t, newPostgresQueryStore)
+		}}}},
+	{name: "sealed-delivery", postgres: "native operations", scope: "Inline and streaming sealed snapshots, package identity and preflights, Bates reservations and verified artifacts with history and custodian evidence; excludes query selection, received-package imports and filesystem delivery.", scenarios: []backendScenario{
+		{"SealedDeliveryReservationRollback", nil, checkSealedDeliveryReservationRollbackPostgres},
+		{"SealedDeliveryArtifactRollback", nil, checkSealedDeliveryArtifactRollbackPostgres},
+		{"SealedDeliveryConcurrentReservations", nil, checkSealedDeliveryConcurrentReservationsPostgres},
+		{"BatesEvidenceSnapshots", nil, checkBatesEvidenceSnapshotsPostgres},
+		{"BatesNamespaceSnapshot", nil, checkBatesNamespaceSnapshotPostgres},
+		{"BatesCollectionEvidenceFollowsFrozenSources", func(t *testing.T) { t.Helper(); checkBatesCollectionEvidenceFollowsFrozenSources(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesCollectionEvidenceFollowsFrozenSources(t, newPostgresQueryStore)
+		}},
+		{"BatesNamespaceDetailCursor", func(t *testing.T) { t.Helper(); checkBatesNamespaceDetailCursor(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesNamespaceDetailCursor(t, newPostgresQueryStore) }},
+		{"BatesSnapshotReservationRechecksLiveSource", func(t *testing.T) { t.Helper(); checkBatesSnapshotReservationRechecksLiveSource(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesSnapshotReservationRechecksLiveSource(t, newPostgresQueryStore)
+		}},
+		{"PackagePreflightOwnerBlockingAndExpiry", func(t *testing.T) { t.Helper(); checkPackagePreflightOwnerBlockingAndExpiry(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPackagePreflightOwnerBlockingAndExpiry(t, newPostgresQueryStore) }},
+		{"SealCollectionSnapshotFreezesExactVersion", func(t *testing.T) { t.Helper(); checkSealCollectionSnapshotFreezesExactVersion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotFreezesExactVersion(t, newPostgresQueryStore)
+		}},
+		{"SnapshotSourceCollectionsFreezeMembership", func(t *testing.T) { t.Helper(); checkSnapshotSourceCollectionsFreezeMembership(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkSnapshotSourceCollectionsFreezeMembership(t, newPostgresQueryStore)
+		}},
+		{"SnapshotSelectedPagesUseVerifiedFullPDF", func(t *testing.T) { t.Helper(); checkSnapshotSelectedPagesUseVerifiedFullPDF(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkSnapshotSelectedPagesUseVerifiedFullPDF(t, newPostgresQueryStore) }},
+		{"SnapshotSourceBatchChecksOverlappingMembershipInOneQuery", func(t *testing.T) {
+			t.Helper()
+			checkSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSnapshotSourceBatchChecksOverlappingMembershipInOneQuery(t, newPostgresQueryStore)
+		}},
+		{"SealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest", func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamAcceptsLargeManifestAndMatchesCanonicalDigest(t, newPostgresQueryStore)
+		}},
+		{"SealCollectionSnapshotStreamRollsBackAndReplaysExactly", func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamRollsBackAndReplaysExactly(t, newPostgresQueryStore)
+		}},
+		{"SealCollectionSnapshotStreamValidatesFamilyAcrossBatches", func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkSealCollectionSnapshotStreamValidatesFamilyAcrossBatches(t, newPostgresQueryStore)
+		}},
+		{"PackageIdentityIsIdempotentAndImmutable", func(t *testing.T) { t.Helper(); checkPackageIdentityIsIdempotentAndImmutable(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPackageIdentityIsIdempotentAndImmutable(t, newPostgresQueryStore) }},
+		{"PackagesListsStablePagesAndFiltersDirection", func(t *testing.T) { t.Helper(); checkPackagesListsStablePagesAndFiltersDirection(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPackagesListsStablePagesAndFiltersDirection(t, newPostgresQueryStore)
+		}},
+		{"ExpiredPreflightsAreSweptAndUnexpiredOnesSurvive", func(t *testing.T) { t.Helper(); checkExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkExpiredPreflightsAreSweptAndUnexpiredOnesSurvive(t, newPostgresQueryStore)
+		}},
+		{"BatesPreviewIsTentativeAndRepeatable", func(t *testing.T) { t.Helper(); checkBatesPreviewIsTentativeAndRepeatable(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesPreviewIsTentativeAndRepeatable(t, newPostgresQueryStore) }},
+		{"ABFixtureAllocatesFortyOneToFortyThree", func(t *testing.T) { t.Helper(); checkABFixtureAllocatesFortyOneToFortyThree(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkABFixtureAllocatesFortyOneToFortyThree(t, newPostgresQueryStore) }},
+		{"NamespaceUniquenessOverflowAndUnverifiedPages", func(t *testing.T) { t.Helper(); checkNamespaceUniquenessOverflowAndUnverifiedPages(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkNamespaceUniquenessOverflowAndUnverifiedPages(t, newPostgresQueryStore)
+		}},
+		{"BatesGlobalLabelCollisionRollsBackCursor", func(t *testing.T) { t.Helper(); checkBatesGlobalLabelCollisionRollsBackCursor(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesGlobalLabelCollisionRollsBackCursor(t, newPostgresQueryStore)
+		}},
+		{"BatesArtifactReceiptsMustNameTheSealedSourcePDF", func(t *testing.T) { t.Helper(); checkBatesArtifactReceiptsMustNameTheSealedSourcePDF(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesArtifactReceiptsMustNameTheSealedSourcePDF(t, newPostgresQueryStore)
+		}},
+		{"BatesExplicitPagesMatchASealedPDFWithoutPageDocument", func(t *testing.T) {
+			t.Helper()
+			checkBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkBatesExplicitPagesMatchASealedPDFWithoutPageDocument(t, newPostgresQueryStore)
+		}},
+		{"BatesRefusesToReserveASourceTooLargeToStamp", func(t *testing.T) { t.Helper(); checkBatesRefusesToReserveASourceTooLargeToStamp(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkBatesRefusesToReserveASourceTooLargeToStamp(t, newPostgresQueryStore)
+		}},
+		{"BatesRefusesAnEmptySource", func(t *testing.T) { t.Helper(); checkBatesRefusesAnEmptySource(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkBatesRefusesAnEmptySource(t, newPostgresQueryStore) }},
+		{"FindBatesArtifactsReturnsCandidatesForExactlyOneSelector", func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactsReturnsCandidatesForExactlyOneSelector(t, newPostgresQueryStore)
+		}},
+		{"FindBatesArtifactEvidenceContinuesWithoutChangingCandidate", func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkFindBatesArtifactEvidenceContinuesWithoutChangingCandidate(t, newPostgresQueryStore)
+		}},
+		{"PackageMembersReadSealedOccurrenceThroughPackageID", func(t *testing.T) {
+			t.Helper()
+			checkPackageMembersReadSealedOccurrenceThroughPackageID(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPackageMembersReadSealedOccurrenceThroughPackageID(t, newPostgresQueryStore)
+		}},
+	}},
+
+	{name: "document-people", postgres: "native operations", scope: "Document-person inputs, immutable attribution publication, freshness, failure coverage and rebuilds; excludes general People discovery and public vault opening.", scenarios: []backendScenario{
+		{"AuthorityInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkDocumentPeopleAuthorityInputs(t, newPostgresQueryStore) }},
+		{"Snapshots", nil, checkDocumentPeopleSnapshotsPostgres},
+		{"Rollback", nil, checkDocumentPeopleRollbackPostgres},
+		{"DocumentPeopleResolverInputsProvisionEligibleIdentityOnce", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsProvisionEligibleIdentityOnce(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleBoundsDerivedLabelsWithoutChangingEvidence(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleProvisioningKeepsPublishedVersionsCurrent", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleProvisioningKeepsPublishedVersionsCurrent(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleNameAliasIsOnlyASuggestion", func(t *testing.T) { t.Helper(); checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleNameAliasIsOnlyASuggestion(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleReusedIdentitySuggestsOnlyActiveOwner", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReusedIdentitySuggestsOnlyActiveOwner(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleRetiredNameAliasKeepsUnassignedCandidate", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleRetiredNameAliasKeepsUnassignedCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleDisplayOnlyActorRemainsUnresolved", func(t *testing.T) { t.Helper(); checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDisplayOnlyActorRemainsUnresolved(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleLoadFailureHasNoPublishableInputs", func(t *testing.T) { t.Helper(); checkDocumentPeopleLoadFailureHasNoPublishableInputs(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleLoadFailureHasNoPublishableInputs(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleDerivationDoesNotMutateAuditedAuthority", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleDerivationDoesNotMutateAuditedAuthority(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleResolverInputsOpensNameOnlyCandidate", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsOpensNameOnlyCandidate(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleResolverInputsHonorsExternalUIDUnlink", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleResolverInputsHonorsExternalUIDUnlink(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentPeopleRejectsChangedInputsBeforeWriting", func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleRejectsChangedInputsBeforeWriting(t, newPostgresQueryStore)
+		}},
+		{"PublishDocumentPeopleReplayInputIdentity", func(t *testing.T) { t.Helper(); checkPublishDocumentPeopleReplayInputIdentity(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPublishDocumentPeopleReplayInputIdentity(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureRemainsRetryableAndCannotEraseSuccess(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleFailureReplacesOlderSuccessfulCoverage", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleFailureReplacesOlderSuccessfulCoverage(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleReadsWithholdStaleAttributionAndRetainHistory", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleReadsWithholdStaleAttributionAndRetainHistory(t, newPostgresQueryStore)
+		}},
+		{"DocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleMembershipChangesInvalidateOnlyAffectedDocument(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildReplay", func(t *testing.T) { t.Helper(); checkPeopleRebuildReplay(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRebuildReplay(t, newPostgresQueryStore) }},
+		{"DocumentPeopleCoverageCountsCurrentVersionWaitingForEvents", func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkDocumentPeopleCoverageCountsCurrentVersionWaitingForEvents(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildWaitsForFailureRetryAndLateNodeRevision", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildWaitsForFailureRetryAndLateNodeRevision(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildCountsFailureAfterNodeRevisionChanges", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildCountsFailureAfterNodeRevisionChanges(t, newPostgresQueryStore)
+		}},
+		{"PeopleRebuildStopsRetryingTerminalFailure", func(t *testing.T) { t.Helper(); checkPeopleRebuildStopsRetryingTerminalFailure(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRebuildStopsRetryingTerminalFailure(t, newPostgresQueryStore)
+		}},
+	}},
+	{name: "people-browsing", postgres: "native operations", scope: "Name and recent pages, Unicode prefixes, evidence visibility, identity labels and photo summaries.", scenarios: []backendScenario{
+		{"UnicodePrefixes", func(t *testing.T) { t.Helper(); checkPeopleBrowseUnicode(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleBrowseUnicode(t, newPostgresQueryStore) }},
+		{"Snapshot", nil, checkPeopleBrowseSnapshotPostgres},
+		{"NameIndex", nil, checkPeopleBrowseNameIndexPostgres},
+		{"PeopleRecentFirstFollowsVisibleEvidence", func(t *testing.T) { t.Helper(); checkPeopleRecentFirstFollowsVisibleEvidence(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRecentFirstFollowsVisibleEvidence(t, newPostgresQueryStore) }},
+		{"PeopleRecentIgnoresUnavailablePhotoEvidence", func(t *testing.T) { t.Helper(); checkPeopleRecentIgnoresUnavailablePhotoEvidence(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentIgnoresUnavailablePhotoEvidence(t, newPostgresQueryStore)
+		}},
+		{"PeopleRecentFirstAfterNaming", func(t *testing.T) { t.Helper(); checkPeopleRecentFirstAfterNaming(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleRecentFirstAfterNaming(t, newPostgresQueryStore) }},
+		{"PeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor", func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleRecentPagingSkipsGroupsThatRiseAheadOfCursor(t, newPostgresQueryStore)
+		}},
+		{"PeopleByDisplayNameEvidenceVisibility", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameEvidenceVisibility(t, newPostgresQueryStore) }},
+		{"PeopleByDisplayNameOperatorCandidateAcceptance", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newTestStore) }, func(t *testing.T) {
+			t.Helper()
+			checkPeopleByDisplayNameOperatorCandidateAcceptance(t, newPostgresQueryStore)
+		}},
+		{"PeopleByDisplayNameMatchesWordPrefixes", func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameMatchesWordPrefixes(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeopleByDisplayNameMatchesWordPrefixes(t, newPostgresQueryStore) }},
+		{"PeopleSearchIdentityLabelsRespectEvidenceVisibility", func(t *testing.T) {
+			t.Helper()
+			checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeopleSearchIdentityLabelsRespectEvidenceVisibility(t, newPostgresQueryStore)
+		}},
+		{"PeoplePhotoSummary", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummary(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummary(t, newPostgresQueryStore) }},
+		{"PeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder", func(t *testing.T) {
+			t.Helper()
+			checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t, newPostgresQueryStore)
+		}},
+		{"PeoplePhotoSummaryPairedSources", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummaryPairedSources(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummaryPairedSources(t, newPostgresQueryStore) }},
+		{"PeoplePhotoSummarySharedPhotos", func(t *testing.T) { t.Helper(); checkPeoplePhotoSummarySharedPhotos(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPeoplePhotoSummarySharedPhotos(t, newPostgresQueryStore) }},
+		{"PersonNameSearchFollowsAuthority", func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPersonNameSearchFollowsAuthority(t, newPostgresQueryStore) }},
+	}},
+	{name: "people-curation", postgres: "native operations", scope: "People, identities, custodians, candidates, face decisions, merge/split and undo; people-browsing covers discovery; document-people covers resolver production.", scenarios: []backendScenario{
 		{"FaceCandidateCurrentScope", func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkFaceCandidateCurrentScope(t, newPostgresQueryStore) }},
 		{"Snapshots", nil, checkPeopleSnapshotsPostgres},
 		{"Rollback", nil, checkPeopleRollbackPostgres},
@@ -729,6 +1388,7 @@ var backendSuites = []backendSuite{
 		{"EmailPDFAttachmentNotifiesOnce", func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkEmailPDFAttachmentNotifiesOnce(t, newPostgresQueryStore) }},
 	}},
 	{name: "text-extraction", postgres: "native operations", scope: "Plain-text queue discovery, retries, results and rendition authority publication; excludes ranked search and recovery.", scenarios: []backendScenario{
+		{"PDFTextDiscovery", func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkPDFTextDiscovery(t, newPostgresQueryStore) }},
 		{"TextPublication", nil, checkTextPublicationPostgres},
 		{"TextChangedResult", nil, checkTextChangedResultPostgres},
 		{"TextPublicationRollback", nil, checkTextPublicationRollbackPostgres},
@@ -1224,12 +1884,12 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobWorkChoosesAnAuthorizedWaiter(t, newPostgresQueryStore)
 		}},
-		{"RenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle", func(t *testing.T) {
+		{"RenditionJobsRecoverAmbiguousProviderWork", func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newTestStore)
+			checkRenditionJobsRecoverAmbiguousProviderWork(t, newTestStore)
 		}, func(t *testing.T) {
 			t.Helper()
-			checkRenditionJobsNeverResubmitAmbiguousProviderWorkWithoutHandle(t, newPostgresQueryStore)
+			checkRenditionJobsRecoverAmbiguousProviderWork(t, newPostgresQueryStore)
 		}},
 		{"RenditionJobNoHandleRetryKeepsAdmissionAuthority", func(t *testing.T) { t.Helper(); checkRenditionJobNoHandleRetryKeepsAdmissionAuthority(t, newTestStore) }, func(t *testing.T) {
 			t.Helper()
@@ -1246,6 +1906,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkRenditionJobStagingIsIdempotentWithinOneClaim(t, newPostgresQueryStore)
 		}},
+		{"RenditionPublicationPreservesLegacyText", func(t *testing.T) { t.Helper(); checkRenditionPublicationPreservesLegacyText(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkRenditionPublicationPreservesLegacyText(t, newPostgresQueryStore) }},
 		{"PublishRenditionJobAtomicallyActivatesAuthorizedWaiters", func(t *testing.T) {
 			t.Helper()
 			checkPublishRenditionJobAtomicallyActivatesAuthorizedWaiters(t, newTestStore)
@@ -1556,7 +2217,7 @@ var backendSuites = []backendSuite{
 	{name: "processing-publication", postgres: "unqualified", scope: "Email PDF rendering and media provider execution remain unqualified; retained-state cleanup is covered above."},
 	{name: "photo-editing", postgres: "unqualified", scope: "Query-driven photo review remains unqualified. Explicit decisions use photo-review; people edits use people-curation; query selection stays with search."},
 	{name: "search", postgres: "unqualified", scope: "Lexical/vector search and query execution remain unqualified; matching metadata columns do not establish ranking or index parity."},
-	{name: "transfer-and-recovery", postgres: "unqualified", scope: "Metadata import/export, portable packages, backup and restore remain unqualified."},
+	{name: "transfer-and-recovery", postgres: "unqualified", scope: "PostgreSQL metadata import, portable packages and physical backup/restore remain unqualified; metadata-export covers pinned logical export and recovery into fresh SQLite."},
 	{name: "organization", postgres: "native operations", scope: "Tags, audited bulk edits and saved definitions; excludes query execution and delivery.", scenarios: []backendScenario{
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
@@ -1655,8 +2316,7 @@ var backendSuites = []backendSuite{
 			checkSavedQueryConcurrentSameRevisionEditHasOneWinner(t, newPostgresQueryStore)
 		}},
 	}},
-	{name: "organization-and-delivery", postgres: "unqualified", scope: "Custodian assignments, query-selected albums, snapshots, Bates and delivery jobs remain unqualified; explicit album operations are covered above."},
-	{name: "multi-store", postgres: "unqualified", scope: "Placement, evacuation and storage-operation jobs remain unqualified."},
+	{name: "organization-and-delivery", postgres: "unqualified", scope: "Query-selected albums remain unqualified; exports covers native explicit-source plans and jobs; sealed-delivery covers snapshots, package identity and Bates; received-packages covers native intake and completion; people-curation covers custodians."},
 	{name: "public-vault", postgres: "unqualified", scope: "Daemon and embedded vault opening still use SQLite; there is no public PostgreSQL opener."},
 }
 

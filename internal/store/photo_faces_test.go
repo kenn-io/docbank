@@ -920,9 +920,10 @@ func checkPhotoFaceGenericDepictedAuthorization(t *testing.T, newStore func(*tes
 	require.NoError(t, err)
 }
 
-func TestPeoplePhotoSummary(t *testing.T) {
+func checkPeoplePhotoSummary(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -1017,9 +1018,10 @@ func TestPeoplePhotoSummary(t *testing.T) {
 	require.Empty(t, rows)
 }
 
-func TestPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t *testing.T) {
+func checkPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	person, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
@@ -1064,9 +1066,10 @@ func TestPeoplePhotoSummaryEligibilityAcrossVisibilityAndOrder(t *testing.T) {
 	}
 }
 
-func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
+func checkPeoplePhotoSummaryPairedSources(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	asset, nodes := photoTrashFixture(t, s)
 	imageFile := fileByRole(asset.Files, PhotoRoleImage)
@@ -1091,9 +1094,10 @@ func TestPeoplePhotoSummaryPairedSources(t *testing.T) {
 	require.Equal(t, nodes[1].CurrentVersionID, rows[0].PhotoSummary.Face.ContentVersionID)
 }
 
-func TestPeoplePhotoSummarySharedPhotos(t *testing.T) {
+func checkPeoplePhotoSummarySharedPhotos(t *testing.T, newStore func(*testing.T) *Store) {
+	t.Helper()
 	t.Parallel()
-	s := newTestStore(t)
+	s := newStore(t)
 	ctx := t.Context()
 	ada, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)

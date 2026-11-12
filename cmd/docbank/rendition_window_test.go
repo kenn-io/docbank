@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -64,6 +65,29 @@ func TestRenditionWindowCatalogBounds(t *testing.T) {
 	}
 }
 
+func windowTestServer(t *testing.T, handle func(http.ResponseWriter, *http.Request) bool) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/processing/profiles" {
+			assert.Equal(t, "true", r.URL.Query().Get("include_configured"))
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/nodes/42":
+			assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", Name: "notes.pdf", Path: "/notes.pdf", CurrentVersionID: processingTestVersionID, Revision: 1, BlobHash: sha256Hex("source"), Size: 100}))
+		case "GET /api/v1/vault":
+			assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
+		default:
+			if !handle(w, r) {
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				http.NotFound(w, r)
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 func TestRenditionWindowCLI(t *testing.T) {
 	for _, scenario := range []string{"discovery", "pinned zero", "pinned continuation",
 		"wrong build", "wrong profile", "pinned wrong profile", "missing profile", "stale"} {
@@ -78,34 +102,28 @@ func TestRenditionWindowCLI(t *testing.T) {
 				options.offset = 1
 			}
 			var summaryCalls, windowCalls int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
+			server := windowTestServer(t, func(w http.ResponseWriter, r *http.Request) bool {
 				switch r.Method + " " + r.URL.Path {
-				case "GET /api/v1/nodes/42":
-					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file",
-						Name: "notes.txt", Path: "/notes.txt", CurrentVersionID: processingTestVersionID}))
 				case "GET /api/v1/processing/profiles":
 					profiles := []api.ProcessingProfileSummary{}
 					if scenario != "missing profile" {
 						profiles = append(profiles, api.ProcessingProfileSummary{Name: "archive", Fingerprint: profile})
 					}
 					assert.NoError(t, json.MarshalWrite(w, profiles))
-				case "GET /api/v1/vault":
-					assert.NoError(t, json.MarshalWrite(w, api.VaultIdentity{VaultID: inspectionTestVaultID}))
 				case "POST /api/v1/documents/resolve":
 					summaryCalls++
 					var request api.DocumentSummaryResolveRequest
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 					assert.Equal(t, []api.DocumentIdentity{{NodeID: 42,
-						ContentVersionID: processingTestVersionID, Path: "/notes.txt"}}, request.Identities)
+						ContentVersionID: processingTestVersionID, Path: "/notes.pdf"}}, request.Identities)
 					if scenario == "stale" {
 						w.WriteHeader(http.StatusConflict)
 						_, _ = w.Write([]byte(`{"status":409,"code":"stale_version"}`))
-						return
+						return true
 					}
 					assert.NoError(t, json.MarshalWrite(w, api.DocumentSummaryResolveResponse{
 						Items: []api.DocumentSummary{{NodeID: 42, ContentVersionID: processingTestVersionID,
-							Name: "notes.txt", Path: "/notes.txt", ModifiedAt: "2026-10-04T12:00:00Z",
+							Name: "notes.pdf", Path: "/notes.pdf", ModifiedAt: "2026-10-04T12:00:00Z",
 							ActiveRenditions: []api.DocumentRenditionIdentity{
 								{ProfileFingerprint: sha256Hex("other"), AttachmentID: sha256Hex("other"), BuildID: build},
 								{ProfileFingerprint: profile, AttachmentID: attachment, BuildID: build},
@@ -131,11 +149,10 @@ func TestRenditionWindowCLI(t *testing.T) {
 					}
 					assert.NoError(t, json.MarshalWrite(w, result))
 				default:
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-					http.NotFound(w, r)
+					return false
 				}
-			}))
-			t.Cleanup(server.Close)
+				return true
+			})
 			c := daemonconn.New(server.URL, "test-key")
 			t.Cleanup(func() { require.NoError(t, c.Close()) })
 			cmd, output := processingTestCommand()
@@ -151,7 +168,7 @@ func TestRenditionWindowCLI(t *testing.T) {
 					require.Zero(t, windowCalls)
 				}
 				if scenario == "missing profile" {
-					require.ErrorContains(t, err, "executable")
+					require.ErrorContains(t, err, "configured or executable")
 					require.Zero(t, summaryCalls)
 				}
 				return
@@ -179,7 +196,7 @@ func TestRenditionWindowOutput(t *testing.T) {
 	require.Contains(t, output.String(), "[1, 4)")
 	require.Contains(t, output.String(), "é界🙂")
 	require.Contains(t, output.String(), "docbank rendition window id:42 --version "+
-		processingTestVersionID+" --profile archive --attachment "+window.AttachmentID+
+		processingTestVersionID+" --attachment "+window.AttachmentID+
 		" --offset 4 --max-chars 3")
 	output.Reset()
 	window.EOF = true
@@ -190,4 +207,107 @@ func TestRenditionWindowOutput(t *testing.T) {
 	require.ErrorIs(t, writeRenditionWindow(w, options, window), failure)
 	require.ErrorIs(t, writeProcessingCoverage(w, processingTestVersionID, "archive", api.CoverageReport{}),
 		failure)
+}
+
+func TestRenditionWindowProfileSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		states  map[string]string
+		unnamed string
+		want    string
+		code    int
+		wantErr []string
+	}{
+		{name: "empty skipped", states: map[string]string{"alpha": "verified_empty", "zeta": "ready"}, want: "zeta"},
+		{name: "none", states: map[string]string{"alpha": "verified_empty"}, code: exitNotFound, wantErr: []string{"no readable rendition is currently available"}},
+		{name: "too large", states: map[string]string{"zeta": "rendition_text_too_large"}, want: "zeta"},
+		{name: "ambiguous", states: map[string]string{"zeta": "ready", "alpha": "ready"}, code: exitUsage, wantErr: []string{"multiple readable profiles; choose", "--profile alpha", "--profile zeta"}},
+		{name: "ambiguous unnamed profile", states: map[string]string{"zeta": "ready", "alpha": "ready"}, unnamed: "alpha", code: exitUsage, wantErr: []string{"multiple readable profiles; choose", "--profile zeta", "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8: --attachment 9332f63c73e34a574a9a905a7f5ae18b17b5d7d3ba1589df7d9ba5ae1be0804b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var profiles []api.ProcessingProfileSummary
+			var renditions []api.DocumentRenditionIdentity
+			var windowCalls int
+			for _, name := range []string{"zeta", "alpha"} {
+				if _, ok := tc.states[name]; ok {
+					if name != tc.unnamed {
+						profiles = append(profiles, api.ProcessingProfileSummary{Name: name, Fingerprint: sha256Hex(name)})
+					}
+					renditions = append(renditions, api.DocumentRenditionIdentity{ProfileFingerprint: sha256Hex(name), AttachmentID: sha256Hex(name + "attachment"), BuildID: sha256Hex(name + "build")})
+				}
+			}
+			server := windowTestServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/v1/processing/profiles":
+					assert.NoError(t, json.MarshalWrite(w, profiles))
+				case "POST /api/v1/documents/resolve":
+					assert.NoError(t, json.MarshalWrite(w, api.DocumentSummaryResolveResponse{Items: []api.DocumentSummary{{NodeID: 42, ContentVersionID: processingTestVersionID, Name: "notes.pdf", Path: "/notes.pdf", ModifiedAt: "2026-10-04T12:00:00Z", ActiveRenditions: renditions}}}))
+				case "POST /api/v1/renditions/text":
+					var request struct {
+						Profile        string `json:"profile"`
+						ExactRendition bool   `json:"exact_rendition"`
+						Observed       struct {
+							AttachmentID       string `json:"attachment_id"`
+							BuildID            string `json:"build_id"`
+							ProfileFingerprint string `json:"profile_fingerprint"`
+						} `json:"observed"`
+					}
+					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+					name := ""
+					for candidate := range tc.states {
+						if sha256Hex(candidate) == request.Observed.ProfileFingerprint {
+							name = candidate
+						}
+					}
+					state, ok := tc.states[name]
+					assert.True(t, ok)
+					assert.Empty(t, request.Profile)
+					assert.True(t, request.ExactRendition)
+					assert.Equal(t, sha256Hex(name+"attachment"), request.Observed.AttachmentID)
+					assert.Equal(t, sha256Hex(name+"build"), request.Observed.BuildID)
+					if state == "rendition_text_too_large" {
+						w.WriteHeader(http.StatusRequestEntityTooLarge)
+						_, _ = w.Write([]byte(`{"status":413,"code":"rendition_text_too_large"}`))
+					} else {
+						receipt := apiclient.RenditionTextReceipt{
+							State:        apiclient.RenditionTextReceiptState(state),
+							Source:       apiclient.RenditionTextSource{NodeID: 42, Revision: 1, VersionID: processingTestVersionID, BlobHash: sha256Hex("source"), Size: 100, MediaType: "application/pdf"},
+							Profile:      apiclient.RenditionTextProfile{Name: name, Configuration: apiclient.RenditionTextProfileConfigurationConfigured, Fingerprint: request.Observed.ProfileFingerprint},
+							AttachmentID: request.Observed.AttachmentID, BuildID: request.Observed.BuildID,
+						}
+						if state == "ready" {
+							receipt.Artifact = &apiclient.RenditionTextArtifact{ID: "artifact_" + sha256Hex("artifact"), Sha256: sha256Hex("artifact"), Size: 9, MediaType: "text/markdown; charset=utf-8"}
+						}
+						assert.NoError(t, json.MarshalWrite(w, receipt))
+					}
+				case "POST /api/v1/renditions/windows":
+					windowCalls++
+					var request api.RenditionWindowRequest
+					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+					assert.Equal(t, sha256Hex(tc.want+"attachment"), request.AttachmentID)
+					assert.NoError(t, json.MarshalWrite(w, api.RenditionTextWindow{VaultID: inspectionTestVaultID, NodeID: 42, ContentVersionID: processingTestVersionID, AttachmentID: request.AttachmentID, BuildID: sha256Hex(tc.want + "build"), ProfileFingerprint: sha256Hex(tc.want), Checksum: sha256Hex("artifact"), MediaType: "text/markdown", Text: "page text", ActualEnd: 9, NextOffset: 9, ResponseBytes: 9, EOF: true}))
+				default:
+					return false
+				}
+				return true
+			})
+			c := daemonconn.New(server.URL, "test-key")
+			t.Cleanup(func() { require.NoError(t, c.Close()) })
+			cmd, output := processingTestCommand()
+			options := renditionWindowOptions{selector: nodeSelector{id: 42}, maxChars: 8000}
+			err := runRenditionWindow(cmd, c, options)
+			if tc.code != 0 {
+				require.Error(t, err)
+				require.Zero(t, windowCalls)
+				require.Equal(t, tc.code, commandExitCode(err, true))
+				for _, want := range tc.wantErr {
+					require.Contains(t, err.Error(), want)
+				}
+				return
+			}
+			require.NoError(t, err)
+			require.Contains(t, output.String(), "profile: \""+tc.want+"\"")
+			require.Contains(t, output.String(), "page text")
+		})
+	}
 }

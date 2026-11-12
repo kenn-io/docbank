@@ -35,7 +35,9 @@ Moving a recipe processes the previewed document count before setup returns. Res
 
 Both `--server auto` and `--server local` use the shared per-user `kennembed` server. Discovery uses its per-user runtime record. When the server or model is missing, the command downloads them from Kit's shared installation and prints the download size first. An already installed server downloads nothing. The daemon's changing loopback port keeps the same consent grant.
 
-Cancellation before apply and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server before apply; API apply requires a ready server. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. Setup restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
+Cancellation before apply and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server before apply. API apply installs a missing server after consent and plan verification, then starts it. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. The CLI restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
+
+In the web app, open **System → Search by meaning**, review the download size, and choose **Turn on** to approve setup. Setup starts the server and saves the indexing choice for this vault and new imports. Run `docbank daemon restart`, then reopen the web app to start indexing and search by meaning. The tab keeps the restart instruction until the daemon restarts.
 
 For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 
@@ -336,8 +338,9 @@ and choose **Review numbering**, then **Reserve and keep PDF**. Each page gains
 a half-inch footer below the reviewed content; a Letter page becomes 612 by 828
 points. The server verifies the content and footer before publication.
 **Download numbered PDF** downloads the retained PDF, and **Open Productions**
-opens its recovery view. The published result stays available while you edit
-other masks, until you close the review. Downloads check the retained file
+opens its recovery view. After editing masks, create another preview to number
+the new review with a separate range. Earlier published PDFs stay downloadable
+until you close the review. Downloads check the retained file
 identity; masks and approved text are not rechecked. The plain preview and ZIP remain available
 until their usual expiry or discard. **Download unnumbered ZIP** saves that
 reviewed preview. Download it before expiry if you need its sanitized-text
@@ -650,7 +653,7 @@ Add a working password to the file, then build again. The daemon reads the file 
 
 ### Design choices
 
-The pinned pdfcpu v0.15.0 password preparation rejects spaces, non-ASCII punctuation such as curly quotes or `£`, and emoji in AES-256 passwords. It also Unicode-normalizes decomposed accents and fullwidth letters. These files report `pdf_password_required` even with the correct password. Older RC4 and AES-128 ciphers support spaces and PDFDocEncoding characters such as `£`, because Docbank also tries each password converted from UTF-8 to PDFDocEncoding. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
+Docbank uses pdfcpu v0.16.4 to open AES-256 PDFs, including passwords containing spaces and punctuation such as curly quotes or `£`. AES-256 password handling applies Unicode normalization to decomposed accents and fullwidth letters. Older RC4 and AES-128 ciphers use PDFDocEncoding, so Docbank also tries each password converted from UTF-8 to that encoding. A rejected password candidate does not prevent trying the remaining entries. With a password file configured, Docbank tries an empty password first, even when the file is empty or contains only blank lines, so owner-only PDFs open. Without a configured file, Docbank tries no passwords, and every encrypted PDF reports `pdf_password_required`.
 
 ## Find similar documents
 
@@ -764,10 +767,15 @@ docbank processing coverage <version-uuid> --profile <name> --json
 docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
 ```
 
-Both commands require a profile listed by `docbank processing profiles --json`.
-A configured profile whose runtime is unavailable is not enough, even if its
-renditions are retained. Reports can still use retained evidence under such a
-configured profile. A profile error here does not mean that evidence is missing.
+For an indexed PDF with one readable profile, omit the version and profile:
+
+```bash
+docbank rendition window /inbox/report.pdf
+```
+
+Coverage requires a profile listed by `docbank processing profiles --json`.
+Window reads can also use a configured profile whose runtime is unavailable.
+Reports can use retained evidence under such a profile.
 
 Coverage reports rendition and embedding counters for the one requested
 version. JSON contains `content_version_id` and the complete `coverage` object.
@@ -783,8 +791,13 @@ succeed.
 
 ### Read and continue a text window
 
-`rendition window` requires the selected version to remain current and live.
-It discovers the active rendition for the named profile and returns at most
+`rendition window` reads the current version and selects the one active
+rendition with readable text. If several have text, it lists their names and
+exits with a usage error; pass `--profile` to choose one. When a profile was
+removed or edited, its retained rendition is identified by fingerprint; pass
+the listed `--attachment` to choose it. `--version` pins
+the current version, and the selected version must remain current and live.
+It returns at most
 8,000 characters by default. Use `--max-chars` for 1–16,000 characters and
 `--json` for the text, full rendition identity, offsets, and EOF flag.
 The text is stored Markdown, including its metadata envelope and escaped
@@ -810,7 +823,7 @@ components, with a path longer than 16 KiB in UTF-8 bytes, or with a filename
 longer than 255 Unicode scalar values. The filename cap does not apply to
 ancestor directories. The CLI names the exceeded limit. Refreshing the
 selection does not solve it. If you know the active attachment, pass
-`--attachment` to skip discovery. The version and profile checks still apply.
+`--attachment` to skip discovery. The version and any supplied profile are still checked.
 
 Each unpinned discovery scans the traversable live vault tree. Pinned calls
 skip that scan. The text reader still reads from the beginning to reach the

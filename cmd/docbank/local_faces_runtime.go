@@ -15,7 +15,7 @@ func localFaceProfile() (processing.ProfileConfig, error) {
 	if err != nil {
 		return processing.ProfileConfig{}, err
 	}
-	provider, err := localface.New(descriptor, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.FaceModel) })
+	provider, err := localface.New(descriptor, func(ctx context.Context) (string, error) { return localEmbeddingOrigin(ctx, embedlocal.FaceModel, nil) })
 	if err != nil {
 		return processing.ProfileConfig{}, err
 	}

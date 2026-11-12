@@ -38,17 +38,23 @@ func (s *Store) IngestPackageFileWithReceipt(
 // bytes to ordinary garbage collection. A receipt retains every representation,
 // including supplied text and pages that are not its primary content version.
 func (s *Store) discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx, pkg Package) error {
+	representations := `SELECT json_extract(rep.value,'$.content_version_id')
+		FROM package_import_receipts receipt,
+			json_each(CAST(receipt.receipt_json AS TEXT),'$.member.representations') rep`
+	if s.postgresSchema != "" {
+		array := `convert_from(receipt.receipt_json,'UTF8')::jsonb #> '{member,representations}'`
+		representations = `SELECT rep.value ->> 'content_version_id' FROM package_import_receipts receipt,
+			jsonb_array_elements(CASE WHEN jsonb_typeof(` + array + `)='array' THEN ` + array + ` ELSE '[]'::jsonb END) rep(value)`
+	}
 	rows, err := tx.QueryContext(ctx, `WITH retained(version_id) AS (
 		SELECT content_version_id FROM package_import_receipts
 		UNION
 		SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE (`+photoCheckoutHoldPredicate+`)
 		UNION
-		SELECT json_extract(rep.value,'$.content_version_id')
-		FROM package_import_receipts receipt,
-			json_each(CAST(receipt.receipt_json AS TEXT),'$.member.representations') rep
+		`+representations+`
 	)
 	SELECT version.node_id,version.version_id FROM content_versions version
-	WHERE EXISTS (SELECT 1 FROM provenance p WHERE p.node_id=version.node_id AND p.ingest_id=?)
+	WHERE EXISTS (SELECT 1 FROM provenance p WHERE p.node_id=version.node_id AND p.ingest_id=$1)
 	  AND NOT EXISTS (SELECT 1 FROM content_versions kept JOIN retained ON retained.version_id=kept.version_id
 		WHERE kept.node_id=version.node_id)
 	ORDER BY version.node_id,version.version_id`, pkg.IngestID)
@@ -87,12 +93,40 @@ func (s *Store) discardUnreceiptedPackageFilesTx(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `WITH doomed(id) AS (SELECT value FROM json_each(?))
+	selection := `SELECT CAST(value AS BIGINT) FROM ` + (metadataJSONDialect{postgres: s.postgresSchema != ""}).arrayValues("$1")
+	if _, err := tx.ExecContext(ctx, `WITH doomed(id) AS (`+selection+`)
 		UPDATE tags SET revision=revision+1, assignment_count=assignment_count-gone.n
 		FROM (SELECT nt.tag_id, COUNT(*) AS n FROM doomed d JOIN node_tags nt ON nt.node_id=d.id
 		GROUP BY nt.tag_id) gone WHERE tags.id=gone.tag_id`, string(encoded)); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM nodes WHERE id IN (SELECT value FROM json_each(?))`, string(encoded))
-	return err
+	var pairedAssets []string
+	if s.postgresSchema != "" {
+		if err := queryRows(ctx, tx, `SELECT DISTINCT f.asset_id FROM nodes sidecar
+			JOIN nodes original ON original.parent_id=sidecar.parent_id AND original.name=left(sidecar.name,-4)
+			JOIN photo_files f ON f.node_id=original.id
+			WHERE sidecar.id IN (`+selection+`) AND right(sidecar.name,4)='.xmp' AND f.asset_id IS NOT NULL`,
+			[]any{string(encoded)}, func(rows *sql.Rows) error {
+				var asset string
+				if err := rows.Scan(&asset); err != nil {
+					return err
+				}
+				pairedAssets = append(pairedAssets, asset)
+				return nil
+			}); err != nil {
+			return err
+		}
+	}
+	if err := s.beforeContentVersionDeletionTx(ctx, tx, versionIDs); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id IN (`+selection+`)`, string(encoded)); err != nil {
+		return err
+	}
+	for _, asset := range pairedAssets {
+		if err := s.refreshPhotoAssetWorkTx(ctx, tx, asset); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -69,15 +69,15 @@ func (s *Store) peopleForFaceTx(ctx context.Context, tx *sql.Tx, options PeopleS
 			return nil, ErrStaleRevision
 		}
 		if options.RecentFirst {
-			return peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
+			return s.peopleRecentTx(ctx, tx, candidates, args, afterName, afterID, options.AfterRecent, limit, visibleOnly, hideLocked, options.PhotoSummary, prefix)
 		}
-		return peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
+		return s.peopleByDisplayNameTx(ctx, tx, candidates, args, afterName, afterID, limit, visibleOnly, hideLocked)
 	}
 	var people []PersonSearchResult
 	if options.RecentFirst {
-		people, err = peopleRecentTx(ctx, tx, candidates, args, "", "", "", math.MaxInt32, visibleOnly, hideLocked, options.PhotoSummary, prefix)
+		people, err = s.peopleRecentTx(ctx, tx, candidates, args, "", "", "", math.MaxInt32, visibleOnly, hideLocked, options.PhotoSummary, prefix)
 	} else {
-		people, err = peopleByDisplayNameTx(ctx, tx, candidates, args, "", "", math.MaxInt32, visibleOnly, hideLocked)
+		people, err = s.peopleByDisplayNameTx(ctx, tx, candidates, args, "", "", math.MaxInt32, visibleOnly, hideLocked)
 	}
 	if err != nil {
 		return nil, err

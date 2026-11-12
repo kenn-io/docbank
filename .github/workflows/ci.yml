@@ -56,7 +56,7 @@ jobs:
     if: &go-changed ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     name: PostgreSQL ${{ matrix.version }} metadata
     runs-on: ubuntu-26.04
-    timeout-minutes: 11
+    timeout-minutes: 16
     strategy:
       fail-fast: false
       matrix:
@@ -136,11 +136,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "26.12.1"
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Restore pinned uv archive
         id: uv_archive
@@ -245,11 +245,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "26.12.1"
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Check and build web application
         run: make frontend-test
@@ -305,11 +305,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: "26.12.1"
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install pinned Chromium
         run: |
@@ -383,7 +383,7 @@ jobs:
       - name: Check Unix installer
         run: sh -n scripts/install.sh
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Check Huma API contract
         run: |
@@ -596,7 +596,7 @@ jobs:
       - name: Run golangci-lint
         uses: step-security/golangci-lint-action@v9.3.0
         with:
-          version: v2.14.0
+          version: v2.15.0
           # The job's Go cache group carries the analysis cache; the action's own key never refreshes.
           skip-cache: true
 
@@ -682,7 +682,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           [scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
         if: matrix.goarch == 'arm64'
 
       - name: Restore pinned ARM64 compiler archive

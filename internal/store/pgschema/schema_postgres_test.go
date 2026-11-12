@@ -20,6 +20,32 @@ import (
 	"go.kenn.io/docbank/internal/pgtest"
 )
 
+func TestSchemaRequiresUTF8(t *testing.T) {
+	t.Parallel()
+	admin, owner := pgtest.NewDatabase(t)
+	name := fmt.Sprintf("ascii_%x", uuid.New())
+	quotedName := pgx.Identifier{name}.Sanitize()
+	_, err := admin.ExecContext(t.Context(), "CREATE DATABASE "+quotedName+" TEMPLATE template0 ENCODING 'SQL_ASCII' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C'")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP DATABASE "+quotedName+" WITH (FORCE)")
+		require.NoError(t, err)
+	})
+	c, err := pgx.ParseConfig(os.Getenv("DOCBANK_TEST_POSTGRES_DSN"))
+	require.NoError(t, err)
+	c.Database = name
+	db := stdlib.OpenDB(*c)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	cfg := Config{Schema: "documents", SchemaOwner: owner}
+	_, err = Setup(t.Context(), db, cfg)
+	require.ErrorContains(t, err, "requires UTF8 database encoding; got SQL_ASCII")
+	var exists bool
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='documents')`).Scan(&exists))
+	require.False(t, exists, "setup must reject the encoding before installing a schema")
+	_, err = Validate(t.Context(), db, cfg)
+	require.ErrorContains(t, err, "requires UTF8 database encoding; got SQL_ASCII")
+}
+
 func TestSetupPreservesIdentity(t *testing.T) {
 	t.Parallel()
 	db, owner := pgtest.NewDatabase(t)

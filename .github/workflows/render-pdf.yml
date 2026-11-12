@@ -34,7 +34,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
       - name: Prepare pinned renderer without changing host policy
         shell: bash
         run: |
@@ -102,10 +102,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 26.12.1
+          node-version: 26.13.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install Poppler and Chromium
         run: |
@@ -143,10 +143,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 26.12.1
+          node-version: 26.13.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install Poppler and Chromium
         run: |

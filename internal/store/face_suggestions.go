@@ -250,12 +250,12 @@ func (s *Store) FaceCandidates(ctx context.Context, reader RenditionBlobReader, 
 			return hiddenErr
 		}
 		hideLocked := hiddenErr != nil
-		visible += ` AND (suggested_person_id IS NULL OR EXISTS(SELECT 1 FROM persons WHERE persons.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=person_match_candidates.suggested_person_id),person_match_candidates.suggested_person_id) AND persons.state<>'retired' AND ` + personVisibleSQL([3]string{"$1", "$2", "$3"}) + `))`
+		visible += ` AND (suggested_person_id IS NULL OR EXISTS(SELECT 1 FROM persons candidate_person WHERE candidate_person.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=person_match_candidates.suggested_person_id),person_match_candidates.suggested_person_id) AND candidate_person.state<>'retired' AND ` + personVisibleSQL("candidate_person.person_id", 1) + `))`
 		locked := 0
 		if hideLocked {
 			locked = 1
 		}
-		args := []any{1, locked, locked}
+		args := []any{1, locked}
 		visible += ` AND (SELECT COUNT(*) FROM (SELECT 1 FROM person_candidate_faces e JOIN photo_faces f ON f.face_id=e.face_id AND f.content_version_id=e.content_version_id JOIN content_versions cv ON cv.version_id=f.content_version_id JOIN nodes n ON n.id=cv.node_id JOIN photo_files pf ON pf.node_id=n.id JOIN photo_assets a ON a.asset_id=pf.asset_id WHERE e.candidate_id=person_match_candidates.candidate_id AND f.assertion_id IS NULL AND a.kind='photo' AND a.excluded_at IS NULL AND ` + currentPhotoSourcePredicate("pf", "n", "f.content_version_id") + ` AND NOT ` + faceSuggestionDecided("f.face_id", "f.content_version_id", "person_match_candidates.suggested_person_id") + ` LIMIT 2) eligible_faces) >= CASE WHEN person_match_candidates.suggested_person_id IS NULL THEN 2 ELSE 1 END`
 		ids, err := stringColumnTx(ctx, tx, "face candidates", `SELECT candidate_id FROM person_match_candidates WHERE state='open' AND reason='face_match' AND `+visible+` ORDER BY created_at,candidate_id`, args...)
 		if err != nil {

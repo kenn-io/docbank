@@ -16,6 +16,15 @@
       "postUpdateOptions": ["gomodUpdateImportPaths", "gomodTidy"]
     },
     {
+      "description": [
+        "Bates and PDF production records name these engines' versions. An update needs requalification, so keep it out of the routine Go group."
+      ],
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/pdfcpu/pdfcpu", "github.com/klippa-app/go-pdfium"],
+      "groupName": "PDF engines",
+      "groupSlug": "pdf-engines"
+    },
+    {
       "matchManagers": ["npm"],
       "groupName": "JavaScript dependencies",
       "groupSlug": "javascript-dependencies"

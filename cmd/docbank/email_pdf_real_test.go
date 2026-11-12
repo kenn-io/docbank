@@ -82,7 +82,7 @@ func TestEmailPDFRealDaemonCLI(t *testing.T) {
 	require.True(t, assertNoCLIError(t, err))
 	first, err := os.ReadFile(output)
 	require.NoError(t, err)
-	pages, err := emailpdf.VerifyPDF(first)
+	pages, err := emailpdf.VerifyPDF(t.Context(), first)
 	require.NoError(t, err)
 	require.Positive(t, pages)
 	_, err = invoke(ctx, "email-pdf", page.Items[0].ID, output, "--overwrite")

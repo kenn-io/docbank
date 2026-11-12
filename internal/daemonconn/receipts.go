@@ -48,6 +48,10 @@ type Connection struct {
 	base string
 	key  string
 	hc   *http.Client
+
+	// pinned is set only on ownership-proven connections. A transfer
+	// connection repeats the proof against this record.
+	pinned *pinnedDaemon
 }
 
 // ErrBackupRepositoryNotConfigured identifies only the absent configuration
@@ -2627,6 +2631,9 @@ func (c *Connection) IngestStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.IngestReport
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.IngestReport{}, err
+		}
 		var event api.IngestEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -3180,6 +3187,9 @@ func (c *Connection) BackupCreateStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupSnapshot
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.BackupSnapshot{}, err
+		}
 		var event api.BackupCreateEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -3253,6 +3263,9 @@ func (c *Connection) BackupVerifyStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupVerifyReport
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.BackupVerifyReport{}, err
+		}
 		var event api.BackupVerifyEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -3330,6 +3343,9 @@ func (c *Connection) BackupRestoreStream(
 	decoder := jsontext.NewDecoder(resp.Body)
 	var result *api.BackupRestoreReport
 	for {
+		if err := ctx.Err(); err != nil {
+			return api.BackupRestoreReport{}, err
+		}
 		var event api.BackupRestoreEvent
 		if err := json.UnmarshalDecode(decoder, &event); err != nil {
 			if errors.Is(err, io.EOF) {

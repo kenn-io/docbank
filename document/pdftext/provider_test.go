@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -15,11 +16,12 @@ import (
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/document/upload"
+	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/redactiontest"
 )
 
 func TestPDFTextCorpus(t *testing.T) {
-	p, err := New(Profile{MaxDocumentBytes: 16 << 20, MaxPages: 1000})
+	p, err := New(Profile{MaxDocumentBytes: 500 << 20, MaxPages: 5_000})
 	require.NoError(t, err)
 	for _, fixture := range scanfixture.Corpus() {
 		expected := map[string][2]int{"born-digital": {3, 0}, "image-only": {0, 3}, "mixed-above-ratio": {8, 2}, "blank": {0, 1}, "undecodable-font": {0, 1}}
@@ -134,7 +136,7 @@ func TestPDFTextSealedAdmissionRetainsProviderBounds(t *testing.T) {
 	require.NoError(t, err)
 	metadata := newTestUpload(data).Metadata()
 	authorization := mediatest.Authorization(p.Descriptor(), metadata)
-	record, err := media.InspectCapability(bytes.NewReader(data), media.InspectionPolicy{
+	record, err := media.InspectCapability(t.Context(), bytes.NewReader(data), media.InspectionPolicy{
 		Filename: metadata.Filename, DeclaredMediaType: metadata.MediaType, ExpectedBytes: metadata.ByteLength, ExpectedSHA256: metadata.SHA256,
 		DescriptorFingerprint: p.Descriptor().Fingerprint, ProfileFingerprint: strings.Repeat("b", 64), DisclosureFingerprint: strings.Repeat("c", 64), InputKind: document.RenditionInputOriginalFile, PDFTextOnly: true,
 		MaxSourceBytes: 1 << 20, MaxExpandedBytes: 1 << 20, MaxEntryBytes: 1 << 20, MaxEntries: 1000, MaxPages: 100,
@@ -162,5 +164,31 @@ func TestPDFTextPageLimitBoundaries(t *testing.T) {
 		} else {
 			require.Error(t, err)
 		}
+	}
+}
+
+func TestPDFTextPageReadFailures(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		code document.RenditionErrorCode
+	}{
+		{"memory", fmt.Errorf("read: %w", &pdfproduction.RSSLimitError{}), document.RenditionErrorCapacity},
+		{"deadline", fmt.Errorf("read: %w", context.DeadlineExceeded), document.RenditionErrorCapacity},
+		{"invalid", errors.New("invalid page"), document.RenditionErrorPolicyRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p, err := New(Profile{MaxDocumentBytes: 1 << 20, MaxPages: 2})
+			require.NoError(t, err)
+			p.readPage = func(context.Context, []byte, int, int64, int) (pdfproduction.PDFTextPage, error) {
+				return pdfproduction.PDFTextPage{}, test.err
+			}
+			upload := newTestUpload(mediatest.PDFTextPages([]string{"sample"}, false))
+			_, err = p.Render(t.Context(), upload, mediatest.Authorization(p.Descriptor(), upload.Metadata()))
+			var providerError *document.RenditionProviderError
+			require.ErrorAs(t, err, &providerError)
+			require.Equal(t, test.code, providerError.Code())
+			require.ErrorIs(t, err, test.err)
+		})
 	}
 }

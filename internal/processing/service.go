@@ -1605,7 +1605,7 @@ func (service *Service) ResolveSourceFence(
 func (service *Service) Search(ctx context.Context, request SearchRequest) (retrieval.Report, error) {
 	explicit := request.Fence.VaultUID != "" || len(request.Fence.ContentVersionIDs) != 0
 	if explicit == (request.AllLive != nil) {
-		return retrieval.Report{}, fmt.Errorf("%w: select exactly one request mode", store.ErrInvalidProcessingSourceFence)
+		return retrieval.Report{}, fmt.Errorf("%w: send exactly one of fence or scope", store.ErrInvalidProcessingSourceFence)
 	}
 	if request.AllLive != nil && request.MediaSources != nil {
 		return retrieval.Report{}, ErrMediaSearchInvalid
@@ -2473,7 +2473,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	if size != version.Size {
 		return media.CapabilityRecord{}, errors.Join(errors.New("inspection source size changed"), reader.Close())
 	}
-	capability, inspectErr := media.InspectCapability(reader, policy)
+	capability, inspectErr := media.InspectCapability(ctx, reader, policy)
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
@@ -2497,7 +2497,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 			return media.CapabilityRecord{}, err
 		}
 		policy.UnlockPDF, policy.PDFPasswords = true, passwords
-		capability, inspectErr = media.InspectCapability(reader, policy)
+		capability, inspectErr = media.InspectCapability(ctx, reader, policy)
 		closeErr = reader.Close()
 		if inspectErr != nil || closeErr != nil {
 			return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)

@@ -59,7 +59,7 @@ func alignFontFixture(t *testing.T, data []byte, text string,
 	evidence := evidenceFor(t, text)
 	source := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001",
 		SHA256: sum(data), Size: int64(len(data))}
-	inspection, err := pagerender.InspectSource(data, source, "application/pdf")
+	inspection, err := pagerender.InspectSource(t.Context(), data, source, "application/pdf")
 	require.NoError(t, err)
 	mapping, err := Align(t.Context(), AlignmentInput{
 		PDF: pdfproduction.Source{Reader: bytes.NewReader(data), Size: source.Size,

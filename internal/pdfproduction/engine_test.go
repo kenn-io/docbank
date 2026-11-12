@@ -3,8 +3,11 @@ package pdfproduction
 import (
 	"context"
 	"errors"
+	"runtime/metrics"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/stretchr/testify/require"
@@ -56,4 +59,49 @@ func TestNativeEnginePageDeadline(t *testing.T) {
 	require.True(t, entered)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, t.Context().Err())
+}
+
+func TestRSSAdmissionFreesMemoryBeforeRefusing(t *testing.T) {
+	start := forcedGCCount()
+	reclaimable := func(context.Context) (uint64, error) {
+		if forcedGCCount() == start {
+			return 2048, nil
+		}
+		return 512, nil
+	}
+	_, stop, err := watchRSS(t.Context(), 1024, reclaimable)
+	require.NoError(t, err)
+	stop()
+
+	_, _, err = watchRSS(t.Context(), 1024, func(context.Context) (uint64, error) { return 2048, nil })
+	cause, ok := errors.AsType[*RSSLimitError](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, uint64(2048), cause.ObservedBytes)
+}
+
+func TestRSSMonitorFreesMemoryBeforeCancelling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := forcedGCCount()
+		var running atomic.Bool
+		reclaimable := func(context.Context) (uint64, error) {
+			if running.Load() && forcedGCCount() == start {
+				return 2048, nil
+			}
+			return 512, nil
+		}
+		ctx, stop, err := watchRSS(t.Context(), 1024, reclaimable)
+		require.NoError(t, err)
+		defer stop()
+		running.Store(true)
+		time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
+		require.Greater(t, forcedGCCount(), start)
+		require.NoError(t, context.Cause(ctx))
+	})
+}
+
+func forcedGCCount() uint64 {
+	sample := []metrics.Sample{{Name: "/gc/cycles/forced:gc-cycles"}}
+	metrics.Read(sample)
+	return sample[0].Value.Uint64()
 }

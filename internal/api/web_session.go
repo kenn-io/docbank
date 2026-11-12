@@ -450,7 +450,8 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if method == http.MethodPost && r.URL.RawQuery == "" {
 		switch path {
-		case "/api/v1/processing/plans", "/api/v1/processing/jobs",
+		case "/api/v1/processing/local/plans", "/api/v1/processing/local/setup",
+			"/api/v1/processing/plans", "/api/v1/processing/jobs",
 			"/api/v1/processing/consent/grants", "/api/v1/processing/consent/revocations",
 			"/api/v1/processing/source-fences/resolve", "/api/v1/search", "/api/v1/search/similar":
 			return true
@@ -564,6 +565,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		// The master API retains the released unbounded form, but a browser
 		// session may request only the UI's fixed bounded page.
 		return r.URL.RawQuery == "limit=1000&offset=0"
+	}
+	if path == "/api/v1/processing/local/status" {
+		return r.URL.RawQuery == ""
 	}
 	switch path {
 	case "/api/v1/path", "/api/v1/search",
