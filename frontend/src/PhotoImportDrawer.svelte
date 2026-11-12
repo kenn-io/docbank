@@ -2,7 +2,7 @@
   import UploadChannelNotice from "./UploadChannelNotice.svelte";
   import type { UploadConnectionState } from "./uploadReconnect.js";
   import { reportAction, reportFailure } from "./action-events.js";
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Button, TextInput } from "@kenn-io/kit-ui";
   import ClockIcon from "@lucide/svelte/icons/clock";
   import PlusIcon from "@lucide/svelte/icons/plus";
@@ -100,13 +100,28 @@
     sessionOnly = false;
     storageNotice = "";
     checkpoint = undefined;
+    missingCheckpoint = undefined;
     controller?.abort();
     items = [];
+    savedImport = undefined;
+    savedImports = [];
+    selectedImport = "";
+    importID = "";
+    sourceID = "";
+    registered = false;
+    replacingConfirmed = false;
+    moreImports = false;
+    untrack(() => {
+      for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
+    });
     unsupported = [];
+    extraFiles = [];
     resuming = false;
     selectedFiles = [];
     interruptedPlan = undefined;
+    plannedChannel = undefined;
     plannedDestination = "";
+    destination = "/";
     error = "";
     if (id) {
       void currentStorage
@@ -283,14 +298,19 @@
   }
 
   async function listSavedImports(more = false): Promise<void> {
-    if (disabledReason || running || planning) return;
+    if (!checkpointReady || disabledReason || running || planning) return;
     planning = true;
+    const activeVault = vaultID;
+    const activeSession = session;
     try {
       const page = await channel.listPhotoImports(
         more ? savedImports.length : 0,
         new AbortController().signal,
       );
+      if (vaultID !== activeVault || session !== activeSession || destroyed) return;
       savedImports = more ? [...savedImports, ...page] : page;
+      if (!more && !page.some((item) => item.import_id === selectedImport))
+        selectedImport = page[0]?.import_id ?? "";
       moreImports = page.length === 50;
     } catch (cause) {
       showError(cause);
@@ -301,12 +321,20 @@
 
   async function inspectAndApply(id: string, preserve: boolean, bySource = false): Promise<void> {
     const activeChannel = channel;
+    const activeVault = vaultID;
+    const activeSession = session;
     const saved = await activeChannel.inspectPhotoImport(
       id,
       new AbortController().signal,
       bySource,
     );
-    if (channel !== activeChannel || destroyed) return;
+    if (
+      channel !== activeChannel ||
+      vaultID !== activeVault ||
+      session !== activeSession ||
+      destroyed
+    )
+      return;
     if (preserve) {
       for (const [index, group] of (saved.groups ?? []).entries()) {
         const item = items[index];
@@ -798,7 +826,7 @@
       <Button
         size="sm"
         surface="soft"
-        disabled={running || planning || !!disabledReason}
+        disabled={!checkpointReady || running || planning || !!disabledReason}
         onclick={() => void listSavedImports()}><ClockIcon size="14" />Saved imports</Button
       >
       {#if savedImports.length}
@@ -813,7 +841,6 @@
           aria-label="Saved import"
           disabled={running || planning}
         >
-          <option value="">Choose an import</option>
           {#each savedImports as saved}
             <option value={saved.import_id}>{savedImportLabel(saved)}</option>
           {/each}

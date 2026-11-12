@@ -60,6 +60,129 @@ beforeEach(() => {
   vi.stubGlobal("File", NodeFile);
 });
 
+it("waits for vault identity before loading saved imports and clears them when it changes", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "a.JPG", size: 1 }] }],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", true);
+  await view.rerender({ vaultID: "first" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  expect(await screen.findByLabelText("Saved import")).toHaveProperty("value", "saved");
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await screen.findByText("a.JPG");
+  await view.rerender({ vaultID: "second" });
+  await waitFor(() => expect(screen.queryByText("a.JPG")).toBeNull());
+  expect(screen.queryByLabelText("Saved import")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false),
+  );
+});
+
+it("ignores a saved-import list from a previous vault", async () => {
+  const saved = [
+    {
+      import_id: "old",
+      source_id: "source",
+      label: "Photos",
+      destination: "/",
+      created_at: "2026-01-01T00:00:00Z",
+      group_count: 1,
+    },
+  ];
+  let finish!: (value: typeof saved) => void;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+    inspectPhotoImport: vi.fn(),
+    listPhotoImports: vi
+      .fn()
+      .mockReturnValue(new Promise<typeof saved>((resolve) => (finish = resolve))),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "first",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  await view.rerender({ vaultID: "second" });
+  finish(saved);
+  await tick();
+  expect(screen.queryByLabelText("Saved import")).toBeNull();
+});
+
+it("ignores inspection results from a previous vault", async () => {
+  const saved = {
+    import_id: "saved",
+    source_id: "source",
+    label: "Photos",
+    destination: "/",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [{ status: "remaining" as const, files: [{ relative_path: "old.JPG", size: 1 }] }],
+  };
+  let finish!: (value: typeof saved) => void;
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi.fn(),
+    registerPhotoImport: vi.fn(),
+    uploadPhotoGroup: vi.fn(),
+    listPhotoImports: vi.fn().mockResolvedValue([saved]),
+    inspectPhotoImport: vi
+      .fn()
+      .mockReturnValue(new Promise<typeof saved>((resolve) => (finish = resolve))),
+  };
+  const view = render(PhotoImportDrawer, {
+    channel,
+    vaultID: "first",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Saved imports" })).toHaveProperty("disabled", false),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Saved imports" }));
+  await screen.findByLabelText("Saved import");
+  await fireEvent.click(screen.getByRole("button", { name: "Inspect import" }));
+  await view.rerender({ vaultID: "second" });
+  finish(saved);
+  await tick();
+  expect(screen.queryByText("old.JPG")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Resume remaining" })).toBeNull();
+});
+
 it("inspects a saved import and resumes only its remaining group", async () => {
   savedImports.set("saved", {
     sourceID: "saved-source",
