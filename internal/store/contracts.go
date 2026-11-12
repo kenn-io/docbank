@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +16,17 @@ import (
 
 var ErrInvalidContract = errors.New("invalid contract")
 var ErrPartyNotOwn = errors.New("party is not an own entity")
+
+// errContractRevisionExhausted refuses a write that would advance a contract past the integer limit.
+var errContractRevisionExhausted = fmt.Errorf("%w: revision cannot advance", ErrInvalidContract)
+
+// nextContractRevision returns the revision a changed contract commits.
+func nextContractRevision(rev int64) (int64, error) {
+	if rev == math.MaxInt64 {
+		return 0, errContractRevisionExhausted
+	}
+	return rev + 1, nil
+}
 
 type ContractPartyInput struct{ PartyID, Role string }
 type ContractParty struct {
@@ -239,14 +251,23 @@ func (s *Store) UpdateContract(ctx context.Context, id string, rev int64, in Con
 			out = c
 			return nil
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE contracts SET title=$1,contract_type=$2,status=$3,starts_on=$4,expires_on=$5,signed_on=$6,summary=$7,purpose=$8,consideration=$9,termination=$10,revision=$11,updated_at=$12 WHERE contract_id=$13`, in.Title, in.ContractType, in.Status, in.StartsOn, in.ExpiresOn, in.SignedOn, in.Summary, in.Purpose, in.Consideration, in.Termination, rev+1, nowRFC3339(), id)
-		if err != nil {
+		if err = updateContractTx(ctx, tx, id, rev, in); err != nil {
 			return err
 		}
 		out, err = getContractTx(ctx, tx, id, asOf)
 		return err
 	})
 	return out, err
+}
+
+// updateContractTx writes the changed fields and the next revision.
+func updateContractTx(ctx context.Context, tx *sql.Tx, id string, rev int64, in ContractInput) error {
+	next, err := nextContractRevision(rev)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE contracts SET title=$1,contract_type=$2,status=$3,starts_on=$4,expires_on=$5,signed_on=$6,summary=$7,purpose=$8,consideration=$9,termination=$10,revision=$11,updated_at=$12 WHERE contract_id=$13`, in.Title, in.ContractType, in.Status, in.StartsOn, in.ExpiresOn, in.SignedOn, in.Summary, in.Purpose, in.Consideration, in.Termination, next, nowRFC3339(), id)
+	return err
 }
 func (s *Store) DeleteContract(ctx context.Context, id string, rev int64) error {
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -333,21 +354,32 @@ func (s *Store) changeContractParty(ctx context.Context, id string, rev int64, p
 			if err = admitContractParty(ctx, tx, ContractPartyInput{PartyID: partyID, Role: role}); err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO contract_parties(contract_id,party_id,role) VALUES ($1,$2,$3)`, id, partyID, role)
-		} else {
-			_, err = tx.ExecContext(ctx, `DELETE FROM contract_parties WHERE contract_id=$1 AND party_id=$2 AND role=$3`, id, partyID, role)
 		}
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE contracts SET revision=$1,updated_at=$2 WHERE contract_id=$3`, rev+1, nowRFC3339(), id)
-		if err != nil {
+		if err = writeContractLinkTx(ctx, tx, id, rev, partyID, role, attach); err != nil {
 			return err
 		}
 		out, err = getContractTx(ctx, tx, id, asOf)
 		return err
 	})
 	return out, err
+}
+
+// writeContractLinkTx links or unlinks one party and writes the next contract revision.
+func writeContractLinkTx(ctx context.Context, tx *sql.Tx, id string, rev int64, partyID, role string, attach bool) error {
+	next, err := nextContractRevision(rev)
+	if err != nil {
+		return err
+	}
+	if attach {
+		_, err = tx.ExecContext(ctx, `INSERT INTO contract_parties(contract_id,party_id,role) VALUES ($1,$2,$3)`, id, partyID, role)
+	} else {
+		_, err = tx.ExecContext(ctx, `DELETE FROM contract_parties WHERE contract_id=$1 AND party_id=$2 AND role=$3`, id, partyID, role)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE contracts SET revision=$1,updated_at=$2 WHERE contract_id=$3`, next, nowRFC3339(), id)
+	return err
 }
 func (s *Store) AttachContractParty(ctx context.Context, id string, rev int64, partyID, role string) (Contract, error) {
 	return s.changeContractParty(ctx, id, rev, partyID, role, true)
