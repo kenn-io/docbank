@@ -12,7 +12,7 @@ func newContractSignCommand() *cobra.Command {
 	sign := &cobra.Command{Use: "sign", Short: "Connect to DocuSeal", Long: "Enable [integrations.docuseal] and restart the daemon before using these commands."}
 	var checkJSON, templatesJSON bool
 	var after int64
-	check := &cobra.Command{Use: "check", Short: "Check the DocuSeal connection", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	check := &cobra.Command{Use: "check", Short: "Check the DocuSeal connection", Example: "  docbank contract sign check", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -28,7 +28,7 @@ func newContractSignCommand() *cobra.Command {
 		return err
 	}}
 	check.Flags().BoolVar(&checkJSON, "json", false, "print JSON")
-	templates := &cobra.Command{Use: "templates", Short: "List DocuSeal templates", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	templates := &cobra.Command{Use: "templates", Short: "List DocuSeal templates", Example: "  docbank contract sign templates --json", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
