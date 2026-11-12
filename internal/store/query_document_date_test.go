@@ -55,6 +55,10 @@ func TestDocumentDateBoundaryVectors(t *testing.T) {
 	require.ErrorContains(t, missingErr, "date_not_in_zone")
 	_, missingErr = (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-28", "2011-12-28"}, {"2011-12-29", "2011-12-29"}, {"2011-12-30", "2011-12-30"}}})
 	require.ErrorContains(t, missingErr, "date_not_in_zone")
+	part, err := (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-29", "2011-12-31"}}})
+	require.NoError(t, err)
+	require.Equal(t, "2011-12-29T10:00:00.000000000Z", part.args[0])
+	require.Equal(t, "2011-12-31T10:00:00.000000000Z", part.args[1])
 	for _, tc := range []struct{ zone, day, start, end string }{
 		{"America/Santiago", "2026-09-06", "2026-09-06T04:00:00.000000000Z", "2026-09-07T03:00:00.000000000Z"},
 		{"America/Havana", "2026-03-08", "2026-03-08T05:00:00.000000000Z", "2026-03-09T04:00:00.000000000Z"},

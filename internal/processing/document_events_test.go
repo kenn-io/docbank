@@ -563,20 +563,28 @@ func testDigest(seed string) string {
 
 func TestCalendarZoneGapAndOverlap(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ value, utc string }{
-		{"20260308T023000", "2026-03-08T07:00:00.000000000Z"},
-		{"20261101T013000", "2026-11-01T05:30:00.000000000Z"},
+	for _, tc := range []struct{ zone, value, utc string }{
+		{"America/Toronto", "20260308T023000", "2026-03-08T07:00:00.000000000Z"},
+		{"America/Toronto", "20261101T013000", "2026-11-01T05:30:00.000000000Z"},
+		{"Europe/London", "20260329T013000", "2026-03-29T01:00:00.000000000Z"},
+		{"Europe/London", "20261025T013000", "2026-10-25T00:30:00.000000000Z"},
 	} {
-		field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID=America/Toronto", false, tc.value)
+		field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID="+tc.zone, false, tc.value)
 		field.Namespace = "calendar"
 		event, err := metadataDateEvent(field)
 		require.NoError(t, err)
 		require.Equal(t, document.EventTimezoneKind("iana"), event.TimezoneKind)
 		require.Equal(t, document.EventPrecision("second"), event.Precision)
 		require.Equal(t, tc.value, event.RawValue)
-		require.Equal(t, "America/Toronto", event.ZoneText)
+		require.Equal(t, tc.zone, event.ZoneText)
 		require.Equal(t, tc.utc, event.UTCKey)
 	}
+	field := stringField("calendar.event.e000001.start.raw", "DTSTART;TZID=UTC", false, "20260329T013000")
+	field.Namespace = "calendar"
+	event, err := metadataDateEvent(field)
+	require.NoError(t, err)
+	require.Equal(t, document.EventTimezoneKind("named"), event.TimezoneKind)
+	require.Empty(t, event.UTCKey)
 }
 
 func TestCalendarExtractionPreservesComponentsForInclusiveDates(t *testing.T) {

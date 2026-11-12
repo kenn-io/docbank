@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/canonical"
-	"go.kenn.io/kit/civiltime"
 )
 
 const (
@@ -424,7 +423,7 @@ func normalizeQuery(value Query) (Query, error) {
 		return Query{}, errors.New("query sort is invalid")
 	}
 	if value.Timezone != nil {
-		if _, err := civiltime.LoadZone(*value.Timezone); err != nil {
+		if _, err := LoadZone(*value.Timezone); err != nil {
 			return Query{}, &DateError{Code: "invalid_timezone", Err: err}
 		}
 	}

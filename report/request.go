@@ -14,7 +14,6 @@ import (
 
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/kit/civiltime"
 )
 
 const (
@@ -99,7 +98,7 @@ func NormalizeRequest(r Request) (Request, error) {
 			return Request{}, fmt.Errorf("term %d: invalid expression", term.Number)
 		}
 		if query.UsesDocumentDate(query.Query{Text: term.Expression, Syntax: term.Syntax}) {
-			if _, err := civiltime.LoadZone(r.Timezone); err != nil {
+			if _, err := query.LoadZone(r.Timezone); err != nil {
 				return Request{}, &query.DateError{Code: "invalid_timezone", Err: err}
 			}
 		}

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"cloud.google.com/go/civil"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
-	"go.kenn.io/kit/civiltime"
 )
 
 // documentDateSortExpression selects the current primary date for Documents sorting.
@@ -110,7 +110,7 @@ func (c queryCompiler) compileDateScope(expression *query.ResolvedExpression, fi
 
 func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragment, error) {
 	zone := c.dateZone
-	loc, err := civiltime.LoadZone(zone)
+	loc, err := query.LoadZone(zone)
 	if err != nil {
 		return compiledQueryFragment{}, &query.DateError{Code: "invalid_timezone", Err: err}
 	}
@@ -151,9 +151,9 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 
 	var commonFrom, commonTo, commonStart, commonEnd string
 	for index, r := range scope.ranges {
-		from, _ := civiltime.ParseDate(r[0])
-		to, _ := civiltime.ParseDate(r[1])
-		start, end, err := civiltime.RangeBounds(from, to, loc)
+		from, _ := civil.ParseDate(r[0])
+		to, _ := civil.ParseDate(r[1])
+		start, end, err := query.RangeBounds(from, to, loc)
 		if err != nil {
 			dateErr := &query.DateError{Code: "date_not_in_zone", Err: err}
 			if index < len(scope.rangePositions) && scope.rangePositions[index] != nil {

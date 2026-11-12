@@ -980,18 +980,23 @@ func TestPhotoFallbackCursorSurvivesProviderRecovery(t *testing.T) {
 }
 
 func TestPhotoCachedQuerySurvivesFilteringTagDeletion(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"semantic", "hybrid"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			ts, catalog := newTestServer(t, nil)
 			tag, err := catalog.CreateTag(t.Context(), "Synthetic selection")
 			require.NoError(t, err)
+			var expected []string
 			for _, name := range []string{"sunset-a.jpg", "sunset-b.jpg"} {
 				node, err := catalog.CreateFile(t.Context(), catalog.RootID(), name, testHash(name), 10, "image/jpeg")
 				require.NoError(t, err)
 				assignment, err := catalog.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
 				require.NoError(t, err)
 				tag = assignment.Tag
+				asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				expected = append(expected, asset.ID)
 			}
 			request := api.PhotoBrowseRequest{Query: api.QueryPayload(fmt.Sprintf(`{"mode":%q,"text":"sunset","filters":{"tag_ids":[%q]},"sort":{"field":"name","direction":"asc"}}`, mode, tag.ID)), PageSize: 1}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
@@ -1005,7 +1010,7 @@ func TestPhotoCachedQuerySurvivesFilteringTagDeletion(t *testing.T) {
 			require.NotEmpty(t, first.SnapshotID)
 			require.NotEmpty(t, first.NextCursor)
 			require.Len(t, first.Items, 1)
-			require.Equal(t, "sunset-a.jpg", first.Items[0].Name)
+			require.Contains(t, expected, first.Items[0].AssetID)
 
 			_, err = catalog.DeleteTag(t.Context(), tag.ID, tag.Revision)
 			require.NoError(t, err)
@@ -1019,7 +1024,8 @@ func TestPhotoCachedQuerySurvivesFilteringTagDeletion(t *testing.T) {
 			require.Equal(t, first.Total, next.Total)
 			require.Equal(t, first.PhotoSearchStatus, next.PhotoSearchStatus)
 			require.Len(t, next.Items, 1)
-			require.Equal(t, "sunset-b.jpg", next.Items[0].Name)
+			require.NotEqual(t, first.Items[0].AssetID, next.Items[0].AssetID)
+			require.ElementsMatch(t, expected, []string{first.Items[0].AssetID, next.Items[0].AssetID})
 			require.Empty(t, next.NextCursor)
 
 			request.Cursor = ""

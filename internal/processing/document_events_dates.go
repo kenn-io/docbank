@@ -10,8 +10,8 @@ import (
 	_ "time/tzdata" // Supply IANA data for embedded hosts without zoneinfo.
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/kit/civiltime"
 )
 
 var (
@@ -58,17 +58,13 @@ func metadataDateEvent(field document.SourceMetadataFieldV1) (document.DocumentE
 				event.ZoneText = strings.Trim(value, `"`)
 				event.OffsetSeconds = nil
 				event.UTCKey = ""
-				designator := civiltime.ClassifyZone(event.ZoneText, civiltime.General)
-				if designator.State == civiltime.ZoneIANA && event.Precision != "date" && event.Precision != "month" && event.Precision != "year" {
-					wall := event.DateValue
-					if event.Precision == "hour" {
-						wall += ":00"
-					}
-					dt, parseErr := civiltime.ParseDateTime(wall)
+				zone := strings.TrimSpace(event.ZoneText)
+				loc, loadErr := query.LoadZone(zone)
+				if strings.Contains(zone, "/") && loadErr == nil && event.Precision != "date" && event.Precision != "month" && event.Precision != "year" {
+					instant, parseErr := document.EventLocalInstant(event.DateValue, event.Precision, loc)
 					if parseErr != nil {
 						return document.DocumentEventV1{}, fmt.Errorf("parse calendar date-time: %w", parseErr)
 					}
-					instant, _ := civiltime.ResolveLocal(dt, designator.Location)
 					_, offset := instant.Zone()
 					event.TimezoneKind = "iana"
 					event.OffsetSeconds = &offset
@@ -180,13 +176,8 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 		precision = "fraction"
 	}
 	zoneToken := match[8]
-	var offset *int
-	designator := civiltime.ClassifyZone(zoneToken, civiltime.Email)
-	zone := document.EventTimezoneKind(designator.State)
+	zone, offset := emailZone(zoneToken)
 	zoneText := zoneToken
-	if designator.State == civiltime.ZoneOffset || designator.State == civiltime.ZoneRFC5322 {
-		offset = &designator.OffsetSeconds
-	}
 
 	axis, err := document.EventAxisKey(base, precision, zone, offset)
 	if err != nil {
@@ -205,6 +196,44 @@ func rawEmailDateEvent(raw string) (document.DocumentEventV1, bool) {
 		event.FractionDigits = len(match[7]) - 1
 	}
 	return event, true
+}
+
+// emailZone classifies the zone tokens admitted by emailDate.
+func emailZone(token string) (document.EventTimezoneKind, *int) {
+	upper := strings.ToUpper(token)
+	if token == "" {
+		return "omitted", nil
+	}
+	if upper == "UTC" {
+		return "utc", nil
+	}
+	if token[0] == '+' || token[0] == '-' {
+		hour, _ := strconv.Atoi(token[1:3])
+		minute, _ := strconv.Atoi(token[3:5])
+		seconds := hour*3600 + minute*60
+		if minute > 59 || seconds > 18*3600 {
+			return "invalid", nil
+		}
+		if seconds == 0 {
+			if token[0] == '-' {
+				return "omitted", nil
+			}
+			return "utc", nil
+		}
+		if token[0] == '-' {
+			seconds = -seconds
+		}
+		return "offset", &seconds
+	}
+	offsets := map[string]int{"UT": 0, "GMT": 0, "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "MST": -7, "MDT": -6, "PST": -8, "PDT": -7}
+	if hours, ok := offsets[upper]; ok {
+		seconds := hours * 3600
+		return "rfc5322", &seconds
+	}
+	if len(token) == 1 && upper != "J" {
+		return "omitted", nil
+	}
+	return "named", nil
 }
 
 func canonicalRFCMonth(value string) string {

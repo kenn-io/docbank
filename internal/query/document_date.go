@@ -5,10 +5,44 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
+
+	"cloud.google.com/go/civil"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/kit/civiltime"
 )
+
+// LoadZone enforces the timeline zone admission policy.
+func LoadZone(name string) (*time.Location, error) {
+	if name == "UTC" {
+		return time.UTC, nil
+	}
+	if !strings.Contains(name, "/") || strings.HasPrefix(name, "posix/") || strings.HasPrefix(name, "right/") {
+		return nil, fmt.Errorf("invalid timezone %q", name)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone %q: %w", name, err)
+	}
+	return loc, nil
+}
+
+// RangeBounds composes inclusive civil endpoints from Kit day boundaries.
+func RangeBounds(from, to civil.Date, loc *time.Location) (time.Time, time.Time, error) {
+	if !from.IsValid() || !to.IsValid() || from.After(to) {
+		return time.Time{}, time.Time{}, errors.New("invalid date range")
+	}
+	start, _, ok := civiltime.DayBounds(from, loc)
+	if !ok {
+		return time.Time{}, time.Time{}, fmt.Errorf("date %s does not exist in %s", from, loc)
+	}
+	_, end, ok := civiltime.DayBounds(to, loc)
+	if !ok {
+		return time.Time{}, time.Time{}, fmt.Errorf("date %s does not exist in %s", to, loc)
+	}
+	return start, end, nil
+}
 
 // DateError carries the stable API code for a date or timezone failure.
 type DateError struct {
@@ -33,10 +67,10 @@ func ParseDocumentDate(value string) (string, string, error) {
 	if !found {
 		to = from
 	}
-	if _, err := civiltime.ParseDate(from); err != nil {
+	if _, err := civil.ParseDate(from); err != nil {
 		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
-	if _, err := civiltime.ParseDate(to); err != nil {
+	if _, err := civil.ParseDate(to); err != nil {
 		return "", "", &DateError{Code: "invalid_date", Err: err}
 	}
 	if from > to {
