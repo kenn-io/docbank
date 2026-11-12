@@ -22430,7 +22430,7 @@ components:
         roles:
           items:
             type: string
-          maxItems: 10
+          maxItems: 11
           type: array
         selected:
           type: boolean
