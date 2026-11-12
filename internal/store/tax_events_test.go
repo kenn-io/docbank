@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"errors"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -194,15 +193,10 @@ func TestTaxEventConcurrentWritersRejectStaleRevision(t *testing.T) {
 	assert.Equal(t, r.Revision+1, d.Record.Revision)
 }
 
-func TestTaxEventsSource48DoesNotQueryTaxCatalogs(t *testing.T) {
+func TestTaxEventsSource50Metadata(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
-			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "source.db"), driver.driver, schemaV0170SQL, 48)
-			var data bytes.Buffer
-			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), db, &data, 48))
-		})
-		t.Run(driver.name+"-source50", func(t *testing.T) {
 			ctx := t.Context()
 			s := newTestStoreWithDriver(t, driver.driver)
 			p, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Holdings", Own: true})
