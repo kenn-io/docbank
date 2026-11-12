@@ -44,7 +44,7 @@ var documentPages = []string{"/searches", "/productions", "/imports", "/trash"}
 // path. JavaScript and styles are public static bytes; every vault read still
 // crosses the authenticated /api/v1 surface.
 // A nil logger selects slog.Default.
-func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin, basePath string, tiles config.MapTilesConfig, logger *slog.Logger) {
+func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin, basePath, timelineTimezone string, tiles config.MapTilesConfig, logger *slog.Logger) {
 	if !enabled {
 		return
 	}
@@ -55,6 +55,10 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin, basePath
 		panic("api: embedded web index is missing")
 	}
 	indexHTML = configureWebBasePath(configureWebMap(indexHTML, tiles), basePath)
+	if timelineTimezone == "" {
+		timelineTimezone = "UTC"
+	}
+	indexHTML = bytes.Replace(indexHTML, []byte("</head>"), []byte(`<meta name="docbank-timeline-timezone" content="`+html.EscapeString(timelineTimezone)+`"></head>`), 1)
 	images := "'self' data: blob:"
 	static := http.FileServer(http.FS(assets))
 	index := func(w http.ResponseWriter, _ *http.Request) {
