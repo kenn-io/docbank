@@ -207,7 +207,7 @@
     const groups = `${saved.group_count} group${saved.group_count === 1 ? "" : "s"}`;
     const suggested = checkpoint?.sourceID === saved.source_id ? "Suggested · " : "";
     const destination = savedImport?.import_id === saved.import_id ? "" : ` → ${saved.destination}`;
-    return `${suggested}${created} · ${groups}${destination}`;
+    return `${suggested}${saved.label} · ${created} · ${groups}${destination}`;
   }
   // Explains a disabled "Resume remaining" after files were chosen again.
   const resumeHint = $derived.by(() => {
@@ -674,16 +674,6 @@
         }
         registered = true;
         registrationUncertain = false;
-      }
-      if (
-        !sessionOnly &&
-        checkpoint &&
-        checkpoint.protocolVersion !== 3 &&
-        (!savedImport || checkpoint.sourceID === savedImport.source_id)
-      ) {
-        const next = { ...checkpoint, protocolVersion: 3, revision: randomUUID() };
-        await replaceCheckpoint(storage, next, checkpoint);
-        checkpoint = next;
       }
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
