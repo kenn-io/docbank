@@ -39,12 +39,15 @@ const (
 	webUploadControlBytes = 4096
 	webUploadAuthTimeout  = 10 * time.Second
 	webUploadInactivity   = 30 * time.Second
+	webVerifyProgress     = 10 * time.Second
 )
 
 var (
 	errWebUploadCanceled = errors.New("browser upload canceled")
 	errWebUploadProtocol = errors.New("invalid browser upload protocol")
 	errWebUploadTooBig   = errors.New("upload control message exceeds its limit")
+	errWebVerifyStalled  = errors.New("stored content verification stalled")
+	errWebVerifyBusy     = errors.New("stored content verification slots full")
 )
 
 type webPhotoFile struct {
@@ -79,44 +82,47 @@ type webPhotoReceipt struct {
 }
 
 type webUploadMessage struct {
-	SourceID     *uuid.UUID          `json:"source_id,omitzero"`
-	ImportID     string              `json:"import_id,omitzero"`
-	Files        []webPhotoFile      `json:"files,omitzero"`
-	Groups       [][]int             `json:"groups,omitzero"`
-	Unsupported  []int               `json:"unsupported,omitzero"`
-	SkipReasons  map[int]string      `json:"skip_reasons,omitzero"`
-	Destination  string              `json:"destination,omitzero"`
-	Group        int                 `json:"group,omitzero"`
-	Hashes       []string            `json:"hashes,omitzero"`
-	Indexes      []int               `json:"indexes,omitzero"`
-	PhotoReceipt *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
-	ContainerID  string              `json:"container_id,omitzero"`
-	ChunkIndex   int                 `json:"chunk_index,omitzero"`
-	ChunkReceipt *store.MailboxChunk `json:"chunk_receipt,omitempty"`
-	Type         string              `json:"type"`
-	Token        string              `json:"token,omitzero"`
-	Nonce        string              `json:"nonce,omitzero"`
-	Proof        string              `json:"proof,omitzero"`
-	RequestID    string              `json:"request_id,omitzero"`
-	ParentID     int64               `json:"parent_id,omitzero"`
-	Name         string              `json:"name,omitzero"`
-	MIMEType     string              `json:"mime_type,omitzero"`
-	ExpectedHash string              `json:"expected_hash,omitzero"`
-	ExpectedSize int64               `json:"expected_size,omitzero"`
-	Receipt      *UploadReceipt      `json:"receipt,omitempty"`
-	Status       int                 `json:"status,omitzero"`
-	Code         string              `json:"code,omitzero"`
-	Detail       string              `json:"detail,omitzero"`
+	SourceID      *uuid.UUID          `json:"source_id,omitzero"`
+	ImportID      string              `json:"import_id,omitzero"`
+	Files         []webPhotoFile      `json:"files,omitzero"`
+	Groups        [][]int             `json:"groups,omitzero"`
+	Unsupported   []int               `json:"unsupported,omitzero"`
+	SkipReasons   map[int]string      `json:"skip_reasons,omitzero"`
+	Destination   string              `json:"destination,omitzero"`
+	Group         int                 `json:"group,omitzero"`
+	Hashes        []string            `json:"hashes,omitzero"`
+	Indexes       []int               `json:"indexes,omitzero"`
+	PhotoReceipt  *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
+	ContainerID   string              `json:"container_id,omitzero"`
+	ChunkIndex    int                 `json:"chunk_index,omitzero"`
+	ChunkReceipt  *store.MailboxChunk `json:"chunk_receipt,omitempty"`
+	Type          string              `json:"type"`
+	Token         string              `json:"token,omitzero"`
+	Nonce         string              `json:"nonce,omitzero"`
+	Proof         string              `json:"proof,omitzero"`
+	RequestID     string              `json:"request_id,omitzero"`
+	ParentID      int64               `json:"parent_id,omitzero"`
+	Name          string              `json:"name,omitzero"`
+	MIMEType      string              `json:"mime_type,omitzero"`
+	ExpectedHash  string              `json:"expected_hash,omitzero"`
+	ExpectedSize  int64               `json:"expected_size,omitzero"`
+	CheckExisting bool                `json:"check_existing,omitzero"`
+	VerifiedSize  int64               `json:"verified_size,omitzero"`
+	Receipt       *UploadReceipt      `json:"receipt,omitempty"`
+	Status        int                 `json:"status,omitzero"`
+	Code          string              `json:"code,omitzero"`
+	Detail        string              `json:"detail,omitzero"`
 }
 
 type webUploadRequest struct {
-	requestID    string
-	containerID  string
-	parentID     int64
-	name         string
-	mimeType     string
-	expectedHash string
-	expectedSize int64
+	requestID     string
+	containerID   string
+	parentID      int64
+	name          string
+	mimeType      string
+	expectedHash  string
+	expectedSize  int64
+	checkExisting bool
 }
 
 func registerWebUpload(
@@ -308,6 +314,31 @@ func handleWebUploadConnection(
 			if problem := validateWebUploadDestination(ctx, d, request.parentID); problem != nil {
 				return problem
 			}
+			if request.checkExisting {
+				node, found, err := d.Store.FindUploadedFile(ctx, request.parentID, request.name, request.expectedHash, request.expectedSize)
+				if err != nil {
+					return err
+				}
+				if found {
+					err := verifyWebUpload(ctx, conn, request.requestID, node.Size, g.verification, func(ctx context.Context) (io.ReadCloser, int64, error) {
+						return d.Blobs.OpenStreamContext(ctx, node.BlobHash)
+					})
+					if err != nil {
+						if errors.Is(err, errWebVerifyBusy) {
+							return NewError(http.StatusServiceUnavailable, "verification_busy", "Upload verification is unavailable. Restart Docbank, sign in again, and retry the upload.")
+						}
+						if errors.Is(err, errWebVerifyStalled) {
+							return err
+						}
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						return NewError(http.StatusConflict, "content_unavailable", "Stored content could not be verified. Run docbank vault verify to identify the problem.")
+					}
+					result = ingest.UploadResult{Node: node, ComputedHash: node.BlobHash, ComputedSize: node.Size}
+					return nil
+				}
+			}
 			if err := wsjson.Write(ctx, conn, webUploadMessage{
 				Type: "ready", RequestID: request.requestID,
 			}); err != nil {
@@ -319,6 +350,9 @@ func handleWebUploadConnection(
 			return err
 		})
 		if uploadErr != nil {
+			if errors.Is(uploadErr, errWebVerifyStalled) {
+				return
+			}
 			problem := uploadError(uploadErr)
 			if errors.Is(uploadErr, errWebUploadCanceled) {
 				problem = NewError(499, "canceled", "browser upload canceled before authority")
@@ -349,6 +383,74 @@ func handleWebUploadConnection(
 	}
 }
 
+// A blocked storage read cannot always be interrupted. Keep its slot until it
+// returns, but let an abandoned verification release the mutation gate.
+func verifyWebUpload(ctx context.Context, conn *websocket.Conn, requestID string, expected int64, slots chan struct{}, open func(context.Context) (io.ReadCloser, int64, error)) error {
+	select {
+	case slots <- struct{}{}:
+	default:
+		return errWebVerifyBusy
+	}
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	progress := make(chan int64)
+	result := make(chan error, 1)
+	go func() {
+		defer func() { <-slots }()
+		stream, size, err := open(readCtx)
+		if err == nil {
+			var total int64
+			buf := make([]byte, webUploadChunkBytes)
+			for readCtx.Err() == nil {
+				var n int
+				n, err = stream.Read(buf)
+				total += int64(n)
+				if n > 0 {
+					select {
+					case progress <- total:
+					case <-readCtx.Done():
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+			if errors.Is(err, io.EOF) {
+				err = nil
+			}
+			if err == nil && readCtx.Err() != nil {
+				err = readCtx.Err()
+			}
+			if err == nil && (size != expected || total != expected) {
+				err = io.ErrUnexpectedEOF
+			}
+			err = errors.Join(err, stream.Close())
+		}
+		result <- err
+	}()
+	timer := time.NewTimer(webUploadInactivity)
+	defer timer.Stop()
+	lastProgress := time.Now()
+	for {
+		select {
+		case err := <-result:
+			return err
+		case total := <-progress:
+			timer.Reset(webUploadInactivity)
+			if time.Since(lastProgress) >= webVerifyProgress {
+				if err := wsjson.Write(ctx, conn, webUploadMessage{Type: "verification_progress", RequestID: requestID, VerifiedSize: total}); err != nil {
+					return fmt.Errorf("writing upload verification progress: %w", err)
+				}
+				lastProgress = time.Now()
+			}
+		case <-timer.C:
+			return errWebVerifyStalled
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 // isCanonicalHash reports whether hash is packstore's canonical lowercase
 // SHA-256 encoding of itself, the acceptance rule every expected_hash on the
 // browser upload socket shares, whether for one file or a photo group.
@@ -367,7 +469,7 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 			"expected_hash must be canonical lowercase SHA-256")
 	}
 	if begin.ContainerID != "" {
-		if len(begin.ContainerID) > 128 || begin.ExpectedSize < 1 || begin.ExpectedSize > store.MailboxContainerBytes || begin.ParentID != 0 || begin.Name != "" || begin.MIMEType != "" {
+		if len(begin.ContainerID) > 128 || begin.ExpectedSize < 1 || begin.ExpectedSize > store.MailboxContainerBytes || begin.ParentID != 0 || begin.Name != "" || begin.MIMEType != "" || begin.CheckExisting {
 			return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation", "invalid package container upload declaration")
 		}
 		return webUploadRequest{requestID: begin.RequestID, containerID: begin.ContainerID,
@@ -388,6 +490,7 @@ func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 	return webUploadRequest{
 		requestID: begin.RequestID, parentID: begin.ParentID, name: name,
 		mimeType: mimeType, expectedHash: begin.ExpectedHash, expectedSize: begin.ExpectedSize,
+		checkExisting: begin.CheckExisting,
 	}, nil
 }
 

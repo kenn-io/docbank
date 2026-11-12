@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UploadChannelNotice from "./UploadChannelNotice.svelte";
+  import type { UploadConnectionState } from "./uploadReconnect.js";
   import { reportAction, reportFailure } from "./action-events.js";
   import { onDestroy } from "svelte";
   import { Button, TextInput } from "@kenn-io/kit-ui";
@@ -29,6 +31,8 @@
     vaultID,
     session,
     disabledReason = "",
+    connectionState = "fatal",
+    onreconnect = () => {},
     onclose,
     oncomplete,
     onauthfailure,
@@ -37,6 +41,8 @@
     vaultID: string;
     session: string;
     disabledReason?: string;
+    connectionState?: UploadConnectionState;
+    onreconnect?: () => void;
     onclose: () => void;
     oncomplete: () => void | Promise<void>;
     onauthfailure: (cause: unknown) => void;
@@ -78,6 +84,7 @@
     unsupported = [];
     resuming = false;
     selectedFiles = [];
+    interruptedPlan = undefined;
     plannedDestination = "";
     error = "";
     if (id) {
@@ -106,6 +113,9 @@
   let selectedFiles: File[] = [];
   let unsupported = $state<{ file: File; reason: string }[]>([]);
   let importID = $state("");
+  let sourceID = "";
+  let plannedChannel: PhotoImportTransport | undefined;
+  let interruptedPlan = $state.raw<PhotoImportTransport>();
   let plannedDestination = $state("");
   let running = $state(false);
   let planning = $state(false);
@@ -114,6 +124,12 @@
   let error = $state("");
   let controller: AbortController | null = null;
   let destroyed = false;
+  $effect(() => {
+    if (interruptedPlan && interruptedPlan !== channel && !planning && !disabledReason) {
+      interruptedPlan = undefined;
+      void plan();
+    }
+  });
   let counts = $state<Record<Item["state"], number>>({
     ready: 0,
     hashing: 0,
@@ -167,11 +183,13 @@
       if (!confirmed || destroyed || checkpoint !== expected) return;
     }
     pickerKind = kind;
+    interruptedPlan = undefined;
+    sourceID = "";
     selectedFiles = files;
     await plan(true);
   }
 
-  async function plan(validated = false): Promise<void> {
+  async function plan(validated = false, reconnect = false): Promise<void> {
     if (!selectedFiles.length || running || planning || !checkpointReady) return;
     if (!validated) {
       try {
@@ -182,16 +200,19 @@
       }
     }
     const files = selectedFiles;
+    const previousItems = reconnect ? items : [];
+    const planChannel = channel;
     const target = destination;
     const currentStorage = storage;
     const expected = checkpoint;
     const active = new AbortController();
     controller = active;
     planning = true;
-    plannedDestination = "";
-    items = [];
-    for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
-    unsupported = [];
+    if (!reconnect) {
+      items = [];
+      for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
+      unsupported = [];
+    }
     error = "";
     try {
       const { digest } = photoImportManifest(files);
@@ -207,14 +228,14 @@
           "These files or destination differ from the saved import. Reselect the original files or folder and destination.",
         );
       const next = {
-        sourceID: resuming ? checkpoint!.sourceID : randomUUID(),
+        sourceID: reconnect ? sourceID : resuming ? checkpoint!.sourceID : randomUUID(),
         revision: randomUUID(),
         destination: target,
         manifestVersion: 2,
         manifestHash: digest,
         pickerKind,
       };
-      const plan = await channel.planPhotoImport(
+      const plan = await planChannel.planPhotoImport(
         files,
         target,
         next.sourceID,
@@ -222,33 +243,65 @@
         (progress) => {
           hashProgress = progress;
         },
+        ...(reconnect
+          ? ([
+              new Map(
+                previousItems
+                  .flatMap((item) =>
+                    item.files.map((file, index) => [file, item.hashes[index]] as const),
+                  )
+                  .filter(([, hash]) => !!hash),
+              ),
+            ] as const)
+          : ([] as const)),
       );
       hashProgress = undefined;
-      if (!sessionOnly) {
+      if (
+        reconnect &&
+        (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
+      )
+        return;
+      if (!reconnect && !sessionOnly) {
         try {
           await currentStorage.replace(plan.groups.length ? next : undefined, expected);
         } catch (cause) {
           if (!useSessionOnly(cause)) throw cause;
         }
       }
-      if (active.signal.aborted || destroyed) return;
-      checkpoint = plan.groups.length ? next : undefined;
+      if (active.signal.aborted || destroyed || destination !== target) return;
+      if (!reconnect) checkpoint = plan.groups.length ? next : undefined;
       if (!plan.groups.length) resuming = false;
       plannedDestination = target;
-      items = plan.groups.map((group, index) => ({
-        group: index,
-        files: group.map((index) => files[index]),
-        hashes: group.map((index) => plan.hashes?.get(files[index]) ?? ""),
-        state: "ready",
-        progress: { processed: 0, total: group.reduce((sum, index) => sum + files[index].size, 0) },
-      }));
-      counts.ready = items.length;
+      sourceID = next.sourceID;
+      plannedChannel = planChannel;
+      items = plan.groups.map((group, index) => {
+        const groupFiles = group.map((index) => files[index]);
+        const previous = previousItems[index];
+        return {
+          group: index,
+          files: groupFiles,
+          hashes: group.map(
+            (fileIndex, member) =>
+              previous?.hashes[member] || plan.hashes?.get(files[fileIndex]) || "",
+          ),
+          state: previous?.state ?? "ready",
+          error: previous?.error,
+          progress: previous?.progress ?? {
+            processed: 0,
+            total: groupFiles.reduce((sum, file) => sum + file.size, 0),
+          },
+        };
+      });
+      for (const state of Object.keys(counts) as Item["state"][])
+        counts[state] = items.filter((item) => item.state === state).length;
       importID = plan.import_id;
       unsupported = plan.unsupported.map((index) => ({
         file: files[index],
         reason: plan.skip_reasons?.[index] ?? "Skipped",
       }));
     } catch (cause) {
+      if (!reconnect && cause instanceof UploadChannelError && !active.signal.aborted && !destroyed)
+        interruptedPlan = planChannel;
       if (!active.signal.aborted && !destroyed) showError(cause);
     } finally {
       hashProgress = undefined;
@@ -270,8 +323,11 @@
   }
 
   async function start(): Promise<void> {
-    if (running || planning || disabledReason || !checkpointReady) return;
-    if (plannedDestination !== destination) await plan();
+    if (running || planning || disabledReason || !checkpointReady || !pending) return;
+    const runChannel = channel;
+    if (plannedDestination !== destination || plannedChannel !== runChannel) {
+      await plan(false, plannedDestination === destination && Boolean(sourceID));
+    }
     if (
       destroyed ||
       running ||
@@ -279,9 +335,12 @@
       !checkpointReady ||
       !pending ||
       disabledReason ||
-      plannedDestination !== destination
+      plannedDestination !== destination ||
+      plannedChannel !== runChannel ||
+      channel !== runChannel
     )
       return;
+    const runImportID = importID;
     running = true;
     stopping = false;
     controller = new AbortController();
@@ -308,8 +367,8 @@
         setState(item, item.hashes.includes("") ? "hashing" : "uploading");
         let transmissionStarted = false;
         try {
-          const receipt = await channel.uploadPhotoGroup(
-            importID,
+          const receipt = await runChannel.uploadPhotoGroup(
+            runImportID,
             item.group,
             item.files,
             controller.signal,
@@ -340,7 +399,7 @@
           item.error =
             state === "unconfirmed"
               ? sessionOnly
-                ? "Import outcome is unconfirmed. Run docbank web again, then choose the same files or folder again. Photos and videos already in the vault are skipped. Other files, including standalone XMP sidecars, may be added again."
+                ? "Import outcome is unconfirmed. Choose the same files or folder again. Photos and videos already in the vault are skipped. Other files, including standalone XMP sidecars, may be added again."
                 : "Import outcome is unconfirmed. Reload the page, then choose Resume import and reselect the same files or folder."
               : cause instanceof Error
                 ? cause.message
@@ -389,11 +448,20 @@
   }
 </script>
 
-<DrawerShell title="Add photos" closeLabel="Close add photos" {onclose}>
+{#snippet channelFooter()}
+  <UploadChannelNotice state={connectionState} message={disabledReason} size="md" {onreconnect} />
+{/snippet}
+
+<DrawerShell
+  title="Add photos"
+  closeLabel="Close add photos"
+  {onclose}
+  footer={disabledReason ? channelFooter : undefined}
+>
   <div class="photo-import">
-    {#if disabledReason || error}
-      <p role="alert">{disabledReason || error}</p>
-    {:else if !checkpointReady}
+    {#if !disabledReason && error}
+      <p role="alert">{error}</p>
+    {:else if !disabledReason && !checkpointReady}
       <p role="status">{vaultID ? "Loading saved import…" : "Waiting for vault identity…"}</p>
     {/if}
     {#if storageNotice}<p role="status">{storageNotice}</p>{/if}
