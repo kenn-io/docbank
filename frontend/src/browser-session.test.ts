@@ -47,47 +47,35 @@ it.each([
   },
 );
 
-it("hands the command-line session to the reloaded page and clears the fragment", () => {
-  history.replaceState(null, "", "/?view=grid#node=42");
-  rememberSession({ token: "session token", uploadSecret: "upload proof" });
-  let loaded: { token: string; uploadSecret: string } | null = null;
-  const current = {
-    get hash() {
-      return location.hash;
-    },
-    get pathname() {
-      return location.pathname;
-    },
-    get search() {
-      return location.search;
-    },
-    reload() {
-      loaded = takeFragmentSession();
-    },
-  } as Location;
-  reloadWithSession(current, history);
-  expect(loaded).toEqual({ token: "session token", uploadSecret: "upload proof" });
-  expect(location.pathname + location.search + location.hash).toBe("/?view=grid#node=42");
-});
-
-it("does not carry a key login into the next load", () => {
-  rememberSession(null);
-  history.replaceState(null, "", "/#node=42");
-  let fragment = "";
-  const current = {
-    get hash() {
-      return location.hash;
-    },
-    get pathname() {
-      return location.pathname;
-    },
-    get search() {
-      return location.search;
-    },
-    reload() {
-      fragment = location.hash;
-    },
-  } as Location;
-  reloadWithSession(current, history);
-  expect(fragment).toBe("#node=42");
-});
+it.each([
+  {
+    name: "command-line session",
+    session: { token: "session token", uploadSecret: "upload proof" },
+    fragment: "#node=42&web_session=session+token&web_upload_secret=upload+proof",
+  },
+  { name: "key login", session: null, fragment: "#node=42" },
+])(
+  "reloads with the $name and clears any credentials after cancellation",
+  ({ session, fragment }) => {
+    history.replaceState(null, "", "/?view=grid#node=42");
+    rememberSession(session);
+    let loadedFragment = "";
+    const current = {
+      get hash() {
+        return location.hash;
+      },
+      get pathname() {
+        return location.pathname;
+      },
+      get search() {
+        return location.search;
+      },
+      reload() {
+        loadedFragment = location.hash;
+      },
+    } as Location;
+    reloadWithSession(current, history);
+    expect(loadedFragment).toBe(fragment);
+    expect(location.pathname + location.search + location.hash).toBe("/?view=grid#node=42");
+  },
+);
