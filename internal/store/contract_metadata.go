@@ -47,9 +47,6 @@ func validateMetadataContract(c metadataContract) error {
 	if err := validateMetadataTime("contract updated_at", c.UpdatedAt); err != nil {
 		return err
 	}
-	if c.UpdatedAt < c.CreatedAt {
-		return errors.New("contract update precedes creation")
-	}
 	return nil
 }
 func validateMetadataContractParty(p metadataContractParty) error {
@@ -59,8 +56,8 @@ func validateMetadataContractParty(p metadataContractParty) error {
 	return nil
 }
 func validateContractMetadataState(ctx context.Context, q metadataQuerier) error {
-	if err := contractMetadata.export(ctx, q, func(any) error { return nil }); err != nil {
+	if err := contractMetadata.validateRows(ctx, q); err != nil {
 		return err
 	}
-	return contractPartyMetadata.export(ctx, q, func(any) error { return nil })
+	return contractPartyMetadata.validateRows(ctx, q)
 }

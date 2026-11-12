@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"uuid"
 
 	"github.com/spf13/cobra"
@@ -11,12 +12,50 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
+func contractDate(d *string) string {
+	if d == nil {
+		return "-"
+	}
+	return *d
+}
 func printContract(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
 	if jsonOutput {
 		return writeCLIJSON(cmd.OutOrStdout(), c)
 	}
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\trevision %d\n", c.ContractID, c.Title, c.EffectiveStatus, c.Revision)
+	parties := []string{}
+	for _, p := range c.Parties {
+		parties = append(parties, p.Role+":"+p.DisplayName)
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\t%s\t%s\trevision %d\n", c.ContractID, c.Title, c.ContractType, c.EffectiveStatus, contractDate(c.StartsOn), contractDate(c.ExpiresOn), strings.Join(parties, ", "), c.Revision)
 	return err
+}
+func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) error {
+	if jsonOutput {
+		return writeCLIJSON(cmd.OutOrStdout(), c)
+	}
+	if err := printContract(cmd, c, false); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Stored status: %s\nSigned: %s\nCreated: %s\nUpdated: %s\nSummary: %q\nPurpose: %q\nConsideration: %q\nTermination: %q\n", c.Status, contractDate(c.SignedOn), c.CreatedAt, c.UpdatedAt, c.Summary, c.Purpose, c.Consideration, c.Termination)
+	return err
+}
+func resolveLinkedContractParty(c api.Contract, role, name string) (string, error) {
+	if id, err := uuid.Parse(name); err == nil && id.String() == name {
+		return name, nil
+	}
+	var found string
+	for _, p := range c.Parties {
+		if p.Role == role && document.FoldPersonName(p.DisplayName) == document.FoldPersonName(name) {
+			if found != "" {
+				return "", fmt.Errorf("party %q is ambiguous; use an ID", name)
+			}
+			found = p.PartyID
+		}
+	}
+	if found == "" {
+		return "", fmt.Errorf("linked party %q not found for role %s", name, role)
+	}
+	return found, nil
 }
 func resolveContractParty(ctx context.Context, c *daemonconn.Connection, name string) (string, error) {
 	// A canonical ID may be used directly; names are matched against active parties.
@@ -66,7 +105,7 @@ func newContractListCommand() *cobra.Command {
 	f.StringVar(&status, "status", "", "effective status")
 	f.StringVar(&kind, "type", "", "contract type")
 	f.StringVar(&party, "party-id", "", "party ID")
-	f.StringVar(&expires, "expiring-before", "", "exclusive expiry date")
+	f.StringVar(&expires, "expiring-before", "", "exclusive expiry date; combine with --status active for active renewals")
 	f.StringVar(&q, "q", "", "literal title substring")
 	f.StringVar(&asOf, "as-of", "", "civil date")
 	f.IntVar(&limit, "limit", 100, "maximum results")
@@ -86,7 +125,7 @@ func newContractShowCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printContract(cmd, v, jsonOutput)
+		return printContractShow(cmd, v, jsonOutput)
 	}}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print JSON")
 	cmd.Flags().StringVar(&asOf, "as-of", "", "civil date")
@@ -100,6 +139,9 @@ func newContractCreateCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "create <title>", Short: "Create a contract", Example: "docbank contract create 'Service agreement'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		b.Title = args[0]
 		f := cmd.Flags()
+		if f.Changed("status") && b.Status == "" {
+			return fmt.Errorf("status cannot be empty")
+		}
 		if f.Changed("starts") {
 			b.StartsOn = &starts
 		}
@@ -190,42 +232,64 @@ func newContractEditCommand() *cobra.Command {
 		if f.Changed("termination") {
 			b.Termination = &termination
 		}
+		hasFields := b.Title != nil || b.ContractType != nil || b.Status != nil || b.StartsOn != nil || b.ExpiresOn != nil || b.SignedOn != nil || b.Summary != nil || b.Purpose != nil || b.Consideration != nil || b.Termination != nil || clearStarts || clearExpires || clearSigned
+		if !hasFields && len(own)+len(other)+len(removeOwn)+len(removeOther) == 0 {
+			return fmt.Errorf("no changes requested")
+		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		if revision == 0 {
-			v, err := c.Contract(cmd.Context(), args[0], "")
-			if err != nil {
-				return err
-			}
-			revision = v.Revision
-		}
-		v, err := c.UpdateContract(cmd.Context(), args[0], revision, b)
+		v, err := c.Contract(cmd.Context(), args[0], "")
 		if err != nil {
 			return err
 		}
-		applied := []string{"contract fields"}
+		if revision == 0 {
+			revision = v.Revision
+		}
+		type change struct {
+			role, name, id string
+			attach         bool
+		}
+		var changes []change
 		for _, group := range []struct {
 			role   string
 			names  []string
 			attach bool
 		}{{"own", own, true}, {"counterparty", other, true}, {"own", removeOwn, false}, {"counterparty", removeOther, false}} {
 			for _, name := range group.names {
-				id, e := resolveContractParty(cmd.Context(), c, name)
-				if e != nil {
-					return fmt.Errorf("applied %v; %w", applied, e)
-				}
+				var id string
 				if group.attach {
-					v, e = c.AttachContractParty(cmd.Context(), args[0], v.Revision, id, group.role)
+					id, err = resolveContractParty(cmd.Context(), c, name)
 				} else {
-					v, e = c.DetachContractParty(cmd.Context(), args[0], v.Revision, id, group.role)
+					id, err = resolveLinkedContractParty(v, group.role, name)
 				}
-				if e != nil {
-					return fmt.Errorf("applied %v; %w", applied, e)
+				if err != nil {
+					return err
 				}
-				applied = append(applied, group.role+":"+name)
+				changes = append(changes, change{group.role, name, id, group.attach})
 			}
+		}
+		var applied []string
+		if hasFields {
+			v, err = c.UpdateContract(cmd.Context(), args[0], revision, b)
+			if err != nil {
+				return err
+			}
+			revision = v.Revision
+			applied = append(applied, "contract fields")
+		}
+		for _, change := range changes {
+			if change.attach {
+				v, err = c.AttachContractParty(cmd.Context(), args[0], revision, change.id, change.role)
+			} else {
+				v, err = c.DetachContractParty(cmd.Context(), args[0], revision, change.id, change.role)
+			}
+			if err != nil {
+				return fmt.Errorf("applied %v; %w", applied, err)
+			}
+			revision = v.Revision
+			applied = append(applied, change.role+":"+change.name)
 		}
 		return printContract(cmd, v, jsonOutput)
 	}}

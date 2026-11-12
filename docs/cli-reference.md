@@ -887,6 +887,20 @@ resulting revision, size, and hash. `--json` returns the node, new version, and
 complete source-version receipt. Repeating the same historical choice later is
 valid and records another operation.
 
+## docbank contract
+
+```text
+docbank contract list [--status <status>] [--type <type>] [--party-id <id>] [--expiring-before <date>] [--q <text>] [--as-of <date>] [--limit <n>] [--offset <n>] [--json]
+docbank contract show <contract-id> [--as-of <date>] [--json]
+docbank contract create <title> [--status <status>] [--type <type>] [--own <party>] [--counterparty <party>] [--json]
+docbank contract edit <contract-id> [field and party flags] [--revision <n>] [--json]
+docbank contract delete <contract-id> [--revision <n>] [--json]
+```
+
+Register agreements, dates, terms and parties. `--expiring-before` is exclusive
+and includes every status; combine it with `--status active` for active
+renewals. See [Contracts](usage/contracts.md) for fields and link behavior.
+
 ## docbank party
 
 ```text

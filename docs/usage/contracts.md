@@ -67,14 +67,14 @@ docbank contract delete <contract-id>
 Stored statuses are `draft`, `pending_signature`, `active`, `terminated`, and
 `cancelled`. An active agreement reads as `expired` after its expiry date; on
 the expiry date it remains active. `--as-of` chooses the date used for that
-calculation, and `--expiring-before` excludes the named date. Title search
+calculation, and `--expiring-before` excludes the named date for every status. Combine it with `--status active` for active renewals. Title search
 with `--q` is a literal, ASCII case-insensitive substring. A contract type is
 an optional lowercase label containing letters, digits, and underscores.
 Each short term is limited to 8,192 bytes.
 
 An own-party link requires an own entity. Retired parties remain on existing
 contracts but cannot be newly attached. Edit party links with `--own`,
-`--counterparty`, `--remove-own`, and `--remove-counterparty`. Each change
+`--counterparty`, `--remove-own`, and `--remove-counterparty`. Names for removals match linked parties in the requested role, including retired parties; use an ID when a name is ambiguous. Each change
 uses the contract revision. If a later change fails, the command reports the
 steps already applied. Deleting a contract removes its party links, not
 stored documents. Contract mutations are refused in audited vaults. Metadata
@@ -83,3 +83,11 @@ backups include contracts and their links.
 The HTTP API exposes `/api/v1/contracts` and individual contracts at
 `/api/v1/contracts/{contract_id}`. Mutations of existing records use the
 revision in `If-Match`; a stale revision fails without changing that operation.
+
+Contract party links use `PUT` and `DELETE` on
+`/api/v1/contracts/{contract_id}/parties/{party_id}?role=own|counterparty`.
+A repeated PUT is a revision-fenced no-op; deleting a missing link returns
+404. An unknown party or invalid role returns `invalid_contract`, a non-own
+party in the own role returns `party_not_own`, and a retired party returns
+`party_retired`. List filters include type, party ID and exclusive expiry;
+`limit` and `offset` select pages, with a short page indicating the end.

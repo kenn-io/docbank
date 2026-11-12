@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"go.kenn.io/docbank/document"
 )
 
 var ErrInvalidContract = errors.New("invalid contract")
@@ -53,7 +55,7 @@ func validContractStatus(s string) bool {
 	return false
 }
 func validateContractInput(in ContractInput) error {
-	if !utf8.ValidString(in.Title) || strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 300 || strings.ContainsRune(in.Title, 0) {
+	if !document.ValidPersonIdentityText(in.Title) || strings.TrimSpace(in.Title) == "" || utf8.RuneCountInString(in.Title) > 300 || strings.ContainsRune(in.Title, 0) {
 		return fmt.Errorf("%w: title", ErrInvalidContract)
 	}
 	if in.ContractType != "" && !contractTypePattern.MatchString(in.ContractType) {
@@ -70,9 +72,9 @@ func validateContractInput(in ContractInput) error {
 	if in.StartsOn != nil && in.ExpiresOn != nil && *in.ExpiresOn < *in.StartsOn {
 		return fmt.Errorf("%w: date order", ErrInvalidContract)
 	}
-	for _, v := range []string{in.Summary, in.Purpose, in.Consideration, in.Termination} {
-		if len(v) > 8192 || !utf8.ValidString(v) || strings.ContainsRune(v, 0) {
-			return fmt.Errorf("%w: term", ErrInvalidContract)
+	for _, term := range []struct{ name, value string }{{"summary", in.Summary}, {"purpose", in.Purpose}, {"consideration", in.Consideration}, {"termination", in.Termination}} {
+		if len(term.value) > 8192 || !utf8.ValidString(term.value) || strings.ContainsRune(term.value, 0) {
+			return fmt.Errorf("%w: %s must be valid UTF-8 without NUL and at most 8192 bytes", ErrInvalidContract, term.name)
 		}
 	}
 	return nil
@@ -216,6 +218,9 @@ func (s *Store) CreateContract(ctx context.Context, in ContractInput) (Contract,
 	})
 	return out, err
 }
+func sameContractDate(a, b *string) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
 func (s *Store) UpdateContract(ctx context.Context, id string, rev int64, in ContractInput) (Contract, error) {
 	if err := validateContractInput(in); err != nil {
 		return Contract{}, err
@@ -229,6 +234,10 @@ func (s *Store) UpdateContract(ctx context.Context, id string, rev int64, in Con
 		}
 		if c.Revision != rev {
 			return ErrStaleRevision
+		}
+		if c.Title == in.Title && c.ContractType == in.ContractType && c.Status == in.Status && sameContractDate(c.StartsOn, in.StartsOn) && sameContractDate(c.ExpiresOn, in.ExpiresOn) && sameContractDate(c.SignedOn, in.SignedOn) && c.Summary == in.Summary && c.Purpose == in.Purpose && c.Consideration == in.Consideration && c.Termination == in.Termination {
+			out = c
+			return nil
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE contracts SET title=$1,contract_type=$2,status=$3,starts_on=$4,expires_on=$5,signed_on=$6,summary=$7,purpose=$8,consideration=$9,termination=$10,revision=$11,updated_at=$12 WHERE contract_id=$13`, in.Title, in.ContractType, in.Status, in.StartsOn, in.ExpiresOn, in.SignedOn, in.Summary, in.Purpose, in.Consideration, in.Termination, rev+1, nowRFC3339(), id)
 		if err != nil {
@@ -296,6 +305,9 @@ func (s *Store) ListContracts(ctx context.Context, o ContractListOptions) ([]Con
 	return items, tx.Commit()
 }
 func (s *Store) changeContractParty(ctx context.Context, id string, rev int64, partyID, role string, attach bool) (Contract, error) {
+	if role != "own" && role != "counterparty" {
+		return Contract{}, ErrInvalidContract
+	}
 	var out Contract
 	asOf := time.Now().Format(time.DateOnly)
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {

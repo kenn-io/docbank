@@ -2265,6 +2265,13 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkContractLifecycle(t, newPostgresQueryStore)
 		}},
+		{"ContractConcurrentRevisionFence", func(t *testing.T) {
+			t.Helper()
+			checkContractConcurrentRevisionFence(t, newTestStore)
+		}, func(t *testing.T) {
+			t.Helper()
+			checkContractConcurrentRevisionFence(t, newPostgresQueryStore)
+		}},
 		{"BatchTagsMixedChangesNoOpsAndCallerOrder", func(t *testing.T) {
 			t.Helper()
 			checkBatchTagsMixedChangesNoOpsAndCallerOrder(t, newTestStore)

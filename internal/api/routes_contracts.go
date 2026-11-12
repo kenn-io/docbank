@@ -107,6 +107,9 @@ func (p *CreateContractRequest) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return err
 	}
+	if _, ok := members["status"]; ok && value.Status == "" {
+		return fmt.Errorf("status cannot be empty")
+	}
 	*p = CreateContractRequest(value)
 	return nil
 }

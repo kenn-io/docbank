@@ -29,7 +29,13 @@ func checkContractLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	assert.Equal(t, "expired", got.EffectiveStatus)
 	_, err = s.UpdateContract(ctx, c.ContractID, c.Revision-1, input)
 	require.ErrorIs(t, err, ErrStaleRevision)
+	same, err := s.UpdateContract(ctx, c.ContractID, c.Revision, input)
+	require.NoError(t, err)
+	assert.Equal(t, c.Revision, same.Revision)
 	require.NoError(t, s.DeleteContract(ctx, c.ContractID, c.Revision))
+	var links int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contract_parties WHERE contract_id=$1`, c.ContractID).Scan(&links))
+	assert.Zero(t, links)
 	_, err = s.GetContract(ctx, c.ContractID, "2024-03-02")
 	require.ErrorIs(t, err, ErrNotFound)
 }
@@ -45,6 +51,7 @@ func TestContractRejectsInvalidInput(t *testing.T) {
 	require.NoError(t, err)
 	for _, input := range []ContractInput{
 		{Title: ""},
+		{Title: "bad\nname"},
 		{Title: "Invalid date", StartsOn: new("2023-02-29")},
 		{Title: "Reverse dates", StartsOn: new("2024-03-02"), ExpiresOn: new("2024-03-01")},
 		{Title: "Long term", Summary: strings.Repeat("x", 8193)},
@@ -64,8 +71,10 @@ func checkContractFilters(t *testing.T, open func(*testing.T) *Store) {
 	t.Helper()
 	s := open(t)
 	ctx := t.Context()
+	p, err := s.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Supplier"})
+	require.NoError(t, err)
 	for _, in := range []ContractInput{
-		{Title: "Rate 100%", Status: "active", ExpiresOn: new("2024-03-01")},
+		{Title: "Rate 100%", ContractType: "lease", Status: "active", ExpiresOn: new("2024-03-01"), Parties: []ContractPartyInput{{PartyID: p.PartyID, Role: "counterparty"}}},
 		{Title: "Rate 100x", Status: "active", ExpiresOn: new("2024-03-02")},
 		{Title: "Draft", Status: "draft", ExpiresOn: new("2024-02-29")},
 	} {
@@ -84,6 +93,13 @@ func checkContractFilters(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "Draft", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", ContractType: "lease", PartyID: p.PartyID, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "Rate 100%", got[0].Title)
+	got, err = s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-02", ContractType: "lease", PartyID: p.PartyID, Limit: 1, Offset: 1})
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 func TestContractFilters(t *testing.T) { t.Parallel(); checkContractFilters(t, newTestStore) }
 
@@ -106,6 +122,8 @@ func checkContractPartyHistory(t *testing.T, open func(*testing.T) *Store) {
 	changed, err := s.DetachContractParty(ctx, c.ContractID, c.Revision, p.PartyID, "own")
 	require.NoError(t, err)
 	assert.Equal(t, c.Revision+1, changed.Revision)
+	_, err = s.DetachContractParty(ctx, c.ContractID, changed.Revision, p.PartyID, "invalid")
+	require.ErrorIs(t, err, ErrInvalidContract)
 	_, err = s.DetachContractParty(ctx, c.ContractID, changed.Revision, p.PartyID, "own")
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.AttachContractParty(ctx, c.ContractID, c.Revision, p.PartyID, "own")
@@ -120,6 +138,8 @@ func TestContractMetadataRoundTrip(t *testing.T) {
 	p, err := source.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Owner", Own: true})
 	require.NoError(t, err)
 	c, err := source.CreateContract(ctx, ContractInput{Title: "Agreement", Parties: []ContractPartyInput{{PartyID: p.PartyID, Role: "own"}}})
+	require.NoError(t, err)
+	_, err = source.db.ExecContext(ctx, `UPDATE contracts SET updated_at=$1 WHERE contract_id=$2`, "2000-01-01T00:00:00.000000000Z", c.ContractID)
 	require.NoError(t, err)
 	var buf bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &buf))
@@ -136,9 +156,9 @@ func TestContractMetadataRoundTrip(t *testing.T) {
 }
 
 // Two writers with the same revision cannot both change the aggregate.
-func TestContractConcurrentRevisionFence(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
+func checkContractConcurrentRevisionFence(t *testing.T, open func(*testing.T) *Store) {
+	t.Helper()
+	s := open(t)
 	ctx := t.Context()
 	c, err := s.CreateContract(ctx, ContractInput{Title: "Before"})
 	require.NoError(t, err)
@@ -167,6 +187,10 @@ func TestContractConcurrentRevisionFence(t *testing.T) {
 	}
 	assert.Equal(t, 1, success)
 	assert.Equal(t, 1, stale)
+}
+func TestContractConcurrentRevisionFence(t *testing.T) {
+	t.Parallel()
+	checkContractConcurrentRevisionFence(t, newTestStore)
 }
 func TestContractAuditRefusal(t *testing.T) {
 	t.Parallel()
