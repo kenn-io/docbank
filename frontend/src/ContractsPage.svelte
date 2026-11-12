@@ -270,7 +270,7 @@
                   ></td
                 >
                 <td class="narrow-hidden">{formatCivilDate(contract.starts_on)}</td>
-                <td>{formatCivilDate(contract.expires_on)}</td>
+                <td class="date-cell">{formatCivilDate(contract.expires_on)}</td>
               </tr>
             {/each}
           </tbody>
@@ -331,6 +331,16 @@
   @media (max-width: 760px) {
     .narrow-hidden {
       display: none;
+    }
+    /* Four columns must fit a phone: narrower cell spacing than the kit
+       table's 10px, and the expiry date may break after its comma. */
+    :global(.contracts) thead th,
+    :global(.contracts) tbody th,
+    :global(.contracts) tbody td {
+      padding-inline: var(--space-2);
+    }
+    :global(.contracts) tbody .date-cell {
+      white-space: normal;
     }
   }
 </style>
