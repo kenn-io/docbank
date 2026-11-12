@@ -46,6 +46,11 @@ try {
     const inspector = path.join(scratch, `docbank-page-inspect-${mode}`);
     const workspace = path.join(scratch, mode);
     const report = path.join(scratch, `${mode}.json`);
+    // The Taxes PR capture runs once, with the CGO binary, in its own
+    // synthetic vault and output directory.
+    const taxes = mode === "cgo";
+    const taxesWorkspace = path.join(scratch, `${mode}-taxes`);
+    const cases = taxes ? 11 : 10;
     const env = {
       ...process.env,
       CGO_ENABLED: cgo,
@@ -64,9 +69,14 @@ try {
         mode,
       ),
       PLAYWRIGHT_JSON_OUTPUT_FILE: report,
+      ...(taxes && {
+        DOCBANK_TAXES_WORKSPACE: taxesWorkspace,
+        DOCBANK_TAXES_SCREENSHOT_DIR: path.join(repository, ".superpowers/taxes-shots"),
+      }),
     };
     try {
       await rm(env.DOCBANK_REDACTION_REVIEW_SCREENSHOT_DIR, { recursive: true, force: true });
+      if (taxes) await rm(env.DOCBANK_TAXES_SCREENSHOT_DIR, { recursive: true, force: true });
       console.log(`Building CGO_ENABLED=${cgo} (${mode})`);
       run("go", ["build", "-tags", "fts5", "-o", binary, "./cmd/docbank"], env, 600_000);
       run(
@@ -91,6 +101,7 @@ try {
           "redaction-text.screenshot.ts",
           "redaction-numbered.screenshot.ts",
           "document-reader.screenshot.ts",
+          ...(taxes ? ["taxes.screenshot.ts"] : []),
           "--config",
           "frontend/screenshots/playwright.config.ts",
           "--project",
@@ -109,10 +120,10 @@ try {
       const { expected, unexpected, flaky, skipped } = result.stats;
       assert.deepEqual(
         { expected, unexpected, flaky, skipped },
-        { expected: 10, unexpected: 0, flaky: 0, skipped: 0 },
-        `${mode} must execute ten passing cases`,
+        { expected: cases, unexpected: 0, flaky: 0, skipped: 0 },
+        `${mode} must execute ${cases} passing cases`,
       );
-      console.log(`${mode}: executed=10 passed=10 skipped=0 failed=0`);
+      console.log(`${mode}: executed=${cases} passed=${cases} skipped=0 failed=0`);
     } catch (error) {
       failures.push(mode);
       keepScratch = true;
@@ -120,6 +131,7 @@ try {
     } finally {
       try {
         await stopAbandonedDaemon(binary, workspace, env);
+        if (taxes) await stopAbandonedDaemon(binary, taxesWorkspace, env);
       } catch (error) {
         keepScratch = true;
         failures.push(`${mode} shutdown`);
