@@ -814,7 +814,7 @@ func restoreV41SourceState(ctx context.Context, source metadataQuerier, target *
 	})
 }
 
-// restoreV48SourceState preserves observations and in-flight explicit requests.
+// restoreV48SourceState preserves observations and derived-upload jobs.
 // Feed cursors belong to the database incarnation and intentionally expire on
 // upgrade; vector membership epochs are derived from imported authority.
 func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
@@ -822,10 +822,9 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		return err
 	}
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		// Ordinary backups omit derived uploads. Preserve the complete job and
-		// its waiters when an explicit description request is still in flight.
-		jobs := `SELECT job_id FROM rendition_job_waiters WHERE waiter_id IN (SELECT waiter_id FROM photo_description_explicit_waiters)`
-		derived := `json_extract(execution_identity_json, '$.upload.input_kind')='derived_upload' AND job_id IN (` + jobs + `)`
+		// Unlike a backup restore, an upgrade keeps consent. Preserve derived
+		// jobs and waiters, including retry budgets, resume handles and holds.
+		derived := `json_extract(execution_identity_json, '$.upload.input_kind')='derived_upload'`
 		if err := copyReleasedRows(ctx, source, tx, "rendition_jobs", derived); err != nil {
 			return err
 		}
