@@ -51,6 +51,17 @@ func TestPhotoBrowseReportsCompilerRelevanceAvailability(t *testing.T) {
 	}
 }
 
+func TestValidatePhotoQueryKeepsSemanticIntent(t *testing.T) {
+	s := newTestStore(t)
+	for _, mode := range []string{"semantic", "hybrid"} {
+		value := snapshotTestQuery(t, `{"mode":"`+mode+`","text":"sunset"}`)
+		require.NoError(t, s.ValidatePhotoQuery(t.Context(), value))
+		require.Equal(t, mode, value.Mode)
+		value.Sort.Field = "document_date"
+		require.ErrorContains(t, s.ValidatePhotoQuery(t.Context(), value), "only supported in Documents")
+	}
+}
+
 func TestCompilePhotoPredicates(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{

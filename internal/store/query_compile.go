@@ -727,7 +727,9 @@ func (s *Store) ValidatePhotoQuery(ctx context.Context, value query.Query) error
 	if err := ValidatePhotoDocumentDates(value); err != nil {
 		return err
 	}
-	resolved, err := query.ResolveQuery(ctx, value, queryResolver{q: s.db})
+	lexical := value
+	lexical.Mode = query.ModeLexical
+	resolved, err := query.ResolveQuery(ctx, lexical, queryResolver{q: s.db})
 	if err != nil {
 		return err
 	}

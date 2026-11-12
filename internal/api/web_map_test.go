@@ -30,7 +30,7 @@ func TestWebMapConfiguration(t *testing.T) {
 	t.Parallel()
 	tiles := config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png?key=synthetic-provider-key", Attribution: `<img src=x onerror="alert(1)">`, MaxZoom: 19}
 	mux := http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", "", "America/Toronto", tiles, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", tiles, nil)
 	paths := []string{"/", "/photos", "/photos/map", "/photos/map/22222222-2222-4222-8222-0000000000aa"}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -40,7 +40,6 @@ func TestWebMapConfiguration(t *testing.T) {
 			body := response.Body.String()
 			assert.Contains(t, strings.ToLower(body), "<!doctype html>")
 			assert.Contains(t, body, `name="docbank-map-tiles"`)
-			assert.Contains(t, body, `<meta name="docbank-timeline-timezone" content="America/Toronto">`)
 			page := html.UnescapeString(body)
 			assert.NotContains(t, page, "synthetic-provider-key")
 			assert.NotContains(t, page, "tiles.example.org/{z}")
@@ -56,14 +55,13 @@ func TestWebMapConfiguration(t *testing.T) {
 	mux.ServeHTTP(invalid, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/photos/map/invalid", nil))
 	require.Equal(t, http.StatusNotFound, invalid.Code)
 	mux = http.NewServeMux()
-	registerWeb(mux, true, "http://localhost:8080", "", "", "", config.MapTilesConfig{}, nil)
+	registerWeb(mux, true, "http://localhost:8080", "", "", config.MapTilesConfig{}, nil)
 	for _, path := range paths {
 		disabled := httptest.NewRecorder()
 		mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 		require.Equal(t, http.StatusOK, disabled.Code)
 		assert.Contains(t, disabled.Header().Get("Content-Security-Policy"), "img-src 'self' data: blob:;")
 		assert.Contains(t, html.UnescapeString(disabled.Body.String()), `"tile_url":""`)
-		assert.Contains(t, disabled.Body.String(), `<meta name="docbank-timeline-timezone" content="UTC">`)
 	}
 	disabled := httptest.NewRecorder()
 	mux.ServeHTTP(disabled, httptest.NewRequestWithContext(t.Context(), http.MethodGet, webMapTilePath+"/3/4/5", nil))

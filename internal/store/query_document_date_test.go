@@ -22,6 +22,12 @@ func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
 	authored.AxisKey = "2020-03-04T00:00:00.000000000"
 	authored.EventID = document.DocumentEventID(s.VaultID(), node.CurrentVersionID, authored.SourceKey, authored.DateKind, authored.DateValue, authored.Precision, authored.TimezoneKind, authored.EvidenceSHA256)
 	record.Events = append(record.Events, authored)
+	coarse := authored
+	coarse.SourceKey += "/month"
+	coarse.DateKind, coarse.DateValue, coarse.Precision = "modified", "2020-03", "month"
+	coarse.AxisKey = "2020-03-01T00:00:00.000000000"
+	coarse.EventID = document.DocumentEventID(s.VaultID(), node.CurrentVersionID, coarse.SourceKey, coarse.DateKind, coarse.DateValue, coarse.Precision, coarse.TimezoneKind, coarse.EvidenceSHA256)
+	record.Events = append(record.Events, coarse)
 	record.Primaries = nil
 	for _, disclosure := range []string{"safe", "full"} {
 		primary, ok := document.SelectPrimaryEvent(record.Events, record.DocumentKind, "vault", disclosure)
@@ -36,10 +42,16 @@ func TestDocumentDateScopeMatchesOneVisibleClaim(t *testing.T) {
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 	compiled = compileFixtureQuery(t, s, "date_kind:authored date:2020-03-04 date_precision:coarse", query.Filters{})
 	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
+	compiled = compileFixtureQuery(t, s, "date_kind:modified date:2020-03-04 date:2020-03-05", query.Filters{})
+	require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
+	compiled = compileFixtureQuery(t, s, "date_kind:modified date:2020-03-04..2020-03-07 date:2020-03-05", query.Filters{})
+	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 }
 
 func TestDocumentDateBoundaryVectors(t *testing.T) {
 	_, missingErr := (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-30", "2011-12-30"}}})
+	require.ErrorContains(t, missingErr, "date_not_in_zone")
+	_, missingErr = (queryCompiler{dateZone: "Pacific/Apia"}).compileDatePredicate(dateScope{ranges: [][2]string{{"2011-12-28", "2011-12-28"}, {"2011-12-29", "2011-12-29"}, {"2011-12-30", "2011-12-30"}}})
 	require.ErrorContains(t, missingErr, "date_not_in_zone")
 	for _, tc := range []struct{ zone, day, start, end string }{
 		{"America/Santiago", "2026-09-06", "2026-09-06T04:00:00.000000000Z", "2026-09-07T03:00:00.000000000Z"},
@@ -145,6 +157,19 @@ func TestDocumentDateAllDayEventMatchesSecondDay(t *testing.T) {
 	}
 	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, requireDocumentEventInputsSHA256(t, s, target), mustMarshalDocumentEvents(t, record))
 	require.NoError(t, err)
+	// Both days overlap the event, but their intersection is empty.
+	for _, text := range []string{
+		"date:2026-03-09 date:2026-03-10",
+		"date:2026-03-09..2026-03-10 date:2026-03-11",
+	} {
+		compiled := compileFixtureQuery(t, s, text, query.Filters{})
+		require.Empty(t, compiledFixtureIDs(t, s.db, compiled, ""))
+	}
+	value, err := query.Parse([]byte(`{"syntax":"advanced","text":"date:2026-03-09..2026-03-10","filters":{"document_date":{"from":"2026-03-10","to":"2026-03-11"}}}`))
+	require.NoError(t, err)
+	intersection, err := compileQuery(ctx, value, queryResolver{q: s.db})
+	require.NoError(t, err)
+	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, intersection, ""))
 	compiled := compileFixtureQuery(t, s, "date:2026-03-10 date_precision:day", query.Filters{})
 	require.Equal(t, []int64{node.ID}, compiledFixtureIDs(t, s.db, compiled, ""))
 	compiled = compileFixtureQuery(t, s, "date_kind:ended date:2026-03-10", query.Filters{})

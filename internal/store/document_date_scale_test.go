@@ -5,16 +5,18 @@ import (
 	"database/sql"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/query"
 )
 
 // TestDocumentDateIndexMeasurement runs in the existing Linux CI test lanes.
 // Its gotestsum JSON artifact retains the query plans and timings, including on
-// success. This measures selective lookups, not end-to-end snapshot latency.
+// success. The synthetic data has one event per file and no multi-day spans.
 func TestDocumentDateIndexMeasurement(t *testing.T) {
 	if os.Getenv("CI") != "true" || runtime.GOOS != "linux" {
 		t.Skip("100k synthetic index measurement runs only in Linux CI")
@@ -77,20 +79,56 @@ func TestDocumentDateIndexMeasurement(t *testing.T) {
 	from := ` FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE n.kind='file' AND `
 	sortKey := documentDateSortExpression(false)
 	keySQL := `SELECT n.id` + from + part.sql + ` ORDER BY ` + sortKey + `, n.id`
-	// This baseline uses retained event columns, without the derived key indexes.
+	// The alternative uses test-only indexes over the retained event columns.
 	// The synthetic corpus has one primary event per file and no multi-day ranges.
-	baseline := `EXISTS (SELECT 1 FROM document_events e JOIN document_event_heads h ON h.generation_id=e.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND e.sensitive=0 AND ((e.utc_key IS NOT NULL AND e.utc_key>=? AND e.utc_key<?) OR (e.utc_key IS NULL AND e.precision NOT IN ('year','month') AND substr(e.date_value,1,10)<=? AND substr(e.date_value,1,10)>=?) OR (e.precision='month' AND substr(e.date_value,1,7)>=? AND substr(e.date_value,1,7)<=?) OR (e.precision='year' AND substr(e.date_value,1,4)>=? AND substr(e.date_value,1,4)<=?)))`
-	baselineSort := strings.Replace(sortKey, "document_date_keys k", "document_events k", 1)
+	baseline := `EXISTS (SELECT 1 FROM document_events e INDEXED BY measurement_events_lookup JOIN document_event_heads h ON h.generation_id=e.generation_id WHERE h.content_version_id=cv.version_id AND ` + currentDocumentDateHead + ` AND e.sensitive=0 AND ((e.utc_key IS NOT NULL AND e.utc_key>=? AND e.utc_key<?) OR (e.utc_key IS NULL AND e.precision NOT IN ('year','month') AND substr(e.date_value,1,10)<=? AND substr(e.date_value,1,10)>=?) OR (e.precision='month' AND substr(e.date_value,1,7)>=? AND substr(e.date_value,1,7)<=?) OR (e.precision='year' AND substr(e.date_value,1,4)>=? AND substr(e.date_value,1,4)<=?)))`
+	baselineSort := strings.Replace(sortKey, "document_date_keys k", "document_events k INDEXED BY measurement_events_lookup", 1)
 	require.NotEqual(t, sortKey, baselineSort)
 	beforePrimaryRemoval := baselineSort
 	baselineSort = strings.Replace(baselineSort, "k.primary_safe=1 AND ", "", 1)
 	require.NotEqual(t, beforePrimaryRemoval, baselineSort)
 	eventSQL := `SELECT n.id` + from + baseline + ` ORDER BY ` + baselineSort + `, n.id`
-	keys := measureDateLookup(t, ctx, s.db, "date_keys", keySQL, part.args...)
-	events := measureDateLookup(t, ctx, s.db, "document_events", eventSQL, part.args...)
-	require.NotEmpty(t, keys)
-	require.Less(t, len(keys), versions)
-	require.Equal(t, events, keys)
+	// Force the same test-only covering index in both event lookups so the
+	// reported alternative is actually indexed, independent of planner choice.
+	_, err = s.db.ExecContext(ctx, `CREATE INDEX measurement_events_lookup ON document_events(generation_id,precision,utc_key,date_value,axis_key,sensitive,event_id)`)
+	require.NoError(t, err)
+	for run := range 3 {
+		keys := measureDateLookup(t, ctx, s.db, "date_keys", keySQL, part.args...)
+		events := measureDateLookup(t, ctx, s.db, "document_events_indexed", eventSQL, part.args...)
+		require.NotEmpty(t, keys)
+		require.Less(t, len(keys), versions)
+		require.Equal(t, events, keys)
+		started := time.Now()
+		require.NoError(t, requireDocumentDateIndex(ctx, s.db))
+		t.Logf("fresh gate run %d: %s", run+1, time.Since(started))
+		value, err := query.Parse([]byte(`{"syntax":"advanced","text":"date:2026-03-01","timezone":"UTC","sort":{"field":"document_date","direction":"asc"}}`))
+		require.NoError(t, err)
+		started = time.Now()
+		projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+		require.NoError(t, err)
+		t.Logf("fresh full snapshot run %d: %d rows in %s", run+1, len(projection.Rows), time.Since(started))
+		var snapshotIDs []int64
+		for _, row := range projection.Rows {
+			snapshotIDs = append(snapshotIDs, row.NodeID)
+		}
+		slices.Sort(keys)
+		slices.Sort(snapshotIDs)
+		require.Equal(t, keys, snapshotIDs)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM document_event_attempts WHERE content_version_id=(SELECT current_version_id FROM nodes WHERE kind='file' ORDER BY id DESC LIMIT 1)`)
+	require.NoError(t, err)
+	value, err := query.Parse([]byte(`{"syntax":"advanced","text":"date:2026-03-01","timezone":"UTC"}`))
+	require.NoError(t, err)
+	for run := range 3 {
+		started := time.Now()
+		require.ErrorIs(t, requireDocumentDateIndex(ctx, s.db), ErrDocumentDatesPending)
+		t.Logf("pending gate run %d: %s", run+1, time.Since(started))
+		started = time.Now()
+		_, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+		require.ErrorIs(t, err, ErrDocumentDatesPending)
+		t.Logf("pending full snapshot run %d: %s", run+1, time.Since(started))
+	}
+	t.Log("Limits: synthetic single-event current files, test-only event indexes, no multi-day spans; timings are observations, not latency requirements.")
 
 }
 
@@ -112,6 +150,7 @@ func measureDateLookup(t *testing.T, ctx context.Context, db *sql.DB, label, sta
 	if label == "date_keys" {
 		require.Contains(t, planText, "document_date_keys_")
 	} else {
+		require.Contains(t, planText, "measurement_events_lookup")
 		require.NotContains(t, planText, "document_date_keys_")
 	}
 	start := time.Now()

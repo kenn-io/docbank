@@ -21,6 +21,7 @@ type DocumentEventCatalog interface {
 	LoadDocumentEventEvidence(
 		ctx context.Context, target store.DocumentEventTarget,
 	) (store.DocumentEventEvidenceSnapshot, error)
+	DocumentEventsForVersion(ctx context.Context, versionID string) (store.DocumentEventView, error)
 	PublishDocumentEvents(
 		ctx context.Context, target store.DocumentEventTarget,
 		fingerprint, inputsSHA256 string, canonical []byte,
@@ -72,6 +73,18 @@ func processDocumentEventTarget(
 		return catalog.RecordDocumentEventAttempt(
 			ctx, target, snapshot.InputsSHA256, state, []byte("[]"),
 		)
+	}
+
+	view, err := catalog.DocumentEventsForVersion(ctx, target.ContentVersionID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if err == nil && view.Generation.InputsSHA256 == snapshot.InputsSHA256 &&
+		view.Generation.ContractVersion == document.DocumentEventsContractV1 &&
+		view.Generation.DeriverFingerprint == DocumentEventsDeriverFingerprint &&
+		view.Generation.ContentVersionID == target.ContentVersionID {
+		_, err = catalog.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, snapshot.InputsSHA256, view.Generation.CanonicalJSON)
+		return err
 	}
 
 	record, _, err := DeriveDocumentEvents(snapshot)

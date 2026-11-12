@@ -56,10 +56,10 @@ second, or fractional second. Missing components are never filled in. A date
 such as `2024-06` stays a month. `2024-06-12` stays a date even when the source
 also names a timezone.
 
-Timezone state is recorded as UTC, a numeric offset, a named zone, omitted, or
-invalid. Docbank computes a UTC key only for hour-or-finer values with UTC or a
-valid numeric offset. A named zone is preserved but remains floating because a
-name alone may be ambiguous. Omitted and invalid zones also remain floating.
+Timezone state records UTC, numeric offsets, resolved IANA zones, RFC 5322
+zone names, other named zones, omitted or invalid zones. Hour-or-finer UTC,
+valid offset, resolved IANA and recognized RFC 5322 claims have UTC keys.
+Unknown named, omitted and invalid zones remain floating.
 Unsupported leap seconds remain diagnostics. The machine's local timezone is
 never used to complete a partial claim.
 
@@ -97,6 +97,12 @@ identities in the same transaction, so a stale worker cannot publish over
 changed evidence. Source metadata is decoded before the write transaction.
 Events, actors, and primary choices stay together in the canonical record.
 
+The v23 source metadata extractor re-extracts every original across the vault.
+Calendar VEVENT dates use component keys; VTODO, VJOURNAL, VFREEBUSY and bare
+dates retain legacy flat keys. Timezone observances, alarms and unknown nested
+components do not supply document dates. Flat pairing can be lossy across
+components.
+
 The source metadata extractor retains email `Received` headers as raw strings. It does not derive a received-date claim from them, so it does not classify those strings as dates. Email `Date` claims use the shared email zone classification, including invalid numeric offsets.
 
 The current recipe adds `iana` and `rfc5322` timezone kinds to
@@ -111,10 +117,12 @@ older codec can read newer bytes.
 
 A rebuild advances the input epoch and scans every retained version, including
 history and trash. The current recipe reads active `source-metadata/v1`, exact
-provenance bindings, and the content-version record. It then publishes a fresh
+provenance bindings, and the content-version record. It reuses a validated
+retained generation when its inputs and recipe still match, or derives a new
 generation or a bounded failed or unavailable attempt. A rebuild does not
-alter originals, rerun source extraction, call a rendition provider, or
-recreate a rendition that derivative purge removed.
+re-resolve retained instants with changed timezone rules. It does not alter
+originals, rerun source extraction, call a rendition provider, or recreate a
+rendition that derivative purge removed.
 
 Removing a retained version cascades its dirty state, attempts, head, and
 generation, and advances the publication epoch. Trashing a node keeps them

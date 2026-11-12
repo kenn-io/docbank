@@ -1562,17 +1562,35 @@ func (c *metadataCollector) emailTimestamp(date document.EmailDateV1, raw string
 
 func (c *metadataCollector) extractCalendar(data []byte) {
 	lines := unfoldCalendar(string(data))
+	type calendarComponent struct {
+		name    string
+		ordinal int
+	}
+	var stack []calendarComponent
 	component := 0
-	inEvent := false
 	for _, line := range lines {
-		if strings.EqualFold(line, "BEGIN:VEVENT") {
-			component++
-			inEvent = true
-			continue
-		}
-		if strings.EqualFold(line, "END:VEVENT") {
-			inEvent = false
-			continue
+		trimmed := strings.TrimSpace(line)
+		if name, value, found := strings.Cut(trimmed, ":"); found {
+			if strings.EqualFold(name, "BEGIN") {
+				frame := calendarComponent{name: strings.ToUpper(strings.TrimSpace(value))}
+				if frame.name == "VEVENT" {
+					if component < 1000000 {
+						component++
+					}
+					frame.ordinal = component
+				}
+				stack = append(stack, frame)
+				continue
+			}
+			if strings.EqualFold(name, "END") {
+				for i := len(stack) - 1; i >= 0; i-- {
+					if strings.EqualFold(stack[i].name, strings.TrimSpace(value)) {
+						stack = stack[:i]
+						break
+					}
+				}
+				continue
+			}
 		}
 		name, value, found := strings.Cut(line, ":")
 		if !found {
@@ -1593,22 +1611,26 @@ func (c *metadataCollector) extractCalendar(data []byte) {
 			c.string("title", "calendar", name, value, false)
 		case "DESCRIPTION":
 			c.string("description", "calendar", name, value, false)
-		case "DTSTART":
-			if !inEvent {
-				continue
+		case "DTSTART", "DTEND":
+			key := "calendar."
+			if len(stack) > 0 {
+				frame := stack[len(stack)-1]
+				switch frame.name {
+				case "VEVENT":
+					if frame.ordinal > 999999 {
+						continue
+					}
+					key = fmt.Sprintf("calendar.event.e%06d.", frame.ordinal)
+				case "VCALENDAR", "VTODO", "VJOURNAL", "VFREEBUSY":
+				default:
+					continue
+				}
 			}
-			key := fmt.Sprintf("calendar.event.e%06d.start", component)
-			if hasNamedTimezone {
-				c.string(key+".raw", "calendar", name, value, false)
-				c.warn("unsupported_timezone", "calendar", name, "named calendar timezone prevented timestamp normalization")
+			if base == "DTSTART" {
+				key += "start"
 			} else {
-				c.timestamp(key, "calendar", name, value)
+				key += "end"
 			}
-		case "DTEND":
-			if !inEvent {
-				continue
-			}
-			key := fmt.Sprintf("calendar.event.e%06d.end", component)
 			if hasNamedTimezone {
 				c.string(key+".raw", "calendar", name, value, false)
 				c.warn("unsupported_timezone", "calendar", name, "named calendar timezone prevented timestamp normalization")

@@ -1774,3 +1774,30 @@ func TestSourceMetadataPDFFactsSearch(t *testing.T) {
 		assert.Equal(t, positive.ID, hits[0].Node.ID, filter)
 	}
 }
+
+func TestCalendarComponentDateIsolation(t *testing.T) {
+	for _, component := range []string{"VTODO", "VJOURNAL", "VFREEBUSY", ""} {
+		lines := "DTSTART:20260401T120000\r\n"
+		if component != "" {
+			lines = "BEGIN:" + component + "\r\n" + lines + "END:" + component + "\r\n"
+		}
+		metadata, err := ExtractSourceMetadata(t.Context(), t.TempDir(), []byte("BEGIN:VCALENDAR\r\n"+lines+"END:VCALENDAR"))
+		require.NoError(t, err)
+		stamp, found := sourceMetadataTimestamp(metadata, "calendar.start")
+		require.True(t, found, component)
+		require.Equal(t, "20260401T120000", stamp.Raw)
+	}
+
+	data := []byte("BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20260309\r\nBEGIN:VALARM\r\nDTSTART:19700101T000000\r\nEND:VALARM\r\nDTEND;VALUE=DATE:20260311\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nDTSTART:20260401T120000\r\nEND:VTODO\r\nBEGIN:VEVENT\r\nDTSTART:20260501T120000\r\nEND:VEVENT\r\nEND:VCALENDAR")
+	metadata, err := ExtractSourceMetadata(t.Context(), t.TempDir(), data)
+	require.NoError(t, err)
+	for _, key := range []string{"calendar.event.e000001.start", "calendar.event.e000001.end", "calendar.event.e000002.start", "calendar.start"} {
+		_, found := sourceMetadataTimestamp(metadata, key)
+		require.True(t, found, key)
+	}
+	for _, field := range metadata.Fields {
+		if field.Value.Timestamp != nil {
+			require.NotContains(t, field.Value.Timestamp.Raw, "1970")
+		}
+	}
+}

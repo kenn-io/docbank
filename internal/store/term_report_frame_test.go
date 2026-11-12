@@ -80,6 +80,26 @@ func TestTermReportFrozenGenerationAndCurrentVersions(t *testing.T) {
 	require.NotEqual(t, frame.Members[0].Identity.VersionID, fresh.Members[0].Identity.VersionID)
 }
 
+func TestTermReportDocumentDateUsesReportTimezone(t *testing.T) {
+	s, node := documentDateZoneFixture(t)
+	request := termFrameRequest()
+	request.Terms = []report.Term{{Number: 1, Expression: "date:2026-03-09", Syntax: "advanced", Dates: report.DateRange{Start: "2024-01-01", End: "2026-12-31"}}}
+	budget := report.NewBudget(8 << 20)
+	defer func() { _ = budget.Close() }()
+	for _, tc := range []struct {
+		zone  string
+		match bool
+	}{{"America/Toronto", true}, {"Asia/Singapore", false}} {
+		request.Timezone = tc.zone
+		frame, err := s.MaterializeTermReportFrame(t.Context(), request, report.CoverageSelection{Configuration: "unconfigured"}, budget, budget)
+		require.NoError(t, err)
+		require.Equal(t, tc.zone, frame.Request.Timezone)
+		require.Len(t, frame.Members, 1)
+		require.Equal(t, node.ID, frame.Members[0].Identity.NodeID)
+		require.Equal(t, []bool{tc.match}, frame.Members[0].RawMatches)
+	}
+}
+
 func TestTermReportScopeAndEarliestAddition(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -150,6 +150,7 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		predicates = append(predicates, "("+strings.Join(alternatives, " OR ")+")")
 	}
 
+	var commonFrom, commonTo, commonStart, commonEnd string
 	for index, r := range scope.ranges {
 		from, _ := civiltime.ParseDate(r[0])
 		to, _ := civiltime.ParseDate(r[1])
@@ -170,11 +171,21 @@ func (c queryCompiler) compileDatePredicate(scope dateScope) (compiledQueryFragm
 		if err != nil {
 			return compiledQueryFragment{}, dateBoundaryError(err, scope, index)
 		}
+		if commonFrom == "" || r[0] > commonFrom {
+			commonFrom, commonStart = r[0], startKey
+		}
+		if commonTo == "" || r[1] < commonTo {
+			commonTo, commonEnd = r[1], endKey
+		}
+	}
+	if commonFrom != "" && commonFrom > commonTo {
+		predicates = append(predicates, "1=0")
+	} else if commonFrom != "" {
 		predicates = append(predicates, `((k.utc_key IS NOT NULL AND k.utc_key>=? AND k.utc_key<?) OR
 			(k.utc_key IS NULL AND k.precision NOT IN ('year','month') AND k.civil_date<=? AND k.civil_end_date>=?) OR
 			(k.precision='month' AND k.civil_month>=? AND k.civil_month<=?) OR
 			(k.precision='year' AND k.civil_year>=? AND k.civil_year<=?))`)
-		args = append(args, startKey, endKey, r[1], r[0], r[0][:7], r[1][:7], r[0][:4], r[1][:4])
+		args = append(args, commonStart, commonEnd, commonTo, commonFrom, commonFrom[:7], commonTo[:7], commonFrom[:4], commonTo[:4])
 	}
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM document_date_keys k JOIN document_event_heads h ON h.generation_id=k.generation_id WHERE ` + strings.Join(predicates, " AND ") + ")", args: args}, nil
 }

@@ -101,8 +101,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 					var page store.SnapshotPage
 					var err error
 					if request.Kind == "query" && request.Query != nil {
-						value := *request.Query
-						page, err = snapshots.Create(ctx, snapshotOwner, store.SnapshotRequest{Query: value})
+						page, err = snapshots.Create(ctx, snapshotOwner, store.SnapshotRequest{Query: *request.Query})
 					} else {
 						// Source resolution already holds the operation gate below.
 						_, page, err = snapshots.RunSaved(ctx, snapshotOwner, request.SavedQueryID, request.SavedQueryRevision, store.SnapshotRequest{}, nil)
