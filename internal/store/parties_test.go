@@ -109,10 +109,9 @@ func checkPartyConcurrentNameAdmission(t *testing.T, open func(*testing.T) *Stor
 	close(results)
 	success, duplicate := 0, 0
 	for err := range results {
-		var exists *PartyExistsError
 		if err == nil {
 			success++
-		} else if errors.As(err, &exists) {
+		} else if _, ok := errors.AsType[*PartyExistsError](err); ok {
 			duplicate++
 		} else {
 			t.Fatalf("unexpected create error: %v", err)
@@ -248,5 +247,4 @@ func checkPartyPersonLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	_, err = s.CreateParty(ctx, PartyInput{Kind: "person", DisplayName: "New link", PersonID: &survivor.PersonID})
 	require.ErrorIs(t, err, ErrInvalidParty)
-
 }

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"net/http"
 	"testing"
 
@@ -68,9 +69,7 @@ func TestPartyCreateRejectsNoncanonicalAndNullFields(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 	for _, field := range []map[string]any{{"OWN": true}, {"Legal_Name": "Example"}, {"Country": "CA"}, {"own": nil}, {"legal_name": nil}} {
 		body := map[string]any{"kind": "person", "display_name": "Example"}
-		for k, v := range field {
-			body[k] = v
-		}
+		maps.Copy(body, field)
 		resp, text := do(t, ts, http.MethodPost, "/api/v1/parties", nil, body)
 		assert.GreaterOrEqual(t, resp.StatusCode, 400, text)
 		assert.Less(t, resp.StatusCode, 500, text)

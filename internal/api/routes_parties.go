@@ -59,7 +59,7 @@ func partyMembers(raw []byte) (map[string]jsontext.Value, error) {
 	for name, member := range members {
 		switch name {
 		case "kind", "display_name", "legal_name", "own":
-			if string(member) == "null" {
+			if string(member) == jsonNull {
 				return nil, fmt.Errorf("%s cannot be null", name)
 			}
 		case "country", "person_id":
@@ -109,10 +109,10 @@ func (p PatchPartyRequest) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	if p.ClearCountry {
-		members["country"] = jsontext.Value("null")
+		members["country"] = jsontext.Value(jsonNull)
 	}
 	if p.ClearPerson {
-		members["person_id"] = jsontext.Value("null")
+		members["person_id"] = jsontext.Value(jsonNull)
 	}
 	return json.Marshal(members)
 }
@@ -127,7 +127,7 @@ func fromStoreParty(p store.Party) Party {
 	return Party{PartyID: p.PartyID, Kind: p.Kind, DisplayName: p.DisplayName, LegalName: p.LegalName, Country: p.Country, PersonID: p.PersonID, Own: p.Own, Revision: p.Revision, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, RetiredAt: p.RetiredAt}
 }
 func partyResult(p store.Party) *partyOutput {
-	return &partyOutput{ETag: fmt.Sprintf("%q", fmt.Sprint(p.Revision)), Body: fromStoreParty(p)}
+	return &partyOutput{ETag: revisionETag(p.Revision), Body: fromStoreParty(p)}
 }
 
 func registerPartyRoutes(api huma.API, d Deps, g *gate) {

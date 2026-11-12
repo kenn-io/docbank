@@ -19,10 +19,14 @@ func TestPartyClientEditSendsRevisionAndClear(t *testing.T) {
 		assert.Equal(t, "/api/v1/parties/"+id, r.URL.Path)
 		assert.Equal(t, `"2"`, r.Header.Get("If-Match"))
 		var body map[string]any
-		require.NoError(t, json.UnmarshalRead(r.Body, &body))
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		assert.Contains(t, body, "country")
 		assert.Nil(t, body["country"])
-		assert.Equal(t, "", body["legal_name"])
+		assert.Contains(t, body, "legal_name")
+		assert.Empty(t, body["legal_name"])
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"3"`)
 		_, _ = w.Write([]byte(`{"party_id":"` + id + `","kind":"organization","display_name":"Example","legal_name":"","country":null,"person_id":null,"own":false,"revision":3,"created_at":"2026-01-01T00:00:00.000000000Z","updated_at":"2026-01-01T00:00:00.000000000Z","retired_at":null}`))
@@ -39,7 +43,10 @@ func TestPartyClientEditSendsExplicitEmptyValues(t *testing.T) {
 	const id = "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
-		require.NoError(t, json.UnmarshalRead(r.Body, &body))
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		assert.Equal(t, map[string]any{
 			"kind": "", "display_name": "", "legal_name": "", "country": "", "person_id": "", "own": false,
 		}, body)

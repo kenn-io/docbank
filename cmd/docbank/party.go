@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -27,7 +28,10 @@ func newPartyCommand() *cobra.Command {
 			retiredAt = *p.RetiredAt
 		}
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\tlegal name: %s\tcountry: %s\town: %t\tperson: %s\tretired: %s\trevision %d\tcreated: %s\tupdated: %s\n", p.PartyID, p.Kind, p.DisplayName, p.LegalName, country, p.Own, person, retiredAt, p.Revision, p.CreatedAt, p.UpdatedAt)
-		return err
+		if err != nil {
+			return fmt.Errorf("write party: %w", err)
+		}
+		return nil
 	}
 	var kind string
 	var own bool
@@ -123,14 +127,14 @@ func newPartyCommand() *cobra.Command {
 			input.PersonID = &editPerson
 		}
 		if clearCountry && input.Country != nil || clearPerson && input.PersonID != nil {
-			return fmt.Errorf("cannot set and clear the same field")
+			return errors.New("cannot set and clear the same field")
 		}
 		if input.Kind == nil && input.DisplayName == nil && input.LegalName == nil && input.Own == nil && input.Country == nil && input.PersonID == nil && !clearCountry && !clearPerson {
-			return fmt.Errorf("provide at least one change")
+			return errors.New("provide at least one change")
 		}
 		revision := editRevision
 		if cmd.Flags().Changed("revision") && revision <= 0 {
-			return fmt.Errorf("revision must be positive")
+			return errors.New("revision must be positive")
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -162,7 +166,7 @@ func newPartyCommand() *cobra.Command {
 	retire := &cobra.Command{Use: "retire <party-id>", Short: "Retire a party", Example: "docbank party retire 11111111-1111-4111-8111-111111111111", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		revision := retireRevision
 		if cmd.Flags().Changed("revision") && revision <= 0 {
-			return fmt.Errorf("revision must be positive")
+			return errors.New("revision must be positive")
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {

@@ -68,7 +68,7 @@ func validatePartyInput(in PartyInput) error {
 
 const partyColumns = `party_id,kind,display_name,display_name_folded,legal_name,country,own,person_id,revision,created_at,updated_at,retired_at`
 
-func scanParty(row interface{ Scan(...any) error }) (Party, error) {
+func scanParty(row interface{ Scan(dest ...any) error }) (Party, error) {
 	var p Party
 	var own int
 	err := row.Scan(&p.PartyID, &p.Kind, &p.DisplayName, &p.DisplayNameFolded, &p.LegalName, &p.Country, &own, &p.PersonID, &p.Revision, &p.CreatedAt, &p.UpdatedAt, &p.RetiredAt)
