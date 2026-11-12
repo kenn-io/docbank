@@ -540,7 +540,7 @@ func (s *Store) PurgeDerivatives(
 			if !generation.headed || !generation.targetsExcluded {
 				continue
 			}
-			replacement, err := stageLexicalGenerationExcludingTx(ctx, tx, headExclusions)
+			replacement, err := stageLexicalGenerationExcludingTx(ctx, tx, headExclusions, s.postgresSchema != "")
 			if err != nil {
 				return fmt.Errorf("staging lexical purge replacement: %w", err)
 			}

@@ -1361,7 +1361,7 @@ func (s *Store) StageRenditionJobBuild(
 			normalized.CapturedArtifactPolicyFingerprint != job.CapturedArtifactPolicyFingerprint {
 			return errors.New("rendition job build identity drifted")
 		}
-		if err := stageRenditionBuildTx(ctx, tx, normalized); err != nil {
+		if err := stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		root := CurrentRenditionRoot{
@@ -1397,7 +1397,7 @@ func (s *Store) StageRenditionJobGeneration(
 			job.Phase != RenditionPhaseGenerationStaged {
 			return errors.New("rendition job is not at the lexical generation phase")
 		}
-		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -1645,9 +1645,9 @@ func (s *Store) publishRenditionJob(
 			}
 			// Capture the final manifest under the publication writer lock so
 			// another publisher cannot make it stale before the head flip.
-			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID})
+			generation, err := appendLexicalGenerationTx(ctx, tx, []string{job.ID}, s.postgresSchema != "")
 			if errors.Is(err, ErrNotFound) {
-				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil)
+				generation, err = stageLexicalGenerationExcludingTx(ctx, tx, nil, s.postgresSchema != "")
 			}
 			if err != nil {
 				return err

@@ -108,7 +108,7 @@ type metadataRenditionSegment struct {
 	CharStart int    `json:"char_start" db:"char_start"`
 	CharEnd   int    `json:"char_end" db:"char_end"`
 	Checksum  string `json:"checksum" db:"checksum"`
-	Text      string `json:"text" db:"text"`
+	Text      string `json:"text" db:"text,bytes"`
 }
 
 type metadataRenditionAttachment struct {
@@ -494,7 +494,7 @@ func lexicalGenerationBuildIDsQuery(
 	return buildIDs, nil
 }
 
-func importMetadataProcessingConsentGrant(ctx context.Context, tx *sql.Tx, value metadataProcessingConsentGrant) error {
+func importMetadataProcessingConsentGrant(ctx context.Context, tx *sql.Tx, value metadataProcessingConsentGrant, postgres bool) error {
 	authority, err := validateMetadataProcessingConsentGrant(value)
 	if err != nil {
 		return err
@@ -514,7 +514,7 @@ func importMetadataProcessingConsentGrant(ctx context.Context, tx *sql.Tx, value
 	return err
 }
 
-func importMetadataProcessingProfile(ctx context.Context, tx *sql.Tx, value metadataProcessingProfile) error {
+func importMetadataProcessingProfile(ctx context.Context, tx *sql.Tx, value metadataProcessingProfile, postgres bool) error {
 	record, err := normalizeProcessingProfileRecord(ProcessingProfileRecord{
 		Fingerprint: value.Fingerprint, CanonicalProfile: value.CanonicalProfile,
 		RenditionRequestFingerprint:    value.RenditionRequestFingerprint,
@@ -541,18 +541,18 @@ func importMetadataProcessingProfile(ctx context.Context, tx *sql.Tx, value meta
 	return err
 }
 
-func importMetadataRenditionHead(ctx context.Context, tx *sql.Tx, value metadataRenditionHead) error {
+func importMetadataRenditionHead(ctx context.Context, tx *sql.Tx, value metadataRenditionHead, postgres bool) error {
 	if err := validateImportedRenditionHead(ctx, tx, value); err != nil {
 		return err
 	}
-	return insertMetadataRecord(ctx, tx, "rendition_heads", value)
+	return insertMetadataRecord(ctx, tx, "rendition_heads", value, postgres)
 }
 
 // importMetadataProcessingIncarnation skips an incarnation the target already
 // holds with the same creation time. An upgrade target adopts the source's
 // current incarnation before import, and that incarnation is exported again
 // when it has consent records.
-func importMetadataProcessingIncarnation(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation) error {
+func importMetadataProcessingIncarnation(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation, postgres bool) error {
 	var createdAt string
 	err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=$1`,
 		value.ID).Scan(&createdAt)
@@ -571,7 +571,7 @@ func importMetadataProcessingIncarnation(ctx context.Context, tx *sql.Tx, value 
 	}
 }
 
-func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataRenditionJob) error {
+func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataRenditionJob, postgres bool) error {
 	identityJSON, _, err := document.CanonicalRenditionExecutionIdentityV1(
 		value.ExecutionIdentity)
 	if err != nil {
@@ -623,7 +623,7 @@ func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataR
 	return err
 }
 
-func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value metadataRenditionJobWaiter) error {
+func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value metadataRenditionJobWaiter, postgres bool) error {
 	authority, err := validateMetadataRenditionJobWaiter(value)
 	if err != nil {
 		return err
@@ -656,13 +656,13 @@ func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value met
 	return err
 }
 
-func importMetadataCurrentRenditionRoot(ctx context.Context, tx *sql.Tx, value metadataCurrentRenditionRoot) error {
+func importMetadataCurrentRenditionRoot(ctx context.Context, tx *sql.Tx, value metadataCurrentRenditionRoot, postgres bool) error {
 	if value.Active {
 		if err := requireCurrentRenditionTargetTx(ctx, tx, value.root()); err != nil {
 			return err
 		}
 	}
-	return insertMetadataRecord(ctx, tx, "current_rendition_roots", value)
+	return insertMetadataRecord(ctx, tx, "current_rendition_roots", value, postgres)
 }
 
 func (value metadataCurrentRenditionRoot) root() CurrentRenditionRoot {
@@ -675,6 +675,7 @@ func (value metadataCurrentRenditionRoot) root() CurrentRenditionRoot {
 
 func restoreLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, value metadataLexicalGeneration,
+	postgres bool,
 ) error {
 	if err := validateMetadataLexicalGeneration(value); err != nil {
 		return err
@@ -693,7 +694,7 @@ func restoreLexicalGenerationTx(
 		return fmt.Errorf("restored lexical generation %s has a different immutable manifest",
 			value.GenerationID)
 	}
-	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, value.BuildIDs, segments, value.GenerationID, value.BuiltAt); err != nil {
+	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, value.BuildIDs, segments, value.GenerationID, value.BuiltAt, postgres); err != nil {
 		return fmt.Errorf("restoring lexical generation %s: %w", value.GenerationID, err)
 	}
 	if value.Headed {

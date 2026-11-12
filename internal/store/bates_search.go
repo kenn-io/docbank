@@ -210,7 +210,7 @@ func (s *Store) batesCandidatePredicate(selector BatesArtifactSelector, first in
 	}
 	claim := s.batesCustodianScopeSQL()
 	match := fmt.Sprintf("ca.raw_label_folded=$%d", first)
-	value := any(selector.CustodianLabel)
+	value := storedString(s.postgresSchema != "", selector.CustodianLabel)
 	if selector.PersonID != "" {
 		match, value = fmt.Sprintf("ca.person_id=$%d", first), selector.PersonID
 	}
@@ -241,7 +241,7 @@ func (s *Store) batesCandidateEvidence(ctx context.Context, q metadataQuerier, s
 		return boundedBatesEvidence(values), len(values) > maxBatesCandidateEvidence, rows.Err()
 	}
 	match := "ca.raw_label_folded=$2"
-	value := any(selector.CustodianLabel)
+	value := storedString(s.postgresSchema != "", selector.CustodianLabel)
 	if selector.PersonID != "" {
 		match, value = "ca.person_id=$2", selector.PersonID
 	}

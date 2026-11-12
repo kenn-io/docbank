@@ -108,7 +108,7 @@ func (s *Store) SuppliedTranscriptForSource(
 		WHERE o.caller_principal=$1 AND o.visible=1 AND i.kind='transcript'
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND c.blob_hash=$2
-		ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1`, principal, sourceSHA256).Scan(
+		ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1`, storedString(s.postgresSchema != "", principal), sourceSHA256).Scan(
 		&result.InputID, &result.OccurrenceID, &result.SourceVersionID,
 		&result.ContentVersionID, &result.InputSHA256, &result.Kind,
 		&result.Origin, &result.Provider, &result.Language)
@@ -150,7 +150,7 @@ func (s *Store) SuppliedTranscriptForSourceID(
 		  AND i.source_id=$3 AND i.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND v.source_id=$4
 		  AND c.blob_hash=$5`
-	args := []any{principal, kind, sourceID, sourceID, sourceSHA256}
+	args := []any{storedString(s.postgresSchema != "", principal), kind, sourceID, sourceID, sourceSHA256}
 	if inputID != "" {
 		query += " AND i.input_id=$6"
 		args = append(args, inputID)
@@ -189,7 +189,7 @@ func (s *Store) SuppliedTranscriptForSourceVersion(
 		WHERE o.caller_principal=$1 AND o.visible=1 AND i.kind=$2
 		  AND i.source_id=$3 AND i.source_version_id=$4
 		  AND o.source_id=i.source_id AND o.source_version_id=i.source_version_id`
-	args := []any{principal, kind, sourceID, sourceVersionID}
+	args := []any{storedString(s.postgresSchema != "", principal), kind, sourceID, sourceVersionID}
 	if inputID != "" {
 		query += " AND i.input_id=$5"
 		args = append(args, inputID)
@@ -224,7 +224,7 @@ func (s *Store) SuppliedTranscriptBindingForSource(
 		WHERE i.input_id=$1 AND o.caller_principal=$2 AND o.visible=1 AND i.kind=$3
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND c.blob_hash=$4`,
-		inputID, principal, kind, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
+		inputID, storedString(s.postgresSchema != "", principal), kind, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
 		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256,
 		&result.Kind, &result.Origin, &result.Provider, &result.Language)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -256,7 +256,7 @@ func (s *Store) MediaInputBindingVisible(
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		WHERE i.input_id=$1 AND i.source_id=$2 AND i.source_version_id=$3
 			AND o.caller_principal=$4 AND o.source_version_id=i.source_version_id`,
-		inputID, sourceID, sourceVersionID, principal).Scan(&visible)
+		inputID, sourceID, sourceVersionID, storedString(s.postgresSchema != "", principal)).Scan(&visible)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -336,7 +336,7 @@ func (s *Store) RetainSuppliedMedia(
 				return "", err
 			}
 		}
-		storedOccurrence, found, err := mediaOccurrenceByRevisionTx(ctx, tx,
+		storedOccurrence, found, err := s.mediaOccurrenceByRevisionTx(ctx, tx,
 			request.Occurrence.Principal, request.Occurrence.Ref, request.Occurrence.Revision)
 		if err != nil {
 			return "", err
@@ -452,7 +452,7 @@ func (s *Store) MediaProcessingContinuations(
 	d := metadataJSONDialect{postgres: s.postgresSchema != ""}
 	rows, err := s.db.QueryContext(ctx, `SELECT receipt_json FROM media_operations
 		WHERE verb IN ('submit_supplied_media','retry_media') AND `+d.text("receipt_json", "operation_state")+`='queued'
-			AND principal=$1 AND operation_id>$2 ORDER BY operation_id LIMIT $3`, principal, after, limit)
+			AND principal=$1 AND operation_id>$2 ORDER BY operation_id LIMIT $3`, storedString(s.postgresSchema != "", principal), after, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -186,7 +186,7 @@ var packageMetadataTables = []metadataRecordCodec{
 		table: "package_volumes", insert: importPackageVolumeMetadata}),
 }
 
-func importCollectionSnapshotMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshot) error {
+func importCollectionSnapshotMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshot, postgres bool) error {
 	if pageChecksum(record.CanonicalJSON) != record.Checksum || validateUUIDv4(record.SnapshotID) != nil {
 		return ErrPackageConflict
 	}
@@ -208,7 +208,7 @@ func importCollectionSnapshotMetadata(ctx context.Context, tx *sql.Tx, record me
 	return err
 }
 
-func importCollectionSnapshotMemberMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshotMember) error {
+func importCollectionSnapshotMemberMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshotMember, postgres bool) error {
 	if pageChecksum(record.CanonicalJSON) != record.Checksum {
 		return ErrPackageConflict
 	}
@@ -236,7 +236,7 @@ func importCollectionSnapshotMemberMetadata(ctx context.Context, tx *sql.Tx, rec
 	return err
 }
 
-func importCollectionSnapshotRepresentationMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshotRepresentation) error {
+func importCollectionSnapshotRepresentationMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshotRepresentation, postgres bool) error {
 	if pageChecksum(record.CanonicalJSON) != record.Checksum {
 		return ErrPackageConflict
 	}
@@ -256,7 +256,7 @@ func importCollectionSnapshotRepresentationMetadata(ctx context.Context, tx *sql
 	return err
 }
 
-func importPackageRecordMetadata(ctx context.Context, tx *sql.Tx, record metadataPackage) error {
+func importPackageRecordMetadata(ctx context.Context, tx *sql.Tx, record metadataPackage, postgres bool) error {
 	if pageChecksum(record.CanonicalJSON) != record.Checksum {
 		return ErrPackageConflict
 	}
@@ -277,7 +277,7 @@ func importPackageRecordMetadata(ctx context.Context, tx *sql.Tx, record metadat
 	return err
 }
 
-func importPackageVolumeMetadata(ctx context.Context, tx *sql.Tx, record metadataPackageVolume) error {
+func importPackageVolumeMetadata(ctx context.Context, tx *sql.Tx, record metadataPackageVolume, postgres bool) error {
 	if pageChecksum(record.CanonicalJSON) != record.Checksum {
 		return ErrPackageConflict
 	}

@@ -902,18 +902,29 @@ cannot authorize a provider call until the operator grants consent again.
 `VerifyAudit` independently replays the restored history and can compare
 previously recorded evidence on either backend.
 
-Provenance source kinds, descriptions and references remain valid UTF-8 strings,
-including U+0000, in the API and metadata stream. PostgreSQL stores
-`ingests.source_kind`, `ingests.source_desc`, `provenance.original_path` and the
-derived `photo_source_claims.original_path` as `BYTEA`. Shared readers scan these
-bytes back into strings; SQLite retains its released `TEXT` columns. Provenance
-identities, metadata exports and audit records retain the original bytes.
+Provenance strings, person names, extracted text and caller-supplied occurrence
+attributes retain U+0000 across logical transfer and native operations.
+PostgreSQL stores unrestricted provenance strings, person names and retained
+name snapshots, extracted text/error strings and retained rendition text, and
+caller-supplied media occurrence attributes as `BYTEA`. The metadata codec marks these fields with
+`db:"column,bytes"`; its existing import plan binds raw bytes on PostgreSQL.
+Native writes use explicit bindings. Shared readers scan the columns back into
+strings, and SQLite retains its released `TEXT` columns. Wire strings,
+provenance identities, metadata exports and audit records keep their original
+bytes. JSON documents remain JSON text with escaped control characters.
 
-PostgreSQL source classification inspects only the nine-byte `embedded:` prefix,
+Source classification inspects only the nine-byte `embedded:` prefix,
 case-insensitively, without decoding the full kind into PostgreSQL text. Exact
 source-path lookups bind bytes directly against the existing index. JSON receipt
-paths remain text values and use separate parameters from binary path lookups.
-Neither backend adds a query or an escaping layer to store these values.
+paths use separate text parameters from binary path lookups.
+
+Person-name ordering and cursors compare the original folded-name bytes.
+NUL-free names retain the PostgreSQL Unicode word-prefix regexp. For a name or
+prefix containing NUL, the query finds exact byte occurrences and checks the
+preceding Unicode rune; it never decodes a NUL-bearing value as PostgreSQL text
+or filters a bounded page after reading it. Recent-name exclusions use a native
+`bytea[]` parameter. These differences add no database round trip or storage
+escaping layer.
 
 PostgreSQL foreign keys that normally check immediately allow explicit deferral.
 Logical import and collection snapshot sealing, including received packages,

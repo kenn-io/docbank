@@ -120,17 +120,17 @@ func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write m
 	return rows.Err()
 }
 
-func insertPhotoCheckoutMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckout) error {
+func insertPhotoCheckoutMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckout, postgres bool) error {
 	if v.SkippedPhotos == nil {
 		v.SkippedPhotos = new([]PhotoCheckoutSkip{})
 	}
 	if v.SkippedPhotoCount == nil {
 		v.SkippedPhotoCount = new(int64(0))
 	}
-	return insertMetadataRecord(ctx, tx, "photo_checkouts", v)
+	return insertMetadataRecord(ctx, tx, "photo_checkouts", v, postgres)
 }
 
-func insertPhotoCheckoutEntryMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckoutEntry) error {
+func insertPhotoCheckoutEntryMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckoutEntry, postgres bool) error {
 	held := v.BaseHeld != nil && *v.BaseHeld
 	_, err := tx.ExecContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id,base_held) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, v.CheckoutID, v.FileID, v.AssetID, v.VersionID, v.Hash, v.Size, v.Path, v.SidecarOfID, boolInt(held))
 	return err

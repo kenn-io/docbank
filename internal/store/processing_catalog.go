@@ -275,7 +275,7 @@ func (s *Store) StageRenditionBuild(ctx context.Context, record RenditionBuildRe
 			normalized.VaultID, s.vaultID)
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return stageRenditionBuildTx(ctx, tx, normalized)
+		return stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != "")
 	})
 }
 
@@ -299,7 +299,7 @@ func (s *Store) StageRenditionBuildWithRoot(
 		return errors.New("rooted rendition build requires a root for the staged build")
 	}
 	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := stageRenditionBuildTx(ctx, tx, normalized); err != nil {
+		if err := stageRenditionBuildTx(ctx, tx, normalized, s.postgresSchema != ""); err != nil {
 			return err
 		}
 		return putCurrentRenditionRootTx(ctx, tx, root)
@@ -308,6 +308,7 @@ func (s *Store) StageRenditionBuildWithRoot(
 
 func stageRenditionBuildTx(
 	ctx context.Context, tx *sql.Tx, normalized RenditionBuildRecord,
+	postgres bool,
 ) error {
 	suppressed, err := derivativeBuildSuppressedTx(
 		ctx, tx, normalized.SourceSHA256, normalized.ID)
@@ -363,7 +364,7 @@ func stageRenditionBuildTx(
 		}
 		return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
 	}
-	if err := insertRenditionBuildChildrenTx(ctx, tx, normalized); err != nil {
+	if err := insertRenditionBuildChildrenTx(ctx, tx, normalized, postgres); err != nil {
 		return err
 	}
 	return validateRenditionBuildStateTx(ctx, tx, normalized.ID)
@@ -934,7 +935,7 @@ func ensureProcessingProfileTx(ctx context.Context, tx *sql.Tx, record Processin
 	return nil
 }
 
-func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record RenditionBuildRecord) error {
+func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record RenditionBuildRecord, postgres bool) error {
 	for _, artifact := range record.Artifacts {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum)
@@ -957,7 +958,7 @@ func insertRenditionBuildChildrenTx(ctx context.Context, tx *sql.Tx, record Rend
 			INSERT INTO rendition_lexical_segments(
 				build_id,segment_id,unit_id,segment_order,char_start,char_end,checksum,text
 			) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.ID, segment.ID, segment.UnitID, segment.Order,
-			segment.CharStart, segment.CharEnd, segment.Checksum, segment.Text); err != nil {
+			segment.CharStart, segment.CharEnd, segment.Checksum, storedString(postgres, segment.Text)); err != nil {
 			return fmt.Errorf("inserting rendition lexical segment %s: %w", segment.ID, err)
 		}
 	}

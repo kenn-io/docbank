@@ -70,6 +70,64 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		require.NoError(t, err)
 		return s
 	}
+	seeds["NUL person name"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		person, err := s.CreatePerson(t.Context(), "Ada\x00李明", "operator")
+		require.NoError(t, err)
+		_, err = s.CreatePerson(t.Context(), "Zoe", "operator")
+		require.NoError(t, err)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "claim.txt", fakeHash("c9"), 9, "text/plain")
+		require.NoError(t, err)
+		_, err = s.SetCustodian(t.Context(), CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: node.ID, ContentVersionID: node.CurrentVersionID}, PersonID: person.PersonID, RawLabel: "Ada\x00label", Rank: "primary", Basis: "operator_assigned", SourceRef: "claim\x00reference", IfMatchRevision: 1})
+		require.NoError(t, err)
+		_, err = s.LinkExternalIdentity(t.Context(), PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic", UID: "synthetic-id", UIDKind: "vcard_uid", UIDState: "current", DisplayNameSnapshot: "Ada\x00snapshot"}, person.Revision)
+		require.NoError(t, err)
+		asset := albumAsset(t, s, "portrait.jpg")
+		photo := requireNodeByID(t, s, asset.Files[0].NodeID)
+		_, err = s.MarkPersonInPhoto(t.Context(), photo.CurrentVersionID, person.PersonID, "")
+		require.NoError(t, err)
+		return s
+	}
+	seeds["NUL extraction"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "text.txt", fakeHash("c8"), 15, "text/plain")
+		require.NoError(t, err)
+		require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "custom\x00extractor", ExtractorVersion: 1, Status: ExtractionOK, Text: "before\x00after café"}))
+		require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "failed\x00extractor", ExtractorVersion: 1, Status: ExtractionFailed, Error: "failure\x00detail"}))
+		return s
+	}
+	for name, text := range map[string]string{"NUL leading email text": " \x00after", "NUL email text": "before\x00after"} {
+		seeds[name] = func(t *testing.T) *Store {
+			t.Helper()
+			s := newTestStore(t)
+			fixture := newEmailSourceFixture(t, s, "source.eml", "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=source.txt\r\n\r\nbody\r\n--m--\r\n")
+			view, err := s.PublishEmailGeneration(t.Context(), fixture.publication)
+			require.NoError(t, err)
+			receipt, err := s.PublishEmailDocuments(t.Context(), attachmentRequest(t, s, view, "native-nul"))
+			require.NoError(t, err)
+			require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: receipt.Relations[0].Child.SHA256, Extractor: legacyPlainTextExtractor, ExtractorVersion: legacyPlainTextExtractorVersion, Status: ExtractionOK, Text: text}))
+			_, err = s.MigrateLegacyPlainText(t.Context())
+			require.NoError(t, err)
+			return s
+		}
+	}
+	seeds["NUL media occurrence"] = func(t *testing.T) *Store {
+		t.Helper()
+		s := newTestStore(t)
+		request := suppliedMediaPublicationFixture(t, s)
+		request.Operation.Principal = "operator\x00principal"
+		request.Occurrence.Principal = request.Operation.Principal
+		request.Occurrence.Ref = "ref\x00original"
+		request.Occurrence.Revision = "revision\x001"
+		request.Occurrence.Filename = "recording\x00name.mp3"
+		request.Occurrence.PersonRef = "person\x00ref"
+		request.Occurrence.SpeakerLabel = "speaker\x00label"
+		_, err := s.RetainSuppliedMedia(t.Context(), request)
+		require.NoError(t, err)
+		return s
+	}
 	seeds["mailbox work"] = seedMetadataImportMailbox
 	seeds["mailbox job"] = func(t *testing.T) *Store {
 		t.Helper()
@@ -231,6 +289,11 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 		"processing":                   {"processing_profile", "rendition_head", "rendition_lexical_generation", "current_rendition_root"},
 		"processing jobs":              {"processing_incarnation", "processing_consent_grant", "rendition_job", "rendition_job_waiter"},
 		"NUL source description":       {"ingest", "provenance", "audit_record"},
+		"NUL person name":              {"person", "custodian_assignment", "person_external_identity"},
+		"NUL extraction":               {"extracted_text"},
+		"NUL email text":               {"extracted_text", "rendition_lexical_segment", "rendition_lexical_generation"},
+		"NUL leading email text":       {"extracted_text", "rendition_lexical_segment", "rendition_lexical_generation"},
+		"NUL media occurrence":         {"media_occurrence", "media_operation"},
 		"NUL source reference":         {"ingest", "provenance", "audit_record"},
 		"NUL caller source kind":       {"ingest", "provenance", "audit_record"},
 		"NUL operational photo source": {"ingest", "provenance", "audit_record", "photo_file"},
@@ -292,6 +355,104 @@ func checkMetadataImportCatalogsPostgres(t *testing.T) {
 			after, err := runtime.VerifyAudit(ctx, nil)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
+			if name == "NUL person name" {
+				first, _, err := source.PeopleByDisplayName(ctx, "", "", "", 1, false, PeopleSearchOptions{})
+				require.NoError(t, err)
+				require.Equal(t, "Ada\x00李明", first[0].DisplayName)
+				for _, store := range []*Store{runtime, recovered} {
+					page, _, err := store.PeopleByDisplayName(ctx, "", "", "", 1, false, PeopleSearchOptions{})
+					require.NoError(t, err)
+					require.Equal(t, first, page)
+					next, _, err := store.PeopleByDisplayName(ctx, "", page[0].DisplayNameFolded, page[0].PersonID, 1, false, PeopleSearchOptions{})
+					require.NoError(t, err)
+					require.Len(t, next, 1)
+					require.Equal(t, "Zoe", next[0].DisplayName)
+					recent, _, err := store.PeopleByDisplayName(ctx, "", "", "", 10, false, PeopleSearchOptions{RecentFirst: true})
+					require.NoError(t, err)
+					require.Len(t, recent, 2)
+					require.Equal(t, "Ada\x00李明", recent[0].DisplayName)
+					require.NotEmpty(t, recent[0].RecentRank)
+					continued, _, err := store.PeopleByDisplayName(ctx, "Ada", recent[0].DisplayNameFolded, recent[0].PersonID, 10, false, PeopleSearchOptions{RecentFirst: true, AfterRecent: recent[0].RecentRank})
+					require.NoError(t, err)
+					require.Empty(t, continued)
+					for prefix, count := range map[string]int{"Ada": 1, "李": 1, "Ada\x00李": 1, "a\x00李": 0, "明": 0} {
+						matches, _, err := store.PeopleByDisplayName(ctx, prefix, "", "", 10, false, PeopleSearchOptions{})
+						require.NoError(t, err, prefix)
+						require.Len(t, matches, count, prefix)
+					}
+					for _, name := range []string{"Xa\x00Y a\x00Y", "李·明\x00😀Fun"} {
+						_, err := store.CreatePerson(ctx, name, "operator")
+						require.NoError(t, err)
+					}
+					for _, prefix := range []string{"a\x00Y", "明", "Fun"} {
+						matches, _, err := store.PeopleByDisplayName(ctx, prefix, "", "", 10, false, PeopleSearchOptions{})
+						require.NoError(t, err)
+						require.Len(t, matches, 1)
+					}
+				}
+				created, err := runtime.CreatePerson(ctx, "New\x00Person", "operator")
+				require.NoError(t, err)
+				updated, err := runtime.UpdatePerson(ctx, created.PersonID, created.Revision, "Renamed\x00Person")
+				require.NoError(t, err)
+				got, _, err := runtime.PersonByID(ctx, updated.PersonID)
+				require.NoError(t, err)
+				require.Equal(t, "Renamed\x00Person", got.DisplayName)
+			}
+			if name == "NUL extraction" {
+				node, err := runtime.NodeByPath(ctx, "/text.txt")
+				require.NoError(t, err)
+				require.NoError(t, runtime.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "custom\x00extractor", ExtractorVersion: 2, Status: ExtractionOK, Text: "new\x00text"}))
+				require.NoError(t, runtime.SeedTextExtractionQueue(ctx, "custom\x00extractor", 2))
+				var got string
+				require.NoError(t, runtime.db.QueryRowContext(ctx, `SELECT text FROM extracted_text WHERE blob_hash=$1 AND extractor=$2`, node.BlobHash, []byte("custom\x00extractor")).Scan(&got))
+				require.Equal(t, "new\x00text", got)
+				require.NoError(t, runtime.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "failed\x00extractor", ExtractorVersion: 1, Status: ExtractionFailed, Error: "error\x00detail"}))
+				require.NoError(t, runtime.ValidateMetadata(ctx))
+			}
+			if name == "NUL leading email text" || name == "NUL email text" {
+				node, err := source.NodeByPath(ctx, "/source.eml")
+				require.NoError(t, err)
+				query := document.EmailDocumentRelationQuery{ParentVersionID: node.CurrentVersionID}
+				want, err := source.EmailDocumentRelations(ctx, query)
+				require.NoError(t, err)
+				require.Len(t, want.Items, 1)
+				if name == "NUL leading email text" {
+					require.Equal(t, "none", want.Items[0].State)
+				} else {
+					require.Equal(t, "indexed", want.Items[0].State)
+				}
+				for _, store := range []*Store{runtime, recovered} {
+					got, err := store.EmailDocumentRelations(ctx, query)
+					require.NoError(t, err)
+					require.Equal(t, want, got)
+				}
+				child := want.Items[0].Relation.Child
+				require.NoError(t, runtime.RecordExtraction(ctx, ExtractionResult{BlobHash: child.SHA256, Extractor: legacyPlainTextExtractor, ExtractorVersion: legacyPlainTextExtractorVersion, Status: ExtractionOK, Text: "new\x00body"}))
+				got, err := runtime.EmailDocumentRelations(ctx, query)
+				require.NoError(t, err)
+				require.Equal(t, "indexed", got.Items[0].State)
+				require.NoError(t, runtime.ValidateMetadata(ctx))
+			}
+			if name == "NUL media occurrence" {
+				for _, store := range []*Store{runtime, recovered} {
+					items, total, _, err := store.MediaOccurrences(ctx, "operator\x00principal", "", "", 10)
+					require.NoError(t, err)
+					require.Equal(t, 1, total)
+					require.Equal(t, "ref\x00original", items[0].Ref)
+					require.Equal(t, "revision\x001", items[0].Revision)
+					require.Equal(t, "recording\x00name.mp3", items[0].Filename)
+					require.Equal(t, "person\x00ref", items[0].PersonRef)
+					require.Equal(t, "speaker\x00label", items[0].SpeakerLabel)
+					in := MediaOccurrenceInput{ID: items[0].OccurrenceID, SourceID: items[0].SourceID, SourceVersionID: items[0].SourceVersionID, Principal: "operator\x00principal", Ref: items[0].Ref, Revision: items[0].Revision, Filename: items[0].Filename, PersonRef: items[0].PersonRef, SpeakerLabel: items[0].SpeakerLabel, MessageJSON: items[0].MessageJSON}
+					// A native exact replay must find the binary caller revision.
+					_, err = store.RecordMediaOccurrence(ctx, testMediaOperation("declare_occurrence", in.Principal), in)
+					require.NoError(t, err)
+					_, err = store.RecordMediaOccurrenceRevocation(ctx, testMediaOperation("revoke_occurrence", in.Principal), in.ID, in.Revision)
+					require.NoError(t, err)
+					_, err = store.MediaOccurrence(ctx, in.Principal, in.ID)
+					require.ErrorIs(t, err, ErrNotFound)
+				}
+			}
 			if name == "NUL operational photo source" {
 				node, err := source.NodeByPath(ctx, "/nul-photo.jpg")
 				require.NoError(t, err)

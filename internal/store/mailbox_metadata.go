@@ -65,26 +65,26 @@ func exportMailboxMetadata(ctx context.Context, q metadataQuerier, write metadat
 // exporters stay in exportMailboxMetadata and exportMailboxJobs.
 var mailboxMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataMailboxJob]{record: metadataMailboxJob{Type: "mailbox_job"}, table: "mailbox_jobs",
-		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxJob) error {
+		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxJob, postgres bool) error {
 			return saveMailboxJob(ctx, tx, r.Job, true)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxOccurrence]{
 		record: metadataMailboxOccurrence{Type: "mailbox_occurrence"}, table: "mailbox_occurrences",
-		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxOccurrence) error {
+		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxOccurrence, postgres bool) error {
 			return insertMailboxOccurrence(ctx, tx, r.Occurrence)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxArchive]{record: metadataMailboxArchive{Type: "mailbox_archive"},
 		table: "mailbox_archives", insert: importMailboxArchive}),
 	newMetadataTable(metadataTable[metadataMailboxTransfer]{
 		record: metadataMailboxTransfer{Type: "mailbox_transfer_receipt"}, table: "mailbox_transfer_receipts",
-		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxTransfer) error {
+		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxTransfer, postgres bool) error {
 			return insertMailboxTransferReceipt(ctx, tx, r.Receipt)
 		}}),
 	newMetadataTable(metadataTable[metadataMailboxContainer]{record: metadataMailboxContainer{Type: "mailbox_container"},
 		table: "mailbox_containers", insert: importMailboxContainer}),
 }
 
-func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArchive) error {
+func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArchive, postgres bool) error {
 	a := r.Archive
 	if !mailboxText(a.ID, 128) || !mailboxText(a.Owner, 256) || !mailboxText(a.Description, 1024) {
 		return ErrMailboxInvalid
@@ -93,7 +93,7 @@ func importMailboxArchive(ctx context.Context, tx *sql.Tx, r metadataMailboxArch
 	return err
 }
 
-func importMailboxContainer(ctx context.Context, tx *sql.Tx, r metadataMailboxContainer) error {
+func importMailboxContainer(ctx context.Context, tx *sql.Tx, r metadataMailboxContainer, postgres bool) error {
 	c := r.Container
 	if err := validateRetainedMailboxContainer(ctx, tx, c); err != nil {
 		return err

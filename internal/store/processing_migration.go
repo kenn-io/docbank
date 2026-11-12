@@ -181,7 +181,7 @@ func (s *Store) migrateLegacyPlainTextTx(
 		if err != nil {
 			return LegacyMigrationReport{}, err
 		}
-		if err := insertLegacyRenditionBuildTx(ctx, tx, build); err != nil {
+		if err := insertLegacyRenditionBuildTx(ctx, tx, build, s.postgresSchema != ""); err != nil {
 			return LegacyMigrationReport{}, err
 		}
 		report.MigratedBuilds++
@@ -226,15 +226,15 @@ func (s *Store) migrateLegacyPlainTextTx(
 
 	var generation LexicalGeneration
 	if blobHash == "" {
-		generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+		generation, err = stageLegacyLexicalGenerationTx(ctx, tx, s.postgresSchema != "")
 	} else {
 		var buildIDs []string
 		buildIDs, err = lexicalBuildIDsTx(ctx, tx,
 			`SELECT build_id FROM rendition_builds WHERE source_sha256=$1 ORDER BY build_id`, []any{blobHash})
 		if err == nil {
-			generation, err = appendLexicalGenerationTx(ctx, tx, buildIDs)
+			generation, err = appendLexicalGenerationTx(ctx, tx, buildIDs, s.postgresSchema != "")
 			if errors.Is(err, ErrNotFound) {
-				generation, err = stageLegacyLexicalGenerationTx(ctx, tx)
+				generation, err = stageLegacyLexicalGenerationTx(ctx, tx, s.postgresSchema != "")
 			}
 		}
 	}
@@ -696,6 +696,7 @@ func legacyPlainTextAttachmentID(versionID, buildID string) string {
 
 func insertLegacyRenditionBuildTx(
 	ctx context.Context, tx *sql.Tx, record RenditionBuildRecord,
+	postgres bool,
 ) error {
 	suppressed, err := derivativeBuildSuppressedTx(ctx, tx, record.SourceSHA256, record.ID)
 	if err != nil {
@@ -733,7 +734,7 @@ func insertLegacyRenditionBuildTx(
 		return fmt.Errorf("checking legacy rendition build %s: %w", record.ID, err)
 	}
 	if inserted != 0 {
-		if err := insertRenditionBuildChildrenTx(ctx, tx, record); err != nil {
+		if err := insertRenditionBuildChildrenTx(ctx, tx, record, postgres); err != nil {
 			return err
 		}
 	} else {
@@ -809,6 +810,7 @@ func insertLegacyRenditionAttachmentTx(
 
 func stageLegacyLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx,
+	postgres bool,
 ) (LexicalGeneration, error) {
 	rows, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
@@ -818,7 +820,7 @@ func stageLegacyLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs, rows)
+	return stageLexicalGenerationRowsTx(ctx, tx, lexicalReplacementGenerationID(rows, buildIDs), buildIDs, rows, postgres)
 }
 
 func compareLegacyServingCompatibilityTx(

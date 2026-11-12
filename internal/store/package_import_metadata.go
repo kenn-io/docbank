@@ -165,7 +165,7 @@ var packageImportMetadataTables = []metadataRecordCodec{
 		insert: importPackageImportMetadata}),
 }
 
-func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPackageImportRow) error {
+func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPackageImportRow, postgres bool) error {
 	if pageChecksum(row.CanonicalJSON) != row.Checksum {
 		return ErrPackageConflict
 	}

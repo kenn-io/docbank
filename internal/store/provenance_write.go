@@ -99,7 +99,7 @@ func (s *Store) AppendNodeProvenance(
 		if _, err := tx.ExecContext(ctx, `INSERT INTO provenance(
 			identity,node_id,ingest_id,original_path,original_mtime,supersedes)
 			VALUES($1,$2,$3,$4,$5,$6)`, provenance.Identity, provenance.NodeID, provenance.IngestID,
-			(provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(provenance.OriginalPath), nullString(provenance.OriginalMTime), nullString(provenance.Supersedes)); err != nil {
+			storedString(s.postgresSchema != "", provenance.OriginalPath), nullString(provenance.OriginalMTime), nullString(provenance.Supersedes)); err != nil {
 			return fmt.Errorf("recording appended provenance: %w", err)
 		}
 		if provenance.Supersedes != nil {

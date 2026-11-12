@@ -29,8 +29,8 @@ const (
 type metadataPerson struct {
 	Type              string  `json:"type"`
 	PersonID          string  `json:"person_id" db:"person_id"`
-	DisplayName       string  `json:"display_name" db:"display_name"`
-	DisplayNameFolded string  `json:"display_name_folded" db:"display_name_folded"`
+	DisplayName       string  `json:"display_name" db:"display_name,bytes"`
+	DisplayNameFolded string  `json:"display_name_folded" db:"display_name_folded,bytes"`
 	Origin            string  `json:"origin" db:"origin"`
 	State             string  `json:"state" db:"state"`
 	Revision          int64   `json:"revision" db:"revision"`
@@ -65,7 +65,7 @@ type metadataPersonExternalIdentity struct {
 	UIDKind             string `json:"uid_kind" db:"uid_kind"`
 	UIDState            string `json:"uid_state" db:"uid_state"`
 	LastSeenRevision    *int64 `json:"last_seen_revision" db:"last_seen_revision"`
-	DisplayNameSnapshot string `json:"display_name_snapshot" db:"display_name_snapshot"`
+	DisplayNameSnapshot string `json:"display_name_snapshot" db:"display_name_snapshot,bytes"`
 	LinkedAt            string `json:"linked_at" db:"linked_at"`
 	UpdatedAt           string `json:"updated_at" db:"updated_at"`
 }
@@ -94,7 +94,7 @@ type metadataPersonMerge struct {
 	RequestSHA256          string `json:"request_sha256" db:"request_sha256"`
 	SurvivorPersonID       string `json:"survivor_person_id" db:"survivor_person_id"`
 	AbsorbedPersonID       string `json:"absorbed_person_id" db:"absorbed_person_id"`
-	AbsorbedDisplayName    string `json:"absorbed_display_name" db:"absorbed_display_name"`
+	AbsorbedDisplayName    string `json:"absorbed_display_name" db:"absorbed_display_name,bytes"`
 	MovedJSON              []byte `json:"moved_json" db:"moved_json"`
 	SurvivorRevisionBefore int64  `json:"survivor_revision_before" db:"survivor_revision_before"`
 	SurvivorRevisionAfter  int64  `json:"survivor_revision_after" db:"survivor_revision_after"`
@@ -119,11 +119,11 @@ type metadataCustodianAssignment struct {
 	NodeID           *int64  `json:"node_id" db:"node_id"`
 	ContentVersionID *string `json:"content_version_id" db:"content_version_id"`
 	PersonID         *string `json:"person_id" db:"person_id"`
-	RawLabel         string  `json:"raw_label" db:"raw_label"`
-	RawLabelFolded   string  `json:"raw_label_folded" db:"raw_label_folded"`
+	RawLabel         string  `json:"raw_label" db:"raw_label,bytes"`
+	RawLabelFolded   string  `json:"raw_label_folded" db:"raw_label_folded,bytes"`
 	Rank             string  `json:"rank" db:"rank"`
 	Basis            string  `json:"basis" db:"basis"`
-	SourceRef        string  `json:"source_ref" db:"source_ref"`
+	SourceRef        string  `json:"source_ref" db:"source_ref,bytes"`
 	Revision         int64   `json:"revision" db:"revision"`
 	RecordedAt       string  `json:"recorded_at" db:"recorded_at"`
 	RetiredAt        *string `json:"retired_at" db:"retired_at"`
@@ -146,7 +146,7 @@ type metadataPersonMatchCandidate struct {
 	Type              string  `json:"type"`
 	CandidateID       string  `json:"candidate_id" db:"candidate_id"`
 	ActorKey          string  `json:"actor_key" db:"actor_key"`
-	DisplayName       string  `json:"display_name" db:"display_name"`
+	DisplayName       string  `json:"display_name" db:"display_name,bytes"`
 	SuggestedPersonID *string `json:"suggested_person_id" db:"suggested_person_id"`
 	Reason            string  `json:"reason" db:"reason"`
 	EvidenceJSON      []byte  `json:"evidence_json" db:"evidence_json"`
@@ -178,11 +178,11 @@ var personMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataCustodianAssignment]{record: metadataCustodianAssignment{Type: metadataCustodianAssignmentType}, table: "custodian_assignments",
 		suffix: "ORDER BY assignment_id", validate: validateMetadataCustodianAssignment, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonDocumentAssertion]{record: metadataPersonDocumentAssertion{Type: metadataPersonAssertionType}, table: "person_document_assertions",
-		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true, insert: func(ctx context.Context, tx *sql.Tx, v metadataPersonDocumentAssertion) error {
+		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true, insert: func(ctx context.Context, tx *sql.Tx, v metadataPersonDocumentAssertion, postgres bool) error {
 			if v.PhotoMark == nil {
 				v.PhotoMark = new(v.Role == personAssertionRoleDepicted && v.Action == personAssertionActionAssert)
 			}
-			return insertMetadataRecord(ctx, tx, "person_document_assertions", v)
+			return insertMetadataRecord(ctx, tx, "person_document_assertions", v, postgres)
 		}}),
 	newMetadataTable(metadataTable[metadataPersonMatchCandidate]{record: metadataPersonMatchCandidate{Type: metadataPersonCandidateType}, table: "person_match_candidates",
 		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),
@@ -595,8 +595,8 @@ func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) er
 type metadataPersonBeforeKey struct {
 	Type              string `json:"type"`
 	PersonID          string `json:"person_id" db:"person_id"`
-	DisplayName       string `json:"display_name" db:"display_name"`
-	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
+	DisplayName       string `json:"display_name" db:"display_name,bytes"`
+	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded,bytes"`
 	Origin            string `json:"origin" db:"origin"`
 	State             string `json:"state" db:"state"`
 	Revision          int64  `json:"revision" db:"revision"`

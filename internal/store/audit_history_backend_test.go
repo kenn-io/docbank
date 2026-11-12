@@ -230,11 +230,7 @@ func copyStoreCatalogFixture(t *testing.T, source *Store, setup *sql.DB, tables 
 		insert := "INSERT INTO " + table + "(" + strings.Join(columns, ",") + ")" + override + " VALUES(" + strings.Join(parameters, ",") + ")"
 		for rows.Next() {
 			require.NoError(t, rows.Scan(destinations...))
-			for _, column := range map[string][]string{
-				"ingests":             {"source_kind", "source_desc"},
-				"provenance":          {"original_path"},
-				"photo_source_claims": {"original_path"},
-			}[table] {
+			for _, column := range backendByteStringColumns[table] {
 				position := slices.Index(columns, column)
 				if values[position] != nil {
 					value, ok := values[position].(string)

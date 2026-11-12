@@ -1263,7 +1263,7 @@ func (s *Store) StageLexicalGeneration(
 	var generation LexicalGeneration
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID, s.postgresSchema != "")
 		return err
 	})
 	if err != nil {
@@ -1290,7 +1290,7 @@ func (s *Store) StageLexicalGenerationWithRoot(
 	var generation LexicalGeneration
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		generation, err = stageLexicalGenerationTx(ctx, tx, generationID)
+		generation, err = stageLexicalGenerationTx(ctx, tx, generationID, s.postgresSchema != "")
 		if err != nil {
 			return err
 		}
@@ -1304,6 +1304,7 @@ func (s *Store) StageLexicalGenerationWithRoot(
 
 func stageLexicalGenerationTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
+	postgres bool,
 ) (LexicalGeneration, error) {
 	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
@@ -1313,11 +1314,12 @@ func stageLexicalGenerationTx(
 	if err != nil {
 		return LexicalGeneration{}, err
 	}
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments, postgres)
 }
 
 func stageLexicalGenerationExcludingTx(
 	ctx context.Context, tx *sql.Tx, excludedBuildIDs map[string]struct{},
+	postgres bool,
 ) (LexicalGeneration, error) {
 	segments, err := readCatalogLexicalManifestRowsTx(ctx, tx, "")
 	if err != nil {
@@ -1339,13 +1341,14 @@ func stageLexicalGenerationExcludingTx(
 		return LexicalGeneration{}, nil
 	}
 	generationID := lexicalReplacementGenerationID(segments, buildIDs)
-	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments)
+	return stageLexicalGenerationRowsTx(ctx, tx, generationID, buildIDs, segments, postgres)
 }
 
 func stageLexicalGenerationRowsTx(
 	ctx context.Context, tx *sql.Tx, generationID string,
 	buildIDs []string,
 	segments []lexicalManifestRow,
+	postgres bool,
 ) (LexicalGeneration, error) {
 	stored, err := loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
 	if err == nil {
@@ -1354,7 +1357,7 @@ func stageLexicalGenerationRowsTx(
 	if !errors.Is(err, ErrNotFound) {
 		return LexicalGeneration{}, err
 	}
-	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, segments, generationID, nowRFC3339()); err != nil {
+	if _, err := extendLexicalStreamTx(ctx, tx, uuid.New().String(), LexicalGeneration{}, buildIDs, segments, generationID, nowRFC3339(), postgres); err != nil {
 		return LexicalGeneration{}, err
 	}
 	return loadAndValidateLexicalGenerationTx(ctx, tx, generationID)
@@ -1395,7 +1398,7 @@ func insertLexicalGenerationTx(ctx context.Context, tx *sql.Tx, generation Lexic
 
 // extendLexicalStreamTx shares indexing and ordered membership for staging and append.
 // A supplied generation ID preserves full-stage and metadata restore identities.
-func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, rows []lexicalManifestRow, generationID, builtAt string) (LexicalGeneration, error) {
+func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, from LexicalGeneration, buildIDs []string, rows []lexicalManifestRow, generationID, builtAt string, postgres bool) (LexicalGeneration, error) {
 	byBuild := make(map[string][]lexicalManifestRow)
 	for _, row := range rows {
 		byBuild[row.buildID] = append(byBuild[row.buildID], row)
@@ -1403,7 +1406,7 @@ func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, fro
 	generation := from
 	for _, buildID := range buildIDs {
 		segments := byBuild[buildID]
-		if err := indexLexicalSegmentsTx(ctx, tx, segments); err != nil {
+		if err := indexLexicalSegmentsTx(ctx, tx, segments, postgres); err != nil {
 			return LexicalGeneration{}, err
 		}
 		generation.BuildCount++
@@ -1426,7 +1429,7 @@ func extendLexicalStreamTx(ctx context.Context, tx *sql.Tx, streamID string, fro
 	return generation, nil
 }
 
-func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []string) (LexicalGeneration, error) {
+func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []string, postgres bool) (LexicalGeneration, error) {
 	head, err := readActiveLexicalGeneration(ctx, tx)
 	if err != nil {
 		return LexicalGeneration{}, err
@@ -1466,7 +1469,7 @@ func appendLexicalGenerationTx(ctx context.Context, tx *sql.Tx, buildIDs []strin
 		}
 		segments = append(segments, rows...)
 	}
-	return extendLexicalStreamTx(ctx, tx, streamID, head, added, segments, "", nowRFC3339())
+	return extendLexicalStreamTx(ctx, tx, streamID, head, added, segments, "", nowRFC3339(), postgres)
 }
 
 // dropLexicalGenerationTx trims only the tail no retained generation can read.
@@ -1577,6 +1580,7 @@ func readCatalogLexicalManifestRowsTx(
 // indexed yet. Builds are immutable, so rows already present are exact.
 func indexLexicalSegmentsTx(
 	ctx context.Context, tx *sql.Tx, segments []lexicalManifestRow,
+	postgres bool,
 ) error {
 	indexed := make(map[string]bool)
 	for _, segment := range segments {
@@ -1597,7 +1601,7 @@ func indexLexicalSegmentsTx(
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO rendition_lexical_index(row_id,build_id,segment_id,text)
 			SELECT COALESCE(MAX(row_id),0)+1,$1,$2,$3 FROM rendition_lexical_index`,
-			segment.buildID, segment.segmentID, segment.text,
+			segment.buildID, segment.segmentID, storedString(postgres, segment.text),
 		); err != nil {
 			return fmt.Errorf("indexing lexical segment %s of build %s: %w",
 				segment.segmentID, segment.buildID, err)

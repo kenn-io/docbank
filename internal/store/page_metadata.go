@@ -168,7 +168,7 @@ var pageMetadataTables = []metadataRecordCodec{
 		table: "page_render_jobs", insert: importPageMetadata}),
 }
 
-func importPageMetadata(ctx context.Context, tx *sql.Tx, record metadataPageRecord) error {
+func importPageMetadata(ctx context.Context, tx *sql.Tx, record metadataPageRecord, postgres bool) error {
 	if pageChecksum(record.CanonicalJSON) != record.Checksum {
 		return ErrPageConflict
 	}

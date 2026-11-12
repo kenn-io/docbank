@@ -91,7 +91,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 					return ErrStaleRevision
 				}
 				personID := nullableCustodianString(request.PersonID)
-				result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,raw_label=$2,raw_label_folded=$3,basis=$4,source_ref=$5,revision=revision+1,recorded_at=$6 WHERE assignment_id=$7 AND revision=$8`, personID, request.RawLabel, document.FoldPersonName(request.RawLabel), request.Basis, request.SourceRef, nowRFC3339(), assignmentID, revision)
+				result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,raw_label=$2,raw_label_folded=$3,basis=$4,source_ref=$5,revision=revision+1,recorded_at=$6 WHERE assignment_id=$7 AND revision=$8`, personID, storedString(s.postgresSchema != "", request.RawLabel), storedString(s.postgresSchema != "", document.FoldPersonName(request.RawLabel)), request.Basis, storedString(s.postgresSchema != "", request.SourceRef), nowRFC3339(), assignmentID, revision)
 				if err != nil {
 					return err
 				}
@@ -110,7 +110,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 		} else {
 			var exists bool
 			match := fmt.Sprintf(" AND person_id IS NOT DISTINCT FROM $%d AND raw_label_folded=$%d AND basis=$%d AND source_ref=$%d)", len(args)+1, len(args)+2, len(args)+3, len(args)+4)
-			args = append(args, nullableCustodianString(request.PersonID), document.FoldPersonName(request.RawLabel), request.Basis, request.SourceRef)
+			args = append(args, nullableCustodianString(request.PersonID), storedString(s.postgresSchema != "", document.FoldPersonName(request.RawLabel)), request.Basis, storedString(s.postgresSchema != "", request.SourceRef))
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM custodian_assignments WHERE retired_at IS NULL AND rank='additional' AND `+predicate+match, args...).Scan(&exists); err != nil {
 				return err
 			}
@@ -127,7 +127,7 @@ func (s *Store) SetCustodian(ctx context.Context, request CustodianRequest) (Cus
 			return err
 		}
 		ingestID, packageID, packageRecordID, nodeID, versionID := custodianScopeValues(request.Scope)
-		_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, assignmentID, request.Scope.Kind, ingestID, packageID, packageRecordID, nodeID, versionID, nullableCustodianString(request.PersonID), request.RawLabel, document.FoldPersonName(request.RawLabel), request.Rank, request.Basis, request.SourceRef, nowRFC3339())
+		_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(assignment_id,scope_kind,ingest_id,package_id,package_record_id,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, assignmentID, request.Scope.Kind, ingestID, packageID, packageRecordID, nodeID, versionID, nullableCustodianString(request.PersonID), storedString(s.postgresSchema != "", request.RawLabel), storedString(s.postgresSchema != "", document.FoldPersonName(request.RawLabel)), request.Rank, request.Basis, storedString(s.postgresSchema != "", request.SourceRef), nowRFC3339())
 		if s.isUniqueViolation(err) {
 			return ErrCustodianConflict
 		}
@@ -332,8 +332,8 @@ func (s *Store) SetOperatorPackageCustodian(ctx context.Context, request Custodi
 			return ErrStaleRevision
 		case err == nil:
 			result, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=$1,raw_label=$2,raw_label_folded=$3,source_ref=$4,revision=revision+1,recorded_at=$5
-				WHERE assignment_id=$6 AND revision=$7`, nullableCustodianString(request.PersonID), request.RawLabel,
-				document.FoldPersonName(request.RawLabel), request.SourceRef, nowRFC3339(), assignmentID, current)
+				WHERE assignment_id=$6 AND revision=$7`, nullableCustodianString(request.PersonID), storedString(s.postgresSchema != "", request.RawLabel),
+				storedString(s.postgresSchema != "", document.FoldPersonName(request.RawLabel)), storedString(s.postgresSchema != "", request.SourceRef), nowRFC3339(), assignmentID, current)
 			if err != nil {
 				return err
 			}
@@ -356,8 +356,8 @@ func (s *Store) SetOperatorPackageCustodian(ctx context.Context, request Custodi
 			_, err = tx.ExecContext(ctx, `INSERT INTO custodian_assignments(
 				assignment_id,scope_kind,package_id,package_record_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
 				VALUES($1,'package',$2,$3,$4,$5,$6,'primary','operator_assigned',$7,$8)`, assignmentID, request.Scope.PackageID,
-				request.Scope.PackageRecordID, nullableCustodianString(request.PersonID), request.RawLabel,
-				document.FoldPersonName(request.RawLabel), request.SourceRef, nowRFC3339())
+				request.Scope.PackageRecordID, nullableCustodianString(request.PersonID), storedString(s.postgresSchema != "", request.RawLabel),
+				storedString(s.postgresSchema != "", document.FoldPersonName(request.RawLabel)), storedString(s.postgresSchema != "", request.SourceRef), nowRFC3339())
 			if s.isUniqueViolation(err) {
 				return ErrCustodianConflict
 			}

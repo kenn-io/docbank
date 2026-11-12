@@ -336,7 +336,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=$`+strconv.Itoa(len(roleArgs)+1)+`
 		ORDER BY n.id, p.identity`, slices.Concat(roleArgs, []any{member.BlobHash})
 	if role == PhotoRoleSidecar {
-		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, normalizePhotoSourcePath(member.OriginalPath), (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(member.OriginalPath)}
+		query, args = s.photoImportSidecarCandidatesSQL(), []any{member.BlobHash, normalizePhotoSourcePath(member.OriginalPath), storedString(s.postgresSchema != "", member.OriginalPath)}
 	}
 	if role == PhotoRoleSidecar && fallback && target != "" {
 		original, bound, err := s.photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
@@ -454,7 +454,7 @@ func (s *Store) photoImportChangedSourceTx(
 		      AND i.source_kind<>'photo-checkout'
 		      AND (NOT `+sidecarParam+` OR i.source_kind<>'photo-import')
 		      AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=other.identity))
-		ORDER BY n.id`, append(roleArgs, (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(member.OriginalPath), role == PhotoRoleSidecar), func(rows *sql.Rows) error {
+		ORDER BY n.id`, append(roleArgs, storedString(s.postgresSchema != "", member.OriginalPath), role == PhotoRoleSidecar), func(rows *sql.Rows) error {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return err

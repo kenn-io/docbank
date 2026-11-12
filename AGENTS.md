@@ -19,6 +19,11 @@ Instructions for autonomous coding agents working in this repository.
   Do not start a container per test or repeat unrelated SQLite suites in the
   PostgreSQL lane. Follow the existing main-pinned PR dispatcher and cache
   ownership; branch changes to `ci.yml` only take effect for PRs after merge.
+- Preserve accepted UTF-8 strings, including NUL, across backends. PostgreSQL
+  `TEXT` cannot hold NUL: use `BYTEA` for unrestricted names and evidence,
+  `db:"column,bytes"` in the metadata codec, and explicit native bind conversion.
+  Keep SQLite acceptance and canonical metadata bytes unchanged; qualify native
+  reads, comparisons and writes along with restore.
 - Metadata-transfer tests populate every custom import hook with native records.
   Assert expected derived rows exist before comparing backend projections;
   equality between empty lists does not qualify their recovery.

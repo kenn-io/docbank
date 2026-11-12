@@ -166,7 +166,7 @@ func (s *Store) PrepareDocumentPeopleInputs(ctx context.Context, versionID strin
 				if len(matches) == 0 && actorKeyAutoProvisionEligible(claim.ActorKey) {
 					// Provisioning an unbound exact key cannot change prior resolutions.
 					// Only authority edits need to advance the global binding epoch.
-					person, err := provisionActorPersonTx(ctx, tx, claim)
+					person, err := s.provisionActorPersonTx(ctx, tx, claim)
 					if err != nil {
 						return err
 					}
@@ -341,7 +341,7 @@ func actorKeyAutoProvisionEligible(key string) bool {
 	return ok && (kind == "email" || (kind == "phone" && strings.HasPrefix(value, "+")))
 }
 
-func provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopleActor) (Person, error) {
+func (s *Store) provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopleActor) (Person, error) {
 	kind, value, _ := strings.Cut(claim.ActorKey, ":")
 	display := claim.DisplayLabel()
 	if !validPersonName(display) {
@@ -361,7 +361,7 @@ func provisionActorPersonTx(ctx context.Context, tx *sql.Tx, claim DocumentPeopl
 	}
 	now := nowRFC3339()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at)
-		VALUES($1,$2,$3,'derived','provisional',1,$4,$5)`, personID, display, document.FoldPersonName(display), now, now); err != nil {
+		VALUES($1,$2,$3,'derived','provisional',1,$4,$5)`, personID, storedString(s.postgresSchema != "", display), storedString(s.postgresSchema != "", document.FoldPersonName(display)), now, now); err != nil {
 		return Person{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO person_identities(identity_id,person_id,kind,value_normalized,value_display,scope_kind,scope_value,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at)

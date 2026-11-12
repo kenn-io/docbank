@@ -42,7 +42,7 @@ func (s *Store) RetainMediaReference(
 		if err != nil {
 			return "", err
 		}
-		existing, found, err := mediaOccurrenceByRevisionTx(ctx, tx,
+		existing, found, err := s.mediaOccurrenceByRevisionTx(ctx, tx,
 			request.Occurrence.Principal, request.Occurrence.Ref, request.Occurrence.Revision)
 		if err != nil {
 			return "", err

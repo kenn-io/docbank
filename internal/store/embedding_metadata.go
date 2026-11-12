@@ -227,7 +227,7 @@ func validateMetadataEmbeddingGeneration(value metadataEmbeddingGeneration) erro
 	return validateMetadataTime("input-generation created_at", value.CreatedAt)
 }
 
-func importMetadataEmbeddingGeneration(ctx context.Context, tx *sql.Tx, value metadataEmbeddingGeneration) error {
+func importMetadataEmbeddingGeneration(ctx context.Context, tx *sql.Tx, value metadataEmbeddingGeneration, postgres bool) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO embedding_input_generations(
 		generation_id,generation_blob_hash,generation_encoded_size,generation_checksum,source_version_id,profile_fingerprint,evidence_fingerprint,
 		tokenizer_fingerprint,chunk_policy_fingerprint,formatter_fingerprint,

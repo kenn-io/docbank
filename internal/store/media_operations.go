@@ -63,7 +63,7 @@ func (s *Store) RemoteRecordingReceipt(ctx context.Context, principal, operation
 	var receipt string
 	err := s.db.QueryRowContext(ctx, `SELECT receipt_json FROM media_operations
 		WHERE operation_id=$1 AND principal=$2 AND verb='submit_remote_recording'`,
-		operationID, principal).Scan(&receipt)
+		operationID, storedString(s.postgresSchema != "", principal)).Scan(&receipt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -106,7 +106,7 @@ func (s *Store) withMediaOperation(
 		// The timestamp survives metadata export and restore; row IDs do not.
 		// Keep both forms indexable by principal and source on either backend.
 		sourcePredicate := "source_id IS NULL"
-		args := []any{op.Principal}
+		args := []any{storedString(s.postgresSchema != "", op.Principal)}
 		if op.SourceID != "" {
 			sourcePredicate = "source_id=$2"
 			args = append(args, op.SourceID)
@@ -125,7 +125,7 @@ func (s *Store) withMediaOperation(
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_operations(
 			operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, op.ID, op.Principal, op.Verb, op.RequestSHA256,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, op.ID, storedString(s.postgresSchema != "", op.Principal), op.Verb, op.RequestSHA256,
 			nullableMediaID(op.SourceID), receipt, stamp, stamp); err != nil {
 			if s.isUniqueViolation(err) {
 				return ErrMediaOperationConflict

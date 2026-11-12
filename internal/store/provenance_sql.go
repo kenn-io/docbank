@@ -4,8 +4,10 @@ package store
 // stores TEXT; PostgreSQL uses BYTEA because TEXT cannot contain NUL.
 type provenanceSQLDialect struct{ postgres bool }
 
-func (d provenanceSQLDialect) value(value string) any {
-	if d.postgres {
+// storedString binds an accepted UTF-8 string to a PostgreSQL BYTEA column.
+// SQLite keeps its released TEXT storage; readers scan both back into strings.
+func storedString(postgres bool, value string) any {
+	if postgres {
 		return []byte(value)
 	}
 	return value

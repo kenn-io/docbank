@@ -47,17 +47,16 @@ func checkBackendSchemaPostgres(t *testing.T) {
 	delete(right["vault_metadata"].Columns, "schema_fingerprint")
 	// Accepted provenance strings permit NUL. PostgreSQL stores bytes while
 	// SQLite retains its released TEXT; logical exports remain strings.
-	for _, field := range []struct {
-		table, column string
-		required      bool
-	}{
-		{"ingests", "source_kind", true}, {"ingests", "source_desc", true},
-		{"provenance", "original_path", true}, {"photo_source_claims", "original_path", false},
-	} {
-		assert.Equal(t, backendColumn{Kind: "text", Required: field.required}, left[field.table].Columns[field.column])
-		assert.Equal(t, backendColumn{Kind: "bytes", Required: field.required}, right[field.table].Columns[field.column])
-		delete(left[field.table].Columns, field.column)
-		delete(right[field.table].Columns, field.column)
+	for table, columns := range backendByteStringColumns {
+		for _, column := range columns {
+			l, r := left[table].Columns[column], right[table].Columns[column]
+			assert.Equal(t, "text", l.Kind)
+			assert.Equal(t, "bytes", r.Kind)
+			l.Kind = "bytes"
+			assert.Equal(t, l, r)
+			delete(left[table].Columns, column)
+			delete(right[table].Columns, column)
+		}
 	}
 	// PostgreSQL's transactional node counter implements SQLite's sqlite_sequence.
 	require.Contains(t, right, "node_allocation")
@@ -341,4 +340,22 @@ func describePostgresIndexes(t *testing.T, s *Store, table string) map[string]ba
 		}
 	}
 	return indexes
+}
+
+// Accepted UTF-8 evidence and names need byte storage on PostgreSQL. This list
+// makes those intentional schema differences visible to the drift check.
+var backendByteStringColumns = map[string][]string{
+	"ingests":                    {"source_kind", "source_desc"},
+	"provenance":                 {"original_path"},
+	"photo_source_claims":        {"original_path"},
+	"persons":                    {"display_name", "display_name_folded"},
+	"person_merges":              {"absorbed_display_name"},
+	"person_external_identities": {"display_name_snapshot"},
+	"person_match_candidates":    {"display_name"},
+	"custodian_assignments":      {"raw_label", "raw_label_folded", "source_ref"},
+	"rendition_lexical_segments": {"text"},
+	"rendition_lexical_index":    {"text"},
+	"extracted_text":             {"extractor", "error", "text"},
+	"media_occurrences":          {"caller_principal", "caller_occurrence_ref", "caller_revision", "caller_filename", "caller_person_ref", "speaker_label"},
+	"media_operations":           {"principal"},
 }

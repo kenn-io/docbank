@@ -211,8 +211,8 @@ type metadataIngest struct {
 	Type       string `json:"type"`
 	ID         string `json:"ingest_id" db:"id"`
 	StartedAt  string `json:"started_at" db:"started_at"`
-	SourceKind string `json:"source_kind" db:"source_kind"`
-	SourceDesc string `json:"source_desc" db:"source_desc"`
+	SourceKind string `json:"source_kind" db:"source_kind,bytes"`
+	SourceDesc string `json:"source_desc" db:"source_desc,bytes"`
 }
 
 type metadataProvenance struct {
@@ -220,7 +220,7 @@ type metadataProvenance struct {
 	Identity      string  `json:"identity" db:"identity"`
 	NodeID        int64   `json:"node_id" db:"node_id"`
 	IngestID      string  `json:"ingest_id" db:"ingest_id"`
-	OriginalPath  string  `json:"original_path" db:"original_path"`
+	OriginalPath  string  `json:"original_path" db:"original_path,bytes"`
 	OriginalMTime *string `json:"original_mtime" db:"original_mtime"`
 	Supersedes    *string `json:"supersedes" db:"supersedes"`
 }
@@ -261,12 +261,12 @@ type metadataNodeTag struct {
 type metadataExtractedText struct {
 	Type             string  `json:"type"`
 	BlobHash         string  `json:"blob_hash" db:"blob_hash"`
-	Extractor        string  `json:"extractor" db:"extractor"`
+	Extractor        string  `json:"extractor" db:"extractor,bytes"`
 	ExtractorVersion int64   `json:"extractor_version" db:"extractor_version"`
 	Status           string  `json:"status" db:"status"`
-	Error            *string `json:"error" db:"error"`
+	Error            *string `json:"error" db:"error,bytes"`
 	Attempts         int64   `json:"attempts" db:"attempts"`
-	Text             *string `json:"text" db:"text"`
+	Text             *string `json:"text" db:"text,bytes"`
 	ExtractedAt      string  `json:"extracted_at" db:"extracted_at"`
 }
 
@@ -340,7 +340,7 @@ var coreMetadataTables = []metadataRecordCodec{
 		validate: func(v metadataBlobChecksum) error {
 			return validateBlobChecksumRecord(BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
 		},
-		insert: func(ctx context.Context, tx *sql.Tx, v metadataBlobChecksum) error {
+		insert: func(ctx context.Context, tx *sql.Tx, v metadataBlobChecksum, postgres bool) error {
 			return ensureBlobChecksumTx(ctx, tx, BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
 		}}),
 	newMetadataTable(metadataTable[metadataSourceMetadataGeneration]{
@@ -356,8 +356,8 @@ var coreMetadataTables = []metadataRecordCodec{
 		table: "extracted_text", validate: validateExtractedTextRecord}),
 }
 
-func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob) error {
-	if err := insertMetadataRecord(ctx, tx, "blobs", v); err != nil {
+func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob, postgres bool) error {
+	if err := insertMetadataRecord(ctx, tx, "blobs", v, postgres); err != nil {
 		return err
 	}
 	generation, err := blobLocationGeneration()
@@ -376,7 +376,7 @@ func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob) error {
 	return err
 }
 
-func importVisualPreviewGeneration(ctx context.Context, tx *sql.Tx, v metadataVisualPreviewGeneration) error {
+func importVisualPreviewGeneration(ctx context.Context, tx *sql.Tx, v metadataVisualPreviewGeneration, postgres bool) error {
 	preview, _, err := document.DecodeVisualPreviewV1(v.CanonicalResult)
 	if err != nil {
 		return err
@@ -1207,7 +1207,7 @@ func (s *Store) importMetadataRecord(
 ) error {
 	// Version 1 predates the burst fields; they restore as their defaults.
 	if version < 2 && kind == metadataPhotoSettingsType {
-		return importPhotoSettingsWithoutSequence(ctx, tx, raw)
+		return importPhotoSettingsWithoutSequence(ctx, tx, raw, s.postgresSchema != "")
 	}
 	if kind == metadataSavedQueryRunType {
 		var err error
@@ -1245,20 +1245,10 @@ func (s *Store) importMetadataRecord(
 		// Preserve recorded order without relaxing the runtime identity column.
 		codec := *photoHiddenFailureMetadata
 		codec.insert = insertPostgresHiddenFailure
-		return codec.importRecord(ctx, tx, raw)
-	}
-	if s.postgresSchema != "" && kind == metadataIngestType {
-		codec := *ingestMetadata
-		codec.insert = insertPostgresIngest
-		return codec.importRecord(ctx, tx, raw)
-	}
-	if s.postgresSchema != "" && kind == metadataProvenanceType {
-		codec := *provenanceMetadata
-		codec.insert = insertPostgresProvenance
-		return codec.importRecord(ctx, tx, raw)
+		return codec.importRecord(ctx, tx, raw, s.postgresSchema != "")
 	}
 	if codec, ok := metadataCodecs[kind]; ok {
-		return codec.importRecord(ctx, tx, raw)
+		return codec.importRecord(ctx, tx, raw, s.postgresSchema != "")
 	}
 	if isMediaMetadataType(kind) {
 		return s.importMediaMetadataRecord(ctx, tx, kind, raw)

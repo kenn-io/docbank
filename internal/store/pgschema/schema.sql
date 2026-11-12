@@ -812,12 +812,12 @@ CREATE TABLE {{schema}}.media_occurrences (
     occurrence_id         TEXT COLLATE "C" PRIMARY KEY,
     source_id             TEXT COLLATE "C" NOT NULL,
     source_version_id     TEXT COLLATE "C",
-    caller_principal      TEXT COLLATE "C" NOT NULL,
-    caller_occurrence_ref TEXT COLLATE "C" NOT NULL,
-    caller_revision       TEXT COLLATE "C" NOT NULL,
-    caller_filename       TEXT COLLATE "C" NOT NULL,
-    caller_person_ref     TEXT COLLATE "C" NOT NULL,
-    speaker_label         TEXT COLLATE "C" NOT NULL,
+    caller_principal      BYTEA NOT NULL,
+    caller_occurrence_ref BYTEA NOT NULL,
+    caller_revision       BYTEA NOT NULL,
+    caller_filename       BYTEA NOT NULL,
+    caller_person_ref     BYTEA NOT NULL,
+    speaker_label         BYTEA NOT NULL,
     message_json          TEXT COLLATE "C" NOT NULL,
     visible               BIGINT NOT NULL,
     first_seen_at         TEXT COLLATE "C" NOT NULL,
@@ -841,7 +841,7 @@ CREATE TABLE {{schema}}.media_input_artifacts (
 
 CREATE TABLE {{schema}}.media_operations (
     operation_id  TEXT COLLATE "C" PRIMARY KEY,
-    principal     TEXT COLLATE "C" NOT NULL,
+    principal     BYTEA NOT NULL,
     verb          TEXT COLLATE "C" NOT NULL,
     request_sha256 TEXT COLLATE "C" NOT NULL,
     source_id     TEXT COLLATE "C",
@@ -1019,7 +1019,7 @@ CREATE TABLE {{schema}}.rendition_lexical_segments (
     char_start   BIGINT NOT NULL,
     char_end     BIGINT NOT NULL,
     checksum     TEXT COLLATE "C" NOT NULL,
-    text         TEXT COLLATE "C" NOT NULL,
+    text         BYTEA NOT NULL,
     PRIMARY KEY (build_id, segment_id),
     UNIQUE (build_id, segment_order)
 );
@@ -1187,7 +1187,7 @@ CREATE TABLE {{schema}}.rendition_lexical_index (
     row_id     BIGINT PRIMARY KEY,
     build_id   TEXT COLLATE "C" NOT NULL,
     segment_id TEXT COLLATE "C" NOT NULL,
-    text       TEXT COLLATE "C" NOT NULL,
+    text       BYTEA NOT NULL,
     UNIQUE (build_id, segment_id)
 );
 
@@ -1344,12 +1344,12 @@ CREATE TABLE {{schema}}.term_report_history (
 CREATE TABLE {{schema}}.extracted_text (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     blob_hash         TEXT COLLATE "C" NOT NULL,
-    extractor         TEXT COLLATE "C" NOT NULL,
+    extractor         BYTEA NOT NULL,
     extractor_version BIGINT NOT NULL,
     status            TEXT COLLATE "C" NOT NULL,
-    error             TEXT COLLATE "C",
+    error             BYTEA,
     attempts          BIGINT NOT NULL DEFAULT 0,
-    text              TEXT COLLATE "C",
+    text              BYTEA,
     extracted_at      TEXT COLLATE "C" NOT NULL,
     UNIQUE (blob_hash, extractor)
 );
@@ -1427,8 +1427,8 @@ CREATE INDEX photo_set_members_added ON {{schema}}.photo_set_members(set_id,adde
 CREATE TABLE {{schema}}.persons (
     key_face_id TEXT COLLATE "C",
     person_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
-    display_name TEXT COLLATE "C" NOT NULL,
-    display_name_folded TEXT COLLATE "C" NOT NULL,
+    display_name BYTEA NOT NULL,
+    display_name_folded BYTEA NOT NULL,
     origin TEXT COLLATE "C" NOT NULL,
     state TEXT COLLATE "C" NOT NULL,
     revision BIGINT NOT NULL DEFAULT 1,
@@ -1460,7 +1460,7 @@ CREATE TABLE {{schema}}.person_external_identities (
     uid_kind TEXT COLLATE "C" NOT NULL,
     uid_state TEXT COLLATE "C" NOT NULL,
     last_seen_revision BIGINT,
-    display_name_snapshot TEXT COLLATE "C" NOT NULL,
+    display_name_snapshot BYTEA NOT NULL,
     linked_at TEXT COLLATE "C" NOT NULL,
     updated_at TEXT COLLATE "C" NOT NULL,
     PRIMARY KEY (system, archive_id, uid)
@@ -1488,7 +1488,7 @@ CREATE TABLE {{schema}}.person_merges (
     request_sha256 TEXT COLLATE "C" NOT NULL,
     survivor_person_id TEXT COLLATE "C" NOT NULL,
     absorbed_person_id TEXT COLLATE "C" NOT NULL,
-    absorbed_display_name TEXT COLLATE "C" NOT NULL,
+    absorbed_display_name BYTEA NOT NULL,
     moved_json BYTEA NOT NULL,
     survivor_revision_before BIGINT NOT NULL,
     survivor_revision_after BIGINT NOT NULL,
@@ -1504,11 +1504,11 @@ CREATE TABLE {{schema}}.custodian_assignments (
     node_id BIGINT,
     content_version_id TEXT COLLATE "C",
     person_id TEXT COLLATE "C",
-    raw_label TEXT COLLATE "C" NOT NULL,
-    raw_label_folded TEXT COLLATE "C" NOT NULL,
+    raw_label BYTEA NOT NULL,
+    raw_label_folded BYTEA NOT NULL,
     rank TEXT COLLATE "C" NOT NULL,
     basis TEXT COLLATE "C" NOT NULL,
-    source_ref TEXT COLLATE "C" NOT NULL,
+    source_ref BYTEA NOT NULL,
     revision BIGINT NOT NULL DEFAULT 1,
     recorded_at TEXT COLLATE "C" NOT NULL,
     retired_at TEXT COLLATE "C"
@@ -1547,7 +1547,7 @@ CREATE TABLE {{schema}}.photo_faces (
 CREATE TABLE {{schema}}.person_match_candidates (
     candidate_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
     actor_key TEXT COLLATE "C" NOT NULL,
-    display_name TEXT COLLATE "C" NOT NULL,
+    display_name BYTEA NOT NULL,
     suggested_person_id TEXT COLLATE "C",
     reason TEXT COLLATE "C" NOT NULL,
     evidence_json BYTEA NOT NULL,

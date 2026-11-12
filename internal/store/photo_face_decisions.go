@@ -369,7 +369,7 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 	}
 	var createdPerson faceDecisionPerson
 	if request.PersonName != "" {
-		person, err := createPersonTx(ctx, tx, request.PersonName, "operator")
+		person, err := s.createPersonTx(ctx, tx, request.PersonName, "operator")
 		if err != nil {
 			return PhotoFaceDecisionReceipt{}, err
 		}

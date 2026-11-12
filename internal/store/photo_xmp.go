@@ -653,7 +653,7 @@ func (s *Store) resumeDetachedPhotoXMPTx(ctx context.Context, tx *sql.Tx, id str
  WHERE f.file_id=$1 AND n.id=$2 AND f.asset_id IS NULL AND n.trashed_at IS NULL
  AND n.parent_id=$3 AND n.name=$4 AND EXISTS(SELECT 1 FROM provenance p JOIN ingests i ON i.id=p.ingest_id
  WHERE p.node_id=n.id AND i.source_kind=$5 AND p.original_path=$6))`,
-		sidecar.FileID, sidecar.NodeID, w.Node.ParentID, w.Node.Name+".xmp", (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value(callerSuppliedSourceKindPrefix+"photo-xmp"), (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value("docbank:xmp:"+w.Original.ID)).Scan(&detached)
+		sidecar.FileID, sidecar.NodeID, w.Node.ParentID, w.Node.Name+".xmp", storedString(s.postgresSchema != "", callerSuppliedSourceKindPrefix+"photo-xmp"), storedString(s.postgresSchema != "", "docbank:xmp:"+w.Original.ID)).Scan(&detached)
 	if err != nil || !detached {
 		return w, err
 	}

@@ -438,14 +438,14 @@ func TestImportMetadataProcessingIncarnationAcceptsOnlyIdenticalExistingRow(t *t
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback()) }()
 
-	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, current))
+	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, current, false))
 	changed := current
 	changed.CreatedAt = "2026-01-01T00:00:00.000000000Z"
-	require.ErrorContains(t, importMetadataProcessingIncarnation(t.Context(), tx, changed),
+	require.ErrorContains(t, importMetadataProcessingIncarnation(t.Context(), tx, changed, false),
 		"processing incarnation "+current.ID+" already exists with created_at")
 	older := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType,
 		ID: "60000000-0000-4000-8000-000000000001", CreatedAt: "2026-01-01T00:00:00.000000000Z"}
-	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, older))
+	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, older, false))
 
 	var count int
 	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM processing_incarnations`).Scan(&count))

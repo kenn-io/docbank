@@ -51,7 +51,7 @@ func validatePhotoSuggestionMetadata(value metadataPhotoSuggestion) error {
 	return validateMetadataTime("photo suggestion created_at", value.CreatedAt)
 }
 
-func insertPhotoSuggestionMetadata(ctx context.Context, tx *sql.Tx, value metadataPhotoSuggestion) error {
+func insertPhotoSuggestionMetadata(ctx context.Context, tx *sql.Tx, value metadataPhotoSuggestion, postgres bool) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO photo_suggestions(suggestion_id,content_version_id,producer_fingerprint,dismissed,caption_resolved,resolved_tags_json,awaiting,text_settled,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		value.ID, value.ContentVersionID, value.ProducerFingerprint, boolInt(value.Dismissed), boolInt(value.CaptionResolved), mustCatalogJSON(value.ResolvedTags), boolInt(value.Awaiting), boolInt(value.TextSettled), value.CreatedAt)
 	return err

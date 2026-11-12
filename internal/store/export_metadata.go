@@ -229,7 +229,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 var exportAuthorityMetadata = newMetadataTable(metadataTable[metadataExportRecord]{
 	record: metadataExportRecord{Type: metadataExportType}, table: "export_sources", insert: importBundleMetadata})
 
-func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecord) error {
+func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecord, postgres bool) error {
 	if r.Type != metadataExportType || validateUUIDv4(r.ID) != nil || len(r.CanonicalJSON) > bundle.MaxMemberBytes || pageChecksum(r.CanonicalJSON) != r.Checksum {
 		return bundle.ErrConflict
 	}

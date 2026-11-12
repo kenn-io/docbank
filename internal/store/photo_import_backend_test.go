@@ -134,7 +134,7 @@ func checkPhotoImportAcceptedSidecarPostgres(t *testing.T) {
 				}
 				prefix = "EXPLAIN (COSTS OFF) "
 			}
-			rows, err := tx.QueryContext(ctx, prefix+s.photoImportSidecarCandidatesSQL(), fakeHash("82"), "/synthetic/capture.jpg.xmp", (provenanceSQLDialect{postgres: s.postgresSchema != ""}).value("/synthetic/capture.jpg.xmp"))
+			rows, err := tx.QueryContext(ctx, prefix+s.photoImportSidecarCandidatesSQL(), fakeHash("82"), "/synthetic/capture.jpg.xmp", storedString(s.postgresSchema != "", "/synthetic/capture.jpg.xmp"))
 			if err != nil {
 				return err
 			}

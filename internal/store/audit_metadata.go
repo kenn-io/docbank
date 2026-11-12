@@ -138,7 +138,7 @@ func exportAuditRecords(ctx context.Context, tx metadataQuerier, write metadataW
 	return rowsError("audit records", rows)
 }
 
-func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecord) error {
+func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecord, postgres bool) error {
 	record, index, canonical, err := validateAuditRecord(value)
 	if err != nil {
 		return err

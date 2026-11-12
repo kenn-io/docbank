@@ -194,7 +194,7 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
 		occurrence_count,revision,state,decided_person_id,created_at,decided_at
 	) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,'open',NULL,$9,NULL) ON CONFLICT `+conflict+` DO NOTHING`,
-		candidate.CandidateID, candidate.ActorKey, candidate.DisplayName,
+		candidate.CandidateID, candidate.ActorKey, storedString(s.postgresSchema != "", candidate.DisplayName),
 		nullableString(candidate.SuggestedPersonID), candidate.Reason, candidate.Evidence,
 		candidate.EvidenceSHA256, candidate.OccurrenceCount, candidate.CreatedAt)
 	if err != nil {
@@ -353,7 +353,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		case "link":
 			personID, err = resolveActiveCandidatePersonTx(ctx, tx, decision.PersonID)
 		case "new_person":
-			personID, err = createCandidatePersonTx(ctx, tx, candidate.DisplayName)
+			personID, err = s.createCandidatePersonTx(ctx, tx, candidate.DisplayName)
 		}
 		if err != nil {
 			return err
@@ -549,8 +549,8 @@ func resolveActiveCandidatePersonTx(ctx context.Context, tx *sql.Tx, personID st
 	return resolved, nil
 }
 
-func createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string) (string, error) {
-	person, err := createPersonTx(ctx, tx, displayName, "operator")
+func (s *Store) createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string) (string, error) {
+	person, err := s.createPersonTx(ctx, tx, displayName, "operator")
 	return person.PersonID, err
 }
 

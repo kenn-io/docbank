@@ -207,7 +207,7 @@ var (
 
 // importPhotoSettingsWithoutSequence defaults an absent sequence while preserving
 // explicit null and numeric values through the current typed codec.
-func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
+func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jsontext.Value, postgres bool) error {
 	required, nullable := photoSettingsMetadata.fields()
 	required = slices.DeleteFunc(slices.Clone(required), func(field string) bool { return field == "representative_sequence" })
 	if err := requireMetadataFields(raw, required, nullable); err != nil {
@@ -215,7 +215,7 @@ func importPhotoSettingsWithoutSequence(ctx context.Context, tx *sql.Tx, raw jso
 	}
 	codec := *photoSettingsMetadata
 	codec.record.RepresentativeSequence = new(int64(0))
-	return codec.importRecord(ctx, tx, raw)
+	return codec.importRecord(ctx, tx, raw, postgres)
 }
 
 // photoMetadataTables exports the photo records in dependency order.

@@ -232,7 +232,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 		if err := validateMetadataMediaOccurrence(record); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, record.OccurrenceID, record.SourceID, record.SourceVersionID, record.CallerPrincipal, record.CallerOccurrenceRef, record.CallerRevision, record.CallerFilename, record.CallerPersonRef, record.SpeakerLabel, record.MessageJSON, record.Visible, record.FirstSeenAt, record.RevokedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, record.OccurrenceID, record.SourceID, record.SourceVersionID, storedString(s.postgresSchema != "", record.CallerPrincipal), storedString(s.postgresSchema != "", record.CallerOccurrenceRef), storedString(s.postgresSchema != "", record.CallerRevision), storedString(s.postgresSchema != "", record.CallerFilename), storedString(s.postgresSchema != "", record.CallerPersonRef), storedString(s.postgresSchema != "", record.SpeakerLabel), record.MessageJSON, record.Visible, record.FirstSeenAt, record.RevokedAt)
 		return err
 	case metadataMediaInputArtifactType:
 		var record metadataMediaInputArtifact
@@ -267,7 +267,7 @@ func (s *Store) importMediaMetadataRecord(ctx context.Context, tx *sql.Tx, kind 
 				record.ReceiptJSON = string(encoded)
 			}
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO media_operations VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.OperationID, record.Principal, record.Verb, record.RequestSHA256, record.SourceID, record.ReceiptJSON, record.CreatedAt, record.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO media_operations VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, record.OperationID, storedString(s.postgresSchema != "", record.Principal), record.Verb, record.RequestSHA256, record.SourceID, record.ReceiptJSON, record.CreatedAt, record.UpdatedAt)
 		return err
 	default:
 		return fmt.Errorf("unknown media metadata type %q", kind)
