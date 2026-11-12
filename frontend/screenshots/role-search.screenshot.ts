@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { inspect, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { getGlobalOrigin, setGlobalOrigin } from "undici";
+import { APIError } from "../src/api-transport.js";
+import {
+  createWorkspaceQuery,
+  type WorkspaceQueryCreateRequestFacetsItem,
+} from "../src/generated/docbank.js";
 import type { SnapshotPage } from "../src/snapshots.js";
 
 const exec = promisify(execFile);
@@ -182,19 +188,22 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
     // browser session's own frozen result before driving the page.
     const freeze = async (
       value: ReturnType<typeof advanced>,
-      facets: string[],
+      facets: WorkspaceQueryCreateRequestFacetsItem[],
     ): Promise<SnapshotPage | undefined> => {
-      const response = await fetch(`http://127.0.0.1:${issued.port}/api/v1/workspace/queries`, {
-        method: "POST",
-        signal: AbortSignal.timeout(30_000),
-        headers: {
-          Host: issued.host,
-          "Content-Type": "application/json",
-          "X-Docbank-Web-Session": session,
-        },
-        body: JSON.stringify({ query: value, page_size: 50, facets }),
-      });
-      return response.ok ? ((await response.json()) as SnapshotPage) : undefined;
+      const previousOrigin = getGlobalOrigin();
+      setGlobalOrigin(`http://127.0.0.1:${issued.port}`);
+      try {
+        const response = await createWorkspaceQuery(
+          { query: value, page_size: 50, facets },
+          { session, signal: AbortSignal.timeout(30_000), headers: { Host: issued.host } },
+        ).catch((cause: unknown) => {
+          if (cause instanceof APIError) return undefined;
+          throw cause;
+        });
+        return response ? ((await response.json()) as SnapshotPage) : undefined;
+      } finally {
+        setGlobalOrigin(previousOrigin);
+      }
     };
     const summary = (page?: SnapshotPage) => ({
       rows: page?.rows.map((row) => [row.name, row.matched_roles]),
