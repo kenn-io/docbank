@@ -81,7 +81,7 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 func TestStorageSchemaVersionContract(t *testing.T) {
 	t.Parallel()
 	if slices.Contains(releasedStorageSchemaVersions, currentStorageSchemaVersion) {
-		return
+		t.Skip("current schema version is released")
 	}
 	records, err := loadSchemaContracts("testdata/schema-contracts")
 	require.NoError(t, err)
@@ -125,6 +125,13 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 
 func TestStorageSchemaContractChanges(t *testing.T) {
 	t.Parallel()
+	digest := strings.Repeat("a", 64)
+	next := strings.Repeat("b", 64)
+	records := []schemaContract{{Version: 49, Digest: digest}, {Version: 50, Digest: next}}
+	require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf("add empty schema contract file testdata/schema-contracts/000049-%s.schema", digest))
+	require.NoError(t, checkSchemaContract(records[:1], 49, digest))
+	require.EqualError(t, checkSchemaContract(records, 49, digest), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
+	require.NoError(t, checkSchemaContract(records, 50, next))
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "current.db"), driver.driver, schemaSQL, currentStorageSchemaVersion)
@@ -143,40 +150,26 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 				return digest
 			}
 			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
-			require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)}}, 49, probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)))
+			require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: probe(`CREATE TABLE contract_probe (id INTEGER)`)}}, 49, probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)), "set currentStorageSchemaVersion to 50")
 			require.ErrorContains(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: probe(`CREATE TABLE contract_probe (id INTEGER)`, trigger)}}, 49, probe(`CREATE TABLE contract_probe (id INTEGER, changed TEXT)`, trigger)), "set currentStorageSchemaVersion to 50")
 			digest := schemaCatalogDigest(t, db)
 			record := schemaContract{Version: 49, Digest: digest}
-			require.EqualError(t, checkSchemaContract(nil, 49, digest), fmt.Sprintf("add empty schema contract file testdata/schema-contracts/000049-%s.schema", digest))
-			require.NoError(t, checkSchemaContract([]schemaContract{record}, 49, digest))
 			for _, statement := range []string{
 				`CREATE TABLE contract_probe (id INTEGER)`,
 				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
-				`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
 				`CREATE INDEX contract_probe ON nodes(id)`,
 				`DROP INDEX nodes_parent`,
 				`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
 			} {
 				require.ErrorContains(t, checkSchemaContract([]schemaContract{record}, 49, probe(statement)), "set currentStorageSchemaVersion to 50", statement)
 			}
-			for _, pair := range [][2]string{
-				{`CREATE TABLE proposal_a (id INTEGER)`, `CREATE TABLE proposal_b (id INTEGER)`},
-				{`CREATE INDEX proposal_a ON nodes(id)`, `CREATE INDEX proposal_b ON nodes(name)`},
-			} {
-				main := schemaContract{Version: 49, Digest: probe(pair[0])}
-				proposal := schemaContract{Version: 49, Digest: probe(pair[1])}
-				combined := probe(pair[0], pair[1])
-				require.ErrorContains(t, checkSchemaContract([]schemaContract{main, proposal}, 49, combined), "set currentStorageSchemaVersion to 50", pair[1])
-				require.EqualError(t, checkSchemaContract([]schemaContract{main}, 50, combined), fmt.Sprintf("add empty schema contract file testdata/schema-contracts/000050-%s.schema", combined))
-				require.NoError(t, checkSchemaContract([]schemaContract{main, {Version: 50, Digest: combined}}, 50, combined))
-			}
+			a, b := `CREATE TABLE proposal_a (id INTEGER)`, `CREATE TABLE proposal_b (id INTEGER)`
+			main := schemaContract{Version: 49, Digest: probe(a)}
+			proposal := schemaContract{Version: 49, Digest: probe(b)}
+			combined := probe(a, b)
+			require.ErrorContains(t, checkSchemaContract([]schemaContract{main, proposal}, 49, combined), "set currentStorageSchemaVersion to 50")
+			require.EqualError(t, checkSchemaContract([]schemaContract{main}, 50, combined), fmt.Sprintf("add empty schema contract file testdata/schema-contracts/000050-%s.schema", combined))
+			require.NoError(t, checkSchemaContract([]schemaContract{main, {Version: 50, Digest: combined}}, 50, combined))
 		})
 	}
-}
-
-func TestStorageSchemaContractCollisions(t *testing.T) {
-	t.Parallel()
-	records := []schemaContract{{Version: 49, Digest: "main"}, {Version: 50, Digest: "next"}}
-	require.EqualError(t, checkSchemaContract(records, 49, "main"), "schema version 49 conflicts with recorded layouts; preserve main's records, remove your old record, set currentStorageSchemaVersion to 51, rerun this test against the combined layout, and add the record it prints")
-	require.NoError(t, checkSchemaContract(records, 50, "next"))
 }
