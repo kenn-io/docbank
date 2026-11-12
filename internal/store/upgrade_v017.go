@@ -5,7 +5,8 @@ import (
 	"database/sql"
 )
 
-// Upgrade preserves absence observations and photo work omitted by backup.
+// Upgrade preserves absence observations and photo work omitted by backup,
+// including the generated suggestion text and settlement that import blanks.
 // Metadata and the v41 chain supply their input authority.
 func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	if err := restoreV41SourceState(ctx, source, target); err != nil {
@@ -25,7 +26,7 @@ func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *
 		if err := copyReleasedRowsOrdered(ctx, source, tx, "rendition_job_waiters", omitted, "job_id,waiter_id"); err != nil {
 			return err
 		}
-		return copyReleasedRowsOrdered(ctx, source, tx, "photo_description_explicit_waiters", "", "waiter_id")
+		return replaceImportedTables(ctx, source, tx, []string{"photo_suggestions", "photo_description_explicit_waiters"})
 	})
 }
 
