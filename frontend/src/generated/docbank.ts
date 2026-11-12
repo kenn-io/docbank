@@ -7503,6 +7503,18 @@ export interface ProcessingProfileSummary {
   reranking_available?: boolean;
 }
 
+export interface Profile {
+  columns: string[];
+  date_format: string;
+  declared_timezone: string;
+  encoding: string;
+  field: number;
+  header_row: boolean;
+  id: string;
+  newline_in_field: number;
+  qualifier: number;
+}
+
 export type PromotePhotoNodeRequestKind = typeof PromotePhotoNodeRequestKind[keyof typeof PromotePhotoNodeRequestKind];
 
 
@@ -7660,6 +7672,53 @@ export interface QueryPreview {
   dependencies: QueryDependency[];
   query: SavedQueryV1Schema;
   query_fingerprint: string;
+}
+
+export interface RecipientPackageFile {
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+export interface RecipientPackageDocument {
+  allocation_id: string;
+  artifact_manifest_sha256: string;
+  document_id: string;
+  labels: string[];
+  namespace_id: string;
+  ordinal: number;
+  page_count: number;
+  pdf: RecipientPackageFile;
+  recipe_sha256: string;
+  review_sha256: string;
+  text: RecipientPackageFile;
+}
+
+export interface RecipientPackageReceipt {
+  contract: string;
+  dat_profile: Profile;
+  document_count: number;
+  documents: RecipientPackageDocument[];
+  load_file: RecipientPackageFile;
+  mapping: RecipientPackageFile;
+  opt_profile: Profile;
+  page_count: number;
+  page_map: RecipientPackageFile;
+}
+
+export interface RecipientPackageDownload {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  allocation_id: string;
+  contract: string;
+  expires_at: string;
+  id: string;
+  name: string;
+  receipt: RecipientPackageReceipt;
+  sha256: string;
+  size: number;
+  url: string;
+  verification: string;
 }
 
 export interface RedactionFileDigest {
@@ -19861,6 +19920,68 @@ export const publishNumberedPDF = async (redactionRenderRequest: NonReadonly<Red
     return headers;
   };
 return sessionJSON<BatesExport>(getPublishNumberedPDFUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionRenderRequest)
+  }
+);}
+
+
+
+export const getDiscardRecipientPackagesUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Cancel this owner's recipient package and transfer
+ */
+export const discardRecipientPackages = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getDiscardRecipientPackagesUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export const getBuildRecipientPackageUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/recipient-packages`
+}
+
+/**
+ * @summary Prepare a recipient ZIP from one completed numbered review
+ */
+export const buildRecipientPackage = async (redactionRenderRequest: NonReadonly<RedactionRenderRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RecipientPackageDownload> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RecipientPackageDownload>(getBuildRecipientPackageUrl(),
   {
     ...options,
     method: 'POST',

@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { Disclosure, Button, Modal, SelectDropdown, Spinner, Toggle } from "@kenn-io/kit-ui";
   import RedactionNumbering from "./RedactionNumbering.svelte";
+  import { RecipientPackageController } from "./recipientPackageController.svelte.js";
   import type { NumberingInputs } from "./redactionNumbering.js";
   import OriginalPreview from "./OriginalPreview.svelte";
   import type { PDFReviewBridge, ReaderReviewStatus, TextSelectionStatus } from "./pdfReview.js";
@@ -65,6 +66,10 @@
   let selectionAnnouncement = $state("");
   let review = $state<RedactionReview>();
   let numberingReviews = $state<{ inputs: NumberingInputs; published: boolean }[]>([]);
+  const packageController = new RecipientPackageController(
+    () => session,
+    (cause) => onauthfailure(cause),
+  );
   const latestNumbering = $derived(numberingReviews.at(-1));
   let numberingLocked = $state(false);
   let preview = $state<RedactionPreview>();
@@ -417,6 +422,7 @@
   function endReview() {
     if (!reviewing) return;
     reviewing = false;
+    void packageController.stop();
     generation++;
     controller.abort();
     clearImage();
@@ -529,6 +535,14 @@
       {#if textSelection.error}<p class="notice" role="status">{textSelection.error}</p>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+      {#if !packageController.allocation && packageController.phase === "cleanup-failed"}<div
+          class="package-recovery"
+        >
+          <p class="error" role="alert">{packageController.error}</p>
+          <Button size="sm" onclick={() => void packageController.release()}
+            >Release recipient ZIP</Button
+          >
+        </div>{/if}
       {#if phase === "preparing"}<p role="status"><Spinner size={16} /> Preparing PDF…</p>
         <Button onclick={close}>Cancel preparation</Button>{/if}
       {#if preparation && currentPage}
@@ -678,6 +692,7 @@
             {session}
             inputs={item.inputs}
             {title}
+            {packageController}
             bind:locked={numberingLocked}
             {onauthfailure}
             onpublished={() => {
@@ -883,6 +898,11 @@
     margin: 0;
     font-size: var(--font-size-sm);
     line-height: 1.5;
+  }
+  .package-recovery {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
   }
   .error {
     color: var(--status-error-text);

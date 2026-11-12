@@ -12990,6 +12990,92 @@ func (c *Client) PublishNumberedPDF(ctx context.Context, options *PublishNumbere
 	return responseParser(ctx, resp)
 }
 
+// DiscardRecipientPackages Cancel this owner's recipient package and transfer
+func (c *Client) DiscardRecipientPackages(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/redaction/recipient-packages",
+		Method:     "DELETE",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DiscardRecipientPackagesErrorResponse](resp, "DiscardRecipientPackagesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/recipient-packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
+// BuildRecipientPackage Prepare a recipient ZIP from one completed numbered review
+func (c *Client) BuildRecipientPackage(ctx context.Context, options *BuildRecipientPackageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*BuildRecipientPackageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/redaction/recipient-packages",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*BuildRecipientPackageResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(BuildRecipientPackageResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "BuildRecipientPackageResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[BuildRecipientPackageErrorResponse](resp, "BuildRecipientPackageErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/redaction/recipient-packages")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // RenderNativePDF Render and verify a reviewed native PDF into one ZIP
 func (c *Client) RenderNativePDF(ctx context.Context, options *RenderNativePDFRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenderNativePDFResponse, error) {
 	var err error
@@ -24828,6 +24914,34 @@ func (o *PublishNumberedPDFRequestOptions) GetHeader() (map[string]string, error
 	return nil, nil
 }
 
+// BuildRecipientPackageRequestOptions is the options needed to make a request to BuildRecipientPackage.
+type BuildRecipientPackageRequestOptions struct {
+	Body *BuildRecipientPackageBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *BuildRecipientPackageRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *BuildRecipientPackageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *BuildRecipientPackageRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *BuildRecipientPackageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // RenderNativePDFRequestOptions is the options needed to make a request to RenderNativePDF.
 type RenderNativePDFRequestOptions struct {
 	Body *RenderNativePDFBody
@@ -28354,6 +28468,8 @@ type DownloadRedactionPreviewBody = RedactionPreviewConfirmation
 
 type PublishNumberedPDFBody = RedactionRenderRequest
 
+type BuildRecipientPackageBody = RedactionRenderRequest
+
 type RenderNativePDFBody = RedactionRenderRequest
 
 type ReserveNumberedPDFBody = NumberedReservationRequest
@@ -30091,6 +30207,12 @@ type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type PublishNumberedPDFErrorResponseApplicationProblemPlusJSON504 api.Error
 
+type DiscardRecipientPackagesErrorResponse = Error
+
+type BuildRecipientPackageResponse = RecipientPackageDownload
+
+type BuildRecipientPackageErrorResponse = Error
+
 type RenderNativePDFResponse = []byte
 
 type RenderNativePDFErrorResponse = Error
@@ -31664,6 +31786,8 @@ type ProcessingSelector = api.ProcessingSelector
 
 type ProcessingStatus = api.ProcessingStatus
 
+type Profile = loadfile.Profile
+
 type PromotePhotoNodeRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string                      `json:"$schema,omitempty"`
@@ -31720,6 +31844,27 @@ type QueryPreview = api.QueryPreview
 type Receipt = bundle.Receipt
 
 type Recipe = pdfstamp.Recipe
+
+type RecipientPackageDocument = processing.RecipientPackageDocument
+
+type RecipientPackageDownload struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string                 `json:"$schema,omitempty"`
+	AllocationID uuid.UUID               `json:"allocation_id"`
+	Contract     string                  `json:"contract"`
+	ExpiresAt    time.Time               `json:"expires_at"`
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	Receipt      RecipientPackageReceipt `json:"receipt"`
+	Sha256       string                  `json:"sha256"`
+	Size         int64                   `json:"size"`
+	URL          string                  `json:"url"`
+	Verification string                  `json:"verification"`
+}
+
+type RecipientPackageFile = processing.RecipientPackageFile
+
+type RecipientPackageReceipt = processing.RecipientPackageReceipt
 
 type RedactionArchive = processing.RedactionArchive
 

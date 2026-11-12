@@ -40,7 +40,7 @@ export interface SessionOptions extends RequestInit {
 // Reads that use POST for their request body, so scrolling or typing a search never defers a pass.
 // A missed entry only delays one refresh pass.
 const readOnlyPosts =
-  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse|redaction\/(prepare|resolve|previews))$/;
+  /^\/api\/v1\/(photos\/(assets\/(query|timeline|flags|[^/]+\/preview)|authored\/prepare|rejects\/preflight|stacks\/group|checkouts\/estimate)|queries\/parse|redaction\/(prepare|resolve|previews|recipient-packages))$/;
 
 let mutations = 0;
 

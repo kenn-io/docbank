@@ -141,6 +141,7 @@ type Service struct {
 	runs                int
 	nativePDFOperation  string
 	redactionPreviews   redactionPreviewStore
+	recipientPackages   recipientPackageStore
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}
@@ -652,6 +653,7 @@ func NewService(ctx context.Context, config ServiceConfig) (*Service, error) {
 // outlived its initiating request. Workers retain their durable recovery state.
 func (service *Service) Stop() {
 	defer service.RevokeRedactionPreviews("")
+	defer service.RevokeRecipientPackages("")
 	service.runsMu.Lock()
 	defer service.runsMu.Unlock()
 	if service.stopping {

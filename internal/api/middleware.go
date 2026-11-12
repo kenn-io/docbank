@@ -356,7 +356,7 @@ func isLoopbackContext(ctx context.Context) bool {
 
 func timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == redactionPublicationsPath {
+		if r.Method == http.MethodPost && (r.URL.Path == redactionPublicationsPath || r.URL.Path == recipientPackagesPath) {
 			ctx, cancel := redactionPublicationContext(w, r)
 			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
