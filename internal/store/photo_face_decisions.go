@@ -668,7 +668,7 @@ func (s *Store) undoFaceDecisionTx(ctx context.Context, tx *sql.Tx, r PhotoFaceD
 			WHERE p.person_id=$1 AND p.state<>'retired' AND p.revision=$2
 			AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=p.person_id
 				AND NOT (a.role='depicted' AND a.action='withdrawn' AND a.content_version_id=$3))
-			AND NOT EXISTS(SELECT 1 FROM custodian_assignments c WHERE c.person_id=p.person_id AND c.retired_at IS NULL))`,
+			AND NOT EXISTS(SELECT 1 FROM custodian_assignments c WHERE c.person_id=p.person_id AND c.retired_at IS NULL) AND NOT EXISTS(SELECT 1 FROM parties y WHERE y.person_id=p.person_id AND y.retired_at IS NULL))`,
 			r.CreatedPerson.PersonID, r.CreatedPerson.Revision, r.After.VersionID).Scan(&unused); err != nil {
 			return PhotoFaceDecisionReceipt{}, err
 		}
