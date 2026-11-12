@@ -252,6 +252,7 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		if p == nil || event.RecordRevision > p.revision {
 			return errors.New("invalid tax event parent or revision")
 		}
+		// An open SQLite table can be rebuilt without its unique constraint.
 		if event.RecordID == previousID && event.RecordRevision == previousRevision {
 			return errors.New("duplicate tax event revision")
 		}
