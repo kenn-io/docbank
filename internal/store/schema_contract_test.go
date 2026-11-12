@@ -397,7 +397,49 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 	}
 }
 
+func TestStorageSchemaUnreleasedVersionFlow(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			db := schemaContractDB(t, driver.driver, schemaSQL)
+			dir := t.TempDir()
+			writeRecord := func(version int, digest string, indexes map[string]string) {
+				var lines []string
+				for name, hash := range indexes {
+					lines = append(lines, name+" "+hash+"\n")
+				}
+				slices.Sort(lines)
+				name := schemaContractFile(schemaContract{Version: version, Digest: digest}, "layout")
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(lines, "")), 0600))
+			}
+			digest := schemaCatalogDigest(t, db)
+			indexes := schemaIndexDigests(t, db)
+			writeRecord(49, digest, indexes)
+			records, err := loadSchemaContracts(dir)
+			require.NoError(t, err)
+			released, err := schemaContractReleased(records, 49, []int{48})
+			require.NoError(t, err)
+			require.False(t, released)
+			require.NoError(t, checkSchemaLayout(records, 49, digest, indexes))
+
+			_, err = db.ExecContext(t.Context(), `CREATE TABLE contract_new (id INTEGER)`)
+			require.NoError(t, err)
+			changed := schemaCatalogDigest(t, db)
+			indexes = schemaIndexDigests(t, db)
+			require.ErrorContains(t, checkSchemaLayout(records, 49, changed, indexes), "set currentStorageSchemaVersion to 50")
+			writeRecord(50, changed, indexes)
+			records, err = loadSchemaContracts(dir)
+			require.NoError(t, err)
+			released, err = schemaContractReleased(records, 50, []int{48})
+			require.NoError(t, err)
+			require.False(t, released)
+			require.NoError(t, checkSchemaLayout(records, 50, changed, indexes))
+		})
+	}
+}
+
 func TestStorageSchemaNonUniqueIndexChanges(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db := schemaContractDB(t, driver.driver, schemaSQL)
