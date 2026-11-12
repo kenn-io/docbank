@@ -42,15 +42,14 @@ const emails: [string, Record<string, string>, string][] = [
     "Vendor notes for review.",
   ],
 ];
-const advanced = (text: string) =>
-  ({
-    v: 1,
-    text,
-    syntax: "advanced",
-    mode: "lexical",
-    filters: {},
-    sort: { field: "name", direction: "asc" },
-  }) as const;
+const advanced = (text: string, filters: Record<string, unknown> = {}) => ({
+  v: 1 as const,
+  text,
+  syntax: "advanced" as const,
+  mode: "lexical" as const,
+  filters,
+  sort: { field: "name", direction: "asc" } as const,
+});
 const query = advanced('from:"Mara Okonkwo-Fell"');
 // Any role: the one person operand the base branch already has.
 const anyRole = advanced('person:"Mara Okonkwo-Fell"');
@@ -251,6 +250,78 @@ test("finds documents by sender with role chips and a People facet", async ({ pa
       ).toBeVisible();
       await expect(people).toBeVisible();
     });
+
+    // Merge the provisioned Ines into a new survivor. A query that still names
+    // the retired ID comes back resolved to the survivor, so the People facet
+    // shows the survivor selected and one click removes that filter.
+    const provisioned = await freeze(query, ["person_role"]);
+    const retiredID = provisioned?.facets[0]?.values.find(
+      (value) => value.label === "Ines Albarrán",
+    )?.key;
+    if (!retiredID) throw new Error("Synthetic Ines person missing");
+    const retired = JSON.parse(await run("people", "show", retiredID));
+    const survivor = JSON.parse(await run("people", "create", "Ines Albarrán-Ruiz"));
+    await run(
+      "people",
+      "merge",
+      survivor.person_id,
+      retiredID,
+      "--revision",
+      String(survivor.revision),
+      "--absorbed-revision",
+      String(retired.revision),
+    );
+    const retiredQuery = advanced(query.text, {
+      people: [{ person_id: retiredID, roles: ["recipient"] }],
+    });
+    await expect
+      .poll(
+        async () => {
+          const frozen = await freeze(retiredQuery, ["person_role"]);
+          return {
+            people: frozen?.query.filters.people,
+            rows: frozen?.rows.map((row) => [row.name, row.matched_roles]),
+            survivor: frozen?.facets[0]?.values.find((value) => value.key === survivor.person_id)
+              ?.label,
+          };
+        },
+        { timeout: 120_000, intervals: [1_000] },
+      )
+      .toEqual({
+        people: [{ person_id: survivor.person_id, roles: ["recipient"] }],
+        rows: [["board-update.eml", ["recipient", "sender"]]],
+        survivor: "Ines Albarrán-Ruiz",
+      });
+
+    await open(retiredQuery);
+    const survivorSelected = people.getByRole("button", {
+      name: "Ines Albarrán-Ruiz, Recipient, 1 documents, selected",
+    });
+    await expect(survivorSelected).toHaveAttribute("aria-pressed", "true");
+    await expect(people.getByText("Ines Albarrán", { exact: true })).toHaveCount(0);
+    await captureStates(page, testInfo, "merged-survivor-selected", async () => {
+      await expect(
+        results.getByRole("cell", { name: "/board-update.eml, matched as Recipient, Sender" }),
+      ).toBeVisible();
+      await expect(survivorSelected).toBeVisible();
+    });
+    const clearing = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/workspace/queries" &&
+        response.request().method() === "POST",
+    );
+    await survivorSelected.click();
+    const cleared = await clearing;
+    expect(cleared.status()).toBe(200);
+    const clearedQuery = cleared.request().postDataJSON().query;
+    expect(clearedQuery.text).toBe(query.text);
+    expect(clearedQuery.filters?.people).toBeUndefined();
+    await expect(
+      results.getByRole("cell", { name: "/budget-follow-up.eml, matched as Sender" }),
+    ).toBeVisible();
+    await expect(
+      people.getByRole("button", { name: "Ines Albarrán-Ruiz, Recipient, 1 documents" }),
+    ).not.toHaveAttribute("aria-pressed", "true");
   } catch (error) {
     failure = error;
     throw error;
