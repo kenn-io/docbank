@@ -14,6 +14,7 @@ import (
 func registerTaxRoutes(api huma.API, d Deps, g *gate) {
 	registerTaxAccountRoutes(api, d, g)
 	registerTaxRecordRoutes(api, d, g)
+	registerTaxEventRoutes(api, d, g)
 }
 
 // Each field records the Huma locations that may be reported for it. The
@@ -27,7 +28,7 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"reveal", "q"}, {"account_id", "b"},
 	{"title", "b"}, {"kind", "bq"}, {"form_code", "b"}, {"tax_year", "b"},
 	{"period_start", "b"}, {"period_end", "b"}, {"due_date", "b"},
-	{"direction", "b"}, {taxAmountField, "b"}, {"state", "q"}, {"year", "q"}, {"record_id", "p"},
+	{"direction", "b"}, {taxAmountField, "b"}, {"state", "bq"}, {"year", "q"}, {"record_id", "p"}, {"event_id", "p"}, {"occurred_on", "b"}, {"reference", "b"}, {"reason", "b"},
 }
 var taxDiagnosticPairs = map[string]string{
 	"invalid value": "filer", "required": "filer_party_id",

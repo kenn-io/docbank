@@ -2582,18 +2582,18 @@ CREATE INDEX tax_records_account_period ON {{schema}}.tax_records(account_id,per
 CREATE UNIQUE INDEX tax_records_live_period ON {{schema}}.tax_records(account_id,period_start,period_end,kind) WHERE account_id IS NOT NULL AND retired_at IS NULL;
 
 CREATE TABLE {{schema}}.tax_events (
-    event_id TEXT PRIMARY KEY,
-    record_id TEXT NOT NULL REFERENCES {{schema}}.tax_records(record_id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,
-    occurred_on TEXT NOT NULL,
-    sets_state TEXT NOT NULL,
+    event_id TEXT COLLATE "C" PRIMARY KEY NOT NULL,
+    record_id TEXT COLLATE "C" NOT NULL REFERENCES {{schema}}.tax_records(record_id) ON DELETE CASCADE,
+    kind TEXT COLLATE "C" NOT NULL,
+    occurred_on TEXT COLLATE "C" NOT NULL,
+    sets_state TEXT COLLATE "C" NOT NULL,
     amount_minor BIGINT,
-    currency TEXT NOT NULL,
-    reference TEXT NOT NULL,
-    note TEXT NOT NULL,
-    recorded_at TEXT NOT NULL,
-    voided_at TEXT,
-    void_reason TEXT NOT NULL,
+    currency TEXT COLLATE "C" NOT NULL,
+    reference TEXT COLLATE "C" NOT NULL,
+    note TEXT COLLATE "C" NOT NULL,
+    recorded_at TEXT COLLATE "C" NOT NULL,
+    voided_at TEXT COLLATE "C",
+    void_reason TEXT COLLATE "C" NOT NULL,
     record_revision BIGINT NOT NULL,
     UNIQUE(record_id, record_revision)
 );

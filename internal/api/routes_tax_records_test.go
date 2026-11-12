@@ -189,6 +189,8 @@ func TestTaxRecordAuditRefusal(t *testing.T) {
 		{http.MethodPost, "/api/v1/tax/records", map[string]any{"account_id": a.AccountID, "kind": "notice", "title": "New"}, nil},
 		{http.MethodPatch, path, map[string]any{"note": "example"}, map[string]string{"If-Match": `"1"`}},
 		{http.MethodPost, path + "/retire", nil, map[string]string{"If-Match": `"1"`}},
+		{http.MethodPost, path + "/advance", map[string]any{"state": "filed", "occurred_on": "2026-01-01"}, map[string]string{"If-Match": `"1"`}},
+		{http.MethodPost, path + "/events", map[string]any{"kind": "note", "occurred_on": "2026-01-01"}, map[string]string{"If-Match": `"1"`}},
 	} {
 		resp, body := do(t, ts, op.method, op.path, op.headers, op.input)
 		assert.Equal(t, http.StatusConflict, resp.StatusCode, body)

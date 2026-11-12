@@ -3334,7 +3334,7 @@ CREATE INDEX IF NOT EXISTS tax_records_account_period ON tax_records(account_id,
 CREATE UNIQUE INDEX IF NOT EXISTS tax_records_live_period ON tax_records(account_id,period_start,period_end,kind) WHERE account_id IS NOT NULL AND retired_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS tax_events (
-    event_id TEXT PRIMARY KEY,
+    event_id TEXT PRIMARY KEY NOT NULL,
     record_id TEXT NOT NULL REFERENCES tax_records(record_id) ON DELETE CASCADE,
     kind TEXT NOT NULL,
     occurred_on TEXT NOT NULL,

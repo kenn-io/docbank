@@ -53,3 +53,48 @@ func TestTaxStateIgnoresEventClocks(t *testing.T) {
 		}
 	}
 }
+
+func TestTaxEventNormalizationAndBoundaries(t *testing.T) {
+	value := EventValues{Kind: "note", OccurredOn: "2024-02-29", Reference: strings.Repeat("x", 256), Note: strings.Repeat("a", 8190) + "\r\n"}
+	got, err := NormalizeEvent("filing", value)
+	if err != nil || len(got.Note) != 8191 {
+		t.Fatalf("NormalizeEvent = %#v, %v", got, err)
+	}
+	for _, value := range []EventValues{
+		{Kind: "note", OccurredOn: "0000-01-01"},
+		{Kind: "note", OccurredOn: "2024-02-29", Reference: "\xff"},
+		{Kind: "note", OccurredOn: "2024-02-29", Reference: "bad\x00value"},
+		{Kind: "refund", OccurredOn: "2024-02-29"},
+	} {
+		if err := ValidateEvent("filing", value); !errors.Is(err, ErrInvalid) {
+			t.Errorf("ValidateEvent returned %v", err)
+		}
+	}
+	if got, err := NormalizeVoidReason("  "); !errors.Is(err, ErrInvalid) || got != "" {
+		t.Fatalf("blank reason = %q, %v", got, err)
+	}
+}
+
+func TestTaxEventAssessmentMoney(t *testing.T) {
+	for _, tc := range []struct {
+		currency, decimal string
+		minor             int64
+		valid             bool
+	}{
+		{"JPY", "123", 123, true}, {"BHD", "1.234", 1234, true}, {"JPY", "1.2", 0, false}, {"USD", "1e3", 0, false}, {"USD", "99999999999999999999999999999999", 0, false},
+	} {
+		got, err := ParseMoney(tc.decimal, tc.currency)
+		if (err == nil) != tc.valid {
+			t.Errorf("%s %s: %v", tc.currency, tc.decimal, err)
+			continue
+		}
+		if err == nil {
+			if got != tc.minor {
+				t.Errorf("%s: got %d", tc.currency, got)
+			}
+			if err := ValidateEvent("filing", EventValues{Kind: "assessed", SetsState: "assessed", OccurredOn: "2026-01-01", Currency: tc.currency, AmountMinor: &got}); err != nil {
+				t.Errorf("valid amount: %v", err)
+			}
+		}
+	}
+}

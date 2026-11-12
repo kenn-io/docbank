@@ -1005,7 +1005,52 @@ func TestTaxOpenAPIContract(t *testing.T) {
 	require.NotNil(t, output)
 	assert.Equal(t, 64, *output.Properties["tax_kind"].MaxLength)
 	assert.True(t, output.Properties["amount_minor"].Nullable)
+	foundReveal := false
 	for _, param := range recordItem.Get.Parameters {
-		assert.NotEqual(t, "reveal", param.Name)
+		if param.Name == "reveal" {
+			foundReveal = true
+		}
 	}
+	assert.True(t, foundReveal)
+}
+
+func TestTaxEventOpenAPIContract(t *testing.T) {
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for _, tc := range []struct{ path, id, status string }{
+		{"/api/v1/tax/records/{record_id}/advance", "advanceTaxRecord", "200"},
+		{"/api/v1/tax/records/{record_id}/events", "addTaxEvent", "201"},
+		{"/api/v1/tax/records/{record_id}/events/{event_id}/void", "voidTaxEvent", "200"},
+	} {
+		item := doc.Paths[tc.path]
+		require.NotNil(t, item)
+		require.NotNil(t, item.Post)
+		assert.Equal(t, tc.id, item.Post.OperationID)
+		assert.Contains(t, item.Post.Responses, tc.status)
+		found := false
+		for _, p := range item.Post.Parameters {
+			if p.In == "header" && p.Name == "If-Match" {
+				found = p.Required
+			}
+			assert.NotEqual(t, "reveal", p.Name)
+		}
+		assert.True(t, found)
+	}
+	for _, name := range []string{"AddTaxEventRequest", "AdvanceTaxRecordRequest", "VoidTaxEventRequest"} {
+		schema := doc.Components.Schemas.Map()[name]
+		require.NotNil(t, schema)
+		assert.Equal(t, false, schema.AdditionalProperties)
+		for _, field := range []string{"event_id", "record_id", "record_revision", "sets_state", "recorded_at", "voided_at", "void_reason"} {
+			assert.NotContains(t, schema.Properties, field)
+		}
+	}
+	event := doc.Components.Schemas.Map()["TaxEvent"]
+	require.NotNil(t, event)
+	assert.Equal(t, "integer", event.Properties["amount_minor"].Type)
+	assert.True(t, event.Properties["amount_minor"].Nullable)
+	assert.True(t, event.Properties["voided_at"].Nullable)
+	detail := doc.Components.Schemas.Map()["TaxRecordDetail"]
+	require.NotNil(t, detail)
+	assert.Contains(t, detail.Properties, "record_id")
+	assert.Contains(t, detail.Properties, "events")
+	assert.Nil(t, doc.Paths["/api/v1/tax/records/{record_id}/events/{event_id}"])
 }

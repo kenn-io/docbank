@@ -122,12 +122,13 @@ func registerTaxRecordRoutes(api huma.API, d Deps, g *gate) {
 	})
 	huma.Register(api, huma.Operation{OperationID: "getTaxRecord", Method: http.MethodGet, Path: "/api/v1/tax/records/{record_id}", Summary: "Inspect a tax record"}, func(ctx context.Context, in *struct {
 		RecordID string `path:"record_id"`
-	}) (*taxRecordOutput, error) {
-		r, err := d.Store.GetTaxRecord(ctx, in.RecordID)
+		Reveal   bool   `query:"reveal"`
+	}) (*taxRecordDetailOutput, error) {
+		detail, err := d.Store.GetTaxRecordDetail(ctx, in.RecordID)
 		if err != nil {
 			return nil, taxRouteError(d.Logger, err)
 		}
-		return taxRecordResult(r), nil
+		return &taxRecordDetailOutput{ETag: revisionETag(detail.Record.Revision), CacheControl: cacheControlNoStore, Body: fromStoreTaxRecordDetail(detail, in.Reveal)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "createTaxRecord", Method: http.MethodPost, Path: "/api/v1/tax/records", Summary: "Create a tax record", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreateTaxRecordRequest }) (*taxRecordOutput, error) {
 		var out *taxRecordOutput
