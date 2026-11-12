@@ -142,7 +142,7 @@ func TestSingleHeadingWithinDefaultByteEnvelope(t *testing.T) {
 			src := []byte("# " + text + ending.text)
 			n, err := Parse(t.Context(), src, Limits{})
 			require.NoError(t, err)
-			require.Equal(t, maxInput, len(src))
+			require.Len(t, src, maxInput)
 			require.Equal(t, text, n.Title)
 			require.Equal(t, "h1", n.TitleSource)
 			require.Len(t, n.Headings, 1)

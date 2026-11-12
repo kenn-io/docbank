@@ -189,7 +189,7 @@ func (d *blockDriver) skipBlankLines() bool {
 }
 
 func (d *blockDriver) openBlocks(parent ast.Node, blankLine bool) blockOpenResult {
-	result := blockOpenResult(noBlocksOpened)
+	result := noBlocksOpened
 	continuable := false
 	lastBlock := d.pc.LastOpenedBlock()
 	if lastBlock.Node != nil {
@@ -236,20 +236,21 @@ retry:
 		last := lastBlock.Node
 		_, blockPos := d.reader.Position()
 		node, state := bp.Open(parent, d.reader, d.pc)
-		if node == nil {
+		block, ok := node.(ast.BlockNode)
+		if !ok {
 			continue
 		}
 		node.SetPos(blockPos.Start + max(d.pc.BlockOffset()-seg.Padding, 0))
-		if state&parser.RequireParagraph != 0 && last == parent.LastChild() {
+		if paragraph, ok := last.(*ast.Paragraph); ok && state&parser.RequireParagraph != 0 && last == parent.LastChild() {
 			lastBlock.Parser.Close(last, d.reader, d.pc)
 			blocks := d.pc.OpenedBlocks()
 			d.pc.SetOpenedBlocks(blocks[:len(blocks)-1])
-			if d.transformParagraph(last.(*ast.Paragraph)) {
+			if d.transformParagraph(paragraph) {
 				continuable = false
 				goto retry
 			}
 		}
-		node.(ast.BlockNode).SetBlankPreviousLines(blankLine)
+		block.SetBlankPreviousLines(blankLine)
 		if last != nil && last.Parent() == nil {
 			lastPos := len(d.pc.OpenedBlocks()) - 1
 			d.closeBlocks(lastPos, lastPos)
@@ -313,7 +314,10 @@ func closeWork(g *blockGuard, node ast.Node) error {
 	}
 	switch g.kind {
 	case blockList:
-		list := node.(*ast.List)
+		list, ok := node.(*ast.List)
+		if !ok {
+			return nil
+		}
 		visits := 0
 		tight := list.IsTight
 		for c := node.FirstChild(); c != nil && tight; c = c.NextSibling() {
@@ -327,20 +331,24 @@ func closeWork(g *blockGuard, node ast.Node) error {
 						return err
 					}
 					visits++
-					if c1.(ast.BlockNode).HasBlankPreviousLines() {
+					if child, ok := c1.(ast.BlockNode); ok && child.HasBlankPreviousLines() {
 						tight = false
 						break
 					}
 				}
 			}
-			if c != node.FirstChild() && c.(ast.BlockNode).HasBlankPreviousLines() {
+			if child, ok := c.(ast.BlockNode); ok && c != node.FirstChild() && child.HasBlankPreviousLines() {
 				tight = false
 			}
 		}
 		// List.Close repeats this bounded direct-child walk.
 		return g.b.step(g.ctx, visits)
 	case blockIndentedCode:
-		segments := node.(*ast.CodeBlock).Value.Segments()
+		code, ok := node.(*ast.CodeBlock)
+		if !ok {
+			return nil
+		}
+		segments := code.Value.Segments()
 		work := 0
 		for _, segment := range segments {
 			if err := g.b.step(g.ctx, 1); err != nil {
@@ -354,10 +362,15 @@ func closeWork(g *blockGuard, node ast.Node) error {
 		// CodeBlock.Close can inspect every trailing segment if all are blank.
 		return g.b.step(g.ctx, work)
 	case blockParagraph:
-		segments := node.(*ast.Paragraph).Source()
+		paragraph, ok := node.(*ast.Paragraph)
+		if !ok {
+			return nil
+		}
+		segments := paragraph.Source()
 		if len(segments) != 0 {
 			return g.b.step(g.ctx, segments[len(segments)-1].Len())
 		}
+	default:
 	}
 	return nil
 }

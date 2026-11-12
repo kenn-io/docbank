@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -292,7 +293,7 @@ func (d *yamlDecoder) admitKey(s string) error {
 	if err := d.b.step(d.ctx, len(s)); err != nil {
 		return err
 	}
-	if !utf8.ValidString(s) || bytes.IndexByte([]byte(s), 0) >= 0 {
+	if !utf8.ValidString(s) || strings.IndexByte(s, 0) >= 0 {
 		return errYAML
 	}
 	return d.b.reserveStrings(len(s))

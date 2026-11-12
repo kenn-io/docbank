@@ -1,6 +1,7 @@
 package notemarkdown
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func TestFrontmatterDecodedFields(t *testing.T) {
 	require.NotNil(t, n.Frontmatter)
 	fm := n.Frontmatter
 	require.Equal(t, 3, fm.Start)
-	require.Equal(t, strings.Index(string(src), "# Body"), fm.End)
+	require.Equal(t, bytes.Index(src, []byte("# Body")), fm.End)
 	require.Equal(t, fm.End, n.BodyStart)
 	require.Equal(t, "Sample", n.Title)
 	require.Equal(t, []string{"Alias", "Other"}, fm.Aliases)

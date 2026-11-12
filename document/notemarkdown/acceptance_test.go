@@ -12,6 +12,7 @@ import (
 // clocks or a scheduler race.
 type cancellationChecks struct {
 	context.Context
+
 	remaining int
 }
 

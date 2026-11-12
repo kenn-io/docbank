@@ -21,7 +21,10 @@ type blockSourceSnapshot struct {
 }
 
 func snapshotBlocks(n ast.Node) blockSourceSnapshot {
-	block := n.(ast.BlockNode)
+	block, ok := n.(ast.BlockNode)
+	if !ok {
+		panic("expected Goldmark block node")
+	}
 	s := blockSourceSnapshot{
 		kind:   fmt.Sprintf("%T", n),
 		pos:    n.Pos(),

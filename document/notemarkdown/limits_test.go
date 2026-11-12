@@ -14,8 +14,8 @@ func TestLimitsConfiguration(t *testing.T) {
 	defaults, err := normalizeLimits(Limits{})
 	require.NoError(t, err)
 	require.Equal(t, Limits{4 << 20, 4096, 10000, 64, 256, 1024, 32}, defaults)
-	for i := 0; i < reflect.TypeFor[Limits]().NumField(); i++ {
-		for _, value := range []int{-1, reflect.ValueOf(defaults).Field(i).Interface().(int) + 1} {
+	for i := range reflect.TypeFor[Limits]().NumField() {
+		for _, value := range []int{-1, int(reflect.ValueOf(defaults).Field(i).Int()) + 1} {
 			l := Limits{}
 			reflect.ValueOf(&l).Elem().Field(i).SetInt(int64(value))
 			n, err := Parse(t.Context(), []byte("# body"), l)
