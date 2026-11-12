@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json/v2"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -115,36 +114,9 @@ func TestTaxRecordRevisionInspectNoRetry(t *testing.T) {
 	assert.Equal(t, 1, writes)
 }
 
-func TestTaxRecordHelpAndCommittedOutputFailure(t *testing.T) {
-	const id = "11111111-1111-4111-8111-111111111111"
+func TestTaxRecordHelp(t *testing.T) {
 	cmd := newTaxCommand()
 	group, _, err := cmd.Find([]string{"record"})
 	require.NoError(t, err)
 	assert.Equal(t, helpOnlyMarker, group.Annotations[helpOnlyAnnotation])
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"1"`)
-		body := taxRecordTestReceipt
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tax/records" {
-			w.WriteHeader(http.StatusCreated)
-		} else {
-			w.Header().Set("ETag", `"2"`)
-			body = strings.Replace(body, `"revision":1`, `"revision":2`, 1)
-			if r.Method == http.MethodPost {
-				body = strings.Replace(body, `"retired_at":null`, `"retired_at":"2025-01-01T00:00:00Z"`, 1)
-			}
-		}
-		_, _ = w.Write([]byte(body))
-	})
-	for _, args := range [][]string{{"record", "add", "--kind", "filing", "--title", "Example"}, {"record", "edit", id, "--note", "Example", "--revision=1"}, {"record", "retire", id, "--revision=1"}} {
-		cmd := newTaxCommand()
-		cmd.SetOut(searchFailingWriter{})
-		cmd.SilenceErrors = true
-		cmd.SilenceUsage = true
-		cmd.SetArgs(args)
-		err := cmd.Execute()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "committed")
-		assert.Contains(t, err.Error(), "inspect the record")
-	}
 }

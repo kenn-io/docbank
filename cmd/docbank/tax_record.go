@@ -181,12 +181,6 @@ func taxValue[T any](p *T) any {
 	}
 	return *p
 }
-func printTaxRecordMutation(cmd *cobra.Command, r api.TaxRecord) error {
-	if err := printTaxRecord(cmd, r); err != nil {
-		return errors.New("tax record change was committed, but output failed; inspect the record before trying again")
-	}
-	return nil
-}
 func taxRecordID(id string) error {
 	if canonical.ValidateUUIDv4(id) != nil {
 		return usageError(errors.New("invalid record ID"))
@@ -268,7 +262,7 @@ func newTaxRecordCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printTaxRecordMutation(cmd, r)
+		return printTaxRecord(cmd, r)
 	}}
 	add.bind(create, true)
 	_ = create.MarkFlagRequired("kind")
@@ -302,7 +296,7 @@ func newTaxRecordCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printTaxRecordMutation(cmd, r)
+		return printTaxRecord(cmd, r)
 	}}
 	change.bind(edit, false)
 	edit.Flags().Int64Var(&editRev, "revision", 0, "expected revision (default: current)")
@@ -329,7 +323,7 @@ func newTaxRecordCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return printTaxRecordMutation(cmd, r)
+		return printTaxRecord(cmd, r)
 	}}
 	retire.Flags().Int64Var(&retireRev, "revision", 0, "expected revision (default: current)")
 	group.AddCommand(create, edit, list, show, retire)
