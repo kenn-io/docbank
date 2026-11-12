@@ -187,7 +187,6 @@
       label="Contract details"
       facts={[
         { label: "Type", value: contractTypeLabel(current.contract_type) },
-        { label: "Status", value: contractStatusLabel(current.effective_status) },
         { label: "Starts", value: formatCivilDate(current.starts_on) },
         { label: "Expires", value: formatCivilDate(current.expires_on) },
         { label: "Signed", value: formatCivilDate(current.signed_on) },

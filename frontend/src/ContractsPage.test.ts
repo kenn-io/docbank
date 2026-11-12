@@ -143,8 +143,8 @@ describe("contracts page", () => {
       ),
     );
     expect(await screen.findByText("No contracts match these filters.")).toBeTruthy();
-    const clear = screen.getAllByRole("button", { name: "Clear filters" });
-    await fireEvent.click(clear.at(-1)!);
+    // The empty state's own action is the only Clear filters button.
+    await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByRole("button", { name: "Show contract Software" })).toBeTruthy();
     expect(requests.at(-1)).toBe("/api/v1/contracts?as_of=2027-01-01&limit=100&offset=0");
   });
@@ -174,19 +174,18 @@ describe("contracts page", () => {
     expect(requests.filter((r) => r.includes("expiring_before=2027-05-02"))).toHaveLength(2);
   });
 
-  it("captions the window by status: any status only when none is chosen", async () => {
+  it("captions the window as its date range with or without a status", async () => {
     serve((url) => (list(url) ? page([contract({ expires_on: "2027-01-20" })]) : undefined));
     show();
     await screen.findByRole("table", { name: "Contracts" });
     await choose(/^Expires/, "Within 30 days");
-    expect(screen.getByText(/in any status/).textContent).toMatch(/through/);
-    await choose(/^Status/, "Active");
-    await waitFor(() => expect(screen.queryByText(/in any status/)).toBeNull());
+    const caption = () => screen.getByText(/Shows agreements expiring/).textContent?.trim() ?? "";
+    expect(caption()).toMatch(/through .*\.$/);
+    expect(caption()).not.toMatch(/status/);
+    const unset = caption();
     await choose(/^Status/, "Draft");
     await waitFor(() => expect(requests.at(-1)).toContain("status=draft"));
-    const caption = screen.getByText(/Shows agreements expiring/).textContent ?? "";
-    expect(caption).toMatch(/through/);
-    expect(caption).not.toMatch(/in any status/);
+    expect(caption()).toBe(unset);
   });
 
   it("renews the daemon date before requesting a horizon page on refresh", async () => {
