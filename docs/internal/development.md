@@ -241,9 +241,8 @@ ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
 An unreleased `currentStorageSchemaVersion` needs a record. Its layout hash
-includes tables, views, triggers, and indexes. It ignores SQL whitespace and
-comments while preserving token spellings. Adding, changing, or removing an
-index under a version already recorded on `main` requires the next version. Run
+includes tables, views, triggers, and unique indexes. It excludes non-unique
+indexes and ignores SQL whitespace and comments while preserving token spellings. Run
 `make schema-contract-check` and add a file under
 `internal/store/testdata/schema-contracts/`. Name the empty file
 `NNNNNN-<layout-sha256>-<summary-slug>.schema`. The test prints the version

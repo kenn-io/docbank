@@ -59,7 +59,16 @@ func schemaRowsDigest(rows [][4]string) (string, error) {
 
 func schemaCatalogDigest(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	digest, err := schemaRowsDigest(releasedSchemaCatalogRows(t, db, true))
+	rows := releasedSchemaCatalogRows(t, db, true)
+	rows = slices.DeleteFunc(rows, func(row [4]string) bool {
+		if row[0] != "index" {
+			return false
+		}
+		var unique bool
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, row[2], row[1]).Scan(&unique))
+		return !unique
+	})
+	digest, err := schemaRowsDigest(rows)
 	require.NoError(t, err)
 	return digest
 }
@@ -270,11 +279,20 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			trigger := `CREATE TRIGGER contract_probe AFTER INSERT ON nodes BEGIN SELECT 1; END`
 			require.NotEqual(t, probe(trigger), probe(trigger+`; CREATE TABLE contract_probe (id INTEGER)`))
 			baseDigest := schemaCatalogDigest(t, db)
+			var unique bool
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, "nodes", "nodes_parent").Scan(&unique))
+			require.False(t, unique)
 			for _, statement := range []string{
-				`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
 				`CREATE INDEX contract_probe ON nodes(id)`,
 				`DROP INDEX nodes_parent; CREATE INDEX nodes_parent ON nodes(id)`,
 				`DROP INDEX nodes_parent`,
+			} {
+				changed := probe(statement)
+				require.Equal(t, baseDigest, changed, statement)
+				require.NoError(t, checkSchemaContract([]schemaContract{{Version: 49, Digest: baseDigest}}, 49, changed))
+			}
+			for _, statement := range []string{
+				`CREATE UNIQUE INDEX contract_probe ON nodes(id)`,
 				`ALTER TABLE nodes ADD COLUMN contract_probe TEXT`,
 				trigger,
 			} {
@@ -285,11 +303,12 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			for _, pair := range [][2]string{
 				{`CREATE TABLE contract_a (id INTEGER CHECK(id>1))`, `CREATE TABLE contract_a (id INTEGER CHECK(id>2))`},
 				{`CREATE VIEW contract_v AS SELECT id FROM nodes WHERE id>1`, `CREATE VIEW contract_v AS SELECT id FROM nodes WHERE id>2`},
-				{`CREATE INDEX contract_i ON nodes(id)`, `CREATE INDEX contract_i ON nodes(name)`},
+				{`CREATE UNIQUE INDEX contract_i ON nodes(id)`, `CREATE UNIQUE INDEX contract_i ON nodes(name)`},
 				{`CREATE TRIGGER contract_t AFTER INSERT ON nodes BEGIN SELECT 1; END`, `CREATE TRIGGER contract_t AFTER INSERT ON nodes BEGIN SELECT 2; END`},
 			} {
 				require.NotEqual(t, probe(pair[0]), probe(pair[1]), pair)
 			}
+			require.Equal(t, probe(`CREATE INDEX contract_i ON nodes(id)`), probe(`CREATE INDEX contract_i ON nodes(name)`))
 			first := probe(`CREATE TABLE contract_a (id INTEGER)`)
 			second := probe(`CREATE TABLE contract_b (id INTEGER)`)
 			combined := probe(`CREATE TABLE contract_a (id INTEGER); CREATE TABLE contract_b (id INTEGER)`)
