@@ -112,7 +112,7 @@ func (c *Connection) TaxRecord(ctx context.Context, id string, reveal bool) (api
 		}
 		previous = e.RecordRevision
 		seen[e.EventID] = true
-		facts = append(facts, taxrecord.EventFact{EventValues: taxrecord.EventValues{Kind: e.Kind, OccurredOn: e.OccurredOn, SetsState: e.SetsState, AmountMinor: e.AmountMinor, Currency: e.Currency, Note: e.Note}, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
+		facts = append(facts, taxrecord.EventFact{Kind: e.Kind, OccurredOn: e.OccurredOn, SetsState: e.SetsState, AmountMinor: e.AmountMinor, Currency: e.Currency, Note: e.Note, RecordRevision: e.RecordRevision, Voided: e.VoidedAt != nil})
 	}
 	state, err := taxrecord.StateFromEvents(out.Kind, facts)
 	if err != nil || state != out.State {

@@ -213,34 +213,33 @@ func validateTaxEventAuthority(ctx context.Context, q metadataQuerier) error {
 		derived  taxrecord.EventState
 	}
 	parents := map[string]*authority{}
-	rows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,revision FROM tax_records`)
+	parentRows, err := q.QueryContext(ctx, `SELECT record_id,kind,state,revision FROM tax_records`)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
+	defer func() { _ = parentRows.Close() }()
+	for parentRows.Next() {
 		var id, kind string
 		var p authority
-		if err = rows.Scan(&id, &kind, &p.state, &p.revision); err != nil {
-			_ = rows.Close()
+		if err = parentRows.Scan(&id, &kind, &p.state, &p.revision); err != nil {
 			return err
 		}
 		p.derived, err = taxrecord.NewEventState(kind)
 		if err != nil {
-			_ = rows.Close()
 			return err
 		}
 		parents[id] = &p
 	}
-	err = rows.Err()
-	_ = rows.Close()
+	err = parentRows.Err()
+	_ = parentRows.Close()
 	if err != nil {
 		return err
 	}
-	rows, err = q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events ORDER BY record_id,record_revision`)
+	rows, err := q.QueryContext(ctx, `SELECT `+taxEventColumns+` FROM tax_events ORDER BY record_id,record_revision`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var previousID string
 	var previousRevision int64
 	for rows.Next() {

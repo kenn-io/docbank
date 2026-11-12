@@ -1015,6 +1015,7 @@ func TestTaxOpenAPIContract(t *testing.T) {
 }
 
 func TestTaxEventOpenAPIContract(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	for _, tc := range []struct{ path, id, status string }{
 		{"/api/v1/tax/records/{record_id}/advance", "advanceTaxRecord", "200"},

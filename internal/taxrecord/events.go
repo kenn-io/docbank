@@ -11,6 +11,7 @@ type EventValues struct {
 // EventFact supplies append order and void status for state derivation.
 type EventFact struct {
 	EventValues
+
 	RecordRevision int64
 	Voided         bool
 }

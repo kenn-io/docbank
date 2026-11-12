@@ -23,7 +23,7 @@ var taxDiagnosticFields = []struct{ name, locations string }{
 	{"filer_party_id", "b"}, {"authority_party_id", "b"}, {"country", "bq"},
 	{"subdivision", "b"}, {"tax_kind", "b"}, {"identifier", "b"}, {"cadence", "b"},
 	{"period_note", "b"}, {"due_note", "b"}, {"lead_days", "b"}, {"currency", "b"},
-	{"effective_start", "b"}, {"effective_end", "b"}, {"note", "b"}, {"filer", "q"},
+	{"effective_start", "b"}, {"effective_end", "b"}, {taxNoteField, "b"}, {"filer", "q"},
 	{"taxkind", "q"}, {"include_retired", "q"}, {packageLimitParameter, "q"}, {"offset", "q"},
 	{"reveal", "q"}, {"account_id", "b"},
 	{"title", "b"}, {"kind", "bq"}, {"form_code", "b"}, {"tax_year", "b"},

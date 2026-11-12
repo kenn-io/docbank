@@ -13,6 +13,7 @@ import (
 )
 
 func TestTaxEventHTTPWorkflowAndReferenceDisclosure(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
@@ -47,6 +48,7 @@ func TestTaxEventHTTPWorkflowAndReferenceDisclosure(t *testing.T) {
 }
 
 func TestTaxEventReferenceBoundariesAndWriteRejection(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
@@ -68,6 +70,7 @@ func TestTaxEventReferenceBoundariesAndWriteRejection(t *testing.T) {
 }
 
 func TestTaxEventRevisionsAndRejection(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
@@ -106,6 +109,7 @@ func TestTaxEventRevisionsAndRejection(t *testing.T) {
 }
 
 func TestTaxEventLongReferenceAndRetiredDetail(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
@@ -123,6 +127,7 @@ func TestTaxEventLongReferenceAndRetiredDetail(t *testing.T) {
 }
 
 func TestTaxEventRequestAdmission(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})
@@ -157,6 +162,7 @@ func TestTaxEventRequestAdmission(t *testing.T) {
 }
 
 func TestTaxEventInputDiagnostics(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	_, account := createTaxTestAccount(t, ts, nil)
 	r := createTaxTestRecord(t, ts, map[string]any{"account_id": account.AccountID, "kind": "filing", "title": "Example"})

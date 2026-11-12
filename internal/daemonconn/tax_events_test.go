@@ -43,7 +43,7 @@ func TestTaxEventClientRejectsInvalidReceipts(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("ETag", tc.etag)
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"record":` + record + `,"event":` + tc.event + `}`))
 		}))
 		_, err := New(server.URL, "").AddTaxEvent(t.Context(), id, 1, api.AddTaxEventRequest{Kind: "note", OccurredOn: "2026-01-01"})

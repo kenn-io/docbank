@@ -33,7 +33,7 @@ func TestTaxCLIEventRevision(t *testing.T) {
 				}
 				writes++
 				assert.Equal(t, tc.match, r.Header.Get("If-Match"))
-				w.WriteHeader(412)
+				w.WriteHeader(http.StatusPreconditionFailed)
 				_, _ = w.Write([]byte(`{"status":412,"code":"stale_revision"}`))
 			})
 			_, err := runCLI(t, tc.args...)

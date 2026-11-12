@@ -19,7 +19,7 @@ func printTaxRecordDetail(cmd *cobra.Command, d api.TaxRecordDetail) error {
 	}
 	for _, e := range d.Events {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "event %s\tkind: %s\toccurred: %s\tstate: %s\tamount minor: %v\tcurrency: %s\treference: %q\tnote: %q\tvoided: %v\treason: %q\trevision %d\n", e.EventID, e.Kind, e.OccurredOn, e.SetsState, taxValue(e.AmountMinor), e.Currency, e.Reference, e.Note, taxValue(e.VoidedAt), e.VoidReason, e.RecordRevision); err != nil {
-			return err
+			return fmt.Errorf("print tax event: %w", err)
 		}
 	}
 	return nil

@@ -102,7 +102,7 @@ type PatchTaxRecordRequest struct {
 
 const taxAmountField = "amount"
 
-var taxRecordPatchMembers = []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", taxAmountField, "currency", "note"}
+var taxRecordPatchMembers = []string{"filer_party_id", "authority_party_id", "title", "country", "subdivision", "tax_kind", "form_code", "tax_year", "period_start", "period_end", "due_date", "lead_days", "direction", taxAmountField, "currency", taxNoteField}
 var taxRecordCreateMembers = append([]string{"account_id", "kind"}, taxRecordPatchMembers...)
 var taxRecordNullable = []string{"authority_party_id", "tax_year", "period_start", "period_end", "due_date", "lead_days", taxAmountField}
 
@@ -183,7 +183,7 @@ func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
 	for field, description := range map[string]string{
 		"title":        "At most 1200 UTF-8 bytes before normalization and 300 Unicode characters after trimming and NFC normalization.",
 		"form_code":    "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization.",
-		"note":         "At most 8192 UTF-8 bytes.",
+		taxNoteField:   "At most 8192 UTF-8 bytes.",
 		taxAmountField: "At most 32 ASCII bytes: unsigned decimal digits with an optional decimal point and fractional digits up to the currency's precision. No signs, exponents, or rounding; the minor-unit value must fit int64.",
 	} {
 		if property := schema.Properties[field]; property != nil {
@@ -202,7 +202,7 @@ func taxRecordRequestSchema(schema *huma.Schema) *huma.Schema {
 	if kind := schema.Properties["tax_kind"]; kind != nil {
 		kind.Description = "At most 256 UTF-8 bytes before normalization and 64 Unicode characters after trimming and NFC normalization."
 	}
-	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "title": 1200, "form_code": 256, taxAmountField: 32, "note": 8192} {
+	for field, length := range map[string]int{"country": 2, "subdivision": 6, "currency": 3, "tax_kind": 256, "title": 1200, "form_code": 256, taxAmountField: 32, taxNoteField: 8192} {
 		if property := schema.Properties[field]; property != nil {
 			property.MaxLength = new(length)
 		}

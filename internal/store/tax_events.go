@@ -14,6 +14,7 @@ var ErrTaxEventVoided = errors.New("tax event already voided")
 // TaxEvent contains exact retained event authority, including its reference.
 type TaxEvent struct {
 	taxrecord.EventValues
+
 	EventID, RecordID, RecordedAt, VoidReason string
 	RecordRevision                            int64
 	VoidedAt                                  *string
@@ -39,7 +40,7 @@ type TaxRecordDetail struct {
 
 const taxEventColumns = `event_id,record_id,kind,occurred_on,sets_state,amount_minor,currency,reference,note,recorded_at,voided_at,void_reason,record_revision`
 
-func scanTaxEvent(row interface{ Scan(...any) error }) (TaxEvent, error) {
+func scanTaxEvent(row interface{ Scan(dest ...any) error }) (TaxEvent, error) {
 	var e TaxEvent
 	err := row.Scan(&e.EventID, &e.RecordID, &e.Kind, &e.OccurredOn, &e.SetsState, &e.AmountMinor, &e.Currency, &e.Reference, &e.Note, &e.RecordedAt, &e.VoidedAt, &e.VoidReason, &e.RecordRevision)
 	return e, err
@@ -60,7 +61,7 @@ func getTaxRecordDetail(ctx context.Context, q metadataQuerier, id string) (TaxR
 	if err != nil {
 		return TaxRecordDetail{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	d := TaxRecordDetail{Record: r, Events: []TaxEvent{}}
 	for rows.Next() {
 		e, err := scanTaxEvent(rows)

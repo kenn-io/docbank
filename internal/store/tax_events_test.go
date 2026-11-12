@@ -54,6 +54,7 @@ func checkTaxEventsLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.ErrorIs(t, err, ErrTaxRetired)
 }
 func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	m, err := s.AdvanceTaxRecord(ctx, r.RecordID, r.Revision, TaxEventInput{Kind: "filed", OccurredOn: "2026-01-01", Reference: "synthetic-reference"})
@@ -104,6 +105,7 @@ func TestTaxEventMetadataAuthorityRoundTrip(t *testing.T) {
 	}
 }
 func TestTaxEventExportRejectsInvalidAuthority(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		update, cause string
 		invalid       bool
@@ -148,6 +150,7 @@ func checkTaxEventsAuthority(t *testing.T, open func(*testing.T) *Store) {
 }
 
 func TestTaxEventTransactionFailureRollsBack(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	_, err := s.db.ExecContext(ctx, `CREATE TRIGGER fail_tax_event_parent BEFORE UPDATE OF state ON tax_records BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
@@ -160,6 +163,7 @@ func TestTaxEventTransactionFailureRollsBack(t *testing.T) {
 	assert.Empty(t, d.Events)
 }
 func TestTaxEventConcurrentWritersRejectStaleRevision(t *testing.T) {
+	t.Parallel()
 	s, _, r := taxFixture(t)
 	ctx := t.Context()
 	var wg sync.WaitGroup
@@ -191,6 +195,7 @@ func TestTaxEventConcurrentWritersRejectStaleRevision(t *testing.T) {
 }
 
 func TestTaxEventsSource48DoesNotQueryTaxCatalogs(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db, _ := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "source.db"), driver.driver, schemaV0170SQL, 48)

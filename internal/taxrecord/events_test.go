@@ -36,9 +36,9 @@ func TestTaxEventValidation(t *testing.T) {
 
 func TestTaxStateIgnoresEventClocks(t *testing.T) {
 	events := []EventFact{
-		{EventValues: EventValues{Kind: "filed", SetsState: "filed", OccurredOn: "2025-01-01"}, RecordRevision: 2},
-		{EventValues: EventValues{Kind: "assessed", SetsState: "assessed", OccurredOn: "2023-01-01"}, RecordRevision: 8},
-		{EventValues: EventValues{Kind: "ready", SetsState: "ready", OccurredOn: "2026-01-01"}, RecordRevision: 5},
+		{Kind: "filed", SetsState: "filed", OccurredOn: "2025-01-01", RecordRevision: 2},
+		{Kind: "assessed", SetsState: "assessed", OccurredOn: "2023-01-01", RecordRevision: 8},
+		{Kind: "ready", SetsState: "ready", OccurredOn: "2026-01-01", RecordRevision: 5},
 	}
 	for _, tt := range []struct {
 		void8, void5, void2 bool
