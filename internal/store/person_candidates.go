@@ -805,3 +805,46 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 }
 
 var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))`
+
+// VersionCandidate contains only the occurrences belonging to the requested version.
+type VersionCandidate struct {
+	CandidateID, DisplayName string
+	Occurrences              []PersonCandidateOccurrence
+}
+
+// OpenCandidatesForVersion reads open, non-face candidates and scopes their
+// evidence to one version, so callers never disclose another version's facts.
+func (s *Store) OpenCandidatesForVersion(ctx context.Context, versionID string) ([]VersionCandidate, error) {
+	if err := validateUUIDv4(versionID); err != nil {
+		return nil, ErrNotFound
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT candidate_id,display_name,evidence_json FROM person_match_candidates WHERE state='open' AND reason<>'face_match' ORDER BY created_at,candidate_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := []VersionCandidate{}
+	for rows.Next() {
+		var c VersionCandidate
+		var raw []byte
+		if err := rows.Scan(&c.CandidateID, &c.DisplayName, &raw); err != nil {
+			return nil, err
+		}
+		occurrences, err := decodeStoredCandidateEvidence(raw)
+		if err != nil {
+			return nil, err
+		}
+		for _, occurrence := range occurrences {
+			if occurrence.ContentVersionID == versionID {
+				c.Occurrences = append(c.Occurrences, occurrence)
+			}
+		}
+		if len(c.Occurrences) > 0 {
+			result = append(result, c)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
