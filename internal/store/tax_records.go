@@ -15,6 +15,7 @@ import (
 // TaxRecord is a retained tax record and its revision.
 type TaxRecord struct {
 	taxrecord.RecordValues
+
 	RecordID, TaxKindFolded, CreatedAt, UpdatedAt string
 	Revision                                      int64
 	RetiredAt                                     *string
@@ -50,7 +51,7 @@ type TaxRecordListOptions struct {
 
 const taxRecordColumns = `record_id,account_id,filer_party_id,authority_party_id,kind,title,country,subdivision,tax_kind,tax_kind_folded,form_code,tax_year,period_start,period_end,due_date,lead_days,state,direction,amount_minor,currency,verification,verified_on,verified_revision,verification_note,note,revision,created_at,updated_at,retired_at`
 
-func scanTaxRecord(row interface{ Scan(...any) error }) (TaxRecord, error) {
+func scanTaxRecord(row interface{ Scan(dest ...any) error }) (TaxRecord, error) {
 	var r TaxRecord
 	err := row.Scan(&r.RecordID, &r.AccountID, &r.FilerPartyID, &r.AuthorityPartyID, &r.Kind, &r.Title, &r.Country, &r.Subdivision, &r.TaxKind, &r.TaxKindFolded, &r.FormCode, &r.TaxYear, &r.PeriodStart, &r.PeriodEnd, &r.DueDate, &r.LeadDays, &r.State, &r.Direction, &r.AmountMinor, &r.Currency, &r.Verification, &r.VerifiedOn, &r.VerifiedRevision, &r.VerificationNote, &r.Note, &r.Revision, &r.CreatedAt, &r.UpdatedAt, &r.RetiredAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -132,7 +133,7 @@ func taxRecordValues(in TaxRecordInput, old *TaxRecord, account *TaxAccount) (ta
 	if in.Amount != nil {
 		code := v.Currency
 		if len(code) <= 3 {
-			for i := 0; i < len(code); i++ {
+			for i := range len(code) {
 				if code[i] >= 0x80 {
 					return v, &taxrecord.FieldError{Field: "currency", Reason: "invalid currency"}
 				}

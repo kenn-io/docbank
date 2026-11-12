@@ -43,11 +43,6 @@ func checkTaxAccountLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	require.Len(t, rows, 1)
 	assert.NotNil(t, rows[0].RetiredAt)
 }
-func TestTaxAccountLifecycle(t *testing.T) {
-	t.Parallel()
-	checkTaxAccountLifecycle(t, newTestStore)
-}
-
 func TestTaxMutationsRefuseAuditAuthority(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

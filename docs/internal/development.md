@@ -1887,7 +1887,8 @@ Party country admission uses the assigned ISO 3166-1 alpha-2 list. The x/text
 `language.Region.IsCountry` contract includes nonstandard CLDR and potentially
 private-use regions, so it is not an equivalent replacement for that list. Tax
 jurisdiction admission instead follows its own `ParseRegion`/`IsCountry` or
-`ZZ` contract and may include CLDR regions.
+`ZZ` contract and may include CLDR regions, excluding the `UN` and `EZ` groups
+that x/text omits from its group classification.
 
 #### Tags and saved definitions
 

@@ -73,7 +73,7 @@ func rawLocation(country, subdivision, code string) error {
 		if len(item.value) > item.limit || !utf8.ValidString(item.value) {
 			return invalid(item.field, "invalid length or text")
 		}
-		for i := 0; i < len(item.value); i++ {
+		for i := range len(item.value) {
 			if item.value[i] >= utf8.RuneSelf {
 				return invalid(item.field, "invalid length or text")
 			}
@@ -88,7 +88,8 @@ func ValidateCountry(country string) error {
 		return invalid("country", "invalid country")
 	}
 	region, err := language.ParseRegion(country)
-	if err != nil || region.String() != country || (!region.IsCountry() && country != "ZZ") {
+	// x/text omits UN and EZ from its group table, though both are groups.
+	if err != nil || region.String() != country || country == "UN" || country == "EZ" || (!region.IsCountry() && country != "ZZ") {
 		return invalid("country", "invalid country")
 	}
 	return nil

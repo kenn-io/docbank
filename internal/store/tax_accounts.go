@@ -17,6 +17,7 @@ var ErrTaxRetired = errors.New("tax item is retired")
 // TaxAccount is a retained tax account and its revision.
 type TaxAccount struct {
 	taxrecord.AccountValues
+
 	AccountID, TaxKindFolded, CreatedAt, UpdatedAt string
 	Revision                                       int64
 	RetiredAt                                      *string
@@ -43,7 +44,7 @@ type TaxAccountListOptions struct {
 
 const taxAccountColumns = `account_id,filer_party_id,authority_party_id,country,subdivision,tax_kind,tax_kind_folded,identifier,cadence,period_note,due_note,lead_days,currency,effective_start,effective_end,note,revision,created_at,updated_at,retired_at`
 
-func scanTaxAccount(row interface{ Scan(...any) error }) (TaxAccount, error) {
+func scanTaxAccount(row interface{ Scan(dest ...any) error }) (TaxAccount, error) {
 	var a TaxAccount
 	err := row.Scan(&a.AccountID, &a.FilerPartyID, &a.AuthorityPartyID, &a.Country, &a.Subdivision, &a.TaxKind, &a.TaxKindFolded, &a.Identifier, &a.Cadence, &a.PeriodNote, &a.DueNote, &a.LeadDays, &a.Currency, &a.EffectiveStart, &a.EffectiveEnd, &a.Note, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.RetiredAt)
 	if errors.Is(err, sql.ErrNoRows) {

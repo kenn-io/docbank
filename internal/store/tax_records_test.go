@@ -47,11 +47,6 @@ func checkTaxRecordLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	_, err = s.CreateTaxRecord(ctx, incomplete)
 	require.NoError(t, err)
 }
-func TestTaxRecordLifecycle(t *testing.T) {
-	t.Parallel()
-	checkTaxRecordLifecycle(t, newTestStore)
-}
-
 func TestTaxListFiltersAndRetirement(t *testing.T) {
 	t.Parallel()
 	s, a, r := taxFixture(t)

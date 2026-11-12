@@ -12,7 +12,7 @@ func TestTaxCountrySubdivisionCurrency(t *testing.T) {
 		country, subdivision, currency string
 		valid                          bool
 	}{
-		{"ZZ", "ZZ-A1", "USD", true}, {"EU", "", "USD", false}, {"UN", "", "USD", false}, {"QO", "", "USD", false}, {"XA", "", "USD", false}, {"ZZ", "AA-A", "USD", false}, {"ZZ", "", "QQQ", false},
+		{"ZZ", "ZZ-A1", "USD", true}, {"EU", "", "USD", false}, {"UN", "", "USD", false}, {"EZ", "", "USD", false}, {"QO", "", "USD", false}, {"XA", "", "USD", false}, {"ZZ", "AA-A", "USD", false}, {"ZZ", "", "QQQ", false},
 	} {
 		v := base
 		v.Country, v.Subdivision, v.Currency = tc.country, tc.subdivision, tc.currency
@@ -89,15 +89,22 @@ func TestTaxDatesYearLeadDaysVocabulary(t *testing.T) {
 		{"year", func(v *RecordValues) { v.TaxYear = new(int64(10000)) }},
 		{"lead", func(v *RecordValues) { v.LeadDays = new(int64(367)) }},
 		{"direction", func(v *RecordValues) { v.Direction = "refundable" }},
-		{"amount", func(v *RecordValues) { v.AmountMinor = new(int64(0)) }},
+		{"amount", func(v *RecordValues) { v.Currency = "USD"; v.AmountMinor = new(int64(0)) }},
 		{"state", func(v *RecordValues) { v.State = "filed" }},
 		{"verification", func(v *RecordValues) { v.Verification = "verified" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := base
 			tc.change(&v)
-			if err := ValidateRecord(v); err == nil {
+			err := ValidateRecord(v)
+			if err == nil {
 				t.Fatal("accepted invalid record")
+			}
+			if tc.name == "amount" {
+				var field *FieldError
+				if !errors.As(err, &field) || field.Field != "amount" {
+					t.Fatalf("amount: %v", err)
+				}
 			}
 		})
 	}
