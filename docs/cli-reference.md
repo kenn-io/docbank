@@ -123,7 +123,7 @@ docbank tax record edit <record-id> [flags]
 docbank tax record retire <record-id> [--revision N] [--json]
 ```
 
-Add accepts `--account`, `--filer`, `--authority`, `--clear-authority`,
+Add accepts `--account`, `--filer`, `--authority`,
 `--kind`, `--title`, `--country`, `--subdivision`, `--tax-kind`, `--form-code`,
 `--tax-year`, `--period-start`, `--period-end`, `--due-date`, `--lead-days`,
 `--direction`, `--amount`, `--currency`, and `--note`. Kind and title are

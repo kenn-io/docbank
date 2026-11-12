@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
