@@ -224,7 +224,8 @@ func TestQueryHighlightPreviewReturnsOnlyCompilerDerivedPositiveTextTerms(t *tes
 		status      int
 	}{
 		{`{"timezone":"Local"}`, "invalid_timezone", http.StatusBadRequest},
-		{`{"syntax":"unknown"}`, "invalid_saved_query", http.StatusUnprocessableEntity},
+		// The payload schema rejects an unknown syntax before the route handler.
+		{`{"syntax":"unknown"}`, "validation", http.StatusUnprocessableEntity},
 	} {
 		response, payload = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries",
 			map[string]string{"X-Api-Key": testAPIKey}, `{"name":"Invalid","kind":"query","payload":`+tc.query+`}`)
