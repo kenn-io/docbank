@@ -16,9 +16,28 @@ const failures = [];
 // so its JSON reporter always writes the result.
 const browserWatchdog = 360_000;
 const browserGlobalTimeout = browserWatchdog - 30_000;
+// Before-and-after screenshot proofs a branch adds to this lane. Each entry is
+// { spec, env }: the branch run sets env=branch, and the base capture runs the
+// same spec, fixtures included, against main's binary with env=base. Each spec
+// holds exactly one test, so the stats check counts specs.
+const proofs = [
+  // P07 role search: matched-role chips and the People facet (#1453).
+  { spec: "role-search.screenshot.ts", env: "DOCBANK_ROLE_SEARCH_PROOF" },
+];
+// Where the base capture comes from: a pull request's base branch, or, for a
+// manual workflow_dispatch run (a fork branch before its upstream PR), the
+// current upstream main fetched by explicit URL.
+const upstream = "https://github.com/kenn-io/docbank.git";
+const baseSource = process.env.GITHUB_BASE_REF
+  ? { remote: "origin", ref: process.env.GITHUB_BASE_REF }
+  : process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
+    ? { remote: upstream, ref: "main" }
+    : undefined;
+const proofEnv = (side) => Object.fromEntries(proofs.map((proof) => [proof.env, side]));
 // Runs the named specs against one binary and requires every case to pass.
 const qualify = async (mode, binary, specs, extraEnv) => {
-  // CI keeps each mode's JSON report for upload; role-search screenshots ride in it.
+  // CI keeps each mode's JSON report for upload; proof screenshots ride in it
+  // as base64 attachments.
   const report = process.env.CI
     ? path.join(repository, "frontend/test-results/playwright", `report-export-${mode}.json`)
     : path.join(scratch, `${mode}.json`);
@@ -57,6 +76,8 @@ const qualify = async (mode, binary, specs, extraEnv) => {
   );
   console.log(`${mode}: executed=${specs.length} passed=${specs.length} skipped=0 failed=0`);
 };
+const base = path.join(scratch, "base");
+let baseWorktree = false;
 try {
   for (const [mode, cgo] of [
     ["cgo", "1"],
@@ -75,7 +96,7 @@ try {
         ".superpowers/report-export-browser",
         mode,
       ),
-      DOCBANK_ROLE_SEARCH_PROOF: "branch",
+      ...proofEnv("branch"),
     };
     try {
       await rm(env.DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR, { recursive: true, force: true });
@@ -90,7 +111,7 @@ try {
       await qualify(
         mode,
         binary,
-        ["report-export.screenshot.ts", "role-search.screenshot.ts"],
+        ["report-export.screenshot.ts", ...proofs.map((proof) => proof.spec)],
         env,
       );
     } catch (error) {
@@ -98,13 +119,16 @@ try {
       console.error(`${mode}: ${error.message}`);
     }
   }
-  // A pull request also captures the same role-search fixtures on its base
-  // branch, so reviewers can compare the changed view with what main shows.
-  if (process.env.GITHUB_BASE_REF) {
+  // The base capture runs the branch's proof specs on the same fixtures
+  // against the base's own frontend and binary, so reviewers compare like
+  // with like. It runs only in CI with a known base and at least one proof.
+  if (process.env.CI && baseSource && proofs.length) {
     try {
-      const base = path.join(scratch, "base");
-      git("fetch", "--depth=1", "origin", process.env.GITHUB_BASE_REF);
+      console.log(`Building base ${baseSource.remote} ${baseSource.ref}`);
+      git("fetch", "--depth=1", baseSource.remote, baseSource.ref);
       git("worktree", "add", "--detach", base, "FETCH_HEAD");
+      baseWorktree = true;
+      console.log(`Base commit: ${git("-C", base, "rev-parse", "HEAD")}`);
       const binary = path.join(
         scratch,
         `docbank-base${process.platform === "win32" ? ".exe" : ""}`,
@@ -113,25 +137,28 @@ try {
         ["make", ["-C", base, "frontend"]],
         ["go", ["build", "-tags", "fts5", "-o", binary, "./cmd/docbank"]],
       ]) {
-        const build = spawnSync(command, args, { cwd: base, stdio: "inherit", timeout: 600_000 });
+        const build = spawnSync(command, args, {
+          cwd: base,
+          env: { ...process.env, CGO_ENABLED: "1" },
+          stdio: "inherit",
+          timeout: 600_000,
+        });
         if (build.error) throw build.error;
         assert.equal(build.status, 0, `base ${command} failed`);
       }
-      await qualify("base", binary, ["role-search.screenshot.ts"], {
-        CGO_ENABLED: "1",
-        DOCBANK_ROLE_SEARCH_PROOF: "base",
-      });
+      await qualify(
+        "base",
+        binary,
+        proofs.map((proof) => proof.spec),
+        { CGO_ENABLED: "1", ...proofEnv("base") },
+      );
     } catch (error) {
       failures.push("base");
       console.error(`base: ${error.message}`);
     }
   }
 } finally {
-  if (process.env.GITHUB_BASE_REF) {
-    spawnSync("git", ["worktree", "remove", "--force", path.join(scratch, "base")], {
-      cwd: repository,
-    });
-  }
+  if (baseWorktree) spawnSync("git", ["worktree", "remove", "--force", base], { cwd: repository });
   await rm(scratch, { recursive: true, force: true });
 }
 if (failures.length) {
