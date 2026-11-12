@@ -3,13 +3,14 @@ package config
 import (
 	"context"
 	"errors"
+	"io"
 	"net/netip"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
 
+	"go.kenn.io/kit/safefileio"
 	"go.kenn.io/kit/secretref"
 )
 
@@ -93,7 +94,7 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 			}
 			d.AllowedCIDRs = out
 		default:
-			invalid("unknown setting")
+			invalid("unknown key")
 		}
 	}
 	return nil
@@ -112,7 +113,7 @@ type DocuSealConnection struct {
 
 func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConnection, error) {
 	fail := func(category string) (DocuSealConnection, error) {
-		return DocuSealConnection{}, errors.New("invalid DocuSeal " + category + " settings")
+		return DocuSealConnection{}, errors.New("invalid DocuSeal setting: " + category)
 	}
 	if ctx.Err() != nil {
 		return DocuSealConnection{}, ctx.Err()
@@ -148,22 +149,36 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 	if (d.APIKeyEnv == "") == (d.APIKeyFile == "") {
 		return fail("credential")
 	}
-	ref := secretref.Ref{Env: d.APIKeyEnv, File: d.APIKeyFile}
-	if ref.File != "" {
-		if !filepath.IsAbs(ref.File) {
-			ref.File = filepath.Join(root, ref.File)
+	var raw string
+	if d.APIKeyFile != "" {
+		filePath := d.APIKeyFile
+		if !filepath.IsAbs(filePath) {
+			filePath = filepath.Join(root, filePath)
 		}
-		info, err := os.Stat(ref.File)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		file, err := safefileio.OpenCurrentUserFile(filePath)
+		if err != nil {
 			return fail("credential")
 		}
+		defer func() { _ = file.Close() }()
+		if err := safefileio.ValidatePrivateCurrentUserFile(file); err != nil {
+			return fail("credential")
+		}
+		data, err := io.ReadAll(io.LimitReader(file, 4097))
+		if err != nil {
+			return fail("credential")
+		}
+		raw = string(data)
+	} else {
+		secret, err := (secretref.Ref{Env: d.APIKeyEnv}).Resolve()
+		if err != nil {
+			return fail("credential")
+		}
+		raw = secret.Value
 	}
-	secret, err := ref.Resolve()
-	if err != nil || len(secret.Value) > 4096 {
+	if len(raw) > 4096 {
 		return fail("credential")
 	}
-	key := secret.Value
-	key = strings.TrimSpace(key)
+	key := strings.TrimSpace(raw)
 	if !validSecret(key) {
 		return fail("credential")
 	}

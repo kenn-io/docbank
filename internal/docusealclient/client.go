@@ -116,7 +116,7 @@ func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 		return errResponseTooLarge
 	}
 
-	if !utf8.Valid(data) || json.Unmarshal(data, dst) != nil {
+	if json.Unmarshal(data, dst) != nil {
 		return errors.New("docuseal_invalid_response")
 	}
 	return nil

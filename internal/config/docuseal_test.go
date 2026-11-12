@@ -89,12 +89,17 @@ func TestDocuSealInvalidCredentials(t *testing.T) {
 	if _, err := valid.Resolve(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
+	boundaryRoot := t.TempDir()
+	writeDocuSealTestKey(t, filepath.Join(boundaryRoot, "key"), strings.Repeat("x", 4095)+"\n")
+	if _, err := valid.Resolve(t.Context(), boundaryRoot); err != nil {
+		t.Fatalf("accepted-size credential: %v", err)
+	}
 
 	for _, tc := range []struct {
 		name, value string
 		file        bool
 	}{
-		{"oversized file", strings.Repeat("x", 4097), true}, {"control env", "part\x1ftoken", false}, {"DEL env", "part\x7ftoken", false}, {"NUL file", "part\x00token", true},
+		{"oversized file", strings.Repeat("x", 4096) + "\n", true}, {"oversized env", strings.Repeat("x", 4096) + " ", false}, {"control env", "part\x1ftoken", false}, {"DEL env", "part\x7ftoken", false}, {"NUL file", "part\x00token", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -130,9 +135,9 @@ func TestDocuSealResolveReportsSafeField(t *testing.T) {
 		edit func(*DocuSealConfig)
 		want string
 	}{
-		{"endpoint", func(d *DocuSealConfig) { d.Endpoint = "https://synthetic-secret@example.test/path" }, "invalid DocuSeal endpoint settings"},
-		{"boundary", func(d *DocuSealConfig) { d.TrustBoundary = "synthetic-secret" }, "invalid DocuSeal trust_boundary settings"},
-		{"hosted HTTP", func(d *DocuSealConfig) { d.Endpoint = "http://example.test" }, "invalid DocuSeal trust_boundary settings"},
+		{"endpoint", func(d *DocuSealConfig) { d.Endpoint = "https://synthetic-secret@example.test/path" }, "invalid DocuSeal setting: endpoint"},
+		{"boundary", func(d *DocuSealConfig) { d.TrustBoundary = "synthetic-secret" }, "invalid DocuSeal setting: trust_boundary"},
+		{"hosted HTTP", func(d *DocuSealConfig) { d.Endpoint = "http://example.test" }, "invalid DocuSeal setting: trust_boundary"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := valid
@@ -151,7 +156,7 @@ func TestDocuSealMalformedFieldsReportSafeCategories(t *testing.T) {
 		value    any
 		category string
 	}{
-		{"enabled", "yes", "enabled"}, {"endpoint", 7, "endpoint"}, {"api_path", 7, "API path"}, {"api_key_env", 7, "credential"}, {"api_key_file", 7, "credential"}, {"trust_boundary", 7, "trust_boundary"}, {"allowed_cidrs", []any{7}, "allowed CIDR"}, {"synthetic-secret", true, "unknown setting"},
+		{"enabled", "yes", "enabled"}, {"endpoint", 7, "endpoint"}, {"api_path", 7, "API path"}, {"api_key_env", 7, "credential"}, {"api_key_file", 7, "credential"}, {"trust_boundary", 7, "trust_boundary"}, {"allowed_cidrs", []any{7}, "allowed CIDR"}, {"synthetic-secret", true, "unknown key"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			var cfg DocuSealConfig
@@ -159,7 +164,7 @@ func TestDocuSealMalformedFieldsReportSafeCategories(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := cfg.Resolve(t.Context(), t.TempDir())
-			want := "invalid DocuSeal " + tc.category + " settings"
+			want := "invalid DocuSeal setting: " + tc.category
 			if err == nil || err.Error() != want {
 				t.Fatalf("got %v, want %s", err, want)
 			}
