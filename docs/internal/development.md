@@ -253,6 +253,9 @@ file. If `main` already records that version, preserve its record, remove your
 old record, bump `currentStorageSchemaVersion`, rerun the test against the
 combined layout, and add the new record.
 
+Keep the record after release. The unreleased-version test skips that version,
+and the released-schema fixture checks enforce compatibility from then on.
+
 Every release's storage schema version belongs in
 `releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
 `schema.sql` saved as `internal/store/testdata/schema-<tag>.sql` and registered
