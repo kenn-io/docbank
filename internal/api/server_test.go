@@ -452,7 +452,8 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		DisplayName: "Example Holdings Ltd.", LegalName: "Example Holdings Limited", Own: true})
 	require.NoError(t, err)
 	contact, err := s.CreateParty(t.Context(), store.PartyInput{Kind: "person",
-		DisplayName: "Example Contact", LegalName: "Example Contact Legal", PersonID: &contactPerson.PersonID})
+		DisplayName: "Example Contact", LegalName: "Example Contact Legal", Country: new("CA"),
+		PersonID: &contactPerson.PersonID})
 	require.NoError(t, err)
 	contact, err = s.RetireParty(t.Context(), contact.PartyID, contact.Revision)
 	require.NoError(t, err)
@@ -515,6 +516,8 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 	require.Contains(t, listedParties, filer.PartyID)
 	shownContact := listedParties[contact.PartyID]
 	assert.Equal(t, "Example Contact Legal", shownContact.LegalName)
+	require.NotNil(t, shownContact.Country)
+	assert.Equal(t, "CA", *shownContact.Country)
 	require.NotNil(t, shownContact.PersonID)
 	assert.Equal(t, contactPerson.PersonID, *shownContact.PersonID)
 	assert.NotNil(t, shownContact.RetiredAt)
