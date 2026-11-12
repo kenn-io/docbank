@@ -13,7 +13,7 @@ import (
 )
 
 func newTaxCommand() *cobra.Command {
-	root := &cobra.Command{Use: "tax", Short: "Manage tax accounts", Long: "Manage tax accounts and their registration details.\nAccount identifiers are masked unless explicitly revealed.", GroupID: groupDocuments}
+	root := &cobra.Command{Use: "tax", Short: "Manage tax accounts and records", Long: "Manage tax accounts and initial records.\nAccount identifiers are masked unless explicitly revealed.", GroupID: groupDocuments}
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		message := "invalid tax command flags"
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
@@ -27,7 +27,7 @@ func newTaxCommand() *cobra.Command {
 	root.Annotations = map[string]string{helpOnlyAnnotation: helpOnlyMarker}
 	root.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	root.PersistentFlags().Bool("json", false, "print JSON")
-	root.AddCommand(newTaxAccountCommand())
+	root.AddCommand(newTaxAccountCommand(), newTaxRecordCommand())
 	return root
 }
 

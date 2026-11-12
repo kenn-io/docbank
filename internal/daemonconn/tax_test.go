@@ -177,7 +177,7 @@ func TestTaxClientIncompleteReceiptsAndUnknownOutcome(t *testing.T) {
 }
 
 func TestTaxClientTransportErrorClass(t *testing.T) {
-	err := taxMutationFailure(&transportError{err: errors.Join(context.DeadlineExceeded, errors.New("private-synthetic-value"))})
+	err := taxMutationFailure(&transportError{err: errors.Join(context.DeadlineExceeded, errors.New("private-synthetic-value"))}, "account")
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.True(t, IsTransportError(err))
 	assert.Contains(t, err.Error(), "deadline exceeded")
