@@ -2,6 +2,9 @@ package api
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +12,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBatesDownloadHEADPreservesTicket(t *testing.T) {
+	t.Parallel()
+	downloads := newWebDownloadRegistry(t.TempDir())
+	path := filepath.Join(t.TempDir(), "bates.pdf")
+	content := []byte("synthetic bates export")
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	digest := sha256.Sum256(content)
+	token, err := downloads.issue(webDownloadTicket{path: path, name: "bates.pdf", mediaType: "application/pdf", blobHash: hex.EncodeToString(digest[:]), size: int64(len(content)), archiveFile: file, releaseArchive: func() { _ = file.Close() }})
+	require.NoError(t, err)
+	mux := http.NewServeMux()
+	registerWebDownload(mux, false, Deps{}, downloads, nil, nil)
+	address := webDownloadFilePath + "?ticket=" + token
+	head := httptest.NewRecorder()
+	mux.ServeHTTP(head, httptest.NewRequestWithContext(t.Context(), http.MethodHead, address, nil))
+	require.Equal(t, http.StatusMethodNotAllowed, head.Code)
+	require.Equal(t, http.MethodGet, head.Header().Get("Allow"))
+	get := httptest.NewRecorder()
+	mux.ServeHTTP(get, httptest.NewRequestWithContext(t.Context(), http.MethodGet, address, nil))
+	require.Equal(t, http.StatusOK, get.Code)
+	require.Equal(t, content, get.Body.Bytes())
+}
 
 func TestWebDownloadSessionRevocationFencesTicketIssuance(t *testing.T) {
 	t.Parallel()

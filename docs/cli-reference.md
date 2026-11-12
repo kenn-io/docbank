@@ -1401,7 +1401,7 @@ for the selection format, limits and recipient import commands.
 
 ```
 docbank rendition get <attachment-sha256> [--max-bytes <n>]
-docbank rendition window <path-or-id> --version <version-uuid> --profile <name>
+docbank rendition window <path-or-id> [--version <version-uuid>] [--profile <name>]
   [--attachment <attachment-id>] [--offset <n>] [--max-chars <n>] [--json]
 ```
 
@@ -1411,8 +1411,10 @@ verifying the complete stream. The attachment ID must be lowercase SHA-256.
 oversized, incomplete, or invalid renditions return a nonzero exit code.
 The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
 
-`window` reads bounded Markdown from the named executable profile's active
-rendition. It requires an explicit current version and prints a pinned
+`window` reads bounded Markdown from the current version. It selects the one
+active rendition with readable text, or asks you to choose when several have
+text. `--version`, `--profile`, and `--attachment` pin the selection. A
+rendition whose profile is no longer configured is identified by fingerprint. It prints a pinned
 continuation command. It does not verify the complete artifact. See
 [Read and continue a text window](usage/document-processing.md#read-and-continue-a-text-window)
 for offsets, limits, JSON fields, and discovery costs.

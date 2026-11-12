@@ -129,7 +129,7 @@
     status = null;
     coverage = null;
     try {
-      const profiles = await generated.listDocumentProcessingProfiles({ session });
+      const profiles = await generated.listDocumentProcessingProfiles(undefined, { session });
       if (request !== generation || !node.current_version_id) return;
       const planned = await Promise.allSettled(profiles.map((item) => planProfile(item.name)));
       if (request !== generation) return;

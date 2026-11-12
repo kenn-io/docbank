@@ -51,6 +51,7 @@ type webDownloadRegistry struct {
 }
 
 type webDownloadTicket struct {
+	original        *originalDownloadSelection
 	previewID       string
 	previewReview   string
 	reportID        string
@@ -414,6 +415,11 @@ func registerWebDownload(
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	mux.HandleFunc("HEAD "+webDownloadFilePath, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
+
 	mux.HandleFunc("GET "+webDownloadFilePath, func(w http.ResponseWriter, r *http.Request) {
 		ticket, ok := downloads.consume(r.URL.Query().Get("ticket"))
 		if !ok {
@@ -422,6 +428,10 @@ func registerWebDownload(
 			return
 		}
 		defer ticket.release()
+		if ticket.original != nil {
+			deliverOriginalDownload(w, r, d, ticket)
+			return
+		}
 		if ticket.previewID != "" {
 			deliverRedactionPreview(w, r, d.Processing, ticket.owner, ticket.previewID, "bundle", 0, ticket.previewReview, ticket.blobHash)
 			return
