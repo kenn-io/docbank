@@ -640,7 +640,7 @@ func init() {
 	searchCmd.Flags().StringVar(&searchBinding, "binding", "",
 		"embedding binding for semantic or hybrid search")
 	searchCmd.Flags().StringSliceVar(&searchSourceVersions, "source-version", nil,
-		"limit search to these document version UUIDs (repeat to include more)")
+		"search only these document version UUIDs (repeatable)")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false,
 		"show bounded retrieval stages without raw similarities or vectors")
 	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
