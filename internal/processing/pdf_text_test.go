@@ -178,7 +178,7 @@ func TestPDFTextInitializePreservesRevokedConsent(t *testing.T) {
 
 //nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestPDFTextRunnerSkipPolicy(t *testing.T) {
-	for _, scenario := range []string{"trashed", "refused", "purged", "cap", "oversized"} {
+	for _, scenario := range []string{"trashed", "refused", "purged", "cap"} {
 		t.Run(scenario, func(t *testing.T) {
 			fixture := newPublicationFixture(t)
 			_, profile, err := NewPDFTextProfile()
@@ -237,11 +237,20 @@ func TestPDFTextRunnerSkipPolicy(t *testing.T) {
 				}
 				require.NoError(t, runner.process(t.Context(), item))
 				require.Len(t, runner.skips, localTextSkipLimit)
-			case "oversized":
-				unqueued, err := runner.UnqueuedPending(t.Context())
-				require.NoError(t, err)
-				require.False(t, unqueued(node.CurrentVersionID, PDFTextMaxDocumentBytes+1))
 			}
 		})
 	}
+}
+
+func TestPDFTextRunnerUnqueuedOversized(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	_, profile, err := NewPDFTextProfile()
+	require.NoError(t, err)
+	service := newPDFTextService(t, fixture, profile)
+	runner := &PDFTextRunner{Service: service}
+	require.NoError(t, runner.Initialize(t.Context()))
+	unqueued, err := runner.UnqueuedPending(t.Context())
+	require.NoError(t, err)
+	require.False(t, unqueued("oversized", PDFTextMaxDocumentBytes+1))
 }

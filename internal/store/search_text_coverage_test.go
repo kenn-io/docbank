@@ -74,7 +74,10 @@ func TestSearchTextCoverage(t *testing.T) {
 		t.Parallel()
 		s, _, pdfs, profile := collectionCoverageFixture(t, 2)
 		skipped := ""
-		unqueued := func(version string, _ int64) bool { return version != skipped }
+		unqueued := func(version string, size int64) bool {
+			require.Equal(t, pdfs[0].Size, size)
+			return version != skipped
+		}
 		coverage, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, nil, unqueued)
 		require.NoError(t, err)
 		require.Equal(t, 2, coverage.Pending)
@@ -185,25 +188,17 @@ func TestSearchTextCoverageLimitsEvidenceReads(t *testing.T) {
 	t.Parallel()
 	s, _, nodes, profile := collectionCoverageFixture(t, 17)
 	var expected []string
-	pages := make(map[string]int)
-	for i, node := range nodes {
+	for _, node := range nodes {
 		state := "candidate_empty"
-		if i%2 == 0 {
-			state = "candidate_serving"
-		}
 		collectionCoveragePublish(t, s, node, profile, state)
 		build := testSHA256([]byte(node.CurrentVersionID + state))
 		expected = append(expected, build)
-		pages[build] = 1
-		if state == "candidate_serving" {
-			pages[build] = 2
-		}
 	}
 	slices.Sort(expected)
 	var read []string
 	got, err := s.SearchTextCoverage(t.Context(), SearchOptions{}, profile.Fingerprint, func(_ context.Context, buildID string) ([]int, error) {
 		read = append(read, buildID)
-		return []int{pages[buildID]}, nil
+		return []int{1}, nil
 	}, nil)
 	require.NoError(t, err)
 	require.Equal(t, expected[:16], read)

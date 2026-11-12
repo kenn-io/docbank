@@ -110,9 +110,7 @@ func TestAnswerQuestionPageCoverage(t *testing.T) {
 			}
 			session := func(ctx context.Context, fn func(context.Context, answerClient) error) error { return fn(ctx, f) }
 			out, _, err := answerQuestion(t.Context(), session, []byte(`{"question":"missing"}`))
-			if err == nil {
-				require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
-			}
+			require.Equal(t, []string{version}, f.coverageFence.ContentVersionIDs)
 			tc.check(t, out, err)
 		})
 	}

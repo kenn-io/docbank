@@ -268,8 +268,11 @@ func TestRenditionTextHTTPReportsMissingPDFPages(t *testing.T) {
 	require.NoError(t, err)
 	_, err = runner.Service.Start(t.Context(), processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
 	require.NoError(t, err)
+	resp, body := get(t, ts, "/api/v1/search/text-coverage", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"pages_without_text":1`)
 	request := map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "profile": processing.PDFTextProfileName}
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/renditions/text", nil, request)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var receipt struct {
 		Pages   []int  `json:"pages_without_text"`
