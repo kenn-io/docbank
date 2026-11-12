@@ -132,3 +132,31 @@ func TestTaxTextPinnedBoundaries(t *testing.T) {
 		t.Fatalf("control: %v", err)
 	}
 }
+
+func TestTaxRawLocationsRejectUnicodeCaseMapping(t *testing.T) {
+	base := AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
+	for _, tc := range []struct {
+		field  string
+		change func(*AccountValues)
+	}{
+		{"country", func(v *AccountValues) { v.Country = "ſ" }},
+		{"subdivision", func(v *AccountValues) { v.Subdivision = "zz-ſ" }},
+		{"currency", func(v *AccountValues) { v.Currency = "uſ" }},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			v := base
+			tc.change(&v)
+			_, err := NormalizeAccount(v)
+			var field *FieldError
+			if !errors.As(err, &field) || field.Field != tc.field {
+				t.Fatalf("field: %v", err)
+			}
+		})
+	}
+	r := RecordValues{FilerPartyID: "filer", Country: "ZZ", Subdivision: "zz-ſ", TaxKind: "example", Kind: "filing", Title: "Example", State: "expected", Direction: "unknown", Verification: "unverified"}
+	_, err := NormalizeRecord(r)
+	var field *FieldError
+	if !errors.As(err, &field) || field.Field != "subdivision" {
+		t.Fatalf("record: %v", err)
+	}
+}

@@ -73,6 +73,11 @@ func rawLocation(country, subdivision, code string) error {
 		if len(item.value) > item.limit || !utf8.ValidString(item.value) {
 			return invalid(item.field, "invalid length or text")
 		}
+		for i := 0; i < len(item.value); i++ {
+			if item.value[i] >= utf8.RuneSelf {
+				return invalid(item.field, "invalid length or text")
+			}
+		}
 	}
 	return nil
 }

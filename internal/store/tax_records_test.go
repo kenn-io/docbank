@@ -188,3 +188,26 @@ func TestTaxRecordUpdatePeriodCollision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, other, got)
 }
+
+func TestTaxSuccessfulNoOpUpdatesAdvanceRevision(t *testing.T) {
+	t.Parallel()
+	s, a, r := taxFixture(t)
+	ctx := t.Context()
+	ai := TaxAccountInput{FilerPartyID: a.FilerPartyID, Country: a.Country, TaxKind: a.TaxKind, Cadence: a.Cadence, Currency: a.Currency}
+	updatedA, err := s.UpdateTaxAccount(ctx, a.AccountID, a.Revision, ai)
+	require.NoError(t, err)
+	assert.Equal(t, a.Revision+1, updatedA.Revision)
+	ri := TaxRecordInput{AccountID: &a.AccountID, Kind: r.Kind, Title: r.Title, PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, TaxYear: r.TaxYear}
+	updatedR, err := s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, ri)
+	require.NoError(t, err)
+	assert.Equal(t, r.Revision+1, updatedR.Revision)
+}
+
+func TestTaxRecordRejectsNonASCIICurrencyWithAmount(t *testing.T) {
+	t.Parallel()
+	s, a, _ := taxFixture(t)
+	_, err := s.CreateTaxRecord(t.Context(), TaxRecordInput{AccountID: &a.AccountID, Kind: "notice", Title: "Example", Currency: new("uſ"), Direction: "payable", Amount: new("1")})
+	var field *taxrecord.FieldError
+	require.ErrorAs(t, err, &field)
+	assert.Equal(t, "currency", field.Field)
+}

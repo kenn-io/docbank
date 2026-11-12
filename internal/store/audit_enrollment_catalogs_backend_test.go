@@ -12,6 +12,11 @@ import (
 
 func retainedMetadataCatalogSeeds() map[string]func(*testing.T) *Store {
 	return map[string]func(*testing.T) *Store{
+		"tax": func(t *testing.T) *Store {
+			t.Helper()
+			s, _, _ := taxFixture(t)
+			return s
+		},
 		"parties": func(t *testing.T) *Store {
 			t.Helper()
 			s := newTestStore(t)

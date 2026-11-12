@@ -20,15 +20,8 @@ invalidating historical records.
 Accounts default to a 14-day lead time. An unset record lead time is reserved
 for inheritance from its account's current value, or 14 days without an
 account. Its currency snapshots the account default when created and can be
-overridden. A tax year defaults to the year of the period end. Amounts are exact nonnegative minor
-units; direction records whether an amount is payable or refundable.
-
-Store updates replace the record's content and nullable fields. Callers must
-supply the dates, year, lead time, form code and amount they want to retain;
-null clears the corresponding nullable value. Identity and currency pointers
-retain their values when omitted. An empty direction retains its current value,
-which must remain consistent with the supplied amount. The account binding and
-kind must match the existing record.
+overridden. A tax year defaults to the year of the period end. Amounts are exact
+nonnegative minor units; direction records whether an amount is payable or refundable.
 
 Records start in their kind's initial state and unverified. Event transitions,
 payments, document evidence, deadlines, and verification operations are not

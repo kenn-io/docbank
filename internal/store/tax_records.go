@@ -132,6 +132,11 @@ func taxRecordValues(in TaxRecordInput, old *TaxRecord, account *TaxAccount) (ta
 	if in.Amount != nil {
 		code := v.Currency
 		if len(code) <= 3 {
+			for i := 0; i < len(code); i++ {
+				if code[i] >= 0x80 {
+					return v, &taxrecord.FieldError{Field: "currency", Reason: "invalid currency"}
+				}
+			}
 			code = strings.ToUpper(code)
 		}
 		amount, err := taxrecord.ParseMoney(*in.Amount, code)

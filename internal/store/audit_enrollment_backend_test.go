@@ -230,6 +230,8 @@ var postgresEnrollmentCatalogs = []string{
 	"person_splits",
 	"persons",
 	"parties",
+	"tax_accounts",
+	"tax_records",
 	"photo_assets",
 	"photo_checkouts",
 	"photo_hidden_credentials",
