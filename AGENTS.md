@@ -245,7 +245,6 @@ release, from a breaking change to `feat` to `fix`.
 
 ## Design Invariants
 
-- Follow the [SQLite schema contract](docs/internal/development.md#change-schema) for catalog changes.
 - Standalone CLI operation is daemon-first: CLI commands are HTTP clients
   (`daemonconn.Ensure`) and never open a vault directly. Go applications may use
   the public embedded API to own separately rooted vaults in-process. Embedded
