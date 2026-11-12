@@ -158,6 +158,8 @@ vault, so it also keeps state that a restore deliberately resets:
   resolve, interrupted exports resume, and completed archives are kept.
 - Watch-source absence observations and explicit photo-description waiters from
   v0.17.0, so pending observations and requests keep their intent.
+- Photo provider answers and completed scan markers from v0.17.0, so pending
+  suggestions stay searchable and completed scans do not reopen.
 - Embedding jobs, so failed or retry-exhausted jobs are not queued again with
   a fresh retry budget.
 - Media receipts, so an admitted request that has no rendition job yet still

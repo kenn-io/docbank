@@ -668,6 +668,8 @@ Schema 43 adds `photo_suggestions`, one row per content version and producer fin
 
 `photo_description_explicit_waiters` marks the waiters an explicit start created. Admission reads it to let explicit work request a new producer fingerprint while automatic work leaves settled descriptions alone. Publication refreshes only rotation for settled rows and preserves text decisions. A rotation refresh keeps the text producer fingerprint, so repeated explicit requests under a different fingerprint can ask again. The waiter marker records in-flight intent only. Description jobs and waiters stay out of backups and rebuild after restore.
 
+Released v0.17.0 upgrades preserve provider answers and completed face-scan markers verbatim; suggestion triggers rebuild the search projection without changing backup filtering.
+
 `visual_preview_generations_ready` is a partial index on ready previews by recipe and content version. Photo description backfill walks it in version order, so an idle pass over settled photos stays an index scan.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
