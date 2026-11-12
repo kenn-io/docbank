@@ -47,19 +47,7 @@ func documentFactsCommand(kind string) *cobra.Command {
 			if asJSON {
 				return writeVersionJSON(cmd.OutOrStdout(), result)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "State: %s\n", result.State)
-			for _, diagnostic := range result.Diagnostics {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Diagnostic: %s\n", diagnostic.Detail)
-			}
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-			for _, claim := range result.Claims {
-				mark := " "
-				if claim.Primary {
-					mark = "*"
-				}
-				_, _ = fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.Precision, documentFactLabel(claim.ClaimBasis))
-			}
-			return w.Flush()
+			return writeVersionDatesTable(cmd.OutOrStdout(), result)
 		}
 		d := apiclient.GetVersionPeopleQueryDisclosure(disclosure)
 		result, err := c.API().GetVersionPeople(cmd.Context(), &apiclient.GetVersionPeopleRequestOptions{PathParams: &apiclient.GetVersionPeoplePath{VersionID: versionID}, Query: &apiclient.GetVersionPeopleQuery{Disclosure: &d}})
@@ -75,8 +63,31 @@ func documentFactsCommand(kind string) *cobra.Command {
 	cmd.Flags().BoolVar(&full, "full", false, "include sensitive claims")
 	return cmd
 }
+
+func writeVersionDatesTable(out io.Writer, result *apiclient.VersionDates) error {
+	if _, err := fmt.Fprintf(out, "State: %s\n", result.State); err != nil {
+		return fmt.Errorf("writing dates state: %w", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if _, err := fmt.Fprintf(out, "Diagnostic: %s\n", diagnostic.Detail); err != nil {
+			return fmt.Errorf("writing dates diagnostic: %w", err)
+		}
+	}
+	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
+	for _, claim := range result.Claims {
+		mark := " "
+		if claim.Primary {
+			mark = "*"
+		}
+		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.Precision, documentFactLabel(claim.ClaimBasis))
+	}
+	return w.Flush()
+}
+
 func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) error {
-	_, _ = fmt.Fprintf(out, "State: %s\n", result.State)
+	if _, err := fmt.Fprintf(out, "State: %s\n", result.State); err != nil {
+		return fmt.Errorf("writing people state: %w", err)
+	}
 	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
 	for _, edge := range result.Edges {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
