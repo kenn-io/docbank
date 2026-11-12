@@ -954,7 +954,12 @@ func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, t
 	if filter != "" {
 		query += ` WHERE ` + filter
 	}
-	rows, err := source.QueryContext(ctx, query+` ORDER BY rowid`)
+	order := `rowid`
+	if table == "watch_source_absences" {
+		// The released table is WITHOUT ROWID and keyed by watch and source.
+		order = `watch_name, source_ref`
+	}
+	rows, err := source.QueryContext(ctx, query+` ORDER BY `+order)
 	if err != nil {
 		return fmt.Errorf("reading released %s: %w", table, err)
 	}
