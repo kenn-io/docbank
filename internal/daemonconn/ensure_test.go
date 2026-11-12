@@ -354,9 +354,9 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	// Protocol 119 ignores original-content ranges, even with the same dev version.
+	// Protocol 127 identifies a different API contract on main, even for dev builds.
 	rec.Metadata[MetaExplicitStart] = "true"
-	rec.Metadata[metaProtocolVersion] = "119"
+	rec.Metadata[metaProtocolVersion] = "127"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root, false,
@@ -367,7 +367,7 @@ func TestEnsureReplacesIncompatibleDaemon(t *testing.T) {
 			return NewRecord(rec.Address, "new-key", "new-token", ""), nil
 		})
 	require.NoError(t, err)
-	require.True(t, started.Load(), "a daemon on an older protocol version is replaced")
+	require.True(t, started.Load(), "a daemon with an incompatible protocol is replaced")
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	outline, err := client.GetTextOutline(t.Context(), request)
