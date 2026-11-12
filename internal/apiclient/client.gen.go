@@ -27681,11 +27681,11 @@ type UploadPackageChunkHeaders struct {
 }
 
 type UpdatePartyHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type RetirePartyHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type RenamePersonHeaders struct {

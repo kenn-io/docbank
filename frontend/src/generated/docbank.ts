@@ -10038,11 +10038,11 @@ offset?: number;
 };
 
 export type UpdatePartyHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type RetirePartyHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type ResolvePathParams = {
@@ -16576,7 +16576,7 @@ export const getUpdatePartyUrl = (partyId: string,) => {
  */
 export const updateParty = async (partyId: string,
     patchPartyRequest: NonReadonly<PatchPartyRequest>,
-    headers?: UpdatePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+    headers: UpdatePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16615,7 +16615,7 @@ export const getRetirePartyUrl = (partyId: string,) => {
  * @summary Retire a party
  */
 export const retireParty = async (partyId: string,
-    headers?: RetirePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
+    headers: RetirePartyHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Party> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
