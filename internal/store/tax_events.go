@@ -117,8 +117,6 @@ func (s *Store) appendTaxEvent(ctx context.Context, id string, revision int64, i
 				return &taxrecord.FieldError{Field: "state", Reason: "unsupported event"}
 			}
 			v.SetsState = in.Kind
-		} else if in.Kind != "note" {
-			return &taxrecord.FieldError{Field: "kind", Reason: "unsupported event"}
 		}
 		if in.Amount != nil {
 			code, err := taxrecord.NormalizeCurrency(in.Currency)
