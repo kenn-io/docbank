@@ -399,6 +399,7 @@ var codeToTypedErr = map[string]error{
 	"exists":                          store.ErrExists,
 	"cycle":                           store.ErrCycle,
 	"stale_revision":                  store.ErrStaleRevision,
+	"tax_revision_exhausted":          store.ErrTaxRevisionExhausted,
 	"redaction_selection_changed":     store.ErrStaleRevision,
 	"redaction_preparation_integrity": ErrIntegrity,
 	"invalid_person":                  store.ErrInvalidPerson,

@@ -12,7 +12,12 @@ import (
 
 func TestTaxCLIUsageErrors(t *testing.T) {
 	requests := 0
-	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) { requests++; http.Error(w, "unexpected", 500) })
+	setupFakeDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":422,"code":"invalid_tax","detail":"cadence: unknown cadence"}`))
+	})
 	for _, args := range [][]string{{"account", "edit", "id", "--note", "x", "--revision=0"}, {"account", "retire", "id", "--revision=-1"}, {"account", "edit", "id"}, {"account", "edit", "id", "--effective-start", "2025-01-01", "--clear-effective-start"}} {
 		cmd := newTaxCommand()
 		cmd.SetArgs(args)
@@ -21,6 +26,11 @@ func TestTaxCLIUsageErrors(t *testing.T) {
 		assert.Equal(t, exitUsage, commandExitCode(err, true))
 	}
 	assert.Zero(t, requests)
+	_, err := runCLI(t, "tax", "account", "add", "--filer", "11111111-1111-4111-8111-111111111111", "--country", "ZZ", "--tax-kind", "Example", "--cadence", "invalid", "--currency", "USD")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, commandExitCode(err, true))
+	assert.Contains(t, err.Error(), "cadence: unknown cadence")
+	assert.Equal(t, 1, requests)
 }
 
 func TestTaxCLIAccountWorkflow(t *testing.T) {
@@ -51,7 +61,6 @@ func TestTaxCLIAccountWorkflow(t *testing.T) {
 	assert.Contains(t, err.Error(), "stale_revision")
 	assert.NotContains(t, out, "private-synthetic-note")
 	assert.NotContains(t, err.Error(), "private-synthetic-note")
-
 }
 
 func TestTaxCLIFlagErrorsArePrivate(t *testing.T) {

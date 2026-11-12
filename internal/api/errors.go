@@ -131,6 +131,7 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidParty, http.StatusUnprocessableEntity, "invalid_party"},
 	{taxrecord.ErrInvalid, http.StatusUnprocessableEntity, "invalid_tax"},
 	{store.ErrTaxRetired, http.StatusConflict, "tax_retired"},
+	{store.ErrTaxRevisionExhausted, http.StatusConflict, "tax_revision_exhausted"},
 	{store.ErrPartyRetired, http.StatusConflict, "party_retired"},
 	{store.ErrInvalidTag, http.StatusUnprocessableEntity, "invalid_tag"},
 	{store.ErrInvalidSavedQuery, http.StatusUnprocessableEntity, "invalid_saved_query"},

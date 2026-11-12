@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestTaxClientRequestContracts(t *testing.T) {
@@ -113,4 +114,26 @@ func TestTaxClientValidationDetails(t *testing.T) {
 	code, ok := ProblemCode(err)
 	assert.True(t, ok)
 	assert.Equal(t, "invalid_tax", code)
+	audit := safeTaxError(apiProblemError(api.Error{Status: http.StatusConflict, Code: "audit_mutation_unsupported", Detail: "private-synthetic-value"}))
+	assert.Contains(t, audit.Error(), "tax writes are unavailable in audited vaults")
+	assert.NotContains(t, audit.Error(), "private-synthetic-value")
+}
+
+func TestTaxClientRevisionExhaustion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"status":409,"code":"tax_revision_exhausted","detail":"private-synthetic-value"}`))
+	}))
+	t.Cleanup(server.Close)
+	_, err := New(server.URL, "").RetireTaxAccount(t.Context(), "11111111-1111-4111-8111-111111111111", 1)
+	require.ErrorIs(t, err, store.ErrTaxRevisionExhausted)
+	status, ok := ResponseStatus(err)
+	assert.True(t, ok)
+	assert.Equal(t, http.StatusConflict, status)
+	code, ok := ProblemCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, "tax_revision_exhausted", code)
+	assert.Contains(t, err.Error(), code)
+	assert.NotContains(t, err.Error(), "private-synthetic-value")
 }

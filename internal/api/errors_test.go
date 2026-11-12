@@ -55,6 +55,7 @@ func TestFromStoreErrorMappings(t *testing.T) {
 		{store.ErrPersonMergeConflict, http.StatusConflict, "person_merge_conflict"},
 		{taxrecord.ErrInvalid, http.StatusUnprocessableEntity, "invalid_tax"},
 		{store.ErrTaxRetired, http.StatusConflict, "tax_retired"},
+		{store.ErrTaxRevisionExhausted, http.StatusConflict, "tax_revision_exhausted"},
 		{store.ErrPhotoCheckoutConflict, http.StatusConflict, "photo_checkout_conflict"},
 		{store.ErrPersonMergeTooLarge, http.StatusUnprocessableEntity, "person_merge_too_large"},
 		{store.ErrPersonRetired, http.StatusConflict, "person_retired"},

@@ -21,8 +21,11 @@ func (e *taxClientError) Error() string {
 	}
 	if code, ok := ProblemCode(e.cause); ok {
 		switch code {
-		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "audit_mutation_unsupported", "maintenance_busy", "internal":
+		case "validation", "invalid_tax", "not_found", "exists", "stale_revision", "precondition_required", "tax_retired", "tax_revision_exhausted", "audit_mutation_unsupported", "maintenance_busy", "internal":
 			message += ": " + code
+			if code == "audit_mutation_unsupported" {
+				message += "; tax writes are unavailable in audited vaults"
+			}
 			if code == "invalid_tax" || code == "validation" {
 				var problem *problemError
 				if errors.As(e.cause, &problem) {
