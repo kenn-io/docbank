@@ -29371,8 +29371,6 @@ type ListDocuSealTemplatesErrorResponse api.Error
 
 type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON api.Error
 
-type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON422 api.Error
-
 type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON500 api.Error
 
 type ListDocuSealTemplatesErrorResponseApplicationProblemPlusJSON502 api.Error

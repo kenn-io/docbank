@@ -25324,12 +25324,6 @@ paths:
             Cache-Control:
               schema:
                 type: string
-        "400":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
         "408":
           content:
             application/problem+json:
