@@ -866,6 +866,12 @@ func TestUpgradeReleasedV0170KeepsOperationalState(t *testing.T) {
 			upgraded, err := Open(ctx, path, driver.driver)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, upgraded.Close()) }()
+			parties, err := upgraded.ListParties(ctx, PartyListOptions{Limit: 100})
+			require.NoError(t, err)
+			assert.Empty(t, parties)
+			party, err := upgraded.CreateParty(ctx, PartyInput{Kind: "organization", DisplayName: "Example Ltd"})
+			require.NoError(t, err)
+			assert.Equal(t, "Example Ltd", party.DisplayName)
 			var absence, explicit int
 			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_source_absences WHERE watch_name='fixture' AND source_ref='fixture.txt'`).Scan(&absence))
 			require.NoError(t, upgraded.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_description_explicit_waiters WHERE waiter_id=?`, waiter.ID).Scan(&explicit))

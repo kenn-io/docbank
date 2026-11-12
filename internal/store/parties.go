@@ -51,10 +51,10 @@ func validatePartyInput(in PartyInput) error {
 	if in.Kind != "person" && in.Kind != "organization" {
 		return fmt.Errorf("%w: unknown kind", ErrInvalidParty)
 	}
-	if strings.ContainsRune(in.DisplayName, 0) || !utf8.ValidString(in.DisplayName) || strings.TrimSpace(in.DisplayName) == "" || utf8.RuneCountInString(in.DisplayName) > 200 || document.FoldPersonName(in.DisplayName) == "" {
+	if !document.ValidPersonIdentityText(in.DisplayName) || strings.TrimSpace(in.DisplayName) == "" || utf8.RuneCountInString(in.DisplayName) > 200 || document.FoldPersonName(in.DisplayName) == "" {
 		return fmt.Errorf("%w: display name", ErrInvalidParty)
 	}
-	if strings.ContainsRune(in.LegalName, 0) || !utf8.ValidString(in.LegalName) || utf8.RuneCountInString(in.LegalName) > 300 {
+	if !document.ValidPersonIdentityText(in.LegalName) || utf8.RuneCountInString(in.LegalName) > 300 {
 		return fmt.Errorf("%w: legal name", ErrInvalidParty)
 	}
 	if in.Country != nil && (len(*in.Country) != 2 || !strings.Contains(partyCountries, " "+*in.Country+" ")) {

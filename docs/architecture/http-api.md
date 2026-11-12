@@ -2526,7 +2526,8 @@ include a `position` span:
 | `snapshot_unavailable` | 503 | query snapshot exceeded its resource budget or its build was canceled |
 | `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
 | `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
-| `party_exists` / `party_retired` | 409 | An active folded name exists, or the party is retired |
+| `party_exists` | 409 | An active folded name exists; the `party_id` problem extension identifies the existing party |
+| `party_retired` | 409 | The party is retired |
 | `invalid_party` | 422 | The party input or reference is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
