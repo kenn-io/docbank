@@ -1245,7 +1245,7 @@
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const pdfCoverageDescription = $derived(
     pdfCoverage?.pdfs_without_text
-      ? `${activeTagID && !snapshotActive ? "With this tag" : "Across the current vault"}: some PDFs have pages without a text layer.`
+      ? `${activeTagID ? "With this tag" : "Across the current vault"}: some PDFs have pages without a text layer.`
       : pdfCoverageIncomplete
         ? "PDF text coverage is incomplete; some pages may not be searchable."
         : undefined,
@@ -2165,20 +2165,15 @@
 
   $effect(() => {
     const query = activeQuery;
-    const frozen = snapshotActive;
-    const frozenReady = snapshot.state.status === "ready";
-    const frozenPage = snapshotPage;
     const tag = activeTagID;
     const session = webSession;
-    const eligible = frozen
-      ? frozenReady && frozenPage?.rows.length === 0
-      : !!query && !loading && !searchPending && rows.length === 0;
+    const eligible = !snapshotActive && !!query && !loading && !searchPending && rows.length === 0;
     pdfCoverage = null;
     if (!eligible) return;
     const controller = new AbortController();
     let current = true;
     void generated
-      .searchTextCoverage(tag && !frozen ? { tag_id: tag } : {}, {
+      .searchTextCoverage(tag ? { tag_id: tag } : {}, {
         session,
         signal: controller.signal,
       })
@@ -4614,10 +4609,7 @@
                     data-member-hash={snapshotPage.member_hash}
                   >
                     {#if snapshotPage.rows.length === 0}
-                      <EmptyState
-                        title="No matching documents"
-                        description={pdfCoverageDescription}
-                      >
+                      <EmptyState title="No matching documents">
                         {#snippet icon()}<SearchIcon size="22" />{/snippet}
                       </EmptyState>
                     {:else}

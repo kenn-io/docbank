@@ -2111,7 +2111,7 @@ function renderEmptySearch(coverage: () => Promise<Response>) {
   return harness;
 }
 
-it("shows vault coverage for an empty Advanced search after a tagged search", async () => {
+it("scopes empty search coverage to the selected tag", async () => {
   const { fetchMock } = renderEmptySearch(async () =>
     json(textCoverage({ pdfs_without_text: 2, pages_without_text: 3 })),
   );
@@ -2128,22 +2128,6 @@ it("shows vault coverage for an empty Advanced search after a tagged search", as
     .map(([url]) => String(url))
     .find((url) => url.startsWith("/api/v1/search/text-coverage"));
   expect(new URL(liveRequest!, "https://example.com").searchParams.get("tag_id")).toBe(tagID);
-  await fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
-  await fireEvent.input(screen.getByLabelText("Filters JSON"), {
-    target: { value: '{"size_min":10}' },
-  });
-  await screen.findByRole("status", { name: "Query valid" });
-  await fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await screen.findByRole("region", { name: "Frozen query results" });
-  expect(
-    await screen.findByText(
-      "Across the current vault: some PDFs have pages without a text layer.",
-    ),
-  ).toBeTruthy();
-  const requests = fetchMock.mock.calls
-    .map(([url]) => String(url))
-    .filter((url) => url.startsWith("/api/v1/search/text-coverage"));
-  expect(new URL(requests.at(-1)!, "https://example.com").searchParams.has("tag_id")).toBe(false);
 });
 
 it.each([
