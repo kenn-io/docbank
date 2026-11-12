@@ -17,7 +17,6 @@ const localOff = {
   provider: "",
   download_bytes: 290_000_000,
   restart_required: false,
-  restart_available: false,
 };
 const localSaved = { ...localOff, download_bytes: 0, restart_required: true };
 const localPlan = { fingerprint: "f".repeat(64), server: "local", flow: [] };
@@ -1295,7 +1294,7 @@ it.each(["reading status", "turning on", "restarting"])(
   async (step) => {
     searchWithMeaningOff({
       status: () => {
-        if (step === "restarting") return { ...localSaved, restart_available: true };
+        if (step === "restarting") return localSaved;
         return step === "reading status" ? new Response("{}", { status: 401 }) : localOff;
       },
       apply: () => Promise.resolve(new Response("{}", { status: 401 })),
@@ -2103,6 +2102,34 @@ it.each(["names", "meaning", "frozen"])(
   },
 );
 
+it("restarts in place and shows search by meaning on", async () => {
+  let restarted = false;
+  const harness = searchWithMeaningOff({
+    status: () =>
+      restarted ? { ...localOff, active: true, provider: "local", download_bytes: 0 } : localSaved,
+    apply: async () => json(localPlan),
+    restart: async () => {
+      restarted = true;
+      return new Response(null, { status: 202 });
+    },
+  });
+  render(App);
+  const drawer = await openSearchByMeaningTab();
+  await within(drawer).findByText("Restart required");
+  await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
+  const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
+  await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
+  expect(await within(drawer).findByText("On")).toBeTruthy();
+  expect(within(drawer).queryByRole("button", { name: "Restart" })).toBeNull();
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Restart Docbank?" })).toBeNull(),
+  );
+  const call = harness.fetchMock.mock.calls.find(
+    ([input]) => String(input) === "/api/v1/processing/local/restart",
+  );
+  expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
+});
+
 it.each([
   [
     "web_browser",
@@ -2112,74 +2139,22 @@ it.each([
         { status: 403, headers: { "Content-Type": "application/json" } },
       ),
     "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues.",
-    "alert",
-  ],
-  [
-    "restart_unavailable",
-    async () =>
-      new Response(
-        JSON.stringify({
-          code: "restart_unavailable",
-          detail:
-            "If Docbank runs in a terminal, press Ctrl+C and start Docbank again. Otherwise, ask its operator to restart it.",
-        }),
-        { status: 409, headers: { "Content-Type": "application/json" } },
-      ),
-    "Docbank couldn't restart: If Docbank runs in a terminal, press Ctrl+C and start Docbank again. Otherwise, ask its operator to restart it.",
-    "alert",
-  ],
-  [
-    "accepted",
-    async () => new Response(null, { status: 202 }),
-    "Restart requested. Docbank may restart later.",
-    "status",
   ],
   [
     "lost",
     async () => {
       throw new Error("connection lost");
     },
-    "Docbank couldn't confirm the restart. It may still happen later.",
-    "status",
+    "Docbank couldn't restart: connection lost",
   ],
-  [
-    "unrecognized structured error",
-    async () =>
-      new Response(JSON.stringify({ code: "internal", detail: "Proxy error" }), { status: 500 }),
-    "Docbank couldn't confirm the restart. It may still happen later.",
-    "status",
-  ],
-  [
-    "rejected",
-    async () =>
-      new Response(JSON.stringify({ code: "restart_failed", detail: "Helper could not start" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }),
-    "Docbank couldn't restart: Helper could not start",
-    "status",
-  ],
-])("shows the restart outcome for %s", async (_kind, restart, notice, role) => {
-  const request = vi.fn(restart);
-  const harness = searchWithMeaningOff({
-    status: () => ({ ...localSaved, restart_available: true }),
-    apply: async () => json(localPlan),
-    restart: request,
-  });
+])("explains a failed restart for %s", async (_kind, restart, message) => {
+  searchWithMeaningOff({ status: () => localSaved, apply: async () => json(localPlan), restart });
   render(App);
   const drawer = await openSearchByMeaningTab();
   await within(drawer).findByText("Restart required");
   await fireEvent.click(within(drawer).getByRole("button", { name: "Restart" }));
   const confirm = screen.getByRole("dialog", { name: "Restart Docbank?" });
   await fireEvent.click(within(confirm).getByRole("button", { name: "Restart" }));
-  expect((await within(drawer).findByRole(role)).textContent).toContain(notice);
-  if (role === "alert") {
-    expect(within(drawer).queryByText(/may still happen later/)).toBeNull();
-    expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
-  }
-  expect(request).toHaveBeenCalledOnce();
-  const call = harness.fetchMock.mock.calls.find(
-    ([input]) => String(input) === "/api/v1/processing/local/restart",
-  );
-  expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
+  expect((await within(drawer).findByRole("alert")).textContent).toBe(message);
+  expect(within(drawer).getByRole("button", { name: "Restart" })).toBeTruthy();
 });

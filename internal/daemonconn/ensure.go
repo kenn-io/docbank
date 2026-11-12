@@ -347,15 +347,10 @@ func EnsureWeb(ctx context.Context) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ConnectWeb(ctx, res.Record)
-}
-
-// ConnectWeb connects only to the daemon described by rec, without starting one.
-func ConnectWeb(ctx context.Context, rec kitdaemon.RuntimeRecord) (*Connection, error) {
-	if !validWebAddress(rec.Metadata[metaWebAddress]) {
+	if !validWebAddress(res.Record.Metadata[metaWebAddress]) {
 		return nil, errors.New("started daemon does not provide the compiled web application")
 	}
-	c, err := newProvenClientFor(ctx, rec)
+	c, err := newProvenClientFor(ctx, res.Record)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTransientDaemonAcquisition, err)
 	}
@@ -467,29 +462,6 @@ func ensureDaemonWithOptions(
 // or the stopped daemon's explicit intent keeps the replacement running.
 func Restart(ctx context.Context, root string, persistent bool) (kitdaemon.RuntimeRecord, bool, error) {
 	return restart(ctx, root, persistent, Stop, Start)
-}
-
-// RestartWeb restarts only the daemon that accepted the browser request.
-func RestartWeb(ctx context.Context, root, token string) (*kitdaemon.RuntimeRecord, error) {
-	var restarted *kitdaemon.RuntimeRecord
-	err := WithLaunchLock(ctx, root, func() error {
-		rec, _, ok, err := Find(ctx, root)
-		if err != nil {
-			return err
-		}
-		if !ok || token == "" || rec.Metadata[metaShutdownToken] != token {
-			return errors.New("requesting daemon is no longer running")
-		}
-		if err := stopRecord(ctx, rec); err != nil {
-			return err
-		}
-		started, err := Start(ctx, root, Explicit(rec))
-		if err == nil {
-			restarted = &started
-		}
-		return err
-	})
-	return restarted, err
 }
 
 func restart(ctx context.Context, root string, persistent bool,

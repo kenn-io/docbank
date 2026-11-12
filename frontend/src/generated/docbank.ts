@@ -3883,7 +3883,6 @@ export interface LocalTextStatus {
   active: boolean;
   download_bytes: number;
   provider: LocalTextStatusProvider;
-  restart_available: boolean;
   restart_required: boolean;
 }
 
@@ -10082,10 +10081,6 @@ hidden?: boolean;
 
 export type SetPhotoSettingsHeaders = {
 'If-Match': string;
-};
-
-export type RestartDaemonHeaders = {
-Origin?: string;
 };
 
 export type ListDocumentProcessingProfilesParams = {
@@ -19239,27 +19234,13 @@ export const getRestartDaemonUrl = () => {
 /**
  * @summary Restart Docbank
  */
-export const restartDaemon = async (headers?: RestartDaemonHeaders, options?: Parameters<typeof sessionEmpty>[1]): Promise<void> => {
+export const restartDaemon = async ( options?: Parameters<typeof sessionEmpty>[1]): Promise<void> => {
 
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionEmpty<void>(getRestartDaemonUrl(),
+  return sessionEmpty<void>(getRestartDaemonUrl(),
   {
     ...options,
-    method: 'POST',
-    headers: { ...headers, ...getHeaders(options?.headers) }
+    method: 'POST'
+
 
   }
 );}

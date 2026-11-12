@@ -1,25 +1,20 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +28,7 @@ import (
 
 var docbankBuildDir string // Allocated on first build; TestMain removes it.
 var docbankBuildMu sync.Mutex
-var docbankBuilds = map[struct{ version, overlay string }]struct {
+var docbankBuilds = map[string]struct {
 	bin string
 	err error
 }{}
@@ -56,18 +51,12 @@ func buildDocbank(tb testing.TB) string {
 // when v is non-empty (an unstamped build reports "dev").
 func buildDocbankVersion(tb testing.TB, v string) string {
 	tb.Helper()
-	return buildDocbankVersionWithOverlay(tb, v, "")
-}
-
-func buildDocbankVersionWithOverlay(tb testing.TB, v, overlay string) string {
-	tb.Helper()
 	if testing.Short() {
 		tb.Skip("integration test: builds the binary")
 	}
 	docbankBuildMu.Lock()
 	defer docbankBuildMu.Unlock()
-	key := struct{ version, overlay string }{v, overlay}
-	build, ok := docbankBuilds[key]
+	build, ok := docbankBuilds[v]
 	if !ok {
 		build.bin, build.err = func() (string, error) {
 			if err := ensureDocbankBuildDir(); err != nil {
@@ -79,9 +68,6 @@ func buildDocbankVersionWithOverlay(tb testing.TB, v, overlay string) string {
 			}
 			bin := filepath.Join(docbankBuildDir, name)
 			args := []string{"build", "-tags", "fts5"}
-			if overlay != "" {
-				args = append(args, "-overlay", overlay)
-			}
 			if v != "" {
 				args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
 			}
@@ -93,7 +79,7 @@ func buildDocbankVersionWithOverlay(tb testing.TB, v, overlay string) string {
 			}
 			return bin, nil
 		}()
-		docbankBuilds[key] = build
+		docbankBuilds[v] = build
 	}
 	require.NoError(tb, build.err)
 	return build.bin
@@ -629,200 +615,4 @@ func TestStartOutputReflectsDaemonLifetimeState(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestWebRestartLeavesStoppedOrReplacedDaemonAlone(t *testing.T) {
-	bin := buildDocbank(t)
-	for _, replace := range []bool{false, true} {
-		t.Run(strconv.FormatBool(replace), func(t *testing.T) {
-			root := t.TempDir()
-			t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-			t.Setenv("DOCBANK_HOME", root)
-			t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
-			t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-			start := exec.CommandContext(t.Context(), bin, "daemon", "start")
-			out, err := start.CombinedOutput()
-			require.NoError(t, err, string(out))
-			old := waitForDaemon(t, root)
-			lock, err := (home.Layout{Root: root}).TryLockLaunch()
-			require.NoError(t, err)
-			defer func() { _ = lock.Release() }()
-			helper := exec.CommandContext(t.Context(), bin, "daemon", "restart", "--from-web")
-			helper.Env = append(os.Environ(), "DOCBANK_WEB_RESTART_TOKEN="+old.Metadata["shutdown_token"])
-			require.NoError(t, helper.Start())
-			_, err = daemonconn.Stop(t.Context(), root)
-			require.NoError(t, err)
-			var replacement kitdaemon.RuntimeRecord
-			if replace {
-				process := exec.CommandContext(t.Context(), bin, "daemon", "run")
-				stderr, err := process.StderrPipe()
-				require.NoError(t, err)
-				require.NoError(t, process.Start())
-				t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root); _ = process.Wait() })
-				ready := make(chan struct{})
-				go func() {
-					scanner := bufio.NewScanner(stderr)
-					for scanner.Scan() {
-						if strings.Contains(scanner.Text(), "docbank daemon listening") {
-							close(ready)
-						}
-					}
-				}()
-				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-				defer cancel()
-				select {
-				case <-ready:
-				case <-ctx.Done():
-					t.Fatal("replacement daemon did not start")
-				}
-				replacement = waitForDaemon(t, root)
-			}
-			require.NoError(t, lock.Release())
-			require.Error(t, helper.Wait())
-			logs, err := filepath.Glob(filepath.Join((home.Layout{Root: root}).LogsDir(), "docbank*"))
-			require.NoError(t, err)
-			require.NotEmpty(t, logs)
-			log, err := os.ReadFile(logs[0])
-			require.NoError(t, err)
-			assert.Contains(t, string(log), "requesting daemon is no longer running")
-			current, _, found, err := daemonconn.Find(t.Context(), root)
-			require.NoError(t, err)
-			require.Equal(t, replace, found)
-			if replace {
-				assert.Equal(t, replacement.PID, current.PID)
-			}
-		})
-	}
-}
-
-func TestWebRestartKeepsAutomaticLifetimeAndReopensRestartedDaemon(t *testing.T) {
-	dir := t.TempDir()
-	index := filepath.Join(dir, "index.html")
-	require.NoError(t, os.WriteFile(index, []byte("<!doctype html><html><head><title>Docbank</title></head><body></body></html>"), 0600))
-	target, err := filepath.Abs("../../internal/web/dist/index.html")
-	require.NoError(t, err)
-	opener := filepath.Join(dir, "opener.go")
-	require.NoError(t, os.WriteFile(opener, []byte(`package main
-import ("context"; "os")
-func openWebBrowser(_ context.Context, rawURL string) error {
-	path := os.Getenv("DOCBANK_TEST_BROWSER_OPEN")
-	if err := os.WriteFile(path + ".tmp", []byte(rawURL), 0600); err != nil { return err }
-	return os.Rename(path + ".tmp", path)
-}`), 0600))
-	openerTarget, err := filepath.Abs("web_" + runtime.GOOS + ".go")
-	require.NoError(t, err)
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
-		openerTarget, err = filepath.Abs("web_other.go")
-		require.NoError(t, err)
-	}
-	overlayData, err := json.Marshal(map[string]map[string]string{"Replace": {target: index, openerTarget: opener}})
-	require.NoError(t, err)
-	overlay := filepath.Join(dir, "overlay.json")
-	require.NoError(t, os.WriteFile(overlay, overlayData, 0600))
-	bin := buildDocbankVersionWithOverlay(t, "", overlay)
-	root := t.TempDir()
-	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	t.Setenv("DOCBANK_HOME", root)
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "0")
-	openedPath := filepath.Join(dir, "opened")
-	t.Setenv("DOCBANK_TEST_BROWSER_OPEN", openedPath)
-	t.Cleanup(func() { _, _ = daemonconn.Stop(context.WithoutCancel(t.Context()), root) })
-
-	start := exec.CommandContext(t.Context(), bin, "ls", "/")
-	out, err := start.CombinedOutput()
-	require.NoError(t, err, string(out))
-	old := waitForDaemon(t, root)
-	require.False(t, daemonconn.Explicit(old))
-	connection, err := daemonconn.ConnectWeb(t.Context(), old)
-	require.NoError(t, err)
-	launch, err := connection.WebSessionURL(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, connection.Close())
-	oldURL, err := url.Parse(launch)
-	require.NoError(t, err)
-	oldSession, err := url.ParseQuery(oldURL.Fragment)
-	require.NoError(t, err)
-	origin := oldURL.Scheme + "://" + oldURL.Host
-	watcher, err := fsnotify.NewWatcher()
-	require.NoError(t, err)
-	defer func() { _ = watcher.Close() }()
-	require.NoError(t, watcher.Add(dir))
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, origin+"/api/v1/processing/local/restart", nil)
-	require.NoError(t, err)
-	request.Header.Set(api.WebSessionHeader, oldSession.Get("web_session"))
-	request.Header.Set("Origin", origin)
-	response, err := http.DefaultClient.Do(request)
-	require.NoError(t, err)
-	_ = response.Body.Close()
-	require.Equal(t, http.StatusAccepted, response.StatusCode)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-waitForBrowser:
-	for {
-		select {
-		case event := <-watcher.Events:
-			if event.Name == openedPath && event.Has(fsnotify.Create) {
-				break waitForBrowser
-			}
-		case err := <-watcher.Errors:
-			require.NoError(t, err)
-		case <-ctx.Done():
-			t.Fatal("restart did not reopen the browser")
-		}
-	}
-	restarted := waitForDaemon(t, root)
-	require.NotEqual(t, old.PID, restarted.PID)
-	require.False(t, daemonconn.Explicit(restarted))
-	bootstrap, err := os.ReadFile(filepath.Join(root, "web-launch", "index.html"))
-	require.NoError(t, err)
-	match := regexp.MustCompile(`location.replace\(("[^"]+")\)`).FindSubmatch(bootstrap)
-	require.Len(t, match, 2)
-	var newLaunch string
-	require.NoError(t, json.Unmarshal(match[1], &newLaunch))
-	newURL, err := url.Parse(newLaunch)
-	require.NoError(t, err)
-	newSession, err := url.ParseQuery(newURL.Fragment)
-	require.NoError(t, err)
-	require.NotEmpty(t, oldSession.Get("web_session"))
-	require.NotEmpty(t, newSession.Get("web_session"))
-	require.NotEqual(t, oldSession.Get("web_session"), newSession.Get("web_session"))
-	newOrigin := newURL.Scheme + "://" + newURL.Host
-	for token, status := range map[string]int{oldSession.Get("web_session"): http.StatusUnauthorized, newSession.Get("web_session"): http.StatusOK} {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, newOrigin+"/api/v1/processing/local/status", nil)
-		require.NoError(t, err)
-		request.Header.Set(api.WebSessionHeader, token)
-		response, err := http.DefaultClient.Do(request)
-		require.NoError(t, err)
-		_ = response.Body.Close()
-		require.Equal(t, status, response.StatusCode)
-	}
-
-	opened := false
-	open := func(_ context.Context, _ string) error {
-		opened = true
-		return nil
-	}
-	var output bytes.Buffer
-	_, err = daemonconn.Stop(t.Context(), root)
-	require.NoError(t, err)
-	opened = false
-	err = reopenWeb(t.Context(), &output, root, restarted, open)
-	require.Error(t, err)
-	require.False(t, opened)
-	_, _, found, err := daemonconn.Find(t.Context(), root)
-	require.NoError(t, err)
-	require.False(t, found)
-
-	updatedBin := buildDocbankVersionWithOverlay(t, "v9.9.9-test", overlay)
-	updated := exec.CommandContext(t.Context(), updatedBin, "daemon", "start")
-	out, err = updated.CombinedOutput()
-	require.NoError(t, err, string(out))
-	replacement := waitForDaemon(t, root)
-	err = reopenWeb(t.Context(), &output, root, restarted, open)
-	require.Error(t, err)
-	require.False(t, opened)
-	current, _, found, err := daemonconn.Find(t.Context(), root)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, replacement.PID, current.PID)
 }

@@ -37,7 +37,7 @@ Both `--server auto` and `--server local` use the shared per-user `kennembed` se
 
 Cancellation before apply and failed server startup leave the saved choice unchanged. New imports keep the same ongoing approval. The CLI installs and starts the shared server before apply. API apply installs a missing server after consent and plan verification, then starts it. Consent is granted before the selection is saved. A failure before file publication leaves the previous selection in place and reports that consent was saved. A later durability failure reports that the new selection was published. The CLI restarts and reconnects the daemon before reporting indexing enabled. If restart fails, the choice stays saved; run `docbank daemon start` to activate it.
 
-In the web app, approve setup under **System → Search by meaning**. The restart button appears when Docbank runs in the background. Restarting signs out open tabs. See [restart and recovery](web.md#browse-tags-and-search-text).
+In the web app, approve setup under **System → Search by meaning**, then choose **Restart**. Open tabs stay signed in. See [browse tags and search text](web.md#browse-tags-and-search-text).
 
 For other processing, configure a profile and its referenced rendition, embedding, and retrieval profiles, then select a name listed by `processing profiles`.
 

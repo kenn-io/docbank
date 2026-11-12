@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -151,8 +148,6 @@ var daemonStopCmd = &cobra.Command{
 	},
 }
 
-var restartFromWeb, restartOpenWeb bool
-
 var daemonRestartCmd = &cobra.Command{
 	Example: `  docbank daemon restart`,
 	Use:     "restart",
@@ -165,34 +160,7 @@ daemon was running.`,
 		if err != nil {
 			return err
 		}
-		ctx := cmd.Context()
-		if restartFromWeb {
-			// The detached helper owns its lifetime after the requesting daemon exits.
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			logger, result, logErr := buildServeLogger(layout, true)
-			if logErr != nil {
-				return logErr
-			}
-			defer func() { _ = result.Close() }()
-			token := os.Getenv("DOCBANK_WEB_RESTART_TOKEN")
-			_ = os.Unsetenv("DOCBANK_WEB_RESTART_TOKEN")
-			restarted, err := daemonconn.RestartWeb(ctx, layout.Root, token)
-			if err != nil {
-				logger.Error("web restart failed", "error", err)
-				return err
-			}
-			if restarted != nil && restartOpenWeb {
-				openErr := reopenWeb(ctx, cmd.OutOrStdout(), layout.Root, *restarted, openWebBrowser)
-				if openErr != nil {
-					logger.Error("web restart browser open failed", "error", openErr)
-					return openErr
-				}
-			}
-			return nil
-		}
-		rec, wasRunning, err := daemonconn.Restart(ctx, layout.Root, true)
+		rec, wasRunning, err := daemonconn.Restart(cmd.Context(), layout.Root, true)
 		if err != nil {
 			return err
 		}
@@ -207,20 +175,7 @@ daemon was running.`,
 	},
 }
 
-func reopenWeb(ctx context.Context, out io.Writer, root string, rec kitdaemon.RuntimeRecord, open func(context.Context, string) error) error {
-	c, err := daemonconn.ConnectWeb(ctx, rec)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = c.Close() }()
-	return runWeb(ctx, out, root, c, false, open)
-}
-
 func init() {
-	daemonRestartCmd.Flags().BoolVar(&restartFromWeb, "from-web", false, "restart from a web session")
-	daemonRestartCmd.Flags().BoolVar(&restartOpenWeb, "open-web", false, "open the web app after restarting")
-	_ = daemonRestartCmd.Flags().MarkHidden("from-web")
-	_ = daemonRestartCmd.Flags().MarkHidden("open-web")
 	daemonStatusCmd.Flags().BoolVar(&daemonStatusJSON, "json", false, "print JSON to stdout")
 	daemonCmd.AddCommand(daemonRunCmd, daemonStartCmd, daemonStatusCmd, daemonStopCmd, daemonRestartCmd)
 	rootCmd.AddCommand(daemonCmd)

@@ -99,6 +99,27 @@ func TestWebSignInKeyExchangeScopeAndRestart(t *testing.T) {
 	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", renewed.Session.Token, newCookie).Code)
 }
 
+func TestWebSignInSurvivesInPlaceRestart(t *testing.T) {
+	t.Parallel()
+	var deps api.Deps
+	_, catalog := newTestServer(t, func(d *api.Deps) {
+		d.WebLoginEnabled = true
+		d.Cfg.Web.PublicOrigin = signInOrigin
+		d.WebSessions = &api.WebSessionHandoff{}
+		deps = *d
+	})
+	s := catalog.Server
+	status, cookie := loginBrowser(t, s)
+	token := status.Session.Token
+	s.Close()
+	s = api.NewServer(deps)
+	t.Cleanup(s.Close)
+	require.Equal(t, http.StatusOK, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", token, cookie).Code, "the next run accepts the same tab and cookie")
+	logout := signInCall(t, s, http.MethodDelete, "/api/daemon/web-session", "", token, cookie)
+	require.Equal(t, http.StatusNoContent, logout.Code)
+	require.Equal(t, http.StatusUnauthorized, signInCall(t, s, http.MethodGet, "/api/v1/tags", "", token, cookie).Code)
+}
+
 func TestWebSignInTabLogoutAndAdminRevocation(t *testing.T) {
 	t.Parallel()
 	_, catalog := newTestServer(t, func(d *api.Deps) { d.WebLoginEnabled = true; d.Cfg.Web.PublicOrigin = signInOrigin })

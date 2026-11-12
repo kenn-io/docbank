@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -88,70 +87,16 @@ func TestLocalTextSetupRouteReviewsConsentAndMapsErrors(t *testing.T) {
 
 func TestRestartDaemonBrowserSession(t *testing.T) {
 	t.Parallel()
-	var calls []bool
-	var failure bool
+	var calls atomic.Int32
 	ts, _ := newTestServer(t, func(deps *api.Deps) {
-		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) { return api.LocalTextStatus{}, nil }
-		deps.RestartDaemon = func(_ context.Context, openTab bool) error {
-			calls = append(calls, openTab)
-			if failure {
-				return errors.New("spawn failed")
-			}
-			return nil
-		}
+		deps.RestartDaemon = func() { calls.Add(1) }
 	})
-	token := issueWebSession(t, ts)
-	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: token, "Origin": strings.TrimSuffix(testWebURL, "/")}
-	response, body := do(t, ts, http.MethodGet, "/api/v1/processing/local/status", headers, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, `"restart_available":true`)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "Origin": strings.TrimSuffix(testWebURL, "/")}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
 	require.Empty(t, body)
-	require.Equal(t, []bool{true}, calls)
+	require.Equal(t, int32(1), calls.Load())
 	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", nil, nil)
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	failure = true
-	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
-	require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
-
-	tsUnavailable, _ := newTestServer(t, func(deps *api.Deps) {
-		deps.LocalTextStatus = func(context.Context) (api.LocalTextStatus, error) { return api.LocalTextStatus{}, nil }
-	})
-	headers[api.WebSessionHeader] = issueWebSession(t, tsUnavailable)
-	response, body = do(t, tsUnavailable, http.MethodGet, "/api/v1/processing/local/status", headers, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, `"restart_available":false`)
-	response, body = do(t, tsUnavailable, http.MethodPost, "/api/v1/processing/local/restart", headers, nil)
-	require.Equal(t, http.StatusConflict, response.StatusCode, body)
-	require.Contains(t, body, "press Ctrl+C and start Docbank again")
-
-	calls = nil
-	_, catalog := newTestServer(t, func(deps *api.Deps) {
-		deps.WebLoginEnabled = true
-		deps.Cfg.Web.PublicOrigin = signInOrigin
-		deps.RestartDaemon = func(_ context.Context, openTab bool) error { calls = append(calls, openTab); return nil }
-	})
-	status, cookie := loginBrowser(t, catalog.Server)
-	publicResponse := signInCall(t, catalog.Server, http.MethodPost, "/api/v1/processing/local/restart", "", status.Session.Token, cookie)
-	require.Equal(t, http.StatusAccepted, publicResponse.Code, publicResponse.Body.String())
-	require.Equal(t, []bool{false}, calls)
-	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, testWebURL+"api/daemon/web-session", nil)
-	issue.RemoteAddr = "127.0.0.1:1234"
-	issue.Header.Set("X-Api-Key", testAPIKey)
-	issued := httptest.NewRecorder()
-	catalog.Server.Handler().ServeHTTP(issued, issue)
-	require.Equal(t, http.StatusCreated, issued.Code, issued.Body.String())
-	var session struct {
-		Token string `json:"token"`
-	}
-	require.NoError(t, json.Unmarshal(issued.Body.Bytes(), &session))
-	local := httptest.NewRequestWithContext(t.Context(), http.MethodPost, testWebURL+"api/v1/processing/local/restart", nil)
-	local.RemoteAddr = "127.0.0.1:1234"
-	local.Header.Set(api.WebSessionHeader, session.Token)
-	local.Header.Set("Origin", strings.TrimSuffix(testWebURL, "/"))
-	localResponse := httptest.NewRecorder()
-	catalog.Server.Handler().ServeHTTP(localResponse, local)
-	require.Equal(t, http.StatusAccepted, localResponse.Code, localResponse.Body.String())
-	require.Equal(t, []bool{false, true}, calls)
+	require.Equal(t, int32(1), calls.Load())
 }

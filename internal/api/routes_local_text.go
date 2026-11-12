@@ -3,18 +3,16 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/processing"
 )
 
 type LocalTextStatus struct {
-	Active           bool   `json:"active"`
-	Provider         string `json:"provider" enum:",local,ollama,configured"`
-	DownloadBytes    int64  `json:"download_bytes"`
-	RestartRequired  bool   `json:"restart_required"`
-	RestartAvailable bool   `json:"restart_available"`
+	Active          bool   `json:"active"`
+	Provider        string `json:"provider" enum:",local,ollama,configured"`
+	DownloadBytes   int64  `json:"download_bytes"`
+	RestartRequired bool   `json:"restart_required"`
 }
 
 type LocalTextPlanRequest struct {
@@ -47,10 +45,6 @@ func fromLocalTextPlan(p processing.LocalTextPlan) LocalTextPlan {
 		RetainedClasses: p.RetainedClasses, Scope: p.Scope, Managed: p.Managed, Flow: fromProcessingPlan(processing.Plan{Flow: p.Flow}).Flow}
 }
 
-type restartInput struct {
-	Origin string `header:"Origin"`
-}
-
 func registerLocalTextRoutes(api huma.API, d Deps) {
 	type statusOutput struct{ Body LocalTextStatus }
 	huma.Register(api, huma.Operation{OperationID: "getLocalTextStatus", Method: http.MethodGet,
@@ -63,21 +57,18 @@ func registerLocalTextRoutes(api huma.API, d Deps) {
 			if err != nil {
 				return nil, fromProcessingError(err)
 			}
-			status.RestartAvailable = d.RestartDaemon != nil
 			return &statusOutput{Body: status}, nil
 		})
 	huma.Register(api, huma.Operation{OperationID: "restartDaemon", Method: http.MethodPost,
 		Path: "/api/v1/processing/local/restart", Summary: "Restart Docbank", DefaultStatus: http.StatusAccepted},
-		func(ctx context.Context, input *restartInput) (*struct{}, error) {
+		func(ctx context.Context, _ *struct{}) (*struct{}, error) {
 			if !browserSessionRequest(ctx) {
 				return nil, NewError(http.StatusForbidden, "forbidden", "A browser session is required")
 			}
 			if d.RestartDaemon == nil {
-				return nil, NewError(http.StatusConflict, "restart_unavailable", "If Docbank runs in a terminal, press Ctrl+C and start Docbank again. Otherwise, ask its operator to restart it.")
+				return nil, NewError(http.StatusNotImplemented, "not_implemented", "This server cannot restart itself")
 			}
-			if err := d.RestartDaemon(ctx, input.Origin == strings.TrimSuffix(d.WebURL, "/")); err != nil {
-				return nil, NewError(http.StatusInternalServerError, "restart_failed", err.Error())
-			}
+			d.RestartDaemon()
 			return &struct{}{}, nil
 		})
 	type planInput struct{ Body LocalTextPlanRequest }

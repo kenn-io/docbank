@@ -8478,8 +8478,6 @@ components:
             - ollama
             - configured
           type: string
-        restart_available:
-          type: boolean
         restart_required:
           type: boolean
       required:
@@ -8487,7 +8485,6 @@ components:
         - provider
         - download_bytes
         - restart_required
-        - restart_available
       type: object
       x-go-type: api.LocalTextStatus
       x-go-type-import:
@@ -30359,11 +30356,6 @@ paths:
   /api/v1/processing/local/restart:
     post:
       operationId: restartDaemon
-      parameters:
-        - in: header
-          name: Origin
-          schema:
-            type: string
       responses:
         "202":
           description: Accepted

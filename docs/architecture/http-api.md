@@ -1263,12 +1263,10 @@ and vary on `Cookie` and `X-Docbank-Web-Session`.
 See [server sign-in](../usage/web.md#sign-in-on-a-server-or-container) for
 lifetime, deployment trust and session-management commands.
 
-`POST /api/v1/processing/local/restart` requires a browser session. It returns
-202 when the detached restart helper is launched; the restart and any browser
-launch happen asynchronously and can still fail. It returns 403 without a
-browser session, 409 when restart is unavailable, and 500 when the helper
-cannot be launched. The local text status response reports availability in
-`restart_available`.
+`POST /api/v1/processing/local/restart` requires a browser session and returns
+202 once the daemon has stopped taking browser requests for the current run.
+Browser sessions remain valid across the restart, so the tab's next request is
+answered by the restarted run. It returns 403 without a browser session.
 
 `POST /api/daemon/telemetry/events` takes one anonymous interface event with optional allowlisted `properties`,
 such as `app_opened` or `session_ended`, from a browser session or the API key. The daemon answers

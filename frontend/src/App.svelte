@@ -2020,29 +2020,23 @@
     readLocalTextStatus();
   }
 
+  // Docbank restarts in place and keeps this tab's session, so the status
+  // read waits for the restarted daemon to answer.
   async function restartDocbank(): Promise<void> {
     const session = webSession;
     localText.error = "";
-    localText.notice = "";
-    let notice = "Restart requested. Docbank may restart later.";
     try {
-      await generated.restartDaemon(undefined, { session, signal: AbortSignal.timeout(10000) });
+      await generated.restartDaemon({ session });
+      const status = await generated.getLocalTextStatus({ session });
+      if (mounted && webSession === session) localText.status = status;
     } catch (cause) {
       if (!mounted || webSession !== session) return;
       if (cause instanceof APIError && cause.status === 401) return handleFailure(cause);
-      if (cause instanceof APIError && cause.status >= 400 && cause.status < 500) {
-        localText.error =
-          cause.code === "web_browser"
-            ? "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues."
-            : `Docbank couldn't restart: ${cause.message}`;
-        return;
-      }
-      notice =
-        cause instanceof APIError && cause.code === "restart_failed"
-          ? `Docbank couldn't restart: ${cause.message}`
-          : "Docbank couldn't confirm the restart. It may still happen later.";
+      localText.error =
+        cause instanceof APIError && cause.code === "web_browser"
+          ? "Restart was refused. Reload this page and sign in again. Allow cookies if the problem continues."
+          : `Docbank couldn't restart: ${cause instanceof Error ? cause.message : String(cause)}`;
     }
-    if (mounted && webSession === session) localText.notice = notice;
   }
 
   async function loadRoot(): Promise<void> {

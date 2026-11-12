@@ -132,11 +132,15 @@ the start half of the restart. Bootstrap stderr is captured in a private
 transient file beside that external lock, included in a startup failure, and
 removed when the start attempt finishes.
 
-For a browser restart, the daemon launches a detached helper with hidden
-`--from-web` and optional `--open-web` flags. It passes its shutdown token in
-the helper's environment. Under the launch lock, the helper checks that token
-against the running daemon before stopping it, preserves its lifetime setting,
-and starts its replacement. The optional flag opens a fresh browser session.
+A browser restart happens inside the daemon process and never takes the launch
+lock. The process keeps the vault lock, runtime record, API and web listeners,
+API key, shutdown token, and browser sessions. The current run stops taking
+browser requests, drains like a shutdown, and a new run reloads configuration
+and processing selections on the same sockets. Connections that arrive in
+between wait for the new run. Listener, API key, and lifetime settings change
+only when the process restarts. A shutdown request during the drain ends the
+process instead. If the new run fails to start, the process exits with that
+error.
 
 The listener closes before background tasks finish draining. During that
 interval, the process and runtime record remain live and the daemon still owns

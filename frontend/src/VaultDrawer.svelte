@@ -6,7 +6,6 @@
     readError: string;
     pending: boolean;
     error: string;
-    notice?: string;
   };
 </script>
 
@@ -129,26 +128,12 @@
       {#if searchByMeaning.error}
         <p class="error" role="alert">{searchByMeaning.error}</p>
       {/if}
-      {#if searchByMeaning.notice}
-        <div class="restart-notice">
-          <p role="status">{searchByMeaning.notice}</p>
-          {@render restartRecovery()}
-        </div>
-      {/if}
       {#if searchByMeaning.readError}
         <p class="error" role="alert">{searchByMeaning.readError}</p>
         <Button size="sm" onclick={() => onreadsearchbymeaning()}>Try again</Button>
       {/if}
       {#if meaning?.restart_required}
-        {#if meaning.restart_available}
-          <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
-        {:else}
-          <p>
-            If you started Docbank in a terminal, press Ctrl+C and repeat the original command. If
-            an operator runs its service or container, ask them to restart it. Then reopen Docbank
-            and sign in.
-          </p>
-        {/if}
+        <Button size="sm" onclick={() => (confirmRestart = true)}>Restart</Button>
       {/if}
     </section>
   </DrawerShell>
@@ -175,10 +160,10 @@
       if (!restarting) confirmRestart = false;
     }}
   >
-    <div class="restart-confirmation">
-      <p>Open tabs sign out. Uploads, exports, and command-line requests may be interrupted.</p>
-      {@render restartRecovery()}
-    </div>
+    <p>
+      Uploads, exports, and command-line requests in progress stop, and hidden photos lock. Open
+      tabs stay signed in.
+    </p>
     {#snippet footer()}
       <Button disabled={restarting} onclick={() => (confirmRestart = false)}>Cancel</Button>
       <Button tone="danger" surface="solid" disabled={restarting} onclick={restart}
@@ -188,14 +173,6 @@
   </Modal>
 {/if}
 
-{#snippet restartRecovery()}
-  <p>
-    If restart stalls, run <code>docbank daemon restart</code> in the vault's terminal. To reopen,
-    run <code>docbank web --no-browser</code> there and open the printed URL, or reload your public URL
-    and sign in. Fix any command error and retry.
-  </p>
-{/snippet}
-
 <style>
   .usage,
   .meaning {
@@ -204,11 +181,6 @@
     gap: var(--space-5);
     padding: var(--space-5);
     font-size: var(--font-size-sm);
-  }
-  .restart-confirmation,
-  .restart-notice {
-    display: grid;
-    gap: var(--space-4);
   }
   .row {
     justify-self: stretch;

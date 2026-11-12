@@ -73,11 +73,13 @@ func newWebLoginPolicy(d Deps) *webLoginPolicy {
 	if err != nil {
 		panic("api: invalid web login origin")
 	}
-	var random [32]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		panic("api: could not generate browser cookie")
-	}
-	cookie := base64.RawURLEncoding.EncodeToString(random[:])
+	cookie := d.WebSessions.loginCookie(func() string {
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			panic("api: could not generate browser cookie")
+		}
+		return base64.RawURLEncoding.EncodeToString(random[:])
+	})
 	parsed, _ := url.Parse(origin)
 	policy := &webLoginPolicy{
 		basePath:   d.Cfg.Web.BasePath,

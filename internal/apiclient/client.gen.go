@@ -12109,12 +12109,11 @@ func (c *Client) PlanLocalText(ctx context.Context, options *PlanLocalTextReques
 }
 
 // RestartDaemon Restart Docbank
-func (c *Client) RestartDaemon(ctx context.Context, options *RestartDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+func (c *Client) RestartDaemon(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/processing/local/restart",
 		Method:     "POST",
-		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -24303,37 +24302,6 @@ func (o *PlanLocalTextRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
-// RestartDaemonRequestOptions is the options needed to make a request to RestartDaemon.
-type RestartDaemonRequestOptions struct {
-	Header *RestartDaemonHeaders
-}
-
-// GetPathParams returns the path params as a map.
-func (o *RestartDaemonRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *RestartDaemonRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *RestartDaemonRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *RestartDaemonRequestOptions) GetHeader() (map[string]string, error) {
-	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var headers map[string]string
-	err = json.Unmarshal(encoded, &headers)
-	return headers, err
-}
-
 // ApplyLocalTextRequestOptions is the options needed to make a request to ApplyLocalText.
 type ApplyLocalTextRequestOptions struct {
 	Body *ApplyLocalTextBody
@@ -27336,10 +27304,6 @@ type PromotePhotoNodeHeaders struct {
 
 type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
-}
-
-type RestartDaemonHeaders struct {
-	Origin *string `json:"Origin,omitempty"`
 }
 
 type UploadPushFileHeaders struct {
