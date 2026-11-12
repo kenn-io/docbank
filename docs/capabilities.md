@@ -42,6 +42,7 @@ explains how.
 - Move several nodes in one operation that either applies the whole plan or
   changes nothing.
 - Watch local inbox folders and import files once they stop changing.
+- [Check a DocuSeal connection and list templates](usage/contracts.md) without sending documents.
 
 Start with [Importing documents](usage/importing.md) and
 [Organizing and tagging](usage/organizing.md). For photos, see

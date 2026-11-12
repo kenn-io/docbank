@@ -88,7 +88,14 @@ func (c *Client) get(ctx context.Context, suffix string, dst any) error {
 		return errors.New("docuseal_response_too_large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errors.New("docuseal_request_failed")
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return errors.New("docuseal_unauthorized")
+		case http.StatusNotFound:
+			return errors.New("docuseal_not_found")
+		default:
+			return errors.New("docuseal_provider_error")
+		}
 	}
 	if !utf8.Valid(data) || json.Unmarshal(data, dst) != nil {
 		return errors.New("docuseal_invalid_response")
@@ -105,15 +112,18 @@ func (c *Client) Check(ctx context.Context) (Status, error) {
 	if user.ID <= 0 {
 		return Status{}, errors.New("docuseal_invalid_response")
 	}
+	if strings.Contains(c.connection.Endpoint, c.connection.APIKey) {
+		return Status{}, errors.New("docuseal_invalid_response")
+	}
 	return Status{Configured: true, Enabled: true, Endpoint: c.connection.Endpoint, Capability: "template_submission"}, nil
 }
 func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, error) {
 	if cursor < 0 {
 		return TemplatePage{}, errors.New("invalid cursor")
 	}
-	suffix := "/templates"
+	suffix := "/templates?limit=100"
 	if cursor > 0 {
-		suffix += fmt.Sprintf("?after=%d", cursor)
+		suffix += fmt.Sprintf("&after=%d", cursor)
 	}
 	var wire struct {
 		Data *[]struct {
@@ -134,29 +144,78 @@ func (c *Client) Templates(ctx context.Context, cursor int64) (TemplatePage, err
 		return TemplatePage{}, errors.New("docuseal_invalid_response")
 	}
 	page := TemplatePage{Templates: make([]Template, 0, len(*wire.Data))}
-	if wire.Pagination.Next != nil {
-		page.Next = *wire.Pagination.Next
-	}
-	for _, t := range *wire.Data {
-		if t.ID <= 0 || !safeText(t.Name, c.connection.APIKey) || len(t.Submitters) > 20 {
+	if len(*wire.Data) == 100 {
+		last := (*wire.Data)[len(*wire.Data)-1].ID
+		if wire.Pagination.Next == nil || *wire.Pagination.Next != last || last <= 0 || cursor > 0 && last >= cursor {
 			return TemplatePage{}, errors.New("docuseal_invalid_response")
 		}
-		item := Template{ID: t.ID, Name: t.Name, Roles: make([]string, 0, len(t.Submitters))}
+		page.Next = last
+	}
+	var previous int64
+	for _, t := range *wire.Data {
+		if t.ID <= 0 || cursor > 0 && t.ID >= cursor || previous > 0 && t.ID >= previous {
+			return TemplatePage{}, errors.New("docuseal_invalid_response")
+		}
+		previous = t.ID
+		if strings.Contains(t.Name, c.connection.APIKey) {
+			return TemplatePage{}, errors.New("docuseal_invalid_response")
+		}
+		name := displayText(t.Name)
+		if strings.Contains(name, c.connection.APIKey) {
+			return TemplatePage{}, errors.New("docuseal_invalid_response")
+		}
+		item := Template{ID: t.ID, Name: name, Roles: make([]string, 0, len(t.Submitters))}
 		for _, role := range t.Submitters {
-			if !safeText(role.Name, c.connection.APIKey) {
+			if !safeText(role.Name, c.connection.APIKey, 4096) {
 				return TemplatePage{}, errors.New("docuseal_invalid_response")
 			}
 			item.Roles = append(item.Roles, role.Name)
 		}
 		page.Templates = append(page.Templates, item)
 	}
-	if page.Next < 0 {
+	if !ValidTemplatePage(page) {
 		return TemplatePage{}, errors.New("docuseal_invalid_response")
 	}
 	return page, nil
 }
-func safeText(s, key string) bool {
-	if s == "" || len(s) > 512 || !utf8.ValidString(s) || key != "" && strings.Contains(s, key) {
+
+// ValidTemplatePage validates the projection at each trust boundary.
+func ValidTemplatePage(page TemplatePage) bool {
+	if page.Templates == nil || len(page.Templates) > 100 || page.Next < 0 {
+		return false
+	}
+	for _, item := range page.Templates {
+		if item.ID <= 0 || !safeText(item.Name, "", 512) || len(item.Roles) > 1024 {
+			return false
+		}
+		for _, role := range item.Roles {
+			if !safeText(role, "", 4096) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func displayText(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			r = ' '
+		}
+		if b.Len()+utf8.RuneLen(r) > 512 {
+			break
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() == 0 {
+		return "(unnamed)"
+	}
+	return b.String()
+}
+
+func safeText(s, key string, limit int) bool {
+	if s == "" || len(s) > limit || !utf8.ValidString(s) || key != "" && strings.Contains(s, key) {
 		return false
 	}
 	for _, r := range s {

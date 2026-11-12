@@ -150,6 +150,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /text-citations/resolve` | reopen an exact quote from retained rendition text | Implemented |
 | `POST /text-citations/outline` | read headings and whole-section bounds from retained text | Implemented |
 | `POST /text-citations/section` | read an exact page of a retained text section | Implemented |
+| `GET /integrations/docuseal/status` | check the configured DocuSeal connection | Implemented |
+| `GET /integrations/docuseal/templates` | list a bounded page of templates using the `after` cursor | Implemented |
 | `POST /kata/cite` | quote a verified document passage into a new or existing Kata issue | Implemented |
 | `POST /kata/context` | read saved Docbank evidence from a Kata issue with its current source status | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |

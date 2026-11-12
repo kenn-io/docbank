@@ -1585,4 +1585,6 @@ the vault unless absolute; it must be owner-only and at most 4,096 bytes.
 `operator_network` allows HTTP and requires private, shared, or loopback CIDRs.
 For `hosted_provider`, use HTTPS and explicit `allowed_cidrs`. Connections use
 only the configured origin and CIDRs, without proxies or redirects. See
-[DocuSeal connection](usage/contracts.md) for the commands.
+[DocuSeal connection](usage/contracts.md) for the commands. Invalid enabled settings report the setting category without exposing values.
+Provider authentication, API path, response and connection failures use distinct
+safe error codes.

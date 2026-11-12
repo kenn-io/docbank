@@ -1,8 +1,11 @@
 package api_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,5 +45,44 @@ func TestDocuSealHTTPCheckAndTemplates(t *testing.T) {
 		require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 		require.NotContains(t, body, "synthetic-key")
 		require.NotContains(t, body, "private@example.test")
+	}
+}
+
+func TestDocuSealUnknownQueryAndInvalidConfig(t *testing.T) {
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true} })
+	resp, body := do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/templates?aftre=1", nil, nil)
+	require.Equal(t, 400, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/status", nil, nil)
+	require.Equal(t, 503, resp.StatusCode, body)
+	require.Contains(t, body, "docuseal_config_invalid")
+}
+
+func TestDocuSealProviderFailuresAreSafe(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+	}{
+		{401, "docuseal_unauthorized"}, {404, "docuseal_not_found"}, {500, "docuseal_provider_error"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "synthetic-key private provider body", tc.status)
+			}))
+			defer provider.Close()
+			t.Setenv("DOCUSEAL_API_TEST_KEY", "synthetic-key")
+			var logs bytes.Buffer
+			ts, _ := newTestServer(t, func(d *api.Deps) {
+				d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+				d.Cfg.Integrations.DocuSeal = config.DocuSealConfig{Enabled: true, Endpoint: provider.URL, APIKeyEnv: "DOCUSEAL_API_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.0/8"}}
+			})
+			resp, body := do(t, ts, http.MethodGet, "/api/v1/integrations/docuseal/status", nil, nil)
+			require.Equal(t, 502, resp.StatusCode, body)
+			require.Contains(t, body, tc.code)
+			require.NotContains(t, body, "synthetic-key")
+			require.NotContains(t, body, "private provider body")
+			if strings.Contains(logs.String(), "synthetic-key") {
+				t.Fatal("credential appeared in logs")
+			}
+		})
 	}
 }

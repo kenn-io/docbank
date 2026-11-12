@@ -40,7 +40,7 @@ func TestConnectionChecksAndListsTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := c.Templates(t.Context(), 0)
-	if err != nil || len(page.Templates) != 1 || len(page.Templates[0].Roles) != 1 || page.Templates[0].Roles[0] != "Tenant" || page.Next != 12 {
+	if err != nil || len(page.Templates) != 1 || len(page.Templates[0].Roles) != 1 || page.Templates[0].Roles[0] != "Tenant" || page.Next != 0 {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 }
@@ -157,23 +157,46 @@ func TestConnectionDeniesAddressOutsideAllowlist(t *testing.T) {
 }
 
 func TestTemplatesContinuationAndUnsafeText(t *testing.T) {
-	for _, body := range []string{`{"data":[{"id":1,"name":"bad\u001btext"}]}`, `{"data":[{"id":1,"name":"ok","submitters":[{"name":"synthetic-key"}]}]}`} {
-		t.Run(body, func(t *testing.T) {
+	for _, count := range []int{0, 1, 100} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Query().Get("after") != "12" {
-					t.Error("missing cursor")
+				if r.URL.Query().Get("after") != "200" || r.URL.Query().Get("limit") != "100" {
+					t.Error("incorrect pagination query")
 				}
-				_, _ = io.WriteString(w, body)
+				var items []string
+				for i := range count {
+					items = append(items, fmt.Sprintf(`{"id":%d,"name":"A\u001b%s","submitters":[%s]}`, 199-i, strings.Repeat("é", 300), strings.TrimSuffix(strings.Repeat(`{"name":"Signer"},`, 21), ",")))
+				}
+				fmt.Fprintf(w, `{"data":[%s],"pagination":{"next":%d}}`, strings.Join(items, ","), 200-count)
 			}))
 			defer s.Close()
 			c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = c.Templates(t.Context(), 12); err == nil {
-				t.Fatal("accepted unsafe text")
+			page, err := c.Templates(t.Context(), 200)
+			if err != nil || len(page.Templates) != count {
+				t.Fatalf("page=%+v err=%v", page, err)
+			}
+			if count == 100 && page.Next != 100 || count < 100 && page.Next != 0 {
+				t.Fatalf("next=%d", page.Next)
+			}
+			if count > 0 && (len(page.Templates[0].Name) > 512 || strings.ContainsRune(page.Templates[0].Name, '\x1b') || len(page.Templates[0].Roles) != 21) {
+				t.Fatalf("unsafe projection: %+v", page.Templates[0])
 			}
 		})
+	}
+	// Role identities cannot be rewritten; reject an echoed credential.
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[{"id":1,"name":"ok","submitters":[{"name":"synthetic-key"}]}]}`)
+	}))
+	defer s.Close()
+	c, err := New(config.DocuSealConnection{Endpoint: s.URL, APIKey: "synthetic-key", AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Templates(t.Context(), 0); err == nil || strings.Contains(err.Error(), "synthetic-key") {
+		t.Fatalf("unsafe role error: %v", err)
 	}
 }
 

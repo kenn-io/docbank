@@ -91,3 +91,40 @@ func TestDocuSealCredentialFileIsPrivateAndBounded(t *testing.T) {
 		t.Fatal("accepted oversized file")
 	}
 }
+
+func TestDocuSealRejectsControlCredential(t *testing.T) {
+	for _, key := range []string{"part\x1ftoken", "part\x7ftoken"} {
+		t.Setenv("DOCUSEAL_TEST_KEY", key)
+		cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyEnv: "DOCUSEAL_TEST_KEY", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
+		if _, err := cfg.Resolve(t.Context(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "credential") {
+			t.Fatalf("credential error: %v", err)
+		}
+	}
+}
+
+func TestDocuSealRejectsNULCredentialFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "key"), []byte("part\x00token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DocuSealConfig{Enabled: true, Endpoint: "http://127.0.0.1", APIKeyFile: "key", TrustBoundary: "operator_network", AllowedCIDRs: []string{"127.0.0.1/32"}}
+	if _, err := cfg.Resolve(t.Context(), root); err == nil || !strings.Contains(err.Error(), "credential") {
+		t.Fatalf("credential error: %v", err)
+	}
+}
+
+func TestDocuSealFutureSettingsDoNotDisableConnection(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOCUSEAL_TEST_KEY", "synthetic-key")
+	text := "[integrations.docuseal]\nenabled=true\nendpoint='http://127.0.0.1'\napi_key_env='DOCUSEAL_TEST_KEY'\ntrust_boundary='operator_network'\nallowed_cidrs=['127.0.0.1/32']\npoll_interval=42\ndownload_origins=false\nimport_path=5\nmax_document_bytes='bad'\n"
+	if err := os.WriteFile(filepath.Join(root, "config.toml"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cfg.Integrations.DocuSeal.Resolve(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+}

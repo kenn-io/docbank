@@ -47,18 +47,8 @@ func (c *Connection) DocuSealTemplates(ctx context.Context, after int64) (docuse
 	if err := decodeCitationResponse(response, &result, 3<<20); err != nil {
 		return docusealclient.TemplatePage{}, &responseDecodeError{err: err}
 	}
-	if result.Templates == nil || len(result.Templates) > 100 || result.Next < 0 {
+	if !docusealclient.ValidTemplatePage(result.TemplatePage) {
 		return docusealclient.TemplatePage{}, &responseDecodeError{err: errors.New("invalid DocuSeal templates response")}
-	}
-	for _, item := range result.Templates {
-		if item.ID <= 0 || item.Name == "" || len(item.Name) > 512 || len(item.Roles) > 20 {
-			return docusealclient.TemplatePage{}, &responseDecodeError{err: errors.New("invalid DocuSeal template")}
-		}
-		for _, role := range item.Roles {
-			if role == "" || len(role) > 512 {
-				return docusealclient.TemplatePage{}, &responseDecodeError{err: errors.New("invalid DocuSeal role")}
-			}
-		}
 	}
 	return result.TemplatePage, nil
 }

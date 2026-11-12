@@ -16,18 +16,14 @@ import (
 //
 //nolint:recvcheck // TOML decoding mutates the config.
 type DocuSealConfig struct {
-	Enabled          bool     `toml:"enabled"`
-	Endpoint         string   `toml:"endpoint"`
-	APIPath          string   `toml:"api_path"`
-	APIKeyEnv        string   `toml:"api_key_env"`
-	APIKeyFile       string   `toml:"api_key_file"`
-	TrustBoundary    string   `toml:"trust_boundary"`
-	AllowedCIDRs     []string `toml:"allowed_cidrs"`
-	DownloadOrigins  []string `toml:"download_origins"`
-	ImportPath       string   `toml:"import_path"`
-	PollInterval     string   `toml:"poll_interval"`
-	MaxDocumentBytes int64    `toml:"max_document_bytes"`
-	decodeInvalid    bool
+	Enabled       bool     `toml:"enabled"`
+	Endpoint      string   `toml:"endpoint"`
+	APIPath       string   `toml:"api_path"`
+	APIKeyEnv     string   `toml:"api_key_env"`
+	APIKeyFile    string   `toml:"api_key_file"`
+	TrustBoundary string   `toml:"trust_boundary"`
+	AllowedCIDRs  []string `toml:"allowed_cidrs"`
+	decodeInvalid bool
 }
 
 func (d *DocuSealConfig) UnmarshalTOML(value any) error {
@@ -42,7 +38,7 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 			var ok bool
 			d.Enabled, ok = v.(bool)
 			d.decodeInvalid = d.decodeInvalid || !ok
-		case "endpoint", "api_path", "api_key_env", "api_key_file", "trust_boundary", "import_path", "poll_interval":
+		case "endpoint", "api_path", "api_key_env", "api_key_file", "trust_boundary":
 			s, ok := v.(string)
 			if !ok {
 				d.decodeInvalid = true
@@ -59,12 +55,8 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 				d.APIKeyFile = s
 			case "trust_boundary":
 				d.TrustBoundary = s
-			case "import_path":
-				d.ImportPath = s
-			case "poll_interval":
-				d.PollInterval = s
 			}
-		case "allowed_cidrs", "download_origins":
+		case "allowed_cidrs":
 			values, ok := v.([]any)
 			if !ok {
 				d.decodeInvalid = true
@@ -79,18 +71,9 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 				}
 				out = append(out, s)
 			}
-			if k == "allowed_cidrs" {
-				d.AllowedCIDRs = out
-			} else {
-				d.DownloadOrigins = out
-			}
-		case "max_document_bytes":
-			n, ok := v.(int64)
-			if !ok {
-				d.decodeInvalid = true
-			} else {
-				d.MaxDocumentBytes = n
-			}
+			d.AllowedCIDRs = out
+		case "download_origins", "import_path", "poll_interval", "max_document_bytes":
+			// Reserved for later consumers; do not let their values disable D1.
 		default:
 			d.decodeInvalid = true
 		}
@@ -98,49 +81,43 @@ func (d *DocuSealConfig) UnmarshalTOML(value any) error {
 	return nil
 }
 
+// DocuSealDisabled reports an absent or explicitly disabled integration.
+func (d DocuSealConfig) DocuSealDisabled() bool { return !d.Enabled && !d.decodeInvalid }
+
 // DocuSealConnection holds per-operation secret material and must not be logged or serialized.
 type DocuSealConnection struct {
-	Endpoint, APIPath, APIKey, TrustBoundary, ImportPath string
-	AllowedCIDRs                                         []netip.Prefix
-	DownloadOrigins                                      []string
-	PollInterval                                         time.Duration
-	MaxDocumentBytes                                     int64
+	Endpoint, APIPath, APIKey, TrustBoundary string
+	AllowedCIDRs                             []netip.Prefix
 }
 
 func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConnection, error) {
-	fail := func() (DocuSealConnection, error) {
-		return DocuSealConnection{}, errors.New("invalid or disabled [integrations.docuseal]; check endpoint, egress and credential settings")
+	fail := func(category string) (DocuSealConnection, error) {
+		return DocuSealConnection{}, errors.New("invalid DocuSeal " + category + " settings")
 	}
 	if ctx.Err() != nil {
 		return DocuSealConnection{}, ctx.Err()
 	}
 	if !d.Enabled || d.decodeInvalid {
-		return fail()
-	}
-	egress := ProviderEgressConfig{Endpoint: d.Endpoint, AllowedCIDRs: d.AllowedCIDRs, ProxyMode: "disabled", ConnectTimeout: Duration(30 * time.Second), KeepAlive: Duration(30 * time.Second), TLSHandshakeTimeout: Duration(10 * time.Second)}
-	u, err := validateProviderEgressConfig(egress, "docuseal")
-	if err != nil || u.Path != "" && u.Path != "/" || u.RawPath != "" || d.TrustBoundary != "operator_network" && d.TrustBoundary != "hosted_provider" || d.TrustBoundary == "hosted_provider" && u.Scheme != "https" {
-		return fail()
+		return fail("configuration")
 	}
 	var prefixes []netip.Prefix
 	for _, s := range d.AllowedCIDRs {
 		p, e := netip.ParsePrefix(s)
 		if e != nil || d.TrustBoundary == "operator_network" && !privateRenditionNetwork(p) {
-			return fail()
+			return fail("allowed CIDR")
 		}
 		prefixes = append(prefixes, p)
 	}
-	if d.APIPath != "" && (d.APIPath == "/" || d.APIPath[0] != '/' || path.Clean(d.APIPath) != d.APIPath || strings.ContainsAny(d.APIPath, "?#%\\")) {
-		return fail()
+	egress := ProviderEgressConfig{Endpoint: d.Endpoint, AllowedCIDRs: d.AllowedCIDRs, ProxyMode: "disabled", ConnectTimeout: Duration(30 * time.Second), KeepAlive: Duration(30 * time.Second), TLSHandshakeTimeout: Duration(10 * time.Second)}
+	u, err := validateProviderEgressConfig(egress, "docuseal")
+	if err != nil || u.Path != "" && u.Path != "/" || u.RawPath != "" || d.TrustBoundary != "operator_network" && d.TrustBoundary != "hosted_provider" || d.TrustBoundary == "hosted_provider" && u.Scheme != "https" {
+		return fail("endpoint or trust boundary")
 	}
-	for _, origin := range d.DownloadOrigins {
-		v, e := validateProviderEndpoint(origin, "docuseal")
-		if e != nil || v.Path != "" && v.Path != "/" || v.RawPath != "" {
-			return fail()
-		}
+	if d.APIPath != "" && (d.APIPath == "/" || d.APIPath[0] != '/' || path.Clean(d.APIPath) != d.APIPath || strings.ContainsAny(d.APIPath, "?#%\\")) {
+		return fail("API path")
 	}
 	if (d.APIKeyEnv == "") == (d.APIKeyFile == "") {
-		return fail()
+		return fail("credential")
 	}
 	var key string
 	if d.APIKeyEnv != "" {
@@ -152,47 +129,26 @@ func (d DocuSealConfig) Resolve(ctx context.Context, root string) (DocuSealConne
 		}
 		f, e := openSecret(file)
 		if e != nil {
-			return fail()
+			return fail("credential")
 		}
 		info, e := f.Stat()
 		if e != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
 			_ = f.Close()
-			return fail()
+			return fail("credential")
 		}
 		b, e := io.ReadAll(io.LimitReader(f, 4097))
 		_ = f.Close()
 		if e != nil || len(b) > 4096 {
-			return fail()
+			return fail("credential")
 		}
 		key = string(b)
 	}
 	if len(key) > 4096 {
-		return fail()
+		return fail("credential")
 	}
 	key = strings.TrimSpace(key)
-	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\r\n") || strings.Contains(u.String(), key) {
-		return fail()
+	if !validSecret(key) {
+		return fail("credential")
 	}
-	importPath := d.ImportPath
-	if importPath == "" {
-		importPath = "/Contracts/Signed"
-	}
-	if !strings.HasPrefix(importPath, "/") || path.Clean(importPath) != importPath {
-		return fail()
-	}
-	interval := 5 * time.Minute
-	if d.PollInterval != "" {
-		interval, err = time.ParseDuration(d.PollInterval)
-		if err != nil || interval <= 0 {
-			return fail()
-		}
-	}
-	limit := d.MaxDocumentBytes
-	if limit == 0 {
-		limit = 64 << 20
-	}
-	if limit < 0 || limit > 1<<30 {
-		return fail()
-	}
-	return DocuSealConnection{Endpoint: strings.TrimSuffix(u.String(), "/"), APIPath: d.APIPath, APIKey: key, TrustBoundary: d.TrustBoundary, AllowedCIDRs: prefixes, DownloadOrigins: d.DownloadOrigins, ImportPath: importPath, PollInterval: interval, MaxDocumentBytes: limit}, nil
+	return DocuSealConnection{Endpoint: strings.TrimSuffix(u.String(), "/"), APIPath: d.APIPath, APIKey: key, TrustBoundary: d.TrustBoundary, AllowedCIDRs: prefixes}, nil
 }
