@@ -61,6 +61,10 @@ func TestContractRejectsInvalidInput(t *testing.T) {
 		_, err := s.CreateContract(ctx, input)
 		require.Error(t, err)
 	}
+	_, err = s.CreateContract(ctx, ContractInput{Title: "Private term", Purpose: strings.Repeat("secret", 1400)})
+	require.ErrorContains(t, err, "purpose")
+	require.ErrorContains(t, err, "8192")
+	require.NotContains(t, err.Error(), "secret")
 	items, err := s.ListContracts(ctx, ContractListOptions{AsOf: "2024-03-01", Limit: 100})
 	require.NoError(t, err)
 	assert.Empty(t, items)
@@ -139,7 +143,7 @@ func TestContractMetadataRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	c, err := source.CreateContract(ctx, ContractInput{Title: "Agreement", Parties: []ContractPartyInput{{PartyID: p.PartyID, Role: "own"}}})
 	require.NoError(t, err)
-	_, err = source.db.ExecContext(ctx, `UPDATE contracts SET updated_at=$1 WHERE contract_id=$2`, "2000-01-01T00:00:00.000000000Z", c.ContractID)
+	_, err = source.db.ExecContext(ctx, `UPDATE contracts SET created_at=$1, updated_at=$2 WHERE contract_id=$3`, "2099-01-01T00:00:00.000000000Z", "2000-01-01T00:00:00.000000000Z", c.ContractID)
 	require.NoError(t, err)
 	var buf bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &buf))
@@ -149,6 +153,36 @@ func TestContractMetadataRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Parties, 1)
 	assert.Equal(t, p.PartyID, got.Parties[0].PartyID)
+	assert.Equal(t, "2099-01-01T00:00:00.000000000Z", got.CreatedAt)
+	assert.Equal(t, "2000-01-01T00:00:00.000000000Z", got.UpdatedAt)
+	var restored bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &restored))
+	assert.Equal(t, buf.Bytes(), restored.Bytes())
+	lines := strings.Split(buf.String(), "\n")
+	contractLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, `"type":"contract"`) {
+			contractLine = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, contractLine)
+	for _, tc := range []struct{ name, from, to string }{
+		{"title control", `"title":"Agreement"`, `"title":"Bad\u001btitle"`},
+		{"created encoding", `"created_at":"2099-01-01T00:00:00.000000000Z"`, `"created_at":"invalid"`},
+		{"updated encoding", `"updated_at":"2000-01-01T00:00:00.000000000Z"`, `"updated_at":"2000-01-01T00:00:00+00:00"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := append([]string(nil), lines...)
+			mutated[contractLine] = strings.Replace(mutated[contractLine], tc.from, tc.to, 1)
+			require.NotEqual(t, lines[contractLine], mutated[contractLine])
+			empty := newTestStore(t)
+			require.Error(t, empty.ImportMetadata(t.Context(), strings.NewReader(strings.Join(mutated, "\n"))))
+			items, err := empty.ListContracts(t.Context(), ContractListOptions{AsOf: "2024-01-01", Limit: 100})
+			require.NoError(t, err)
+			assert.Empty(t, items)
+		})
+	}
 	malformed := strings.Replace(buf.String(), `"role":"own"`, `"role":"unknown"`, 1)
 	require.NotEqual(t, buf.String(), malformed)
 	empty := newTestStore(t)

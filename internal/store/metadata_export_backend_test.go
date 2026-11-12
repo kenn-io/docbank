@@ -37,6 +37,12 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	contract, err := s.CreateContract(ctx, ContractInput{Title: "Retained agreement", Parties: []ContractPartyInput{{PartyID: party.PartyID, Role: "own"}}})
 	require.NoError(t, err)
+	// A wall-clock correction can place an update before creation. Exercise
+	// both native exporters and recovery with the retained contract present.
+	_, err = s.db.ExecContext(ctx, `UPDATE contracts SET created_at=$1 WHERE contract_id=$2`, "2099-01-01T00:00:00.000000000Z", contract.ContractID)
+	require.NoError(t, err)
+	contract, err = s.GetContract(ctx, contract.ContractID, "2024-01-01")
+	require.NoError(t, err)
 	deleted, err := s.Mkdir(ctx, s.RootID(), "removed")
 	require.NoError(t, err)
 	_, _, err = s.Trash(ctx, deleted.ID, deleted.Revision)
@@ -74,6 +80,8 @@ func checkMetadataExportRecovery(t *testing.T, open func(*testing.T) *Store) {
 	}
 	recoveredContract, err := target.GetContract(ctx, contract.ContractID, "2024-01-01")
 	require.NoError(t, err)
+	require.Equal(t, contract.CreatedAt, recoveredContract.CreatedAt)
+	require.Equal(t, contract.UpdatedAt, recoveredContract.UpdatedAt)
 	require.Len(t, recoveredContract.Parties, 1)
 	require.Equal(t, party.PartyID, recoveredContract.Parties[0].PartyID)
 	var restored bytes.Buffer

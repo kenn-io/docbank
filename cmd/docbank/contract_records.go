@@ -36,6 +36,11 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 	if err := printContract(cmd, c, false); err != nil {
 		return err
 	}
+	for _, p := range c.Parties {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Party: %s %s (%s)\n", p.Role, p.DisplayName, p.PartyID); err != nil {
+			return err
+		}
+	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Stored status: %s\nSigned: %s\nCreated: %s\nUpdated: %s\nSummary: %q\nPurpose: %q\nConsideration: %q\nTermination: %q\n", c.Status, contractDate(c.SignedOn), c.CreatedAt, c.UpdatedAt, c.Summary, c.Purpose, c.Consideration, c.Termination)
 	return err
 }
@@ -138,6 +143,7 @@ func newContractCreateCommand() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "create <title>", Short: "Create a contract", Example: "docbank contract create 'Service agreement'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		b.Title = args[0]
+		b.Parties = nil
 		f := cmd.Flags()
 		if f.Changed("status") && b.Status == "" {
 			return fmt.Errorf("status cannot be empty")
@@ -244,8 +250,9 @@ func newContractEditCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if revision == 0 {
-			revision = v.Revision
+		expected := revision
+		if expected == 0 {
+			expected = v.Revision
 		}
 		type change struct {
 			role, name, id string
@@ -272,23 +279,23 @@ func newContractEditCommand() *cobra.Command {
 		}
 		var applied []string
 		if hasFields {
-			v, err = c.UpdateContract(cmd.Context(), args[0], revision, b)
+			v, err = c.UpdateContract(cmd.Context(), args[0], expected, b)
 			if err != nil {
 				return err
 			}
-			revision = v.Revision
+			expected = v.Revision
 			applied = append(applied, "contract fields")
 		}
 		for _, change := range changes {
 			if change.attach {
-				v, err = c.AttachContractParty(cmd.Context(), args[0], revision, change.id, change.role)
+				v, err = c.AttachContractParty(cmd.Context(), args[0], expected, change.id, change.role)
 			} else {
-				v, err = c.DetachContractParty(cmd.Context(), args[0], revision, change.id, change.role)
+				v, err = c.DetachContractParty(cmd.Context(), args[0], expected, change.id, change.role)
 			}
 			if err != nil {
 				return fmt.Errorf("applied %v; %w", applied, err)
 			}
-			revision = v.Revision
+			expected = v.Revision
 			applied = append(applied, change.role+":"+change.name)
 		}
 		return printContract(cmd, v, jsonOutput)
