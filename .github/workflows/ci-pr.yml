@@ -33,9 +33,6 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           files=$(git diff --no-renames --diff-filter=DMT --name-only "$BASE_SHA" HEAD -- internal/store/testdata/schema-contracts)
           if [ -n "$files" ]; then
-            files=${files//'%'/'%25'}
-            files=${files//$'\r'/'%0D'}
-            files=${files//$'\n'/'%0A'}
             echo "::error::Base schema records were changed or deleted and must be restored: $files. Run go test -tags fts5 ./internal/store -run TestStorageSchemaVersionContract and add a marker for the current schema version if needed."
             exit 1
           fi

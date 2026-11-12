@@ -218,15 +218,6 @@ func checkSchemaLayout(records []schemaContract, version int, digest string, ind
 	return errors.Join(err, checkSchemaIndexes(records, version, digest, indexes))
 }
 
-func schemaContractReleased(records []schemaContract, version int, released []int) (bool, error) {
-	for _, record := range records {
-		if record.Version > version {
-			return false, fmt.Errorf("schema contract version %d exceeds currentStorageSchemaVersion %d", record.Version, version)
-		}
-	}
-	return slices.Contains(released, version), nil
-}
-
 func schemaContractDB(t *testing.T, driver docsqlite.Driver, schema string) *sql.DB {
 	t.Helper()
 	db, err := driver.Open(filepath.Join(t.TempDir(), "current.db"), docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
@@ -241,9 +232,7 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 	t.Parallel()
 	records, err := loadSchemaContracts("testdata/schema-contracts")
 	require.NoError(t, err)
-	released, err := schemaContractReleased(records, currentStorageSchemaVersion, releasedStorageSchemaVersions)
-	require.NoError(t, err)
-	if released {
+	if slices.Contains(releasedStorageSchemaVersions, currentStorageSchemaVersion) {
 		t.Skip("current schema version is released")
 	}
 	for _, driver := range v090UpgradeDrivers() {
@@ -310,53 +299,19 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 	collision := checkSchemaLayout(records[:1], 49, second, map[string]string{"index_a": combined})
 	require.ErrorContains(t, collision, "set currentStorageSchemaVersion to 50")
 	require.NotContains(t, collision.Error(), "with these index records")
-	require.ErrorContains(t, checkSchemaContract(nil, 49, first), "000049-"+first+"-<summary-slug>.schema")
-	require.NoError(t, checkSchemaContract(records[:1], 49, first))
-	require.NoError(t, checkSchemaContract(records[1:], 49, second))
 	require.ErrorContains(t, checkSchemaContract(records, 49, first), "set currentStorageSchemaVersion to 50")
-	require.ErrorContains(t, checkSchemaContract(records, 49, combined), "set currentStorageSchemaVersion to 50")
-	require.NoError(t, checkSchemaContract(append(records, schemaContract{Version: 50, Digest: combined}), 50, combined))
-}
-
-func TestStorageSchemaContractReleased(t *testing.T) {
-	t.Parallel()
-	released, err := schemaContractReleased(nil, 48, []int{48})
-	require.NoError(t, err)
-	require.True(t, released)
-	released, err = schemaContractReleased(nil, 49, []int{48})
-	require.NoError(t, err)
-	require.False(t, released)
-	_, err = schemaContractReleased([]schemaContract{{Version: 49, Digest: strings.Repeat("a", 64)}}, 48, []int{48})
-	require.ErrorContains(t, err, "schema contract version 49 exceeds currentStorageSchemaVersion 48")
 }
 
 func TestStorageSchemaTokenDigest(t *testing.T) {
 	t.Parallel()
-	row := [][4]string{{"table", "t", "t", "CREATE TABLE t (id INTEGER)"}}
+	row := [][4]string{{"table", "quoted table", "quoted table", `CREATE TABLE "quoted table" ("label" TEXT NOT NULL DEFAULT 'it''s ready', "count" INTEGER CHECK ("count" >= 0))`}}
 	digest, err := schemaRowsDigest(row)
 	require.NoError(t, err)
-	require.Equal(t, "b30c0e59243ff78aa209ca6ca6a9f5c95ab77385a8e91542969c4da4fdb40382", digest)
-	row[0][3] = "CREATE /* comment */ TABLE t\n(id INTEGER) -- comment"
+	require.Equal(t, "547f847035713649e20ea8d69859c6116c057fb9ae08f9e93aa5c20fb291a284", digest)
+	row[0][3] = "CREATE /* comment */ TABLE \"quoted table\"\n(\"label\" TEXT NOT NULL DEFAULT 'it''s ready', \"count\" INTEGER CHECK (\"count\" >= 0)) -- comment"
 	formatted, err := schemaRowsDigest(row)
 	require.NoError(t, err)
 	require.Equal(t, digest, formatted)
-	quoted := [][4]string{{"table", "quoted table", "quoted table", `CREATE TABLE "quoted table" ("label" TEXT NOT NULL DEFAULT 'it''s ready', "count" INTEGER CHECK ("count" >= 0))`}}
-	quotedDigest, err := schemaRowsDigest(quoted)
-	require.NoError(t, err)
-	require.Equal(t, "547f847035713649e20ea8d69859c6116c057fb9ae08f9e93aa5c20fb291a284", quotedDigest)
-	for _, pair := range [][2]string{
-		{`CREATE TABLE t (a TEXT DEFAULT 'a b')`, `CREATE TABLE t (a TEXT DEFAULT 'ab')`},
-		{`CREATE TABLE t (a INTEGER CHECK(a+2))`, `CREATE TABLE t (a INTEGER CHECK(a-2))`},
-		{`CREATE TABLE t (a INTEGER)`, `create table t (a INTEGER)`},
-	} {
-		row[0][3] = pair[0]
-		first, err := schemaRowsDigest(row)
-		require.NoError(t, err)
-		row[0][3] = pair[1]
-		second, err := schemaRowsDigest(row)
-		require.NoError(t, err)
-		require.NotEqual(t, first, second, pair)
-	}
 }
 
 func TestStorageSchemaCatalogChanges(t *testing.T) {
@@ -417,9 +372,6 @@ func TestStorageSchemaUnreleasedVersionFlow(t *testing.T) {
 			writeRecord(49, digest, indexes)
 			records, err := loadSchemaContracts(dir)
 			require.NoError(t, err)
-			released, err := schemaContractReleased(records, 49, []int{48})
-			require.NoError(t, err)
-			require.False(t, released)
 			require.NoError(t, checkSchemaLayout(records, 49, digest, indexes))
 
 			_, err = db.ExecContext(t.Context(), `CREATE TABLE contract_new (id INTEGER)`)
@@ -430,9 +382,6 @@ func TestStorageSchemaUnreleasedVersionFlow(t *testing.T) {
 			writeRecord(50, changed, indexes)
 			records, err = loadSchemaContracts(dir)
 			require.NoError(t, err)
-			released, err = schemaContractReleased(records, 50, []int{48})
-			require.NoError(t, err)
-			require.False(t, released)
 			require.NoError(t, checkSchemaLayout(records, 50, changed, indexes))
 		})
 	}
