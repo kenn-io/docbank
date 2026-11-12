@@ -38,9 +38,6 @@ function json(value: unknown): Response {
 
 function textCoverage(overrides: object = {}) {
   return {
-    no_text: 0,
-    families: [],
-    pending: 0,
     pdfs_without_text: 0,
     pages_without_text: 0,
     pdf_page_coverage_partial: false,
