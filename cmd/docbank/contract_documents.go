@@ -60,7 +60,7 @@ func newContractDocumentCommand(link bool) *cobra.Command {
 		if err != nil {
 			return contractMutationError(name+" contract document", err)
 		}
-		return printContract(cmd, out, jsonOutput)
+		return printContractShow(cmd, out, jsonOutput)
 	}}
 	cmd.Flags().StringVar(&role, "role", "", "document role: draft, signed, audit_trail, amendment, or attachment")
 	_ = cmd.MarkFlagRequired("role")
