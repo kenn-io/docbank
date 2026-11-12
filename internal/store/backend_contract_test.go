@@ -2273,6 +2273,7 @@ var backendSuites = []backendSuite{
 			t.Helper()
 			checkContractConcurrentRevisionFence(t, newPostgresQueryStore)
 		}},
+		{"ContractDocumentRevisionExhaustion", func(t *testing.T) { t.Helper(); checkContractDocumentRevisionExhaustion(t, false) }, func(t *testing.T) { t.Helper(); checkContractDocumentRevisionExhaustion(t, true) }},
 		{"ContractDocumentHistory", func(t *testing.T) { t.Helper(); checkContractDocumentHistory(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkContractDocumentHistory(t, newPostgresQueryStore) }},
 		{"ContractDocumentNodeHighWater", func(t *testing.T) { t.Helper(); checkContractDocumentNodeHighWater(t, newTestStore) }, func(t *testing.T) { t.Helper(); checkContractDocumentNodeHighWater(t, newPostgresQueryStore) }},
 		{"ContractDocumentConcurrentFence", func(t *testing.T) {
