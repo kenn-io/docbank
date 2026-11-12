@@ -245,10 +245,13 @@ includes tables, views, triggers, and unique indexes. It excludes non-unique
 indexes and ignores SQL whitespace and comments while preserving token
 spellings. Run `go test -tags fts5 ./internal/store -run
 TestStorageSchemaVersionContract` and add a file under
-`internal/store/testdata/schema-contracts/`. Name the empty file
+`internal/store/testdata/schema-contracts/`. Name the file
 `NNNNNN-<layout-sha256>-<summary-slug>.schema`. The test prints the version
 and layout hash. The summary slug has 1–48 characters: lowercase ASCII letters
-or digits, with words separated by single hyphens.
+or digits, with words separated by single hyphens. The test also prints sorted
+`name digest` lines for non-unique indexes to put in the record. New indexes
+need another record with their lines; changing or removing a recorded index
+requires the next version. Preserve existing records and their contents.
 If you change your own unmerged layout, replace its record with the newly named
 file. If `main` already records that version, preserve its record, remove your
 old record, bump `currentStorageSchemaVersion`, rerun the test against the

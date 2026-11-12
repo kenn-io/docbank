@@ -24,6 +24,7 @@ import (
 type schemaContract struct {
 	Version int
 	Digest  string
+	Indexes map[string]string
 }
 
 type schemaDigestRow struct {
@@ -78,6 +79,75 @@ func schemaContractFile(record schemaContract, summarySlug string) string {
 	return fmt.Sprintf("%06d-%s-%s.schema", record.Version, record.Digest, summarySlug)
 }
 
+func schemaIndexDigests(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+	indexes := make(map[string]string)
+	for _, row := range releasedSchemaCatalogRows(t, db, true) {
+		if row[0] != "index" {
+			continue
+		}
+		var unique bool
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list(?) WHERE name=?`, row[2], row[1]).Scan(&unique))
+		if !unique {
+			digest, err := schemaRowsDigest([][4]string{row})
+			require.NoError(t, err)
+			indexes[row[1]] = digest
+		}
+	}
+	return indexes
+}
+
+func parseSchemaIndexes(data []byte) (map[string]string, error) {
+	var indexes map[string]string
+	if len(data) == 0 {
+		return indexes, nil
+	}
+	indexes = make(map[string]string)
+	if data[len(data)-1] != '\n' {
+		return nil, errors.New("index records must end with a newline")
+	}
+	last := ""
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
+		pos := strings.LastIndexByte(line, ' ')
+		if pos < 1 {
+			return nil, fmt.Errorf("invalid index record %q", line)
+		}
+		name, digest := line[:pos], line[pos+1:]
+		if name <= last || !canonical.IsSHA256Hex(digest) {
+			return nil, fmt.Errorf("invalid index record %q", line)
+		}
+		indexes[name] = digest
+		last = name
+	}
+	return indexes, nil
+}
+
+func checkSchemaIndexes(records []schemaContract, version int, digest string, current map[string]string) error {
+	baseline := make(map[string]string)
+	for _, record := range records {
+		if record.Version != version || record.Digest != digest {
+			continue
+		}
+		for name, hash := range record.Indexes {
+			if current[name] != hash {
+				return fmt.Errorf("non-unique index %q was changed or removed; set currentStorageSchemaVersion to %d", name, version+1)
+			}
+			baseline[name] = hash
+		}
+	}
+	var missing []string
+	for name, hash := range current {
+		if baseline[name] != hash {
+			missing = append(missing, name+" "+hash)
+		}
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		return fmt.Errorf("add schema contract %s with these index records:\n%s\n", schemaContractFile(schemaContract{Version: version, Digest: digest}, "<summary-slug>"), strings.Join(missing, "\n"))
+	}
+	return nil
+}
+
 var schemaContractName = regexp.MustCompile(`^([0-9]{6})-([^-]+)-([a-z0-9]+(?:-[a-z0-9]+)*)\.schema$`)
 
 func loadSchemaContracts(dir string) ([]schemaContract, error) {
@@ -99,10 +169,18 @@ func loadSchemaContracts(dir string) ([]schemaContract, error) {
 		if err != nil {
 			return nil, fmt.Errorf("inspect schema contract %s: %w", entry.Name(), err)
 		}
-		if !info.Mode().IsRegular() || info.Size() != 0 {
-			return nil, fmt.Errorf("schema contract %s must be an empty regular file", entry.Name())
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("schema contract %s must be a regular file", entry.Name())
 		}
-		records = append(records, schemaContract{Version: version, Digest: match[2]})
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		indexes, err := parseSchemaIndexes(data)
+		if err != nil {
+			return nil, fmt.Errorf("schema contract %s: %w", entry.Name(), err)
+		}
+		records = append(records, schemaContract{Version: version, Digest: match[2], Indexes: indexes})
 	}
 	return records, nil
 }
@@ -119,7 +197,7 @@ func checkSchemaContract(records []schemaContract, version int, digest string) e
 		}
 	}
 	name := schemaContractFile(schemaContract{Version: version, Digest: digest}, "<summary-slug>")
-	guidance := "add an empty file with a short lowercase hyphenated summary in " + name
+	guidance := "add a file with a short lowercase hyphenated summary in " + name
 	if mismatches > 0 {
 		return fmt.Errorf("schema version %d differs from recorded layouts; if the records are yours and unmerged, remove the old records and %s; if main already records this version, preserve main's record, set currentStorageSchemaVersion to %d, rerun this test against the combined layout, and add the record it prints", version, guidance, version+1)
 	}
@@ -160,7 +238,9 @@ func TestStorageSchemaVersionContract(t *testing.T) {
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			db := schemaContractDB(t, driver.driver, schemaSQL)
-			require.NoError(t, checkSchemaContract(records, currentStorageSchemaVersion, schemaCatalogDigest(t, db)))
+			digest := schemaCatalogDigest(t, db)
+			require.NoError(t, checkSchemaContract(records, currentStorageSchemaVersion, digest))
+			require.NoError(t, checkSchemaIndexes(records, currentStorageSchemaVersion, digest, schemaIndexDigests(t, db)))
 		})
 	}
 }
@@ -175,6 +255,11 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 	records, err := loadSchemaContracts(dir)
 	require.NoError(t, err)
 	require.Equal(t, []schemaContract{{Version: 49, Digest: digest}, {Version: 49, Digest: digest}}, records)
+	name := schemaContractFile(schemaContract{Version: 49, Digest: digest}, "add-documents")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("index_a "+digest+"\n"), 0600))
+	records, err = loadSchemaContracts(dir)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"index_a": digest}, records[0].Indexes)
 
 	for _, name := range []string{
 		"49-" + digest + "-valid.schema",
@@ -191,13 +276,13 @@ func TestStorageSchemaContractRecords(t *testing.T) {
 		require.NoError(t, os.Remove(path))
 	}
 	path := filepath.Join(dir, "000049-"+digest+"-invalid.schema")
-	require.NoError(t, os.WriteFile(path, []byte("summary"), 0600))
+	require.NoError(t, os.WriteFile(path, []byte("index_a invalid\n"), 0600))
 	_, err = loadSchemaContracts(dir)
-	require.ErrorContains(t, err, "must be an empty regular file")
+	require.ErrorContains(t, err, "invalid index record")
 	require.NoError(t, os.Remove(path))
 	require.NoError(t, os.Mkdir(path, 0700))
 	_, err = loadSchemaContracts(dir)
-	require.ErrorContains(t, err, "must be an empty regular file")
+	require.ErrorContains(t, err, "must be a regular file")
 }
 
 func TestStorageSchemaContractChanges(t *testing.T) {
@@ -289,6 +374,37 @@ func TestStorageSchemaCatalogChanges(t *testing.T) {
 			sameName := probe(`CREATE TABLE contract_a (id INTEGER); CREATE TRIGGER contract_a AFTER INSERT ON contract_a BEGIN SELECT 1; END`)
 			changedTable := probe(`CREATE TABLE contract_a (id INTEGER, label TEXT); CREATE TRIGGER contract_a AFTER INSERT ON contract_a BEGIN SELECT 1; END`)
 			require.NotEqual(t, sameName, changedTable)
+		})
+	}
+}
+
+func TestStorageSchemaNonUniqueIndexChanges(t *testing.T) {
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			db := schemaContractDB(t, driver.driver, schemaSQL)
+			_, err := db.ExecContext(t.Context(), `CREATE INDEX contract_index ON nodes(name)`)
+			require.NoError(t, err)
+			digest := schemaCatalogDigest(t, db)
+			records := []schemaContract{{Version: 49, Digest: digest, Indexes: schemaIndexDigests(t, db)}}
+			require.NoError(t, checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db)))
+			_, err = db.ExecContext(t.Context(), `CREATE INDEX contract_added ON nodes(kind)`)
+			require.NoError(t, err)
+			added := schemaIndexDigests(t, db)
+			require.ErrorContains(t, checkSchemaIndexes(records, 49, digest, added), "contract_added "+added["contract_added"])
+			records = append(records, schemaContract{Version: 49, Digest: digest, Indexes: map[string]string{"contract_added": added["contract_added"]}})
+			require.NoError(t, checkSchemaIndexes(records, 49, digest, added))
+			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_index; CREATE INDEX contract_index ON nodes(kind)`)
+			require.NoError(t, err)
+			t.Run("replacement", func(t *testing.T) {
+				require.Equal(t, digest, schemaCatalogDigest(t, db))
+				require.ErrorContains(t, checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db)), "set currentStorageSchemaVersion to 50")
+			})
+			_, err = db.ExecContext(t.Context(), `DROP INDEX contract_index`)
+			require.NoError(t, err)
+			t.Run("removal", func(t *testing.T) {
+				require.Equal(t, digest, schemaCatalogDigest(t, db))
+				require.ErrorContains(t, checkSchemaIndexes(records, 49, digest, schemaIndexDigests(t, db)), "set currentStorageSchemaVersion to 50")
+			})
 		})
 	}
 }
