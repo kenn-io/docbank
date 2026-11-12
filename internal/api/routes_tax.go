@@ -60,7 +60,7 @@ func SafeTaxDiagnostic(detail string) string {
 					continue
 				}
 				safe := prefix + field.name + ": " + reason
-				if index := strings.Index(detail, safe); index >= 0 && index < best {
+				if index := strings.Index(detail, safe); index >= 0 && (index < best || index == best && len(safe) > len(result)) {
 					best, result = index, safe
 				}
 			}

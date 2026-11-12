@@ -222,7 +222,13 @@ func TestTaxRecordAuthorityAndReplacement(t *testing.T) {
 	attached.Kind = r.Kind
 	_, err = s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, attached)
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
-	require.ErrorContains(t, err, "account identity is immutable")
+	field, ok := errors.AsType[*taxrecord.FieldError](err)
+	require.True(t, ok)
+	assert.Equal(t, "authority_party_id", field.Field)
+	assert.Equal(t, "account identity mismatch", field.Reason)
+	unchanged, err := s.GetTaxRecord(ctx, r.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, r.Revision, unchanged.Revision)
 }
 
 func TestTaxRecordUpdatePeriodCollision(t *testing.T) {

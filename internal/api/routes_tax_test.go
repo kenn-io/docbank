@@ -214,6 +214,7 @@ func TestRecordSafeTaxDiagnostics(t *testing.T) {
 	for _, detail := range []string{"title: invalid length or text", "kind: unknown kind", "state: unknown state", "direction: unknown direction", "amount: invalid precision", "amount: invalid length", "amount: invalid decimal or overflow", "amount: overflow", "amount: amount required", "amount: zero required", "amount: unknown amount must be null", "amount: amount required when currency changes", "period_end: precedes period_start", "body.form_code: invalid value", "tax_year: out of range", "query.year: invalid value"} {
 		assert.Equal(t, detail, SafeTaxDiagnostic("untrusted "+detail+" trailing private"))
 	}
+	assert.Equal(t, "amount: amount required", SafeTaxDiagnostic("amount: amount required; amount: amount required when currency changes"))
 	assert.Empty(t, SafeTaxDiagnostic("private: private-synthetic-value"))
 	assert.Empty(t, SafeTaxDiagnostic("title: invalid precision private-synthetic-value"))
 }
