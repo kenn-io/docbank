@@ -28,15 +28,16 @@ type NoteSummary struct {
 
 type NoteByPath struct {
 	NoteSummary
-	Headings         int                       `json:"headings"`
-	Frontmatter      map[string]jsontext.Value `json:"frontmatter" nullable:"true"`
-	FrontmatterError string                    `json:"frontmatter_error,omitempty" enum:"invalid_frontmatter,unclosed_frontmatter" doc:"Bounded parser diagnostic when frontmatter was discarded; the note body remains readable."`
+	Headings         int             `json:"headings"`
+	Frontmatter      noteFrontmatter `json:"frontmatter" nullable:"true"`
+	FrontmatterError string          `json:"frontmatter_error,omitempty" enum:"invalid_frontmatter,unclosed_frontmatter" doc:"Bounded parser diagnostic when frontmatter was discarded; the note body remains readable."`
 }
 
-func (n NoteByPath) MarshalJSONTo(enc *jsontext.Encoder) error {
-	// Keep absent/discarded YAML null without changing the shared API codec.
-	type noteByPath NoteByPath
-	return json.MarshalEncode(enc, noteByPath(n), json.FormatNilMapAsNull(true))
+type noteFrontmatter map[string]jsontext.Value
+
+func (f noteFrontmatter) MarshalJSONTo(enc *jsontext.Encoder) error {
+	// Huma copies field types into its schema-linked response, so encode here.
+	return json.MarshalEncode(enc, map[string]jsontext.Value(f), json.FormatNilMapAsNull(true))
 }
 
 func (NoteByPath) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
