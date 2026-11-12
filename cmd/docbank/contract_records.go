@@ -51,29 +51,45 @@ func printContractShow(cmd *cobra.Command, c api.Contract, jsonOutput bool) erro
 	}
 	return nil
 }
-func resolveLinkedContractParty(c api.Contract, role, name string) (string, error) {
+func findLinkedContractParty(c api.Contract, role, name string) (string, bool, error) {
 	if id, err := uuid.Parse(name); err == nil && id.String() == name {
 		for _, p := range c.Parties {
 			if p.PartyID == name && p.Role == role {
-				return name, nil
+				return name, true, nil
 			}
 		}
-		return "", fmt.Errorf("linked party %q not found for role %s", name, role)
+		return "", false, nil
 	}
 	var found string
 	for _, p := range c.Parties {
 		if p.Role == role && document.FoldPersonName(p.DisplayName) == document.FoldPersonName(name) {
 			if found != "" {
-				return "", fmt.Errorf("party %q is ambiguous; use an ID", name)
+				return "", false, fmt.Errorf("party %q is ambiguous; use an ID", name)
 			}
 			found = p.PartyID
 		}
 	}
-	if found == "" {
+	return found, found != "", nil
+}
+
+func resolveLinkedContractParty(c api.Contract, role, name string) (string, error) {
+	id, found, err := findLinkedContractParty(c, role, name)
+	if err != nil {
+		return "", err
+	}
+	if !found {
 		return "", fmt.Errorf("linked party %q not found for role %s", name, role)
 	}
-	return found, nil
+	return id, nil
 }
+
+func contractMutationError(operation string, err error) error {
+	if daemonconn.IsRetryableMutationError(err) {
+		return fmt.Errorf("%s outcome unknown; inspect contracts before retrying: %w", operation, err)
+	}
+	return err
+}
+
 func resolveContractParty(ctx context.Context, c *daemonconn.Connection, name, role string) (api.Party, error) {
 	var party api.Party
 	if id, err := uuid.Parse(name); err == nil && id.String() == name {
@@ -202,7 +218,7 @@ func newContractCreateCommand() *cobra.Command {
 		}
 		v, err := c.CreateContract(cmd.Context(), b)
 		if err != nil {
-			return err
+			return contractMutationError("create contract", err)
 		}
 		return printContract(cmd, v, jsonOutput)
 	}}
@@ -295,8 +311,12 @@ func newContractEditCommand() *cobra.Command {
 				var id string
 				var party api.Party
 				if group.attach {
-					party, err = resolveContractParty(cmd.Context(), c, name, group.role)
-					id = party.PartyID
+					var found bool
+					id, found, err = findLinkedContractParty(v, group.role, name)
+					if err == nil && !found {
+						party, err = resolveContractParty(cmd.Context(), c, name, group.role)
+						id = party.PartyID
+					}
 				} else {
 					id, err = resolveLinkedContractParty(v, group.role, name)
 				}
@@ -324,22 +344,27 @@ func newContractEditCommand() *cobra.Command {
 		if hasFields {
 			v, err = c.UpdateContract(cmd.Context(), args[0], expected, b)
 			if err != nil {
-				return err
+				return contractMutationError("edit contract fields", err)
 			}
 			expected = v.Revision
 			applied = append(applied, "contract fields")
 		}
 		for _, change := range changes {
+			action := "detach"
+			if change.attach {
+				action = "attach"
+			}
+			operation := action + " " + change.role + ":" + change.name
 			if change.attach {
 				v, err = c.AttachContractParty(cmd.Context(), args[0], expected, change.id, change.role)
 			} else {
 				v, err = c.DetachContractParty(cmd.Context(), args[0], expected, change.id, change.role)
 			}
 			if err != nil {
-				return fmt.Errorf("applied %v; %w", applied, err)
+				return fmt.Errorf("confirmed %v; %s: %w", applied, operation, contractMutationError(operation, err))
 			}
 			expected = v.Revision
-			applied = append(applied, change.role+":"+change.name)
+			applied = append(applied, operation)
 		}
 		return printContract(cmd, v, jsonOutput)
 	}}
@@ -384,7 +409,7 @@ func newContractDeleteCommand() *cobra.Command {
 			revision = v.Revision
 		}
 		if err = c.DeleteContract(cmd.Context(), args[0], revision); err != nil {
-			return err
+			return contractMutationError("delete contract", err)
 		}
 		if jsonOutput {
 			return writeCLIJSON(cmd.OutOrStdout(), map[string]string{"deleted": args[0]})

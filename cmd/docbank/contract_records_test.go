@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json/v2"
+	"net/http"
+	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
@@ -30,6 +33,56 @@ func TestContractPreflight(t *testing.T) {
 			require.ErrorContains(t, cmd.Execute(), tc.message)
 		})
 	}
+	t.Run("unknown mutation outcomes", func(t *testing.T) {
+		const contractID = "11111111-1111-4111-8111-111111111111"
+		const ownerID = "22222222-2222-4222-8222-222222222222"
+		const supplierID = "33333333-3333-4333-8333-333333333333"
+		var committed atomic.Int32
+		var mode atomic.Int32
+		contract := api.Contract{ContractID: contractID, Title: "Agreement", Revision: 1, Parties: []api.ContractParty{{PartyID: ownerID, Role: "own", DisplayName: "Owner"}, {PartyID: supplierID, Role: "counterparty", DisplayName: "Supplier"}}}
+		setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/contracts/"+contractID:
+				w.Header().Set("ETag", `"1"`)
+				assert.NoError(t, json.MarshalWrite(w, contract))
+			case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/contracts/"+contractID:
+				committed.Add(1)
+				_, _ = w.Write([]byte("{"))
+			case r.Method == http.MethodPut && r.URL.Path == "/api/v1/contracts/"+contractID+"/parties/"+ownerID:
+				committed.Add(1)
+				w.Header().Set("ETag", `"1"`)
+				assert.NoError(t, json.MarshalWrite(w, contract))
+			case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/contracts/"+contractID+"/parties/"+supplierID:
+				committed.Add(1)
+				_, _ = w.Write([]byte("{"))
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/contracts":
+				committed.Add(1)
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte("{"))
+			case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/contracts/"+contractID:
+				committed.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			default:
+				mode.Add(1)
+				http.NotFound(w, r)
+			}
+		})
+		_, err := runCLI(t, "contract", "edit", contractID, "--title", "Changed")
+		require.ErrorContains(t, err, "edit contract fields outcome unknown")
+		require.ErrorContains(t, err, "inspect contracts before retrying")
+		require.EqualValues(t, 1, committed.Load())
+		_, err = runCLI(t, "contract", "edit", contractID, "--own", ownerID, "--remove-counterparty", supplierID)
+		require.ErrorContains(t, err, "confirmed [attach own:")
+		require.ErrorContains(t, err, "detach counterparty:"+supplierID+" outcome unknown")
+		require.EqualValues(t, 3, committed.Load())
+		_, err = runCLI(t, "contract", "create", "Agreement")
+		require.ErrorContains(t, err, "create contract outcome unknown")
+		_, err = runCLI(t, "contract", "delete", contractID)
+		require.ErrorContains(t, err, "delete contract outcome unknown")
+		require.EqualValues(t, 5, committed.Load())
+		require.Zero(t, mode.Load())
+	})
 }
 
 func TestContractShowQuotesTermsAndResolvesLinkedNames(t *testing.T) {
@@ -106,6 +159,13 @@ func TestContractCLIWalkAndPreflight(t *testing.T) {
 	require.NoError(t, err, out)
 	var baseline api.Contract
 	require.NoError(t, json.Unmarshal([]byte(out), &baseline))
+	for _, party := range []string{supplier.PartyID, "Synthetic Supplier"} {
+		out, err = runCLI(t, "contract", "edit", second.ContractID, "--counterparty", party, "--json")
+		require.NoError(t, err, out)
+		var same api.Contract
+		require.NoError(t, json.Unmarshal([]byte(out), &same))
+		require.Equal(t, baseline, same)
+	}
 	_, err = runCLI(t, "contract", "edit", second.ContractID, "--title", "Should not apply", "--own", supplier.PartyID)
 	require.ErrorContains(t, err, "retired")
 	out, err = runCLI(t, "contract", "show", second.ContractID, "--json")
