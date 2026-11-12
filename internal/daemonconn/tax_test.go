@@ -253,10 +253,14 @@ func TestTaxClientRejectsMissingAccountMembers(t *testing.T) {
 func TestTaxReceiptBoundAndMetadata(t *testing.T) {
 	body := strings.Replace(taxAccountFixture, `"identifier":""`, `"identifier":"****1234","$schema":"example","extension":true`, 1)
 	response := func(s string) *http.Response { return &http.Response{Body: io.NopCloser(strings.NewReader(s))} }
-	page, err := decodeTaxReceiptLimit(t.Context(), response(body), false, int64(len(body)))
+	withinLimit := response(body)
+	defer func() { _ = withinLimit.Body.Close() }()
+	page, err := decodeTaxReceiptLimit(t.Context(), withinLimit, false, int64(len(body)))
 	require.NoError(t, err)
 	assert.True(t, validTaxAccount(page.Items[0]))
-	_, err = decodeTaxReceiptLimit(t.Context(), response(body), false, int64(len(body)-1))
+	overLimit := response(body)
+	defer func() { _ = overLimit.Body.Close() }()
+	_, err = decodeTaxReceiptLimit(t.Context(), overLimit, false, int64(len(body)-1))
 	require.True(t, IsResponseDecodeError(err))
 	err = taxMutationFailure(err)
 	assert.Contains(t, err.Error(), "may have been applied")

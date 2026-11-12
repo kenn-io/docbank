@@ -98,6 +98,7 @@ func TestTaxOversizeWriteFailureOmitsPath(t *testing.T) {
 
 // These inputs reach account admission; record-only reasons are owned by T3b.
 func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
+	t.Parallel()
 	base := taxrecord.AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
 	cases := []struct {
 		field, reason string
@@ -120,6 +121,7 @@ func TestTaxAccountAdmissionDiagnosticsRemainSafe(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.field+"/"+tc.reason, func(t *testing.T) {
+			t.Parallel()
 			v := base
 			tc.change(&v)
 			var field *taxrecord.FieldError
