@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
@@ -13,9 +14,12 @@ import (
 )
 
 func TestDocumentFactsToolsRejectAmbiguousSelection(t *testing.T) {
-	for _, args := range [][]byte{[]byte(`{}`), []byte(`{"node_id":1,"content_version_id":"00000000-0000-4000-8000-000000000000"}`)} {
-		_, err := documentFactsSelection(args)
-		require.Error(t, err)
+	for _, name := range []string{"get_document_dates", "get_document_people"} {
+		for _, args := range []map[string]any{{}, {"node_id": 1, "content_version_id": "00000000-0000-4000-8000-000000000000"}} {
+			wireErr := decodeWireError(t, callToolWire(t, name, args))
+			require.EqualValues(t, jsonrpc.CodeInvalidParams, wireErr.Code)
+			require.Equal(t, "invalid tool arguments", wireErr.Message)
+		}
 	}
 }
 

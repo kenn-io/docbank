@@ -69,7 +69,7 @@ func writeVersionDatesTable(out io.Writer, result *apiclient.VersionDates) error
 		return fmt.Errorf("writing dates state: %w", err)
 	}
 	for _, diagnostic := range result.Diagnostics {
-		if _, err := fmt.Fprintf(out, "Diagnostic: %s\n", diagnostic.Detail); err != nil {
+		if _, err := fmt.Fprintf(out, "Diagnostic: %q\n", diagnostic.Detail); err != nil {
 			return fmt.Errorf("writing dates diagnostic: %w", err)
 		}
 	}
@@ -79,7 +79,7 @@ func writeVersionDatesTable(out io.Writer, result *apiclient.VersionDates) error
 		if claim.Primary {
 			mark = "*"
 		}
-		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%s\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.Precision, documentFactLabel(claim.ClaimBasis))
+		_, _ = fmt.Fprintf(w, "%s %s\t%s\t%q (state=%s, zone=%q)\t%s\t%s\n", mark, claim.DateKind, claim.DateValue, claim.ZoneText, claim.When.State, claim.When.ZoneState, claim.Precision, documentFactLabel(claim.ClaimBasis))
 	}
 	return w.Flush()
 }
@@ -90,11 +90,11 @@ func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) err
 	}
 	w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
 	for _, edge := range result.Edges {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
+		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", edge.Role, edge.DisplayName, documentFactLabel(edge.Basis))
 	}
 	for _, assertion := range result.Assertions {
 		represented := false
-		if assertion.Action == "assert" && assertion.AssertionID != "" {
+		if assertion.Action == "assert" {
 			for _, edge := range result.Edges {
 				if edge.EvidenceKind == "operator_assertion" && edge.EvidenceID == assertion.AssertionID && edge.PersonID == assertion.PersonID && edge.Role == assertion.Role {
 					represented = true
@@ -103,11 +103,11 @@ func writeVersionPeopleTable(out io.Writer, result *apiclient.VersionPeople) err
 			}
 		}
 		if !represented {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
+			_, _ = fmt.Fprintf(w, "%s\t%q\t%s\n", assertion.Role, assertion.DisplayName, assertion.Action)
 		}
 	}
 	for _, unresolved := range result.Unresolved {
-		_, _ = fmt.Fprintf(w, "%s\t%s\tunresolved\n", unresolved.Role, unresolved.RawLabel)
+		_, _ = fmt.Fprintf(w, "%s\t%q\tunresolved\n", unresolved.Role, unresolved.RawLabel)
 	}
 	return w.Flush()
 }
