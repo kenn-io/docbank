@@ -75,11 +75,7 @@ it.each(["unconfigured", "unprocessed", "failed", "verified_empty"] as const)(
   },
 );
 
-async function mockReadyText(
-  source: SelectedSource,
-  pages: number[] = [],
-  artifactFailure = false,
-) {
+async function mockReadyText(source: SelectedSource, pages: number[] = [], artifact?: Response) {
   const { createHash } = await import("node:crypto");
   const body = "Report one. Report two.";
   const envelope = {
@@ -109,8 +105,7 @@ async function mockReadyText(
   };
   const bytes = new TextEncoder().encode(`---\n${JSON.stringify(envelope)}\n---\n${body}`);
   const hash = createHash("sha256").update(bytes).digest("hex");
-  const fetchMock = vi
-    .spyOn(globalThis, "fetch")
+  vi.spyOn(globalThis, "fetch")
     .mockName("verified text fetch")
     .mockResolvedValueOnce(
       Response.json({
@@ -135,27 +130,24 @@ async function mockReadyText(
           media_type: "text/markdown; charset=utf-8",
         },
       }),
+    )
+    .mockResolvedValueOnce(
+      artifact ??
+        new Response(bytes, {
+          headers: {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Length": String(bytes.length),
+            "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
+            "X-Docbank-Rendition-SHA256": hash,
+            "X-Docbank-Rendition-Size": String(bytes.length),
+            "X-Docbank-Rendition-Profile": "b".repeat(64),
+            "X-Docbank-Rendition-Generation": "c".repeat(64),
+            "X-Docbank-Rendition-Attachment": "d".repeat(64),
+            "X-Docbank-Rendition-Build": "e".repeat(64),
+            "X-Docbank-Rendition-Artifact": "f".repeat(64),
+          },
+        }),
     );
-  if (artifactFailure)
-    fetchMock.mockResolvedValueOnce(new Response("artifact unavailable", { status: 500 }));
-  else {
-    fetchMock.mockResolvedValueOnce(
-      new Response(bytes, {
-        headers: {
-          "Content-Type": "text/markdown; charset=utf-8",
-          "Content-Length": String(bytes.length),
-          "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
-          "X-Docbank-Rendition-SHA256": hash,
-          "X-Docbank-Rendition-Size": String(bytes.length),
-          "X-Docbank-Rendition-Profile": "b".repeat(64),
-          "X-Docbank-Rendition-Generation": "c".repeat(64),
-          "X-Docbank-Rendition-Attachment": "d".repeat(64),
-          "X-Docbank-Rendition-Build": "e".repeat(64),
-          "X-Docbank-Rendition-Artifact": "f".repeat(64),
-        },
-      }),
-    );
-  }
 }
 
 const pdf = { ...source, name: "scan.pdf", path: "/scan.pdf", mimeType: "application/pdf" };
@@ -187,14 +179,6 @@ function renderPDF(receipt?: object) {
     onauthfailure: vi.fn(),
   });
 }
-
-it("keeps PDF page gaps when reading the text artifact fails", async () => {
-  await mockReadyText(pdf, [2], true);
-  renderPDF();
-  expect(await screen.findByRole("alert")).toBeTruthy();
-  expect(screen.getByText(/Page 2 has no text layer/)).toBeTruthy();
-  expect(screen.getByRole("link", { name: /OCR can read it/ })).toBeTruthy();
-});
 
 it("reports unavailable PDF page coverage", async () => {
   renderPDF({ state: "unprocessed", page_coverage: "unavailable" });
@@ -233,9 +217,16 @@ it("finds text, wraps navigation, and clears the find query", async () => {
 it.each([
   ["ready", [3, 4, 7], /Pages 3–4, 7 have no text layer/, /OCR can read them/],
   ["verified_empty", [2], /Page 2 has no text layer/, /OCR can read it/],
+  ["artifact_error", [2], /Page 2 has no text layer/, /OCR can read it/],
 ] as const)("shows %s text coverage for PDF pages %j", async (state, pages, notice, link) => {
-  if (state === "ready") {
-    await mockReadyText(pdf, [...pages]);
+  if (state !== "verified_empty") {
+    await mockReadyText(
+      pdf,
+      [...pages],
+      state === "artifact_error"
+        ? new Response("artifact unavailable", { status: 500 })
+        : undefined,
+    );
     renderPDF();
   } else
     renderPDF({
@@ -254,6 +245,7 @@ it.each([
       rendered.compareDocumentPosition(screen.getByLabelText("Verified text of scan.pdf")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  else if (state === "artifact_error") expect(screen.getByRole("alert")).toBeTruthy();
   else
     expect(
       screen.queryByText("Processing verified that this document has no readable text."),
