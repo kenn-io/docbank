@@ -72,7 +72,7 @@ func getOriginalDownloadURL(ctx context.Context, lease *daemonLease, raw []byte)
 }
 
 func originalDownloadSchemas() (schema, schema) {
-	const nodeField, sizeField = "node_id", "size"
+	const nodeField = "node_id"
 	selection := schema{
 		answerVaultIDField: uuidSchema(), nodeField: integerSchema(1, 0), versionField: uuidSchema(),
 		"blob_hash": sha256Schema(), sizeField: integerSchema(0, 0),

@@ -51,6 +51,7 @@ type contractDocument struct {
 type contractDetailToolOutput struct {
 	privateCache
 	contractListItem
+
 	Summary       string             `json:"summary"`
 	Purpose       string             `json:"purpose"`
 	Consideration string             `json:"consideration"`
@@ -62,6 +63,7 @@ type contractDetailToolOutput struct {
 }
 type listContractsToolOutput struct {
 	privateCache
+
 	Items  []contractListItem `json:"items"`
 	Limit  int                `json:"limit"`
 	Offset int                `json:"offset"`
@@ -69,6 +71,7 @@ type listContractsToolOutput struct {
 }
 type contractReceipt struct {
 	privateCache
+
 	ContractID string `json:"contract_id"`
 	Revision   int64  `json:"revision"`
 }

@@ -130,7 +130,7 @@ func (in originalContentInput) readChunk(stream *daemonconn.ContentStream) (data
 }
 
 func originalContentSchemas() (schema, schema) {
-	const nodeField, sizeField = "node_id", "size"
+	const nodeField = "node_id"
 	selection := schema{
 		"vault_id": uuidSchema(), nodeField: integerSchema(1, 0),
 		versionField: uuidSchema(), "blob_hash": sha256Schema(),

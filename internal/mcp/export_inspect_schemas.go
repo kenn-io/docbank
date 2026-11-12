@@ -16,10 +16,10 @@ func exportRoleSchema() schema {
 
 func exportSourceSchema() schema {
 	queryFingerprint := stringSchema(71)
-	queryFingerprint["pattern"] = "^sha256:[0-9a-f]{64}$"
+	queryFingerprint[jsonSchemaPattern] = "^sha256:[0-9a-f]{64}$"
 	return objectSchema(schema{
 		"id": uuidSchema(), "request_sha256": sha256Schema(),
-		"kind": enumSchema(
+		conflictKindField: enumSchema(
 			"explicit", "nodes", "query", "saved_query", "snapshot", "upload", "mailbox_collection", "photos",
 		),
 		schemaStateField: enumSchema("sealed"), "member_hash": sha256Schema(),
@@ -28,7 +28,7 @@ func exportSourceSchema() schema {
 		"created_at":     dateTimeSchema(), "expires_at": dateTimeSchema(),
 		"saved_query_id": uuidSchema(), "saved_query_revision": integerSchema(1, math.MaxInt64),
 		"query_fingerprint": queryFingerprint, "collection_id": uuidSchema(),
-	}, "id", "request_sha256", "kind", schemaStateField, "member_hash", schemaTotalField,
+	}, "id", "request_sha256", conflictKindField, schemaStateField, "member_hash", schemaTotalField,
 		"source_bytes", "created_at", "expires_at")
 }
 
@@ -44,9 +44,9 @@ func exportOutputCountsSchema() schema {
 
 func retainedExportPlanSchema() schema {
 	roles := arraySchema(objectSchema(schema{
-		"role": exportRoleSchema(), "allow_unavailable": booleanSchema(),
+		roleField: exportRoleSchema(), "allow_unavailable": booleanSchema(),
 		"profile_fingerprint": sha256Schema(), "recipe_sha256": sha256Schema(),
-	}, "role"), 6)
+	}, roleField), 6)
 	roles["minItems"] = 1
 	return exportPlanSchema(schema{
 		"toolchain": stringSchema(bundle.MaxMemberBytes), "source": exportSourceSchema(),
@@ -77,16 +77,16 @@ func getExportPlanSchemas() (schema, schema) {
 func getExportProblemsSchemas() (schema, schema) {
 	problem := objectSchema(schema{
 		"node_id": integerSchema(1, math.MaxInt64), "version_id": uuidSchema(),
-		"role": exportRoleSchema(), "reason": stringSchema(bundle.MaxMemberBytes),
+		roleField: exportRoleSchema(), "reason": stringSchema(bundle.MaxMemberBytes),
 		"part_path": stringSchema(bundle.MaxMemberBytes),
-	}, "node_id", "version_id", "role", "reason")
+	}, "node_id", "version_id", roleField, "reason")
 	page := objectSchema(schema{
 		"plan_id": uuidSchema(), "fingerprint": sha256Schema(),
 		"after":          integerSchema(0, bundle.MaxOutputProblems),
 		"next":           integerSchema(0, bundle.MaxOutputProblems),
 		schemaTotalField: integerSchema(0, bundle.MaxOutputProblems),
-		"items":          arraySchema(problem, bundle.InspectionPageSize),
-	}, "plan_id", "fingerprint", "after", "next", schemaTotalField, "items")
+		jsonSchemaItems:  arraySchema(problem, bundle.InspectionPageSize),
+	}, "plan_id", "fingerprint", "after", "next", schemaTotalField, jsonSchemaItems)
 	return rootObjectSchema(schema{
 			"plan_id": uuidSchema(), "after": integerSchema(0, bundle.MaxOutputProblems),
 		}, "plan_id"),
