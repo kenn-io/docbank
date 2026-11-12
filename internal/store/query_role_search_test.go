@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -180,16 +181,23 @@ func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
 	person, err := s.CreatePerson(ctx, "Jory Pellham", "operator")
 	require.NoError(t, err)
 	person, _ = addTestPersonIdentity(t, s, person, "name_alias", `A "OR" *`, "quoted-alias")
-	person, derived := addTestPersonIdentity(t, s, person, "name_alias", "Hidden Derived Alias", "derived-alias")
-	_, err = s.db.ExecContext(ctx, `UPDATE person_identities SET origin='derived' WHERE identity_id=?`, derived.IdentityID)
+	_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+		Kind: "name_alias", ValueDisplay: "Derived Alias", Origin: "derived",
+		EvidenceKind: "source_metadata", EvidenceID: "derived-alias", Confidence: "name_candidate",
+	})
+	require.NoError(t, err)
+	person, _, err = s.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	evidence := seedDocumentPeopleEvent(t, s, "visible.txt", "b2", nil)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: evidence.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
 	require.NoError(t, err)
 	visibleNames, err := (queryResolver{q: s.db}).personMentionNames(WithVisiblePeopleOnly(ctx), person.PersonID)
 	require.NoError(t, err)
 	require.Contains(t, visibleNames, `A "OR" *`)
-	require.NotContains(t, visibleNames, "Hidden Derived Alias")
+	require.Contains(t, visibleNames, "Derived Alias")
 	fullNames, err := (queryResolver{q: s.db}).personMentionNames(ctx, person.PersonID)
 	require.NoError(t, err)
-	require.Contains(t, fullNames, "Hidden Derived Alias")
+	require.Contains(t, fullNames, "Derived Alias")
 	for i := range 20 {
 		person, _ = addTestPersonIdentity(t, s, person, "name_alias", fmt.Sprintf("Alias %02d", i), fmt.Sprintf("alias-%02d", i))
 	}
@@ -207,6 +215,49 @@ func TestRoleSearchMentionNamesAreLiteralAndBounded(t *testing.T) {
 	require.Contains(t, compiled.PositiveTextTerms(), "Jory Pellham")
 	require.Len(t, compiled.roleMatches, 1)
 	require.Equal(t, "mentioned", compiled.roleMatches[0].label)
+}
+
+// Restored identity authority is visible to both callers even though no
+// published name_alias document-person edge exists.
+func TestRoleSearchMentionsRestoredDerivedAlias(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source := newTestStore(t)
+	person, err := source.CreatePerson(ctx, "Linden Vale", "operator")
+	require.NoError(t, err)
+	identity, err := source.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+		Kind: "name_alias", ValueDisplay: "Willow Finch", Origin: "derived",
+		EvidenceKind: "source_metadata", EvidenceID: "synthetic-name", Confidence: "name_candidate",
+	})
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	s := newTestStore(t)
+	require.NoError(t, s.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	detail, err := s.PersonDetailPage(ctx, person.PersonID, PersonAssertionPage{})
+	require.NoError(t, err)
+	require.Contains(t, detail.Identities, identity)
+
+	evidence := seedDocumentPeopleEvent(t, s, "evidence.txt", "b1", nil)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: evidence.ID, PersonID: person.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	aliasDoc, err := s.CreateFile(ctx, s.RootID(), "neutral.txt", testSHA256([]byte("restored-alias-body")), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, aliasDoc, "A note for Willow Finch")
+	other, err := s.CreateFile(ctx, s.RootID(), "other.txt", testSHA256([]byte("restored-other-body")), 20, "text/plain")
+	require.NoError(t, err)
+	seedCompiledLegacyText(t, s, other, "Unrelated body")
+	value := snapshotTestQuery(t, `{"syntax":"advanced","text":"mentions:\"Linden Vale\""}`)
+	full, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, full.Rows, 1)
+	require.Equal(t, "neutral.txt", full.Rows[0].Name)
+	require.Equal(t, []string{"mentioned"}, full.Rows[0].MatchedRoles)
+	browser, err := s.MaterializeQuerySnapshot(WithVisiblePeopleOnly(ctx), SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, browser.Rows, 1)
+	require.Equal(t, full.Rows[0].NodeID, browser.Rows[0].NodeID)
+	require.Equal(t, full.Rows[0].MatchedRoles, browser.Rows[0].MatchedRoles)
 }
 
 func TestRoleSearchPeopleFacetBoundsAndFreeze(t *testing.T) {

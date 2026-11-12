@@ -190,6 +190,74 @@ func (q *populationRecordingQuerier) QueryContext(ctx context.Context, statement
 	return q.metadataQuerier.QueryContext(ctx, statement, args...)
 }
 
+// Record the largest individual value handed across the query boundary. A
+// stream of constant-size operations is different from one corpus-sized value.
+type populationSizeQuerier struct {
+	metadataQuerier
+	maxArgument, maxStatement int
+}
+
+func populationArgumentSize(args []any) int {
+	largest := 0
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case string:
+			largest = max(largest, len(value))
+		case []byte:
+			largest = max(largest, len(value))
+		}
+	}
+	return largest
+}
+
+func (q *populationSizeQuerier) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
+	q.maxStatement = max(q.maxStatement, len(statement))
+	q.maxArgument = max(q.maxArgument, populationArgumentSize(args))
+	return q.metadataQuerier.QueryContext(ctx, statement, args...)
+}
+
+func TestDocumentPopulationCarrierDoesNotGrowWithCorpus(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	dir, err := s.Mkdir(ctx, s.RootID(), "bulk")
+	require.NoError(t, err)
+	_, err = s.CreatePerson(ctx, "Absent Author", "operator")
+	require.NoError(t, err)
+	compiled := compileFixtureQuery(t, s, `NOT author:"Absent Author" AND path:/bulk`, query.Filters{})
+	var expected []int64
+	type sizes struct{ argument, statement, fragmentArgument, fragmentSQL int }
+	measure := func() sizes {
+		var got sizes
+		err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+			recording := &populationSizeQuerier{metadataQuerier: q}
+			fragment, err := documentSnapshotPopulation(ctx, recording, compiled, generation.ID, CoverageSelection{})
+			if err != nil {
+				return err
+			}
+			got = sizes{recording.maxArgument, recording.maxStatement, populationArgumentSize(fragment.args), len(fragment.sql)}
+			ids, _ := preparedLeafMembers(t, q, fragment.sql, fragment.args)
+			require.Equal(t, expected, ids)
+			return nil
+		})
+		require.NoError(t, err)
+		return got
+	}
+	add := func(start, end int) {
+		for i := start; i < end; i++ {
+			node, err := s.CreateFile(ctx, dir.ID, fmt.Sprintf("file-%03d.txt", i), testSHA256([]byte(fmt.Sprintf("carrier-%03d", i))), 10, "text/plain")
+			require.NoError(t, err)
+			expected = append(expected, node.ID)
+		}
+	}
+	const n = 16
+	add(0, n)
+	small := measure()
+	add(n, 4*n)
+	large := measure()
+	require.Equal(t, small, large, "individual SQL-bound and returned carrier sizes must not grow with corpus membership")
+}
+
 func TestDocumentPopulationPersonEdgeRouting(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
