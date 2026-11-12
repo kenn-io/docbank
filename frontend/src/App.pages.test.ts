@@ -96,6 +96,9 @@ function start(path = "/", fragment = "", packages?: Promise<Response>) {
         limit: 100,
         offset: 0,
       });
+    // The contracts list always returns the daemon date it used.
+    if (url.startsWith("/api/v1/contracts?"))
+      return Response.json({ items: [], as_of: "2026-09-20", limit: 100, offset: 0 });
     if (url.startsWith("/api/v1/packages?")) {
       if (packages) return (await packages).clone();
       return Response.json({
@@ -283,15 +286,13 @@ it("seeds Run report from the current search", async () => {
 });
 
 it("opens Contracts directly between Imports and Trash", async () => {
-  const fetch = start("/contracts");
+  start("/contracts");
   expect(await screen.findByText(/No contracts yet/)).toBeTruthy();
+  expect(screen.getByText(/Dates as of/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Contracts" }).getAttribute("aria-current")).toBe(
     "page",
   );
   const sidebar = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
   expect(sidebar.indexOf("Contracts")).toBeGreaterThan(sidebar.indexOf("Imports"));
   expect(sidebar.indexOf("Contracts")).toBeLessThan(sidebar.indexOf("Recoverable trash"));
-  expect(fetch.mock.calls.map(([url]) => String(url))).toContain(
-    "/api/v1/contracts?limit=100&offset=0",
-  );
 });

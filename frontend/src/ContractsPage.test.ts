@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 import ContractsPage from "./ContractsPage.svelte";
 import { drawerPage } from "./drawerNavigation.js";
 import type { Contract } from "./generated/docbank.js";
@@ -14,23 +15,26 @@ import {
 
 type Route = (url: URL) => Response | undefined | Promise<Response | undefined>;
 let requests: string[] = [];
+let bodies: Record<string, string> = {};
 
 function page(items: Contract[], asOf = "2027-01-01", limit = 100, offset = 0): Response {
   return Response.json({ items, as_of: asOf, limit, offset });
 }
+// many returns rows with canonical UUIDs; prefix is one hex letter.
 function many(count: number, prefix: string, overrides: Partial<Contract> = {}): Contract[] {
   return Array.from({ length: count }, (_, i) =>
     contract({
-      contract_id: `${prefix}${String(i).padStart(4, "0")}-0000-4000-8000-000000000000`,
+      contract_id: `${prefix.repeat(4)}${String(i).padStart(4, "0")}-0000-4000-8000-000000000000`,
       title: `${prefix} agreement ${i}`,
       ...overrides,
     }),
   );
 }
 function serve(route: Route) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://localhost");
     requests.push(url.pathname + url.search);
+    if (typeof init?.body === "string") bodies[url.pathname] = init.body;
     const response = await route(url);
     if (response) return response;
     throw new Error(`unexpected ${url.pathname}${url.search}`);
@@ -50,9 +54,18 @@ async function choose(name: RegExp, option: string) {
   await fireEvent.click(await screen.findByRole("option", { name: option }));
 }
 const list = (url: URL) => url.pathname === "/api/v1/contracts";
+// matching applies the list route's status and type filters to rows.
+const matching = (url: URL, rows: Contract[]) =>
+  rows.filter(
+    (row) =>
+      (!url.searchParams.has("status") ||
+        row.effective_status === url.searchParams.get("status")) &&
+      (!url.searchParams.has("type") || row.contract_type === url.searchParams.get("type")),
+  );
 
 beforeEach(() => {
   requests = [];
+  bodies = {};
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -103,14 +116,17 @@ describe("contracts page", () => {
   });
 
   it("filters by status and a seen type, then clears filters", async () => {
-    serve((url) => {
-      if (!list(url)) return undefined;
-      if (url.searchParams.get("type") === "licence") return page([]);
-      return page([
-        contract(),
-        contract({ contract_id: "b", title: "Software", contract_type: "licence" }),
-      ]);
-    });
+    const rows = [
+      contract(),
+      contract({
+        contract_id: "bbbbbbbb-0000-4000-8000-000000000000",
+        title: "Software",
+        contract_type: "licence",
+        status: "draft",
+        effective_status: "draft",
+      }),
+    ];
+    serve((url) => (list(url) ? page(matching(url, rows)) : undefined));
     show();
     await screen.findByRole("table", { name: "Contracts" });
     await choose(/^Status/, "Active");
@@ -128,17 +144,20 @@ describe("contracts page", () => {
     expect(await screen.findByText("No contracts match these filters.")).toBeTruthy();
     const clear = screen.getAllByRole("button", { name: "Clear filters" });
     await fireEvent.click(clear.at(-1)!);
-    await screen.findByRole("table", { name: "Contracts" });
+    expect(await screen.findByRole("button", { name: "Show contract Software" })).toBeTruthy();
     expect(requests.at(-1)).toBe("/api/v1/contracts?as_of=2027-01-01&limit=100&offset=0");
   });
 
-  it("computes the window from the daemon date and skips pages of expired rows", async () => {
+  it("keeps fetching hidden pages until a row is in the window or the list ends", async () => {
     const expired = many(100, "e", { expires_on: "2026-11-30", effective_status: "expired" });
     serve((url) => {
       if (!list(url)) return undefined;
       if (!url.searchParams.has("expiring_before")) return page([contract()], "2027-01-31");
       if (url.searchParams.get("offset") === "0") return page(expired, "2027-01-31");
-      return page([contract({ title: "Due soon", expires_on: "2027-02-10" })], "2027-01-31");
+      // Only the 30-day window has a visible row after the hidden page.
+      return url.searchParams.get("expiring_before") === "2027-03-03"
+        ? page([contract({ title: "Due soon", expires_on: "2027-02-10" })], "2027-01-31")
+        : page([], "2027-01-31");
     });
     show();
     await screen.findByRole("table", { name: "Contracts" });
@@ -149,33 +168,27 @@ describe("contracts page", () => {
       "/api/v1/contracts?expiring_before=2027-03-03&as_of=2027-01-31&limit=100&offset=100",
     ]);
     expect(screen.queryByText("e agreement 0")).toBeNull();
+    await choose(/^Expires/, "Within 90 days");
+    expect(await screen.findByText("No contracts match these filters.")).toBeTruthy();
+    expect(requests.filter((r) => r.includes("expiring_before=2027-05-02"))).toHaveLength(2);
+  });
+
+  it("captions the window by status: any status only when none is chosen", async () => {
+    serve((url) => (list(url) ? page([contract({ expires_on: "2027-01-20" })]) : undefined));
+    show();
+    await screen.findByRole("table", { name: "Contracts" });
+    await choose(/^Expires/, "Within 30 days");
     expect(screen.getByText(/in any status/).textContent).toMatch(/through/);
     await choose(/^Status/, "Active");
     await waitFor(() => expect(screen.queryByText(/in any status/)).toBeNull());
-    // Any chosen status narrows the window; only an unset status says "any".
     await choose(/^Status/, "Draft");
     await waitFor(() => expect(requests.at(-1)).toContain("status=draft"));
-    await screen.findByRole("button", { name: "Show contract Due soon" });
     const caption = screen.getByText(/Shows agreements expiring/).textContent ?? "";
     expect(caption).toMatch(/through/);
     expect(caption).not.toMatch(/in any status/);
   });
 
-  it("shows the filtered empty state only after the last hidden page", async () => {
-    const expired = many(100, "e", { expires_on: "2026-11-30" });
-    serve((url) => {
-      if (!list(url)) return undefined;
-      if (!url.searchParams.has("expiring_before")) return page([contract()]);
-      return page(url.searchParams.get("offset") === "0" ? expired : []);
-    });
-    show();
-    await screen.findByRole("table", { name: "Contracts" });
-    await choose(/^Expires/, "Within 90 days");
-    expect(await screen.findByText("No contracts match these filters.")).toBeTruthy();
-    expect(requests.filter((r) => r.includes("expiring_before"))).toHaveLength(2);
-  });
-
-  it("renews the daemon date before a horizon refresh shows rows", async () => {
+  it("renews the daemon date before requesting a horizon page on refresh", async () => {
     let date = "2027-01-01";
     serve((url) => (list(url) ? page([contract()], date) : undefined));
     show();
@@ -191,43 +204,29 @@ describe("contracts page", () => {
     ]);
   });
 
-  it("loads more rows by the returned count and keeps rows when a page fails", async () => {
+  it("keeps rows through a failed page and shows a repeated live row once", async () => {
+    const first = many(100, "a");
+    const added = contract({
+      contract_id: "bbbbbbbb-0000-4000-8000-000000000000",
+      title: "b added",
+    });
     let fail = true;
     serve((url) => {
       if (!list(url)) return undefined;
-      const offset = url.searchParams.get("offset");
-      if (offset === "0") return page(many(100, "a"));
+      if (url.searchParams.get("offset") === "0") return page(first);
       if (fail) {
         fail = false;
         return Response.json({ detail: "Daemon busy" }, { status: 503 });
       }
-      return page([]);
-    });
-    show();
-    await screen.findByRole("button", { name: "Show contract a agreement 99" });
-    await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Show contract a agreement 0" })).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
-    expect(screen.getAllByRole("row")).toHaveLength(101);
-    expect(requests.at(-1)).toBe("/api/v1/contracts?as_of=2027-01-01&limit=100&offset=100");
-  });
-
-  it("shows a contract once when a later live page repeats it", async () => {
-    const first = many(100, "a");
-    const added = contract({
-      contract_id: "b0000000-0000-4000-8000-000000000000",
-      title: "b added",
-    });
-    serve((url) => {
-      if (!list(url)) return undefined;
       // A concurrent insert ahead of the offset shifts the last row of the
       // first page onto the second page.
-      return url.searchParams.get("offset") === "0" ? page(first) : page([first[99]!, added]);
+      return page([first[99]!, added]);
     });
     show();
     await screen.findByRole("button", { name: "Show contract a agreement 99" });
+    await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Daemon busy");
+    expect(screen.getByRole("button", { name: "Show contract a agreement 0" })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(await screen.findByRole("button", { name: "Show contract b added" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Show contract a agreement 99" })).toHaveLength(1);
@@ -238,12 +237,21 @@ describe("contracts page", () => {
 
   it("ignores an older filter response", async () => {
     let releaseActive: (() => void) | undefined;
+    let staleParsed = false;
     serve(async (url) => {
       if (!list(url)) return undefined;
       const status = url.searchParams.get("status");
       if (status === "active") {
         await new Promise<void>((resolve) => (releaseActive = resolve));
-        return page([contract({ title: "Stale active" })]);
+        const stale = page([contract({ title: "Stale active" })]);
+        // The page handler continues in the microtasks after its body parses.
+        const json = stale.json.bind(stale);
+        stale.json = () =>
+          json().then((value) => {
+            staleParsed = true;
+            return value;
+          });
+        return stale;
       }
       if (status === "draft") return page([contract({ title: "Fresh draft" })]);
       return page([contract()]);
@@ -255,11 +263,13 @@ describe("contracts page", () => {
     await choose(/^Status/, "Draft");
     await screen.findByRole("button", { name: "Show contract Fresh draft" });
     releaseActive?.();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(staleParsed).toBe(true));
+    await tick();
     expect(screen.queryByText("Stale active")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show contract Fresh draft" })).toBeTruthy();
   });
 
-  it("retries after an error and reports an expired session", async () => {
+  it("retries after a list error", async () => {
     let calls = 0;
     serve((url) =>
       list(url)
@@ -273,9 +283,9 @@ describe("contracts page", () => {
     expect(screen.getByRole("combobox", { name: /^Status/ }).hasAttribute("disabled")).toBe(true);
     await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("table", { name: "Contracts" })).toBeTruthy();
+  });
 
-    cleanup();
-    vi.restoreAllMocks();
+  it("reports an expired session without an alert", async () => {
     serve(() => Response.json({ detail: "Session expired" }, { status: 401 }));
     const auth = show();
     await waitFor(() => expect(auth).toHaveBeenCalledOnce());
@@ -323,8 +333,11 @@ describe("contract detail", () => {
         return Response.json({ detail: "Not found" }, { status: 404 });
       if (url.pathname === `/api/v1/versions/${draftVersionID}`)
         return Response.json({ ...versionFixture(documents[1]!), mime_type: "text/plain" });
-      if (url.pathname.endsWith("/content")) return new Response("Synthetic draft text");
-      return Response.json({});
+      // The reader prepares the exact version it shows; the prepared bytes
+      // themselves are covered by the reader's own tests.
+      if (url.pathname === "/api/daemon/web-download")
+        return Response.json({ detail: "Preview unavailable" }, { status: 503 });
+      return undefined;
     };
   }
 
@@ -355,16 +368,8 @@ describe("contract detail", () => {
     ).toBe(true);
     expect(requests).not.toContain("/api/v1/nodes/414");
 
-    await fireEvent.click(screen.getByRole("button", { name: "All contracts" }));
-    await waitFor(() =>
-      expect(document.activeElement?.getAttribute("aria-label")).toBe(
-        "Show contract Northwind Storage - unit lease",
-      ),
-    );
-    expect(screen.getByRole("combobox", { name: /^Status/ }).textContent).toContain("Active");
-  });
-
-  it("shows empty parties, terms and documents", async () => {
+    cleanup();
+    vi.restoreAllMocks();
     const empty = contract({
       parties: [],
       documents: [],
@@ -380,6 +385,23 @@ describe("contract detail", () => {
     expect(screen.getByText("No documents linked.")).toBeTruthy();
   });
 
+  it("returns to the table with focus on the title and the filters kept", async () => {
+    serve(detailRoutes(() => Response.json(contract({ documents }))));
+    show();
+    await choose(/^Status/, "Active");
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Show contract Northwind Storage - unit lease" }),
+    );
+    await screen.findByRole("heading", { name: "Northwind Storage - unit lease" });
+    await fireEvent.click(screen.getByRole("button", { name: "All contracts" }));
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("aria-label")).toBe(
+        "Show contract Northwind Storage - unit lease",
+      ),
+    );
+    expect(screen.getByRole("combobox", { name: /^Status/ }).textContent).toContain("Active");
+  });
+
   it("opens the exact older version in the reader and returns focus", async () => {
     serve(detailRoutes(() => Response.json(contract({ documents }))));
     show();
@@ -387,7 +409,14 @@ describe("contract detail", () => {
     const open = await screen.findByRole("button", { name: "Open Draft lease-draft.txt" });
     await fireEvent.click(open);
     const reader = await screen.findByRole("dialog", { name: "Read lease-draft.txt" });
-    expect(requests).toContain(`/api/v1/versions/${draftVersionID}`);
+    await waitFor(() => expect(bodies["/api/daemon/web-download"]).toBeDefined());
+    expect(JSON.parse(bodies["/api/daemon/web-download"]!)).toMatchObject({
+      node_id: 413,
+      version_id: draftVersionID,
+      blob_hash: "b".repeat(64),
+      size: 2048,
+    });
+    expect(draftNode.current_version_id).not.toBe(draftVersionID);
     await fireEvent.click(within(reader).getAllByRole("button", { name: /Close/ })[0]!);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() =>
@@ -412,9 +441,14 @@ describe("contract detail", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("shows a failed refresh on the open contract and retries it", async () => {
+  it("refreshes the open contract through a failed list and its deletion", async () => {
     let listStatus = 200;
-    const routes = detailRoutes(() => Response.json(contract({ documents: [] })));
+    let detailStatus = 200;
+    const routes = detailRoutes(() =>
+      detailStatus === 200
+        ? Response.json(contract({ documents: [] }))
+        : Response.json({ detail: "Not found" }, { status: detailStatus }),
+    );
     serve((url) =>
       list(url) && listStatus !== 200
         ? Response.json({ detail: "Daemon busy" }, { status: listStatus })
@@ -434,21 +468,7 @@ describe("contract detail", () => {
     expect(
       await screen.findByRole("heading", { name: "Northwind Storage - unit lease" }),
     ).toBeTruthy();
-  });
-
-  it("keeps the open contract on refresh and shows when it was deleted", async () => {
-    let status = 200;
-    serve(
-      detailRoutes(() =>
-        status === 200
-          ? Response.json(contract({ documents: [] }))
-          : Response.json({ detail: "Not found" }, { status }),
-      ),
-    );
-    show();
-    await fireEvent.click(await screen.findByRole("button", { name: /^Show contract/ }));
-    await screen.findByRole("heading", { name: "Northwind Storage - unit lease" });
-    status = 404;
+    detailStatus = 404;
     await fireEvent.click(screen.getByRole("button", { name: "Refresh contracts" }));
     expect(await screen.findByText("This contract no longer exists.")).toBeTruthy();
     await fireEvent.click(screen.getAllByRole("button", { name: "All contracts" }).at(-1)!);

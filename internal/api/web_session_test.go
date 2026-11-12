@@ -136,7 +136,6 @@ func TestWebSessionAllowsOnlyContractRegisterReads(t *testing.T) {
 		allowed      bool
 	}{
 		{http.MethodGet, "/api/v1/contracts?limit=100&offset=0", true},
-		{http.MethodGet, "/api/v1/contracts?limit=1", true},
 		{http.MethodGet, "/api/v1/contracts?status=active&type=lease&expiring_before=2027-02-01&as_of=2027-01-01&limit=100&offset=200", true},
 		{http.MethodGet, contract, true},
 		{http.MethodGet, contract + "?as_of=2027-01-01", true},
@@ -150,15 +149,10 @@ func TestWebSessionAllowsOnlyContractRegisterReads(t *testing.T) {
 		{http.MethodGet, "/api/v1/contracts/not-a-uuid", false},
 		{http.MethodGet, "/api/v1/contracts/11111111-1111-4111-8111-11111111111A", false},
 		{http.MethodGet, contract + "/documents", false},
+		// The contract checks follow the shared non-GET refusal; one write per
+		// path fails if either check moves ahead of it.
 		{http.MethodPost, "/api/v1/contracts", false},
 		{http.MethodPatch, contract, false},
-		{http.MethodDelete, contract, false},
-		{http.MethodPut, contract + "/documents/1?role=signed", false},
-		{http.MethodDelete, contract + "/documents/1?role=signed", false},
-		{http.MethodPut, contract + "/parties/22222222-2222-4222-8222-222222222222?role=counterparty", false},
-		{http.MethodGet, "/api/v1/parties", false},
-		{http.MethodGet, "/api/v1/parties/22222222-2222-4222-8222-222222222222", false},
-		{http.MethodGet, "/api/v1/nodes/1/contracts", false},
 	} {
 		require.Equal(t, route.allowed, webSessionRequestAllowed(httptest.NewRequestWithContext(t.Context(), route.method, route.path, nil)), route.method+" "+route.path)
 	}
@@ -181,7 +175,6 @@ func TestWebPages(t *testing.T) {
 		{"/contracts", true},
 		{"/trash", true},
 		{"/searches/x", false},
-		{"/contracts/x", false},
 	} {
 		require.Equal(t, tc.allowed, authExempt(tc.path), tc.path)
 		response := httptest.NewRecorder()

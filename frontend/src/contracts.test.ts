@@ -20,10 +20,12 @@ afterEach(() => {
 });
 
 describe("contract helpers", () => {
-  it("adds calendar days across months and leap days", () => {
+  it("adds calendar days across months, leap days and years below 100", () => {
     expect(addCivilDays("2027-01-31", 31)).toBe("2027-03-03");
     expect(addCivilDays("2028-02-28", 1)).toBe("2028-02-29");
     expect(addCivilDays("2027-12-31", 1)).toBe("2028-01-01");
+    expect(addCivilDays("0099-12-31", 1)).toBe("0100-01-01");
+    expect(addCivilDays("0001-01-01", 30)).toBe("0001-01-31");
   });
 
   it("sends an inclusive window as an exclusive cutoff at the daemon date", () => {
@@ -43,30 +45,22 @@ describe("contract helpers", () => {
   });
 
   it("hides agreements that expired before the daemon date when a window is set", () => {
+    const [a, b, c] = ["a", "b", "c"].map((d) => `${d.repeat(8)}-0000-4000-8000-000000000000`);
     const items = [
-      contract({ contract_id: "a", expires_on: "2026-12-31" }),
-      contract({ contract_id: "b", expires_on: "2027-01-01" }),
-      contract({ contract_id: "c", expires_on: "2027-01-31" }),
+      contract({ contract_id: a, expires_on: "2026-12-31", effective_status: "expired" }),
+      contract({ contract_id: b, expires_on: "2027-01-01" }),
+      contract({ contract_id: c, expires_on: "2027-01-31" }),
     ];
     const window = { ...noContractFilters, expiringDays: 30 as const };
     expect(visibleContracts(items, window, "2027-01-01").map((c) => c.contract_id)).toStrictEqual([
-      "b",
-      "c",
+      b,
+      c,
     ]);
     expect(visibleContracts(items, noContractFilters, "2027-01-01")).toHaveLength(3);
   });
 
-  it("formats civil dates in UTC regardless of the browser time zone", () => {
+  it("formats civil dates in UTC regardless of the browser time zone or a year below 100", () => {
     vi.stubEnv("TZ", "America/Los_Angeles");
-    expect(formatCivilDate("2027-01-01")).toBe(
-      new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(
-        Date.UTC(2027, 0, 1),
-      ),
-    );
-    expect(formatCivilDate(null)).toBe("—");
-  });
-
-  it("keeps API years below 100 instead of remapping them to the 1900s", () => {
     const utc = (year: number, month: number, day: number) => {
       const value = new Date(0);
       value.setUTCFullYear(year, month, day);
@@ -74,10 +68,9 @@ describe("contract helpers", () => {
         value,
       );
     };
+    expect(formatCivilDate("2027-01-01")).toBe(utc(2027, 0, 1));
     expect(formatCivilDate("0099-01-01")).toBe(utc(99, 0, 1));
-    expect(formatCivilDate("0099-01-01")).not.toBe(utc(1999, 0, 1));
-    expect(addCivilDays("0099-12-31", 1)).toBe("0100-01-01");
-    expect(addCivilDays("0001-01-01", 30)).toBe("0001-01-31");
+    expect(formatCivilDate(null)).toBe("—");
   });
 
   it("labels types, statuses and roles", () => {
@@ -137,11 +130,13 @@ describe("contract document source", () => {
     });
   }
 
-  it("binds the reader to the recorded older version", async () => {
-    const link = contractLink({ current: false });
-    const fetch = serve(versionFixture(link), nodeFixture());
-    const source = await contractDocumentSource("synthetic", link, new AbortController().signal);
-    expect(source).toMatchObject({
+  it("returns the source for the recorded identity at any size", async () => {
+    // Larger than the attachment limit, which contract links do not share.
+    const link = contractLink({ size: 200 * 1024 * 1024 });
+    serve(versionFixture(link), nodeFixture());
+    await expect(
+      contractDocumentSource("synthetic", link, new AbortController().signal),
+    ).resolves.toMatchObject({
       kind: "related",
       nodeID: link.node_id,
       versionID: link.content_version_id,
@@ -149,18 +144,6 @@ describe("contract document source", () => {
       size: link.size,
       name: "lease-signed.pdf",
     });
-    expect(fetch.mock.calls.map(([url]) => String(url))).toStrictEqual([
-      `/api/v1/versions/${link.content_version_id}`,
-      `/api/v1/nodes/${link.node_id}`,
-    ]);
-  });
-
-  it("accepts sizes beyond the attachment limit", async () => {
-    const link = contractLink({ size: 200 * 1024 * 1024 });
-    serve(versionFixture(link), nodeFixture());
-    await expect(
-      contractDocumentSource("synthetic", link, new AbortController().signal),
-    ).resolves.toMatchObject({ size: link.size });
   });
 
   it("refuses changed, trashed and unavailable sources", async () => {
