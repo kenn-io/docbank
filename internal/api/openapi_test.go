@@ -879,4 +879,22 @@ func TestPartyRequestSchemas(t *testing.T) {
 		fields = append(fields, option.Required...)
 	}
 	assert.ElementsMatch(t, []string{"kind", "display_name", "legal_name", "country", "person_id", "own"}, fields)
+	for _, name := range []string{"CreateContractRequest", "PatchContractRequest"} {
+		schema := schemas[name]
+		require.NotNil(t, schema)
+		assert.Equal(t, 1, *schema.Properties["title"].MinLength)
+		assert.Equal(t, 300, *schema.Properties["title"].MaxLength)
+		assert.Equal(t, `^([a-z0-9_]{1,64})?$`, schema.Properties["contract_type"].Pattern)
+		assert.ElementsMatch(t, []any{"draft", "pending_signature", "active", "terminated", "cancelled"}, schema.Properties["status"].Enum)
+		for _, field := range []string{"starts_on", "expires_on", "signed_on"} {
+			assert.Equal(t, "date", schema.Properties[field].Format)
+		}
+		assert.Nil(t, schema.Properties["summary"].MaxLength)
+	}
+	var contractFields []string
+	for _, option := range schemas["PatchContractRequest"].AnyOf {
+		contractFields = append(contractFields, option.Required...)
+	}
+	assert.ElementsMatch(t, []string{"title", "contract_type", "status", "starts_on", "expires_on", "signed_on", "summary", "purpose", "consideration", "termination"}, contractFields)
+
 }

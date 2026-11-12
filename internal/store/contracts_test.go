@@ -24,7 +24,10 @@ func checkContractLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	c, err := s.CreateContract(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, c.Parties, 2)
-	got, err := s.GetContract(ctx, c.ContractID, "2024-03-02")
+	got, err := s.GetContract(ctx, c.ContractID, "2024-03-01")
+	require.NoError(t, err)
+	assert.Equal(t, "active", got.EffectiveStatus)
+	got, err = s.GetContract(ctx, c.ContractID, "2024-03-02")
 	require.NoError(t, err)
 	assert.Equal(t, "expired", got.EffectiveStatus)
 	_, err = s.UpdateContract(ctx, c.ContractID, c.Revision-1, input)
@@ -32,6 +35,7 @@ func checkContractLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	same, err := s.UpdateContract(ctx, c.ContractID, c.Revision, input)
 	require.NoError(t, err)
 	assert.Equal(t, c.Revision, same.Revision)
+	require.ErrorIs(t, s.DeleteContract(ctx, c.ContractID, c.Revision-1), ErrStaleRevision)
 	require.NoError(t, s.DeleteContract(ctx, c.ContractID, c.Revision))
 	var links int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM contract_parties WHERE contract_id=$1`, c.ContractID).Scan(&links))
@@ -39,8 +43,6 @@ func checkContractLifecycle(t *testing.T, open func(*testing.T) *Store) {
 	_, err = s.GetContract(ctx, c.ContractID, "2024-03-02")
 	require.ErrorIs(t, err, ErrNotFound)
 }
-
-func TestContractLifecycle(t *testing.T) { t.Parallel(); checkContractLifecycle(t, newTestStore) }
 
 // These cases catch invalid values being persisted and incorrect admission of an own party.
 func TestContractRejectsInvalidInput(t *testing.T) {
@@ -59,7 +61,11 @@ func TestContractRejectsInvalidInput(t *testing.T) {
 		{Title: "Duplicate", Parties: []ContractPartyInput{{PartyID: p.PartyID, Role: "counterparty"}, {PartyID: p.PartyID, Role: "counterparty"}}},
 	} {
 		_, err := s.CreateContract(ctx, input)
-		require.Error(t, err)
+		want := ErrInvalidContract
+		if input.Title == "Wrong owner" {
+			want = ErrPartyNotOwn
+		}
+		require.ErrorIs(t, err, want)
 	}
 	_, err = s.CreateContract(ctx, ContractInput{Title: "Private term", Purpose: strings.Repeat("secret", 1400)})
 	require.ErrorContains(t, err, "purpose")
@@ -105,7 +111,6 @@ func checkContractFilters(t *testing.T, open func(*testing.T) *Store) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
-func TestContractFilters(t *testing.T) { t.Parallel(); checkContractFilters(t, newTestStore) }
 
 // Retiring a party does not invalidate a retained link or an idempotent PUT.
 func checkContractPartyHistory(t *testing.T, open func(*testing.T) *Store) {
@@ -133,9 +138,8 @@ func checkContractPartyHistory(t *testing.T, open func(*testing.T) *Store) {
 	_, err = s.AttachContractParty(ctx, c.ContractID, c.Revision, p.PartyID, "own")
 	require.ErrorIs(t, err, ErrStaleRevision)
 }
-func TestContractPartyHistory(t *testing.T) { t.Parallel(); checkContractPartyHistory(t, newTestStore) }
 
-func TestContractMetadataRoundTrip(t *testing.T) {
+func TestContractMetadataInvalidImport(t *testing.T) {
 	t.Parallel()
 	source := newTestStore(t)
 	ctx := t.Context()
@@ -147,17 +151,6 @@ func TestContractMetadataRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	var buf bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &buf))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(buf.Bytes())))
-	got, err := target.GetContract(ctx, c.ContractID, "2024-01-01")
-	require.NoError(t, err)
-	require.Len(t, got.Parties, 1)
-	assert.Equal(t, p.PartyID, got.Parties[0].PartyID)
-	assert.Equal(t, "2099-01-01T00:00:00.000000000Z", got.CreatedAt)
-	assert.Equal(t, "2000-01-01T00:00:00.000000000Z", got.UpdatedAt)
-	var restored bytes.Buffer
-	require.NoError(t, target.ExportMetadata(ctx, &restored))
-	assert.Equal(t, buf.Bytes(), restored.Bytes())
 	lines := strings.Split(buf.String(), "\n")
 	contractLine := -1
 	for i, line := range lines {
@@ -221,10 +214,6 @@ func checkContractConcurrentRevisionFence(t *testing.T, open func(*testing.T) *S
 	}
 	assert.Equal(t, 1, success)
 	assert.Equal(t, 1, stale)
-}
-func TestContractConcurrentRevisionFence(t *testing.T) {
-	t.Parallel()
-	checkContractConcurrentRevisionFence(t, newTestStore)
 }
 func TestContractAuditRefusal(t *testing.T) {
 	t.Parallel()

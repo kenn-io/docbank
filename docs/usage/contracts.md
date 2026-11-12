@@ -1,9 +1,11 @@
 ---
-title: Contracts and parties
+title: Contracts
 description: Register agreements and reusable parties in Docbank.
 ---
 
-# Parties
+# Contracts
+
+## Parties
 
 A party is a person or organization you refer to in your records. Create one
 entry for each entity or counterparty, then reuse its stable ID. Mark your own

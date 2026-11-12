@@ -104,7 +104,7 @@ func newContractListCommand() *cobra.Command {
 				return err
 			}
 		}
-		return nil
+		return writeContinuation(cmd.OutOrStdout(), "contracts", page.Limit, page.Offset, len(page.Items))
 	}}
 	f := cmd.Flags()
 	f.StringVar(&status, "status", "", "effective status")

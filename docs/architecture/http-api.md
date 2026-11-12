@@ -128,6 +128,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /versions/{version_id}/email/generations/{generation_id}/parts/{part_path}/{role}` | stream one verified raw-header, decoded-payload, or UTF-8 body artifact | Implemented |
 | `GET /content-references?sha256=&limit=&offset=` | find every stable node/version pair retaining a content hash | Implemented |
 | `GET /duplicates?limit=&offset=` | list live current documents sharing content, with exact counts and bounded reference previews | Implemented |
+| `GET\|POST /contracts` · `GET\|PATCH\|DELETE /contracts/{contract_id}` · `PUT\|DELETE /contracts/{contract_id}/parties/{party_id}` | list and manage contracts and their party links | Implemented |
 | `GET\|POST /parties` · `GET\|PATCH /parties/{party_id}` · `POST /parties/{party_id}/retire` | list, create, inspect, edit, or retire parties | Implemented |
 | `GET\|POST /tags` · `GET /tags/by-name` · `GET\|PATCH\|DELETE /tags/{tag_id}` | list, resolve, create, rename, or delete stable tag definitions | Implemented |
 | `GET /nodes/{id}/tags` · `GET /tags/{tag_id}/nodes` · `PUT\|DELETE /nodes/{id}/tags/{tag_id}` · `PUT\|DELETE /path/tags/{tag_id}` | inspect and change tag assignments | Implemented |
@@ -1742,6 +1743,7 @@ and maintenance are exceptions:
 | `POST /nodes/{id}/trash` | required: target node's revision |
 | `POST /nodes/{id}/restore` | required: target node's revision |
 | `POST /nodes/{id}/verify` | required: binds the evidence to the node state the caller inspected |
+| `PATCH` or `DELETE /contracts/{contract_id}`, `PUT` or `DELETE /contracts/{contract_id}/parties/{party_id}` | required: contract revision |
 | `PATCH /parties/{party_id}`, `POST /parties/{party_id}/retire` | required: party revision |
 | `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}` | required: tag definition/assignment-set revision |
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required: saved-definition revision |

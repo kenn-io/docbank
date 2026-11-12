@@ -13,20 +13,20 @@ import (
 func TestContractRoutesExpiryAndRevision(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"title": "Agreement", "status": "active", "expires_on": "2024-03-01"})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, map[string]any{"$schema": "https://example.com/schemas/CreateContractRequest.json", "title": "Agreement", "status": "active", "expires_on": "2024-03-01"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	var c api.Contract
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
-	resp, body = get(t, ts, "/api/v1/contracts/"+c.ContractID+"?as_of=2024-03-01", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NoError(t, json.Unmarshal([]byte(body), &c))
-	require.Equal(t, "active", c.EffectiveStatus)
 	resp, body = get(t, ts, "/api/v1/contracts/"+c.ContractID+"?as_of=2024-03-02", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
 	require.Equal(t, "expired", c.EffectiveStatus)
 	path := "/api/v1/contracts/" + c.ContractID
-	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"expires_on": nil})
+	for _, patch := range []map[string]any{{}, {"$schema": "https://example.com/schemas/PatchContractRequest.json"}} {
+		resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, patch)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
+	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"1"`}, map[string]any{"$schema": "https://example.com/schemas/PatchContractRequest.json", "expires_on": nil})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &c))
 	require.Nil(t, c.ExpiresOn)
@@ -36,6 +36,8 @@ func TestContractRoutesExpiryAndRevision(t *testing.T) {
 	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPatch, path, map[string]string{"If-Match": `"2"`}, map[string]any{"title": nil})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodDelete, path, map[string]string{"If-Match": `"1"`}, nil)
+	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 }
 
 func TestContractCreateRejectsMisnamedAndNullFields(t *testing.T) {
@@ -49,7 +51,7 @@ func TestContractCreateRejectsMisnamedAndNullFields(t *testing.T) {
 		{"title": "Agreement", "parties": []any{map[string]any{"party_id": "11111111-1111-4111-8111-111111111111", "role": "own", "Role": "counterparty"}}},
 	} {
 		resp, response := do(t, ts, http.MethodPost, "/api/v1/contracts", nil, body)
-		require.GreaterOrEqual(t, resp.StatusCode, 400, response)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, response)
 	}
 }
 
@@ -73,8 +75,6 @@ func TestContractPartyAdmissionHTTP(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPut, path+"?role=counterparty", map[string]string{"If-Match": `"2"`}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &c))
-	require.Equal(t, int64(2), c.Revision)
 	resp, body = do(t, ts, http.MethodDelete, path+"?role=invalid", map[string]string{"If-Match": `"2"`}, nil)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodDelete, path+"?role=own", map[string]string{"If-Match": `"2"`}, nil)

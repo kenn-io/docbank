@@ -59,7 +59,7 @@ func newPartyCommand() *cobra.Command {
 				return err
 			}
 		}
-		return writePartyContinuation(cmd.OutOrStdout(), page)
+		return writeContinuation(cmd.OutOrStdout(), "parties", page.Limit, page.Offset, len(page.Items))
 	}}
 	list.Flags().StringVar(&kind, "kind", "", "filter person or organization")
 	list.Flags().BoolVar(&own, "own", false, "filter own entities")
@@ -191,13 +191,12 @@ func newPartyCommand() *cobra.Command {
 	return root
 }
 
-// writePartyContinuation hints at the next page after a full one. The API
-// reports no total, so a full page only means more parties may exist.
-func writePartyContinuation(w io.Writer, page api.PartyPage) error {
-	if page.Limit <= 0 || len(page.Items) < page.Limit {
+// writeContinuation hints at another page when the API has no total.
+func writeContinuation(w io.Writer, resource string, limit, offset, count int) error {
+	if limit <= 0 || count < limit {
 		return nil
 	}
-	if _, err := fmt.Fprintf(w, "limit reached: more parties may exist; repeat this command with --offset %d to continue\n", page.Offset+len(page.Items)); err != nil {
+	if _, err := fmt.Fprintf(w, "limit reached: more %s may exist; repeat this command with --offset %d to continue\n", resource, offset+count); err != nil {
 		return fmt.Errorf("write continuation: %w", err)
 	}
 	return nil

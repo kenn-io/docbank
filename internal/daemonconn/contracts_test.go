@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,12 +15,14 @@ import (
 func TestContractClientEditSendsExplicitEmptyValues(t *testing.T) {
 	t.Parallel()
 	const id = "11111111-1111-4111-8111-111111111111"
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		assert.Equal(t, http.MethodPatch, r.Method)
 		assert.Equal(t, "/api/v1/contracts/"+id, r.URL.Path)
 		assert.Equal(t, `"2"`, r.Header.Get("If-Match"))
 		var body map[string]any
-		require.NoError(t, json.UnmarshalRead(r.Body, &body))
+		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
 		assert.Equal(t, map[string]any{
 			"title": "", "contract_type": "", "status": "", "starts_on": "", "expires_on": nil,
 			"summary": "", "purpose": "", "consideration": "", "termination": "",
@@ -33,4 +36,5 @@ func TestContractClientEditSendsExplicitEmptyValues(t *testing.T) {
 		Summary: new(""), Purpose: new(""), Consideration: new(""), Termination: new(""),
 	})
 	require.Error(t, err)
+	assert.EqualValues(t, 1, calls.Load())
 }

@@ -85,6 +85,30 @@ type CreateContractRequest struct {
 	Parties       []ContractPartyInput `json:"parties,omitempty"`
 }
 
+// TransformSchema publishes the representable contract input constraints.
+func (CreateContractRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	return contractRequestSchema(schema)
+}
+
+func (PatchContractRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	contractRequestSchema(schema)
+	for _, field := range []string{"title", "contract_type", "status", "starts_on", "expires_on", "signed_on", "summary", "purpose", "consideration", "termination"} {
+		schema.AnyOf = append(schema.AnyOf, &huma.Schema{Required: []string{field}})
+	}
+	return schema
+}
+
+func contractRequestSchema(schema *huma.Schema) *huma.Schema {
+	schema.Properties["title"].MinLength = new(1)
+	schema.Properties["title"].MaxLength = new(300)
+	schema.Properties["contract_type"].Pattern = `^([a-z0-9_]{1,64})?$`
+	schema.Properties["status"].Enum = []any{"draft", "pending_signature", "active", "terminated", "cancelled"}
+	for _, field := range []string{"starts_on", "expires_on", "signed_on"} {
+		schema.Properties[field].Format = "date"
+	}
+	return schema
+}
+
 // UnmarshalJSON rejects ignored or null nonnullable create members.
 func (p *CreateContractRequest) UnmarshalJSON(raw []byte) error {
 	type fields CreateContractRequest
@@ -98,7 +122,7 @@ func (p *CreateContractRequest) UnmarshalJSON(raw []byte) error {
 			if string(value) == "null" {
 				return fmt.Errorf("%s cannot be null", key)
 			}
-		case "starts_on", "expires_on", "signed_on":
+		case "starts_on", "expires_on", "signed_on", "$schema":
 		default:
 			return fmt.Errorf("unknown field %s", key)
 		}
@@ -143,10 +167,14 @@ func (p *PatchContractRequest) UnmarshalJSON(raw []byte) error {
 			if string(v) == "null" {
 				return fmt.Errorf("%s cannot be null", k)
 			}
-		case "starts_on", "expires_on", "signed_on":
+		case "starts_on", "expires_on", "signed_on", "$schema":
 		default:
 			return fmt.Errorf("unknown field %s", k)
 		}
+	}
+	delete(m, "$schema")
+	if len(m) == 0 {
+		return fmt.Errorf("contract patch must contain a field")
 	}
 	var f fields
 	if err := json.Unmarshal(raw, &f); err != nil {
