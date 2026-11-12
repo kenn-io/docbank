@@ -84,7 +84,6 @@
   let selectedImport = $state("");
   let savedImport = $state<SavedPhotoImport>();
   let registered = $state(false);
-  let registrationUncertain = $state(false);
   let extraFiles = $state<string[]>([]);
   let pickerKind: "files" | "folder" = "files";
   const checkpointVaultID = $derived(vaultID);
@@ -274,7 +273,6 @@
     pickerKind = kind;
     interruptedPlan = undefined;
     registered = false;
-    registrationUncertain = false;
     sourceID = "";
     selectedFiles = files;
     await plan(true);
@@ -347,7 +345,6 @@
     selectedImport = saved.import_id;
     importID = saved.import_id;
     registered = true;
-    registrationUncertain = false;
     destination = saved.destination;
     plannedDestination = destination;
     plannedChannel = activeChannel;
@@ -380,27 +377,12 @@
   }
 
   async function inspectCurrentImport(): Promise<void> {
-    if ((!registered && !registrationUncertain) || running || planning || disabledReason) return;
-    const activeChannel = channel;
+    if (!registered || running || planning || disabledReason) return;
     planning = true;
     try {
-      await inspectAndApply(
-        registrationUncertain ? sourceID : importID,
-        true,
-        registrationUncertain,
-      );
+      await inspectAndApply(importID, true);
     } catch (cause) {
-      if (
-        registrationUncertain &&
-        cause instanceof APIError &&
-        cause.status === 404 &&
-        channel === activeChannel &&
-        !destroyed
-      ) {
-        registrationUncertain = false;
-        plannedChannel = undefined;
-        error = "";
-      } else showError(cause);
+      showError(cause);
     } finally {
       planning = false;
     }
@@ -537,6 +519,9 @@
         (active.signal.aborted || destroyed || channel !== planChannel || destination !== target)
       )
         return;
+      const savedPlan = plan.groups.length
+        ? await planChannel.registerPhotoImport(plan.import_id, active.signal)
+        : "";
       if (!reconnect && !sessionOnly) {
         await replaceCheckpoint(currentStorage, plan.groups.length ? next : undefined, expected);
       }
@@ -566,7 +551,7 @@
       });
       for (const state of Object.keys(counts) as Item["state"][])
         counts[state] = items.filter((item) => item.state === state).length;
-      importID = plan.import_id;
+      importID = savedPlan || plan.import_id;
       unsupported = plan.unsupported.map((index) => ({
         name: localFilePath(files[index]),
         reason: plan.skip_reasons?.[index] ?? "Skipped",
@@ -607,15 +592,7 @@
   }
 
   async function start(): Promise<void> {
-    if (
-      running ||
-      planning ||
-      disabledReason ||
-      !checkpointReady ||
-      !pending ||
-      registrationUncertain
-    )
-      return;
+    if (running || planning || disabledReason || !checkpointReady || !pending) return;
     const runChannel = channel;
     if (
       !savedImport &&
@@ -666,17 +643,7 @@
         }
         savedImport = latest;
         plannedChannel = runChannel;
-      } else if (!registered) {
-        registrationUncertain = true;
-        try {
-          importID = await channel.registerPhotoImport(importID, controller.signal);
-        } catch (cause) {
-          if (cause instanceof APIError) registrationUncertain = false;
-          throw cause;
-        }
-        registered = true;
-        registrationUncertain = false;
-      }
+      } else if (!registered) registered = true;
       for (const item of items) {
         if (stopping || disabledReason || controller.signal.aborted) break;
         if (item.state !== "ready" && item.state !== "failed") continue;
@@ -848,7 +815,7 @@
               : inspectSavedImport())}><SearchIcon size="14" />Inspect import</Button
         >
       {/if}
-      {#if savedImport || registered || registrationUncertain}
+      {#if savedImport || registered}
         <Button
           size="sm"
           surface="soft"
@@ -860,12 +827,11 @@
             selectedFiles = [];
             items = [];
             registered = false;
-            registrationUncertain = false;
             for (const state of Object.keys(counts) as Item["state"][]) counts[state] = 0;
           }}><PlusIcon size="14" />Start new import</Button
         >
       {/if}
-      {#if checkpoint && checkpoint !== missingCheckpoint && !items.length && !savedImport && !registered && !registrationUncertain}
+      {#if checkpoint && checkpoint !== missingCheckpoint && !items.length && !savedImport && !registered}
         <Button
           size="sm"
           surface="soft"
@@ -883,8 +849,7 @@
           running ||
           planning ||
           !!disabledReason ||
-          (registered && !savedImport) ||
-          registrationUncertain}
+          (registered && !savedImport)}
         filesLabel="Choose photo files"
         folderLabel="Choose photo folder"
         onopen={() => {
@@ -932,7 +897,7 @@
           </li>{/each}
       </ul>
       <div class="controls">
-        {#if ((registered && (counts.unconfirmed > 0 || counts.pending > 0)) || registrationUncertain) && !(savedImports.length && selectedImport === importID && registered)}
+        {#if registered && (counts.unconfirmed > 0 || counts.pending > 0) && !(savedImports.length && selectedImport === importID && registered)}
           <Button
             size="sm"
             surface="soft"
@@ -946,12 +911,7 @@
             size="sm"
             tone="info"
             surface="solid"
-            disabled={!checkpointReady ||
-              running ||
-              planning ||
-              !pending ||
-              !!disabledReason ||
-              registrationUncertain}
+            disabled={!checkpointReady || running || planning || !pending || !!disabledReason}
             onclick={() => void start()}
             >{#if savedImport}<RotateCcwIcon size="14" />Resume remaining{:else}<PlusIcon
                 size="14"
