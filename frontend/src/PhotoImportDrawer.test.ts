@@ -809,42 +809,6 @@ it("inspects a checkpoint's saved receipt before sending groups", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
-it("keeps a missing saved import unconfirmed", async () => {
-  const selected = [files()[0]];
-  const { photoImportManifest } = await import("./photoImportStorage.js");
-  savedImports.set("missing-saved", {
-    sourceID: "source",
-    revision: "revision",
-    destination: "/photos",
-    manifestVersion: 2,
-    manifestHash: photoImportManifest(selected).digest,
-    pickerKind: "files",
-  });
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi.fn(),
-    registerPhotoImport: vi.fn(),
-    listPhotoImports: vi.fn().mockResolvedValue([]),
-    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
-    uploadPhotoGroup: vi.fn(),
-  };
-  render(PhotoImportDrawer, {
-    channel,
-    vaultID: "missing-saved",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
-  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: selected },
-  });
-  await screen.findByText(
-    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
-  );
-  expect(channel.planPhotoImport).not.toHaveBeenCalled();
-});
-
 it("uploads after registration without a redundant checkpoint write", async () => {
   const module = await import("./photoImportStorage.js");
   const createStorage = module.photoImportStorage;
@@ -983,6 +947,8 @@ it("requires a new import when a closed preview cannot be distinguished from an 
   await screen.findByText(
     "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
   );
+  expect(screen.queryByRole("button", { name: "Resume import" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Choose files" })).toHaveProperty("disabled", false);
   expect(channel.planPhotoImport).toHaveBeenCalledOnce();
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
   await fireEvent.change(screen.getByLabelText("Choose photo files"), {
@@ -992,45 +958,6 @@ it("requires a new import when a closed preview cannot be distinguished from an 
   await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
   await waitFor(() => expect(channel.uploadPhotoGroup).toHaveBeenCalledOnce());
   expect(savedImports.get("preview-resume")?.sourceID).not.toBe(originalSource);
-});
-
-it("keeps a missing legacy import unconfirmed", async () => {
-  const { photoImportManifest } = await import("./photoImportStorage.js");
-  const selected = [files()[0]];
-  savedImports.set("legacy", {
-    sourceID: "legacy-source",
-    revision: "legacy-revision",
-    destination: "/photos",
-    manifestVersion: 2,
-    manifestHash: photoImportManifest(selected).digest,
-    pickerKind: "files",
-  });
-  const channel: PhotoImportTransport = {
-    planPhotoImport: vi
-      .fn()
-      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
-    registerPhotoImport: vi.fn().mockResolvedValue("saved"),
-    listPhotoImports: vi.fn().mockResolvedValue([]),
-    inspectPhotoImport: vi.fn().mockRejectedValue(new APIError("Not found", 404, "not_found")),
-    uploadPhotoGroup: vi.fn().mockResolvedValue({ status: "added" }),
-  };
-  render(PhotoImportDrawer, {
-    channel,
-    vaultID: "legacy",
-    session: "session",
-    onclose: vi.fn(),
-    oncomplete: vi.fn(),
-    onauthfailure: vi.fn(),
-  });
-  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
-  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
-    target: { files: selected },
-  });
-  await screen.findByText(
-    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.",
-  );
-  expect(channel.planPhotoImport).not.toHaveBeenCalled();
-  expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
 it("allows retry after a rejected registration", async () => {

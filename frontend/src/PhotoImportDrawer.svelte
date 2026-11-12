@@ -74,6 +74,8 @@
     error?: string;
   };
   let checkpoint = $state<PhotoImportCheckpoint>();
+  const missingImportMessage =
+    "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.";
   let resuming = false;
   let replacingConfirmed = false;
   let savedImports = $state<SavedPhotoImport[]>([]);
@@ -246,8 +248,7 @@
           return;
         }
         resuming = false;
-        error =
-          "Import outcome is unconfirmed. Check the destination for imported files, then start a new import with the remaining files.";
+        error = missingImportMessage;
         return;
       }
     }
@@ -863,7 +864,7 @@
           }}><PlusIcon size="14" />Start new import</Button
         >
       {/if}
-      {#if checkpoint && !items.length && !savedImport && !registered && !registrationUncertain}
+      {#if checkpoint && !items.length && !savedImport && !registered && !registrationUncertain && error !== missingImportMessage}
         <Button
           size="sm"
           surface="soft"
