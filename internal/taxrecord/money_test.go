@@ -33,3 +33,12 @@ func TestTaxMoneyCurrencyErrorField(t *testing.T) {
 		t.Fatalf("currency: %v", err)
 	}
 }
+
+func TestTaxMoneyOverflowAfterPadding(t *testing.T) {
+	if got, err := ParseMoney("92233720368547758.07", "USD"); err != nil || got != math.MaxInt64 {
+		t.Fatalf("maximum: %d %v", got, err)
+	}
+	if _, err := ParseMoney("92233720368547758.08", "USD"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("overflow: %v", err)
+	}
+}

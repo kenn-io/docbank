@@ -173,3 +173,18 @@ func TestTaxRecordAuthorityAndReplacement(t *testing.T) {
 	require.ErrorIs(t, err, taxrecord.ErrInvalid)
 	require.ErrorContains(t, err, "account identity is immutable")
 }
+
+func TestTaxRecordUpdatePeriodCollision(t *testing.T) {
+	t.Parallel()
+	s, a, r := taxFixture(t)
+	ctx := t.Context()
+	input := TaxRecordInput{AccountID: &a.AccountID, Kind: "filing", Title: "Another", PeriodStart: new("2025-01-01"), PeriodEnd: new("2025-12-31")}
+	other, err := s.CreateTaxRecord(ctx, input)
+	require.NoError(t, err)
+	input.PeriodStart, input.PeriodEnd = r.PeriodStart, r.PeriodEnd
+	_, err = s.UpdateTaxRecord(ctx, other.RecordID, other.Revision, input)
+	require.ErrorIs(t, err, ErrExists)
+	got, err := s.GetTaxRecord(ctx, other.RecordID)
+	require.NoError(t, err)
+	assert.Equal(t, other, got)
+}

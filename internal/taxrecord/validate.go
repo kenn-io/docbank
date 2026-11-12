@@ -76,13 +76,22 @@ func rawLocation(country, subdivision, code string) error {
 	}
 	return nil
 }
-func location(country, subdivision, code string, requireCurrency bool) error {
+
+// ValidateCountry checks a canonical tax country code.
+func ValidateCountry(country string) error {
 	if len(country) != 2 || country[0] < 'A' || country[0] > 'Z' || country[1] < 'A' || country[1] > 'Z' {
 		return invalid("country", "invalid country")
 	}
 	region, err := language.ParseRegion(country)
 	if err != nil || region.String() != country || (!region.IsCountry() && country != "ZZ") {
 		return invalid("country", "invalid country")
+	}
+	return nil
+}
+
+func location(country, subdivision, code string, requireCurrency bool) error {
+	if err := ValidateCountry(country); err != nil {
+		return err
 	}
 	if subdivision != "" {
 		if len(subdivision) < 4 || len(subdivision) > 6 || !strings.HasPrefix(subdivision, country+"-") {
@@ -153,6 +162,26 @@ func ValidState(state string) bool {
 	}
 }
 
+// NormalizeTaxKind bounds and canonicalizes a tax kind.
+func NormalizeTaxKind(s string) (string, error) {
+	if err := text(s, "tax_kind", 256, 0, true, false); err != nil {
+		return "", err
+	}
+	s = label(s)
+	return s, ValidateTaxKind(s)
+}
+
+// ValidateTaxKind checks a canonical retained tax kind.
+func ValidateTaxKind(s string) error {
+	if err := text(s, "tax_kind", 256, 64, true, false); err != nil {
+		return err
+	}
+	if label(s) != s {
+		return invalid("tax_kind", "not canonical")
+	}
+	return nil
+}
+
 // NormalizeAccount canonicalizes and validates account input.
 func NormalizeAccount(v AccountValues) (AccountValues, error) {
 	if err := rawLocation(v.Country, v.Subdivision, v.Currency); err != nil {
@@ -167,10 +196,11 @@ func NormalizeAccount(v AccountValues) (AccountValues, error) {
 			return v, invalid(item.field, "invalid length or text")
 		}
 	}
-	if err := text(v.TaxKind, "tax_kind", 256, 0, true, false); err != nil {
+	kind, err := NormalizeTaxKind(v.TaxKind)
+	if err != nil {
 		return v, err
 	}
-	v.TaxKind = label(v.TaxKind)
+	v.TaxKind = kind
 	v.Country = strings.ToUpper(v.Country)
 	v.Subdivision = strings.ToUpper(v.Subdivision)
 	v.Currency = strings.ToUpper(v.Currency)
@@ -186,11 +216,8 @@ func ValidateAccount(v AccountValues) error {
 	if v.FilerPartyID == "" {
 		return invalid("filer_party_id", "required")
 	}
-	if err := text(v.TaxKind, "tax_kind", 256, 64, true, false); err != nil {
+	if err := ValidateTaxKind(v.TaxKind); err != nil {
 		return err
-	}
-	if label(v.TaxKind) != v.TaxKind {
-		return invalid("tax_kind", "not canonical")
 	}
 	for _, item := range []struct {
 		field, value string
@@ -228,12 +255,16 @@ func NormalizeRecord(v RecordValues) (RecordValues, error) {
 	for _, item := range []struct {
 		field, value string
 		limit        int
-	}{{"title", v.Title, 1200}, {"tax_kind", v.TaxKind, 256}, {"form_code", v.FormCode, 256}} {
+	}{{"title", v.Title, 1200}, {"form_code", v.FormCode, 256}} {
 		if err := text(item.value, item.field, item.limit, 0, false, false); err != nil {
 			return v, err
 		}
 	}
-	v.Title, v.TaxKind, v.FormCode = label(v.Title), label(v.TaxKind), label(v.FormCode)
+	kind, err := NormalizeTaxKind(v.TaxKind)
+	if err != nil {
+		return v, err
+	}
+	v.Title, v.TaxKind, v.FormCode = label(v.Title), kind, label(v.FormCode)
 	v.Country, v.Subdivision, v.Currency = strings.ToUpper(v.Country), strings.ToUpper(v.Subdivision), strings.ToUpper(v.Currency)
 	v.Note, v.VerificationNote = note(v.Note), note(v.VerificationNote)
 	return v, ValidateRecord(v)
@@ -251,13 +282,16 @@ func ValidateRecord(v RecordValues) error {
 		field, value string
 		bytes, runes int
 		required     bool
-	}{{"title", v.Title, 1200, 300, true}, {"tax_kind", v.TaxKind, 256, 64, true}, {"form_code", v.FormCode, 256, 64, false}} {
+	}{{"title", v.Title, 1200, 300, true}, {"form_code", v.FormCode, 256, 64, false}} {
 		if err := text(item.value, item.field, item.bytes, item.runes, item.required, false); err != nil {
 			return err
 		}
 		if label(item.value) != item.value {
 			return invalid(item.field, "not canonical")
 		}
+	}
+	if err := ValidateTaxKind(v.TaxKind); err != nil {
+		return err
 	}
 	for _, item := range []struct{ field, value string }{{"note", v.Note}, {"verification_note", v.VerificationNote}} {
 		if err := text(item.value, item.field, 8192, 0, false, true); err != nil {

@@ -179,3 +179,75 @@ func TestTaxMetadataRejectsDuplicateWhenIndexMissing(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate tax record period")
 	assert.Empty(t, out.String())
 }
+
+func TestTaxFutureTimestampsSurviveMutationsAndRestore(t *testing.T) {
+	t.Parallel()
+	s, a, r := taxFixture(t)
+	ctx := t.Context()
+	const future = "9998-01-01T00:00:00.000000000Z"
+	for _, table := range []string{"tax_accounts", "tax_records"} {
+		_, err := s.db.ExecContext(ctx, "UPDATE "+table+" SET created_at=$1, updated_at=$1", future)
+		require.NoError(t, err)
+	}
+	ai := TaxAccountInput{FilerPartyID: a.FilerPartyID, Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
+	a, err := s.UpdateTaxAccount(ctx, a.AccountID, a.Revision, ai)
+	require.NoError(t, err)
+	require.Equal(t, future, a.UpdatedAt)
+	ri := TaxRecordInput{AccountID: &a.AccountID, Kind: "filing", Title: "Edited", PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd, TaxYear: r.TaxYear}
+	r, err = s.UpdateTaxRecord(ctx, r.RecordID, r.Revision, ri)
+	require.NoError(t, err)
+	require.Equal(t, future, r.UpdatedAt)
+	r, err = s.RetireTaxRecord(ctx, r.RecordID, r.Revision)
+	require.NoError(t, err)
+	require.Equal(t, future, *r.RetiredAt)
+	a, err = s.RetireTaxAccount(ctx, a.AccountID, a.Revision)
+	require.NoError(t, err)
+	require.Equal(t, future, *a.RetiredAt)
+	var full, backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &full))
+	snap, err := s.BeginMetadataSnapshot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, snap.ExportBackup(ctx, &backup))
+	require.NoError(t, snap.Close())
+	for _, data := range [][]byte{full.Bytes(), backup.Bytes()} {
+		target := newTestStore(t)
+		require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(data)))
+		gotA, err := target.GetTaxAccount(ctx, a.AccountID)
+		require.NoError(t, err)
+		assert.Equal(t, a, gotA)
+		gotR, err := target.GetTaxRecord(ctx, r.RecordID)
+		require.NoError(t, err)
+		assert.Equal(t, r, gotR)
+	}
+}
+
+func TestTaxDuplicatePeriodImportRollsBack(t *testing.T) {
+	t.Parallel()
+	s, _, r := taxFixture(t)
+	ctx := t.Context()
+	var data bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &data))
+	lines := strings.Split(data.String(), "\n")
+	changed := false
+	for i, line := range lines {
+		if strings.Contains(line, `"type":"tax_record"`) {
+			duplicate := strings.Replace(line, r.RecordID, "11111111-1111-4111-8111-111111111111", 1)
+			lines[i] += "\n" + duplicate
+			changed = true
+			break
+		}
+	}
+	require.True(t, changed)
+	target := newTestStore(t)
+	root, vault := target.RootID(), target.vaultID
+	err := target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
+	require.ErrorContains(t, err, "UNIQUE constraint failed: tax_records.account_id")
+	assert.Equal(t, root, target.RootID())
+	assert.Equal(t, vault, target.vaultID)
+	accounts, err := target.ListTaxAccounts(ctx, TaxAccountListOptions{Limit: 100})
+	require.NoError(t, err)
+	assert.Empty(t, accounts)
+	records, err := target.ListTaxRecords(ctx, TaxRecordListOptions{Limit: 100})
+	require.NoError(t, err)
+	assert.Empty(t, records)
+}

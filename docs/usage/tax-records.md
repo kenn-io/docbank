@@ -17,9 +17,10 @@ attachments require a live own filer and, when present, a live organization as
 the authority. A previously attached party may later change or retire without
 invalidating historical records.
 
-Accounts default to a 14-day lead time. An unset record lead time is reserved for inheritance from its account's
-current value, or 14 days without an account. Its currency is a snapshot of the account default when created and can be overridden. A tax year
-defaults to the year of the period end. Amounts are exact nonnegative minor
+Accounts default to a 14-day lead time. An unset record lead time is reserved
+for inheritance from its account's current value, or 14 days without an
+account. Its currency snapshots the account default when created and can be
+overridden. A tax year defaults to the year of the period end. Amounts are exact nonnegative minor
 units; direction records whether an amount is payable or refundable.
 
 Store updates replace the record's content and nullable fields. Callers must
@@ -32,7 +33,8 @@ kind must match the existing record.
 Records start in their kind's initial state and unverified. Event transitions,
 payments, document evidence, deadlines, and verification operations are not
 available through these store operations. Mutations are refused when the vault
-has audited authority. Revisions reject stale updates.
+has audited authority. Revisions reject stale updates. Retired accounts and records are read-only
+and cannot be unretired; create a new row when needed.
 
 Metadata backups preserve accounts and records, including retired entries and
 historical party references. Restore validates their fields and relationships

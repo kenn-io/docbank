@@ -197,7 +197,7 @@ func (s *Store) UpdateTaxAccount(ctx context.Context, id string, revision int64,
 		}
 		a.AccountValues = v
 		a.Revision++
-		a.UpdatedAt = nowRFC3339()
+		a.UpdatedAt = max(nowRFC3339(), a.UpdatedAt)
 		if err := taxUpdate(ctx, tx, "tax_accounts", taxAccountUpdateColumns, taxAccountUpdateArgs(a), revision); err != nil {
 			return err
 		}
@@ -221,7 +221,7 @@ func (s *Store) RetireTaxAccount(ctx context.Context, id string, revision int64)
 		if a.RetiredAt != nil {
 			return ErrTaxRetired
 		}
-		now := nowRFC3339()
+		now := max(nowRFC3339(), a.UpdatedAt)
 		a.RetiredAt = &now
 		a.UpdatedAt = now
 		a.Revision++
@@ -238,14 +238,12 @@ func validateTaxSelectors(filer, country, kind string) error {
 		return fmt.Errorf("%w: filer selector", taxrecord.ErrInvalid)
 	}
 	if country != "" {
-		v := taxrecord.AccountValues{FilerPartyID: "x", Country: country, TaxKind: "x", Cadence: "annual", Currency: "USD"}
-		if err := taxrecord.ValidateAccount(v); err != nil {
+		if err := taxrecord.ValidateCountry(country); err != nil {
 			return err
 		}
 	}
 	if kind != "" {
-		v := taxrecord.AccountValues{FilerPartyID: "x", Country: "ZZ", TaxKind: kind, Cadence: "annual", Currency: "USD"}
-		if _, err := taxrecord.NormalizeAccount(v); err != nil {
+		if _, err := taxrecord.NormalizeTaxKind(kind); err != nil {
 			return err
 		}
 	}

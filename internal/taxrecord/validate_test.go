@@ -109,3 +109,26 @@ func TestTaxDatesYearLeadDaysVocabulary(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTaxTextPinnedBoundaries(t *testing.T) {
+	base := AccountValues{FilerPartyID: "filer", Country: "ZZ", TaxKind: "example", Cadence: "annual", Currency: "USD"}
+	base.Identifier = strings.Repeat("x", 256)
+	base.Note = strings.Repeat("x", 8189) + "\r\ny"
+	got, err := NormalizeAccount(base)
+	if err != nil || got.Note != strings.Repeat("x", 8189)+"\ny" {
+		t.Fatalf("boundary normalization: %v", err)
+	}
+	base.Identifier += "x"
+	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("identifier bound: %v", err)
+	}
+	base.Identifier = "x"
+	base.Note = strings.Repeat("x", 8193)
+	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("note bound: %v", err)
+	}
+	base.Note = "bad\x01"
+	if _, err := NormalizeAccount(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("control: %v", err)
+	}
+}
