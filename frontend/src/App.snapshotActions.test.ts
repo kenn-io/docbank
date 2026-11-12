@@ -722,7 +722,7 @@ it("uses the rerun's revision after uncertain recovery", async () => {
   await waitFor(() =>
     expect(document.querySelector('[aria-label="Current tags"]')?.textContent).toContain("Review"),
   );
-  await fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Close" }));
   await screen.findByText(fresh.snapshot_id);
   await waitFor(() =>
     expect((screen.getByRole("button", { name: "Tag all…" }) as HTMLButtonElement).disabled).toBe(

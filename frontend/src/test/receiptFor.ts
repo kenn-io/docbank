@@ -7,8 +7,8 @@ export async function receiptFor(request: BatchTagRequest, unchanged: number[] =
     request_digest: await batchTagRequestDigest(request),
     tag_id: request.tag_id,
     assign: request.assign,
-    tag_revision: 3,
-    assignment_count: 13,
+    tag_revision: Math.max(3, request.nodes.length - unchanged.length + 1),
+    assignment_count: Math.max(13, request.nodes.length),
     completed_at: "2026-09-11T13:00:00.000000000Z",
     nodes: request.nodes.map((node) => ({
       node_id: node.node_id,
