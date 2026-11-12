@@ -42,6 +42,5 @@ export class TagChangeRun {
     if (outcome.kind === "rejected") this.stale = outcome.stale;
     const text = outcome.cause instanceof Error ? outcome.cause.message : String(outcome.cause);
     this.failure = (outcome.kind === "unknown" ? this.options.unknownMessage : undefined) ?? text;
-    return;
   }
 }

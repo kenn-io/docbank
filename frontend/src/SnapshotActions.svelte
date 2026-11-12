@@ -78,12 +78,8 @@
     session: untrack(() => session),
     onauthfailure: (cause) => onauthfailure(cause),
     onconfirmed: (confirmed) => {
-      if (!recovering) {
-        receipt = confirmed;
-        onchanged?.(confirmed);
-      } else {
-        receipt = confirmed;
-      }
+      receipt = confirmed;
+      if (!recovering) onchanged?.(confirmed);
     },
     onunknown: () => {
       recovering = true;

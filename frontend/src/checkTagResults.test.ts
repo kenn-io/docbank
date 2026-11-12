@@ -174,3 +174,32 @@ it("marks a document unavailable when its revision changes before preview", asyn
     "POST /api/v1/batch/tags/preview",
   ]);
 });
+
+it("falls back to per-document previews so one stale document keeps the other results", async () => {
+  const previews: number[][] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith(`/tags/${request.tag_id}`))
+      return Response.json({ id: request.tag_id, name: "Review" });
+    if (url.endsWith("/batch/tags/preview")) {
+      const { nodes } = JSON.parse(String(init?.body));
+      previews.push(nodes.map((node: { node_id: number }) => node.node_id));
+      if (nodes.length > 1 || nodes[0].node_id === 2)
+        return Response.json({ code: "stale_revision" }, { status: 409 });
+      return Response.json({
+        tag_id: request.tag_id,
+        tag_revision: 2,
+        nodes: [{ ...nodes[0], assigned: true }],
+      });
+    }
+    const id = Number(url.match(/nodes\/(\d+)/)?.[1]);
+    return Response.json({ id, name: `File ${id}`, revision: id + 1 });
+  });
+  const { rows } = await checkTagResults("session", request, () => {});
+  expect(rows.map((row) => [row.node_id, row.status])).toEqual([
+    [1, "matched"],
+    [2, "unavailable"],
+    [3, "matched"],
+  ]);
+  expect(previews).toEqual([[1, 2, 3], [1], [2], [3]]);
+});

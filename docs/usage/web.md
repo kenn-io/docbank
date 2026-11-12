@@ -386,7 +386,8 @@ document. Review current membership, then choose whether to retry readable
 documents that still need the change. The retry uses their current revisions.
 After a confirmed retry, check again to include documents that couldn't be read
 earlier. After an uncertain change, Docbank refreshes the view when you close
-the dialog. If the initial change is refused because a document is stale, close the dialog, refresh, and select the documents again.
+the dialog. If the initial change is refused because a document is stale, close
+the dialog, refresh, and select the documents again.
 After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
