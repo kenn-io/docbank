@@ -6,7 +6,7 @@ import (
 )
 
 // Upgrade preserves absence observations and photo work omitted by backup.
-// Their parents have already been restored from metadata and the v41 chain.
+// Metadata and the v41 chain supply their input authority.
 func restoreV48SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	if err := restoreV41SourceState(ctx, source, target); err != nil {
 		return err
