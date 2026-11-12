@@ -144,7 +144,7 @@ func checkSchemaIndexes(records []schemaContract, version int, digest string, cu
 	}
 	if len(missing) > 0 {
 		slices.Sort(missing)
-		return fmt.Errorf("add schema contract %s with these index records:\n%s\n", schemaContractFile(schemaContract{Version: version, Digest: digest}, "<summary-slug>"), strings.Join(missing, "\n"))
+		return fmt.Errorf("add schema contract %s with these index records:\n%s", schemaContractFile(schemaContract{Version: version, Digest: digest}, "<summary-slug>"), strings.Join(missing, "\n"))
 	}
 	return nil
 }
@@ -360,7 +360,7 @@ func TestStorageSchemaContractChanges(t *testing.T) {
 			err := checkSchemaLayout(nil, 49, digest, indexes)
 			require.ErrorContains(t, err, "000049-"+digest+"-<summary-slug>.schema with these index records:")
 			for name, hash := range indexes {
-				require.ErrorContains(t, err, name+" "+hash+"\n")
+				require.ErrorContains(t, err, name+" "+hash)
 			}
 			writeRecord(49, digest, indexes)
 			records, err := loadSchemaContracts(dir)
