@@ -1033,6 +1033,70 @@ it("inspects a checkpoint's saved receipt before sending groups", async () => {
   expect(channel.uploadPhotoGroup).not.toHaveBeenCalled();
 });
 
+it("starts a new selection after resuming a saved import", async () => {
+  const original = files()[0];
+  const fresh = new File(["new"], "fresh.JPG");
+  const { photoImportManifest } = await import("./photoImportStorage.js");
+  savedImports.set("new-after-resume", {
+    sourceID: "old-source",
+    revision: "revision",
+    destination: "/photos",
+    manifestVersion: 2,
+    manifestHash: photoImportManifest([original]).digest,
+    pickerKind: "files",
+  });
+  const saved = {
+    import_id: "saved",
+    source_id: "old-source",
+    label: "Photos",
+    destination: "/photos",
+    created_at: "2026-01-01T00:00:00Z",
+    group_count: 1,
+    groups: [
+      {
+        status: "remaining" as const,
+        files: [{ relative_path: original.name, size: original.size }],
+      },
+    ],
+  };
+  const channel: PhotoImportTransport = {
+    planPhotoImport: vi
+      .fn()
+      .mockResolvedValue({ import_id: "preview", groups: [[0]], unsupported: [] }),
+    registerPhotoImport: vi.fn().mockResolvedValue("new"),
+    listPhotoImports: vi.fn(),
+    inspectPhotoImport: vi.fn().mockResolvedValue(saved),
+    uploadPhotoGroup: vi.fn(),
+  };
+  render(PhotoImportDrawer, {
+    channel,
+    vaultID: "new-after-resume",
+    session: "session",
+    onclose: vi.fn(),
+    oncomplete: vi.fn(),
+    onauthfailure: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Resume import" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [original] },
+  });
+  await screen.findByRole("button", { name: "Resume remaining" });
+  await fireEvent.click(screen.getByRole("button", { name: "Start new import" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Choose files" }));
+  await fireEvent.change(screen.getByLabelText("Choose photo files"), {
+    target: { files: [fresh] },
+  });
+  await screen.findByRole("button", { name: "Add 1 group" });
+  expect(channel.inspectPhotoImport).toHaveBeenCalledOnce();
+  expect(channel.planPhotoImport).toHaveBeenCalledWith(
+    [fresh],
+    "/photos",
+    expect.not.stringMatching(/^old-source$/),
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+});
+
 it("uploads after registration without a redundant checkpoint write", async () => {
   const module = await import("./photoImportStorage.js");
   const createStorage = module.photoImportStorage;
